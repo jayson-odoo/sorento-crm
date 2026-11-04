@@ -159,8 +159,8 @@ def list_product_tag_templates(
     if not product_tag_template_service.product_exists(db, product_id):
         raise AppException(status_code=404, message="Product not found.", code="NOT_FOUND")
     return [
-        ProductTagTemplateItem(**product_tag_template_service.template_item(t))
-        for t in product_tag_template_service.linked_templates(db, product_id)
+        ProductTagTemplateItem(**item)
+        for item in product_tag_template_service.linked_items(db, product_id)
     ]
 
 
@@ -177,11 +177,62 @@ def set_product_tag_templates(
     from app.services.uuid_path_param import validate_uuid_path
 
     product_id = validate_uuid_path(product_id, resource="Product")
-    rows = product_tag_template_service.set_product_templates(
-        db, product_id, payload.template_ids, user_id=(user or {}).get("id")
+    product_tag_template_service.set_product_templates(
+        db,
+        product_id,
+        payload.template_ids,
+        user_id=(user or {}).get("id"),
+        default_template_id=payload.default_template_id,
     )
     db.commit()
     return [
-        ProductTagTemplateItem(**product_tag_template_service.template_item(t))
-        for t in rows
+        ProductTagTemplateItem(**item)
+        for item in product_tag_template_service.linked_items(db, product_id)
+    ]
+
+
+@router.get(
+    "/combos/{combo_id}/tag-templates", response_model=list[ProductTagTemplateItem]
+)
+def list_combo_tag_templates(
+    combo_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The templates linked to this combo (its host product's company scopes it)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    combo_id = validate_uuid_path(combo_id, resource="Combo")
+    if not product_tag_template_service.combo_exists(db, combo_id):
+        raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
+    return [
+        ProductTagTemplateItem(**item)
+        for item in product_tag_template_service.linked_combo_items(db, combo_id)
+    ]
+
+
+@router.put(
+    "/combos/{combo_id}/tag-templates", response_model=list[ProductTagTemplateItem]
+)
+def set_combo_tag_templates(
+    combo_id: str,
+    payload: ProductTagTemplatesUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """Replace this combo's links with ``template_ids``."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    combo_id = validate_uuid_path(combo_id, resource="Combo")
+    product_tag_template_service.set_combo_templates(
+        db,
+        combo_id,
+        payload.template_ids,
+        user_id=(user or {}).get("id"),
+        default_template_id=payload.default_template_id,
+    )
+    db.commit()
+    return [
+        ProductTagTemplateItem(**item)
+        for item in product_tag_template_service.linked_combo_items(db, combo_id)
     ]

@@ -30,7 +30,8 @@ A combo has two kinds of part:
 7. To print a package price, fill **List price (RM)** and **Sell price (RM)** on the combo. Leave them blank to keep the added-up price. On a choice group where each option has its own price, such as a sink whose price depends on the tap, fill **Sell price if picked** on each part row instead.
 8. To offer an upgrade, tick **Upgrade** on the part's row and fill **Top-up**, the amount it adds to the package price. Upgrades are drawn in their own **Upgrade** block after the choice groups.
 9. Remove a part with the trash icon on its row, or a whole combo with the trash icon in its header. Both are countdown actions with a **Cancel**, and there is no confirmation dialog to answer.
-10. For a product on two catalogue pages, click **Add combo** again and build the second one. Order matters only within a combo: fixed parts print first, then each choice group in the order its label first appears.
+10. To give the combo its own price tag templates, use **Price tag templates** in the **Add combo** dialog or on the combo, and with two or more linked pick a **Default template**. A request line on this combo then uses them; a combo with none falls back to the host product's templates. This needs the tag templates manage permission; without it the field does not show.
+11. For a product on two catalogue pages, click **Add combo** again and build the second one. Order matters only within a combo: fixed parts print first, then each choice group in the order its label first appears.
 
 Editing a combo's **parts** takes effect on requests raised **after** the change: a request already submitted keeps the parts that were copied onto it. A change to its **description, free items or prices** reaches tags still being designed, with the usual change note and roll back. An approved tag stays as it was, apart from the cover picture, which always shows the current one.
 
@@ -40,7 +41,7 @@ Open any part (the mirror, the tap, a basin) and the **Sold with** card on its *
 
 ## What the salesperson does on the portal
 
-Nothing is asked of them that they did not already know. They pick the cabinet code they have in front of them, and the parts appear under the line on their own. They can drop a part, add one the package missed, answer a choice group, or leave it open for you. A missing package never blocks their submit; it arrives to you as a note on the line instead. Their side is written up in [Submit via portal](../project-sales-rep/submit-via-portal.md#packages-and-parts-on-a-line).
+Nothing is asked of them that they did not already know. A combo is also matched when they paste a list: codes joined with **+** must equal a saved combo (the host plus exactly its parts), otherwise the row reads **Not found** and they pick the product or an existing combo. Nothing creates a combo from the request form, so record every package here first. They pick the cabinet code they have in front of them, and the parts appear under the line on their own. They can drop a part, add one the package missed, answer a choice group, or leave it open for you. A missing package never blocks their submit; it arrives to you as a note on the line instead. Their side is written up in [Submit via portal](../project-sales-rep/submit-via-portal.md#packages-and-parts-on-a-line).
 
 ## Steps - prepare the tags on a request
 
@@ -78,7 +79,7 @@ One template serves lines with and without a combo. With no combo, **Combo Photo
 * **Which price wins**, highest first: a price override on the tag, a price typed on the line, the combo's own price, then the added-up price below.
 * The combo's own **Sell price (RM)** prints as filled. When the salesperson picked an option with its own **Sell price if picked**, that prints instead. A picked upgrade adds its **Top-up** to the combo's price. While a choice group with its own prices is still open and the combo has no sell price, the sell price layer stays empty, because each option prints its own price.
 * With no combo price, **List price** on the tag is the host's list price plus the list price of every part.
-* **Selling price** uses the line's own promotion, set on the request's **Price** section or changed later on the request's **Lines** tab: the parent and every part price under that promotion where it offers one, otherwise at that product's list price. A part the promotion lists at RM 0 adds nothing. A line with a typed price instead of a promotion carries that figure straight through as the tag's selling price. A marketing override set on the tag itself wins over either.
+* **Selling price** applies on a line set to SP; a line on LP prints the list price. It uses the line's own promotion, set on the request's **Price** section or changed later on the request's **Lines** tab: the parent and every part price under that promotion where it offers one, otherwise at that product's list price. A part the promotion lists at RM 0 adds nothing. A line with a typed price instead of a promotion carries that figure straight through as the tag's selling price. A marketing override set on the tag itself wins over either.
 * A tag with no parts prints exactly what it always did.
 * When the combo carries its own cover picture, that picture is the FIRST image the tag shows, ahead of the host's own gallery; a layer bound to the parent uses it, while a layer bound to one part still shows that part's own photo. A combo with no cover picture leaves the photo pick as it always was - see [Which photo prints](price-tag-requests.md#which-photo-prints) in the main request guide.
 
