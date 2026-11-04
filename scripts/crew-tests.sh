@@ -33,7 +33,7 @@ BASE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --plan) PLAN=1 ;;
-    --base) BASE="$2"; shift ;;
+    --base) BASE="${2:?--base needs a ref}"; shift ;;
     -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "usage: $0 [--plan] [--base <ref>]" >&2; exit 2 ;;
   esac
@@ -41,11 +41,22 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "${CREW_CHANGED_FILES+x}" ]; then
+  # Test hook: the list replaces the git diff. The base is then HEAD, so a run (not --plan)
+  # would pass `vitest --changed HEAD` and select nothing; use it with --plan.
   files="$CREW_CHANGED_FILES"
   BASE="${BASE:-HEAD}"
 else
   if [ -z "$BASE" ]; then
-    git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main || true
+    if ! git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main; then
+      echo "git fetch of origin/main failed: cannot tell what this head changes against main now" >&2
+      exit 2
+    fi
+    # The PR gate tests the head merged into main's head; a lane behind main would report on
+    # code that is not what lands. Merge origin/main first (a plan may still be printed).
+    if ! git merge-base --is-ancestor refs/remotes/origin/main HEAD; then
+      echo "HEAD does not contain origin/main ($(git rev-parse --short refs/remotes/origin/main)): merge origin/main first" >&2
+      [ "$PLAN" = "1" ] || exit 2
+    fi
     BASE="$(git merge-base refs/remotes/origin/main HEAD)"
   fi
   # --no-renames: a rename is its deleted and its added path, both judged.
@@ -64,6 +75,7 @@ FORMS_RE='^sorento_crm_backend/(app/(api/v1/(procurement|complaints|sla|public|p
 
 backend_list=""
 forms=false
+over_budget=""
 if has '^sorento_crm_backend/'; then
   selected=""
   inputs="$(grep -E "$BACKEND_CODE_RE" <<< "$files" || true)"
@@ -72,6 +84,7 @@ if has '^sorento_crm_backend/'; then
     printf '%s\n' "$inputs" \
       | GITHUB_OUTPUT="$out" python3 "$BACKEND/scripts/ci_select_tests.py" --root "$BACKEND" --scm false >&2
     selected="$(sed -n 's/^tests=//p' "$out")"
+    [ "$(sed -n 's/^full=//p' "$out")" != "true" ] || over_budget=" (selection over budget: changed test files only)"
     rm -f "$out"
   fi
   chains=""
@@ -171,7 +184,7 @@ if [ -n "$backend_list" ]; then
   # shellcheck disable=SC2086
   [ -z "$migrations" ] || pytest_pass backend -p no:xdist $migrations
   read -r bp bf <<< "$(count "$TMP"/backend-*.xml)"
-  backend_summary="$bp passed/$bf failed"
+  backend_summary="$bp passed/$bf failed$over_budget"
 fi
 
 mcp_summary=""
@@ -195,8 +208,12 @@ if [ "$vitest" = "true" ]; then
   vitest_summary="$vp/$vf"
 fi
 
+# A run that crashed before writing results can count 0 passed/0 failed: never let that line
+# read as a pass.
+verdict=""
+[ "$rc" -eq 0 ] || verdict=" FAILED (exit $rc)"
 echo
-echo "crew-tests: $HEAD_SHA backend $backend_summary, vitest $vitest_summary$mcp_summary"
+echo "crew-tests: $HEAD_SHA backend $backend_summary, vitest $vitest_summary$mcp_summary$verdict"
 echo "base: $BASE"
 echo "commands:"
 for c in "${commands[@]}"; do echo "  $c"; done

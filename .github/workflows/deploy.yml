@@ -85,8 +85,10 @@ on:
   # then build-and-deploy, which carries `environment: production` and
   # therefore PAUSES until the owner approves the deployment in GitHub
   # (environment "production", required reviewer jayson-odoo, deployment
-  # branches: main only). On any other ref a dispatch runs the tests only:
-  # build-images and build-and-deploy also require main.
+  # branches: main only). On any other ref a dispatch never ships:
+  # build-images and build-and-deploy also require main. There it tests only
+  # with skip_tests=false or full_suite=true (the default skip_tests needs a
+  # release-sweep status and then runs nothing).
   workflow_dispatch:
     inputs:
       skip_tests:
@@ -1826,7 +1828,8 @@ jobs:
       # A release whose tests passed leaves a marker for its tree, so a
       # re-dispatch of the same tree (a rejected approval, a deploy hiccup)
       # skips the tests (`changes`, the workflow_dispatch case). A PR gate
-      # that passed does the same for its merge tree under its own prefix,
+      # whose fast checks passed (no tests since CI-CLOUD-GATE) does the same
+      # for its merge tree under its own prefix,
       # `pr-validated-tree-` (CI-COST round 2), so a re-label on that tree
       # is a no-op and a release never reads it. `success()`: every step
       # above passed. One byte, kept 30 days.
@@ -1985,8 +1988,8 @@ jobs:
     needs: [changes]
     # Same condition as build-and-deploy: only build for real on a release
     # (workflow_dispatch on main). A push to main builds nothing (see the
-    # `push` trigger comment), a dispatch on any other ref runs the suite
-    # only, and a PR run still needs the images to exist for its own
+    # `push` trigger comment), a dispatch on any other ref runs at most the
+    # tests (skip_tests=false or full_suite=true), and a PR run still needs the images to exist for its own
     # validate-backend/validate-mcp legs, which build separately (load:
     # true, no push) and are unaffected by this job's `if`.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'

@@ -2249,3 +2249,88 @@ def test_every_release_runs_the_forms_chains():
     assert len(FORMS_CHAIN_FILES) >= 9
     missing = [f for f in FORMS_CHAIN_FILES if f not in core]
     assert not missing, f"add to tests/release_core.txt: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# CI-CLOUD-GATE: which lean-gate steps run on a release and which on a PR, from
+# each step's own `if`, evaluated as written (reviewer kill tests K5, K6).
+# ---------------------------------------------------------------------------
+
+RELEASE_ONLY_STEPS = [
+    "Select the changed test files to run",
+    "Relax Postgres durability for the test run",
+    "Bootstrap the database",
+    "Run the changed test files (executing gate)",
+    "Pytest regression guards (executing gate)",
+    "MCP test suite (executing gate)",
+    "Run the vitest files related to the change (executing gate)",
+    "Run the source-scanning guard tests (always)",
+]
+
+
+def _step_if(name: str) -> str:
+    match = re.search(r"^        if: (.*)$", _lean_gate_steps()[name], re.M)
+    assert match, f"{name}: no if"
+    return _expression(match.group(1))
+
+
+def _step_ctx(event: str) -> dict:
+    return {
+        "github": {"event_name": event, "event": {"label": {"name": "ci"}} if event == "pull_request" else {}},
+        "needs": {"changes": {"outputs": {"backend": "true", "frontend": "true", "mcp": "true", "lean": "true"}}},
+        "steps": {"select": {"outputs": {"files": "tests/test_x.py"}}, "merge": {"outputs": {"main": MAIN}}},
+    }
+
+
+@pytest.mark.parametrize("name", RELEASE_ONLY_STEPS)
+def test_the_lean_release_still_runs_its_test_steps(name):
+    """A lean release (skip_tests=false) whose selection step stopped running would test
+    nothing and still deploy: every test step runs on a release, none on a PR."""
+    cond = _step_if(name)
+    assert _gh_eval(cond, _step_ctx("workflow_dispatch")), (name, cond)
+    assert not _gh_eval(cond, _step_ctx("pull_request")), (name, cond)
+
+
+def test_the_eslint_step_runs_on_a_frontend_pr_only():
+    cond = _step_if("Lint the changed frontend files")
+    assert _gh_eval(cond, _step_ctx("pull_request"))
+    no_frontend = _step_ctx("pull_request")
+    no_frontend["needs"]["changes"]["outputs"]["frontend"] = "false"
+    assert not _gh_eval(cond, no_frontend)
+    assert not _gh_eval(cond, _step_ctx("workflow_dispatch"))
+
+
+def test_the_eslint_step_lints_added_and_changed_frontend_files_only(tmp_path):
+    """Its shell against a real repo: added/modified/renamed .ts/.tsx files reach eslint,
+    a deleted file and a non-script file do not."""
+    repo = tmp_path / "repo"
+    fe = repo / "sorento_crm_frontend"
+    (fe / "lib").mkdir(parents=True)
+    _git(tmp_path, "init", "-q", "-b", "main", str(repo))
+    for name in ("keep.ts", "gone.ts", "old.tsx"):
+        (fe / "lib" / name).write_text("export const x = 1;\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "main")
+    main = _git(repo, "rev-parse", "HEAD")
+    (fe / "lib" / "keep.ts").write_text("export const x = 2;\n")
+    (fe / "lib" / "gone.ts").unlink()
+    _git(repo, "mv", "sorento_crm_frontend/lib/old.tsx", "sorento_crm_frontend/lib/new.tsx")
+    (fe / "lib" / "added.ts").write_text("export const y = 1;\n")
+    (fe / "lib" / "notes.md").write_text("x\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "pr")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "npx").write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$NPX_ARGS"\n')
+    (bindir / "npx").chmod(0o755)
+    args = tmp_path / "args.txt"
+    script = re.search(r"run: \|\n((?:          .*\n|\s*\n)+)", _lean_gate_steps()["Lint the changed frontend files"]).group(1)
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", textwrap.dedent(script)],
+        cwd=fe, env={**GIT_ENV, "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}", "MAIN": main, "NPX_ARGS": str(args)},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    got = args.read_text().split("\n")
+    assert got[:3] == ["eslint", "--no-warn-ignored", "--"], got
+    assert sorted(a for a in got[3:] if a) == ["lib/added.ts", "lib/keep.ts", "lib/new.tsx"], got

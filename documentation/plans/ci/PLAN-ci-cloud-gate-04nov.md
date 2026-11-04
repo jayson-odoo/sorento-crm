@@ -21,7 +21,9 @@ joins.
    still the one required check). On a pull request it runs: merge main's head, single alembic
    head, PII guard, Outline guide check, gitleaks, backend dependency install + the app/worker
    import smoke + `pytest --collect-only` (imports every test file, executes none), MCP import
-   check, frontend `tsc` + ESLint over the changed frontend files. No pytest execution, no
+   check, frontend `tsc` + ESLint over the changed frontend files (whole changed files: the
+   tree has 195 errors in 54 files on main, so a PR that touches one of them fixes its errors;
+   no baseline mechanism). No pytest execution, no
    vitest, no Postgres or Redis service container (their image is empty on a PR, so they never
    start).
 2. **Release on GitHub = build + deploy by default.** `skip_tests` now defaults to `true`: the

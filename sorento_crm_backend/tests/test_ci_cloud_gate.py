@@ -301,3 +301,11 @@ def test_the_sweep_check_is_wired_first_with_a_read_only_status_scope():
     deploy = wf["jobs"]["build-and-deploy"]
     assert "changes" in deploy["needs"] and "!contains(needs.*.result, 'failure')" in deploy["if"]
     assert wf["jobs"]["build-images"]["needs"] == ["changes"] or "changes" in wf["jobs"]["build-images"]["needs"]
+
+
+def test_crew_tests_refuses_a_head_behind_main_and_never_prints_a_clean_failed_line():
+    script = CREW_TESTS.read_text(encoding="utf-8")
+    assert "git merge-base --is-ancestor refs/remotes/origin/main HEAD" in script
+    assert "merge origin/main first" in script
+    assert "fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main || true" not in script
+    assert 'verdict=" FAILED (exit $rc)"' in script and "$verdict\"" in script

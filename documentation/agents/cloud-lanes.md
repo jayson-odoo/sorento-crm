@@ -67,7 +67,8 @@ do not trigger runs on their own, and it still matters for pushes to `main`.
 A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job, **fast checks only**
 (CI-CLOUD-GATE, owner 4 Nov 2026): main's head merged in, the alembic head, PII, Outline-guide
 and gitleaks gates, the backend import chains and `pytest --collect-only`, the MCP import check,
-and `tsc` plus ESLint over the changed frontend files. No pytest test and no vitest executes on
+and `tsc` plus ESLint over the changed frontend files (whole files: 54 files carry 195 ESLint
+errors on main today, so touching one means fixing its errors). No pytest test and no vitest executes on
 GitHub for a PR, and no job runs on the Mac runner: the tests run in the lane's own sandbox
 (next section). **A merge does not deploy**: a push to main runs only the alembic head gate. The
 release is `gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main`,
@@ -106,7 +107,9 @@ Every lane, cloud or local, runs its changed-area tests itself, on the exact hea
      (cd sorento_crm_frontend && npx vitest run --changed <base> --passWithNoTests)
    ```
 
-   The sha must be the PR's head at the time of `crew-done`; any later push needs a new run and
+   Only a run that exited 0 counts: a failed or crashed run ends its line with
+   `FAILED (exit N)`. The script refuses a head that does not contain `origin/main` (merge
+   main first, as the PR gate does). The sha must be the PR's head at the time of `crew-done`; any later push needs a new run and
    a new `crew-tests:` comment. A failure is fixed, not posted as done. A test that fails on main
    too is named with its main run as evidence, never skipped or quarantined.
 3. A lane may add tests the script does not pick (a module it knows is coupled) and lists them
