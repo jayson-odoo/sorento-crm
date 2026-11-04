@@ -48,6 +48,7 @@ import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
 import ListPager from '@/components/common/ListPager';
 import { productsPagerQuery } from '../lib/listQuery';
+import { localStore } from '@/lib/storage';
 
 /** The tab values `?tab=` may name, so a stray query string cannot land on an empty panel. */
 const PRODUCT_FORM_TABS = [
@@ -209,7 +210,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
     const interval = setInterval(() => {
       if (form.formState.isDirty) {
         const formData = form.getValues();
-        localStorage.setItem('product-form-draft', JSON.stringify(formData));
+        localStore.setItem('product-form-draft', JSON.stringify(formData));
       }
     }, 30000);
 
@@ -263,7 +264,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       } else {
         await createMutation.mutateAsync(formData);
       }
-      localStorage.removeItem('product-form-draft');
+      localStore.removeItem('product-form-draft');
       if (onSuccess) {
         onSuccess();
       } else {
