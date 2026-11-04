@@ -423,7 +423,7 @@ def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many
 
 @pytest.mark.usefixtures("said_as_on")
 def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_company(rbot, world) -> None:
-    """Lock 1: HT1-6 with said_as "brand". Depends on the brand branch applying the held company (report_ask.py:3612,
+    """Lock 1: HT1-6 with said_as "brand". Depends on the brand branch applying the held company (report_ask.py:3633,
     `ask["company"] = held_company`): without it the object's same-name company is dropped even though it is the held
     one (CP-5)."""
     sorento, _m = world
@@ -607,13 +607,13 @@ def test_ht1_16_a_v200_text_without_said_as_text_has_no_such_key(monkeypatch, se
 # ------------------------------------------------------------------------------------------ HT1-18..20 held company vs object echo
 
 
-def _company_held_breakdown(rbot, object_company: str, entities: tuple, message: str):
+def _company_held_breakdown(rbot, object_company: str, entities: tuple, message: str, sales_company: Any = "Sorento"):
     """Company Sorento held (total, delivered, Sep 2026); then "break down project and retail" as the v202 parse gave it:
     top-level sales_company the held name, the object's company `object_company`, entities as given."""
     sorento = "Sorento"
     _hold(rbot, sorento, group_by=None)
     ra = _ra2("breakdown", basis="delivered", group_by="channel", company=object_company, brands=[], **SEP)
-    v = _follow("sales_analysis", ra, *entities, group_by="channel", sales_company=sorento, **SEPF)
+    v = _follow("sales_analysis", ra, *entities, group_by="channel", sales_company=sales_company, **SEPF)
     return rbot.say(v, message)
 
 
@@ -641,3 +641,27 @@ def test_ht1_20_lock_a_company_the_message_names_that_the_contact_does_not_hold_
     text, calls = _company_held_breakdown(rbot, "Fujiwara", (ent,), "Fujiwara sales only")
     assert text.strip() == FORBIDDEN, f"HT1-20: {text!r}"
     assert not _ran(calls), _ran(calls)
+
+
+def test_ht1_18b_a_genuine_switch_with_no_parser_field_naming_the_held_company_runs_the_new_company(rbot, world) -> None:
+    text, calls = _company_held_breakdown(rbot, "Mocha", (), "break down project and retail", sales_company=None)
+    assert FORBIDDEN not in text, f"HT1-18b: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == MOCHA_ID, f"HT1-18b: {args}"
+
+
+def test_ht1_18_a_channel_entity_of_this_message_does_not_disable_the_held_company_rule(rbot, world) -> None:
+    ent = _ent("project", "sales_channel", None, None)
+    text, calls = _company_held_breakdown(rbot, "Sorenth", (ent,), "break down project and retail")
+    assert FORBIDDEN not in text, f"HT1-18 channel: {text!r}"
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("group_by") == "channel" and args.get("company") == DEFAULT_COMPANY_ID, f"HT1-18 channel: {args}"
+
+
+def test_ht1_18c_lock_an_entity_naming_the_object_company_wins_over_sales_company(rbot, world) -> None:
+    ent = _ent("Mocha", "brand", None, None)
+    text, calls = _company_held_breakdown(rbot, "Mocha", (ent,), "Mocha sales only", sales_company="Sorento")
+    assert FORBIDDEN not in text, f"HT1-18c: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == MOCHA_ID, f"HT1-18c: {args}"
