@@ -32,3 +32,10 @@ pure decisions), shell (`infra/tests/test_ha_scripts.py`, fake binaries), drill
 ## Outside the repo (owner, reviewed commands)
 19. Cloudflare LB: steering off, pools node-a / node-b, monitor `GET /api/v1/health/role` expecting 200 with the public Host header, DNS-only TTL 30 s. After a drill the LB answers with node B and does not move back when A returns.
 20. The measured failover time of the prod drill is recorded in the plan (expected 8-11 min on 60 s checks).
+
+## Active-active app tier (owner 4 Nov, PR #2170; plan section 12)
+21. Both nodes are origins of one Cloudflare pool; each is health-checked on `/api/v1/health/role`, which answers 200 only when that node's app reaches a writable database. (drill aa: steady)
+22. Each node's pgbouncer points at the current primary: local on the primary node, the peer on the other node, switched by the controller (R1) only toward a peer that answers as primary; Redis follows the same way (master on the primary node). (unit R1 tests, adapter route tests, world model aa, drill aa)
+23. An unhealthy app on either node removes only that origin; no fence, no promotion; the other node keeps serving writes into the one primary. `APP_SICK_AFTER` other than 0 is refused in active-active mode. (unit, drill aa: app down on A / on B)
+24. A primary box loss promotes the standby by the existing rules; the new primary's endpoints switch to local and it serves; the returning node rejoins and serves through the new primary. (drill aa: primary box dies)
+25. The added latency per request served from B is measured and stated (round trips x RTT). (plan 12c, `infra/rehearsal/measure_roundtrips.py`)

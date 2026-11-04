@@ -198,6 +198,63 @@ Record every time measured into the plan, section 10.
 4. A returns: hPanel Start. Expect A as a standby following B (alert "rejoined" or "RE-SEEDED"),
    users stay on B.
 
+## Phase AA: active-active app tier (owner 4 Nov; plan section 12; after phase 3)
+
+Both nodes serve the app; one writable database and one Redis master stay on the primary node.
+Templates: `infra/templates/active-active/`.
+
+0. **READ-ONLY** checks (any time):
+   ```
+   # READ-ONLY: nothing below changes prod.
+   cd /opt/sorento-crm2
+   # Existing files: every attachment must live in object storage, none on a local path.
+   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At \
+     -c "select coalesce(storage_provider, (null)::text) as provider, count(*) from attachments group by 1 order by 1" \
+     -c "select count(*) as not_a_url from attachments where coalesce(file_path, (\x27\x27)::text) <> \x27\x27 and file_path not like \x27http%\x27"'
+   # Which database / Redis host each app service uses today (host:port only, never the password).
+   docker compose config --format json | python3 -c 'import json,sys,re
+   for n,svc in sorted(json.load(sys.stdin)["services"].items()):
+       env=svc.get("environment") or {}
+       for k in ("DATABASE_URL","REDIS_URL","SCHEDULER_LEADER_DATABASE_URL"):
+           v=env.get(k)
+           if v: print(n, k, re.sub(r"^.*@", "", re.sub(r"\?.*$", "", v)))'
+   ```
+   Expect `not_a_url` = 0 and every provider `s3` or `r2`. Expect every backend-image service's
+   `DATABASE_URL` to name `pgbouncer:6432`; a service that names `db` directly must be moved to
+   pgbouncer first (`SCHEDULER_LEADER_DATABASE_URL` stays direct: it runs only on the primary).
+1. **THIS CHANGES PROD, WINDOW** (about 1-2 minutes per node: Redis and pgbouncer restart, then
+   one app colour swap), on BOTH nodes, the primary first:
+   - `REDIS_PASSWORD` (the same on both) in `.env`;
+   - the app lines over the link in `postgres/pg_hba.conf` (template, ACTIVE-ACTIVE block) and
+     `select pg_reload_conf()` on the primary;
+   - `ha/pgbouncer.ini`, `ha/route/route.ini` (from `route.ini.initial`; on the standby node
+     `host=<PEER_WG_IP>`), `ha/haproxy-redis.cfg`, the pgbouncer userlist and admin pgpass;
+   - `COMPOSE_FILE=docker-compose.yml:compose.ha.yml:compose.aa.yml` in `.deploy.env`;
+   - app `REDIS_URL` -> `redis://:<REDIS_PASSWORD>@redis_proxy:6380/<db>`;
+   - `docker compose up -d redis redis_proxy pgbouncer`, then on the standby node
+     `docker compose exec -T redis redis-cli REPLICAOF <PEER_WG_IP> 6379`;
+   - a normal release (both nodes, `scripts/ha_release.sh`) to bring the app colours up on the
+     new env.
+   Check on each node: the app answers `GET /api/v1/health/role` 200 locally; `redis-cli role`
+   says master on the primary node, slave on the other.
+2. **THIS CHANGES PROD** (traffic starts reaching node B): Cloudflare: replace the two pools with
+   ONE pool holding both endpoints (same monitor `GET /api/v1/health/role`, 60 s, down 2, up 1);
+   LB default pool = that pool, DNS-only TTL 30 s. Note each endpoint's address for the env.
+3. **THIS CHANGES PROD**: in `/etc/sorento-ha/ha-pg.env` on both nodes add the active-active
+   block (`ACTIVE_ACTIVE=1`, `CF_ORIGIN_SELF`, `CF_ORIGIN_PEER`, `CF_POOL_SELF` = the one pool,
+   `ROUTE_FILE`, `PGB_LOCAL_HOST`, `PGB_RELOAD`, `REDIS_CLI`), remove `APP_SICK_AFTER` (it must be
+   0), then `systemctl restart cf-failover` on the standby node first, then the primary node.
+   The logs must show `started: ... app_sick_after=0s` and no action.
+4. **THIS CHANGES PROD, causes an outage on one node** (drill, announced window):
+   `docker compose stop backend_<active>` on node A. Expect: A's origin leaves the pool within
+   about 2 minutes, users keep working through B, no fence and no promotion in either
+   controller's log. Start it again; A returns to the pool. Then the same on node B.
+5. **READ-ONLY**: measure the A-B round trip (phase 1 step 1b) and record it in plan section 12c.
+
+Rollback of phase AA: Cloudflare back to the two pools in failover order (phase 3), remove
+`ACTIVE_ACTIVE` and the active-active block from `ha-pg.env`, restart `cf-failover` on both.
+Redis and pgbouncer on the primary node keep working as they are.
+
 ## When something looks wrong
 
 - Alert "TWO PRIMARIES": never expected. The controller already fenced the node Cloudflare does
