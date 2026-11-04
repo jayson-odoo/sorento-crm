@@ -97,6 +97,8 @@ def record_report(
         user_agent=_cut(user_agent, MAX_USER_AGENT),
         is_chunk_error=bool(is_chunk_error),
         client_ts=client_ts,
+        # Explicit UTC, same clock the rate-limit window and the prune cutoff read.
+        created_at=datetime.utcnow(),
     )
     db.add(row)
     db.commit()
