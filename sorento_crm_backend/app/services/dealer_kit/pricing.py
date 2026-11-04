@@ -441,8 +441,6 @@ def _line_total_under(
     part_ids: Sequence[str],
     viewer: ViewerContext,
     promotion_id: str,
-    *,
-    combo: bool = False,
 ) -> tuple[Decimal, list[str]]:
     """The line's total under ONE promotion, and which PARTS printed at list.
 
@@ -464,10 +462,6 @@ def _line_total_under(
         worth = _offer_worth_showing(offers.get(product_id), list_price)
         if worth is not None:
             total += worth
-        elif combo and product_id in part_ids and offers.get(product_id) == 0:
-            # PRICETAG-COMBO AC-2.7: a part the combo's promotion lists at RM 0 is
-            # free in that package. The host is never free (not in `part_ids`).
-            continue
         else:
             total += list_price or Decimal("0")
             if product_id in part_ids:
@@ -543,11 +537,19 @@ def line_pricing(
         today = business_today()
         promotion_options = []
         totals_by_promotion: dict[str, tuple[Decimal, list[str]]] = {}
+        # PRICETAG-COMBO-RENDER K8: on a combo line a promotion option is what the tag would
+        # print, the combo's own price or nothing, never a sum of the parts.
+        combo_price = None
+        if combo_row is not None:
+            _combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
+            combo_price = combo_sell if sell_decided else None
         for promo in covering:
-            total, parts_at_list_for_promo = _line_total_under(
-                db, products_by_id, resolved_ids, part_ids, viewer, promo.id,
-                combo=combo_row is not None,
-            )
+            if combo_row is not None:
+                total, parts_at_list_for_promo = combo_price, []
+            else:
+                total, parts_at_list_for_promo = _line_total_under(
+                    db, products_by_id, resolved_ids, part_ids, viewer, promo.id
+                )
             totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
             promotion_options.append(
                 {
@@ -567,7 +569,8 @@ def line_pricing(
         promotion_options.sort(
             key=lambda option: (
                 option["expired_on"] is not None,
-                option["sell_price"],
+                option["sell_price"] is None,
+                option["sell_price"] or Decimal("0"),
                 option["description"],
                 option["id"],
             )
@@ -581,7 +584,7 @@ def line_pricing(
             sell_price = _as_decimal(manual)
             sell_price_basis = "manual"
             parts_at_list: list[str] = []
-        elif chosen_total is not None:
+        elif chosen_total is not None and chosen_total[0] is not None:
             sell_price, parts_at_list = chosen_total
             # R11a (security H1): `chosen_total` legitimately equals
             # `list_price` when the only covering promotion prices a
@@ -644,23 +647,6 @@ def line_pricing(
     return results
 
 
-def free_part_ids(
-    db: Session, product_ids: Sequence[str], viewer: ViewerContext, promotion_id: Optional[str]
-) -> set[str]:
-    """Products a promotion lists at exactly RM 0 (PRICETAG-COMBO AC-2.7).
-
-    `resolve_prices` drops a 0 offer as "not an offer", so a free part in a combo
-    promotion would add its list price. A combo line asks this instead.
-    """
-    if not promotion_id or not product_ids:
-        return set()
-    return {
-        pid
-        for pid, price in _offer_prices(db, list(product_ids), viewer, promotion_id).items()
-        if price == 0
-    }
-
-
 def combo_for_host(
     db: Session, combo_id: Optional[str], host_product_id: Optional[str], products_by_id: dict
 ) -> Optional[ProductCombo]:
@@ -682,10 +668,11 @@ def combo_prices(
 ) -> tuple[Optional[Decimal], Optional[Decimal], bool]:
     """``(list_price, sell_price, sell_decided)`` for a combo and what is picked.
 
-    PRICETAG-COMBO AC-2.4/2.5. ``list_price`` is the combo's own list price or None
-    (today's sum). ``sell_decided`` says the combo takes over the sell side; when
-    False the caller keeps today's sum. A decided None is AC-2.5: nothing picked,
-    some option prints its own price and the combo has none.
+    PRICETAG-COMBO AC-2.4/2.5, K8. ``list_price`` is the combo's own list price or None;
+    the sum of the parts is never used. ``sell_decided`` says a figure is decided (a picked
+    option's own price, else the combo's); when False there is none and a combo line prints
+    nothing. A decided None is AC-2.5: some option still open prints its own price and the
+    combo has none.
     """
     list_price = _as_decimal(combo.list_price)
     parts = list(combo.parts or [])

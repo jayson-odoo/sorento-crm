@@ -427,46 +427,6 @@ def test_ac_2_6_a_line_without_combo_id_prices_as_today(db):
 # --------------------------------------------------------------------------- AC-2.7
 
 
-def _promoted_row(db, s, offers):
-    promo = seed.promotion(db, offers)
-    request = seed.submit_one(
-        db,
-        s["host"],
-        s["combo"],
-        _line_parts(s, s["white"]),
-        price_mode="selling",
-        promotion_id=promo.id,
-    )
-    db.flush()
-    return seed.rows(db, request)[0]
-
-
-def test_ac_2_7_a_part_at_rm_0_in_the_promotion_adds_rm_0(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00"), (s["mirror"], "0.00")])
-    # K8: a promotion no longer sums a combo line's parts; no stored price, nothing prints.
-    assert row["sell_price"] is None
-
-
-def test_ac_2_7_a_part_with_no_row_in_the_promotion_adds_its_list_price(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00")])
-    assert row["sell_price"] is None  # K8: never the sum
-
-
-def test_ac_2_7_a_positive_offer_on_a_part_behaves_as_today(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "800.00"), (s["mirror"], "150.00")])
-    assert row["sell_price"] is None  # K8: never the sum
-
-
-def test_ac_2_7_a_host_listed_at_rm_0_is_not_free(db):
-    s = _std(db)
-    row = _promoted_row(db, s, [(s["host"], "0.00"), (s["mirror"], "0.00")])
-    # K8: no stored combo price, nothing prints (the host is not free, nor summed).
-    assert row["sell_price"] is None
-
-
 # --------------------------------------------------------------------------- AC-2.8
 
 
@@ -663,18 +623,31 @@ def test_ac_2_8_a_description_only_edit_reaches_a_designing_tag_with_its_change_
     assert "combo description" in labels
 
 
-def test_ac_2_7_line_pricing_under_the_promotion_agrees_with_the_tag(db):
+def test_ac_2_7_a_promotion_option_on_a_combo_line_is_the_combos_figure_never_a_sum(db):
     from app.services.dealer_kit import tag_data_service
     from app.services.dealer_kit.pricing import line_pricing
 
-    s = _std(db)
-    promo = seed.promotion(db, [(s["host"], "800.00"), (s["mirror"], "0.00")])
+    viewer = tag_data_service.staff_viewer()
+    promo_lines = lambda s: [(s["host"], "800.00"), (s["mirror"], "0.00")]  # noqa: E731
+
+    s = _std(db, combo_fields={"sell_price": D("1800.00")})
+    promo = seed.promotion(db, promo_lines(s))
     line = {**_pricing_line(s, [s["mirror"].id, s["white"].id]), "promotion_id": promo.id}
-    (priced,) = line_pricing(db, lines=[line], viewer=tag_data_service.staff_viewer(), auto_pick=False)
-    assert priced["sell_price"] is None, "K8: a combo line is never summed"
-    # Without the combo the free part would add its list price.
-    plain = {k: v for k, v in line.items() if k != "combo_id"}
-    (unpriced,) = line_pricing(db, lines=[plain], viewer=tag_data_service.staff_viewer(), auto_pick=False)
+    (priced,) = line_pricing(db, lines=[line], viewer=viewer, auto_pick=False)
+    assert [o["sell_price"] for o in priced["promotion_options"]] == [D("1800.00")]
+    assert D(str(priced["sell_price"])) == D("1800.00")
+
+    # No stored combo price: the option has no figure either (K8), and nothing is summed.
+    s2 = _std(db)
+    promo2 = seed.promotion(db, promo_lines(s2))
+    line2 = {**_pricing_line(s2, [s2["mirror"].id, s2["white"].id]), "promotion_id": promo2.id}
+    (priced2,) = line_pricing(db, lines=[line2], viewer=viewer, auto_pick=False)
+    assert [o["sell_price"] for o in priced2["promotion_options"]] == [None]
+    assert priced2["sell_price"] is None
+
+    # Without the combo the same promotion still sums per part, as before.
+    plain = {k: v for k, v in line2.items() if k != "combo_id"}
+    (unpriced,) = line_pricing(db, lines=[plain], viewer=viewer, auto_pick=False)
     assert D(str(unpriced["sell_price"])) == D("1300.00")
 
 

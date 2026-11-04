@@ -40,7 +40,6 @@ from app.services.dealer_kit.pricing import (
     DEFAULT_CURRENCY,
     combo_for_host,
     combo_prices,
-    free_part_ids,
     resolve_prices,
 )
 from app.services.dealer_kit.product_images import gallery_images
@@ -866,22 +865,9 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             # The selling side takes the engine's offer where it HAS one and the
             # list price where it does not: an offer the engine cannot answer for
             # is not a discount, it is simply the price.
-            # AC-2.7: on a combo line a part the promotion lists at RM 0 is free.
-            free_ids = (
-                free_part_ids(
-                    db, [product.id for product in part_products], viewer, promotion_id
-                )
-                if line.combo_id
-                else set()
-            )
             sell_price = _sum_prices(
                 [sell_price if sell_price is not None else data["list_price"]]
-                + [
-                    Decimal("0")
-                    if product.id in free_ids
-                    else _offer_or_list(part_prices.get(product.id))
-                    for product in part_products
-                ]
+                + [_offer_or_list(part_prices.get(product.id)) for product in part_products]
             )
             package_text = _package_text(part_rows, open_groups)
             if package_text:
