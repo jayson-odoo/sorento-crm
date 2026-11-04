@@ -170,6 +170,14 @@ describe('main', () => {
     expect(product?.list_price).toBe(2000);
   });
 
+  it('on a preview binding reads slots.main when present: the host\'s own picture and list price, not the combo\'s', () => {
+    const main = part(HOST, 1234, { images: [{ attachment_id: 'att-main', url: 'https://cdn/m.jpg', is_primary: true }] });
+    const data = previewWith({ ...S1, main } as unknown as Slots);
+    const product = code(data, layer({ kind: 'main' }, 'image'));
+    expect(product?.list_price).toBe(1234);
+    expect(imagesOf(subjectOf(data, layer({ kind: 'main' }, 'image')))[0].attachment_id).toBe('att-main');
+  });
+
   it('reads the product itself on a preview binding', () => {
     expect(code(previewWith(S1), layer({ kind: 'main' }))?.code).toBe(HOST);
   });

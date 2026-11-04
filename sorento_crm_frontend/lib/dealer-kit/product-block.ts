@@ -263,12 +263,9 @@ export function subjectOf(
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
     if (slots !== undefined) {
       if (slot.kind === 'main') {
-        if (data.kind !== 'line') return data;
         // The main product's OWN picture and list price, not the combo's (AC-A2).
-        return {
-          kind: 'product',
-          product: slots?.main ? productFromPart(slots.main) : productFromLineParent(data.line),
-        };
+        if (slots?.main) return { kind: 'product', product: productFromPart(slots.main) };
+        return data.kind === 'line' ? { kind: 'product', product: productFromLineParent(data.line) } : data;
       }
       return { kind: 'product', product: slots ? productAtSlot(slot, slots) : EMPTY_PART_PRODUCT };
     }
