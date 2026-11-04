@@ -991,8 +991,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
     return rows
 
 
-def _slots_dict(fixed: list, groups: list, upgrades: list) -> dict:
-    return {"fixed": fixed, "groups": groups, "upgrades": upgrades}
+def _slots_dict(main: Optional[dict], fixed: list, groups: list, upgrades: list) -> dict:
+    return {"main": main, "fixed": fixed, "groups": groups, "upgrades": upgrades}
 
 
 def _combo_choice_groups(combo) -> dict[str, int]:
@@ -1046,6 +1046,7 @@ def _line_slots(
     upgrade_products = _combo_upgrade_products(combo_row) if combo_row is not None else []
     upgrade_ids = {product.id for product in upgrade_products}
     wanted = {product_id for _, product_id in placed}
+    host = db.query(Product).filter(Product.id == line.product_id).first()
     products = (
         {p.id: p for p in db.query(Product).filter(Product.id.in_(wanted)).all()}
         if wanted
@@ -1081,10 +1082,10 @@ def _line_slots(
         {**row(product), "chosen": product.id in picked_upgrade_ids}
         for product in upgrade_products
     ]
-    return _slots_dict(fixed, groups, upgrades)
+    return _slots_dict(row(host) if host is not None else None, fixed, groups, upgrades)
 
 
-def _preview_slots(db: Session, combo) -> dict:
+def _preview_slots(db: Session, combo, host) -> dict:
     """The template editor's preview of a combo: fixed parts, every option of each
     group in combo order, every upgrade (AC-A6)."""
     viewer = staff_viewer()
@@ -1109,7 +1110,7 @@ def _preview_slots(db: Session, combo) -> dict:
     groups = [
         {"role": role, "size": len(items), "picks": items} for role, items in picks.items()
     ]
-    return _slots_dict(fixed, groups, upgrades)
+    return _slots_dict(row(host), fixed, groups, upgrades)
 
 
 def _tag_sell_price_basis(
@@ -1274,7 +1275,7 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
         "offer_price": combo_sell if sell_decided else data.get("offer_price"),
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
-        "slots": _preview_slots(db, combo),
+        "slots": _preview_slots(db, combo, product),
     }
 
 
@@ -1809,7 +1810,10 @@ def _slots_from_pin(tag, pinned_slots: Optional[dict], pinned_parts: list, resig
         {**up, "chosen": bool(up.get("chosen")) or str(choices.get("Upgrade", "")) == up.get("product_id")}
         for up in pinned_slots.get("upgrades") or []
     ]
-    return _slots_dict(fresh(pinned_slots.get("fixed") or []), groups, fresh(upgrades))
+    main = pinned_slots.get("main")
+    return _slots_dict(
+        fresh([main])[0] if main else None, fresh(pinned_slots.get("fixed") or []), groups, fresh(upgrades)
+    )
 
 
 # ---------------------------------------------------------------------------

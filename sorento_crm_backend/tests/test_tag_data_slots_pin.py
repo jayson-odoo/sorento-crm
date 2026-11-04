@@ -91,3 +91,35 @@ def test_a_list_price_request_prints_no_offer_on_a_position(db):
     request = seed.submit_one(db, s["host"], s["combo"], parts, price_mode="selling", promotion_id=promo.id)
     db.flush()
     assert seed.rows(db, request)[0]["slots"]["groups"][0]["picks"][0]["sell_price"] == D("50.00")
+
+
+# --------------------------------------------------------------------------- S6: main
+
+
+def test_slots_carry_the_main_products_own_data(db):
+    s = shapes.s1(db, list_price=D("2600.00"))
+    row = seed.rows(db, seed.submit_one(db, s["host"], s["combo"], shapes.pick_parts(s["group"], s["options"][0])))[0]
+    main = row["slots"]["main"]
+    assert main["code"] == "SRTKS7061"
+    assert main["list_price"] == D("2000.00"), "the host's own list price, not the combo's 2600"
+    assert row["list_price"] == D("2600.00")
+
+
+def test_the_pinned_main_keeps_its_pinned_value(db):
+    s = shapes.s1(db)
+    request = seed.submit_one(db, s["host"], s["combo"], shapes.pick_parts(s["group"], s["options"][0]))
+    db.flush()
+    seed.rows(db, request)
+    s["host"].list_price = D("1.00")
+    db.flush()
+    db.expire_all()
+    assert seed.rows(db, request)[0]["slots"]["main"]["list_price"] == D("2000.00")
+
+
+def test_the_preview_carries_main(db):
+    from app.services.dealer_kit import tag_data_service
+
+    s = shapes.s1(db)
+    data = tag_data_service.product_tag_data(db, s["host"], tag_data_service.staff_viewer(), None)
+    out = tag_data_service.with_preview_combo(db, s["host"], data, s["combo"].id)
+    assert out["slots"]["main"]["code"] == "SRTKS7061"

@@ -1428,6 +1428,8 @@ class TagSlots(BaseModel):
     """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
     choice groups with their picks in pick order, upgrades with `chosen`)."""
 
+    #: The main product's own data (its picture and list price, never the combo's).
+    main: Optional[TagPartData] = None
     fixed: list[TagPartData] = []
     groups: list[TagSlotGroup] = []
     upgrades: list[TagPartData] = []
