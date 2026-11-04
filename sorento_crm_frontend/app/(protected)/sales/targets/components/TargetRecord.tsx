@@ -106,6 +106,7 @@ const METRIC_OPTIONS = [
   { value: 'quantity', label: 'Quantity (units)' },
 ];
 const COUNTS_OPTIONS = [
+  { value: 'invoiced', label: 'Invoiced' },
   { value: 'ordered', label: 'Ordered' },
   { value: 'delivered', label: 'Delivered' },
 ];
@@ -213,7 +214,7 @@ function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
     subjectId: preset?.subjectId ?? '',
     name: '',
     metric: 'amount',
-    basis: 'ordered',
+    basis: 'invoiced',
     scope: 'all',
     categoryIds: [],
     productIds: [],
@@ -840,7 +841,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                 )}
               </Field>
               <Field
-                label={isDealer ? (editing ? 'Accounts' : 'Dealer') : 'Who'}
+                label={isDealer ? 'Accounts' : 'Who'}
                 htmlFor={isCreate || (isDealer && editing) ? 'target-who' : undefined}
               >
                 {isDealer && draft ? (
@@ -876,6 +877,20 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     disabled={!draft.kind || !!preset?.subjectId}
                     wrapOptions
                   />
+                ) : isDealer && !(target?.accounts ?? []).length ? (
+                  <span className="text-muted-foreground">-</span>
+                ) : isDealer ? (
+                  // Read mode shows the same accounts Edit does: code and name, one per line.
+                  <ul aria-label="Accounts" className="flex flex-col gap-0.5">
+                    {(target?.accounts ?? []).map((a) => {
+                      const text = `${a.code} - ${a.name}`;
+                      return (
+                        <li key={a.customer_id} className="truncate" title={text}>
+                          {text}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 ) : (
                   <span className="block truncate" title={target?.subject_label}>
                     {target?.subject_label}
@@ -1054,7 +1069,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   unit={unit}
                   commission={target.commission_method !== 'none'}
                   ratio={target.threshold_unit === 'points'}
-                  provisional={isDealer}
+                  provisional={isDealer && target.basis !== 'invoiced'}
                 >
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
@@ -1741,7 +1756,9 @@ function DealerAccounts({
                 <th className="px-3 py-2 text-start font-medium">Customer</th>
                 <th className="px-3 py-2 text-start font-medium">Account</th>
                 {current && !draft ? (
-                  <th className="px-3 py-2 text-end font-medium">{`Sales, ${period} (${PROVISIONAL})`}</th>
+                  <th className="px-3 py-2 text-end font-medium">
+                    {target?.basis === 'invoiced' ? `Sales, ${period}` : `Sales, ${period} (${PROVISIONAL})`}
+                  </th>
                 ) : null}
               </tr>
             </thead>

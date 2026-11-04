@@ -88,6 +88,7 @@ from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.planning_predicate import fulfilment_planning_predicate
 from app.services.scm.stock_debt_projection import ProjectedMonth, project_months
 from app.services.scm.workbook_split import split_rows, unique_sheet_title
+from app.services.scm.borrow_mode import borrow_from_order_enabled
 from app.services.scm.supply_assignment import (
     BUCKET_TBA,
     BUCKET_UNDATED,
@@ -1301,8 +1302,11 @@ class StockDebtService:
         # (`assignments_for`) never lend; their Borrow step is where the same window turns
         # into a decision. This page stays read-only (owner, 30 Sep 2026: "this is a
         # dashboard view only") and points the planner at that board.
+        # OI-RESERVE-USED-ROW (owner, 4 Nov 2026, answer (a)): and only while "Borrow from
+        # another order" is on (`borrow_mode`). Off, the default, the board cannot borrow from
+        # an order, so the view shows no lend either: no "Lent to", no `order_back` from one.
         lendable_lines: Optional[Set[str]] = None
-        if view:
+        if view and borrow_from_order_enabled(self.db):
             lendable_lines = set()
             for product_id, lines in demand_rows.items():
                 lead = leads.get(product_id)

@@ -129,6 +129,23 @@ vi.mock('../../../services/salesOrderService', () => ({
     ]),
 }));
 
+// PO-LINK-HISTORY: the History tab is shown only with `scm.dashboard.view`, the permission that
+// opens the PO page and the one the audit read checks (crew ruling, 4 Nov). Granted by default; one test takes it away.
+let grantedPermissions = new Set(['scm.dashboard.view']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => grantedPermissions.has(slug),
+}));
+
+// PO-LINK-HISTORY: the History tab is the shared trail; what it is pointed at is the contract.
+vi.mock('@/components/audit/AuditTrail', () => ({
+  __esModule: true,
+  default: ({ entityType, entityId, title }: { entityType: string; entityId: string; title?: string }) => (
+    <div data-testid="audit-trail" data-entity-type={entityType} data-entity-id={entityId}>
+      {title}
+    </div>
+  ),
+}));
+
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';
 import PurchaseOrderDetailPage from '../page';
 import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
@@ -192,7 +209,7 @@ function renderDetail() {
  * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down (a plain `click` event
  * in jsdom leaves the tab strip exactly where it was, which reads as a section that vanished).
  */
-function openTab(name: 'General' | 'Lines' | 'Goods receipt') {
+function openTab(name: 'General' | 'Lines' | 'Goods receipt' | 'History') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
@@ -209,6 +226,7 @@ beforeEach(() => {
   usePurchaseOrder.mockReset();
   updatePurchaseOrderMutateAsync.mockReset().mockResolvedValue({});
   searchParams = new URLSearchParams();
+  grantedPermissions = new Set(['scm.dashboard.view']);
 });
 
 describe('PurchaseOrderDetail - states', () => {
@@ -247,6 +265,7 @@ describe('PurchaseOrderDetail - states', () => {
       'General',
       'Lines',
       'Goods receipt',
+      'History',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',
@@ -1051,5 +1070,56 @@ describe('PurchaseOrderDetail - a blank or invalid quantity is pending, never 0 
     expect(updatePurchaseOrderMutateAsync).not.toHaveBeenCalled();
     expect(box).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText(/^Enter a number above 0\.$/)).toBeInTheDocument();
+  });
+});
+
+describe('PurchaseOrderDetail - History tab (PO-LINK-HISTORY)', () => {
+  it('shows the order\'s own audit trail, its lines\' S/O link events included', () => {
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('History');
+
+    const trail = screen.getByTestId('audit-trail');
+    expect(trail).toHaveAttribute('data-entity-type', 'purchase_orders');
+    expect(trail).toHaveAttribute('data-entity-id', 'po-1');
+  });
+
+  it('hides the History tab from a user without the PO page permission', () => {
+    grantedPermissions = new Set();
+    // Even a link that names the tab lands on General rather than an empty panel.
+    searchParams = new URLSearchParams('tab=history');
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.queryByRole('tab', { name: 'History' })).toBeNull();
+    expect(screen.queryByTestId('audit-trail')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('data-state', 'active');
+  });
+
+  it('opens the S/O cell\'s link history from the Lines tab', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({
+        lines: [
+          {
+            ...po().lines[0],
+            book_so_number: 'SO422492',
+            book_so_unresolved: false,
+            book_so_link: {
+              changed_at: '2026-09-04T06:05:00',
+              estimated: false,
+              previous_linked: false,
+              previous_so_number: null,
+            },
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: 'S/O link history' }));
+    expect(screen.getByText('Linked by AutoCount sync')).toBeInTheDocument();
   });
 });
