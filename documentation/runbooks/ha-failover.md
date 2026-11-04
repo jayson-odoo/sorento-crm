@@ -25,16 +25,71 @@ Goal: node A on the HA Postgres layout (data in a subdirectory, `wal_log_hints`,
 R2), role watcher and checks installed. The controller is NOT started in this phase: with no peer
 and no load balancer its lease would expire and it would fence the only database.
 
-1. Read-only pre-checks (owner, any time):
+Convention in this runbook: a block headed **READ-ONLY** changes nothing and can run any time; a
+block headed **THIS CHANGES PROD** changes the box and runs only in a window the owner has
+chosen, with crew on the call. Paste outputs into the private crew folder, never into the repo
+or a PR (the checks below print setting NAMES and states, never secret values).
+
+1. **READ-ONLY** pre-checks on node A (any time, about 1 minute):
    ```
+   # READ-ONLY: nothing below changes prod.
    cd /opt/sorento-crm2
-   docker compose exec -T db psql -U "$POSTGRES_USER" -d postgres -Atc "show data_directory; show wal_log_hints; show archive_mode; show shared_preload_libraries; show server_version"
-   docker compose config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin)["services"]["db"]; print(c["image"], c.get("volumes"))'
+
+   # Postgres: version, layout, the HA-relevant settings, size
+   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -At \
+     -c "show server_version" -c "show data_directory" -c "show hba_file" \
+     -c "show wal_level" -c "show wal_log_hints" -c "show data_checksums" \
+     -c "show archive_mode" -c "show max_wal_senders" -c "show max_replication_slots" \
+     -c "show shared_preload_libraries" -c "show max_connections" \
+     -c "select pg_size_pretty(sum(pg_database_size(datname))) from pg_database" \
+     -c "select count(*) from pg_replication_slots" \
+     -c "select rolname from pg_roles where rolreplication"'
+
+   # pg_hba as it is today (rules only, no passwords live here)
+   docker compose exec -T db sh -c 'grep -Ev "^[[:space:]]*(#|$)" "$(psql -U "$POSTGRES_USER" -d postgres -Atc "show hba_file")"'
+
+   # The db service: image, volumes, restart policy, env NAMES only (values never printed)
+   docker compose config --format json | python3 -c 'import json,sys
+   d=json.load(sys.stdin)["services"]["db"]
+   print("image:", d.get("image")); print("restart:", d.get("restart"))
+   print("volumes:", [v.get("source","")+" -> "+v.get("target","") for v in d.get("volumes",[])])
+   print("env names:", sorted((d.get("environment") or {}).keys()))'
+
+   # The compose network the app reaches Postgres on (for <COMPOSE_SUBNET> in pg_hba.conf)
+   for n in $(docker inspect "$(docker compose ps -q db)" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}'); do
+     echo "$n $(docker network inspect "$n" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}')"
+   done
+
+   # Host: disk, memory, CPUs, clock, watchdog module, deploy files and their modes
+   df -h / /var/lib/docker 2>/dev/null; free -m; nproc
+   timedatectl show -p NTPSynchronized --value
+   lsmod | grep -q softdog && echo "softdog loaded" || echo "softdog NOT loaded"
+   stat -c '%a %U %n' . .deploy.env .active_color 2>/dev/null
+   ls -l backups/pre-migrate 2>/dev/null | tail -3
    ```
    Note the data directory. If it is the volume root (`/var/lib/postgresql/data`), step 4 moves it
-   into `pgdata/`. Copy `shared_preload_libraries` into `compose.ha.yml`.
-2. A fresh backup exists and restores (`scripts/ops/backup-db.sh`, the weekly restore test).
-3. Replication role (owner types the password at the prompt; it never lands in shell history):
+   into `pgdata/`. Copy `shared_preload_libraries` into `compose.ha.yml` and today's app lines from
+   pg_hba into `templates/postgres/pg_hba.conf`.
+
+1b. **READ-ONLY** A-B round trip (plan section 9b; decides `SYNC_MODE` and the active-active
+   option). Run on node A against node B (B still runs n8n; this only sends pings), then the same
+   on B against A. Use B's private address once WireGuard exists, its public address until then.
+   ```
+   # READ-ONLY: nothing below changes prod.
+   PEER="<B_ADDRESS>"          # replace; on node B use "<A_ADDRESS>"
+   ping -c 100 -i 0.2 "$PEER" | tail -2          # the rtt min/avg/max/mdev line
+   # If ICMP is filtered: TCP connect time to SSH, 20 samples, in ms
+   python3 -c 'import socket,time,statistics,sys
+   h=sys.argv[1]; t=[]
+   for _ in range(20):
+       s=time.perf_counter(); c=socket.create_connection((h,22),timeout=3); t.append((time.perf_counter()-s)*1000); c.close(); time.sleep(0.2)
+   print("tcp connect ms: min %.2f median %.2f max %.2f" % (min(t), statistics.median(t), max(t)))' "$PEER"
+   ```
+   Record avg/median in plan section 9b. Under 2 ms: `SYNC_MODE=remote_write` becomes the
+   recommendation (owner Q5). Each page that runs 30 sequential queries would pay about 30 x the
+   round trip if B's app ever used A's database (option 9b).
+2. **READ-ONLY** check: a fresh backup exists and restores (`scripts/ops/backup-db.sh`, the weekly restore test).
+3. **THIS CHANGES PROD** (no downtime): replication role (owner types the password at the prompt; it never lands in shell history):
    ```
    docker compose exec -it db psql -U "$POSTGRES_USER" -d postgres
      CREATE ROLE replicator WITH REPLICATION LOGIN;
@@ -46,7 +101,7 @@ and no load balancer its lease would expire and it would fence the only database
      GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text, bigint, bigint, boolean) TO replicator;
    ```
    (the grants are what `pg_rewind --source-server` needs from a non-superuser).
-4. WINDOW (about 2-3 minutes of downtime: one Postgres stop and start):
+4. **THIS CHANGES PROD, WINDOW** (about 2-3 minutes of downtime: one Postgres stop and start):
    ```
    docker compose stop worker worker_fast
    docker compose stop db
@@ -65,18 +120,20 @@ and no load balancer its lease would expire and it would fence the only database
    `/etc/postgresql/pg_hba.conf`. Check the app signs in (pg_hba allows it) and that
    `psql -h <A_WG_IP> -U postgres` from another host is REJECTED. Then `docker compose up -d worker worker_fast`
    and check the app.
-5. Install the role watcher and checks: `infra/scripts/` to `/opt/sorento-crm2/infra/scripts/`,
+5. **THIS CHANGES PROD** (no downtime): install the role watcher and checks: `infra/scripts/` to `/opt/sorento-crm2/infra/scripts/`,
    `/etc/sorento-ha/ha-pg.env` from `infra/templates/ha-pg.env.example`, the role watcher unit,
    `.ha-image-tag` from the running worker's image SHA, `ha-checks.sh` cron with
    `EXPECT_REPLICAS=0`. Load softdog (`infra/templates/host/README.md`) but do not start
    `cf-failover` yet.
-6. First WAL-G base backup: `docker compose exec -T -u postgres db wal-g backup-push "$PGDATA"`;
+6. **THIS CHANGES PROD** (no downtime, disk and network load): first WAL-G base backup: `docker compose exec -T -u postgres db wal-g backup-push "$PGDATA"`;
    `ha-checks.sh` green.
 
 Rollback of phase 1: `COMPOSE_FILE` back to the plain compose and `docker compose up -d db` (the
 data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
 
-## Phase 2: node B (after n8n is stopped and its 14-day stop has ended)
+## Phase 2: node B (after n8n is stopped and its 14-day stop has ended): THIS CHANGES PROD
+
+Every step below changes a box (step 2 changes node A without downtime; the rest build node B).
 
 1. Fresh OS, Docker, edge rules, WireGuard (`infra/templates/wireguard/`), host psql client
    (`postgresql-client-17`), the same `/opt/sorento-crm2` files as node A (compose, `.env`,
@@ -107,7 +164,9 @@ data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
    runs `scripts/ha_release.sh`: primary first, then the standby; it refuses a host whose key
    does not match.
 
-## Phase 3: Cloudflare and the controllers
+## Phase 3: Cloudflare and the controllers: THIS CHANGES PROD
+
+Every step below changes prod: from step 4 on, failover is automatic.
 
 1. Cloudflare (dashboard): monitor HTTPS `GET /api/v1/health/role`, expected 200, Host header =
    the public host, interval 60 s, retries 1, timeout 5 s. Pools `node-a` and `node-b`, one
@@ -123,7 +182,9 @@ data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
 Rollback of phase 3: `systemctl stop cf-failover` on both (disarms the watchdog), set the LB's
 default pool to `node-a` only. Postgres keeps replicating; nothing promotes.
 
-## Phase 4: prod drills (owner window; plan section 9a)
+## Phase 4: prod drills (owner window; plan section 9a): THIS CHANGES PROD, causes outages
+
+Each drill takes the CRM down or moves it between boxes; run only in an announced window.
 
 Record every time measured into the plan, section 10.
 
@@ -143,11 +204,11 @@ Record every time measured into the plan, section 10.
   not see. Check `infra/scripts/ha-pg.sh observe` on both; page crew.
 - Alert "too far behind; NOT promoting": the standby lagged more than 16 MB when A died. Nothing
   promotes automatically (it would lose more than allowed). Options: bring A back, or accept the
-  loss and promote by hand: confirm A is stopped (hPanel), `systemctl stop cf-failover` on B FIRST
+  loss and promote by hand (**THIS CHANGES PROD**): confirm A is stopped (hPanel), `systemctl stop cf-failover` on B FIRST
   (a running controller fences a node it did not promote itself, within one tick), then
   `docker compose exec -T -u postgres db psql -U postgres -c "select pg_promote()"` on B. Start
   `cf-failover` on B again only once A is back as B's standby.
-- Stop everything automatic: `systemctl stop cf-failover` on BOTH nodes, standby first. Never stop
+- **THIS CHANGES PROD**: stop everything automatic: `systemctl stop cf-failover` on BOTH nodes, standby first. Never stop
   it on the primary alone: that switches off the primary's fence while the standby can still
   promote (two writers if the primary is then cut off).
 
