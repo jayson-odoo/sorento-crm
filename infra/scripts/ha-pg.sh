@@ -247,6 +247,14 @@ case "$cmd" in
           || { echo "ha-pg: redis REPLICAOF peer failed; pgbouncer left as it is" >&2; exit 1; }
       fi
     fi
+    # Same target, already confirmed (R1 only had to repair the Redis role): leave pgbouncer
+    # alone, a reload + RECONNECT would cut every app connection for nothing.
+    want="* = host=$host port=$port"
+    if [ -f "$ROUTE_FILE" ] && head -1 "$ROUTE_FILE" | grep -q "^; route=$target " \
+       && grep -qxF "$want" "$ROUTE_FILE"; then
+      [ "$redis_failed" = 0 ] || exit 1
+      exit 0
+    fi
     # The file says "unconfirmed" until pgbouncer has taken it (review blocker 1b): if the reload
     # fails, observe reports no route and R1 retries next tick instead of trusting the file.
     tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1

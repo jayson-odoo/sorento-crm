@@ -310,7 +310,7 @@ class Stack:
             (self.dir / f"users-{n}.acl").write_text(
                 "user default off\n"
                 f"user admin on >{REDIS_USERS['admin']} ~* &* +@all\n"
-                f"user app on >{REDIS_USERS['app']} ~* &* +@all -@admin -flushall -flushdb\n"
+                f"user app on >{REDIS_USERS['app']} ~* &* +@all -@admin -flushall -flushdb -swapdb\n"
                 f"user repl on >{REDIS_USERS['repl']} +psync +replconf +ping\n"
                 f"user hacheck on >{REDIS_USERS['hacheck']} +info +ping +quit\n")
             for f in (f"redis-{n}.conf", f"users-{n}.acl"):
@@ -650,7 +650,7 @@ def main():
         assert app_redis("a", "set", "drill-key", "from-a") == "OK"
         assert app_redis("b", "get", "drill-key") == "from-a", "Redis must be shared through the master"
         # The app's Redis user cannot reconfigure, re-point or wipe Redis (security review S1).
-        for cmd in (("replicaof", "no", "one"), ("flushall",), ("config", "set", "maxmemory", "1"), ("shutdown",)):
+        for cmd in (("replicaof", "no", "one"), ("flushall",), ("swapdb", "0", "1"), ("config", "set", "maxmemory", "1"), ("shutdown",)):
             out = app_redis("a", *cmd)
             assert "NOPERM" in out, (cmd, out)
         rc, out = psql("a", "select count(*) from drill where node = 'via-b'")

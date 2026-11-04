@@ -227,12 +227,18 @@ Templates: `infra/templates/active-active/`.
    one app colour swap), on BOTH nodes, the primary first:
    - Redis users (`templates/active-active/users.acl`: admin, app, repl, hacheck) and
      `redis.conf` in `/etc/sorento-ha/`, mode 0640 root:999; every password from
-     `openssl rand -hex 32` (hex: safe in URLs and HAProxy config); `REDIS_ADMIN_PASSWORD` in
-     `.env` (the same on both nodes);
+     `openssl rand -hex 32` (hex: safe in URLs and HAProxy config); the admin password ONLY in
+     `/etc/sorento-ha/redis-admin.env` (`REDISCLI_AUTH=...`, mode 0600 root, the same on both
+     nodes), never in the project `.env`. Check (READ-ONLY) that no other service gets it:
+     `docker compose config --format json | python3 -c 'import json,sys; print([n for n,s in json.load(sys.stdin)["services"].items() if n != "redis" and "REDISCLI_AUTH" in (s.get("environment") or {})])'`
+     must print `[]`;
    - `/etc/sorento-ha/haproxy-redis.cfg` (the hacheck password) mode 0640 root:<HAPROXY_UID>;
      `/etc/sorento-ha/pgbouncer-admin.pgpass` mode 0600 owned by the pgbouncer container uid;
-     `/etc/sorento-ha/pgbouncer-hba.conf`; pgbouncer must be 1.15 or later in `pool_mode =
-     transaction` (`RECONNECT`);
+     `/etc/sorento-ha/pgbouncer-hba.conf`; pgbouncer must be 1.15 or later (`RECONNECT`) and KEEPS prod's
+     `pool_mode` (read it first: `SHOW CONFIG` on the pgbouncer admin console; never switch session
+     to transaction, the app holds session-level advisory locks); every role that goes through
+     pgbouncer today (an analytics read-only URL too, if any) needs its line in
+     `pgbouncer-hba.conf`;
    - `infra/templates/host/docker-user-wg.sh` on both nodes, run at boot after Docker (5432 and
      6379 on the private address: only the peer over wg0; only the CRM compose network out over
      wg0);
@@ -247,8 +253,12 @@ Templates: `infra/templates/active-active/`.
      `set -a; . /etc/sorento-ha/ha-pg.env; set +a; /opt/sorento-crm2/infra/scripts/ha-pg.sh route peer`;
    - a normal release (both nodes, `scripts/ha_release.sh`) to bring the app colours up on the
      new env.
-   Check on each node: the app answers `GET /api/v1/health/role` 200 locally; `redis-cli role`
-   says master on the primary node, slave on the other.
+   Check on each node: the app answers `GET /api/v1/health/role` 200 locally;
+   `docker compose exec -T redis redis-cli --user admin role` says master on the primary node,
+   slave on the other (the `default` user is off: a plain `redis-cli`, and any `redis-cli ping`
+   healthcheck in the prod compose, needs `--user`). Docker must be 28 or later, or add a DROP for
+   the 127.0.0.1-published 5432/6379 from non-loopback sources: older Docker lets a neighbour on
+   the provider network reach loopback-published ports.
 2. **THIS CHANGES PROD** (traffic starts reaching node B): Cloudflare: replace the two pools with
    ONE pool holding both endpoints (same monitor `GET /api/v1/health/role`, 60 s, down 2, up 1);
    LB default pool = that pool, DNS-only TTL 30 s. Note each endpoint's address for the env.

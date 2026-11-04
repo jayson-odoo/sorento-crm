@@ -30,10 +30,10 @@ services:
     # FLUSHALL, FLUSHDB), `repl` (replication only), `hacheck` (the HAProxy check only), `admin`
     # (the controller's REPLICAOF and ROLE only). `default` is off.
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
-    environment:
-      # The controller's `redis-cli --user admin` reads it; visible in `docker inspect`, i.e. to
-      # root and the docker group only, who own the box anyway (accepted, review N6).
-      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD:?set REDIS_ADMIN_PASSWORD}
+    # REDISCLI_AUTH=<admin password> for the controller's `redis-cli --user admin`, from its OWN
+    # file (0600 root): never the project .env, which app services may load with env_file, and
+    # an app container holding the admin password would undo the ACL (security review F2).
+    env_file: [/etc/sorento-ha/redis-admin.env]
     volumes:
       - /etc/sorento-ha/redis.conf:/usr/local/etc/redis/redis.conf:ro   # templates/active-active/redis.conf, 0640 root:999
       - /etc/sorento-ha/users.acl:/etc/redis/users.acl:ro               # templates/active-active/users.acl, 0640 root:999

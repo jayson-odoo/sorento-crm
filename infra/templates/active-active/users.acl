@@ -1,5 +1,5 @@
 user default off
 user admin on ><ADMIN_PASSWORD> ~* &* +@all
-user app on ><APP_PASSWORD> ~* &* +@all -@admin -flushall -flushdb
+user app on ><APP_PASSWORD> ~* &* +@all -@admin -flushall -flushdb -swapdb
 user repl on ><REPL_PASSWORD> +psync +replconf +ping
 user hacheck on ><HACHECK_PASSWORD> +info +ping +quit

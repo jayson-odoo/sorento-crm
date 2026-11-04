@@ -635,3 +635,22 @@ def test_route_refuses_a_host_or_port_that_could_add_connect_keys(tmp_path, key,
     e, _, route = _route_env(tmp_path, **{key: value})
     r = _adapter(e, "route", "peer")
     assert r.returncode == 2 and not route.exists()
+
+
+def test_a_redis_only_repair_does_not_reload_pgbouncer(tmp_path):
+    # The route file already names this target and is confirmed; R1 re-issued the route only
+    # because Redis's role drifted: Redis is switched, pgbouncer is not reloaded (security F1).
+    e, log, route = _route_env(tmp_path)
+    assert _adapter(e, "route", "peer").returncode == 0
+    log.write_text("")
+    assert _adapter(e, "route", "peer").returncode == 0
+    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379"]
+
+
+def test_an_unconfirmed_route_is_reloaded_again(tmp_path):
+    e, log, route = _route_env(tmp_path, PGB_RELOAD="exit 1")
+    _adapter(e, "route", "peer")
+    e2, log2, _ = _route_env(tmp_path)
+    log2.write_text("")
+    assert _adapter(e2, "route", "peer").returncode == 0
+    assert "reload" in log2.read_text()
