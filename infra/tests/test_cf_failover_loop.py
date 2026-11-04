@@ -150,3 +150,70 @@ def test_a_failed_fence_stops_petting_the_watchdog(box, cf):
     pets = (tmp / "watchdog").read_bytes().rstrip(b"V").count(b"\0")
     assert pets <= 2, pets                        # only the ticks before the lease ran out
     assert "watchdog not petted" in r.stdout
+
+
+# ---------------------------------------------------------------- active-active: one pool, two origins
+
+sys.path.insert(0, str(CONTROLLER.parent))
+from cf_failover import cf_pool_health  # noqa: E402
+
+
+def _origins(a, b):
+    return {"success": True, "result": {"pop_health": {"SG": {"healthy": a or b, "origins": [
+        {"10.0.0.1": {"healthy": a}}, {"10.0.0.2": {"healthy": b}}]}}}}
+
+
+@pytest.mark.parametrize("a, b", [(True, True), (True, False), (False, True), (False, False)])
+def test_each_origin_of_the_shared_pool_is_read_on_its_own(cf, a, b):
+    state, base = cf
+    state["body"] = _origins(a, b)
+    want = {True: "healthy", False: "unhealthy"}
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.1") == want[a]
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.2") == want[b]
+
+
+def test_an_origin_missing_from_the_answer_is_unknown(cf):
+    state, base = cf
+    state["body"] = _origins(True, True)
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.9") == "unknown"
+
+
+def test_active_active_without_origins_is_refused(box):
+    _, env = box
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", CF_API_BASE="http://127.0.0.1:1")
+    assert r.returncode == 2 and "CF_ORIGIN_SELF" in r.stdout
+
+
+def test_active_active_refuses_a_separate_peer_pool(box):
+    _, env = box
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", CF_ORIGIN_SELF="o-a", CF_ORIGIN_PEER="o-b",
+            CF_POOL_SELF="shared", CF_POOL_PEER="old-node-b-pool", CF_API_BASE="http://127.0.0.1:1")
+    assert r.returncode == 2 and "one shared pool" in r.stdout
+
+
+def test_active_active_reads_the_peer_from_the_shared_pool(box, cf):
+    tmp, env = box
+    state, base = cf
+    state["body"] = _origins(True, False)
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", APP_SICK_AFTER="0", CF_ORIGIN_SELF="10.0.0.1",
+            CF_ORIGIN_PEER="10.0.0.2", CF_POOL_SELF="shared", CF_POOL_PEER="", CF_API_BASE=base)
+    assert r.returncode == 0, r.stdout
+    # The fake observe reports no route, so R1 acts and logs what it saw: the peer's origin
+    # (unhealthy in the shared pool's answer) and this node's (healthy).
+    assert "cf_self='healthy'" in r.stdout and "cf_peer='unhealthy'" in r.stdout, r.stdout
+    assert "route" in pg_calls(tmp)
+
+
+def test_observe_redis_role_reaches_the_decision(box, cf):
+    # Review round 2 blocker 2: a standby node whose Redis restarted as a master (route file
+    # still "peer") must get `route peer` again; this only works if main() passes redis_role on.
+    tmp, env = box
+    state, base = cf
+    state["body"] = _origins(True, True)
+    (tmp / "ha-pg.sh").write_text(FAKE_PG.replace(
+        "printf 'self_pg=primary\\nself_streaming=t\\nself_lsn=100\\nsync_names=\\npeer_pg=standby\\npeer_lsn=100\\n'",
+        "printf 'self_pg=standby\\nself_streaming=t\\nself_lsn=100\\nsync_names=\\npeer_pg=primary\\npeer_lsn=100\\nroute=peer\\nredis_role=master\\n'"))
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", APP_SICK_AFTER="0", CF_ORIGIN_SELF="10.0.0.1",
+            CF_ORIGIN_PEER="10.0.0.2", CF_POOL_SELF="shared", CF_POOL_PEER="", CF_API_BASE=base)
+    assert r.returncode == 0, r.stdout
+    assert "route peer" in (tmp / "pg.log").read_text(), (tmp / "pg.log").read_text()

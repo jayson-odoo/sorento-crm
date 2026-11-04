@@ -1040,6 +1040,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/system-management/api-call-logs',
             permission: 'system_management.api_call_log.view',
           },
+          {
+            title: 'Client Errors',
+            path: '/system-management/client-errors',
+            permission: 'system_management.client_error.view',
+          },
         ],
       },
       {
@@ -2543,6 +2548,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'API Call Log',
         path: '/system-management/api-call-logs',
         permission: 'system_management.api_call_log.view',
+      },
+      {
+        title: 'Client Errors',
+        path: '/system-management/client-errors',
+        permission: 'system_management.client_error.view',
       },
       {
         title: 'Email Event Configs',

@@ -198,6 +198,89 @@ Record every time measured into the plan, section 10.
 4. A returns: hPanel Start. Expect A as a standby following B (alert "rejoined" or "RE-SEEDED"),
    users stay on B.
 
+## Phase AA: active-active app tier (owner 4 Nov; plan section 12; after phase 3)
+
+Both nodes serve the app; one writable database and one Redis master stay on the primary node.
+Templates: `infra/templates/active-active/`.
+
+0. **READ-ONLY** checks (any time):
+   ```
+   # READ-ONLY: nothing below changes prod.
+   cd /opt/sorento-crm2
+   # Existing files: every attachment must live in object storage, none on a local path.
+   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' <<'SQL'
+   select coalesce(storage_provider, 'none') as provider, count(*) from attachments group by 1 order by 1;
+   select count(*) as not_a_url from attachments where coalesce(file_path, '') <> '' and file_path not like 'http%';
+   SQL
+   # Which database / Redis host each app service uses today (host:port only, never the password).
+   docker compose config --format json | python3 -c 'import json,sys,re
+   for n,svc in sorted(json.load(sys.stdin)["services"].items()):
+       env=svc.get("environment") or {}
+       for k in ("DATABASE_URL","REDIS_URL","SCHEDULER_LEADER_DATABASE_URL"):
+           v=env.get(k)
+           if v: print(n, k, v.rsplit("@", 1)[-1].split("?", 1)[0])'
+   ```
+   Expect `not_a_url` = 0 and every provider `s3` or `r2`. Expect every backend-image service's
+   `DATABASE_URL` to name `pgbouncer:6432`; a service that names `db` directly must be moved to
+   pgbouncer first (`SCHEDULER_LEADER_DATABASE_URL` stays direct: it runs only on the primary).
+1. **THIS CHANGES PROD, WINDOW** (about 1-2 minutes per node: Redis and pgbouncer restart, then
+   one app colour swap), on BOTH nodes, the primary first:
+   - Redis users (`templates/active-active/users.acl`: admin, app, repl, hacheck) and
+     `redis.conf` in `/etc/sorento-ha/`, mode 0640 root:999; every password from
+     `openssl rand -hex 32` (hex: safe in URLs and HAProxy config); the admin password ONLY in
+     `/etc/sorento-ha/redis-admin.env` (`REDISCLI_AUTH=...`, mode 0600 root, the same on both
+     nodes), never in the project `.env`. Check (READ-ONLY) that no other service gets it:
+     `docker compose config --format json | python3 -c 'import json,sys; print([n for n,s in json.load(sys.stdin)["services"].items() if n != "redis" and "REDISCLI_AUTH" in (s.get("environment") or {})])'`
+     must print `[]`;
+   - `/etc/sorento-ha/haproxy-redis.cfg` (the hacheck password) mode 0640 root:<HAPROXY_UID>;
+     `/etc/sorento-ha/pgbouncer-admin.pgpass` mode 0600 owned by the pgbouncer container uid;
+     `/etc/sorento-ha/pgbouncer-hba.conf`; pgbouncer KEEPS prod's
+     `pool_mode` (read it first: `SHOW CONFIG` on the pgbouncer admin console; never switch session
+     to transaction, the app holds session-level advisory locks); every role that goes through
+     pgbouncer today (an analytics read-only URL too, if any) needs its line in
+     `pgbouncer-hba.conf`;
+   - `infra/templates/host/docker-user-wg.sh` on both nodes, run at boot after Docker (5432 and
+     6379 on the private address: only the peer over wg0; only the CRM compose network out over
+     wg0);
+   - the app lines over the link in `postgres/pg_hba.conf` (template, ACTIVE-ACTIVE block) and
+     `select pg_reload_conf()` on the primary;
+   - `ha/pgbouncer.ini`; `ha/route/` root-owned 0755 with `route.ini` from `route.ini.initial`
+     on the PRIMARY node; the pgbouncer userlist;
+   - `COMPOSE_FILE=docker-compose.yml:compose.ha.yml:compose.aa.yml` in `.deploy.env`;
+   - app `REDIS_URL` -> `redis://app:<APP_PASSWORD>@redis_proxy:6380/<db>`;
+   - `docker compose up -d redis redis_proxy pgbouncer`; then on the STANDBY node let the
+     adapter write its route and make its Redis a replica (never by hand):
+     `set -a; . /etc/sorento-ha/ha-pg.env; set +a; /opt/sorento-crm2/infra/scripts/ha-pg.sh route peer`;
+   - a normal release (both nodes, `scripts/ha_release.sh`) to bring the app colours up on the
+     new env.
+   Check on each node: the app answers `GET /api/v1/health/role` 200 locally;
+   `docker compose exec -T redis redis-cli --user admin role` says master on the primary node,
+   slave on the other (the `default` user is off: a plain `redis-cli`, and any `redis-cli ping`
+   healthcheck in the prod compose, needs `--user`). Docker must be 28 or later, or add a DROP for
+   the 127.0.0.1-published 5432/6379 from non-loopback sources: older Docker lets a neighbour on
+   the provider network reach loopback-published ports.
+2. **THIS CHANGES PROD** (traffic starts reaching node B): Cloudflare: replace the two pools with
+   ONE pool holding both endpoints (same monitor `GET /api/v1/health/role`, 60 s, down 2, up 1);
+   LB default pool = that pool, DNS-only TTL 30 s. Note each endpoint's address for the env.
+3. **THIS CHANGES PROD**: in `/etc/sorento-ha/ha-pg.env` on both nodes add the active-active
+   block (`ACTIVE_ACTIVE=1`, `CF_ORIGIN_SELF`, `CF_ORIGIN_PEER`, `CF_POOL_SELF` = the one pool,
+   `ROUTE_FILE`, `PGB_LOCAL_HOST`, `PGB_ADMIN`, `PGB_DATABASES`, `REDIS_CLI`), remove `APP_SICK_AFTER` (it must be
+   0) and `CF_POOL_PEER` (the old per-node pool is gone; a different value is refused), then `systemctl restart cf-failover` on the standby node first, then the primary node.
+   The logs must show `started: ... app_sick_after=0s` and no action.
+4. **THIS CHANGES PROD, causes an outage on one node** (drill, announced window):
+   `docker compose stop backend_<active>` on node A. Expect: A's origin leaves the pool within
+   about 2 minutes, users keep working through B, no fence and no promotion in either
+   controller's log. Start it again; A returns to the pool. Then the same on node B.
+5. **READ-ONLY**: measure the A-B round trip (phase 1 step 1b) and record it in plan section 12c.
+
+In active-active a standby that the release cannot reach keeps serving the OLD code to real users
+(`scripts/ha_release.sh` fails the run): fix the node or take its endpoint out of the pool until
+the next release reaches it.
+
+Rollback of phase AA: Cloudflare back to the two pools in failover order (phase 3), remove
+`ACTIVE_ACTIVE` and the active-active block from `ha-pg.env`, restart `cf-failover` on both.
+Redis and pgbouncer on the primary node keep working as they are.
+
 ## When something looks wrong
 
 - Alert "TWO PRIMARIES": never expected. The controller already fenced the node Cloudflare does

@@ -1,6 +1,6 @@
 # PLAN: HA failover with Cloudflare Load Balancing as the witness (HA-CF-FAILOVER)
 
-Status: Review. Card answered 4 Nov (section 8). F1-F4 built (controller, adapter, drill, templates, two-node release); security + correctness review round 1 fixed (section 11); owner options in section 9. F5-F8 are owner phases (runbook).
+Status: Review (base, PR #2166); active-active app tier in build on the follow-up PR #2170 (section 12). Card answered 4 Nov (section 8). F1-F4 built (controller, adapter, drill, templates, two-node release); security + correctness review round 1 fixed (section 11); owner options in section 9. F5-F8 are owner phases (runbook).
 Track: full (prod infra, size L), LEAD pattern. Nothing in this lane touches production: every prod
 step goes to the owner as reviewed commands.
 
@@ -376,3 +376,164 @@ the round-2 blocker back); "rejecting connections" reads `down` only when `pg_co
 the cluster is in crash or archive recovery or starting up (a smart shutdown also rejects new
 connections while old sessions keep committing: `unknown`); a D2 rejoin clears `fenced_at`, so a
 slow standby start that reads down is not rejoined again as a full re-seed.
+
+
+## 12. Active-active app tier (owner decision 4 Nov about 17:15, follow-up PR #2170)
+
+Owner: "i want active active". This overrides section 9b's "no" for the APP tier only. There is
+still exactly ONE writable database and ONE Redis master. Built for DNS-only, the owner's 3 Nov
+choice; section 12d gives the proxied numbers for the owner.
+
+**Ruling interaction, no card needed.** Requirement (6), "a node whose app is unhealthy drops out
+of the pool with NO DB failover", supersedes Q3 (a), the app-sick failover. In active-active mode
+P2 is off: `APP_SICK_AFTER` defaults to 0, and the controller refuses to start with any other
+value. The reason: the other node now serves the same database, so moving the database fixes
+nothing for an app fault.
+
+### 12a. How each requirement is met
+
+| # | Requirement | How (evidence) |
+|---|---|---|
+| 1 | Both nodes serve behind the LB; health check per node | ONE Cloudflare pool with both nodes as origins (steering inside the pool: random; LB-level steering stays "off", one pool). The monitor stays `GET /api/v1/health/role` (`sorento_crm_backend/app/main.py:737-762`): 200 only when THIS node's app reaches a writable database. Cloudflare checks it per origin. The controller reads its own origin's health from the pool health API (`CF_ORIGIN_SELF` / `CF_ORIGIN_PEER`, `infra/scripts/cf_failover.py` `cf_pool_health`; the per-origin shape is UNVERIFIED, phase 3 checks it) |
+| 2 | One writable DB, each backend reaches the CURRENT primary through a local endpoint that follows the role | Each node's pgbouncer is its app's only database endpoint. Rule **R1** (`decide()`): on the primary node the target is `local`; on the other node it is `peer`, and only while the peer answers as primary, never a guess. `ha-pg.sh route` rewrites `route/route.ini` (a `%include` in `templates/active-active/pgbouncer.ini`), then runs pgbouncer `RELOAD` and `KILL` + `RESUME` of the app database, so every client and server connection reconnects through the new target in ANY pool mode. In session mode the app's pooled connections are never released, so `RECONNECT` alone would leave a connection pinned to a running standby (review round 2). A route change never moves away from the writable primary, so the dropped connections were doing no useful writes. `server_login_retry = 2`, because pgbouncer otherwise refuses clients for 15 s after the old primary's failed logins. pgbouncer KEEPS prod's `pool_mode`: the app holds session-level advisory locks that transaction pooling would break (security F1). A route repair that only fixes Redis's role does not touch pgbouncer. An unreadable Redis ROLE alerts |
+| 3 | One Redis, used by both nodes; jobs/schedulers/senders only on the primary | The primary node's Redis is the master; the other node's is its replica (the same `route` switches roles, Redis FIRST so a returning node never writes to its stale Redis). Each node's app reaches Redis only through a local HAProxy (`templates/active-active/haproxy-redis.cfg`) that sends every connection to whichever Redis answers `role:master`. So one queue, one set of locks (the chatbot drain mutex `chatbot:drain:{contact}`, `app/services/chatbot/inbox_queue.py:382`), one idempotency store (`app/middleware/idempotency_middleware.py`), one rate-limit store. Workers + scheduler: role watcher, unchanged (`infra/scripts/role-watcher.sh`; `app/scheduler/leader.py:53-91`). The chatbot sweeper runs in both nodes' API processes but claims each turn with a database write before it sends (`inbox_queue.py:558-571`, send `:731`) and serialises per contact through the shared Redis mutex: no double sends |
+| 4 | Uploads/files shared, existing files included | Already object storage. Every attachment row names `s3` or `r2` (`app/services/storage_router.py:108`, `:311`). Imports carry a storage key, not a local path (`app/tasks/import_tasks.py:642`, download `:730`). Exports upload their result (`app/tasks/export_tasks.py`, 15 storage calls, no local file). Temp files exist only inside a single task (`attachment_bulk_download_task.py:81`, `dealer_kit_export_tasks.py:97`). The only local volume is `backend_logs`. Existing files: a read-only owner query (runbook phase AA, step 0) confirms no row points at a local path |
+| 5 | Sessions/auth on either node | Staff sessions are Postgres rows resolved per request (`app/services/user_session_service.py:92-127`), now in the one primary. NextAuth's cookie needs only the same `NEXTAUTH_SECRET` on both (the env hash check in `ha-checks.sh` alerts on drift). No sticky sessions. Per-process caches already exist across gunicorn workers and blue/green colours, so a second node adds no new class of staleness |
+| 6 | Unhealthy app leaves the pool, NO DB failover; only a primary DB/box loss promotes | P2 off (above). An app fault on the primary node: Cloudflare marks its origin down, but the standby still streams, so the P1 lease holds and S1 never fires. Drill: app down on A, then on B: no fence, no promotion, the other node served |
+| 7 | Added latency for pages served from B | Section 12c (measured) |
+| 8 | DNS-only vs proxied | Section 12d |
+
+### 12b. What changes in the failure picture (DNS-only, 60 s checks)
+
+| Case | Active-passive (sections 3, 9a) | Active-active |
+|---|---|---|
+| App crash on one node | autoheal; after 15 min the DB fails over (Q3) | that origin leaves the pool after 2 checks (60-120 s). Users whose DNS answer named it see errors until then plus up to 30 s TTL; everyone else is unaffected. No DB move |
+| Whole primary box down | about 8-11 min to B | the same promotion path (the DB is gone): about 8-11 min until B is primary. B's own origin is unhealthy meanwhile, because its app cannot reach the dead primary. After promotion R1 points B's pgbouncer at itself and B's Redis becomes master |
+| Whole standby box down | nothing (it had no users) | its origin leaves the pool (60-120 s + TTL for users pinned to it); no DB effect |
+| Link A-B cut | nothing | the standby node's origin leaves the pool (its app cannot reach the primary); no failover |
+| Old primary returns | rejoins as standby | rejoins as standby, R1 routes it at the new primary, and it serves again |
+
+Redis, accepted risks (review):
+- **Async replication.** Redis replication is asynchronous: a primary-box loss drops the
+  jobs, idempotency keys and rate-limit counters written in its last moments. A POST retried
+  after a failover may run twice. Job rows that were queued or processing are failed by the
+  orphan reconcile for a retry (section 2 row 6).
+- **Two masters for up to one tick.** A Redis that restarts (host reboot, container recreate)
+  comes back a MASTER, because no `replicaof` is persisted. Until the controller's next tick
+  repairs it from Redis's real ROLE (R1 checks the role, not only the route file), the HAProxy on
+  that node prefers it: up to one tick (15 s) of split Redis on the standby node. The same holds
+  for a fenced old primary's Redis until its next tick.
+- **Job pickles.** RQ jobs are pickled (`app/services/queue_service.py:52-57`), so anyone who can
+  push to the master's queues runs code on the primary's workers. Before active-active only node
+  A's own containers could reach A's Redis; now node B's containers can too. The ACL (`users.acl`)
+  takes away reconfiguration and wiping, not pushing jobs. Accepted residual risk, bounded by the
+  DOCKER-USER rules (only the CRM compose network crosses the link).
+
+- **A retried re-point cuts live sessions.** A re-point drops every app connection through
+  pgbouncer (`KILL` + `RESUME`). Normally they point at a dead host or a standby, so nothing of
+  value is cut. In one rare case they point at the primary: a retry of an unconfirmed route whose
+  first `RELOAD` did take effect. Then a session-level advisory lock such as the chatbot's
+  one-turn-per-contact lock (`app/services/chatbot/agent/loop.py:813-834`) is released while its
+  turn carries on, so a second turn for that contact can start and a double reply is possible.
+  This is the same outcome as losing the primary, and as rare.
+
+Constraint the drill found: a newly promoted primary's lease starts at the promotion, so its
+origin must turn Cloudflare-healthy within `FENCE_AFTER`. In prod that is 240 s, against a route
+switch (one tick, 15 s) plus `server_login_retry` (2 s) plus one Cloudflare check (up to 60 s).
+
+### 12c. Measured: added latency for requests served from node B
+
+`infra/rehearsal/measure_roundtrips.py` signs in for real and counts every round trip to Postgres
+(statements, psycopg2's implicit BEGIN, COMMIT/ROLLBACK, the pool's pre-ping on checkout) and to
+Redis, per request: each one crosses the link when node B serves. The run was on a throwaway
+database built by `scripts.bootstrap_env` + `scripts.seed_never_stuck_smoke`, 4 Nov, warm second
+calls, admin persona, Redis reachable. It is a LOWER bound:
+- list endpoints that run per-row queries cost more on real data;
+- a NEW server connection over the link (after a re-point or `server_lifetime`) adds TCP plus
+  SCRAM round trips once.
+Re-run it on a staging copy for prod-shaped numbers. (The first table, before review, missed
+BEGIN/COMMIT/pre-ping and read about 3 too low per request.)
+
+| Request | HTTP | SQL | Redis | local ms | +ms at 0.5 ms RTT | +ms at 1 ms RTT | +ms at 2 ms RTT | +ms at 5 ms RTT |
+|---|---|---|---|---|---|---|---|---|
+| `/api/v1/health/role` | 200 | 4 | 0 | 8 | 2 | 4 | 8 | 20 |
+| `/api/v1/my-requests/me` | 403 | 10 | 0 | 19 | 5 | 10 | 20 | 50 |
+| `/api/v1/notifications/coverage/for-me` | 200 | 12 | 0 | 23 | 6 | 12 | 24 | 60 |
+| `/api/v1/order-management/customers/?page=1&limit=20` | 200 | 16 | 0 | 41 | 8 | 16 | 32 | 80 |
+| `/api/v1/order-management/customers/select` | 200 | 15 | 0 | 34 | 8 | 15 | 30 | 75 |
+| `/api/v1/order-management/orders/?page=1&limit=20` | 200 | 12 | 0 | 37 | 6 | 12 | 24 | 60 |
+| `/api/v1/order-management/orders/analytics` | 422 | 10 | 0 | 19 | 5 | 10 | 20 | 50 |
+| `/api/v1/master-data/products?page=1&limit=20` | 200 | 12 | 0 | 32 | 6 | 12 | 24 | 60 |
+| `/api/v1/complaints-management/complaints/?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/forms-management/forms/?page=1&limit=20` | 200 | 12 | 0 | 32 | 6 | 12 | 24 | 60 |
+| `/api/v1/inventory/stock-position?page=1&limit=20` | 200 | 17 | 0 | 41 | 8 | 17 | 34 | 85 |
+| `/api/v1/inventory/stock/dashboard` | 200 | 15 | 0 | 42 | 8 | 15 | 30 | 75 |
+| `/api/v1/procurement/purchase-requests?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/procurement/grn/?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/incoming-stock/list?page=1&limit=20` | 200 | 10 | 0 | 22 | 5 | 10 | 20 | 50 |
+
+Reading it:
+- A typical authenticated GET makes 10-17 SEQUENTIAL database round trips (median 12). About 10
+  are per-request overhead: transaction, session, permissions, company scope, module guard.
+  GETs make no Redis round trips.
+- Added latency per request served from B: about 12 ms at 1 ms RTT, 24 ms at 2 ms, 60 ms at 5 ms;
+  the slowest here (17) adds 17 / 34 / 85 ms.
+- A page that fires its API calls in parallel pays roughly its slowest call.
+- Requests Cloudflare sends to the primary node pay nothing.
+- The A-B RTT itself is still unmeasured: runbook phase 1 step 1b, read-only. Under 2 ms (same
+  data centre): +12-35 ms on half the requests, below what a user notices. Above 5 ms: consider
+  sending a larger share to the primary node.
+- Writes add their idempotency Redis calls (`app/middleware/idempotency_middleware.py`).
+
+### 12d. DNS-only (built) vs proxied (owner's choice), when one node dies or its app breaks
+
+| | DNS-only, TTL 30 s, 60 s checks (built) | Proxied |
+|---|---|---|
+| A dead node (or link to it) | Cloudflare marks the origin down after 2 checks: 60-120 s. Clients that resolved it keep using it until their DNS cache expires (TTL 30 s, some resolvers longer). Worst case about 150 s of errors for those clients, about half of all users with random steering | Cloudflare connects to the origin itself and, on a connection failure (521/522/523), retries the OTHER origin at once ("zero-downtime failover", proxied only; UNVERIFIED from this sandbox): about 0 s of errors, then the monitor removes it |
+| A running but broken app (HTTP 500) | the same 60-150 s | not retried (it is an HTTP answer, not a connection failure): 60-120 s until the monitor removes it |
+| Primary database or box lost | 8-11 min (promotion), both modes alike: no node can write until the fenced promotion | same |
+
+Built for DNS-only. Switching to proxied is a Cloudflare setting (orange cloud on the LB
+hostname), with no code change. It also hides the origin addresses; per-node certificates remain
+valid (Cloudflare to origin: Full (strict)).
+
+### 12e. Drill (`python3 infra/rehearsal/cf_drill.py --mode aa`, 4 Nov, after review round 2)
+
+Each node runs:
+- Postgres 17;
+- pgbouncer in SESSION mode (prod keeps its mode; session is the hard case), with the route
+  include and TCP timeouts;
+- Redis (the template's config + ACL users, no persisted replicaof);
+- HAProxy for Redis (checks as `hacheck`).
+
+All of it sits on the node's own network; node-local hops use names that exist only there. The
+link is a separate network. The fake Cloudflare checks each node's APP PATH (through its
+pgbouncer) as two origins of one pool, each check on its own. Each node also runs a long-lived
+session client modelled on the app's SQLAlchemy pool: it stays on a connection that only
+returns read-only errors, and reconnects only when the connection is lost. The real controller
+and adapter run on each node, with scaled timings.
+
+| Scenario | Result |
+|---|---|
+| steady state | PASS: both origins healthy; writes through B's app land on A; one Redis shared (set on A, read on B); the app's Redis user gets NOPERM for REPLICAOF, FLUSHALL, SWAPDB, CONFIG, SHUTDOWN; both long-lived sessions write |
+| app down on A only | PASS: A out of the pool and back; no fence, no promotion; B kept serving writes |
+| app down on B only | PASS: same, mirrored |
+| link cut only | PASS: B left the pool (no route to the primary), no failover; back after the link returned |
+| primary box dies | PASS: B primary 20 s after A died, serving at 22 s; B routes local and its Redis is master; B's long-lived session writes into B; A came back read-only and serves again through B |
+| both nodes reboot while B is primary | PASS: one writer. Both Redis restarted as masters and R1 repaired the standby's from its real role. A, routed at B, wins the both-standby tie and promotes while B stays a running standby: A's long-lived session, pinned to B, is moved off it and writes into A (the round-2 case). KILL TEST: the same drill with the re-point limited to RELOAD (no KILL + RESUME) FAILS this scenario, so the drill guards the fix |
+| primary isolated | PASS: the isolated primary fenced (11 s) before the other promoted (20 s); both serving again, both long-lived sessions writing |
+| never two writers | PASS: 0 two-Postgres samples ("never two writers" is the Postgres check) |
+| Redis two masters | NOTE: 15 samples (0.3 s each, about 4 s in all), all right after a Redis restart, each repaired within a tick (12b) |
+| acknowledged writes | NOTE: 2 of 357 lost, written through the ISOLATED primary's own app path in the seconds before it fenced (the drill reaches it through Docker; a real isolated box has no users) |
+
+Drill findings fixed in the build:
+- Round 1: pgbouncer re-point after `RELOAD` (`RECONNECT`); `server_login_retry = 2`; Redis role
+  switched before pgbouncer.
+- Round 2: `KILL` + `RESUME` instead of `RECONNECT`, so session mode is covered; pgbouncer TCP
+  keepalive and `tcp_user_timeout`, so a cut link drops server connections in about 10 s
+  instead of hanging app requests for the kernel's 15 minutes.
+- Drill fidelity: names that resolved to the link address made a link cut also cut node-local
+  paths, so node-local hops now use local-only aliases; the old long-lived client never
+  reconnected, unlike the app's pool.
+
+`--mode ap` keeps the active-passive scenarios.

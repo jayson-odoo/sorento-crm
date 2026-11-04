@@ -697,6 +697,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "path": "/system-management/api-call-logs",
             "title": "API Call Log",
           },
+          {
+            "path": "/system-management/client-errors",
+            "title": "Client Errors",
+          },
         ],
         "title": "Operations",
       },

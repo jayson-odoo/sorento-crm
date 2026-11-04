@@ -1,0 +1,57 @@
+# Active-active APP tier override for BOTH CRM nodes (HA-CF-FAILOVER, owner 4 Nov):
+#   COMPOSE_FILE=docker-compose.yml:compose.ha.yml:compose.aa.yml
+# Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 12.
+#
+# Both nodes serve the app behind ONE Cloudflare pool. There is still exactly one writable
+# database (the primary) and one Redis master, on the primary node:
+# - pgbouncer on each node is the app's ONLY database endpoint (DATABASE_URL -> pgbouncer:6432).
+#   Its [databases] target lives in ha/route/route.ini, which the failover controller rewrites
+#   (`ha-pg.sh route local|peer`) whenever the primary moves, then RELOADs pgbouncer and KILLs +
+#   RESUMEs the app database so every connection reconnects through the new target. Never a
+#   hardcoded host.
+# - Redis on each node: the primary node's is the master, the other a replica of it (switched by
+#   the same `route`). The app reaches Redis ONLY through redis_proxy (HAProxy) on its own node,
+#   which sends every command to whichever of the two answers `role:master`
+#   (templates/active-active/haproxy-redis.cfg), so both nodes share one queue, one set of locks
+#   and one rate-limit store.
+# - Workers and the scheduler still run only on the primary node (role watcher, compose.ha.yml).
+services:
+  pgbouncer:
+    volumes:
+      - ./ha/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro    # templates/active-active/pgbouncer.ini
+      - ./ha/route:/etc/pgbouncer/route:ro                    # the DIRECTORY: renames stay visible
+      - /etc/sorento-ha/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      # libpq ignores a pgpass looser than 0600, and `exec` runs as the image's user: 0600 owned
+      # by the pgbouncer container uid (70 in edoburu/pgbouncer), or RELOAD fails (review S4).
+      - /etc/sorento-ha/pgbouncer-admin.pgpass:/etc/pgbouncer/admin.pgpass:ro   # for RELOAD, KILL, RESUME
+      - /etc/sorento-ha/pgbouncer-hba.conf:/etc/pgbouncer/pg_hba.conf:ro        # templates/active-active/pgbouncer-hba.conf
+
+  redis:
+    # Users (security review S1): `app` (the app: no CONFIG, REPLICAOF, SHUTDOWN, DEBUG, ACL,
+    # FLUSHALL, FLUSHDB), `repl` (replication only), `hacheck` (the HAProxy check only), `admin`
+    # (the controller's REPLICAOF and ROLE only). `default` is off.
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    # REDISCLI_AUTH=<admin password> for the controller's `redis-cli --user admin`, from its OWN
+    # file (0600 root): never the project .env, which app services may load with env_file, and
+    # an app container holding the admin password would undo the ACL (security review F2).
+    env_file: [/etc/sorento-ha/redis-admin.env]
+    volumes:
+      - /etc/sorento-ha/redis.conf:/usr/local/etc/redis/redis.conf:ro   # templates/active-active/redis.conf, 0640 root:999
+      - /etc/sorento-ha/users.acl:/etc/redis/users.acl:ro               # templates/active-active/users.acl, 0640 root:999
+    ports:
+      - "127.0.0.1:6379:6379"
+      - "<THIS_WG_IP>:6379:6379"     # the peer's proxy and replica only: DOCKER-USER rules, templates/host/docker-user-wg.sh
+
+  redis_proxy:
+    image: <HAPROXY_IMAGE>@sha256:<DIGEST>
+    volumes:
+      # Holds the `hacheck` password: 0640 root:<HAPROXY_UID> (99 in the official image), never in
+      # the deploy-writable project folder (security review S4).
+      - /etc/sorento-ha/haproxy-redis.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: unless-stopped
+    # The app's REDIS_URL becomes redis://app:<APP_PASSWORD>@redis_proxy:6380/<db> on both nodes.
+
+  backend_blue:
+    depends_on: [pgbouncer, redis_proxy]
+  backend_green:
+    depends_on: [pgbouncer, redis_proxy]

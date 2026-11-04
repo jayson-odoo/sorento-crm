@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from 'react';
+import { localStore } from '@/lib/storage';
 
 export type ImpersonationTargetUser = {
   id: string;
@@ -23,7 +24,7 @@ const STORAGE_KEY = 'impersonation-session-v1';
 function _readPersisted(): ImpersonationSession | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = localStore.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as ImpersonationSession;
   } catch {
@@ -35,9 +36,9 @@ function _writePersisted(session: ImpersonationSession | null): void {
   if (typeof window === 'undefined') return;
   try {
     if (session) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+      localStore.setItem(STORAGE_KEY, JSON.stringify(session));
     } else {
-      window.localStorage.removeItem(STORAGE_KEY);
+      localStore.removeItem(STORAGE_KEY);
     }
   } catch {
     // ignore

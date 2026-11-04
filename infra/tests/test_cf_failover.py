@@ -37,7 +37,7 @@ def obs(**kw):
     d = dict(
         self_pg="standby", self_streaming=False, self_lsn=1000,
         peer_pg="unreachable", peer_lsn=None,
-        cf_self="unhealthy", cf_peer="unhealthy", sync_names="",
+        cf_self="unhealthy", cf_peer="unhealthy", sync_names="", route="",
     )
     d.update(kw)
     return Obs(**d)
@@ -450,11 +450,15 @@ def test_fenced_node_with_an_unreachable_peer_needs_cloudflare_to_say_it_is_down
 class World:
     """Two nodes, a link, each node's public reachability, and Cloudflare's view."""
 
-    def __init__(self, sync="off"):
+    def __init__(self, sync="off", active_active=False):
+        extra = {"ACTIVE_ACTIVE": 1} if active_active else {}
         self.cfg = {
-            "a": cfg(SYNC_MODE=sync),
-            "b": cfg(NODE_NAME="crm-b", PEER_NAME="crm-a", SYNC_MODE=sync),
+            "a": cfg(SYNC_MODE=sync, **extra),
+            "b": cfg(NODE_NAME="crm-b", PEER_NAME="crm-a", SYNC_MODE=sync, **extra),
         }
+        self.active_active = active_active
+        self.route = {"a": "local", "b": "peer"} if active_active else {"a": "", "b": ""}
+        self.route_fails = {"a": 0, "b": 0}
         self.pg = {"a": "primary", "b": "standby"}
         self.tl = {"a": 1, "b": 1}
         self.lsn = {"a": 1000, "b": 1000}
@@ -477,9 +481,19 @@ class World:
         pair = {self.pg[n], self.pg[p]}
         return self.link and pair == {"primary", "standby"} and self.tl[n] == self.tl[p]
 
+    def app_reaches_writer(self, n):
+        """Active-active: the node's app reaches a writable database through its pgbouncer."""
+        if self.route[n] == "local":
+            return self.pg[n] == "primary"
+        if self.route[n] == "peer":
+            return self.link and self.pg[self.peer(n)] == "primary"
+        return False
+
     def cf_truth(self, n):
-        # The monitor: 200 only from a primary reachable from the internet; 2 failures to go down.
-        ok = self.net[n] and self.app_ok[n] and self.pg[n] == "primary"
+        # The monitor: 200 only from a node whose app reaches a writable database (active-passive:
+        # its own primary); reachable from the internet; 2 failures to go down.
+        writable = self.app_reaches_writer(n) if self.active_active else self.pg[n] == "primary"
+        ok = self.net[n] and self.app_ok[n] and writable
         self.cf_down_ticks[n] = 0 if ok else self.cf_down_ticks[n] + 1
         return "healthy" if ok or self.cf_down_ticks[n] < 2 * 4 else "unhealthy"  # 2 x 60 s at 15 s ticks
 
@@ -511,7 +525,7 @@ class World:
                 self_pg=self.pg[n], self_streaming=self.streaming(n), self_lsn=self.lsn[n],
                 peer_pg=(self.pg[p] if self.pg[p] != "down" else "unreachable") if self.link else "unreachable",
                 peer_lsn=self.lsn[p] if self.link and self.pg[p] != "down" else None,
-                cf_self=seen(n), cf_peer=seen(p), sync_names=self.sync[n],
+                cf_self=seen(n), cf_peer=seen(p), sync_names=self.sync[n], route=self.route[n],
             )
             self.state[n], actions = decide(self.state[n], o, t, self.cfg[n])
             for a in actions:
@@ -541,6 +555,12 @@ class World:
                 self.lsn[n] = self.lsn[p]
         elif a[0] == "set_sync":
             self.sync[n] = a[1]
+        elif a[0] == "route":
+            if self.route_fails[n] > 0:   # the reload failed: the route stays unconfirmed
+                self.route_fails[n] -= 1
+                self.route[n] = ""
+            else:
+                self.route[n] = a[1]
 
     def run(self, until, start=0, rng=None):
         t = start
@@ -659,3 +679,143 @@ def test_world_random_faults_never_two_writers(seed):
 def test_obs_is_a_frozen_value():
     o = obs()
     assert replace(o, self_lsn=5).self_lsn == 5
+
+
+# ---------------------------------------------------------------- active-active app tier (owner 4 Nov)
+# Both nodes serve the app; each node's pgbouncer and Redis follow the CURRENT primary (rule R1);
+# an unhealthy app drops out of the Cloudflare pool with NO database failover (P2 off).
+
+
+def aa(**env):
+    return cfg(ACTIVE_ACTIVE=1, **env)
+
+
+def test_active_active_turns_the_app_sick_failover_off():
+    c = aa()
+    assert c.active_active and c.app_sick_after == 0
+    _, out = run(c, prim(self_streaming=True, peer_pg="standby"), 7200)
+    assert first(out, "fence") is None  # app down on the primary node: traffic moves, the DB stays
+
+
+def test_active_active_refuses_an_explicit_app_sick_window():
+    with pytest.raises(ConfigError):
+        aa(APP_SICK_AFTER=900)
+
+
+def test_r1_primary_routes_its_endpoints_to_the_local_database():
+    _, a = decide(initial_state(), prim(cf_self="healthy", self_streaming=True, peer_pg="standby", route="peer"), 0, aa())
+    assert ("route", "local") in a
+    _, a = decide(initial_state(), prim(cf_self="healthy", self_streaming=True, peer_pg="standby", route="local"), 0, aa())
+    assert not any(x[0] == "route" for x in a)
+
+
+def test_r1_standby_routes_to_the_peer_only_while_the_peer_is_primary():
+    c = aa()
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy", route="local"), 0, c)
+    assert ("route", "peer") in a
+    for peer in ("standby", "unreachable"):
+        for route in ("local", "peer", ""):  # whatever it points at now (review blocker 3)
+            _, a = decide(initial_state(), obs(peer_pg=peer, peer_lsn=1, route=route), 0, c)
+            assert not any(x[0] == "route" for x in a), (peer, route)  # never re-points at a guess
+
+
+def test_r1_a_fenced_node_serves_again_through_the_new_primary():
+    c = aa()
+    state, _ = run(c, prim(), c.fence_after)  # fenced
+    _, a = decide(state, obs(self_pg="down", peer_pg="primary", peer_lsn=9, cf_peer="healthy", route="local"), c.fence_after + TICK, c)
+    assert ("route", "peer") in a
+
+
+def test_r1_never_routes_while_fencing():
+    c = aa()
+    _, out = run(c, prim(route="peer"), 600)
+    assert all(not any(x[0] == "route" for x in acts) for t, acts in out if "fence" in kinds(acts))
+
+
+def test_r1_is_off_in_active_passive_mode():
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy", route="local"), 0, cfg())
+    assert not any(x[0] == "route" for x in a)
+
+
+def test_world_active_active_never_two_writers_and_routes_follow_the_primary():
+    for seed in range(60):
+        rng = random.Random(1000 + seed)
+        w = World(active_active=True)
+        t = 0
+        for _ in range(20):
+            w.link = rng.random() < 0.6
+            w.net = {"a": rng.random() < 0.8, "b": rng.random() < 0.8}
+            w.app_ok = {"a": rng.random() < 0.7, "b": rng.random() < 0.7}
+            w.cf_api = rng.random() < 0.85
+            w.fence_fails = {"a": rng.random() < 0.2, "b": rng.random() < 0.2}
+            t = w.run(t + rng.choice([60, 300, 900]), start=t, rng=rng)
+        # settle with everything healthy: each node's endpoint names the one primary
+        w.link, w.net, w.app_ok, w.cf_api = True, {"a": True, "b": True}, {"a": True, "b": True}, True
+        w.fence_fails = {"a": False, "b": False}
+        w.run(t + 1800, start=t)
+        p = "a" if w.pg["a"] == "primary" else "b"
+        assert w.pg[p] == "primary"
+        assert w.route[p] == "local" and w.route[w.peer(p)] == "peer", (seed, w.pg, w.route)
+
+
+def test_world_active_active_app_down_moves_no_database():
+    w = World(active_active=True)
+    w.run(300)
+    w.app_ok["a"] = False  # node A's app is unhealthy, its database is fine
+    w.run(3900, start=315)
+    assert w.pg == {"a": "primary", "b": "standby"}
+    assert w.route == {"a": "local", "b": "peer"}
+
+
+def test_r1_repairs_a_redis_whose_role_drifted_from_the_route():
+    # Security review S2: a restarted Redis comes back as a master while the route file still
+    # says peer; R1 must notice the ROLE, not only the file, or each node runs its own Redis.
+    c = aa()
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy",
+                                       route="peer", redis_role="master"), 0, c)
+    assert ("route", "peer") in a
+    _, a = decide(initial_state(), prim(cf_self="healthy", self_streaming=True, peer_pg="standby",
+                                        route="local", redis_role="slave"), 0, c)
+    assert ("route", "local") in a
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy",
+                                       route="peer", redis_role="slave"), 0, c)
+    assert not any(x[0] == "route" for x in a)
+
+
+@pytest.mark.parametrize("value", ["True", "on", "2", "yes please"])
+def test_active_active_refuses_an_unrecognised_switch_value(value):
+    with pytest.raises(ConfigError):
+        cfg(ACTIVE_ACTIVE=value)
+
+
+def test_r1_keeps_retrying_while_the_route_is_unconfirmed():
+    # Review blocker 1b: a reload that failed leaves the route unconfirmed (""); every tick
+    # re-issues it until pgbouncer took it, so a new primary cannot stay pointed at the dead one.
+    c = aa()
+    s = initial_state()
+    for t in range(0, 60, TICK):
+        s, a = decide(s, prim(cf_self="healthy", self_streaming=True, peer_pg="standby", route=""), t, c)
+        assert ("route", "local") in a
+
+
+def test_world_active_active_a_failing_route_never_leaves_two_writers_and_heals():
+    w = World(active_active=True)
+    w.run(300)
+    w.route_fails["b"] = 3          # B's first three re-points fail after its promotion
+    w.net["a"] = False
+    w.link = False
+    w.run(2400, start=315)
+    assert w.pg["b"] == "primary" and w.route["b"] == "local"
+
+
+def test_an_unreadable_redis_role_alerts_once_until_it_reads_again():
+    # Review round 2 should-fix: ROLE failing (admin auth drift, exec failure) must not go unseen.
+    c = aa()
+    o = obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy", route="peer", redis_role="")
+    s, a = decide(initial_state(), o, 0, c)
+    assert any(x[0] == "alert" and "Redis" in x[1] for x in a)
+    s, a = decide(s, o, TICK, c)
+    assert not any(x[0] == "alert" for x in a)
+    s, a = decide(s, replace(o, redis_role="slave"), 2 * TICK, c)
+    s, a = decide(s, o, 3 * TICK, c)
+    assert any(x[0] == "alert" and "Redis" in x[1] for x in a)

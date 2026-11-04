@@ -537,3 +537,174 @@ def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, p
     r = subprocess.run(["bash", str(ADAPTER), "observe"], env=e, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert want in r.stdout.splitlines(), r.stdout
+
+
+# ---------------------------------------------------------------- ha-pg.sh route (active-active)
+
+
+def _route_env(tmp_path, **extra):
+    log = tmp_path / "calls.log"
+    rdir = tmp_path / "pgbouncer"
+    rdir.mkdir(exist_ok=True)
+    e = {
+        "PATH": os.environ["PATH"], "NODE_NAME": "crm-a", "PEER_NAME": "crm-b", "PEER_HOST": "10.9.0.2",
+        "PEER_PORT": "5432", "PGDATA": "/v/pgdata", "PG_EXEC": "false", "PG_RUNNING": "false",
+        "PG_START": "true", "PG_STOP": "true", "PG_OFFLINE_SH": "false", "PEER_PSQL": "false",
+        "ROUTE_FILE": str(rdir / "route.ini"), "PGB_LOCAL_HOST": "db",
+        "PGB_ADMIN": f"{tmp_path}/fake-pgb", "PGB_DATABASES": "sorento_app", "REDIS_CLI": f"{tmp_path}/fake-redis",
+    }
+    pgb = tmp_path / "fake-pgb"
+    pgb.write_text(
+        f'#!/usr/bin/env bash\ncase "$1" in RELOAD) echo reload >> {log};;\n'
+        f'  KILL*) echo "kill ${{1#KILL }}" >> {log}; [ -e {tmp_path}/kill_fail ] && {{ echo "timeout: connection lost" >&2; exit 124; }};;\n'
+        f'  RESUME*) echo "resume ${{1#RESUME }}" >> {log};\n'
+        f'    [ -e {tmp_path}/resume_not_paused ] && {{ echo "ERROR:  database ${{1#RESUME }} is not paused" >&2; exit 1; }}\n'
+        f'    [ -e {tmp_path}/resume_fail ] && exit 1;;\nesac\n'
+        f'[ -e {tmp_path}/reload_fail ] && [ "$1" = RELOAD ] && exit 1\nexit 0\n')
+    pgb.chmod(0o755)
+    fake = tmp_path / "fake-redis"
+    fake.write_text(f'#!/usr/bin/env bash\necho "redis $*" >> {log}\n[ -e {tmp_path}/redis_fail ] && exit 1\nexit 0\n')
+    fake.chmod(0o755)
+    e.update(extra)
+    return e, log, rdir / "route.ini"
+
+
+def _adapter(e, *args):
+    return subprocess.run(["bash", str(ADAPTER), *args], env=e, capture_output=True, text=True, timeout=30)
+
+
+def test_route_local_points_pgbouncer_at_the_local_db_and_makes_redis_master(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 0, r.stderr
+    text = route.read_text()
+    assert text.splitlines()[0].startswith("; route=local")
+    assert "* = host=db port=5432" in text
+    assert log.read_text().splitlines() == ["redis REPLICAOF NO ONE", "reload", "kill sorento_app", "resume sorento_app"]
+
+
+def test_route_peer_points_pgbouncer_at_the_peer_and_makes_redis_a_replica(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    r = _adapter(e, "route", "peer")
+    assert r.returncode == 0, r.stderr
+    assert "* = host=10.9.0.2 port=5432" in route.read_text()
+    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379", "reload", "kill sorento_app", "resume sorento_app"]
+
+
+def test_observe_reports_the_current_route(tmp_path):
+    e, _, _ = _route_env(tmp_path)
+    assert "route=" in _adapter(e, "observe").stdout.splitlines()
+    _adapter(e, "route", "peer")
+    assert "route=peer" in _adapter(e, "observe").stdout.splitlines()
+
+
+@pytest.mark.parametrize("bad", ["", "both", "local;rm"])
+def test_route_refuses_anything_but_local_or_peer(tmp_path, bad):
+    e, log, route = _route_env(tmp_path)
+    assert _adapter(e, "route", bad).returncode == 2
+    assert not route.exists()
+
+
+def test_a_failed_reload_leaves_the_route_unconfirmed_so_it_is_retried(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "reload_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "unconfirmed" in r.stderr
+    assert route.read_text().startswith("; route=unconfirmed")
+    assert "route=" in _adapter(e, "observe").stdout.splitlines()  # empty: R1 tries again
+
+
+def test_a_new_primary_whose_redis_cannot_switch_still_gets_its_database_route(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "redis_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "anyway" in r.stderr
+    assert route.read_text().startswith("; route=local") and "reload" in log.read_text()
+
+
+def test_route_fails_loudly_when_redis_cannot_be_switched_and_leaves_pgbouncer_alone(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "redis_fail").write_text("")
+    r = _adapter(e, "route", "peer")
+    assert r.returncode == 1 and "redis" in r.stderr
+    assert not route.exists() and "reload" not in log.read_text()  # the app path is not switched
+
+
+def test_observe_reports_the_real_redis_role(tmp_path):
+    e, _, _ = _route_env(tmp_path)
+    fake = tmp_path / "fake-redis"
+    fake.write_text('#!/usr/bin/env bash\n[ "$1" = ROLE ] && printf "master\\r\\n0\\r\\n"; exit 0\n')
+    assert "redis_role=master" in _adapter(e, "observe").stdout.splitlines()
+
+
+@pytest.mark.parametrize("key, value", [
+    ("PEER_HOST", "10.0.0.2 user=postgres"), ("PGB_LOCAL_HOST", "db password=x"),
+    ("PEER_REDIS_HOST", "a b"), ("PEER_PORT", "5432 x"), ("PEER_REDIS_PORT", "63a9"),
+])
+def test_route_refuses_a_host_or_port_that_could_add_connect_keys(tmp_path, key, value):
+    e, _, route = _route_env(tmp_path, **{key: value})
+    r = _adapter(e, "route", "peer")
+    assert r.returncode == 2 and not route.exists()
+
+
+def test_a_redis_only_repair_does_not_reload_pgbouncer(tmp_path):
+    # The route file already names this target and is confirmed; R1 re-issued the route only
+    # because Redis's role drifted: Redis is switched, pgbouncer is not reloaded (security F1).
+    e, log, route = _route_env(tmp_path)
+    assert _adapter(e, "route", "peer").returncode == 0
+    log.write_text("")
+    assert _adapter(e, "route", "peer").returncode == 0
+    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379"]
+
+
+def test_an_unconfirmed_route_is_reloaded_again(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "reload_fail").write_text("")
+    _adapter(e, "route", "peer")
+    (tmp_path / "reload_fail").unlink()
+    e2, log2, _ = _route_env(tmp_path)
+    log2.write_text("")
+    assert _adapter(e2, "route", "peer").returncode == 0
+    assert "reload" in log2.read_text()
+
+
+def test_a_failed_resume_after_kill_leaves_the_route_unconfirmed(tmp_path):
+    # KILL pauses the database; if RESUME then fails the database stays paused: never call that
+    # a confirmed route (review round 2 blocker 1).
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "resume_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "RESUME" in r.stderr
+    assert route.read_text().startswith("; route=unconfirmed")
+
+
+def test_a_failed_kill_still_resumes_and_leaves_the_route_unconfirmed(tmp_path):
+    # Review round 3: a KILL that timed out may still have paused the database: RESUME must run,
+    # and the route must not be confirmed, so R1 retries next tick.
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "kill_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "KILL" in r.stderr
+    assert "resume sorento_app" in log.read_text()
+    assert route.read_text().startswith("; route=unconfirmed")
+
+
+def test_resume_saying_not_paused_is_harmless(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "resume_not_paused").write_text("")
+    assert _adapter(e, "route", "local").returncode == 0
+    assert route.read_text().startswith("; route=local")
+
+
+@pytest.mark.parametrize("names", ["app;RESUME", "pgbouncer", "app pgbouncer"])
+def test_pgbouncer_database_names_must_be_plain_app_databases(tmp_path, names):
+    e, _, route = _route_env(tmp_path, PGB_DATABASES=names)
+    assert _adapter(e, "route", "local").returncode == 2 and not route.exists()
+
+
+def test_route_refuses_an_empty_database_list(tmp_path):
+    # An empty PGB_DATABASES would confirm a re-point without any KILL: sessions stay pinned.
+    e, log, route = _route_env(tmp_path, PGB_DATABASES="")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 2 and "PGB_DATABASES" in r.stderr
+    assert not route.exists() and not log.exists()  # nothing touched: not Redis, not the file

@@ -46,6 +46,7 @@ import type {
   StockDonorMatch,
   StockJumpTarget,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { localStore } from '@/lib/storage';
 
 const CHEVRON_COL = 'w-[36px] min-w-[36px] max-w-[36px]';
 /**
@@ -70,7 +71,7 @@ const LOCATION_WIDTH_FLOOR = 120;
  * that makes it throw) still renders the table, just with today's slack column. */
 function readStoredLocationWidth(): number | null {
   try {
-    const raw = window.localStorage.getItem(LOCATION_WIDTH_STORAGE_KEY);
+    const raw = localStore.getItem(LOCATION_WIDTH_STORAGE_KEY);
     if (!raw) return null;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? Math.max(LOCATION_WIDTH_FLOOR, parsed) : null;
@@ -81,7 +82,7 @@ function readStoredLocationWidth(): number | null {
 
 function writeStoredLocationWidth(px: number) {
   try {
-    window.localStorage.setItem(LOCATION_WIDTH_STORAGE_KEY, String(px));
+    localStore.setItem(LOCATION_WIDTH_STORAGE_KEY, String(px));
   } catch {
     // localStorage disabled - the width still applies for this session.
   }
