@@ -1493,6 +1493,9 @@ class AssetResponse(BaseModel):
     kind: str
     tags: list[str] = []
     url: Optional[str] = None
+    #: A rendition for a screen (the attachment's thumbnail, else a medium copy), never the
+    #: original. The picker grid draws this; ``url`` stays the original.
+    thumb_url: Optional[str] = None
     mime_type: Optional[str] = None
 
 

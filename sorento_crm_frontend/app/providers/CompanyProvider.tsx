@@ -22,6 +22,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { toast } from '@/lib/toast';
+import { invalidateKitLibrary } from '@/lib/dealer-kit/kit-library-cache';
 import {
   getMyCompanyContext,
   switchCompany,
@@ -120,6 +121,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
           // included: it is the source the header now reads, so leaving it cached would
           // leave the chip on the old company until the next focus.
           await queryClient.invalidateQueries();
+          // The designer's library lives in its own cache; it is the old company's too.
+          void invalidateKitLibrary();
           const next = grants.find((c) => c.id === companyId);
           toast.success(next ? `Switched to ${next.name}` : 'Company switched');
         } catch (e) {
