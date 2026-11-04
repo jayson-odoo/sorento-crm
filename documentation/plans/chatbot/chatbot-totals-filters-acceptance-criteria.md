@@ -146,7 +146,9 @@ reply was "You do not have access to that company." and the split was lost for s
 
 | # | Given | When | Expected |
 |---|---|---|---|
-| HT1-18 | Company Sorento held | a parse whose object company differs from the held one (e.g. "Sorenth") while this message names nothing (no entity with current_message true) | The held company stays: the report runs for Company Sorento, never "You do not have access to that company." Parser fields only (as `_customer_stays`), no text comparison |
+| HT1-18 | Company Sorento held | a parse whose object company differs from the held one (e.g. "Sorenth") while the parser's own top-level sales_company IS the held company and no entity of this message (current_message true) has the object's company as its raw or code; any other entity (e.g. a sales channel "project") does not matter | The held company stays: the report runs for Company Sorento, never "You do not have access to that company." Parser fields compared with parser fields only, never with the message text; no fuzzy matching |
+| HT1-18b | Company Sorento held | object company "Mocha", no entity, sales_company null (no parser field names the held company) | Mocha runs (the rule needs positive evidence: sales_company equal to the held company) |
+| HT1-18c | Company Sorento held | object company "Mocha", an entity raw "Mocha" of this message, sales_company still "Sorento" | Mocha runs (an entity of this message names the object's company) |
 | HT1-19 | Company Sorento held | the message names another company ("Mocha sales only", an entity of this message) | That company replaces the held one (unchanged) |
 | HT1-20 | Company Sorento held | the message names a company the contact does not hold (an entity of this message) | "You do not have access to that company." (unchanged) |
 
