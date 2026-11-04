@@ -983,11 +983,9 @@ def _slots_dict(main: Optional[dict], fixed: list, groups: list, upgrades: list)
 
 def _combo_choice_groups(combo) -> dict[str, int]:
     """The combo's choice groups in part order: group name -> number of options."""
-    sizes: dict[str, int] = {}
-    for part in combo.parts or []:
-        if part.part_product is not None and not part.is_upgrade and part.choice_group:
-            sizes[part.choice_group] = sizes.get(part.choice_group, 0) + 1
-    return sizes
+    from app.services.dealer_kit.template_needs import combo_shape
+
+    return {group["role"]: group["size"] for group in combo_shape(combo)["groups"]}
 
 
 def _combo_upgrade_products(combo) -> list:

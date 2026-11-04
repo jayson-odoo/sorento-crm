@@ -10,25 +10,40 @@ from __future__ import annotations
 from typing import Optional
 
 
-def template_needs(doc: Optional[dict]) -> dict:
+#: A stored document is data: positions beyond these are not real and are skipped, so a damaged or
+#: hostile document cannot make the list long.
+MAX_GROUP = 32
+MAX_INDEX = 64
+
+
+def _position(value, limit: int) -> Optional[int]:
+    """`value` when it is a real int (not a bool) in [0, limit), else None."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < limit:
+        return None
+    return value
+
+
+def template_needs(doc) -> dict:
     fixed = 0
     upgrades = 0
     groups: list[int] = []
-    for layer in (doc or {}).get("layers") or []:
-        slot = ((layer or {}).get("props") or {}).get("subjectSlot")
+    layers = doc.get("layers") if isinstance(doc, dict) else None
+    for layer in layers if isinstance(layers, list) else []:
+        props = layer.get("props") if isinstance(layer, dict) else None
+        slot = props.get("subjectSlot") if isinstance(props, dict) else None
         if not isinstance(slot, dict):
             continue
         kind = slot.get("kind")
-        index = slot.get("index")
-        if not isinstance(index, int) or index < 0:
+        index = _position(slot.get("index"), MAX_INDEX)
+        if index is None:
             continue
         if kind == "fixed":
             fixed = max(fixed, index + 1)
         elif kind == "upgrade":
             upgrades = max(upgrades, index + 1)
         elif kind == "pick":
-            group = slot.get("group")
-            if not isinstance(group, int) or group < 0:
+            group = _position(slot.get("group"), MAX_GROUP)
+            if group is None:
                 continue
             while len(groups) <= group:
                 groups.append(0)
