@@ -130,6 +130,44 @@ It posts `crew-tests: <candidate sha> backend N passed/F failed, vitest N/F` on 
 or issue it fixes from. A red sweep is fixed (a test-only fix PR, as #2157) and swept again on
 the new candidate.
 
+### Nightly sweep + release delta (owner ruling, 4 Nov 2026)
+
+The full suite runs **nightly** on main; a release needs only the last green nightly plus a
+delta on the diff since that nightly's sha. Both are one command in a cloud sandbox, and each
+prints ONE line to post as is:
+
+```
+bash scripts/nightly-sweep.sh [<sha>]                    # default origin/main, ~2.5 h on 4 cores
+# crew-tests: <sha> backend N passed/F failed, vitest N/F
+
+bash scripts/release-delta.sh <nightly sha> [<head>]     # default head origin/main
+# crew-tests: <head> delta since nightly <nightly sha> backend N passed/F failed, vitest N/F
+```
+
+The nightly runs the split above on a detached worktree of the sha with a FRESH database
+bootstrapped from that sha's code: 10 xdist groups (pytest-split) of `tests/` minus `tests/scm`,
+the migration tests, `serial_ddl` and `tests/ci_excluded.txt`; then `tests/test_migration_*.py`
+and `-m serial_ddl` serially; then `tests/scm/` (xdist, then its `serial_ddl`); then
+`npx vitest run`. The delta runs alembic heads == 1, `bootstrap_env` + `alembic upgrade head` on
+a fresh database, the migration tests, `tests/scm/` incl. `serial_ddl`, every backend test file
+the diff touches or that imports a touched `app/` module (list in `selected.txt`), and the FULL
+vitest. Logs, junit files and `failed.txt` stay in the output directory the script names.
+
+`scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
+#2171), each of which shows up as reds that CI does not have:
+
+| Gap | Symptom without it | What the script does |
+| --- | --- | --- |
+| Ubuntu's pgvector is 0.6.0 | 3 `hnsw.iterative_scan` tests fail (`test_lookup_embed_central_*`) | builds pgvector v0.8.0 when the packaged one is older |
+| no DNS for `automate-sorento.foundryx.my` | 12 `tests/chatbot` retry tests 422 in `outbound_url_guard` | adds an `/etc/hosts` line (public IP; nothing connects to it) |
+| `tests/scm/conftest.py` `_pg_url` ignores `SORENTO_ENV_FILE` | 25 `tests/scm` errors, ~2,100 skips | exports `DATABASE_URL` (CI sets it too) |
+
+A database bootstrapped by `bootstrap_env` never holds the `MIGRATION_ONLY_TABLES`
+(`alembic/env.py`), so a migration that reads one of them (`oiod_0002` reads
+`projects.oi_delivery_date_backfill`) fails `alembic upgrade head` from an older bootstrapped
+database while prod, which ran the creating migration, is fine. The delta therefore upgrades a
+fresh database bootstrapped at the head, as CI does.
+
 ### Release runbook: the `release-sweep` status (machine-checked, owner 4 Nov 2026)
 
 A release with `skip_tests=true` (the default) ships only a sha that carries a `success`
