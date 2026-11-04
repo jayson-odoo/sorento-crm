@@ -822,13 +822,13 @@ describe('State sorts on the line State, not the primary row state', () => {
       foldInquiryLines([
         { ...base, id: 'a', core_line_id: 'cl-1', line_no: 1, ack_state: 'changed' },
         { ...base, id: 'b', core_line_id: 'cl-2', line_no: 2, line_cancelled: true },
+        // OI-RESERVE-USED-ROW: a used-only line is not rendered, so no nothing_to_buy here.
         { ...base, id: 'c', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true, ack_state: 'acknowledged' },
       ] as OrderInquiryWorklistRow[]),
     );
     expect(lineRows.map((row, index) => stateColumn!.accessorFn!(row, index))).toEqual([
       'to_confirm',
       'line_cancelled',
-      'nothing_to_buy',
     ]);
   });
 });
@@ -1038,9 +1038,10 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
     expect(screen.getByText('Line cancelled')).toBeInTheDocument();
   });
 
-  it('a line with only used rows keeps Nothing to buy', () => {
-    render(<>{stateCell(linesRow({ id: 's8', core_line_id: 'cl-s8', redirected_to_pool: true }))}</>);
-    expect(screen.getByText('Nothing to buy')).toBeInTheDocument();
+  it('a line with only used rows is not a line (OI-RESERVE-USED-ROW, owner 4 Nov)', () => {
+    expect(
+      foldInquiryLines([{ id: 's8', core_line_id: 'cl-s8', redirected_to_pool: true } as OrderInquiryWorklistRow]),
+    ).toEqual([]);
   });
 
   it('a row with a PO link and a reserve link shows both chips in the PO cell', () => {

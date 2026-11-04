@@ -94,6 +94,8 @@ export interface SnapshotOiRow {
   state: string;
   now_state?: string | null;
   reserve_state?: SnapshotReserveState | null;
+  /** OI-RESERVE-USED-ROW: the latest request's qty, or what CS reserved when reserved. */
+  reserve_qty?: number | null;
   remaining?: number | null;
   requestable?: boolean;
   after_snapshot?: boolean;

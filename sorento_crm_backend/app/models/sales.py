@@ -433,7 +433,9 @@ class SalesTarget(CompanyScopedMixin, Base):
             name="ck_sales_targets_replaced_by_dealer",
         ),
         CheckConstraint("metric IN ('amount', 'quantity')", name="ck_sales_targets_metric"),
-        CheckConstraint("basis IN ('ordered', 'delivered')", name="ck_sales_targets_basis"),
+        CheckConstraint(
+            "basis IN ('ordered', 'delivered', 'invoiced')", name="ck_sales_targets_basis"
+        ),
         CheckConstraint(
             "product_scope IN ('all', 'categories', 'products', 'brands')",
             name="ck_sales_targets_product_scope",

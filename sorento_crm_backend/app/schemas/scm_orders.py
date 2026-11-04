@@ -641,6 +641,25 @@ class PurchaseOrderLine(BaseModel):
     #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`), so a
     #: placement on it reads "PO cancelled". Filled with `spos` (detail and update routes).
     dead_reason: Optional[Literal["po_cancelled"]] = None
+    #: PO-LINK-HISTORY: the line's latest S/O link event, for the S/O cell's popover.
+    #: `None` when no change was ever recorded. Detail and update routes only.
+    book_so_link: Optional["PoLineBookSoLink"] = None
+
+
+class PoLineBookSoLink(BaseModel):
+    """When the AutoCount sync last moved this line's S/O link (`po_link_history`)."""
+
+    #: When it was recorded. On an `estimated` row: the upper bound, "on or before".
+    changed_at: str
+    #: True for the backfill's "first seen" row (history began after the link).
+    estimated: bool = False
+    #: Whether the line named an S/O before this change; `None` when unknown (`estimated`).
+    previous_linked: Optional[bool] = None
+    #: That previous S/O's number, when this CRM holds it.
+    previous_so_number: Optional[str] = None
+
+
+PurchaseOrderLine.model_rebuild()
 
 
 class PurchaseOrderSpoLanding(BaseModel):
@@ -698,6 +717,11 @@ class PurchaseOrderPlacement(BaseModel):
     #: the demand is at BRW-BB. That difference IS the split instruction for AutoCount,
     #: which is why it is a mark on the row rather than a filter that hides it.
     location_differs: bool = False
+    #: PO-LINK-HISTORY: when the order-inquiry link was made, by whom (the user's name), and
+    #: whether the cascade made it (`auto`) rather than a person. `inquiry` rows only.
+    linked_at: Optional[str] = None
+    linked_by_name: Optional[str] = None
+    auto: Optional[bool] = None
 
 
 class PurchaseOrderDedication(BaseModel):
