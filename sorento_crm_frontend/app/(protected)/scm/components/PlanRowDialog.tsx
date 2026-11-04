@@ -283,7 +283,7 @@ export function DrillTable<TRow extends object>({
   );
 }
 
-const MONTHS = [
+const MONTHS = [ // date-format-ok: month bucket labels (Apr 26), not a calendar date
   'Jan',
   'Feb',
   'Mar',
