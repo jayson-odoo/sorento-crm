@@ -876,6 +876,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     disabled={!draft.kind || !!preset?.subjectId}
                     wrapOptions
                   />
+                ) : isDealer && !(target?.accounts ?? []).length ? (
+                  <span className="text-muted-foreground">-</span>
                 ) : isDealer ? (
                   // Read mode shows the same accounts Edit does: code and name, one per line.
                   <ul aria-label="Accounts" className="flex flex-col gap-0.5">

@@ -15,8 +15,11 @@ offers only Ordered and Delivered.
 - One shared sales service (27 Oct): the Invoiced achievement reads `invoiced_sales.posted()`,
   `signed_amount()`, `signed_line_amount()`, `signed_line_quantity()`, `agent_id()`. No second
   definition of a sale.
-- "Invoiced" is the first choice (chatbot basis ruling); new targets default to Invoiced, saved
-  targets keep their basis.
+- "Invoiced" is the first choice (chatbot basis ruling); the target screen preselects Invoiced for
+  a new target, saved targets keep their basis. The API and column defaults stay `ordered`, so
+  the dealer import and API callers keep their behaviour.
+- No extra permission (owner, 4 Nov, crew-ask answer (a)): whoever may view a target sees its
+  achievement on any basis; the target's own scope rules apply unchanged (tested).
 
 ## Build
 
@@ -32,7 +35,11 @@ offers only Ordered and Delivered.
    Amount, scoped: signed line net x rate over the in-scope lines. Quantity: signed line quantity
    (a credit note line's quantity counts negative, so a returned unit nets out in the CN's period).
 3. Every reader of `basis` handles `invoiced` (listed in the PR).
-4. FE: basis select offers Invoiced first; Counts label "Invoiced".
+4. FE: basis select offers Invoiced first; Counts label "Invoiced". A dealer's Invoiced figure is
+   never marked "provisional, incl. tax" (record Periods and Accounts tabs, list column, chatbot
+   line); a mixed dealers list marks each provisional figure with `*`.
+5. Owner add-on (4 Nov): read-only Details of a dealer target shows the Accounts field (code -
+   name, one per line) as Edit does, never "Dealer: <name>". Dates stay with DATE-FORMAT-UNIFY.
 
 ## Tests (red first)
 

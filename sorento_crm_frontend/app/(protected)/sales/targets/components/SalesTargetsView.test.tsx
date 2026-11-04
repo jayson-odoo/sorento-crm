@@ -294,5 +294,25 @@ describe('SalesTargetsView', () => {
     expect(headers.join(' ')).not.toMatch(/provisional/);
     expect(screen.getByText('Invoiced')).toBeTruthy();
   });
+
+  it('a mixed Dealers list marks only the provisional figures (TARGET-INVOICED)', () => {
+    perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
+    const dealer = {
+      sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
+      subject_kind: 'dealer', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
+      account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+    };
+    withRows([
+      row({ ...dealer, target_id: 'ti', target_no: 'TGT-000301', name: 'Invoiced one', basis: 'invoiced', achieved_value: 1234 }),
+      row({ ...dealer, target_id: 'to', target_no: 'TGT-000302', name: 'Ordered one', basis: 'ordered', achieved_value: 5678 }),
+    ]);
+    render(<SalesTargetsView />);
+    openTab('Dealers');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toContain('Achieved (* provisional, incl. tax)');
+    expect(screen.getByText('5,678 *')).toBeTruthy();
+    expect(screen.getByText('1,234')).toBeTruthy();
+    expect(screen.queryByText('1,234 *')).toBeNull();
+  });
 });
 

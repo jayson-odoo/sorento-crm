@@ -155,16 +155,38 @@ def test_dealer_invoiced_split_per_account(db):
 
 
 def test_agent_invoiced_counts_the_sales_agent_and_label_siblings(db):
-    me = agent(db)
+    label = f"ZZT person {uuid.uuid4().hex[:6]}"
+    me, sibling = agent(db), agent(db)
+    me.person_label = sibling.person_label = label
     stranger = agent(db)
+    db.flush()
     c = cust(db)
     doc(db, "invoice", "300.00", date(2026, 2, 10), customer=c, agent_row=me)
     doc(db, "credit_note", "20.00", date(2026, 2, 11), customer=c, agent_row=me)
     doc(db, "invoice", "50.00", date(2026, 2, 12), customer=c, agent_row=me, status="cancelled")
+    doc(db, "invoice", "45.50", date(2026, 3, 3), customer=c, agent_row=sibling)
     doc(db, "invoice", "999.00", date(2026, 2, 12), customer=c, agent_row=stranger)
     target = _target(db, "agent", agent_row=me)
 
-    assert _achieved(db, target) == [(Q1[0], D("280.00")), (Q2[0], D("0"))]
+    assert _achieved(db, target) == [(Q1[0], D("325.50")), (Q2[0], D("0"))]
+
+
+def test_agent_invoiced_honours_the_company_agent_source(db):
+    """`companies.sales_agent_source = customer`: the sale is the customer's current agent's,
+    whatever agent the document itself names (`invoiced_sales.agent_id()`, plan 2.2)."""
+    from app.models.company import Company
+
+    owner, on_document = agent(db), agent(db)
+    c = cust(db, agent_row=owner)
+    doc(db, "invoice", "410.00", date(2026, 1, 8), customer=c, agent_row=on_document)
+    company = db.get(Company, DEFAULT_COMPANY_ID)
+    company.sales_agent_source = "customer"
+    db.flush()
+    owners = _target(db, "agent", agent_row=owner)
+    documents = _target(db, "agent", agent_row=on_document)
+
+    assert _achieved(db, owners)[0] == (Q1[0], D("410.00"))
+    assert _achieved(db, documents)[0] == (Q1[0], D("0"))
 
 
 def test_team_invoiced_counts_member_docs_inside_their_stay(db):
@@ -194,6 +216,9 @@ def test_invoiced_quantity_nets_credit_note_quantity(db):
         lines=[line(net="100.00", qty="2", prod=p)])
     doc(db, "invoice", "50.00", date(2026, 1, 6), customer=a1, status="cancelled",
         lines=[line(net="50.00", qty="1", prod=p)])
+    # A charge line with no product (transport, say) is no unit sold.
+    doc(db, "debit_note", "30.00", date(2026, 1, 7), customer=a1,
+        lines=[line(net="30.00", qty="3", description="Transport")])
     target = _target(db, "dealer", accounts=(a1,), metric="quantity")
 
     assert _achieved(db, target)[0] == (Q1[0], D("8"))

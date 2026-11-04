@@ -679,22 +679,32 @@ def _achieved_invoiced(
     ).data(credit_rows)
 
     doc_date = BillingDocument.doc_date
-    # The sale's agent once per document (a correlated CASE over the company's agent source).
-    docs = (
-        select(
+    span = doc_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs))
+    keys_by_kind: Dict[int, Set[str]] = {}
+    for row in credit_rows:
+        keys_by_kind.setdefault(row[1], set()).add(row[2])
+
+    def credited_docs(kind: int):
+        # One select per credit kind, bounded by its keys before anything joins it (the order
+        # side's `credited_lines` shape): kind 1 a dealer's accounts, kind 0 the sale's agent,
+        # the company's agent source applied once per document by `invoiced_sales.agent_id()`.
+        key = BillingDocument.customer_id if kind == 1 else invoiced_sales.agent_id()
+        return select(
             BillingDocument.id.label("doc_id"),
             doc_date.label("doc_date"),
             BillingDocument.customer_id.label("customer_id"),
-            invoiced_sales.agent_id().label("agent_id"),
+            key.label("credit_key"),
+            literal(kind, Integer).label("ckind"),
             invoiced_sales.signed_amount().label("amount"),
-        )
-        .where(
+        ).where(
             invoiced_sales.posted(),
             BillingDocument.company_id == company_id,
-            doc_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs)),
+            span,
+            key.in_(sorted(keys_by_kind[kind])),
         )
-        .cte("inv_docs")
-    )
+
+    parts = [credited_docs(kind) for kind in sorted(keys_by_kind)]
+    docs = (parts[0] if len(parts) == 1 else union_all(*parts)).cte("inv_docs")
     docs_credited = (
         select(
             pv.c.period_id, pv.c.target_id, pv.c.metric, pv.c.product_scope,
@@ -705,7 +715,8 @@ def _achieved_invoiced(
         .join(
             cr,
             and_(
-                cr.c.credit_key == case((cr.c.ckind == 1, docs.c.customer_id), else_=docs.c.agent_id),
+                cr.c.ckind == docs.c.ckind,
+                cr.c.credit_key == docs.c.credit_key,
                 docs.c.doc_date.between(cr.c.valid_from, cr.c.valid_to),
             ),
         )
