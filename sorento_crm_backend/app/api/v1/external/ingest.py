@@ -82,6 +82,7 @@ from app.services.document_ingest_service import (
     DocumentIngestService,
     DocumentReadService,
 )
+from app.services.master_ref_resolver import WARN_LINE_PRODUCT_UNRESOLVED
 from app.services.master_ingest_service import (
     ENTITY_SPECS,
     IngestOutcome,
@@ -234,9 +235,11 @@ def _log_record_outcomes(
 ) -> None:
     """One INFO line per FAILED/RETRYABLE record, capped at `MAX_RECORD_LOG_LINES`.
 
-    Never logs a payload field beyond `source_ref` and the record's own
-    `errors` dict - no line bodies, no customer/agent/product names, nothing
-    that was actually sent. Skipped entirely for a dry run: a preview never
+    Never logs a payload field beyond `source_ref`, the record's own
+    `errors` dict and (INGEST-DROP-WARN-CRM) the `line_product_unresolved`
+    warnings naming a dropped line - no line bodies, no customer/agent/product
+    names, nothing else that was actually sent. A landed record that dropped a
+    line is logged too, under the same cap. Skipped entirely for a dry run: a preview never
     happened as far as the operational log is concerned, the same reason the
     batch summary line's own counts are for the real run only in spirit
     (dry-run callers read the response body, not the server log).
@@ -244,7 +247,15 @@ def _log_record_outcomes(
     logged = 0
     suppressed = 0
     for record in result.records:
-        if record.outcome.value not in ("failed", "retryable"):
+        # INGEST-DROP-WARN-CRM: a landed document that DROPPED a line is logged
+        # too, with the warnings naming each dropped line, so the server trail
+        # says which line and why, not only the reply.
+        dropped_line_warnings = [
+            w
+            for w in (getattr(record, "warnings", None) or [])
+            if w.startswith(WARN_LINE_PRODUCT_UNRESOLVED)
+        ]
+        if record.outcome.value not in ("failed", "retryable") and not dropped_line_warnings:
             continue
         if logged >= MAX_RECORD_LOG_LINES:
             suppressed += 1
@@ -255,13 +266,14 @@ def _log_record_outcomes(
         }
         logger.info(
             "ingest.record entity=%s integration=%s company=%s source_ref=%s "
-            "outcome=%s errors=%s",
+            "outcome=%s errors=%s warnings=%s",
             entity,
             integration_name,
             company_id,
             record.source_ref,
             record.outcome.value,
             json.dumps(errors),
+            json.dumps([w[:_ERROR_VALUE_LOG_LIMIT] for w in dropped_line_warnings]),
         )
         logged += 1
     if suppressed:
