@@ -89,7 +89,7 @@ Second replay on the new path (copy on sorento_prod_1020, the e4aa6d43 text save
 ## Architecture
 
 Layer: backend chatbot only. Parser report-ask object (`head/parser.py`, marker path), the parser prompt text (a DB row;
-the edits are recorded in `PROMPT-chatbot-totals-filters-1b576855.md`), and `report_ask.from_object`
+the edits are recorded in `PROMPT-chatbot-totals-filters-dc77a7ac.md`), and `report_ask.from_object`
 (`lanes/business/report_ask.py:3273-3407`). No FE, no migration, no old-path code (PR B deletes it).
 
 - M1 ask frame. The report-ask object gets `frame`: `total` | `breakdown` | `ranking` | null. `from_object` acts on it:
