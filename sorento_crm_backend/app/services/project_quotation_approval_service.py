@@ -342,6 +342,51 @@ def _user(db: Session, user_id: Optional[str]):
     return db.query(User).filter(User.id == str(user_id)).first()
 
 
+_NO_VIEW = "no_view"
+
+
+def _skip_reason(
+    db: Session,
+    user_id: Optional[str],
+    *,
+    requester_id: Optional[str],
+    company_id: Optional[str],
+) -> Optional[str]:
+    """Why routing passes over ``user_id``, or None when they can take the request.
+
+    Eligible means: active, a person, holds the grant AND the project view, and may work in the
+    quotation's company (the company rule ``project_notify_service.approver_user_ids``
+    applies): an approver who cannot open the project cannot decide it. ``_NO_VIEW`` is told
+    apart from the other reasons so the refusal can name the grant an admin has to add.
+    """
+    from app.models.company import UserCompany
+    from app.models.user import UserStatus
+    from app.services.user_service import UserPermissionService
+
+    user = _user(db, user_id)
+    if user is None:
+        return "missing"
+    if str(user.id) == str(requester_id or ""):
+        return "requester"
+    if user.status != UserStatus.ACTIVE.value or user.is_trashed or user.is_integration:
+        return "inactive"
+    if company_id and (
+        db.query(UserCompany.id)
+        .filter(UserCompany.user_id == user.id, UserCompany.company_id == str(company_id))
+        .first()
+        is None
+    ):
+        return "company"
+    slugs = UserPermissionService(db).get_user_permission_slugs(user.id)
+    if APPROVE_PERMISSION not in slugs:
+        return "no_grant"
+    # Crew B1 (3 Nov): holding the grant is not enough, the approver must be able to OPEN the
+    # quotation, which needs the full project view (`view_own` reaches only their own projects).
+    if VIEW_PERMISSION not in slugs:
+        return _NO_VIEW
+    return None
+
+
 def _eligible(
     db: Session,
     user_id: Optional[str],
@@ -349,29 +394,7 @@ def _eligible(
     requester_id: Optional[str],
     company_id: Optional[str],
 ) -> bool:
-    """Active, a person, holds the grant AND the project view, and may work in the quotation's
-    company (the company rule ``project_notify_service.approver_user_ids`` applies): an approver
-    who cannot open the project cannot decide it."""
-    from app.models.company import UserCompany
-    from app.models.user import UserStatus
-    from app.services.user_service import UserPermissionService
-
-    user = _user(db, user_id)
-    if user is None or str(user.id) == str(requester_id or ""):
-        return False
-    if user.status != UserStatus.ACTIVE.value or user.is_trashed or user.is_integration:
-        return False
-    if company_id and (
-        db.query(UserCompany.id)
-        .filter(UserCompany.user_id == user.id, UserCompany.company_id == str(company_id))
-        .first()
-        is None
-    ):
-        return False
-    slugs = UserPermissionService(db).get_user_permission_slugs(user.id)
-    # Crew B1 (3 Nov): holding the grant is not enough, the approver must be able to OPEN the
-    # quotation, which needs the full project view (`view_own` reaches only their own projects).
-    return APPROVE_PERMISSION in slugs and VIEW_PERMISSION in slugs
+    return _skip_reason(db, user_id, requester_id=requester_id, company_id=company_id) is None
 
 
 def superior_chain(db: Session, user_id: Optional[str]) -> list[str]:
@@ -422,13 +445,10 @@ def default_approver_id(db: Session) -> Optional[str]:
     return _setting(db, "default_quotation_approver_user_id")
 
 
-def route_approver(
-    db: Session,
-    document: ProjectQuotationDocument,
-    *,
-    requester_id: Optional[str],
-) -> Optional[str]:
-    """Who this request goes to (R4). The one resolver, also for the quotation after WON (R8)."""
+def _route_candidates(
+    db: Session, document: ProjectQuotationDocument, *, requester_id: Optional[str]
+) -> list[Optional[str]]:
+    """The R4 starting points, in order; each is walked up its own superior line."""
     project = _project_of(db, document)
     candidates: list[Optional[str]] = []
     if off_series_line_count(db, document):
@@ -445,13 +465,49 @@ def route_approver(
     candidates.append(default_approver_id(db))
     # No per-size tiers (owner 2 Nov ~21:40): the discount ceiling is the series' own max
     # discount, which the minimum price already enforces; every request has ONE approver.
-    for candidate in candidates:
+    return candidates
+
+
+def route_approver(
+    db: Session,
+    document: ProjectQuotationDocument,
+    *,
+    requester_id: Optional[str],
+) -> Optional[str]:
+    """Who this request goes to (R4). The one resolver, also for the quotation after WON (R8)."""
+    for candidate in _route_candidates(db, document, requester_id=requester_id):
         found = _first_eligible_from(
             db, candidate, requester_id=requester_id, company_id=document.company_id
         )
         if found:
             return found
     return None
+
+
+def approvers_without_view(
+    db: Session, document: ProjectQuotationDocument, *, requester_id: Optional[str]
+) -> list[str]:
+    """The names of everyone routing reached but passed over ONLY for lacking project view.
+
+    Read when routing found nobody, so the refusal can say "configured, but cannot open
+    projects" instead of "nobody is set up" (crew, 3 Nov).
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for candidate in _route_candidates(db, document, requester_id=requester_id):
+        if not candidate:
+            continue
+        for user_id in [str(candidate), *superior_chain(db, candidate)]:
+            if user_id in seen:
+                continue
+            seen.add(user_id)
+            reason = _skip_reason(
+                db, user_id, requester_id=requester_id, company_id=document.company_id
+            )
+            if reason == _NO_VIEW:
+                user = _user(db, user_id)
+                names.append((user.name or user.email or "An approver") if user else "An approver")
+    return names
 
 
 def _is_admin(db: Session, user_id: Optional[str]) -> bool:
@@ -732,13 +788,23 @@ def move(
         # refusal leaves the document exactly where it was.
         routed_to = route_approver(db, document, requester_id=actor_user_id)
         if routed_to is None:
-            raise AppException(
-                status_code=422,
-                message=(
+            blind = approvers_without_view(db, document, requester_id=actor_user_id)
+            if blind:
+                who = blind[0] if len(blind) == 1 else ", ".join(blind[:-1]) + " and " + blind[-1]
+                message = (
+                    f"{who} would approve this quotation but cannot open projects. Ask an admin "
+                    "to give them the project view permission (projects.projects.view) in "
+                    "Settings > Roles."
+                )
+            else:
+                message = (
                     "Nobody is set up to approve this quotation. Ask an admin to set your "
                     "superior, this project's discount approver, or the default quotation "
                     "approver in Settings."
-                ),
+                )
+            raise AppException(
+                status_code=422,
+                message=message,
                 code="quotation_approver_not_configured",
             )
     _set_status(db, document, target)

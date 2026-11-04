@@ -898,4 +898,22 @@ def test_nobody_who_can_open_it_means_nobody_is_set_up():
         with pytest.raises(AppException) as refused:
             _ask(db, document, owner, ensure_default=False)
         assert refused.value.detail["code"] == "quotation_approver_not_configured"
+        # Crew queued item (3 Nov): an approver IS configured, they just cannot open projects,
+        # so the refusal names them and the grant they lack instead of "nobody is set up".
+        assert "zzt-qrules Blind" in refused.value.message
+        assert "projects.projects.view" in refused.value.message
+        assert "Nobody is set up" not in refused.value.message
         assert approval.current_key(db, document) is None
+
+
+def test_with_truly_nobody_configured_the_refusal_still_says_nobody_is_set_up():
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        _settings(db).default_quotation_approver_user_id = None
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        with pytest.raises(AppException) as refused:
+            _ask(db, document, owner, ensure_default=False)
+        assert refused.value.detail["code"] == "quotation_approver_not_configured"
+        assert refused.value.message.startswith("Nobody is set up")
+        assert "projects.projects.view" not in refused.value.message
