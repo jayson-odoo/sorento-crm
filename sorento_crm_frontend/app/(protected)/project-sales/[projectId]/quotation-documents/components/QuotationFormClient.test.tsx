@@ -1681,3 +1681,20 @@ describe('QuotationFormClient round 4: Copy columns from on New proposal', () =>
     expect(copy.lines).toEqual([]);
   });
 });
+
+describe('QuotationFormClient: an unsaved line keeps its product code across a section switch', () => {
+  it('New proposal: pick a product, open another section and come back, and the code is still there', async () => {
+    renderForm();
+    const first = await openLines();
+    await addLine(first, 1);
+    await pickProduct(first, 1);
+
+    await addScope('Guard House');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /^Scope 1/ }), { button: 0 });
+    const back = await waitFor(() => scopeCard('Scope 1'));
+
+    const picker = await within(back).findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
+    expect(picker).toHaveTextContent('SRT-BASIN-02');
+    expect(within(back).queryByText('Selected product')).toBeNull();
+  });
+});
