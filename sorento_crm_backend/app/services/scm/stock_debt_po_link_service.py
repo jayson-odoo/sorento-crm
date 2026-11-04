@@ -30,6 +30,7 @@ from app.models.stock_debt_snapshot import StockDebtSnapshotRow
 from app.services.error_handler import AppException, handle_not_found
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.project_supply_service import ProjectSupplyService
+from app.services.scm.demand import demand_qty
 
 logger = logging.getLogger(__name__)
 
@@ -215,10 +216,44 @@ class StockDebtPoLinkService:
                     "po_qty": _num(line.qty_ordered),
                     "free_qty": free,
                     "supplier_name": supplier,
+                    # The AutoCount book the line lives in: only a line of the SO line's own
+                    # book can be linked to it (never shown; the picker greys the others).
+                    "book": _keys(line.source_ref)[0],
                 }
             )
         po_lines.sort(key=lambda l: (l["delivery_date"] is None, l["delivery_date"] or "", l["po_number"], l["po_line_no"] or 0))
-        return {"capabilities": self.capabilities(self._row_company_code(row)), "po_lines": po_lines}
+        so_books = {
+            str(line_id): keys[0]
+            for line_id, ref in self.db.query(SalesOrderLine.id, SalesOrderLine.source_ref)
+            .filter(SalesOrderLine.id.in_(sorted(self._row_line_ids(row))))
+            .all()
+            if (keys := _keys(ref)) is not None
+        }
+        return {
+            "capabilities": self.capabilities(self._row_company_code(row)),
+            "po_lines": po_lines,
+            "so_books": so_books,
+        }
+
+    def _coverage(self, so_line: SalesOrderLine) -> Tuple[Decimal, Decimal, List[str]]:
+        """(outstanding, already linked to POs, those PO numbers) for one SO line, now."""
+        outstanding = (
+            self.db.query(demand_qty())
+            .select_from(SalesOrderLine)
+            .filter(SalesOrderLine.id == so_line.id)
+            .scalar()
+        )
+        rows = (
+            self.db.query(PurchaseOrderLine.qty_ordered, PurchaseOrder.po_number)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(
+                func.btrim(PurchaseOrderLine.from_so_line_ref) == so_line.source_ref.strip(),
+                PurchaseOrderLine.line_status == "open",
+            )
+            .all()
+        )
+        linked = sum((Decimal(str(qty or 0)) for qty, _n in rows), Decimal("0"))
+        return Decimal(str(outstanding or 0)), linked, sorted({n for _q, n in rows})
 
     # ------------------------------------------------------------------ writes
 
@@ -396,12 +431,37 @@ class StockDebtPoLinkService:
         row = self._row(snapshot_id, row_id)
         plan = []
         asked: Dict[str, Decimal] = {}
+        so_asked: Dict[str, Decimal] = {}
+        coverage: Dict[str, Tuple[Decimal, Decimal, List[str]]] = {}
         for item in lines:
             so_line, so = self._so_line(row, item["sales_order_line_id"])
             po_line, po = self._po_line(row, item["po_line_id"])
             if po_line.from_so_line_ref or po_line.from_so_external:
                 raise AppException(status_code=422, message=f"PO {po.po_number} line is already linked.")
+            if _keys(po_line.source_ref)[0] != _keys(so_line.source_ref)[0]:
+                raise AppException(
+                    status_code=422,
+                    message=f"PO {po.po_number} is in a different AutoCount book from {so.so_number}.",
+                )
             qty = Decimal(str(item["qty"]))
+            # Over-link (crew, round 3): what the SO line still needs once the POs already
+            # linked to it, and the earlier lines of this request, are taken off.
+            key = str(so_line.id)
+            if key not in coverage:
+                coverage[key] = self._coverage(so_line)
+            outstanding, linked, po_numbers = coverage[key]
+            so_label = f"{so.so_number} line {so_line.line_no}" if so_line.line_no is not None else so.so_number
+            if linked >= outstanding and linked > 0:
+                raise AppException(
+                    status_code=422,
+                    message=f"{so_label} is already covered by PO {', '.join(po_numbers)}.",
+                )
+            left = outstanding - linked - so_asked.get(key, Decimal("0"))
+            if qty > left:
+                raise AppException(
+                    status_code=422, message=f"{so_label} needs only {left.normalize():f} more."
+                )
+            so_asked[key] = so_asked.get(key, Decimal("0")) + qty
             free = self._free(po_line)
             asked[str(po_line.id)] = asked.get(str(po_line.id), Decimal("0")) + qty
             if qty <= 0 or asked[str(po_line.id)] > free:

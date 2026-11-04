@@ -58,6 +58,8 @@ export interface PoLinkDialogProps {
   allLines: SnapshotLine[];
   capabilities: PoLinkCapabilities;
   poLines: PoLinkOption[];
+  /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
+  soBooks?: Record<string, string>;
   onClose: () => void;
 }
 
@@ -86,10 +88,27 @@ function poOptionLabel(po: PoLinkOption): string {
   return `${po.po_number} · line ${po.po_line_no ?? '-'}${at} · ${po.free_qty.toLocaleString()} free`;
 }
 
-function qtyCap(line: SnapshotLine, po: PoLinkOption | undefined): number {
-  const outstanding = Math.max(0, Math.floor(line.open_qty));
-  return po ? Math.min(outstanding, Math.floor(po.free_qty)) : outstanding;
+/** What the line still needs from a PO: outstanding now, less what POs already cover
+ *  (crew round 3: the same line could be linked twice and over-allocated in AutoCount). */
+export function stillNeeds(line: SnapshotLine): number {
+  const outstanding = Math.floor(line.now?.open_qty ?? line.open_qty);
+  const linked = (line.now?.po_links ?? []).reduce((sum, po) => sum + po.qty, 0);
+  return Math.max(0, outstanding - linked);
 }
+
+/** "Already covered by PO X (10)" for a line POs fully cover, else null. */
+export function coveredText(line: SnapshotLine): string | null {
+  const links = line.now?.po_links ?? [];
+  if (!links.length || stillNeeds(line) > 0) return null;
+  return `Already covered by ${links.map((po) => `PO ${po.po_number} (${po.qty.toLocaleString()})`).join(', ')}`;
+}
+
+function qtyCap(line: SnapshotLine, po: PoLinkOption | undefined): number {
+  const needs = stillNeeds(line);
+  return po ? Math.min(needs, Math.floor(po.free_qty)) : needs;
+}
+
+const OTHER_BOOK = 'In another AutoCount book from this sales order';
 
 const TONE = {
   ok: 'bg-emerald-100 text-emerald-800',
@@ -166,6 +185,7 @@ export function PoLinkDialog({
   allLines,
   capabilities,
   poLines,
+  soBooks,
   onClose,
 }: PoLinkDialogProps) {
   const { link, unlink, relink } = usePoLinkMutations(snapshotId, rowId);
@@ -209,8 +229,25 @@ export function PoLinkDialog({
   const [picked, setPicked] = React.useState<Record<string, string>>({});
   const [qty, setQty] = React.useState<Record<string, string>>({});
   const [target, setTarget] = React.useState<Record<string, string>>({});
+  const selectable = React.useCallback(
+    (row: DialogRow) => mode !== 'link' || coveredText(row.line) === null,
+    [mode],
+  );
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>(() =>
-    Object.fromEntries(rows.map((row) => [row.id, true])),
+    Object.fromEntries(rows.filter(selectable).map((row) => [row.id, true])),
+  );
+  /** The PO choices for one SO line: a PO of another AutoCount book is greyed with why. */
+  const optionsFor = React.useCallback(
+    (line: SnapshotLine): SearchableSelectOption[] => {
+      const book = soBooks?.[line.sales_order_line_id];
+      return poOptions.map((option) => {
+        const po = poById.get(option.value);
+        return book && po?.book && po.book !== book
+          ? { ...option, disabled: true, description: OTHER_BOOK }
+          : option;
+      });
+    },
+    [poOptions, poById, soBooks],
   );
   const [showErrors, setShowErrors] = React.useState(false);
   const [results, setResults] = React.useState<PoLinkResult[] | null>(null);
@@ -255,6 +292,8 @@ export function PoLinkDialog({
     const base: ColumnDef<DialogRow>[] = [
       buildSelectColumn<DialogRow>({
         selectAllRows: true,
+        enableRow: (row) => selectable(row.original),
+        disabledReason: (row) => (selectable(row.original) ? undefined : coveredText(row.original.line) ?? undefined),
         rowLabel: (row) => `Select ${row.original.line.so_number} line ${soLine(row.original.line)}`,
       }),
       {
@@ -304,7 +343,12 @@ export function PoLinkDialog({
           id: 'po',
           header: 'PO',
           size: 240,
-          cell: ({ row }) => (
+          cell: ({ row }) =>
+            coveredText(row.original.line) ? (
+              <span className="block truncate text-sm text-muted-foreground" title={coveredText(row.original.line) ?? undefined}>
+                {coveredText(row.original.line)}
+              </span>
+            ) : (
             <>
               <Label htmlFor={`po-link-po-${row.original.id}`} className="sr-only">
                 PO
@@ -317,7 +361,7 @@ export function PoLinkDialog({
                 clearable
                 truncateTriggerLabel
                 onChange={(value) => setPicked((prev) => ({ ...prev, [row.original.id]: value }))}
-                options={poOptions}
+                options={optionsFor(row.original.line)}
               />
             </>
           ),
@@ -424,14 +468,14 @@ export function PoLinkDialog({
       },
     ];
     // Cells read live values through `stateRef` (the RequestReserveDialog G6 lesson).
-  }, [mode, poOptions, poById, targetOptions]);
+  }, [mode, poById, targetOptions, optionsFor, selectable]);
 
   const table = useReactTable({
     columns,
     data: rows,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
-    enableRowSelection: true,
+    enableRowSelection: (row) => selectable(row.original),
     state: { rowSelection },
     onRowSelectionChange: setRowSelection,
     columnResizeMode: 'onChange',

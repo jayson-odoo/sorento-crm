@@ -574,3 +574,57 @@ def test_po_lines_are_numbered_as_autocount_numbers_them(scm_app, fake_ss):
     (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
     assert [p["po_line_no"] for p in line["now"]["po_links"]] == [7]
 
+
+
+# --------------------------------------------------------------------------- crew pass round 3
+
+
+def test_a_line_fully_covered_by_a_po_cannot_be_linked_again(scm_app, fake_ss):
+    """Over-link (crew, round 3): SO line covered 120/120 by a PO; a second link is refused
+    with a plain reason and never reaches AutoCount."""
+    w = _world(scm_app, fake_ss)
+    po2, covering = _po_line(w["db"], w["product"], w["hq"], qty=120, so_ref=w["so_line"].source_ref,
+                             doc_key=12100, dtl_key=12101)
+    resp = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 10},
+    ]})
+    assert resp.status_code == 422
+    assert f"already covered by PO {po2.po_number}" in resp.text
+    assert fake_ss.bodies("/api/v1/autocount/po-links") == []
+
+
+def test_a_partly_covered_line_takes_only_what_is_left(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    _po_line(w["db"], w["product"], w["hq"], qty=100, so_ref=w["so_line"].source_ref,
+             doc_key=12100, dtl_key=12101)
+    over = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 21},
+    ]})
+    assert over.status_code == 422
+    assert "20 more" in over.text
+    fake_ss.answers["/api/v1/autocount/po-links"] = _done_split
+    ok = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 20},
+    ]})
+    assert ok.status_code == 200, ok.text
+    assert fake_ss.bodies("/api/v1/autocount/po-links")[0]["qty"] == 20
+
+
+def test_a_po_in_another_autocount_book_cannot_be_linked(scm_app, fake_ss):
+    """A PO pulled from another AutoCount book (a live book next to db3) cannot be linked to a
+    sales order line of this book: refused before AutoCount, and the options say which book."""
+    w = _world(scm_app, fake_ss)
+    _po, other = _po_line(w["db"], w["product"], w["hq"], qty=50, doc_key=500, dtl_key=501)
+    other.source_ref = "LIVE_SRT:500:501"
+    w["db"].flush()
+    resp = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": other.id, "qty": 5},
+    ]})
+    assert resp.status_code == 422
+    assert "different AutoCount book" in resp.text
+    assert fake_ss.bodies("/api/v1/autocount/po-links") == []
+
+    body = w["c"].get(_url(w)).json()
+    books = {l["po_line_id"]: l["book"] for l in body["po_lines"]}
+    assert books[other.id] == "LIVE_SRT" and books[w["po_line"].id] == DB
+    assert body["so_books"][w["so_line"].id] == DB

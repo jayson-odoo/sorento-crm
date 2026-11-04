@@ -190,11 +190,15 @@ class PoLinkOption(BaseModel):
     po_qty: float
     free_qty: float
     supplier_name: Optional[str] = None
+    #: The AutoCount book (database) the PO line lives in.
+    book: Optional[str] = None
 
 
 class PoLinkOptions(BaseModel):
     capabilities: PoLinkCapabilities
     po_lines: List[PoLinkOption]
+    #: sales_order_line_id -> its AutoCount book: a PO line links only within its own book.
+    so_books: Dict[str, str] = {}
 
 
 class PoLinkLineIn(BaseModel):

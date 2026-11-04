@@ -31,7 +31,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     id?: string;
     value?: string;
     onChange: (value: string) => void;
-    options?: { value: string; label: string }[];
+    options?: { value: string; label: string; disabled?: boolean; description?: string }[];
     placeholder?: string;
     truncateTriggerLabel?: boolean;
   }) => (
@@ -43,7 +43,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     >
       <option value="">{props.placeholder ?? ''}</option>
       {(props.options ?? []).map((option) => (
-        <option key={option.value} value={option.value}>
+        <option key={option.value} value={option.value} disabled={option.disabled} title={option.description}>
           {option.label}
         </option>
       ))}
@@ -83,10 +83,17 @@ const PO_LINES: PoLinkOption[] = [
   {
     po_line_id: 'po-3', po_number: '202609-S0029', po_line_no: 3, location_code: 'HQ',
     delivery_date: '2026-11-12', po_qty: 500, free_qty: 380, supplier_name: 'Supplier A',
+    book: 'DB3',
   },
   {
     po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, location_code: 'MWH-BB',
     delivery_date: '2026-11-20', po_qty: 120, free_qty: 120, supplier_name: 'Supplier A',
+    book: 'DB3',
+  },
+  {
+    po_line_id: 'po-live', po_number: '202609-S0064', po_line_no: 2, location_code: 'HQ',
+    delivery_date: '2026-11-25', po_qty: 300, free_qty: 300, supplier_name: 'Supplier B',
+    book: 'LIVE',
   },
 ];
 
@@ -121,6 +128,7 @@ function renderDialog(lines = [soLine({})]) {
         allLines={lines}
         capabilities={CAPS}
         poLines={PO_LINES}
+        soBooks={{ 'sol-1': 'DB3', 'sol-2': 'DB3', 'sol-c': 'DB3', 'sol-p': 'DB3' }}
         onClose={onClose}
       />
     </QueryClientProvider>,
@@ -155,6 +163,46 @@ describe('Link to PO popup', () => {
     const { dialog } = renderDialog();
     const options = [...(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement).options];
     expect(options.map((o) => o.textContent)).toContain('202609-S0029 · line 3 · HQ · 380 free');
+  });
+
+  it('a line already covered by a PO is greyed "Already covered by PO …" and cannot be ticked', () => {
+    const covered = soLine({
+      sales_order_line_id: 'sol-c', open_qty: 10,
+      now: {
+        so_status: 'open', open_qty: 10,
+        po_links: [{ po_line_id: 'x', po_number: 'FXT-1104d-1', po_line_no: 3, qty: 10, location_code: 'BRW-AM' }],
+      },
+    });
+    const { dialog } = renderDialog([covered]);
+    expect(dialog).toHaveTextContent('Already covered by PO FXT-1104d-1 (10)');
+    const box = within(dialog).getByRole('checkbox', { name: /select so425045 line 140/i });
+    expect(box).not.toBeChecked();
+    expect(box).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Link 0 lines' })).toBeDisabled();
+  });
+
+  it('a partly covered line defaults Qty to what is left (outstanding minus linked)', () => {
+    const partly = soLine({
+      sales_order_line_id: 'sol-p', open_qty: 120,
+      now: {
+        so_status: 'open', open_qty: 120,
+        po_links: [{ po_line_id: 'x', po_number: 'FXT-1104d-1', po_line_no: 3, qty: 100, location_code: 'HQ' }],
+      },
+    });
+    const { dialog } = renderDialog([partly]);
+    fireEvent.change(dialog.querySelector('#po-link-po-sol-p') as HTMLSelectElement, {
+      target: { value: 'po-3' },
+    });
+    expect((dialog.querySelector('#po-link-qty-sol-p') as HTMLInputElement).value).toBe('20');
+  });
+
+  it('a PO in another AutoCount book is greyed with the reason', () => {
+    const { dialog } = renderDialog();
+    const live = [...(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement).options].find(
+      (o) => o.value === 'po-live',
+    ) as HTMLOptionElement;
+    expect(live.disabled).toBe(true);
+    expect(live.title).toContain('In another AutoCount book');
   });
 
   it('picking a PO shows its PO qty and Free, and Qty defaults to the outstanding', () => {
@@ -221,7 +269,7 @@ describe('Link to PO popup', () => {
   });
 
   it('two lines on one PO line cannot take more than it has free', async () => {
-    const lines = [soLine({}), soLine({ sales_order_line_id: 'sol-2', so_number: 'SO425046', line_no: 3, open_qty: 300 })];
+    const lines = [soLine({}), soLine({ sales_order_line_id: 'sol-2', so_number: 'SO425046', line_no: 3, open_qty: 300, now: { so_status: 'open', open_qty: 300, po_links: [] } })];
     const { dialog } = renderDialog(lines);
     for (const id of ['sol-1', 'sol-2']) {
       fireEvent.change(dialog.querySelector(`#po-link-po-${id}`) as HTMLSelectElement, {

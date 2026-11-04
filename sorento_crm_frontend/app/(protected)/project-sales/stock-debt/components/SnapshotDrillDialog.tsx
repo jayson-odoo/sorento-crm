@@ -38,7 +38,7 @@ import type {
 } from '../types/stockDebtSnapshot.types';
 import { decisionText } from './SnapshotDecisionPopover';
 import { SnapshotDecideControl, type DecideItem } from './SnapshotDecideControl';
-import { PoLinkDialog } from './PoLinkDialog';
+import { PoLinkDialog, coveredText } from './PoLinkDialog';
 
 const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 /** AC-LINK-CRM-UI: link / unlink / move a PO line through AutoCount. */
@@ -280,6 +280,11 @@ function OiGroupGrid({
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
     capabilities: options.data?.capabilities ?? null,
     loading: options.isFetching,
+    // Crew round 3: every ticked line already covered by POs -> Link greyed, naming them.
+    coveredBy:
+      tickedLines.length > 0 && tickedLines.every((line) => coveredText(line) !== null)
+        ? [...new Set(tickedLines.flatMap((line) => (line.now.po_links ?? []).map((po) => po.po_number)))]
+        : null,
   });
   const items: DecideItem[][] = [
     showRequest
@@ -363,6 +368,7 @@ function OiGroupGrid({
           allLines={group.lines}
           capabilities={options.data.capabilities}
           poLines={options.data.po_lines}
+          soBooks={options.data.so_books}
           onClose={() => {
             setPoDialog(null);
             setRowSelection({});

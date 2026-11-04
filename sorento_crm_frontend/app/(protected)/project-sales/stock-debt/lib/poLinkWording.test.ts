@@ -108,6 +108,13 @@ describe('poLinkMenu', () => {
     expect(menu.unlink).toEqual({ enabled: false, reason: 'No PO linked to the ticked lines' });
   });
 
+  it('every ticked line already covered: Link greyed "Already covered by PO …"', () => {
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, capabilities: CAPS, loading: false, coveredBy: ['FXT-1104d-1'],
+    });
+    expect(menu.link).toEqual({ enabled: false, reason: 'Already covered by PO FXT-1104d-1' });
+  });
+
   it('while AutoCount is being asked, items wait', () => {
     const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true });
     expect(menu.link).toEqual({ enabled: false, reason: 'Checking AutoCount…' });

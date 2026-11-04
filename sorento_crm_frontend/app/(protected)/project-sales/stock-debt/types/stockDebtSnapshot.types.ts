@@ -143,11 +143,15 @@ export interface PoLinkOption {
   po_qty: number;
   free_qty: number;
   supplier_name: string | null;
+  /** The AutoCount book the PO line lives in (never shown). */
+  book?: string | null;
 }
 
 export interface PoLinkOptions {
   capabilities: PoLinkCapabilities;
   po_lines: PoLinkOption[];
+  /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
+  so_books?: Record<string, string>;
 }
 
 export type PoLinkOutcome =

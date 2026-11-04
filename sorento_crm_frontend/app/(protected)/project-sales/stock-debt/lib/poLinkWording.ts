@@ -93,6 +93,8 @@ export function poLinkMenu(input: {
   linked: number;
   capabilities: PoLinkCapabilities | null;
   loading: boolean;
+  /** When every ticked line is already fully covered by POs: those PO numbers. */
+  coveredBy?: string[] | null;
 }): { link: MenuItemState; unlink: MenuItemState; relink: MenuItemState } {
   const off = (reason: string): MenuItemState => ({ enabled: false, reason });
   if (input.ticked === 0) {
@@ -109,8 +111,11 @@ export function poLinkMenu(input: {
     if (needsLink && input.linked === 0) return off('No PO linked to the ticked lines');
     return { enabled: true, reason: null };
   };
+  const covered = input.coveredBy?.length
+    ? off(`Already covered by PO ${input.coveredBy.join(', ')}`)
+    : null;
   return {
-    link: from(caps.split_link, false),
+    link: covered ?? from(caps.split_link, false),
     unlink: from(caps.unlink_row, true),
     relink: from(caps.relink_row, true),
   };
