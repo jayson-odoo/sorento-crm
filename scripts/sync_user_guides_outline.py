@@ -74,6 +74,7 @@ PARENT_TITLES = {
     "complaints": "14-Complaints",
     "system-management": "15-System Management",
     "user-management": "16-User Management",
+    "sales": "17-Sales",
 }
 
 # Folders that are intentionally HELD back from Outline publishing. They MUST
