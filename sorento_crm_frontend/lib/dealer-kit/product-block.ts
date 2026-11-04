@@ -31,6 +31,8 @@ import type {
   TagLayerProps,
   TagLayerType,
   TagPartData,
+  TagSlots,
+  SubjectSlot,
   TextLayerProps,
 } from './tag-template-types';
 import {
@@ -85,6 +87,47 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
       return props.subjectPart;
     default:
       return undefined;
+  }
+}
+
+/** The position a layer points at (K1), for the same subject-aware kinds. */
+function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
+  switch (props.kind) {
+    case 'text':
+    case 'product_slot':
+    case 'price_badge':
+    case 'barcode':
+    case 'image':
+      return props.subjectSlot;
+    default:
+      return undefined;
+  }
+}
+
+/** The product at a position, `EMPTY_PART_PRODUCT` for one the line has not filled (AC-A3). */
+function productAtSlot(slot: SubjectSlot, slots: TagSlots): ProductTagData {
+  const part =
+    slot.kind === 'fixed'
+      ? slots.fixed[slot.index]
+      : slot.kind === 'pick'
+        ? slots.groups[slot.group]?.picks[slot.index]
+        : slot.kind === 'upgrade'
+          ? slots.upgrades[slot.index]
+          : undefined;
+  return part ? productFromPart(part) : EMPTY_PART_PRODUCT;
+}
+
+/** "Main product", "Fixed part 2", "<group>, pick 2" / "Choice group 1, pick 2", "Upgrade 1". */
+export function slotLabel(slot: SubjectSlot, slots: TagSlots | null | undefined): string {
+  switch (slot.kind) {
+    case 'main':
+      return 'Main product';
+    case 'fixed':
+      return `Fixed part ${slot.index + 1}`;
+    case 'upgrade':
+      return `Upgrade ${slot.index + 1}`;
+    case 'pick':
+      return `${slots?.groups[slot.group]?.role ?? `Choice group ${slot.group + 1}`}, pick ${slot.index + 1}`;
   }
 }
 
@@ -212,6 +255,17 @@ export function subjectOf(
   data: TagBindingData | null | undefined,
   layer: { props?: TagLayerProps } | undefined,
 ): TagBindingData | null | undefined {
+  // K3: a position wins over `subjectPart`; a binding with no `slots` (older rows) ignores it.
+  const slot = layer?.props ? subjectSlotOf(layer.props) : undefined;
+  if (slot && data) {
+    const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : null;
+    if (slots) {
+      if (slot.kind === 'main') {
+        return data.kind === 'line' ? { kind: 'product', product: productFromLineParent(data.line) } : data;
+      }
+      return { kind: 'product', product: productAtSlot(slot, slots) };
+    }
+  }
   if (!data || data.kind !== 'line') return data;
   const subjectPart = layer?.props ? subjectPartOf(layer.props) : undefined;
   if (subjectPart === undefined) return data;
@@ -1158,7 +1212,10 @@ export function layerDisplayName(layer: TagLayer): string {
 export function layerSubjectSuffix(
   layer: Pick<TagLayer, 'props'>,
   parts: TagPartData[] | undefined,
+  slots?: TagSlots | null,
 ): string {
+  const slot = subjectSlotOf(layer.props);
+  if (slot) return ` - ${slotLabel(slot, slots)}`;
   const subjectPart = subjectPartOf(layer.props);
   if (subjectPart === undefined || subjectPart < 0) return '';
   const part = parts?.[subjectPart];

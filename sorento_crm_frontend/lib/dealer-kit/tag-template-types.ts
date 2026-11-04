@@ -113,6 +113,8 @@ export interface ImageLayerProps {
    *  slots are `image` layers, not `product_slot`), so it needs the same
    *  per-layer subject. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 /**
@@ -140,6 +142,20 @@ export interface LayerPadding {
   left: number;
 }
 
+/** PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line. 0-based. */
+export type SubjectSlot =
+  | { kind: 'main' }
+  | { kind: 'fixed'; index: number }
+  | { kind: 'pick'; group: number; index: number }
+  | { kind: 'upgrade'; index: number };
+
+/** K2: where each product of a tag sits. */
+export interface TagSlots {
+  fixed: TagPartData[];
+  groups: { role: string; size: number; picks: TagPartData[] }[];
+  upgrades: TagPartData[];
+}
+
 export interface TextLayerProps {
   kind: 'text';
   text: string;
@@ -165,6 +181,8 @@ export interface TextLayerProps {
    *  the parent, matching every document saved before this field existed
    *  (AC-S4-4). See `subjectOf` in `product-block.ts`. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 export interface ShapeLayerProps {
@@ -187,6 +205,8 @@ export interface ProductSlotLayerProps {
   fieldKey: string;
   /** D7 - see `TextLayerProps.subjectPart`. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 export interface BadgeLayerProps {
@@ -276,6 +296,8 @@ export interface PriceBadgeLayerProps {
    * `product-block.ts`.
    */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 /**
@@ -291,6 +313,8 @@ export interface BarcodeLayerProps {
   show_code: boolean;
   /** D7 - see `TextLayerProps.subjectPart`. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 export interface GroupLayerProps {
@@ -607,6 +631,8 @@ export interface ProductTagData {
   currency?: string;
   /** The combo being previewed in the template editor (PRICETAG-COMBO AC-5.3). */
   combo?: TagCombo | null;
+  /** Positions of the previewed combo (PRICETAG-COMBO-RENDER K2). */
+  slots?: TagSlots | null;
   /** PS-SPEC-SHEET: brand name and technical drawing, when the source carries them. */
   brand?: string;
   drawing?: TagImage | null;
@@ -795,6 +821,8 @@ export interface LineTagData {
   price_tag_description?: string | null;
   /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
   combo?: TagCombo | null;
+  /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
+  slots?: TagSlots | null;
   /** PS-SPEC-SHEET: present only on a spec sheet page's row. */
   brand?: string;
   drawing?: TagImage | null;

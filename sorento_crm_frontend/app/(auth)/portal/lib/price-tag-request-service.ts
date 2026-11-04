@@ -361,6 +361,8 @@ export interface ComboPartOption {
   is_upgrade?: boolean;
   /** An upgrade's top-up, when set. */
   topup_amount?: number | null;
+  /** The part product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */
