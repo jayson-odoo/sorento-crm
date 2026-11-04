@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price tag LP/SP</title>
+<!--
+  PRICETAG-LPSP mock (CARD-pricetag-lpsp-04nov.md, recommendations Q1 a, Q2 a, Q3 a, Q4 a, Q5 a). Static, no data
+  fetch. Real case: the owner's 4 Nov paste (dealer outlet name replaced; codes and prices kept).
+
+  Element -> component map (reuse first; NEW only where named):
+  A. "Default price" toggle (was "Price")
+       components/dealer-kit/PriceModeToggle.tsx (label only), in app/(auth)/portal/components/PriceTagRequestForm.tsx
+  B. AI extract dialog, paste a list -> review step
+       components/common/ai-extract/AIExtractDialog.tsx (paste already becomes a .txt upload, :188-215); review table
+       gains LP/SP and Typed price columns; unresolved rows keep the existing did-you-mean suggestion picker
+       BE: app/services/ai_extract/extract_service.py (_build_messages :989, _extract_products :1364),
+           app/services/ai_prompt_registry.py (_ai_extract_price_tag_fallback :1174)
+  C. Line row: LP/SP per line + typed price hints + minimum price pill
+       components/dealer-kit/PriceTagLinesTable.tsx (line row) + components/ui/toggle-group (same as PriceModeToggle)
+       + components/ui/badge for "Below the minimum price RM x" (wording from QuotationLineFlags.tsx:131-147)
+  D. Preview: one thumbnail per line, click to enlarge
+       components/dealer-kit/PriceTagLivePreview.tsx -> per-line tiles; each tile = components/dealer-kit/DesignViewer
+       fed buildRequestSheet() (lib/dealer-kit/request-tags.ts) for that one line; enlarge = DesignViewer's own lightbox
+  E. Template: new slots "Price (LP or SP)" and "Price label"
+       lib/dealer-kit/merge-fields.ts (slot list :88-105), lib/dealer-kit/product-block.ts resolveSlotText (:366)
+  F. Combo modal: "Price tag templates" field (card Q3 a)
+       app/(protected)/master-data-management/products/[id]/components/AddComboModal.tsx (beside the combo's own
+       LP/SP, description) + components/common/SearchableMultiSelect (clearable), same control as the product's
+       ProductTagTemplatesSection; BE link table dealer_kit.combo_tag_template mirrors product_tag_template
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --warn:#b45309; --warnbg:#fffbeb; --sel:#eef4ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --sel:#1b2540; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --sel:#1b2540; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:960px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:4px 10px; font-size:12px; } .seg .on { background:var(--primary); color:#fff; }
+  .seg .off { color:var(--muted); } .seg.dis { opacity:.5; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .code { font-weight:600; } .sub { color:var(--muted); font-size:12px; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; margin-top:4px; }
+  .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.err { background:#fef2f2; color:var(--danger); }
+  textarea { width:100%; min-height:110px; border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--card); color:var(--fg); font:12px/1.4 ui-monospace, monospace; }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px; }
+  .tile { border:1px solid var(--line); border-radius:8px; padding:8px; cursor:zoom-in; }
+  .tag { aspect-ratio: 3 / 2; border:1px solid var(--line); border-radius:4px; padding:6px; display:flex; flex-direction:column; justify-content:space-between; background:#fff; color:#111; }
+  .tag .c { font-weight:700; font-size:11px; } .tag .p { font-size:16px; font-weight:800; } .tag .l { font-size:9px; color:#555; }
+  .tile .cap { font-size:12px; margin-top:6px; display:flex; justify-content:space-between; gap:6px; }
+  .empty { border:1px dashed var(--line); border-radius:4px; aspect-ratio:3/2; display:flex; align-items:center; justify-content:center; text-align:center; font-size:11px; color:var(--muted); padding:6px; }
+  .scroll { overflow-x:auto; }
+  @media (max-width:600px) { .hide-sm { display:none; } th, td { padding:6px 4px; } }
+</style>
+</head>
+<body>
+<h1>Price tag request (changed parts only)</h1>
+<div class="muted">Real case: the owner's 4 Nov paste. Sections A to E map to components in the comment at the top of this file.</div>
+
+<h2>A. Default price</h2>
+<div class="card">
+  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+    <strong>Default price</strong>
+    <span class="seg"><span class="on">List price</span><span class="off">Selling price</span></span>
+  </div>
+  <div class="muted" style="margin-top:6px">Fills new lines. Each line keeps its own choice.</div>
+</div>
+
+<h2>B. AI extract: paste a list, review</h2>
+<div class="card">
+  <textarea readonly>Price tag
+LP
+Srtsh2626 GY
+Srtsh2626 GRY
+SRTSS3240
+Srtw1200 BL
+SP
+Srtbf11850 +srtmcb8083 BL + srtwt6204 MBL      LP rm2155  SP RM1729
+Srtbf11840+srtwt8301 GMB+ srtmcb8083 BL        LP rm2911  SP RM2299  LP rm2149
+Srtwc8066 S UF SP Rm599
+Cabana item under SP (example E4)</textarea>
+  <div class="scroll" style="margin-top:12px">
+  <table>
+    <thead><tr><th>Read as</th><th>Matched</th><th>Price</th><th class="hide-sm">Typed</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Srtsh2626 GY</td><td class="code">SRTSH2626-GY</td><td>LP</td><td class="hide-sm">-</td><td></td></tr>
+      <tr><td>Srtsh2626 GRY</td><td><span class="pill err">Not found</span><div class="sub">Did you mean SRTSH2626-GY?</div></td><td>LP</td><td class="hide-sm">-</td><td><span class="sub">Not added until picked</span></td></tr>
+      <tr><td>SRTSS3240</td><td class="code">SRTSS3240</td><td>LP</td><td class="hide-sm">-</td><td></td></tr>
+      <tr><td>Srtw1200 BL</td><td class="code">SRTW1200-BL</td><td>LP</td><td class="hide-sm">-</td><td></td></tr>
+      <tr><td>Srtbf11850 + srtmcb8083 BL + srtwt6204 MBL</td><td class="code">SRTBF11850<div class="sub">+ SRTMCB8083-BL, SRTWT6204-MBL (one tag)</div></td><td>SP</td><td class="hide-sm">LP 2,155 / SP 1,729</td><td></td></tr>
+      <tr><td>Srtbf11840 + srtwt8301 GMB + srtmcb8083 BL</td><td class="code">SRTBF11840<div class="sub">+ SRTWT8301-GMB, SRTMCB8083-BL (one tag)</div></td><td>SP</td><td class="hide-sm">LP 2,911 / SP 2,299</td><td><span class="sub">Second LP 2,149 not used, kept in remarks</span></td></tr>
+      <tr><td>Srtwc8066 S UF SP Rm599</td><td class="code">SRTWC8066-S-UF</td><td>SP</td><td class="hide-sm">SP 599</td><td></td></tr>
+      <tr><td>Cabana item</td><td class="code">(Cabana code)</td><td>LP</td><td class="hide-sm">-</td><td><span class="sub">No selling price for this brand.</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end"><button class="btn">Cancel</button><button class="btn primary">Add 7 lines</button></div>
+</div>
+
+<h2>C. Lines: LP/SP per line</h2>
+<div class="card scroll">
+  <table>
+    <thead><tr><th>Item</th><th>Price</th><th>Amount</th><th class="hide-sm">Template</th></tr></thead>
+    <tbody>
+      <tr><td><div class="code">SRTSH2626-GY</div><div class="sub">Shower set, gunmetal grey</div></td>
+          <td><span class="seg"><span class="on">LP</span><span class="off">SP</span></span></td><td>RM 1,280</td><td class="hide-sm">Small tag</td></tr>
+      <tr><td><div class="code">SRTBF11850</div><div class="sub">+ SRTMCB8083-BL, SRTWT6204-MBL</div></td>
+          <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
+          <td>RM 1,729<div class="sub">Typed. System SP RM 1,799</div><div class="sub">Typed LP RM 2,155, system LP RM 2,195</div></td><td class="hide-sm">Furniture set A5</td></tr>
+      <tr><td><div class="code">SRTWC8066-S-UF</div><div class="sub">Wall-hung WC</div></td>
+          <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
+          <td>RM 599<div class="sub">Typed. System SP RM 649</div><span class="pill warn">Below the minimum price RM 620</span></td><td class="hide-sm">Small tag</td></tr>
+      <tr><td><div class="code">(Cabana code)</div><div class="sub">Cabana basin</div></td>
+          <td><span class="seg dis"><span class="on">LP</span><span class="off">SP</span></span><div class="sub">No selling price for this brand.</div></td><td>RM 890</td><td class="hide-sm">Small tag</td></tr>
+    </tbody>
+  </table>
+  <div class="muted" style="margin-top:6px">System prices and the minimum price above are placeholders for the mock; the build reads them live.</div>
+</div>
+
+<h2>D. Preview: one tile per item, click to enlarge</h2>
+<div class="card">
+  <div class="tiles">
+    <div class="tile"><div class="tag"><div class="c">SRTSH2626-GY</div><div class="l">LP</div><div class="p">1,280</div></div><div class="cap"><span>SRTSH2626-GY</span><span class="muted">LP</span></div></div>
+    <div class="tile"><div class="tag"><div class="c">SRTBF11850 SET</div><div class="l">SP</div><div class="p">1,729</div></div><div class="cap"><span>SRTBF11850</span><span class="muted">SP</span></div></div>
+    <div class="tile"><div class="tag"><div class="c">SRTWC8066-S-UF</div><div class="l">SP</div><div class="p">599</div></div><div class="cap"><span>SRTWC8066-S-UF</span><span class="muted">SP</span></div></div>
+    <div class="tile"><div class="empty">No tag template yet for SRTW1200-BL.</div><div class="cap"><span>SRTW1200-BL</span><span class="muted">LP</span></div></div>
+  </div>
+  <div class="muted" style="margin-top:8px">Same template ("Small tag") draws LP or SP from the line. The PDF of the whole sheet stays where it is.</div>
+</div>
+
+<h2>F. Combo modal (SRTBF11850 host): templates on the combo</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Field</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td>BF11850 set (blue mirror cabinet)</td></tr>
+      <tr><td>Parts</td><td>SRTMCB8083-BL, SRTWT6204-MBL</td></tr>
+      <tr><td>List price / Selling price</td><td>2,155 / 1,729</td></tr>
+      <tr><td>Description</td><td>Basin cabinet with mirror cabinet and wall tap</td></tr>
+      <tr><td>Price tag templates <span class="sub">new</span></td><td><span class="seg"><span class="on">Furniture set A5</span></span> <span class="sub">Empty = the host product's templates.</span></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>E. Template editor: two new slots</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Slot</th><th>LP line prints</th><th>SP line prints</th></tr></thead>
+    <tbody>
+      <tr><td>Price (LP or SP) <span class="sub">new</span></td><td>1,280</td><td>1,729</td></tr>
+      <tr><td>Price label <span class="sub">new</span></td><td>LP</td><td>SP</td></tr>
+      <tr><td>List price <span class="sub">unchanged</span></td><td>1,280</td><td>2,195</td></tr>
+      <tr><td>Sell price <span class="sub">unchanged</span></td><td>(blank)</td><td>1,729</td></tr>
+    </tbody>
+  </table>
+</div>
+</body>
+</html>
