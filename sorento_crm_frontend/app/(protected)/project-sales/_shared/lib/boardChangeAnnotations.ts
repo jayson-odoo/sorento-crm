@@ -128,25 +128,7 @@ export interface BoardChangeAnnotation {
  * (PLAN-oi-replan-received-links.md AC-RL-01, owner ruling 16 Sep 2026): a
  * bare `1/6 -> 1/3` reads as an advance within the same year when the book actually moved
  * a line from 2026 into 2027, which is exactly what SO314593 did.
- *
- * `SHORT_MONTHS` stays for the sentences `fulfilmentBoard.ts` writes beside the server's own
- * labels ("from 24 Sep", "Buy 134 for 15 Mar"): `Intl`'s en-GB spells September "Sept".
  */
-export const SHORT_MONTHS = [ // date-format-ok: vocabulary shared with server-composed sentences ("from 24 Sep"), kept in step with the backend's labels
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
 export function shortDay(value: string | null | undefined): string {
   if (!value) return '';
   return formatDateInMalaysia(value.slice(0, 10));
