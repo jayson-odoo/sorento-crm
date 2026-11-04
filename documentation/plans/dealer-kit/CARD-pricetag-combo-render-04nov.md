@@ -37,7 +37,7 @@ the dev data request on PR #2172.
 | 11 | Combo info line: full codes joined "+" | PARTLY | `set_members` prints one line per part, `+ CODE name dims` (`tag_data_service.py:724-751`), not `CODE+CODE+CODE`; an open group prints `ROLE: A / B / C`. | |
 | 12 | "RMxxx NETT" combo price | PARTLY | A combo SP prints as a bare figure (`product-block.ts:366-372`); "NETT" can only be static template text, so it also prints on a line whose figure is the sum of parts. Only 2/169 combos carry a SP. | |
 | 13 | Bathroom furniture set (cabinet + mirror cabinet + tap) | PARTLY | Combo-level picture + description works (owner: fine for BF). Price: SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM has SP 2099 only in an expired promotion, so today it prints the sum of parts. Starter template is A5 148 x 210 (`import_product_combos.py:266-281`), not 105 x 148. | |
-| 14 | Combo seeded from flyer | PARTLY | 169 combos on dev, 162 from the 1 Nov flyer import, SRT only, no prices; Cabana hosts never imported; CKS7306+CB1520SS-DIY, KS6645-NL+CB1530SS-BL, SRTWB1419-BL+SRTWT7449 have no combo; SRTKS2432 has a different tap group to the current PDF (crew findings). Flyer reading extracts codes per page, not combos (`app/services/dealer_kit/flyer_reading_service.py`). | |
+| 14 | Combo seeded from flyer | PARTLY | 169 combos on dev, 162 from the 1 Nov flyer import, SRT only, no prices; Cabana hosts never imported; CKS7306+CB1520SS-DIY, KS6645-NL+CB1530SS-BL (system code CB1530SS-BL-DIY), SRTWB1419-BL+SRTWT7449 have no combo; SRTKS2432 has a different tap group to the current PDF (crew findings). Flyer reading extracts codes per page, not combos (`app/services/dealer_kit/flyer_reading_service.py`). | |
 
 Canvas, preview and PDF agree today: text breaks once in `textLayerLines` for both surfaces
 (`lib/dealer-kit/text-layout.ts:1-14`) and the print page resolves through the same
@@ -127,6 +127,16 @@ E6. Bathroom furniture SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM: unchanged layo
   record, AC-S1-5); the picker shows it as "No longer in this combo".
 - A template whose N is larger than the combo's option group is not offered for that combo.
 - The same tap picked twice: refused by the picker.
+- A discontinued tap in a combo's option group (`products.is_discontinued`, `app/models/product.py:354`;
+  for example SRTWT5831-BL, CB890SS): the tap picker lists it disabled with a "Discontinued"
+  badge (the multi-select's existing option `disabled` + `badgeText`), never offered silently and
+  never hidden; a draft that already picked it keeps it and Approve is off with "SRTWT5831-BL is
+  discontinued. Pick another tap or escalate it to marketing." The re-seed report lists every
+  discontinued product a combo still names.
+- Examples and tests use exact system codes only (crew tally 4 Nov: SRTMCB8083-BL, not the
+  PDF's SRTMR8083-BL / SRTMCB80803-BL typos; CB1530SS-BL-DIY, not the discontinued CB1530SS-BL).
+- A set's printed LP is never derived (crew tally: SRTBF11829 set LP 2,715 matches no sum of its
+  component LPs), which is why R5 never sums.
 - Cabana combo on an SP line: typed SP only, as for any Cabana product.
 
 ### Questions
