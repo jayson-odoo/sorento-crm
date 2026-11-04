@@ -468,3 +468,34 @@ def test_statement_cells_never_start_a_formula(api, monkeypatch):
                 assert cell.data_type != "f", (ws.title, cell.coordinate, cell.value)
     summary = _values(wb["Summary"])
     assert any("=1+1 quarterly" in row for row in summary)
+
+
+# --------------------------------------------------------------------------------------- #
+# Invoiced basis (TARGET-INVOICED #2162 merged): the documents are the billing documents
+# --------------------------------------------------------------------------------------- #
+
+
+def test_invoiced_statement_lists_the_billing_documents_adding_up_to_achieved(monkeypatch):
+    """An Invoiced target's documents are its invoices, cash sales, debit notes and credit notes
+    (a credit note negative), each in its own period, adding up to Achieved to the cent."""
+    from app.models.base import set_company_scope
+    from app.services.sales import target_service
+
+    from ._pg_fixture import blank_session
+    from .test_sales_target_invoiced import Q1, _seed_dealer_docs, _target
+
+    with blank_session() as db:
+        set_company_scope(db, None)
+        a1, a2, _other = _seed_dealer_docs(db)
+        target = _target(db, "dealer", accounts=(a1, a2))
+        [statement] = target_service.commission_statements(db, [target], on=TODAY)
+        q1, q2 = statement["periods"]
+        assert q1["achieved_value"] == 1190.75 and q2["achieved_value"] == 425.0
+        for period in (q1, q2):
+            total = sum((Decimal(str(d["amount"])) for d in period["documents"]), Decimal("0"))
+            assert total == Decimal(str(period["achieved_value"])), period["period_start"]
+        assert sorted(d["amount"] for d in q1["documents"]) == [-100.0, 40.25, 250.5, 1000.0]
+        assert all(Q1[0] <= d["doc_date"] <= Q1[1] for d in q1["documents"])
+        codes = {a1.customer_code, a2.customer_code}
+        assert {d["account_code"] for d in q1["documents"]} <= codes
+        assert all(d["doc_no"] for d in q1["documents"])

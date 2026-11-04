@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snapshot drill row</title>
+<style>
+  /* Static mock. Pills mirror STATUS_PILL_BASE + the drill's tones (SnapshotDrillDialog.tsx:51-55). */
+  :root { --bg:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --link:#1d4ed8; --panel:#f9fafb; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0b0f17; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --link:#93c5fd; --panel:#111827; } }
+  :root[data-theme="dark"] { --bg:#0b0f17; --fg:#e5e7eb; --muted:#9ca3af; --line:#1f2937; --link:#93c5fd; --panel:#111827; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  h1 { font-size:16px; margin:0 0 4px; } h2 { font-size:14px; margin:20px 0 6px; color:var(--muted); font-weight:600; }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:100%; min-width:900px; table-layout:fixed; }
+  th, td { border-bottom:1px solid var(--line); padding:8px; text-align:left; vertical-align:top; }
+  th { background:var(--panel); font-weight:600; font-size:12px; }
+  .n { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-flex; align-items:center; gap:4px; border-radius:999px; padding:1px 8px; font-size:12px; font-weight:500; margin:1px 2px 1px 0; white-space:nowrap; }
+  .neutral { background:#f3f4f6; color:#111827; } .amber { background:#fef3c7; color:#92400e; }
+  .green { background:#d1fae5; color:#065f46; } .blue { background:#dbeafe; color:#1e40af; }
+  a { color:var(--link); text-decoration:none; font-weight:500; }
+  .btn { border:0; background:none; color:var(--link); font:inherit; font-weight:500; padding:0; cursor:pointer; }
+  .pop { margin-top:4px; border:1px solid var(--line); border-radius:6px; padding:6px 8px; background:var(--bg); box-shadow:0 4px 12px rgba(0,0,0,.08); font-size:12px; }
+  .note { color:var(--muted); font-size:12px; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<h1>Stock debt snapshot drill: OI-2609-0257, SRTSA830-PJ</h1>
+<p class="note">Static mock. Same DataGrid, same pill and link styles; only the three right-hand cells change.</p>
+
+<h2>Before (today)</h2>
+<div class="wrap"><table>
+  <colgroup><col style="width:90px"><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:260px"><col style="width:70px"><col style="width:80px"><col style="width:260px"></colgroup>
+  <tr><th>SO</th><th>Due</th><th class="n">Ordered</th><th class="n">Outst.</th><th class="n">Assigned</th><th>Covered by</th><th>Status</th><th>OI row</th><th>Now</th></tr>
+  <tr><td>SO396347</td><td>04/05/2027</td><td class="n">33</td><td class="n">33</td><td class="n">33</td>
+    <td>On hand BRW-BB</td><td><span class="pill blue">pinned</span></td>
+    <td><a href="#">55</a>&nbsp; <a href="#">33</a></td>
+    <td><span class="pill neutral">Open 33</span><span class="pill neutral">Raised</span><span class="pill amber">Reserve requested</span><span class="pill neutral">Raised</span></td></tr>
+  <tr><td>SO3xxxxx</td><td>12/01/2027</td><td class="n">47</td><td class="n">0</td><td class="n">0</td>
+    <td>Lent to SO424729 (4) &nbsp;Lent to SO424754 (19) &nbsp;Lent to SO424760 (12) &nbsp;Lent to SO424781 (12)</td><td><span class="pill neutral">order back 47</span></td>
+    <td><a href="#">47</a></td><td><span class="pill neutral">Open 47</span><span class="pill neutral">Placed</span></td></tr>
+</table></div>
+
+<h2>After (proposed)</h2>
+<div class="wrap"><table>
+  <colgroup><col style="width:90px"><col style="width:90px"><col style="width:70px"><col style="width:70px"><col style="width:70px"><col style="width:260px"><col style="width:70px"><col style="width:80px"><col style="width:260px"></colgroup>
+  <tr><th>SO</th><th>Due</th><th class="n">Ordered</th><th class="n">Outst.</th><th class="n">Assigned</th><th>Covered by</th><th>Status</th><th>OI row</th><th>Now</th></tr>
+  <tr><td>SO396347</td><td>04/05/2027</td><td class="n">33</td><td class="n">33</td><td class="n">33</td>
+    <td>On hand BRW-BB</td><td><span class="pill blue">pinned</span></td>
+    <td><a href="#" title="Live row, 33 @ 04/05/2027">33</a></td>
+    <td><span class="pill amber">Reserve requested 33</span></td></tr>
+  <tr><td>SO3xxxxx</td><td>12/01/2027</td><td class="n">47</td><td class="n">0</td><td class="n">0</td>
+    <td><button class="btn" type="button">Lent to 4 SOs (47)</button>
+      <div class="pop"><a href="#">SO424729</a> 4<br><a href="#">SO424754</a> 19<br><a href="#">SO424760</a> 12<br><a href="#">SO424781</a> 12</div>
+      <p class="note">Popover, shown open here; closed by default.</p></td>
+    <td><span class="pill neutral">order back 47</span></td>
+    <td><a href="#">47</a></td><td><span class="pill neutral">Open 47</span></td></tr>
+</table></div>
+
+<h2>"Now": one pill per line, first match wins</h2>
+<p><span class="pill" style="background:#fee2e2;color:#991b1b">SO cancelled</span> &gt;
+<span class="pill green">Reserved 33</span> &gt;
+<span class="pill amber">Reserve requested 33</span> / <span class="pill amber">Reserve parked 33</span> &gt;
+<span class="pill neutral">Open 33</span></p>
+<p class="note">The OI row state (Raised / Placed) leaves this cell; it stays on the OI page. Used and cancelled OI rows never appear in "OI row" or the request tick list. Second row's SO number is illustrative.</p>
+</body>
+</html>

@@ -236,6 +236,10 @@ function TargetsGrid({
     ];
   }, [teamList, rows]);
 
+  // Which dealer figures are the provisional SO-based ones: none, some or all of the rows.
+  const provisionalRows = rows.filter((r) => r.basis !== 'invoiced').length;
+  const provisional: 'none' | 'some' | 'all' =
+    provisionalRows === 0 ? 'none' : provisionalRows === rows.length ? 'all' : 'some';
   const columns = useMemo<ColumnDef<SalesTargetRow>[]>(() => {
     const subjectColumns: ColumnDef<SalesTargetRow>[] =
       tab === 'dealer'
@@ -338,14 +342,31 @@ function TargetsGrid({
         id: 'achieved',
         header: ({ column }) => (
           <DataGridColumnHeader
-            // A dealer's sales are the sales orders' totals until the invoice sync (ruling 1).
-            title={tab === 'dealer' ? 'Achieved (sales orders, incl. tax)' : 'Achieved'}
+            // A dealer's Ordered / Delivered figure is the sales orders' totals (ruling 1); an
+            // Invoiced one is the billing figure itself (TARGET-INVOICED) and is never marked.
+            // All rows provisional: the header says so. Mixed: each provisional figure carries *.
+            title={
+              tab !== 'dealer' || provisional === 'none'
+                ? 'Achieved'
+                : provisional === 'all'
+                  ? 'Achieved (sales orders, incl. tax)'
+                  : 'Achieved (* sales orders, incl. tax)'
+            }
             column={column}
           />
         ),
-        cell: ({ row }) => (
-          <span className="block truncate text-end tabular-nums">{formatFigure(row.original.achieved_value)}</span>
-        ),
+        cell: ({ row }) => {
+          const marked = tab === 'dealer' && provisional === 'some' && row.original.basis !== 'invoiced';
+          return (
+            <span
+              className="block truncate text-end tabular-nums"
+              title={marked ? 'provisional, incl. tax' : undefined}
+            >
+              {formatFigure(row.original.achieved_value)}
+              {marked ? ' *' : ''}
+            </span>
+          );
+        },
         size: tab === 'dealer' ? 130 : 85,
         meta: { headerTitle: 'Achieved', skeleton: <Skeleton className="h-4 w-16" /> },
       },
@@ -385,7 +406,7 @@ function TargetsGrid({
           ]
         : []),
     ];
-  }, [tab]);
+  }, [tab, provisional]);
 
   const table = useReactTable({
     columns,

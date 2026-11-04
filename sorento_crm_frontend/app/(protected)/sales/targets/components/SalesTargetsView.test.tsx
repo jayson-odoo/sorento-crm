@@ -279,6 +279,44 @@ describe('SalesTargetsView', () => {
     expect(screen.getAllByText(/Import from Excel|Point ratio|Actions/).length).toBeGreaterThan(0);
   });
 
+  it('Dealers whose targets all count Invoiced drop the provisional mark (TARGET-INVOICED)', () => {
+    perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
+    withRows([
+      row({
+        target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
+        sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
+        basis: 'invoiced', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
+        account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+      }),
+    ]);
+    render(<SalesTargetsView />);
+    openTab('Dealers');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toContain('Achieved');
+    expect(headers.join(' ')).not.toMatch(/incl\. tax/);
+    expect(screen.getByText('Invoiced')).toBeTruthy();
+  });
+
+  it('a mixed Dealers list marks only the provisional figures (TARGET-INVOICED)', () => {
+    perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
+    const dealer = {
+      sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
+      subject_kind: 'dealer', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
+      account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+    };
+    withRows([
+      row({ ...dealer, target_id: 'ti', target_no: 'TGT-000301', name: 'Invoiced one', basis: 'invoiced', achieved_value: 1234 }),
+      row({ ...dealer, target_id: 'to', target_no: 'TGT-000302', name: 'Ordered one', basis: 'ordered', achieved_value: 5678 }),
+    ]);
+    render(<SalesTargetsView />);
+    openTab('Dealers');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toContain('Achieved (* sales orders, incl. tax)');
+    expect(screen.getByText('5,678 *')).toBeTruthy();
+    expect(screen.getByText('1,234')).toBeTruthy();
+    expect(screen.queryByText('1,234 *')).toBeNull();
+  });
+
   it('ticking targets offers one commission statement for all of them (lane TARGET-COMMISSION-VIEW)', () => {
     statement.mutate.mockReset();
     withRows([row(), row({ target_id: 't2', target_no: 'TGT-000002', name: 'South FY26 H2' })]);

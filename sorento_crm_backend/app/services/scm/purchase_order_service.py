@@ -158,7 +158,8 @@ class PurchaseOrderService:
                   allocations: Optional[list[dict]] = None,
                   spo_plan: Optional[dict] = None,
                   book_so_by_ref: Optional[dict[str, str]],
-                  spos_by_line: Optional[dict[str, list]] = None) -> dict:
+                  spos_by_line: Optional[dict[str, list]] = None,
+                  book_so_links: Optional[dict[str, dict]] = None) -> dict:
         """`book_so_by_ref` is REQUIRED, with no default (review of PR #764, F2/F4). A
         caller that forgot it used to get `book_so_unresolved=True` on every linked line -
         the CRM reading "linked, not held" for orders it actually holds - rather than a
@@ -292,6 +293,8 @@ class PurchaseOrderService:
                 # line reads "PO cancelled" here as on the popup. None on the list, which
                 # does not resolve `spos`.
                 "dead_reason": "po_cancelled" if str(ln.id) in dead_ids else None,
+                # PO-LINK-HISTORY: the latest S/O link event (detail and update routes).
+                "book_so_link": (book_so_links or {}).get(str(ln.id)),
             })
         return {
             "id": po.id,
@@ -529,6 +532,7 @@ class PurchaseOrderService:
         )
         from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
         from app.models.sales_agent import SalesAgent
+        from app.models.user import User
         from app.services.project_order_inquiry_service import (
             project_customer_label,
             project_title_with_note,
@@ -544,6 +548,9 @@ class PurchaseOrderService:
                 OrderInquiryLink.qty,
                 OrderInquiryLink.linked_at,
                 OrderInquiryLink.id,
+                OrderInquiryLink.auto,
+                User.name.label("linked_by_name"),
+                User.email.label("linked_by_email"),
                 OrderInquiryRow.stock_location,
                 OrderInquiry.inquiry_no,
                 ProjectSalesOrder.autocount_doc_no,
@@ -576,6 +583,7 @@ class PurchaseOrderService:
                 == func.coalesce(ProjectParty.customer_id, SalesOrder.customer_id),
             )
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
+            .outerjoin(User, User.id == OrderInquiryLink.linked_by)
             .filter(
                 OrderInquiryLink.po_line_id.in_(list(lines)),
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
@@ -618,6 +626,12 @@ class PurchaseOrderService:
                     needed_at and line_location
                     and needed_at.upper() != line_location.strip().upper()
                 ),
+                # PO-LINK-HISTORY: who linked it and when (name, else email; never the id).
+                "linked_at": row.linked_at.isoformat() if row.linked_at else None,
+                "linked_by_name": (
+                    (row.linked_by_name or "").strip() or row.linked_by_email or None
+                ),
+                "auto": bool(row.auto),
             })
 
         # G7 DEDICATION (captain, 2 Sep 2026). `Free` used to be outstanding less the
@@ -949,6 +963,7 @@ class PurchaseOrderService:
             spo_plan=spo_plan,
             book_so_by_ref=book_so_by_ref,
             spos_by_line=self._spos_for(po),
+            book_so_links=self._book_so_links_for(po),
         )
 
     def list_supplier_options(
@@ -1063,7 +1078,14 @@ class PurchaseOrderService:
             gr_refs.get(po.id),
             book_so_by_ref=self._book_so_for(po.lines),
             spos_by_line=self._spos_for(po),
+            book_so_links=self._book_so_links_for(po),
         )
+
+    def _book_so_links_for(self, po: PurchaseOrder) -> dict[str, dict]:
+        """PO-LINK-HISTORY: by line id, the latest S/O link event, one read for the order."""
+        from app.services.scm import po_link_history
+
+        return po_link_history.latest_by_line(self.db, [str(ln.id) for ln in po.lines])
 
     def _spos_for(self, po: PurchaseOrder) -> dict[str, list]:
         """LINKAGE-UNIFY U4: by line id, the SPO lines each line was transferred onto, one

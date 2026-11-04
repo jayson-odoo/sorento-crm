@@ -44,6 +44,8 @@ statement is a snapshot of that moment.
 
 ## What "Achieved" counts
 
+- **Invoiced**: invoices, cash sales and debit notes, less credit notes, net of tax, each on its
+  own document date. In the statement a credit note is a negative amount.
 - **Ordered**: each sales order's line totals, including tax, on the sales order date.
 - **Delivered**: the delivered share of each line's total, including tax, on the delivery order
   date. A document's amount is the part delivered inside that period.

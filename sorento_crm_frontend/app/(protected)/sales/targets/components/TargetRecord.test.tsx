@@ -4,7 +4,7 @@
  *
  * ONE record view for create, view and edit, no modal: a header card, then line tabs in the
  * order Details, Periods, Agents (a team target only), Commission. Create opens the same view
- * empty with the defaults Amount, Ordered, All products, today to month end, split off. Edit is
+ * empty with the defaults Amount, Invoiced, All products, today to month end, split off. Edit is
  * an item in the gear dropdown. Every pick is the system SearchableSelect or
  * SearchableMultiSelect, and a picked category, product or brand always shows its name.
  */
@@ -247,7 +247,12 @@ describe('TargetRecord: create (F4)', () => {
     expect(screen.getByRole('heading', { name: 'New target' })).toBeTruthy();
     expect(tabNames()).toEqual(['Details', 'Periods', 'Commission']);
     expect((screen.getByLabelText('Measure') as HTMLSelectElement).value).toBe('amount');
-    expect((screen.getByLabelText('Counts') as HTMLSelectElement).value).toBe('ordered');
+    expect((screen.getByLabelText('Counts') as HTMLSelectElement).value).toBe('invoiced');
+    // TARGET-INVOICED: Invoiced leads the basis choices; saved targets keep their own.
+    const counts = screen.getByLabelText('Counts') as HTMLSelectElement;
+    expect(Array.from(counts.options).map((o) => o.textContent)).toEqual([
+      'None', 'Invoiced', 'Ordered', 'Delivered',
+    ]);
     expect((screen.getByLabelText('Applies to') as HTMLSelectElement).value).toBe('all');
     expect((screen.getByLabelText('Start date') as HTMLInputElement).value).toBe('2026-10-20');
     expect((screen.getByLabelText('End date') as HTMLInputElement).value).toBe('2026-10-31');
@@ -267,7 +272,7 @@ describe('TargetRecord: create (F4)', () => {
     await waitFor(() => expect(create.mutateAsync).toHaveBeenCalledTimes(1));
     expect(create.mutateAsync).toHaveBeenCalledWith({
       subject_kind: 'agent', sales_agent_id: 'ali', target_value: 5000, name: 'Ali Oct',
-      metric: 'amount', basis: 'ordered', product_scope: 'all',
+      metric: 'amount', basis: 'invoiced', product_scope: 'all',
       start_date: '2026-10-20', end_date: '2026-10-31',
     });
     await waitFor(() => expect(router.push).toHaveBeenCalledWith('/sales/targets/new1'));
@@ -795,12 +800,40 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
-  it('read mode names the dealer, and Periods says the figures are sales orders incl. tax', () => {
+  it('Periods labels the SO-based figures of an Ordered dealer target marked as sales orders incl. tax', () => {
     hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
-    expect(screen.getByText('Dealer', { selector: 'span' })).toBeTruthy();
     openTab('Periods');
     expect(screen.getByText('Achieved (sales orders, incl. tax)')).toBeTruthy();
+  });
+
+  it('read mode Details shows the same Accounts as Edit: code and name, one per line (owner, 4 Nov)', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    const list = screen.getByRole('list', { name: 'Accounts' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      '300-A0123 - DEALER A SDN BHD',
+      '300-A0124 - DEALER A SDN BHD (III)',
+    ]);
+    // The field is labelled Accounts in read mode too, never "Dealer".
+    expect(screen.queryByText('Dealer', { selector: 'span.text-xs' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(UUID);
+  });
+
+  it('an Invoiced dealer target is the billing figure: never marked provisional (TARGET-INVOICED)', () => {
+    hooks.useSalesTarget.mockReturnValue({
+      data: dealerDetail({ basis: 'invoiced', counts_label: 'Invoiced' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    expect(screen.getByText('Invoiced')).toBeTruthy();
+    openTab('Periods');
+    expect(screen.queryByText(/incl\. tax/)).toBeNull();
+    expect(screen.getByText('Achieved')).toBeTruthy();
+    openTab('Accounts');
+    expect(screen.queryByText(/incl\. tax/)).toBeNull();
+    expect(screen.getByText('Sales (RM)')).toBeTruthy();
   });
 
   it('the Commission tab shows the four settings and a rate column per account', () => {

@@ -1735,6 +1735,8 @@ def list_all_targets(
 def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"
+    if basis == "invoiced":
+        return "Invoiced"
     return "Delivered (by DO date)" if ach.any_do_linked(db, company_id) else "Delivered"
 
 
@@ -1949,7 +1951,8 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
     from the achievement statement itself (`achievement_service.achieved_by_period_and_line`),
     so a period's documents add up to its Achieved to the cent. Ordered and Delivered count
     sales orders: one row per sales order, dated by the order (on Delivered the DO date decides
-    the period, the amount is the part delivered in it)."""
+    the period, the amount is the part delivered in it). Invoiced counts billing documents: one
+    row per invoice, cash sale, debit note or credit note (negative), on its own date."""
     from app.models.order import SalesOrder, SalesOrderLine
 
     on = on or _today()
@@ -1960,16 +1963,26 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
         lines = ach.achieved_by_period_and_line(
             db, _specs(db, target.company_id, [(target, p) for p in periods]), target.company_id
         )
-        sol_ids = {sol_id for by_line in lines.values() for _cust, sol_id in by_line}
-        so_of: Dict[str, SalesOrder] = {}
-        if sol_ids:
+        ids = {line_id for by_line in lines.values() for _cust, line_id in by_line}
+        # Each counted id -> (document key, doc no., date, customer id, code kept as sent).
+        doc_of: Dict[str, tuple] = {}
+        if ids and target.basis == "invoiced":
+            # Invoiced: the id is the billing document itself (TARGET-INVOICED).
+            from app.models.finance import BillingDocument
+
+            for d in db.query(BillingDocument).filter(BillingDocument.id.in_(ids)):
+                doc_of[str(d.id)] = (str(d.id), d.doc_no, d.doc_date, d.customer_id, d.debtor_code)
+        elif ids:
+            # Ordered / Delivered: the id is a sales order line; one row per sales order.
             for sol_id, order in (
                 db.query(SalesOrderLine.id, SalesOrder)
                 .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-                .filter(SalesOrderLine.id.in_(sol_ids))
+                .filter(SalesOrderLine.id.in_(ids))
             ):
-                so_of[str(sol_id)] = order
-        customer_ids = {o.customer_id for o in so_of.values() if o.customer_id}
+                doc_of[str(sol_id)] = (
+                    order.id, order.so_number, order.order_date, order.customer_id, order.debtor_code
+                )
+        customer_ids = {d[3] for d in doc_of.values() if d[3]}
         codes = (
             {c.id: c.customer_code for c in db.query(Customer).filter(Customer.id.in_(customer_ids))}
             if customer_ids
@@ -1977,16 +1990,17 @@ def commission_statements(db: Session, targets: List[SalesTarget], *, on: Option
         )
         for row in detail["periods"]:
             docs: Dict[str, dict] = {}
-            for (_cust, sol_id), amount in lines.get(row["id"], {}).items():
-                order = so_of.get(sol_id)
-                if order is None:
+            for (_cust, line_id), amount in lines.get(row["id"], {}).items():
+                found = doc_of.get(line_id)
+                if found is None:
                     continue
+                key, doc_no, doc_date, customer_id, debtor_code = found
                 doc = docs.setdefault(
-                    order.id,
+                    key,
                     {
-                        "doc_no": order.so_number,
-                        "doc_date": order.order_date,
-                        "account_code": codes.get(order.customer_id) or order.debtor_code or "",
+                        "doc_no": doc_no,
+                        "doc_date": doc_date,
+                        "account_code": codes.get(customer_id) or debtor_code or "",
                         "amount": Decimal("0"),
                     },
                 )
@@ -2375,7 +2389,9 @@ def period_progress(
                 "is_current": is_current,
                 "metric": target.metric,
                 "threshold_unit": unit,
-                "provisional": target.subject_kind == "dealer",
+                # The SO figure stood in for billing (dealer plan Q3): an Invoiced target counts
+                # the billing documents themselves, net of tax, so it is never provisional.
+                "provisional": target.subject_kind == "dealer" and target.basis != "invoiced",
                 "accounts": [{"code": c.customer_code, "label": account_label(c)} for c in dealer_accounts],
                 "target_value": _r2(figure),
                 "target_points": _r2(period.target_value) if unit == "points" else None,

@@ -74,6 +74,7 @@ export const METRIC_LABEL: Record<TargetMetric, string> = {
   quantity: 'Quantity',
 };
 export const BASIS_LABEL: Record<TargetBasis, string> = {
+  invoiced: 'Invoiced',
   ordered: 'Ordered',
   delivered: 'Delivered',
 };

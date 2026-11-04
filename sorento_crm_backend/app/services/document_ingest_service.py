@@ -391,6 +391,9 @@ class DocumentIngestService(MasterRefResolver):
         # into the next one's publish.
         self.ref_moves: list[dict[str, Optional[str]]] = []
         self._pending_ref_moves: list[dict[str, Optional[str]]] = []
+        # PO-LINK-HISTORY: `(line, old_ref, new_ref)` per PO line `_sync_lines` writes;
+        # reset at the top of every `_sync_lines` call (see there).
+        self._link_changes: list[tuple[Any, Optional[str], Optional[str]]] = []
         # sales_orders only: the BEFORE half of the route's plan-exception hook
         # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
         # before the record loop runs (`ingest()` calls
@@ -1555,11 +1558,17 @@ class DocumentIngestService(MasterRefResolver):
         # `flag_rows_for_cancelled_lines`.
         newly_cancelled_so_line_ids: list[str] = []
 
+        # PO-LINK-HISTORY: every PO line whose S/O link this sync writes, as
+        # `(row, old_ref, new_ref)`, from all three write sites (matched below, `_adopt_lines`,
+        # created further down). Turned into audit events once the lines are flushed; the
+        # list is only appended to, the ref comparison happens in `po_link_history`.
+        self._link_changes = []
         unmatched: list[dict[str, Any]] = []
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
             if row is not None:
                 prior_line_status = row.line_status
+                prior_so_ref = getattr(row, "from_so_line_ref", None)
                 values.pop("line_number", None)
                 # D22: a resolved warehouse that DIFFERS from what the row
                 # already carries overwrites it (the AutoCount location wins)
@@ -1625,6 +1634,8 @@ class DocumentIngestService(MasterRefResolver):
                         values["line_status"] = CANCELLED
                 for column, value in values.items():
                     setattr(row, column, value)
+                if spec.entity_type == "purchase_orders":
+                    self._link_changes.append((row, prior_so_ref, row.from_so_line_ref))
                 # AC-REMOVED-KEEP-CANCELLED: AutoCount sends a line it had removed again. The
                 # old sweep would have deleted it and this push recreated it, counted again.
                 if row.removed_unreferenced:
@@ -1656,6 +1667,8 @@ class DocumentIngestService(MasterRefResolver):
             values.pop("line_number", None)
             for column, value in values.items():
                 setattr(row, column, value)
+            if spec.entity_type == "purchase_orders":
+                self._link_changes.append((row, None, row.from_so_line_ref))
             counts["created"] += 1
 
         line_table = spec.line_model.__tablename__
@@ -1710,6 +1723,13 @@ class DocumentIngestService(MasterRefResolver):
         if spec.entity_type == "purchase_orders":
             from app.services.project_order_inquiry_service import (
                 auto_confirm_rows_on_po_lines,
+            )
+            from app.services.scm import po_link_history
+
+            # PO-LINK-HISTORY: inside this record's savepoint, so a failed record (or a dry
+            # run) leaves no event; a re-push that moved no link writes none.
+            po_link_history.record_changes(
+                self.db, self._link_changes, purchase_order_id=str(header.id)
             )
 
             auto_confirm_rows_on_po_lines(
@@ -1858,8 +1878,11 @@ class DocumentIngestService(MasterRefResolver):
                             source="autocount_esb",
                         )
                     )
+            prior_so_ref = getattr(row, "from_so_line_ref", None)
             for column, value in values.items():
                 setattr(row, column, value)
+            if spec.entity_type == "purchase_orders":
+                self._link_changes.append((row, prior_so_ref, row.from_so_line_ref))
             counts["adopted"] += 1
             claimed_lines.add(idx)
             claimed_rows.add(id(row))

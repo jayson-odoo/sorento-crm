@@ -18,6 +18,7 @@ import {
   ListOrdered,
   LoaderCircleIcon,
   PackageCheck,
+  History,
   SquarePen,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +39,9 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import AuditTrail from '@/components/audit/AuditTrail';
+import { useHasPermission } from '@/hooks/usePermissions';
+
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -83,6 +87,10 @@ import type {
 import { codeWithName, distinctName } from '@/lib/product-display';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { useStableColumns } from '@/hooks/useStableColumns';
+
+/** The audit read's gate for a purchase order's history (`audit_logs.py`): the same
+ *  permission that opens this page (crew ruling, 4 Nov). */
+const HISTORY_PERMISSION = 'scm.dashboard.view';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -364,7 +372,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   } = useDebouncedSearch();
   // Kept in the URL, not component state (mirrors `SalesOrderDetail`'s own `tab` param), so a
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
-  const tab = searchParams.get('tab') || 'general';
+  // PO-LINK-HISTORY: the History tab reads the audit log, which answers with the permission
+  // that opens this page (crew ruling, 4 Nov); without it the tab is not offered, and a link
+  // naming it opens General.
+  const canSeeHistory = useHasPermission(HISTORY_PERMISSION);
+  const requestedTab = searchParams.get('tab') || 'general';
+  const tab = requestedTab === 'history' && !canSeeHistory ? 'general' : requestedTab;
   const handleTabChange = useCallback(
     (next: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -1169,6 +1182,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             <PackageCheck />
             <span>Goods receipt</span>
           </TabsTrigger>
+          {canSeeHistory ? (
+            <TabsTrigger value="history">
+              <History />
+              <span>History</span>
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1388,6 +1407,14 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             </div>
           </Card>
         </TabsContent>
+
+        {/* PO-LINK-HISTORY: the order's audit trail. Its lines are audit-skipped, so what
+            reads here is mostly the AutoCount sync's S/O link events for each line. */}
+        {canSeeHistory ? (
+          <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+            <AuditTrail entityType="purchase_orders" entityId={po.id} title="History" />
+          </TabsContent>
+        ) : null}
       </Tabs>
 
       {/* R5: the "Placed" figure's lightbox - one dialog for the whole grid, the shell every
