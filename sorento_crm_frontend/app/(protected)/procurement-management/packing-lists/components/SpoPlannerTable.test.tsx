@@ -1658,7 +1658,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
@@ -1670,7 +1670,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/SO covered · SRTWT7443/)).toBeInTheDocument();
@@ -1680,7 +1680,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const hitRow = within(dialog).getByText('202605-S0060').closest('tr') as HTMLElement;
@@ -1696,7 +1696,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     // Project tab is the default - the bucket-hit project row is there.
@@ -1714,7 +1714,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const search = within(dialog).getByPlaceholderText('Search POs');
@@ -1846,7 +1846,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
 
     // "Sep" not "Sep 2026" - `en-GB` abbreviates September as "Sept", so a regex requiring
     // the space right after "Sep" would miss it (`SpoPlannerTable.test.tsx`'s own precedent).
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28 Sep/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28\/09\/2026/ });
     expect(cell.className).toContain('bg-muted');
     expect(cell.className).not.toContain('bg-primary/10');
     expect(within(cell).getByText('50')).toBeTruthy();
@@ -1857,7 +1857,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     await screen.findByRole('button', { name: /schedule/i });
     fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
 
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ });
     expect(cell.className).toContain('bg-primary/10');
     expect(within(cell).getByText('60')).toBeTruthy();
     expect(within(cell).getByText('+25 on CRM-SPO-2026/08-0005')).toBeTruthy();
@@ -1871,7 +1871,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     fireEvent.click(control);
     fireEvent.click(await screen.findByText('Sales order'));
 
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ });
     expect(cell.className).toContain('bg-primary/10');
     expect(within(cell).getByText('40')).toBeTruthy();
     expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
