@@ -457,7 +457,7 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     expect(within(periods).getByText('Current')).toBeTruthy();
     expect(within(periods).queryAllByRole('button')).toHaveLength(0);
     expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(within(periods).getAllByText('1,000')).toHaveLength(3);
+    expect(within(periods).getAllByText('1,000.00')).toHaveLength(3);
   });
 
   it('Periods in Edit mode takes a figure per period and Save sends every changed one in one request', async () => {
@@ -493,7 +493,7 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     const periods = screen.getByRole('region', { name: 'Periods' });
     expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
-    expect(within(periods).getAllByText('1,000')).toHaveLength(3);
+    expect(within(periods).getAllByText('1,000.00')).toHaveLength(3);
     expect(patchHeader.mutateAsync).not.toHaveBeenCalled();
   });
 
@@ -903,12 +903,15 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     expect(within(q1).getByText('Tier 1')).toBeTruthy();
     expect(within(q1).getByText('6.00%')).toBeTruthy();
     expect(within(q1).getByText('3,681.10')).toBeTruthy();
-    expect(within(q1).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
+    // The cell names the code and account; the full name is its title and in the summary.
+    expect(within(q1).getByText('300-A077 (A/C I)').getAttribute('title')).toBe('300-A077 - A CRAFT IDEA SDN BHD (A/C I)');
+    expect(within(q1).getByText('61,351.64')).toBeTruthy();
     const q3 = screen.getByText('01/07/2026 to 30/09/2026').closest('tr') as HTMLElement;
     expect(within(q3).getByText('None')).toBeTruthy();
     expect(within(q3).getAllByText('-').length).toBeGreaterThan(0);
     const total = screen.getByText('Total').closest('tr') as HTMLElement;
     expect(within(total).getByText('6,918.12')).toBeTruthy();
+    expect(within(total).getByText('240,000.00')).toBeTruthy();
   });
 
   it('Accounts shows every period, its total, the commission and where it pays, not only the current one', () => {

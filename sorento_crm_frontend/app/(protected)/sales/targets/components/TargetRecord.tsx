@@ -603,6 +603,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const figureFromTiers = thresholdUnit !== 'pct';
   const metric = draft?.metric ?? target?.metric ?? 'amount';
   const unit = unitOf(metric);
+  // RM with 2 decimals (owner, 4 Nov); units stay whole numbers or as typed.
+  const figure = metric === 'amount' ? formatMoney : formatFigure;
 
   // Periods the dates make, for the hint and the new target's Periods tab.
   const split = draft ? splitOf(draft) : null;
@@ -1093,11 +1095,11 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                           ) : editing && isTeam ? (
                             formatFigure(teamTotal(p.period_start))
                           ) : (
-                            formatFigure(p.target_value)
+                            figure(p.target_value)
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                          {future ? '-' : formatFigure(p.achieved_value)}
+                          {future ? '-' : figure(p.achieved_value)}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {future ? '-' : formatPct(p.achieved_pct)}
@@ -1124,8 +1126,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                               ) : null}
                             </td>
                             {isDealer ? (
-                              <td className="max-w-[14rem] truncate px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                                {paid ? payoutText(target) : '-'}
+                              <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
+                                {paid ? payoutShort(target) : '-'}
                               </td>
                             ) : null}
                           </>
@@ -1306,6 +1308,12 @@ export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMet
     .join(', ');
 }
 
+/** `300-A077 (A/C I)` for a table cell; the full name sits in the summary and the title. */
+function payoutShort(target: SalesTargetDetail): string {
+  const a = target.payout_account;
+  return a ? `${a.code} (${a.label})` : '-';
+}
+
 /** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */
 function payoutText(target: SalesTargetDetail): string {
   const a = target.payout_account;
@@ -1353,14 +1361,15 @@ function CommissionSummary({ target }: { target: SalesTargetDetail }) {
 /** The Periods table's Total row: every period's figures summed (a period not started yet
  * adds its target and nothing else). */
 function PeriodsTotal({ target, paysTo }: { target: SalesTargetDetail; paysTo: boolean }) {
+  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
   const sum = (pick: (p: SalesTargetDetail['periods'][number]) => number | null | undefined) =>
     target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
   return (
     <tfoot className="border-t bg-muted/40 font-medium">
       <tr>
         <td className="whitespace-nowrap px-3 py-2">Total</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(sum((p) => p.target_value))}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(sum((p) => p.achieved_value))}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.target_value))}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.achieved_value))}</td>
         <td colSpan={target.threshold_unit === 'points' ? 4 : 3} className="px-3 py-2" aria-hidden="true" />
         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(sum(paidIn))}</td>
         {paysTo ? <td className="px-3 py-2" aria-hidden="true" /> : null}
@@ -1916,6 +1925,7 @@ function DealerAccounts({
                       <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                         {formatMoney(sales.get(a.customer_id) ?? 0)}
                       </td>
+                      {commission ? <td colSpan={2} className="px-3 py-2" aria-hidden="true" /> : null}
                     </tr>
                   ))}
                   <tr className="bg-muted/40 font-medium">
@@ -1927,8 +1937,8 @@ function DealerAccounts({
                       <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(paid)}</td>
                     ) : null}
                     {commission ? (
-                      <td className="max-w-[16rem] truncate px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                        {paid ? payoutText(target) : '-'}
+                      <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
+                        {paid ? payoutShort(target) : '-'}
                       </td>
                     ) : null}
                   </tr>
