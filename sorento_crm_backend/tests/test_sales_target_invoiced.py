@@ -256,3 +256,21 @@ def test_database_accepts_invoiced_basis(db):
     target = _target(db, "dealer", accounts=(a1,))
     db.refresh(target)
     assert target.basis == "invoiced"
+
+
+def test_chat_progress_line_counts_invoiced_and_is_not_provisional(db, monkeypatch):
+    """The chatbot's target answer (`period_progress`): an Invoiced dealer target reads the
+    billing figure, final and net of tax, so it is never labelled provisional."""
+    monkeypatch.setattr(target_service, "_today", lambda: date(2026, 2, 15))
+    a1, a2, _ = _seed_dealer_docs(db)
+    invoiced = _target(db, "dealer", accounts=(a1, a2))
+    ordered = _target(db, "dealer", accounts=(a1, a2), basis="ordered")
+
+    lines = target_service.period_progress(
+        db, [invoiced, ordered], date_from=Q1[0], date_to=Q1[1]
+    )
+
+    by_no = {line["target_no"]: line for line in lines}
+    assert by_no[invoiced.target_no]["achieved_value"] == 1190.75
+    assert by_no[invoiced.target_no]["provisional"] is False
+    assert by_no[ordered.target_no]["provisional"] is True
