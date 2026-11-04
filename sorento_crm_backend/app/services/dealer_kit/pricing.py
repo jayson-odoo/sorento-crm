@@ -537,25 +537,23 @@ def line_pricing(
         today = business_today()
         promotion_options = []
         totals_by_promotion: dict[str, tuple[Decimal, list[str]]] = {}
-        # PRICETAG-COMBO-RENDER K8: on a combo line a promotion option is what the tag would
-        # print, the combo's own price or nothing, never a sum of the parts.
-        combo_price = None
+        # PRICETAG-COMBO-RENDER K8: on a combo line the figure an option SHOWS is what the tag
+        # would print, the combo's own price or nothing, never a sum of the parts. The sum is
+        # still read for the line's basis below (whether this promotion beats list at all).
+        combo_figure = None
         if combo_row is not None:
             _combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
-            combo_price = combo_sell if sell_decided else None
+            combo_figure = combo_sell if sell_decided else None
         for promo in covering:
-            if combo_row is not None:
-                total, parts_at_list_for_promo = combo_price, []
-            else:
-                total, parts_at_list_for_promo = _line_total_under(
-                    db, products_by_id, resolved_ids, part_ids, viewer, promo.id
-                )
+            total, parts_at_list_for_promo = _line_total_under(
+                db, products_by_id, resolved_ids, part_ids, viewer, promo.id
+            )
             totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
             promotion_options.append(
                 {
                     "id": promo.id,
                     "description": promo.description or "",
-                    "sell_price": total,
+                    "sell_price": combo_figure if combo_row is not None else total,
                     "expired_on": promotion_expired_on(promo, today),
                 }
             )
@@ -584,7 +582,7 @@ def line_pricing(
             sell_price = _as_decimal(manual)
             sell_price_basis = "manual"
             parts_at_list: list[str] = []
-        elif chosen_total is not None and chosen_total[0] is not None:
+        elif chosen_total is not None:
             sell_price, parts_at_list = chosen_total
             # R11a (security H1): `chosen_total` legitimately equals
             # `list_price` when the only covering promotion prices a

@@ -52,3 +52,29 @@ def test_a_non_dict_layer_or_props_is_skipped_without_a_crash():
 def test_a_non_list_layers_or_doc_is_empty():
     assert template_needs({"layers": "x"}) == {"fixed": 0, "groups": [], "upgrades": 0}
     assert template_needs("x") == {"fixed": 0, "groups": [], "upgrades": 0}
+
+
+def test_the_strict_doc_model_accepts_a_slot_and_refuses_an_out_of_range_one():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.price_tag import TagTemplateDocModel
+
+    def doc(slot):
+        layer = {
+            "id": "a", "type": "text", "x_mm": 0, "y_mm": 0, "width_mm": 5, "height_mm": 5,
+            "rotation_deg": 0, "z_index": 0, "locked": False, "visible": True,
+            "slot_binding": "code", "text_override": None,
+            "props": {
+                "kind": "text", "text": "", "fontFamily": "x", "fontSize": 9, "fontWeight": 400,
+                "color": "#000", "align": "left", "lineHeight": 1.2, "letterSpacing": 0, "subjectSlot": slot,
+            },
+        }
+        return {"layers": [layer], "width_mm": 105, "height_mm": 148}
+
+    TagTemplateDocModel.model_validate(doc({"kind": "pick", "group": 1, "index": 2}))
+    TagTemplateDocModel.model_validate(doc({"kind": "main"}))
+    with pytest.raises(ValidationError):
+        TagTemplateDocModel.model_validate(doc({"kind": "pick", "group": 99, "index": 0}))
+    with pytest.raises(ValidationError):
+        TagTemplateDocModel.model_validate(doc({"kind": "wat"}))

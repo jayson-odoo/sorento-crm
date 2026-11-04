@@ -488,7 +488,7 @@ def test_the_old_fixed_starters_are_gone(db, catalogue, tmp_path):
 def test_starter_layouts_come_from_one_generic_position_function():
     script = _script()
     assert callable(script.position_template)
-    doc = script.position_template("ZZT shape", 1, [3], 1, None)
+    doc = script.position_template("ZZT shape", 1, [3], 1)
     from app.services.dealer_kit.template_needs import template_needs
 
     assert template_needs(doc) == {"fixed": 1, "groups": [3], "upgrades": 1}

@@ -154,6 +154,22 @@ def read_seed(path: str) -> list[dict]:
     return data
 
 
+def invalid_entry(entry) -> Optional[str]:
+    """Why a seed entry cannot be read, or None. Checked with the reader's own `Combo` model (one
+    schema for the seed), against a copy: the entry itself is used as written, `title` standing in
+    for a missing `combo_name` as it always has."""
+    from scripts.flyer_combo_read import Combo, ValidationError
+
+    if not isinstance(entry, dict):
+        return "the entry is not an object"
+    try:
+        Combo.model_validate({**entry, "combo_name": entry.get("combo_name") or entry.get("title") or "-"})
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        return f"{'.'.join(str(part) for part in first['loc'])}: {first['msg']}"[:300]
+    return None
+
+
 def photo_path(photos: Optional[Path], name: str) -> Optional[Path]:
     """The photo file for an entry, only when it sits inside the photos folder."""
     if not photos or not name:
@@ -240,7 +256,7 @@ def link_fitting_templates(db, combo, published, apply: bool) -> str:
 
 def process_entry(
     db, entry, host, parts_by_code, photos, apply: bool,
-    *, update: bool = False, published=None, no_sp_hosts=frozenset(),
+    *, update: bool = False, published=None, no_sp_ids=frozenset(),
 ) -> dict:
     """Load (or, on a dry run, only judge) one seed entry. Returns its report row."""
     row = {column: "" for column in REPORT_COLUMNS}
@@ -277,16 +293,24 @@ def process_entry(
     row["discontinued"] = "; ".join(discontinued)
     row["shape"] = _shape_text(_shape_of(keep))
 
-    # A brand with no promotion selling price: no combo SP, option SP or top-up (the list price loads).
-    no_sp = host.id in no_sp_hosts
+    # A product whose brand carries no promotion selling price never gets a selling price: the combo
+    # SP for such a host, an option SP or a top-up for a part of such a host or one that is itself
+    # such a product. The list price still loads.
     seed_lp = _money(entry.get("lp"))
     seed_sp = _money(entry.get("sp"))
-    if no_sp:
-        if seed_sp is not None or any(k["sp"] is not None or k["topup"] is not None for k in keep):
-            row["price_note"] = NO_SP_NOTE
+    host_no_sp = host.id in no_sp_ids
+    skipped = False
+    if host_no_sp:
+        skipped = seed_sp is not None
         seed_sp = None
-        for k in keep:
+    for k in keep:
+        # A no-selling-price host sells its whole combo that way; a part may also be one on its own.
+        k["no_sp"] = host_no_sp or k["product"].id in no_sp_ids
+        if k["no_sp"]:
+            skipped = skipped or k["sp"] is not None or k["topup"] is not None
             k["sp"] = k["topup"] = None
+    if skipped:
+        row["price_note"] = NO_SP_NOTE
 
     unsure = []
     if (entry.get("unsure") or "").strip():
@@ -327,16 +351,24 @@ def process_entry(
             elif (part.choice_group or None) != k["group"] or bool(part.is_upgrade) != k["upgrade"]:
                 differences.append(f"regrouped {code}")
             else:
+                if k["no_sp"]:
+                    if part.sell_price is not None:
+                        differences.append(f"{code} sell price {part.sell_price} -> none")
+                    if part.topup_amount is not None:
+                        differences.append(f"{code} top-up {part.topup_amount} -> none")
+                    continue
                 if _wanted(part.sell_price, k["sp"], True) is not None:
                     differences.append(f"{code} sell price {_show(part.sell_price)} -> {k['sp']}")
                 if _wanted(part.topup_amount, k["topup"], True) is not None:
                     differences.append(f"{code} top-up {_show(part.topup_amount)} -> {k['topup']}")
         for product_id, part in have.items():
-            if product_id not in want:
+            if product_id not in want and part.part_product is not None:
                 differences.append(f"removed {part.part_product.product_code}")
         if _wanted(existing.list_price, seed_lp, True) is not None:
             differences.append(f"list price {_show(existing.list_price)} -> {seed_lp}")
-        if _wanted(existing.sell_price, seed_sp, True) is not None:
+        if host_no_sp and existing.sell_price is not None:
+            differences.append(f"selling price {existing.sell_price} -> none")
+        elif _wanted(existing.sell_price, seed_sp, True) is not None:
             differences.append(f"selling price {_show(existing.sell_price)} -> {seed_sp}")
 
     description = (entry.get("combo_description") or "").strip()
@@ -375,6 +407,8 @@ def process_entry(
             target = _wanted(current, seed_value, update)
             if target is not None:
                 update_fields[field] = target
+        if update and host_no_sp and existing is not None and existing.sell_price is not None:
+            update_fields["sell_price"] = None
         if update_fields:
             service.update(combo_id, update_fields)
         if prune:
@@ -399,6 +433,12 @@ def process_entry(
                 prices["sell_price"] = value
             if (value := _wanted(topup, k["topup"], update)) is not None:
                 prices["topup_amount"] = value
+            if update and k["no_sp"]:
+                # A brand with no selling price carries none: clear what an earlier load left.
+                if sell is not None:
+                    prices["sell_price"] = None
+                if topup is not None:
+                    prices["topup_amount"] = None
             if prices:
                 service.update_part(part_id, prices, fields_set=set(prices))
         if want_photo:
@@ -448,12 +488,10 @@ STARTER_FAMILY = "combo"
 TAG_WIDTH_MM, TAG_HEIGHT_MM = 105, 148
 
 
-def position_template(name: str, fixed: int, groups, upgrades: int, free_asset=None) -> dict:
+def position_template(name: str, fixed: int, groups, upgrades: int) -> dict:
     """A 105 x 148 document with one row per position: the main product, `fixed` fixed parts,
     `groups[g]` picks of group g, and `upgrades` upgrades. Each row is a picture, a code and the
-    position's own list price, all reading that position through `subjectSlot`. `free_asset` is a
-    library asset id drawn once as the combo's free item, or None.
-
+    position's own list price, all reading that position through `subjectSlot`.
     Unbound placeholders are empty on purpose: a position the line has not filled, or a combo with
     no price, prints nothing."""
     from scripts.tag_template_seed_docs import _Doc
@@ -466,8 +504,6 @@ def position_template(name: str, fixed: int, groups, upgrades: int, free_asset=N
     doc.text("combo-name", 4, 4, 97, 10, "", size=14, weight=700, slot="combo_name")
     doc.text("list-price", 4, 17, 46, 7, "", size=11, slot="list_price")
     doc.text("sell-price", 50, 14, 51, 14, "", size=24, weight=700, color=SELL_COLOUR, align="right", slot="sell_price")
-    if free_asset:
-        doc.image("free-item", 76, 4, 25, 10, asset_id=free_asset)
 
     slots = [{"kind": "main"}]
     slots += [{"kind": "fixed", "index": i} for i in range(fixed)]
@@ -591,14 +627,17 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
             return 1
 
         photos = Path(args.photos) if args.photos else None
+        problems = [invalid_entry(entry) for entry in entries]
         codes: set[str] = set()
-        for entry in entries:
+        for entry, problem in zip(entries, problems):
+            if problem:
+                continue
             codes.add((entry.get("host_code") or "").strip())
             codes.update(part["code"] for part in wanted_parts(entry))
         found = products_by_code(db, company_id, codes)
 
         found_ids = [product.id for product in found.values()]
-        no_sp_hosts = (
+        no_sp_ids = (
             frozenset(db.execute(_no_selling_price_product_ids(found_ids)).scalars().all())
             if found_ids
             else frozenset()
@@ -610,13 +649,20 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         rows = []
         try:
             with company_scope(db, frozenset({company_id})):
-                for entry in entries:
+                for entry, problem in zip(entries, problems):
+                    if problem:
+                        rows.append(
+                            {**{column: "" for column in REPORT_COLUMNS},
+                             "id": str(entry.get("id") or "") if isinstance(entry, dict) else "",
+                             "status": "invalid_entry", "notes": problem}
+                        )
+                        continue
                     host = found.get((entry.get("host_code") or "").strip().upper())
                     try:
                         rows.append(
                             process_entry(
                                 db, entry, host, found, photos, args.apply,
-                                update=args.update, published=published, no_sp_hosts=no_sp_hosts,
+                                update=args.update, published=published, no_sp_ids=no_sp_ids,
                             )
                         )
                     except Exception as exc:  # one bad entry must not stop the rest

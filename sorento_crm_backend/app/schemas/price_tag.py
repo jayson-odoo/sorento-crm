@@ -610,12 +610,37 @@ class CropRect(_StrictProps):
     height: float
 
 
+class SlotMain(_StrictProps):
+    kind: Literal["main"]
+
+
+class SlotFixed(_StrictProps):
+    kind: Literal["fixed"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotPick(_StrictProps):
+    kind: Literal["pick"]
+    group: int = Field(ge=0, lt=32)
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotUpgrade(_StrictProps):
+    kind: Literal["upgrade"]
+    index: int = Field(ge=0, lt=64)
+
+
+#: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade]
+
+
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class LayerPaddingDoc(_StrictProps):
@@ -639,6 +664,7 @@ class TextLayerPropsDoc(_StrictProps):
     lineHeight: float
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -664,6 +690,7 @@ class ShapeLayerPropsDoc(_StrictProps):
 class ProductSlotLayerPropsDoc(_StrictProps):
     kind: Literal["product_slot"]
     fieldKey: str
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PriceBadgeLayerPropsDoc(_StrictProps):
@@ -701,6 +728,7 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     # used to do both jobs at once - `priceBadgeInsets` in the frontend's
     # `price-badge.ts` is the one place that resolves the legacy rule.
     margin: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):

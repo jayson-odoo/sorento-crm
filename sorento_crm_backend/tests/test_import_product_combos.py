@@ -403,8 +403,10 @@ def test_ac_8_9_templates_flag_creates_and_publishes_one_starter_per_shape(
     assert set(found) == set(_starter_names())
     for template in found.values():
         assert template.published_version_id is not None, "published, so the designer can pick it"
-        # Every starter reads positions, never a part number. (`TagTemplateDocModel` is not
-        # applied: it forbids `subjectPart` and `subjectSlot` alike and no save path uses it.)
+        # The doc is a valid TagTemplateDoc, and every starter reads positions, never a part number.
+        from app.schemas.price_tag import TagTemplateDocModel
+
+        TagTemplateDocModel.model_validate(template.doc)
         assert "subjectSlot" in json.dumps(template.doc)
         assert "subjectPart" not in json.dumps(template.doc)
 
