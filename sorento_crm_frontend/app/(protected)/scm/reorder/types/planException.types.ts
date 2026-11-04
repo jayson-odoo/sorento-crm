@@ -141,6 +141,9 @@ export interface ProposedAction {
    * need-by date (AC-D5). Null on actions that move nothing.
    */
   candidate_so_number: string | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   candidate_need_by: string | null;
   /** Destination for a location change. Null on actions that move nothing. */
   candidate_warehouse_code: string | null;

@@ -1,5 +1,6 @@
 'use client';
 
+import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
@@ -337,7 +338,11 @@ export function ConsignmentDialog({
     (await searchSampleRequestConsignments(request.id, q)).map((c) => ({
       value: c.id,
       label: c.so_number,
-      description: [c.debtor_code, c.debtor_name, c.order_date ? day(c.order_date) : null]
+      description: [
+        c.debtor_code,
+        soCustomerProjectLabel(c.customer_name ?? c.debtor_name, c.project_label),
+        c.order_date ? day(c.order_date) : null,
+      ]
         .filter(Boolean)
         .join(' - '),
     }));
@@ -838,6 +843,11 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
                   <Badge variant="destructive">Voided in AutoCount</Badge>
                 )}
               </p>
+              <SoCustomerProject
+                customer={r.consignment?.customer_name}
+                project={r.consignment?.project_label}
+                className="text-sm"
+              />
             </div>
             <Field label="PO No (internal)" empty="Not set">
               {r.po_no}

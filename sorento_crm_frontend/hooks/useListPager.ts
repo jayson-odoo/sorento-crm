@@ -52,7 +52,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { skipToken, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { SortingState } from '@tanstack/react-table';
-import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { buildDetailSearch, detailViewParams, parseDetailSearch } from '@/lib/listNavQuery';
 import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 
 /** The list query a detail URL describes. */
@@ -119,6 +119,9 @@ export interface UseListPagerResult {
  * `tab` (NAV-KEEP-TAB, owner ruling 1 Nov 2026) is the tab the reader has open:
  * the next record opens on the same one. A record that has no such tab shows its
  * default (`useUrlTab` validates it), so the pager never needs to know the tabs.
+ *
+ * `view` (OI-UX-FILTER-SNAPSHOT, owner 3 Nov) is every `view_*` param: the detail page's own
+ * grid search/filter/sort, so the next record opens filtered the same way.
  */
 function stepHref(
   detailPath: string,
@@ -126,6 +129,7 @@ function stepHref(
   params: ListPagerParams,
   hrefFor: ((id: string, search: string) => string) | undefined,
   tab: string | null,
+  view: Record<string, string> = {},
 ): string {
   const search = buildDetailSearch(
     {
@@ -134,7 +138,7 @@ function stepHref(
       sorting: params.sorting,
       searchQuery: params.searchQuery,
     },
-    { ...params.filters, from: id, tab },
+    { ...params.filters, from: id, tab, ...view },
   );
   if (hrefFor) return hrefFor(id, search);
   return `${detailPath}/${id}${search ? `?${search}` : ''}`;
@@ -165,6 +169,7 @@ export function useListPager({
     [searchKey],
   );
   const tab = useMemo(() => new URLSearchParams(searchKey).get('tab') || null, [searchKey]);
+  const view = useMemo(() => detailViewParams(new URLSearchParams(searchKey)), [searchKey]);
 
   // Same key, same options as the list: when the list cached this page (every
   // list here runs `staleTime: Infinity`) this resolves from the cache without a
@@ -220,12 +225,12 @@ export function useListPager({
   // prefetch until then, so it is left to the click that already fetches it.
   useEffect(() => {
     if (hasPrevious && idx > 0) {
-      prefetchOnce(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab));
+      prefetchOnce(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab, view));
     }
     if (hasNext && idx < items.length - 1) {
-      prefetchOnce(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab));
+      prefetchOnce(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab, view));
     }
-  }, [hasPrevious, hasNext, idx, items, detailPath, params, hrefFor, tab, prefetchOnce]);
+  }, [hasPrevious, hasNext, idx, items, detailPath, params, hrefFor, tab, view, prefetchOnce]);
 
   /** Step to a neighbouring page and land on the row at its near edge. */
   const stepPage = useCallback(
@@ -245,31 +250,31 @@ export function useListPager({
           return;
         }
         const target = edge === 'first' ? rows[0] : rows[rows.length - 1];
-        router.push(stepHref(detailPath, target.id, next, hrefFor, tab));
+        router.push(stepHref(detailPath, target.id, next, hrefFor, tab, view));
       } finally {
         setStepping(false);
       }
     },
-    [detailPath, fetchPage, hrefFor, listQueryKey, params, queryClient, router, tab],
+    [detailPath, fetchPage, hrefFor, listQueryKey, params, queryClient, router, tab, view],
   );
 
   const goPrevious = useCallback(() => {
     if (!hasPrevious) return;
     if (idx > 0) {
-      router.push(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab));
+      router.push(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab, view));
       return;
     }
     void stepPage(params.pageIndex - 1, 'last');
-  }, [detailPath, hasPrevious, hrefFor, idx, items, params, router, stepPage, tab]);
+  }, [detailPath, hasPrevious, hrefFor, idx, items, params, router, stepPage, tab, view]);
 
   const goNext = useCallback(() => {
     if (!hasNext) return;
     if (idx < items.length - 1) {
-      router.push(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab));
+      router.push(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab, view));
       return;
     }
     void stepPage(params.pageIndex + 1, 'first');
-  }, [detailPath, hasNext, hrefFor, idx, items, params, router, stepPage, tab]);
+  }, [detailPath, hasNext, hrefFor, idx, items, params, router, stepPage, tab, view]);
 
   return {
     // While the first fetch is in flight nothing is known yet, but hiding the

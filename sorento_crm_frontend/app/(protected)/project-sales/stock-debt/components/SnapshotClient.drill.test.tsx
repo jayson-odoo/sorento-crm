@@ -526,6 +526,26 @@ describe('AC-F5 grouping by OI', () => {
     }
   });
 
+  it('prints no CUSTOMER / project line under an OI heading: its table already has both columns (owner, 4 Nov)', async () => {
+    getSnapshotRowLines.mockResolvedValue({
+      lines: LINES.map((l) => ({
+        ...l,
+        customer_name: 'ZZT YUEN SENG SDN BHD (PROJECT)',
+        project_label: 'ZZT SURYA PJ SOUTH',
+      })),
+    });
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    const group = groupOf(dialog, 'OI-2609-0417');
+    expect(within(group).getByRole('columnheader', { name: 'Customer' })).toBeInTheDocument();
+    expect(within(group).getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    expect(within(group).getAllByText('ZZT YUEN SENG SDN BHD (PROJECT)').length).toBeGreaterThan(0);
+    expect(
+      within(dialog).queryByText('ZZT YUEN SENG SDN BHD (PROJECT) / ZZT SURYA PJ SOUTH'),
+    ).toBeNull();
+  });
+
   it('groups lines by OI: two lines under OI-2609-0417 plus the shared one', async () => {
     renderPage();
     const dialog = await openAllMonths();

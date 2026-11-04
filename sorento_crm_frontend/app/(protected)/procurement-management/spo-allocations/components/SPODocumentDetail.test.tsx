@@ -821,4 +821,35 @@ describe('SPODocumentDetail - the book\'s own PO linkage (AC-B1/B2/B3/B4)', () =
     const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
     expect(within(row).getByText('1 SO · 100')).toBeInTheDocument();
   });
+
+  it('a project row with no sales order yet reads its project under Project, never as the customer (OI-UX-FILTER-SNAPSHOT)', async () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        lines: [
+          line({
+            from_po_number: 'PO-2020/03-0022',
+            so_covered: [
+              {
+                document: 'PSO-ZZT-1',
+                customer: 'ZZT Tower',
+                customer_name: null,
+                project_label: 'ZZT Tower',
+                demand_class: 'project',
+                qty: 100,
+              },
+            ],
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: '1 SO · 100' }));
+
+    await screen.findByText('PSO-ZZT-1');
+    expect(screen.getAllByText('ZZT Tower')).toHaveLength(1);
+  });
 });

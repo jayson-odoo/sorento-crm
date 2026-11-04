@@ -915,8 +915,11 @@ def test_summary_matrix_and_export_all_honour_the_project_filter(api):
     book = openpyxl.load_workbook(io.BytesIO(export.content))
     assert book.sheetnames == ["ORDER INQUIRY"]
     sheet = book["ORDER INQUIRY"]
+    # Row 1 is the header row (OI-EXPORT-SHARED: no title row above it); ITEM CODE is the
+    # third heading.
+    assert sheet.cell(row=1, column=3).value == "ITEM CODE"
     item_codes = {
-        sheet.cell(row=r, column=3).value for r in range(3, sheet.max_row + 1)
+        sheet.cell(row=r, column=3).value for r in range(2, sheet.max_row + 1)
     }
     assert item_codes == alpha_item_codes
 

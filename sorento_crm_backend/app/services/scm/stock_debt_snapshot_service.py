@@ -42,7 +42,7 @@ from app.services.order_inquiry_reserve_service import (
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.demand import demand_qty
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
-from app.services.scm.stock_debt_service import StockDebtService
+from app.services.scm.stock_debt_service import StockDebtService, annotate_so_parties
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
 from app.utils.multi_value import multi_values
@@ -437,6 +437,9 @@ class StockDebtSnapshotService:
         lines = [dict(l) for l in row.lines if month is None or l["bucket"] == month]
         lines.sort(key=lambda l: (l["required_date"] is None, l["required_date"] or "", l["so_number"]))
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
+        # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
+        # stored before the lines carried them names them too.
+        annotate_so_parties(self.db, lines)
 
         now = self._line_now(core_ids)
         # Security L1: without `projects.projects.view` no order inquiry row is served,

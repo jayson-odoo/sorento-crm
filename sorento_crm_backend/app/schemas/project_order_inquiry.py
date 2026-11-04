@@ -1032,6 +1032,9 @@ class OrderInquiryPoCandidateClaim(BaseModel):
     """
 
     so_number: Optional[str] = None
+    #: That order's customer (debtor name, else customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     item_code: Optional[str] = None
     qty: str
     placed_date: Optional[datetime] = None
@@ -1090,6 +1093,8 @@ class OrderInquiryPoCandidate(BaseModel):
     # dialog greys the row "Dedicated to SO xxxx". `None` when nobody but this row's own
     # SO (or nobody at all) claims it.
     dedicated_to: Optional[str] = None
+    dedicated_customer_name: Optional[str] = None
+    dedicated_project_label: Optional[str] = None
     # G12's project-bin lock: this line sits at a `segment = 'project'` warehouse and NO
     # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
     # link manually". Always `False` for a pool-destination line (AC-6.10).
@@ -1368,6 +1373,8 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: linkage does not depend on which screen it is read from. `response_model` silently
     #: drops an undeclared field, which is exactly why both of these are declared.
     book_so_number: Optional[str] = None
+    book_so_customer_name: Optional[str] = None
+    book_so_project_label: Optional[str] = None
     #: True when the book named a sales order this CRM does not hold. Three states, not
     #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
     #:

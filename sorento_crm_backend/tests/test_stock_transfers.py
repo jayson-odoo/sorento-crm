@@ -1070,3 +1070,69 @@ def test_the_list_names_the_so_line_number_not_the_planning_orders_own(one_trans
     row = client.get(TRANSFERS, params={"query": transfer.transfer_no}).json()["data"][0]
 
     assert row["so_line_no"] == 224, row
+
+
+def test_the_list_names_the_orders_customer_and_project_and_sorts_by_both(one_transfer):
+    """OI-UX-FILTER-SNAPSHOT: customer is the debtor name, else the customer master; project
+    is the order's `project_label`. Both are declared on the wire and sort on the server."""
+    from app.models.order import SalesOrder
+
+    client, world, transfer = one_transfer
+    sales_order_id = client.get(f"{TRANSFERS}/{transfer.id}").json()["sales_order_id"]
+    order = world.db.query(SalesOrder).filter(SalesOrder.id == sales_order_id).one()
+    order.debtor_name = " ZZT Debtor Sdn Bhd "
+    order.project_label = "ZZT Tower"
+    world.db.flush()
+
+    row = client.get(TRANSFERS, params={"query": transfer.transfer_no}).json()["data"][0]
+    assert row["customer_name"] == "ZZT Debtor Sdn Bhd"
+    assert row["project_label"] == "ZZT Tower"
+    assert client.get(f"{TRANSFERS}/{transfer.id}").json()["project_label"] == "ZZT Tower"
+    # Review round: the Customer column keeps its id `customer` (saved column preferences
+    # are keyed by it), so that is the sort key the grid sends.
+    for sort in ("customer", "project_label"):
+        response = client.get(TRANSFERS, params={"query": transfer.transfer_no, "sort": sort})
+        assert response.status_code == 200, (sort, response.text)
+    searched = client.get(TRANSFERS, params={"query": "ZZT Tower"}).json()["data"]
+    assert [r["id"] for r in searched] == [str(transfer.id)]
+
+
+def test_customer_and_project_sort_the_whole_list_both_ways(one_transfer):
+    """OI-UX-FILTER-SNAPSHOT verify round (AC-7): `customer` and `project_label` really order
+    the list, not only answer 200 (an unmapped sort key falls back to proposed_at silently).
+    The names sort the two transfers one way, so ascending and descending must differ."""
+    from app.models.order import SalesOrder
+
+    client, world, first = one_transfer
+    db = world.db
+    order, _core_so, _core_line, line = _one_line_order(world, qty="5")
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "5"}])
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    second = _transfers(db, order.id)[0]
+    for transfer, debtor, project in (
+        (first, "ZZT Zeta Debtor", "ZZT Zeta Tower"),
+        (second, "ZZT Alpha Debtor", "ZZT Alpha Tower"),
+    ):
+        sales_order_id = client.get(f"{TRANSFERS}/{transfer.id}").json()["sales_order_id"]
+        so = db.query(SalesOrder).filter(SalesOrder.id == sales_order_id).one()
+        so.debtor_name = debtor
+        so.project_label = project
+    db.flush()
+
+    ours = {str(first.id), str(second.id)}
+    for sort in ("customer", "project_label"):
+        for direction, expected in (("asc", [second, first]), ("desc", [first, second])):
+            rows = client.get(
+                TRANSFERS, params={"sort": sort, "dir": direction, "limit": 100}
+            ).json()["data"]
+            assert [r["id"] for r in rows if r["id"] in ours] == [str(t.id) for t in expected], (
+                sort,
+                direction,
+            )

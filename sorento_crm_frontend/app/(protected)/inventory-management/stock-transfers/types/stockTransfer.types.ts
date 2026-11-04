@@ -31,6 +31,7 @@ export interface StockTransfer {
   so_line_no: number | null;
   project_sales_order_id: string | null;
   customer_name: string | null;
+  project_label?: string | null;
   sales_agent_id: string | null;
   agent_code: string | null;
   agent_name: string | null;

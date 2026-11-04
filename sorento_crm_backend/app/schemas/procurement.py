@@ -706,6 +706,9 @@ class SPODocumentLineSOCovered(BaseModel):
     AC-J2)."""
     document: Optional[str] = None
     customer: Optional[str] = None
+    #: The order's own customer (debtor name, else the customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     demand_class: str
     qty: float
     #: LINKAGE-UNIFY U4: the PO number a placement reached this SPO line through (it was

@@ -615,6 +615,49 @@ describe('SupplyLineCard', () => {
     ).toBeInTheDocument();
   });
 
+  it('names the donor order\'s customer and project too (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderCard(
+      line({
+        uom: 'EA',
+        open_qty: '50',
+        components: [
+          {
+            kind: 'borrow',
+            qty: '50',
+            reason:
+              'Borrow 50 arriving 15 Sep 2026 (SPO 202607-S0105) from SO414285 line 4 ' +
+              '(JEREMY, due 12 Nov 2026); its debt lands in Nov 2026',
+            source_location: 'BRW-IB',
+            source_warehouse_id: WH_BRW,
+            rung: 'supply_borrow',
+            donor_so_number: 'SO414285',
+            donor_customer_name: 'Maju Debtor',
+            donor_project_label: 'Tuju Residences',
+            donor_line_no: 4,
+            donor_agent_code: 'JEREMY',
+            donor_required_date: '2026-11-12',
+            supply_key: 'spo:9f2c1a44-1111-4c11-8c11-111111111111',
+            supply_document: 'SPO 202607-S0105',
+            arrival_date: '2026-09-15',
+          },
+        ],
+        timely_spo: [],
+        advisory_spo: [],
+        borrow_candidates: [],
+      }),
+    );
+
+    const document = screen.getByTestId(`borrow-document-borrow-${LINE_ID}-0`);
+    expect(
+      within(document).getByText('SPO 202607-S0105, 50 EA, arriving 15/09/2026'),
+    ).toBeInTheDocument();
+    expect(
+      within(document).getByText(
+        'From SO414285 line 4 (JEREMY) - Maju Debtor / Tuju Residences, due 12/11/2026; its debt lands in Nov 2026.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('opens a step-3 borrow on the engine’s own sentence, so the Confirm is not blocked', () => {
     renderCard(SUPPLY_BORROW);
 

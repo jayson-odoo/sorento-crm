@@ -320,6 +320,30 @@ function UndatedGrid({ rows }: { rows: CoverageUndatedDemand[] }) {
         meta: { headerTitle: 'Sales order' },
       },
       {
+        accessorKey: 'customer_name',
+        header: 'Customer',
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.customer_name ?? undefined}>
+            {row.original.customer_name || EM_DASH}
+          </span>
+        ),
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Customer' },
+      },
+      {
+        accessorKey: 'project_label',
+        header: 'Project',
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.project_label ?? undefined}>
+            {row.original.project_label || EM_DASH}
+          </span>
+        ),
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'Project' },
+      },
+      {
         accessorKey: 'item_code',
         header: 'Item',
         cell: ({ row }) => (

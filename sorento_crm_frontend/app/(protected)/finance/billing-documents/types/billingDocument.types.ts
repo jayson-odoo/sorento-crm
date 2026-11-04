@@ -40,6 +40,15 @@ export interface BillingDocumentListRow {
   outstanding_as_of: string | null;
 }
 
+/** A sales order a billing document names, with its customer (debtor name, else customer
+ *  master) and project label (OI-UX-FILTER-SNAPSHOT). */
+export interface BillingSalesOrderRef {
+  id: string;
+  doc_no: string;
+  customer_name?: string | null;
+  project_label?: string | null;
+}
+
 export interface BillingDocumentLine {
   line_no: number;
   item_code: string | null;
@@ -57,7 +66,7 @@ export interface BillingDocumentLine {
   line_total: number | null;
   from_doc_type: string | null;
   from_doc_no: string | null;
-  sales_order: { id: string; doc_no: string } | null;
+  sales_order: BillingSalesOrderRef | null;
 }
 
 export interface BillingRelatedNote {
@@ -82,7 +91,7 @@ export interface BillingDocumentDetail extends BillingDocumentListRow {
   lines: BillingDocumentLine[];
   related: {
     notes: BillingRelatedNote[];
-    sales_orders: { id: string; doc_no: string }[];
+    sales_orders: BillingSalesOrderRef[];
     delivery_order_nos: string[];
     /** DOC-RELATIONS: the DOs the lines came from; id null when the DO is not in the CRM. */
     delivery_orders: { id: string | null; doc_no: string; doc_date: string | null }[];

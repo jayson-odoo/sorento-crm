@@ -252,6 +252,22 @@ def test_admin_gets_every_kind_newest_first(api, monkeypatch):
         assert event["id"]
 
 
+def test_every_event_names_the_orders_customer_and_project(api, monkeypatch):
+    """OI-UX-FILTER-SNAPSHOT: the debtor name and project label ride on each event."""
+    _as_role(monkeypatch, "admin")
+    fx = _seed(api)
+    fx["core_so"].debtor_name = "ZZT Debtor Sdn Bhd"
+    fx["core_so"].project_label = "ZZT Tower"
+    fx["world"].db.flush()
+
+    events = _get(fx).json()["events"]
+
+    assert events
+    for event in events:
+        assert event["customer_name"] == "ZZT Debtor Sdn Bhd"
+        assert event["project_label"] == "ZZT Tower"
+
+
 def test_a_revision_cancel_with_no_audit_row_derives_who_when_and_cause(api, monkeypatch):
     _as_role(monkeypatch, "admin")
     fx = _seed(api)

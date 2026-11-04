@@ -4596,6 +4596,69 @@ def test_the_pile_queue_is_exactly_the_queue_the_trail_counted():
         assert mine["cumulative_ahead_qty"] == "190", "the running sum includes this row"
 
 
+def test_board_lines_name_the_order_the_way_the_so_list_does_never_the_note():
+    """OI-UX-FILTER-SNAPSHOT (crew browser pass, 4 Nov): the board's CUSTOMER / project labels
+    and the List view's Project column read the sales order's own Customer and Project
+    (`so_party`, the helper the holds use), a dash when the order names none. The board's own
+    `project_label` (note fallback, #813) is left as it was for the pivot by project, but it
+    is never what those labels print: SO397869's note "OWN COLLECT" is not a project."""
+    from app.schemas.project_board import BoardContribution
+
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        ours.debtor_name = "ZZT Debtor Sdn Bhd"
+        ours.project_label = None
+        ours.internal_note = "OWN COLLECT"
+        db.flush()
+
+        def lines_of(board):
+            top = [c for c in board["contributions"] if c["so_number"] == ours.so_number]
+            in_cells = [
+                c
+                for cell in board["cells"]
+                for c in cell["contributions"]
+                if c["so_number"] == ours.so_number
+            ]
+            assert top and in_cells
+            return top + in_cells
+
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        for line in lines_of(board):
+            assert line["so_customer_name"] == "ZZT Debtor Sdn Bhd"
+            assert line["so_project_label"] is None
+
+        ours.project_label = "ZZT Tower"
+        db.flush()
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        lines = lines_of(board)
+        assert {line["so_project_label"] for line in lines} == {"ZZT Tower"}
+        wire = BoardContribution(**lines[0]).model_dump()
+        assert wire["so_customer_name"] == "ZZT Debtor Sdn Bhd"
+        assert wire["so_project_label"] == "ZZT Tower"
+
+
+def test_the_pile_queue_names_each_orders_customer_and_project():
+    """OI-UX-FILTER-SNAPSHOT: the queue names the debtor and project of every order in it."""
+    from app.schemas.project_board import PileQueueLine
+
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        ours.debtor_name = "ZZT Debtor Sdn Bhd"
+        ours.project_label = "ZZT Tower"
+        db.flush()
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        queue = _service(db).pile_queue(
+            str(product.id), str(warehouse.id), contribution["line_id"]
+        )
+
+        mine = next(line for line in queue["lines"] if line["is_this_line"])
+        assert mine["customer_name"] == "ZZT Debtor Sdn Bhd"
+        assert mine["project_label"] == "ZZT Tower"
+        assert PileQueueLine(**mine).model_dump()["project_label"] == "ZZT Tower"
+
+
 def test_the_pile_queue_is_ordered_exactly_as_the_pile_book_orders_it():
     from app.services.project_supply_service import ProjectSupplyService
 
@@ -6277,6 +6340,10 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
             db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
         )
         pso_id = _adopt(db, str(borrower.id))
+        # OI-UX-FILTER-SNAPSHOT review round: the board route names the borrower's customer
+        # and project on the wire (`attach_donor_parties`), proven below.
+        borrower.debtor_name = "ZZT Taker Debtor"
+        borrower.project_label = "ZZT Taker Tower"
         db.flush()
 
         from app.models.project_so import ProjectSalesOrderLine
@@ -6356,7 +6423,8 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
             if contribution["so_number"] == "ZZT-SO-DONOR"
         ]
         assert on_the_wire and on_the_wire[0]["lent_to"] == [
-            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no,
+             "customer_name": "ZZT Taker Debtor", "project_label": "ZZT Taker Tower"}
         ]
 
 

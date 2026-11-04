@@ -290,6 +290,28 @@ The pager beside the header walks the same filtered list you opened the order in
 example, if you opened it from **Outstanding**, previous and next step through the other
 Outstanding order inquiries in that same order.
 
+The **Lines** tab keeps its own view as you step: the **Search product...** text, the **State**
+filter and the column you sorted by stay in the address bar, so previous and next open the next
+order inquiry's lines searched, filtered and sorted the same way, and a reload keeps them too.
+Clear the search or untick the **State** values to see every line again. **Back** to the list
+leaves this view behind: the list opens with its own filters only.
+
+## Customer and project beside every sales order
+
+Wherever a sales order number is shown (the **Stock Debt** drills and snapshots, **Request CS to
+reserve**, the Fulfilment Planning board, the reorder plan's drills, Stock Transfers, the loading
+plan, and the other screens that name an order), its customer and project are named with it:
+
+* In a table, as two columns, **Customer** and **Project**, right after the sales order, the same
+  as on the **Sales Orders** list. On a list that pages (for example **Stock Transfers**), both
+  columns sort the whole list.
+* In a dialog title, a chip or a short list, as one line under the order number: `CUSTOMER /
+  project`.
+
+The customer is the debtor name the order was issued under (it often already ends with the
+project in brackets), else the customer's own name; the project is the order's project. A half
+the order does not have prints a dash, for example `ACME SDN BHD / -`.
+
 ## Emails and the sales order page
 
 The order inquiry handover, changed and undone emails, the reserve request and reserved emails,

@@ -408,6 +408,28 @@ describe('FulfilmentBoardMatrix: what was lent off a line', () => {
     expect(screen.getByTestId('cell-lent-out')).toHaveTextContent('71 lent to SO415472');
   });
 
+  it('names the borrowing order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderMatrix([
+      cellWith([
+        contribution({
+          lent_to: [
+            {
+              qty: '71',
+              so_number: 'SO415472',
+              line_no: 3,
+              customer_name: 'Maju Debtor',
+              project_label: 'Tuju Residences',
+            },
+          ],
+        }),
+      ]),
+    ]);
+
+    expect(screen.getByTestId('cell-lent-out')).toHaveTextContent(
+      '71 lent to SO415472 (Maju Debtor / Tuju Residences)',
+    );
+  });
+
   it('lists every borrow taken off the cell, one order per phrase', () => {
     renderMatrix([
       cellWith([

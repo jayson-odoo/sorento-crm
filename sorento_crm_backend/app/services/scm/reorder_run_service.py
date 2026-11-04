@@ -43,6 +43,7 @@ from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import demand
 from app.services.scm import reorder_engine as eng
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm import reorder_level_service as rl_service
 from app.services.scm.money import (
     BASE_CURRENCY,
@@ -3959,6 +3960,7 @@ def net_breakdown(db: Session, product_id: str,
         ORDER BY so.order_date DESC NULLS LAST, so.so_number
     """), {**params, **co_sol_params}).mappings().all()
 
+    parties = so_parties(db, numbers=[r["so_number"] for r in sos])
     on_hand = _fnum(pos["on_hand"]) or 0.0
     on_order = _fnum(pos["on_order"]) or 0.0
     committed = _fnum(pos["committed"]) or 0.0
@@ -3969,12 +3971,12 @@ def net_breakdown(db: Session, product_id: str,
         "po_ordered": po_ordered_val,
         "committed": committed,
         "net": on_hand + on_order + po_ordered_val - committed,
-        "committed_sos": [{
+        "committed_sos": [with_party({
             "so_number": r["so_number"],
             "qty": _fnum(r["qty"]),
             "customer_name": r["customer_name"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
-        } for r in sos],
+        }, parties, r["so_number"]) for r in sos],
     }
 
 

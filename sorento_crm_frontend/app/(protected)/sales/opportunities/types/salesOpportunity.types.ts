@@ -43,6 +43,9 @@ export interface SalesOpportunityListItem {
   lost_reason_label?: string | null;
   sales_order_id?: string | null;
   sales_order_no?: string | null;
+  /** The linked sales order's customer (debtor name, else customer master) and project. */
+  sales_order_customer_name?: string | null;
+  sales_order_project_label?: string | null;
   source: 'portal' | 'crm' | 'chat';
   created_by_label?: string | null;
   created_by_contact_id?: string | null;
@@ -112,6 +115,7 @@ export interface SalesOpportunitySalesOrderOption {
   so_number: string;
   customer_id: string | null;
   customer_name: string | null;
+  project_label?: string | null;
   order_date: string | null;
 }
 

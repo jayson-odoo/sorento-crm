@@ -412,6 +412,25 @@ class TestRelatedRoutes:
         assert _nos(body["sales_orders"]) == [so.so_number]
         assert [x["id"] for x in body["delivery_orders"]] == [str(do.id)]
 
+    def test_sales_order_rows_carry_customer_and_project(self, world, api):
+        """OI-UX-FILTER-SNAPSHOT: a sales order row names its debtor and project; the other
+        kinds leave both null, and both columns sort on the server."""
+        so, do, iv = _so427775(world)
+        so.debtor_name = " ZZT Debtor "
+        so.project_label = "ZZT Tower"
+        world.db.flush()
+        client = api(*ALL)
+        url = f"/api/v1/finance/billing-documents/{iv.id}/related"
+        rows = _ok(client.get(url))["rows"]
+        sales = [r for r in rows if r["kind"] == "sales_order"]
+        assert [(r["customer_name"], r["project_label"]) for r in sales] == [
+            ("ZZT Debtor", "ZZT Tower")
+        ]
+        others = [r for r in rows if r["kind"] != "sales_order"]
+        assert others and all(r["customer_name"] is None for r in others)
+        for key in ("customer_name", "project_label"):
+            assert client.get(url, params={"sort": key}).status_code == 200
+
     def test_rows_are_one_table_sorted_server_side(self, world, api):
         """Owner 27 Oct 15:51: Related is a table (Type, Number, Date, Status, Amount), every
         column sortable server side."""

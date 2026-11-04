@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Info } from 'lucide-react';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -253,8 +254,12 @@ function DemandBody({ data, channel }: { data: PlanDemand; channel?: PlanChannel
                       a second screen; a line the extract carries no price for simply
                       says nothing, and the same for an order with no agent on file. */}
                   <div className="mt-0.5 flex items-baseline gap-1.5 text-2xs text-muted-foreground">
-                    <span className="min-w-0 flex-1 truncate" title={l.customer_label}>
-                      {l.customer_label}
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      title={soCustomerProjectLabel(l.customer_label, l.project_title) ?? undefined}
+                    >
+                      {/* OI-UX-FILTER-SNAPSHOT: CUSTOMER / project, the shared format. */}
+                      {soCustomerProjectLabel(l.customer_label, l.project_title)}
                       {l.agent_label ? ` · ${l.agent_label}` : ''}
                     </span>
                     {l.unit_price !== null && l.unit_price !== undefined ? (
@@ -325,8 +330,12 @@ function HistoryBody({ data, channel }: { data: PlanDemand; channel: PlanChannel
                     ) : null}
                   </div>
                   <div className="mt-0.5 flex items-baseline gap-1.5 text-2xs text-muted-foreground">
-                    <span className="min-w-0 flex-1 truncate" title={l.customer_label}>
-                      {l.customer_label}
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      title={soCustomerProjectLabel(l.customer_label, l.project_title) ?? undefined}
+                    >
+                      {/* OI-UX-FILTER-SNAPSHOT: CUSTOMER / project, the shared format. */}
+                      {soCustomerProjectLabel(l.customer_label, l.project_title)}
                       {l.agent_label ? ` · ${l.agent_label}` : ''}
                     </span>
                     {l.unit_price !== null && l.unit_price !== undefined ? (

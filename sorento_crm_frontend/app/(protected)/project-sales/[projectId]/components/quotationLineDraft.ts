@@ -31,6 +31,14 @@ export const PRICED_PER_OPTIONS: { value: UnitType; label: string }[] = [
   { value: 'common_area', label: 'Whole site (common area)' },
 ];
 
+/**
+ * The code of the product or set picked on a line in this session, carried on the DRAFT. The
+ * editor's own lookup of picked products dies with it on a section or tab switch, and a line not
+ * saved yet has no stored code, so without this it came back as "Selected product". Read by the
+ * label and the picker; never sent (`toBody` names its fields).
+ */
+export const PICKED_CODE_KEY = 'picked_code';
+
 /** The two picked files a line can carry. Only ever sent when set, or when clearing one. */
 const PICKS = ['image_attachment_id', 'drawing_attachment_id'] as const;
 

@@ -29,6 +29,7 @@ import {
   type TimelinePoint,
 } from '../types/planException.types';
 import { distinctName } from '@/lib/product-display';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /**
  * Reviewing one Plan Exception (UAC Group D), as a right slide-over off the row.
@@ -164,6 +165,11 @@ function ActionCard({
         <p className="mt-1 flex items-center gap-1 text-2xs">
           <ArrowRight className="size-3" />
           {action.candidate_so_number}
+          <SoCustomerProject
+            customer={action.customer_name}
+            project={action.project_label}
+            className="ml-1 inline"
+          />
           {action.candidate_need_by ? (
             <span className="text-muted-foreground">
               {' '}

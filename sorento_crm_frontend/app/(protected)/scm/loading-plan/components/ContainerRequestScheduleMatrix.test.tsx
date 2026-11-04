@@ -106,7 +106,7 @@ describe('ContainerRequestScheduleMatrix - render', () => {
 
 describe('ContainerRequestScheduleMatrix - cell click opens the SO-lines lightbox', () => {
   it('clicking a cell opens a dialog listing exactly the lines behind it', () => {
-    const a = soLine({ so_number: 'SO-A', required_date: '2026-08-17', qty: 6 });
+    const a = soLine({ so_number: 'SO-A', required_date: '2026-08-17', qty: 6, project_title: 'TAMAN JAYA' });
     const b = soLine({ so_number: 'SO-B', required_date: '2026-08-19', qty: 4 });
     renderMatrix([a, b]);
 
@@ -117,6 +117,9 @@ describe('ContainerRequestScheduleMatrix - cell click opens the SO-lines lightbo
     expect(within(dialog).getByText('SO-A')).toBeInTheDocument();
     expect(within(dialog).getByText('SO-B')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Acme Sdn Bhd')).toHaveLength(2);
+    // OI-UX-FILTER-SNAPSHOT: a Project column beside Customer, a dash when none.
+    expect(within(dialog).getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    expect(within(dialog).getByText('TAMAN JAYA')).toBeInTheDocument();
   });
 
   it('the dialog title names the row and bucket the cell belongs to', () => {

@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef, Table } from '@tanstack/react-table';
@@ -301,15 +302,18 @@ function reallocateCandidateLine(
     inquiry_no: string | null;
     item_code: string | null;
     so_number: string | null;
+    customer_name?: string | null;
+    project_label?: string | null;
     delivery_date: string;
     open_qty: string;
   },
   isTarget: boolean,
 ): string {
   const prefix = isTarget ? 'Reallocate to ' : '';
+  const party = soCustomerProjectLabel(candidate.customer_name, candidate.project_label);
   return (
     `${prefix}${candidate.inquiry_no ?? 'another inquiry'} · ` +
-    `${candidate.so_number ?? 'unknown SO'} · ` +
+    `${candidate.so_number ?? 'unknown SO'}${party ? ` (${party})` : ''} · ` +
     `needed ${formatDateInMalaysia(candidate.delivery_date)} · ` +
     `open ${formatInquiryQty(candidate.open_qty)}`
   );

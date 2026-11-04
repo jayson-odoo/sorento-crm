@@ -897,7 +897,14 @@ describe('PurchaseOrderDetail - the Plan card (R1, AC-H7)', () => {
       },
     ],
     covers: [
-      { so_number: 'SO-2201', customer: 'Dealer A', qty: 30, warehouse: 'MWH' },
+      {
+        so_number: 'SO-2201',
+        customer: 'Dealer A',
+        customer_name: 'Dealer A',
+        project_label: 'Tuju Residences',
+        qty: 30,
+        warehouse: 'MWH',
+      },
     ],
   };
 
@@ -916,6 +923,7 @@ describe('PurchaseOrderDetail - the Plan card (R1, AC-H7)', () => {
     );
     expect(screen.getByText('SO-2201')).toBeInTheDocument();
     expect(screen.getByText('Dealer A')).toBeInTheDocument();
+    expect(screen.getByText('Tuju Residences')).toBeInTheDocument();
   });
 
   it('does not render for an import (non-crm) order', () => {

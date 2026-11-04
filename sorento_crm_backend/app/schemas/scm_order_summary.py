@@ -188,6 +188,10 @@ class ProjectDemandLineOut(BaseModel):
 
     project_name: str
     so_number: str
+    # OI-UX-FILTER-SNAPSHOT: the order's own customer and project (`project_name` is the
+    # customer, kept for older readers).
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: float
     required_date: Optional[str] = None
     # The human line number and the decision this Buy came from, so Purchasing can trace
@@ -204,6 +208,8 @@ class DealerDemandLineOut(BaseModel):
 
     dealer_name: str
     so_number: str
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: float
     # The column the printed sheet has no room for, and the reason two units can outrank two
     # hundred.
@@ -214,7 +220,8 @@ class DealerDemandLineOut(BaseModel):
 class UnclassifiedDemandLineOut(BaseModel):
     """One SO line whose demand class is missing, shown as an exception (AC-E02)."""
 
-    customer_name: str
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     so_number: str
     line_no: Optional[int] = None
     qty: float
