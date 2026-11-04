@@ -12,7 +12,17 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 const linked = vi.fn();
 const save = vi.fn();
+const start = vi.fn();
+const deferredInputs: Array<Record<string, unknown>> = [];
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: Record<string, unknown>) => {
+    deferredInputs.push(input);
+    return { start, isPending: false };
+  },
+}));
+
 vi.mock('@/app/(protected)/dealer-kit/hooks/useProductTagTemplates', () => ({
+  comboTagTemplatesKey: (id: string) => ['combo-tag-templates', id],
   useComboTagTemplates: () => linked(),
   useSetComboTagTemplates: () => ({ mutate: save, isPending: false }),
   usePriceTagTemplateOptions: () => ({ data: [], error: null, refetch: vi.fn() }),
@@ -23,6 +33,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
     <div>
       <span data-testid="chosen">{value.join(',')}</span>
       <button type="button" onClick={() => onChange([...value, 'c'])}>add c</button>
+      <button type="button" onClick={() => onChange(value.filter((v) => v !== 'a'))}>drop a</button>
     </div>
   ),
 }));
@@ -64,6 +75,7 @@ describe('ComboTemplatesField (existing combo)', () => {
     granted.clear();
     linked.mockReset();
     save.mockReset();
+    start.mockReset();
   });
 
   it('is not drawn without the manage permission', () => {
@@ -116,5 +128,30 @@ describe('ComboTemplatesField (existing combo)', () => {
       template_ids: ['a', 'c'],
       default_template_id: null,
     });
+  });
+
+  it('an untick parks an unlink with a countdown instead of saving, and keeps the link meanwhile', () => {
+    granted.add('dealer_kit.tag_templates.manage');
+    linked.mockReturnValue({ data: [row('a'), row('b')], isLoading: false, isError: false });
+    render(<ComboTemplatesField comboId="cb1" />);
+    fireEvent.click(screen.getByText('drop a'));
+    expect(save).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalled();
+    const last = deferredInputs[deferredInputs.length - 1];
+    expect(last.actionKey).toBe('combo.unlink_tag_templates');
+    expect(last.entityType).toBe('product_combo');
+    expect(last.entityId).toBe('cb1');
+    expect(last.payload).toEqual({ template_ids: ['a'] });
+    // Nothing is committed until the window lapses: Cancel leaves the links as they were.
+    expect(screen.getByTestId('chosen')).toHaveTextContent('a,b');
+  });
+
+  it('an add saves at once without a countdown', () => {
+    granted.add('dealer_kit.tag_templates.manage');
+    linked.mockReturnValue({ data: [row('a'), row('b')], isLoading: false, isError: false });
+    render(<ComboTemplatesField comboId="cb1" />);
+    fireEvent.click(screen.getByText('add c'));
+    expect(save).toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 });
