@@ -1,10 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
 import { QuotationDocumentHeader, useQuotationHeaderDetails } from './QuotationDocumentHeader';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
+import { useQuotationCoverPreview } from '../../../../_shared/hooks/useQuotationDocuments';
 
 /**
  * The three prose tabs, each one nothing but the panel it always was plus the document the layout
@@ -25,9 +27,18 @@ export function QuotationHeaderTab() {
 }
 
 export function QuotationCoverLetterTab() {
-  const { document } = useQuotationDocumentScreen();
-  // A read: the letter is edited with the rest of the quotation in the form page (#1341).
-  return <QuotationCoverLetterPanel html={document.cover_letter_html} />;
+  const { projectId, document } = useQuotationDocumentScreen();
+  // A read: the preview of the saved quotation; the intro and closing are edited with the rest
+  // of the quotation in the form page (#1341).
+  const preview = useQuotationCoverPreview(projectId, { document_id: document.id });
+  return (
+    <QuotationCoverLetterPanel
+      cover={preview.data}
+      isLoading={preview.isLoading}
+      noun={documentNoun(document)}
+      error={preview.error?.message}
+    />
+  );
 }
 
 export function QuotationTermsTab() {

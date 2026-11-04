@@ -1,11 +1,17 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import type { CoverDesign } from '@/lib/quotation-cover';
 import { toast } from '@/lib/toast';
 import {
   activateQuotationTemplate,
   createQuotationTemplate,
+  deactivateQuotationTemplate,
+  getCoverDefaultDesign,
+  listMergeFields,
   listQuotationTemplates,
+  previewCoverDesign,
   updateQuotationTemplate,
   type QuotationTemplateBody,
   type QuotationTemplateKind,
@@ -19,6 +25,35 @@ export function useQuotationTemplates(kind: QuotationTemplateKind) {
   return useQuery({
     queryKey: quotationTemplatesKey(kind),
     queryFn: () => listQuotationTemplates(kind),
+  });
+}
+
+/** The merge fields the intro and closing text may use, served by the backend registry. */
+export function useQuotationMergeFields() {
+  return useQuery({
+    queryKey: [TEMPLATES_KEY, 'merge-fields'],
+    queryFn: listMergeFields,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** The default cover design, from the server: the one source of the twelve rows. */
+export function useCoverDefaultDesign() {
+  return useQuery({
+    queryKey: [TEMPLATES_KEY, 'cover-default'],
+    queryFn: getCoverDefaultDesign,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** The designer's live preview. Settled for 400 ms so typing does not request per keystroke. */
+export function useCoverDesignPreview(design: CoverDesign, bodyHtml: string) {
+  const settled = useDebouncedValue({ design, body_html: bodyHtml }, 400);
+  return useQuery({
+    queryKey: [TEMPLATES_KEY, 'cover-preview', settled],
+    queryFn: () => previewCoverDesign(settled),
+    placeholderData: keepPreviousData,
+    retry: false,
   });
 }
 
@@ -54,5 +89,14 @@ export function useQuotationTemplateMutations(kind: QuotationTemplateKind) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { create, update, activate };
+  const deactivate = useMutation({
+    mutationFn: (id: string) => deactivateQuotationTemplate(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Template deactivated');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, activate, deactivate };
 }

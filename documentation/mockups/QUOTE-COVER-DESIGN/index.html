@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cover page designer (sample v3)</title>
+<style>
+/* App tokens from sorento_crm_frontend/css/config.reui.css (light), as in documentation/mockups/QUOTE-COVER-PAGE v2.
+   The A4 preview uses the PDF stylesheet (_STYLE + cover CSS in project_quotation_pdf_service.py). */
+:root{--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--q:#6d28d9;--q-soft:#f5f3ff;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 4px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 10px;max-width:960px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:940px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
+.newtag{display:inline-block;font-size:10px;font-weight:600;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.qtag{display:inline-block;font:600 10px/1.5 Inter,system-ui,sans-serif;color:var(--q);background:var(--q-soft);border:1px solid #c4b5fd;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px}
+.desk{width:1280px;max-width:100%;background:var(--page);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.phone{width:375px;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.phone .screen{height:820px;overflow:auto}
+.shell{padding:22px;display:flex;flex-direction:column;gap:14px}
+.phone .shell{padding:14px;gap:12px}
+.ph-hd{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.ph-hd .t{font-size:20px;font-weight:600}
+.phone .ph-hd .t{font-size:17px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.ltabs{display:flex;gap:18px;border-bottom:1px solid var(--border);font-size:13px;overflow-x:auto}
+.ltabs span{padding:8px 0;color:var(--muted-fg);white-space:nowrap}
+.ltabs span.on{color:var(--foreground);font-weight:500;border-bottom:2px solid var(--primary)}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px}
+.card .hd{padding:14px 18px 0;font-size:13px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card .bd{padding:14px 18px}
+.phone .card .bd,.phone .card .hd{padding-left:12px;padding-right:12px}
+.lbl{font-size:12.5px;font-weight:500;margin-bottom:4px}
+.inp{border:1px solid var(--border);border-radius:6px;min-height:32px;padding:6px 10px;font-size:13px;background:#fff}
+.rte{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.rte .bar{display:flex;gap:4px;padding:5px 8px;border-bottom:1px solid var(--border);background:#fafafa;flex-wrap:wrap}
+.rte .bar span{font-size:11px;border:1px solid var(--border);background:#fff;border-radius:4px;padding:1px 6px;color:#3f3f46}
+.rte .body{padding:10px 12px;font-size:13px;min-height:54px}
+.rte .body p{margin:0}
+.tok{display:inline-block;font:11px ui-monospace,monospace;background:var(--muted);border-radius:4px;padding:0 4px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) 460px;gap:18px;align-items:start}
+.phone .split{grid-template-columns:1fr}
+.muted{color:var(--muted-fg);font-size:12px}
+.note{color:var(--q);font-size:11.5px;font-style:italic}
+/* columns-panel style row list (components/ui/data-grid-columns-panel.tsx) */
+.rl{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.rl .it{display:grid;grid-template-columns:18px 18px minmax(0,1fr) minmax(0,1.2fr);gap:8px;align-items:center;padding:6px 10px;border-top:1px solid var(--border);font-size:12.5px;background:#fff}
+.rl .it:first-child{border-top:0}
+.rl .it.off{color:#a1a1aa;background:#fafafa}
+.grip{color:#a1a1aa;font-size:12px;text-align:center;cursor:grab}
+.chk{width:15px;height:15px;border:1px solid #a1a1aa;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px}
+.chk.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.rl .it .inp{min-height:26px;padding:3px 8px;font-size:12px}
+.sw{display:inline-flex;align-items:center;gap:8px;font-size:12.5px}
+.sw i{width:30px;height:17px;border-radius:9px;background:var(--primary);position:relative;display:inline-block}
+.sw i::after{content:"";position:absolute;right:2px;top:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+/* A4 preview, PDF stylesheet */
+.a4wrap{background:#e4e4e7;border-radius:10px;padding:14px;display:flex;justify-content:center}
+.a4{width:420px;height:594px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);padding:28px 26px;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;font-size:8.6px;overflow:hidden;position:relative}
+.phone .a4{width:300px;height:424px;padding:18px 16px;font-size:6.4px}
+.a4 .lh{display:flex;gap:7px;align-items:center}
+.a4 .lg{width:34px;height:24px;border:1px dashed #a1a1aa;font-size:6px;color:#71717a;display:flex;align-items:center;justify-content:center}
+.a4 .sn{font-weight:700;font-size:10px}
+.a4 .ti{margin:16px 0 8px;font-weight:700;font-size:12px;letter-spacing:.06em}
+.a4 .blk{margin:0 0 8px;line-height:1.45}
+.a4 table{width:100%;border-collapse:collapse;table-layout:fixed}
+.a4 th{width:32%;text-align:left;font-weight:700;vertical-align:top;padding:4px 6px 4px 0;border-bottom:1px solid #ddd}
+.a4 td{vertical-align:top;padding:4px 0;border-bottom:1px solid #ddd}
+.a4 td p{margin:0}.a4 td p.gap{height:6px}
+.a4 td ul{margin:1px 0 0;padding-left:11px}.a4 td ul ul{list-style:circle}
+.pg{position:absolute;bottom:6px;right:10px;font-size:7px;color:#999}
+.opt{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1150px}
+.opt .o{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px}
+.opt .o.rec{border-color:#93c5fd;box-shadow:0 0 0 3px var(--primary-soft)}
+.opt .o h4{margin:0 0 6px;font-size:13px}
+.opt .o ul{margin:6px 0 0;padding-left:18px}
+.canvas{height:220px;border:1px dashed #a1a1aa;border-radius:8px;background:repeating-linear-gradient(0deg,#fafafa 0 19px,#f0f0f0 19px 20px),repeating-linear-gradient(90deg,transparent 0 19px,#f0f0f0 19px 20px);position:relative;margin-top:8px}
+.canvas .box{position:absolute;border:1px solid var(--primary);background:rgba(59,130,246,.06);font-size:10px;padding:2px 4px;color:#1d4ed8}
+.tl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-width:1150px}
+.tl .s{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:12.5px}
+.tl .s b{display:block;margin-bottom:4px}
+table.map{border-collapse:collapse;width:100%;max-width:1200px;background:#fff;border:1px solid var(--border);font-size:12.5px}
+table.map th,table.map td{border-bottom:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+table.map th{font-size:11.5px;color:var(--muted-fg);font-weight:500;background:#fafafa}
+table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-radius:4px;word-break:break-all}
+.qs{max-width:1050px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px 14px 34px;font-size:13px}
+.qs li{margin-bottom:10px}
+@media (max-width:1000px){.split{grid-template-columns:1fr}.opt,.tl{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>Cover page designer &middot; sample v3 (follow-up to #2088)</h1>
+  <p class="intro">Static sample for a separate PR after #2088. Nothing is built. All names, numbers and prices are made up.
+    The shapes come from the dev copy: 1 of 18 quotations has a free-text cover letter, 3 have terms, 12 have an Attn, 2 have an
+    address. Of 19 sent revisions, 18 use the old layout and 1 uses the #2088 cover. Amber <span class="newtag">NEW</span> = does
+    not exist today; violet <span class="qtag">Q1</span> to <span class="qtag">Q5</span> = the questions in section 6.</p>
+  <p class="intro"><b>Owner answers, 2 Nov 19:46:</b> Q1 (a), Q2 (a) form-based with everything reusable reused, Q3 as listed, Q4 (a), Q5 (a). Approved for build.</p>
+  <nav class="nav">
+    <a href="#tab">1. Cover Letter tab = live cover preview</a>
+    <a href="#tpl">2. Designing it in Quotation Templates</a>
+    <a href="#canvas">3. Form vs canvas designer</a>
+    <a href="#sent">4. Quotations already sent</a>
+    <a href="#map">5. What each piece reuses</a>
+    <a href="#qs">6. Questions</a>
+  </nav>
+
+  <!-- ============================================================ 1 -->
+  <section id="tab">
+    <h2><span class="nb">1</span>Cover Letter tab on a draft: the cover page as it will print <span class="qtag">Q1</span></h2>
+    <p class="why">The tab stops being a separate free-text letter. It shows page 1 live as you type on any tab. The two text
+      blocks of the chosen design (intro above the rows, closing below) are copied into the quotation and editable here, the way the
+      terms are today. The old free-text letter becomes the intro block. Example shaped from a dev quotation: Attn and phone filled,
+      no address, no email, no terms, so those rows are left out.</p>
+    <div class="row">
+      <div class="desk">
+        <div class="shell">
+          <div class="ph-hd"><div class="t">Edit quotation PRJQ-2026-0042</div><div style="display:flex;gap:8px"><span class="btn">Cancel</span><span class="btn pri">Save</span></div></div>
+          <div class="ltabs"><span>Header</span><span>Lines</span><span class="on">Cover letter</span><span>Terms</span></div>
+          <div class="split">
+            <div class="card"><div class="hd">Cover page<span class="muted">Design: Standard cover page</span></div><div class="bd" style="display:flex;flex-direction:column;gap:12px">
+              <div><div class="lbl">Intro text <span class="newtag">NEW</span></div>
+                <div class="rte"><div class="bar"><span><b>B</b></span><span><i>I</i></span><span>&bull; List</span><span>Insert field</span></div>
+                  <div class="body"><p>Dear Ms Farah, thank you for the enquiry for <span class="tok">{{project_title}}</span>. Please find our quotation below.</p></div></div></div>
+              <div class="note">(mock note, not on screen) The rows come from the Header, Terms and Lines tabs; empty rows are left out.</div>
+              <div><div class="lbl">Closing text <span class="newtag">NEW</span></div>
+                <div class="rte"><div class="bar"><span><b>B</b></span><span><i>I</i></span><span>&bull; List</span><span>Insert field</span></div>
+                  <div class="body"><p>We look forward to your confirmation.</p></div></div></div>
+            </div></div>
+            <div>
+              <div class="a4wrap"><div class="a4">
+                <div class="lh"><div class="lg">logo</div><div class="sn">Company name</div></div>
+                <div class="ti">QUOTATION</div>
+                <div class="blk">Dear Ms Farah, thank you for the enquiry for SERI MUTIARA RESIDENCES. Please find our quotation below.</div>
+                <table>
+                  <tr><th>REFERENCE NO.:</th><td>PRJQ-2026-0042-R1 SERI MUTIARA RESIDENCES</td></tr>
+                  <tr><th>DATE:</th><td>02/11/2026</td></tr>
+                  <tr><th>ATTN:</th><td>Ms Farah Iskandar</td></tr>
+                  <tr><th>COMPANY:</th><td>TERAS JAYA BUILDERS SDN BHD</td></tr>
+                  <tr><th>CONTACT:</th><td>012-345 6789</td></tr>
+                  <tr><th>QUOTATION PURPOSE:</th><td>Tender submission for Block B show units</td></tr>
+                  <tr><th>PAYMENT TERMS:</th><td>30 days from invoice date</td></tr>
+                  <tr><th>VALIDITY:</th><td>30 days from quotation date</td></tr>
+                  <tr><th>PREPARED BY:</th><td>Aina Rahman</td></tr>
+                </table>
+                <div class="blk" style="margin-top:8px">We look forward to your confirmation.</div>
+                <div class="pg">Page 1 (preview)</div>
+              </div></div>
+              <div class="cap">Live preview, same builder as the PDF and the sign link</div>
+            </div>
+          </div>
+        </div>
+        <div class="cap">1280px, edit</div>
+      </div>
+      <div class="phone"><div class="screen"><div class="shell">
+        <div class="ph-hd"><div class="t">PRJQ-2026-0042</div><span class="btn">Edit</span></div>
+        <div class="ltabs"><span>Header</span><span>Lines</span><span class="on">Cover letter</span><span>Terms</span></div>
+        <div class="a4wrap"><div class="a4">
+          <div class="lh"><div class="lg">logo</div><div class="sn">Company name</div></div>
+          <div class="ti">QUOTATION</div>
+          <div class="blk">Dear Ms Farah, thank you for the enquiry for SERI MUTIARA RESIDENCES.</div>
+          <table>
+            <tr><th>REFERENCE NO.:</th><td>PRJQ-2026-0042-R1 SERI MUTIARA RESIDENCES</td></tr>
+            <tr><th>DATE:</th><td>02/11/2026</td></tr>
+            <tr><th>ATTN:</th><td>Ms Farah Iskandar</td></tr>
+            <tr><th>COMPANY:</th><td>TERAS JAYA BUILDERS SDN BHD</td></tr>
+            <tr><th>CONTACT:</th><td>012-345 6789</td></tr>
+            <tr><th>PAYMENT TERMS:</th><td>30 days from invoice date</td></tr>
+            <tr><th>VALIDITY:</th><td>30 days from quotation date</td></tr>
+            <tr><th>PREPARED BY:</th><td>Aina Rahman</td></tr>
+          </table>
+        </div></div>
+        <div class="cap">375px, view: the preview scales to the width</div>
+      </div></div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 2 -->
+  <section id="tpl">
+    <h2><span class="nb">2</span>Designing it: a Cover page tab in Quotation Templates (form-based) <span class="qtag">Q2</span> <span class="qtag">Q3</span></h2>
+    <p class="why">Beside Terms, a Cover page tab lists cover designs (one active per company, like terms). Editing one: letterhead
+      on/off, the title, which rows show, their order (drag) and their printed label, plus the intro and closing text with insertable
+      fields. The preview on the right updates as you change it, filled with a sample quotation.</p>
+    <div class="desk">
+      <div class="shell">
+        <div class="ph-hd"><div class="t">Quotation Templates</div></div>
+        <div class="ltabs"><span>Terms</span><span class="on">Cover page <span class="newtag">NEW</span></span></div>
+        <div class="split">
+          <div class="card"><div class="hd">Edit Standard cover page<span class="btn pri">Save</span></div><div class="bd" style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div><div class="lbl">Name</div><div class="inp">Standard cover page</div></div>
+              <div><div class="lbl">Title</div><div class="inp">QUOTATION</div></div>
+            </div>
+            <span class="sw"><i></i>Show company letterhead</span>
+            <div><div class="lbl">Rows (tick to show, drag to reorder, rename the printed label)</div>
+              <div class="rl">
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Reference No.</span><div class="inp">REFERENCE NO.</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Date</span><div class="inp">DATE</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Attn</span><div class="inp">ATTENTION</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Company</span><div class="inp">COMPANY</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Contact</span><div class="inp">CONTACT</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Add</span><div class="inp">ADDRESS</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Email</span><div class="inp">EMAIL</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Quotation Purpose</span><div class="inp">QUOTATION PURPOSE</div></div>
+                <div class="it off"><span class="grip">&#8942;&#8942;</span><span class="chk"></span><span>Terms &amp; Conditions</span><div class="inp">TERMS &amp; CONDITIONS</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Payment Terms</span><div class="inp">PAYMENT TERMS</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Validity</span><div class="inp">VALIDITY</div></div>
+                <div class="it"><span class="grip">&#8942;&#8942;</span><span class="chk on">&#10003;</span><span>Prepared By</span><div class="inp">PREPARED BY</div></div>
+              </div>
+              <div class="note" style="margin-top:4px">(mock note, not on screen) Unticked Terms = the terms print after the price table instead.</div>
+            </div>
+            <div><div class="lbl">Intro text</div><div class="rte"><div class="bar"><span><b>B</b></span><span><i>I</i></span><span>&bull; List</span><span>Insert field</span></div><div class="body"><p>Dear <span class="tok">{{attn_name}}</span>, thank you for the enquiry for <span class="tok">{{project_title}}</span>.</p></div></div></div>
+            <div><div class="lbl">Closing text</div><div class="rte"><div class="bar"><span><b>B</b></span><span><i>I</i></span><span>&bull; List</span><span>Insert field</span></div><div class="body"><p>We look forward to your confirmation.</p></div></div></div>
+          </div></div>
+          <div>
+            <div class="a4wrap"><div class="a4">
+              <div class="lh"><div class="lg">logo</div><div class="sn">Company name</div></div>
+              <div class="ti">QUOTATION</div>
+              <div class="blk">Dear Ms Farah Iskandar, thank you for the enquiry for SERI MUTIARA RESIDENCES.</div>
+              <table>
+                <tr><th>REFERENCE NO.:</th><td>PRJQ-2026-0042-R1 SERI MUTIARA RESIDENCES</td></tr>
+                <tr><th>DATE:</th><td>02/11/2026</td></tr>
+                <tr><th>ATTENTION:</th><td>Ms Farah Iskandar</td></tr>
+                <tr><th>COMPANY:</th><td>TERAS JAYA BUILDERS SDN BHD</td></tr>
+                <tr><th>CONTACT:</th><td>012-345 6789</td></tr>
+                <tr><th>ADDRESS:</th><td>No. 21, Jalan Cempaka 7, 43000 Kajang, Selangor</td></tr>
+                <tr><th>EMAIL:</th><td>farah@terasjaya.example</td></tr>
+                <tr><th>QUOTATION PURPOSE:</th><td>Tender submission for Block B show units</td></tr>
+                <tr><th>PAYMENT TERMS:</th><td>30 days from invoice date</td></tr>
+                <tr><th>VALIDITY:</th><td>30 days from quotation date</td></tr>
+                <tr><th>PREPARED BY:</th><td>Aina Rahman</td></tr>
+              </table>
+              <div class="blk" style="margin-top:8px">We look forward to your confirmation.</div>
+              <div class="pg">Sample quotation</div>
+            </div></div>
+            <div class="cap">Preview with a sample quotation</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap">1280px</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 3 -->
+  <section id="canvas">
+    <h2><span class="nb">3</span>What "configurable, designable" means: form vs canvas <span class="qtag">Q2</span></h2>
+    <div class="opt">
+      <div class="o rec"><h4>(a) Form-based, as in section 2 (recommended)</h4>
+        Rows on/off, order, labels, letterhead on/off, title, intro and closing text, per design.
+        <ul><li>The cover's content changes length: an empty row is dropped, terms run from 0 to 20 lines and can spill onto page 2. A flowing page handles that by itself.</li>
+          <li>Prints through the same PDF builder as #2088; the sign link and the preview use the same rows, so the three cannot disagree.</li>
+          <li>Reuses the columns panel (tick + drag) and the rich text editor that staff already know.</li>
+          <li>Size L.</li></ul></div>
+      <div class="o"><h4>(b) Canvas designer like the price tag template editor</h4>
+        Boxes placed freely on an A4 page, fonts, sizes, positions.
+        <div class="canvas"><div class="box" style="left:12px;top:10px;width:120px;height:30px">Letterhead</div><div class="box" style="left:12px;top:52px;width:200px;height:22px">Reference</div><div class="box" style="left:12px;top:82px;width:260px;height:96px">Terms (fixed box: overflows or clips)</div></div>
+        <ul><li>The price tag editor (<code>TagCanvasEditor.tsx</code>, 4,614 lines, mm positions) is built for fixed-size tags with fixed-length text.</li>
+          <li>Fixed boxes clip or overflow when the terms run long or a row is empty; page 2 spill has no answer.</li>
+          <li>Needs a second renderer for the PDF and another for the sign link. Size XL.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 4 -->
+  <section id="sent">
+    <h2><span class="nb">4</span>Quotations already sent <span class="qtag">Q5</span></h2>
+    <p class="why">A sent revision re-downloads exactly as it went out. The design is copied onto the revision when it is sent, so
+      editing or switching the design later never changes what a customer already holds.</p>
+    <div class="tl">
+      <div class="s"><b>Sent before #2088 (18 on the dev copy)</b>Landscape only, no cover page, the free-text letter above the prices (none of them have one). Unchanged.</div>
+      <div class="s"><b>Sent with #2088 (1 on the dev copy)</b>The fixed cover from #2088. Unchanged.</div>
+      <div class="s"><b>Sent after this follow-up</b>The design active when it was sent, copied onto the revision; the intro and closing text as typed on that quotation.</div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 5 -->
+  <section id="map">
+    <h2><span class="nb">5</span>What each piece reuses</h2>
+    <table class="map">
+      <tr><th>Element</th><th>Reuses (repo path)</th></tr>
+      <tr><td>Cover rows, terms cleaning, reference</td><td><code>sorento_crm_backend/app/services/quotation_cover_service.py</code> (#2088): rows filtered and relabelled by the design</td></tr>
+      <tr><td>PDF page 1</td><td><code>project_quotation_pdf_service.py</code> cover section (#2088); intro and closing blocks through <code>clean_terms_html</code></td></tr>
+      <tr><td>Live preview (tab and designer)</td><td>The same cover rows rendered as the countersign cover card (<code>QuotationSignClient.tsx</code>, #2088) inside an A4-shaped frame; a preview endpoint for drafts and samples</td></tr>
+      <tr><td>Rows: tick, drag, rename</td><td><code>components/ui/data-grid-columns-panel.tsx</code> pattern with <code>components/ui/sortable.tsx</code> (@dnd-kit), <code>Checkbox</code>, <code>Input</code></td></tr>
+      <tr><td>Letterhead toggle</td><td><code>components/ui/switch.tsx</code></td></tr>
+      <tr><td>Intro / closing text with fields</td><td><code>@/components/ui/rich-text-editor</code>; fields from the existing merge-token list in <code>project_quotation_template_service.py</code></td></tr>
+      <tr><td>Cover page tab in Quotation Templates</td><td><code>project-sales/quotation-templates</code> (<code>QuotationTemplatesClient.tsx</code> list + activate, one active per company and kind); line tabs <code>@/components/ui/tabs</code></td></tr>
+      <tr><td>Cover Letter tab</td><td><code>QuotationLetterPanels.tsx</code> (#2088 split of Terms / Cover letter panels)</td></tr>
+      <tr><td>Old revisions unchanged</td><td><code>quotation_issues.layout_version</code> (#2088): a new value for designed covers, with the design copied onto the revision</td></tr>
+    </table>
+  </section>
+
+  <!-- ============================================================ 6 -->
+  <section id="qs">
+    <h2><span class="nb">6</span>Questions (also in the crew ask)</h2>
+    <ol class="qs">
+      <li><b>Q1 Cover Letter tab.</b> (a) It shows the live cover preview, and the free-text letter becomes the design's intro block
+        (recommended: one idea, "the cover", and only 1 of 18 dev quotations has a letter); (b) preview on top with the old
+        free-text letter kept below it, still printing on page 2 above the prices; (c) leave the letter tab and add a separate
+        Preview button.</li>
+      <li><b>Q2 Designable.</b> (a) form-based in Quotation Templates as in section 2 (recommended: handles long terms and empty
+        rows, one renderer, size L); (b) canvas designer like price tags (size XL, fixed boxes clip variable text).</li>
+      <li><b>Q3 What the form controls.</b> Letterhead on/off, title, rows on/off + order + printed label, intro and closing text
+        with fields. Recommended: exactly these. Not included: custom extra rows with no field behind them, fonts and colours.
+        Unticking Terms prints them after the price table instead.</li>
+      <li><b>Q4 Per quotation.</b> (a) the design comes from the template; on a quotation only the intro and closing text are
+        editable (copied in, like terms) (recommended); (b) each quotation can also hide or reorder rows; (c) template only,
+        nothing editable per quotation. Also: one active design per company, like terms (recommended), not a picker on each
+        quotation.</li>
+      <li><b>Q5 Already sent.</b> (a) revisions keep exactly what they were sent with; the design is copied onto each new
+        revision at send time (recommended); (b) a sent revision follows the current design when re-downloaded (not
+        recommended: the customer's copy would change).</li>
+    </ol>
+  </section>
+</div>
+</body>
+</html>

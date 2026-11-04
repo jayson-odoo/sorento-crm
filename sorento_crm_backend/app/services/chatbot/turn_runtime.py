@@ -5968,17 +5968,23 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     for row in plan_rows:
         if row.get("uuid"):
             settled.setdefault((row["entity_type"], _code_of(row)), set()).add(str(row["uuid"]))
+    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
+    # O-R3 rule A (owner, 3 Nov 2026): a kind the plan names only by rows with no uuid that no resolver row answers by
+    # code is answered by the resolver's rows of that kind this turn. The customer-or-supplier pick's answer is such a
+    # row (the option carries no rows, its code is the typed word): the resolver's customer row is the customer.
+    unplaced = {row["entity_type"] for row in plan_rows} - {
+        row["entity_type"] for row in plan_rows if row.get("uuid") or (row["entity_type"], _code_of(row)) in returned
+    }
 
     def answers_the_plan(e: dict[str, Any]) -> bool:
         kind, code = e.get("entity_type"), _code_of(e)
         if kind not in kinds or not codes:
             return True
         held = settled.get((kind, code))
-        return code in codes and (held is None or str(e.get("uuid")) in held)
+        return (code in codes or kind in unplaced) and (held is None or str(e.get("uuid")) in held)
 
     picked = [e for e in compatible if answers_the_plan(e)]
     answered = {e.get("entity_type") for e in picked}
-    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
     kept = {str(e.get("uuid")) for e in picked}
     return picked + [
         row for row in plan_rows

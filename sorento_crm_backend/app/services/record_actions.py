@@ -2761,6 +2761,88 @@ register(
 )
 
 
+def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
+    """The spec sheet routes' write checks (edit right + write access to the project), run at park
+    time and again when the window lapses. 404 when the sheet is gone or not in the caller's
+    company, 403 without the right. Returns the sheet."""
+    from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationSpecSheet
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    query = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id)
+    if lock:
+        # Held until commit so a reset cannot interleave with a page save (both rewrite page_edits).
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
+    document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if sheet is None or project is None:
+        raise handle_not_found("Spec sheet", sheet_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return sheet
+
+
+def assert_spec_sheet_page_resettable(db: Session, sheet_id: str, page_key, user_id) -> None:
+    """Park-time check for `quotation_spec_sheet.reset_page`: the sheet is editable and the page
+    key is `cover` or one of its pages (422 otherwise)."""
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    sheet = assert_spec_sheet_editable(db, sheet_id, user_id)
+    key = str(page_key or "")
+    if len(key) > 120 or key not in {spec.COVER_KEY} | {p["key"] for p in spec.pages(db, sheet)}:
+        raise AppException(
+            status_code=422, message="That page is not on this spec sheet.", code="spec_sheet_keys_invalid"
+        )
+
+
+def _delete_quotation_spec_sheet(db: Session, payload: dict):
+    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    db.delete(sheet)
+    db.flush()
+    return {"deleted": True}
+
+
+def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
+    from app.services import project_spec_sheet_service as spec
+
+    assert_spec_sheet_page_resettable(
+        db, _entity_id(payload), payload.get("page_key"), payload.get("requested_by_id")
+    )
+    sheet = assert_spec_sheet_editable(
+        db, _entity_id(payload), payload.get("requested_by_id"), lock=True
+    )
+    spec.reset_page_edit(
+        db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")
+    )
+    return {"reset": True}
+
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.delete",
+        entity_types=("quotation_spec_sheet",),
+        execute=_delete_quotation_spec_sheet,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete spec sheet",
+    )
+)
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.reset_page",
+        entity_types=("quotation_spec_sheet",),
+        execute=_reset_quotation_spec_sheet_page,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Reset page to template",
+    )
+)
+
+
 def _delete_project_party_contact(db: Session, payload: dict):
     """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
     (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""

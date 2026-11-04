@@ -2903,3 +2903,372 @@ describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry ru
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 });
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P6): a refused dry run is shown, never settled as ready
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 refused dry run', () => {
+  const REFUSAL =
+    'Line 3 cannot be confirmed: BRW now has 1 free for this line, and 30 was asked for';
+  const BOARD_WORDS = 'USE BRW 522 & ORDER 294';
+
+  function refuseEveryRun() {
+    previewConfirmMany.mockImplementation(
+      (body: { orders: { pso_id: string }[] }) =>
+        Promise.resolve({
+          results: body.orders.map((order) => ({
+            pso_id: order.pso_id,
+            ok: false,
+            preview: true,
+            error: REFUSAL,
+            email_lines: [],
+            lines_confirmed: [],
+            lines_carried: 0,
+            lines_held_back: [],
+            lines_fulfilled_skipped: 0,
+            inquiry_rows: [],
+            transfers: [],
+          })),
+        }),
+    );
+  }
+
+  async function openRefusedPage() {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    refuseEveryRun();
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    const guide = await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    return { guide, page };
+  }
+
+  it('P6 RED: the dry run\'s own error is shown in a role=alert line with a Retry beside it', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!;
+    expect(within(holder as HTMLElement).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('P6 RED: the page prints no words in its REMARK cells: not the board\'s, not "Preparing email preview..."', async () => {
+    const { page } = await openRefusedPage();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(page).not.toHaveTextContent(BOARD_WORDS);
+    expect(page).not.toHaveTextContent('Preparing email preview...');
+    expect(within(page).queryByTestId('remark-words-pending')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+  });
+
+  it('P6 RED: with one of two orders refused, the refused page shows its error and no words, Confirm stays enabled, and the press posts only the ok order and reports the refusal', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) =>
+          order.pso_id === 'pso-so-2'
+            ? {
+                pso_id: order.pso_id,
+                ok: false,
+                preview: true,
+                error: REFUSAL,
+                email_lines: [],
+                lines_confirmed: [],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+              }
+            : {
+                pso_id: order.pso_id,
+                ok: true,
+                preview: true,
+                decision_revision: 4,
+                lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+                email_lines: [],
+              },
+        ),
+      }),
+    );
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await clickNext();
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    // (1) the refused page: the error with Retry, and no words in its REMARK cells.
+    const refusedPage = screen.getByTestId('confirm-guide-split-page');
+    const alert = await within(screen.getByTestId('confirm-guide')).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(refusedPage).not.toHaveTextContent('ORDER BACK');
+    expect(refusedPage).not.toHaveTextContent('Preparing email preview...');
+    // (2) Confirm stays enabled.
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(confirm).toBeEnabled();
+    // (3) it posts only the ok order.
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const posted = (confirmMany.mock.calls[0][0] as { orders: { pso_id: string }[] }).orders.map(
+      (order) => order.pso_id,
+    );
+    expect(posted).toEqual(['pso-so-1']);
+    // (4) the result card carries the refusal.
+    const card = await screen.findByTestId('board-confirm-results');
+    expect(card).toHaveTextContent(REFUSAL);
+  });
+
+  it('P6 RED: pressing Retry sends the dry run again', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    fireEvent.click(within(holder).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+  });
+
+  describe('review round: each page shows its own refusal', () => {
+    const refusalFor = (psoId: string) => ({
+      pso_id: psoId,
+      ok: false,
+      preview: true,
+      error: REFUSAL,
+      email_lines: [],
+      lines_confirmed: [],
+      lines_carried: 0,
+      lines_held_back: [],
+      lines_fulfilled_skipped: 0,
+      inquiry_rows: [],
+      transfers: [],
+    });
+
+    function pageOneRefusedPageTwo(page2: () => Promise<unknown>) {
+      previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) => {
+        const psoId = body.orders[0].pso_id;
+        return psoId === 'pso-so-1'
+          ? Promise.resolve({ results: [refusalFor('pso-so-1')] })
+          : page2();
+      });
+    }
+
+    it('P6 RED (a): page 1 shows its refusal with Retry while page 2 is still preparing', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => new Promise(() => {}));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      const alert = await within(guide).findByRole('alert');
+      expect(alert).toHaveTextContent(REFUSAL);
+      const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+      expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+
+    it('P6 RED (b): page 2 failing does not replace page 1\'s own refusal; page 2 shows the generic sentence with Retry', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => Promise.reject(new Error('Gateway timeout')));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      expect(await within(guide).findByRole('alert')).toHaveTextContent(REFUSAL);
+      await clickNext();
+      await waitFor(() =>
+        expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+      );
+      const failed = await screen.findByTestId('confirm-guide-words-failed');
+      expect(within(failed).getByRole('alert')).toHaveTextContent('The email preview could not be prepared.');
+      expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P7): every line the email carries is on Review split
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
+  // Line 3 is this press's confirmed line; line 2 (CKSW015) is CARRIED: on the board with a
+  // decision, no draft, so the press does not confirm it, yet the email prints it.
+  const CARRIED = demand({
+    project_line_id: 'pl-1-2',
+    line_no: 2,
+    item_code: 'CKSW015',
+    qty: '8',
+  });
+  const REMARK = 'ORDER BACK MWH-BB';
+
+  const bothLinesRead = () => ({
+    ...splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C' }]),
+    lines: [
+      wireLine(2, 'CKSW015', 8, '2026-09-20', {
+        line_id: 'pl-1-2',
+        now_qty: 8,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+      wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+        line_id: 'pl-1-3',
+        now_qty: 10,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+    ],
+  });
+
+  const board = () =>
+    withDraft(boardOf([CARRIED, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+  function emailAnswers(emailLines: Row[]) {
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) => ({
+          pso_id: order.pso_id,
+          ok: true,
+          preview: true,
+          decision_revision: 4,
+          lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+          lines_carried: 1,
+          lines_held_back: [],
+          lines_fulfilled_skipped: 0,
+          inquiry_rows: [],
+          transfers: [],
+          email_lines: emailLines,
+        })),
+      }),
+    );
+  }
+
+  async function openPage() {
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    return page;
+  }
+
+  it('P7 RED: a carried covered line the email prints shows as a read-only row with the email\'s words', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'CHANGED: ORDER 72 -> USE BRW 72' },
+      { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '8', remark: REMARK },
+    ]);
+    const page = await openPage();
+    const block = await within(page).findByTestId('split-line-2');
+    expect(block).toHaveTextContent('CKSW015');
+    expect(block).toHaveTextContent('8');
+    expect(block).toHaveTextContent(REMARK);
+    expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+    // The page's own confirmed row stays as it was.
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('CHANGED: ORDER 72 -> USE BRW 72');
+  });
+
+  it('P7 GUARD: the carried line does not show before its page\'s email words land', async () => {
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
+  });
+
+  it('P7 RED: an email line on no board row at all still shows a read-only row from the email\'s own entry', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+      { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER 5 FOR ORPHAN' },
+    ]);
+    const page = await openPage();
+    const words = await within(page).findByText(/ORDER 5 FOR ORPHAN/);
+    const row = words.closest('tr') as HTMLElement;
+    expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
+    expect(row).toHaveTextContent('5');
+    expect(row.querySelectorAll('input, textarea')).toHaveLength(0);
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW');
+  });
+
+  describe('review round: one email line told twice', () => {
+    /** The text of a row's Qty cell, located by the header of its own table. */
+    const qtyCell = (row: HTMLElement) => {
+      const table = row.closest('table') as HTMLElement;
+      const headers = Array.from(table.querySelectorAll('th')).map((th) => th.textContent?.trim());
+      const at = headers.indexOf('Qty');
+      expect(at, `no Qty header in ${headers.join('|')}`).toBeGreaterThanOrEqual(0);
+      return (row.closest('tr') ?? row).querySelectorAll('td')[at]?.textContent?.trim();
+    };
+    const TWICE = demand({ project_line_id: 'pl-1-2', line_no: 2, item_code: 'CKSW015', qty: '9' });
+    const readOf = () => ({
+      ...bothLinesRead(),
+      lines: [
+        wireLine(2, 'CKSW015', 9, '2026-09-20', {
+          line_id: 'pl-1-2',
+          now_qty: 9,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+          splits: [],
+        }),
+        bothLinesRead().lines[1],
+      ],
+    });
+    const twiceBoard = () =>
+      withDraft(boardOf([TWICE, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+    it('P7 RED: one row for the line, both words joined with " / " in email order, the board\'s qty, no duplicate key', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      serveSplits({ 'pso-so-1': readOf() });
+      await mountWith(twiceBoard(), ['SO000001']);
+      await openConfirmGuide();
+      const page = await screen.findByTestId('confirm-guide-split-page');
+      await within(page).findByTestId('split-line-3');
+      const block = await within(page).findByTestId('split-line-2');
+      expect(within(page).getAllByTestId('split-line-2')).toHaveLength(1);
+      expect(block).toHaveTextContent('ORDER BACK MWH-BB / ORDER BACK BRW-BB');
+      expect(qtyCell(block.querySelector('tr') as HTMLElement)).toBe('9');
+      expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
+
+    it('P7 RED: an orphan line told twice is one row, qty summed (5 + 3 = 8), both words shown', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      const page = await openPage();
+      const words = await within(page).findByText(/ORDER BACK MWH-BB/);
+      const row = words.closest('tr') as HTMLElement;
+      expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
+      expect(qtyCell(row)).toBe('8');
+      expect(row).toHaveTextContent('ORDER BACK BRW-BB');
+      const orphanRows = Array.from(page.querySelectorAll('tr')).filter((tr) =>
+        tr.textContent?.includes('ZZT-ORPHAN-Q'),
+      );
+      expect(orphanRows).toHaveLength(1);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
+  });
+});

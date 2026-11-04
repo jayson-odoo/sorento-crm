@@ -51,13 +51,14 @@ def _user_id(user: dict) -> Optional[str]:
     return user.get("id") or user.get("user_id")
 
 
-def _serialize(asset, attachment, urls: dict) -> AssetResponse:
+def _serialize(asset, attachment, urls: dict, thumbs: Optional[dict] = None) -> AssetResponse:
     return AssetResponse(
         id=asset.id,
         name=asset.name,
         kind=asset.kind,
         tags=list(asset.tags or []),
         url=urls.get(asset.id),
+        thumb_url=(thumbs or {}).get(asset.id),
         mime_type=attachment.mime_type,
     )
 
@@ -73,8 +74,10 @@ def list_assets(
 ):
     """The library, filtered by kind, tag or name."""
     rows = asset_service.list_assets(db, kind=kind, tag=tag, query=q, limit=limit)
-    urls = asset_service.urls_for(db, [asset.id for asset, _ in rows])
-    return [_serialize(asset, attachment, urls) for asset, attachment in rows]
+    ids = [asset.id for asset, _ in rows]
+    urls = asset_service.urls_for(db, ids)
+    thumbs = asset_service.screen_urls_for(db, ids)
+    return [_serialize(asset, attachment, urls, thumbs) for asset, attachment in rows]
 
 
 @router.post("", response_model=AssetResponse, status_code=status.HTTP_201_CREATED)
@@ -135,7 +138,7 @@ def upload_asset(
     from app.models.resources import Attachment
 
     attachment = db.query(Attachment).filter(Attachment.id == asset.attachment_id).first()
-    return _serialize(asset, attachment, urls)
+    return _serialize(asset, attachment, urls, asset_service.screen_urls_for(db, [asset.id]))
 
 
 class _RenameAssetRequest(BaseModel):

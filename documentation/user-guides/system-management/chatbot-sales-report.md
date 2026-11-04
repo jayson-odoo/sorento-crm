@@ -111,6 +111,14 @@ same as any other.
 
 ## Defaults
 
+* **No company named means every company you hold.** The bot never asks "Sorento or Mocha?".
+  When two or more of your companies have figures for what you asked, one line per company sits
+  right above the Total line, and the lines add up to the Total. A company with nothing to show
+  is left out, so a customer or brand that exists in one company prints no company lines. Name a
+  company ("for Mocha") to see that company alone.
+* **A customer you named stays until you name another.** A follow-up such as "invoiced",
+  "breakdown product" or "top 5" keeps the customer of the report on screen, and the header still
+  names it.
 * **A customer-only report, or a customer-and-product report, with no date named shows all
   dates.** The header prints `Delivery date: all`.
 * **A product-only report with no date named shows the current year** instead of everything -

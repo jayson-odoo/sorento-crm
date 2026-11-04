@@ -18,6 +18,7 @@ wrong once somewhere in this codebase:
 """
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import secrets
@@ -51,8 +52,13 @@ from app.services import quotation_view_service as _views
 from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
+    COVER_LAYOUT_DESIGNED,
+    cover_payload,
     cover_reference,
     cover_rows,
+    sender_of,
+    default_design,
+    design_of,
     layout_of,
 )
 from app.services.numbering_service import NumberingService
@@ -232,6 +238,10 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
     }
 
 
+#: The text fields whose {{merge fields}} are filled on every save.
+TOKEN_FIELDS = ("cover_letter_html", "cover_closing_html", "terms_html")
+
+
 def create_document(
     db: Session,
     *,
@@ -256,6 +266,7 @@ def create_document(
         validity=payload.get("validity"),
         subject_title=payload.get("subject_title") or project.title,
         cover_letter_html=payload.get("cover_letter_html"),
+        cover_closing_html=payload.get("cover_closing_html"),
         terms_html=payload.get("terms_html"),
         signatory_name=payload.get("signatory_name"),
         signatory_phone=payload.get("signatory_phone"),
@@ -284,11 +295,25 @@ def _render_templates_onto(
     """
     from app.services import project_quotation_template_service as templates
 
+    # The active cover page design supplies the intro (into the letter column) and the closing;
+    # with none active the old cover letter template stays the intro.
+    design = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    context = templates.build_document_context(db, document=document) if design else None
+    if design is not None:
+        if not (payload.get("cover_closing_html") or "").strip():
+            closing = (design.design or {}).get("closing_html")
+            document.cover_closing_html = templates.render(closing, context) or None
+        if not (payload.get("cover_letter_html") or "").strip():
+            document.cover_letter_html = templates.render(design.body_html, context) or None
     for field, kind in (
         ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
         ("terms_html", templates.TEMPLATE_KIND_TERMS),
     ):
         if (payload.get(field) or "").strip():
+            continue
+        if field == "cover_letter_html" and design is not None:
             continue
         rendered = templates.render_for_document(db, document=document, kind=kind)
         if rendered is not None:
@@ -399,6 +424,10 @@ def create_document_with_scopes(
     Returns the lines written so the route can raise below-floor notifications for them, exactly
     as the bulk line route does.
     """
+    from app.services import project_quotation_template_service as _templates
+
+    for field in TOKEN_FIELDS:
+        _templates.assert_tokens_known(payload.get(field))
     body = dict(payload)
     scopes = body.pop("scopes", None) or []
     corrections = {field: body.pop(field, None) for field in _RECIPIENT_FIELDS}
@@ -408,7 +437,7 @@ def create_document_with_scopes(
     # number and total, not the ones a half-made quotation would give.
     letter = {
         field: body.pop(field)
-        for field in ("cover_letter_html", "terms_html")
+        for field in TOKEN_FIELDS
         if (body.get(field) or "").strip()
     }
 
@@ -449,12 +478,21 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
     from app.services import project_quotation_template_service as templates
 
     out: Dict[str, Optional[str]] = {}
+    design = templates.active_template(
+        db, company_id=project.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    out["cover_closing_html"] = (design.design or {}).get("closing_html") or None if design else None
     for field, kind in (
         ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
         ("terms_html", templates.TEMPLATE_KIND_TERMS),
     ):
-        template = templates.active_template(db, company_id=project.company_id, kind=kind)
-        out[field] = template.body_html if template is not None else None
+        # An active cover page design supplies the intro in place of the old cover letter.
+        template = templates.active_template(
+            db,
+            company_id=project.company_id,
+            kind=templates.TEMPLATE_KIND_COVER_PAGE if field == "cover_letter_html" and design else kind,
+        )
+        out[field] = (template.body_html or None) if template is not None else None
         if kind == templates.TEMPLATE_KIND_TERMS:
             out["payment_terms"] = template.payment_terms if template is not None else None
             out["validity"] = template.validity if template is not None else None
@@ -598,6 +636,16 @@ def current_issue(
     )
 
 
+def next_issue_no(db: Session, document_id: str) -> int:
+    """The revision number the next send of this document takes (R1 for a first send)."""
+    highest = (
+        db.query(func.max(ProjectQuotationIssue.issue_no))
+        .filter(ProjectQuotationIssue.document_id == document_id)
+        .scalar()
+    )
+    return 1 if highest is None else int(highest) + 1
+
+
 def issue(
     db: Session,
     *,
@@ -633,15 +681,17 @@ def issue(
     # nothing below its floor - the overwhelming majority - is not touched by this at all.
     approvals.assert_issuable(db, document)
 
-    highest = (
-        db.query(func.max(ProjectQuotationIssue.issue_no))
-        .filter(ProjectQuotationIssue.document_id == document.id)
-        .scalar()
-    )
-    issue_no = 1 if highest is None else int(highest) + 1
+    issue_no = next_issue_no(db, document.id)
     label = _next_label(db, document, issue_no)
     previous = current_issue(db, document)
 
+    from app.services import project_quotation_template_service as templates
+
+    # The active cover page design, copied: editing or activating another one later never
+    # touches this revision (QUOTE-COVER-DESIGN, UAC C4).
+    active_design = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
     record = ProjectQuotationIssue(
         company_id=document.company_id,
         document_id=document.id,
@@ -651,8 +701,14 @@ def issue(
         issued_at=datetime.utcnow(),
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
+        cover_closing_rendered=document.cover_closing_html,
+        cover_design=(
+            copy.deepcopy(active_design.design)
+            if active_design is not None and active_design.design
+            else default_design()
+        ),
         terms_rendered=document.terms_html,
-        layout_version=COVER_LAYOUT,
+        layout_version=COVER_LAYOUT_DESIGNED,
         payment_terms=document.payment_terms,
         validity=document.validity,
         grand_total=ZERO,
@@ -1147,6 +1203,7 @@ def serialize_document(
         "attn_name": document.attn_name,
         "subject_title": document.subject_title,
         "cover_letter_html": document.cover_letter_html,
+        "cover_closing_html": document.cover_closing_html,
         "terms_html": document.terms_html,
         "signatory_name": document.signatory_name,
         "signatory_phone": document.signatory_phone,
@@ -1271,12 +1328,18 @@ def update_document(
     answer, and it clears.
     """
     approvals.assert_unlocked(db, document)
+    from app.services import project_quotation_template_service as templates
+
+    # One rule for every save: an unknown merge field is refused before anything is written.
+    for field in TOKEN_FIELDS:
+        templates.assert_tokens_known(payload.get(field))
     for field in (
         "your_ref",
         "doc_date",
         "attn_name",
         "subject_title",
         "cover_letter_html",
+        "cover_closing_html",
         "terms_html",
         "signatory_name",
         "signatory_phone",
@@ -1290,6 +1353,13 @@ def update_document(
     ):
         if field in payload:
             setattr(document, field, payload[field])
+    db.flush()
+    # ...and the known ones are filled in from this document, on every save.
+    context = None
+    for field in TOKEN_FIELDS:
+        if payload.get(field):
+            context = context or templates.build_document_context(db, document=document)
+            setattr(document, field, templates.render(payload[field], context))
     db.flush()
     return document
 
@@ -2051,16 +2121,7 @@ def serialize_sign_page(
         else None
     )
 
-    company_name = None
-    company_logo_url = None
-    if document is not None and document.company_id:
-        from app.models.company import Company
-
-        company = (
-            db.query(Company).filter(Company.id == document.company_id).first()
-        )
-        company_name = company.name if company else None
-        company_logo_url = company.logo_url if company else None
+    sender = sender_of(db, document.company_id if document is not None else None)
 
     from app.services import quotation_amendment_service as amendments
 
@@ -2074,6 +2135,7 @@ def serialize_sign_page(
         blocked = None
 
     cover = None
+    designed: Dict[str, Any] = {}
     our_ref = (
         issue_no_text(document.document_no, record)
         if document is not None
@@ -2085,17 +2147,32 @@ def serialize_sign_page(
             if document.project_id
             else None
         )
-        cover = cover_rows(db, document, record, project)
+        layout3 = layout_of(record) >= COVER_LAYOUT_DESIGNED
+        cover = cover_rows(db, document, record, project, design_of(record) if layout3 else None)
         our_ref = cover_reference(document, record, project)
+        if layout3:
+            designed = cover_payload(
+                cover,
+                design_of(record),
+                intro=record.cover_letter_rendered,
+                closing=record.cover_closing_rendered,
+                sender_name=None,
+                sender_logo_url=None,
+                noun=document_noun(document),
+            )
     page = {
         "our_ref": our_ref,
         "document_kind": (document.kind if document is not None else None) or KIND_PROPOSAL,
         "cover_rows": cover,
+        "cover_title": designed.get("cover_title"),
+        "cover_show_letterhead": designed.get("cover_show_letterhead"),
+        "cover_intro_html": designed.get("cover_intro_html"),
+        "cover_closing_html": designed.get("cover_closing_html"),
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,
         "subject_title": document.subject_title if document else None,
-        "sender_name": company_name,
-        "sender_logo_url": company_logo_url,
+        "sender_name": sender["sender_name"],
+        "sender_logo_url": sender["sender_logo_url"],
         "recipient_name": document.recipient_name_snapshot if document else None,
         "recipient_address": document.recipient_address_snapshot if document else None,
         "attn_name": document.attn_name if document else None,
@@ -2126,3 +2203,96 @@ def serialize_sign_page(
     for row, field, key in slots:
         row[field] = pictures.get(key)
     return page
+
+
+# ------------------------------------------------------------------ cover preview (stores nothing)
+
+#: The quotation fields a preview body may stage over the saved document.
+_PREVIEW_FIELDS = (
+    "doc_date",
+    "attn_name",
+    "recipient_name_snapshot",
+    "recipient_address_snapshot",
+    "recipient_phone_snapshot",
+    "recipient_email_snapshot",
+    "quotation_purpose",
+    "payment_terms",
+    "validity",
+    "cover_letter_html",
+    "cover_closing_html",
+    "terms_html",
+)
+
+
+def preview_cover(
+    db: Session, *, project: Project, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """The cover as it would print now, from the form's unsaved values.
+
+    Works on plain namespaces, never an ORM row, so nothing is added to the session: no number is
+    drawn from the numbering rule and no row is written. A saved quotation (``document_id``) shows
+    its own number; an unsaved one shows a placeholder. Merge fields are filled from the same
+    context a save uses, and an unknown one is refused with the same 422.
+    """
+    from types import SimpleNamespace
+
+    from app.services import project_quotation_template_service as templates
+
+    for field in TOKEN_FIELDS:
+        templates.assert_tokens_known(payload.get(field))
+    document_id = payload.get("document_id")
+    if document_id:
+        saved = get_document_or_404(db, str(project.id), str(document_id))
+        base = {field: getattr(saved, field) for field in _PREVIEW_FIELDS}
+        base.update(
+            document_no=saved.document_no,
+            subject_title=saved.subject_title,
+            created_by=saved.created_by,
+            company_id=saved.company_id,
+            kind=saved.kind,
+        )
+        issue_no = next_issue_no(db, saved.id)
+        next_label = _next_label(db, saved, issue_no)
+        total = document_total(db, saved)
+    else:
+        base = {field: None for field in _PREVIEW_FIELDS}
+        base.update(_recipient_from_project(db, project))
+        base.update(
+            doc_date=date.today(),
+            document_no="NEW",
+            subject_title=project.title,
+            created_by=None,
+            company_id=project.company_id,
+            kind=KIND_PROPOSAL,
+        )
+        issue_no = 1
+        next_label = revision_letter(1)
+        total = ZERO
+    for field in _PREVIEW_FIELDS:
+        if field in payload:
+            base[field] = payload[field]
+    document = SimpleNamespace(project_id=project.id, **base)
+    context = templates.build_document_context(db, document=document, grand_total=total)
+    for field in TOKEN_FIELDS:
+        setattr(document, field, templates.render(getattr(document, field), context))
+    draft = SimpleNamespace(
+        issue_no=issue_no,
+        revision_label=next_label,
+        issued_at=None,
+        payment_terms=document.payment_terms,
+        validity=document.validity,
+        terms_rendered=document.terms_html,
+    )
+    active = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    design = active.design if active is not None and active.design else default_design()
+    sender = sender_of(db, document.company_id)
+    return cover_payload(
+        cover_rows(db, document, draft, project, design),
+        design,
+        intro=document.cover_letter_html,
+        closing=document.cover_closing_html,
+        noun=document_noun(document),
+        **sender,
+    )
