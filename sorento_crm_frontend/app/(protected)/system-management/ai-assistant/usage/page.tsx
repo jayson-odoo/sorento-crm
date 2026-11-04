@@ -24,7 +24,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateRange, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatUsd } from '../lib/formatUsd';
 import {
   useQueryDetail,
@@ -181,11 +181,9 @@ export default function AIUsagePage() {
                 <CalendarIcon className="h-4 w-4" />
                 {dateRange?.from ? (
                   dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'LLL dd, y')} - {format(dateRange.to, 'LLL dd, y')}
-                    </>
+                    formatDateRange(format(dateRange.from, 'yyyy-MM-dd'), format(dateRange.to, 'yyyy-MM-dd'))
                   ) : (
-                    format(dateRange.from, 'LLL dd, y')
+                    formatDateInMalaysia(format(dateRange.from, 'yyyy-MM-dd'))
                   )
                 ) : (
                   <span>Filter by date range</span>

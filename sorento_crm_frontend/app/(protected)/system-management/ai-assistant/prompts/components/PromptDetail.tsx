@@ -638,7 +638,7 @@ export function PromptDetail({ name }: { name: string }) {
 /** Malaysia time, in the form the chatbot's `{{current_date}}` directive uses ("Wednesday, 30 September 2026"). */
 function todayInMalaysia(): string {
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', {
+    new Intl.DateTimeFormat('en-GB', { // date-format-ok: mirrors the model's own {{current_date}} text (Wednesday, 30 September 2026), not a CRM date display
       timeZone: 'Asia/Kuala_Lumpur',
       weekday: 'long',
       day: '2-digit',
