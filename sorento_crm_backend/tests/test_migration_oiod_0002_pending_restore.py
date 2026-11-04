@@ -13,7 +13,7 @@ to the seeded rows.
 from __future__ import annotations
 
 import importlib.util
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -32,7 +32,7 @@ from app.models.planning_change import (
     PlanningChangeBatch,
     PlanningChangeRow,
 )
-from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+from app.models.project_so import INQUIRY_CANCELLED, IV_DELAY, OrderInquiryRow
 
 from ._oi_one_date_seed import Chain, uid
 from ._pg_fixture import pg_session
@@ -85,7 +85,12 @@ def _logged(db, row_ids):
     return {str(r[0]): (r[1], r[2]) for r in out}
 
 
-def _change(db, chain, batch, line, kind, state=PLANNING_CHANGE_STATE_PENDING):
+def _change(
+    db, chain, batch, line, kind, state=PLANNING_CHANGE_STATE_PENDING, *, moves=None
+):
+    """`moves=(from, to)` writes the from/to required_date the way `build_batch` does
+    (ISO strings); None writes the from/to of a change that names no date."""
+    from_date, to_date = moves if moves else (None, None)
     db.add(
         PlanningChangeRow(
             id=uid(),
@@ -94,6 +99,8 @@ def _change(db, chain, batch, line, kind, state=PLANNING_CHANGE_STATE_PENDING):
             project_sales_order_id=chain.pso.id,
             project_line_id=line.id,
             kind=kind,
+            from_json={"required_date": from_date.isoformat() if from_date else None},
+            to_json={"required_date": to_date.isoformat() if to_date else None},
             facts_json={},
             applied_state=state,
         )
@@ -116,27 +123,45 @@ def seeded():
             _c, delayed = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["delayed"] = chain.add_row(delayed, told=OLD)
             rows["delayed_with_previous"] = chain.add_row(delayed, told=OLD, previous=PRIOR)
-            _change(db, chain, batch, delayed, PLANNING_CHANGE_KIND_DELAYED)
+            _change(db, chain, batch, delayed, PLANNING_CHANGE_KIND_DELAYED, moves=(OLD, NEW))
+            # An old DELAY notice row on the same line: a Confirm never stamps it, leave it.
+            rows["notice_verb"] = chain.add_row(delayed, told=OLD)
+            rows["notice_verb"].verb = IV_DELAY
 
             # Moved earlier, the ADVANCE still pending: swallowed.
             _c, advanced = chain.add_line(core_date=EARLY, mirror_date=EARLY)
             rows["advanced"] = chain.add_row(advanced, told=OLD)
-            _change(db, chain, batch, advanced, PLANNING_CHANGE_KIND_ADVANCED)
+            _change(db, chain, batch, advanced, PLANNING_CHANGE_KIND_ADVANCED, moves=(OLD, EARLY))
             # A superseded row beside the pending one changes nothing.
             _change(
                 db, chain, batch, advanced, PLANNING_CHANGE_KIND_ADVANCED,
-                state=PLANNING_CHANGE_STATE_SUPERSEDED,
+                state=PLANNING_CHANGE_STATE_SUPERSEDED, moves=(OLD, EARLY),
             )
+
+            # A DELAY then a qty-only upload before Confirm: the pending row is `qty_up`
+            # but carries the original from date forward, so it still moves the date.
+            _c, chained = chain.add_line(core_date=NEW, mirror_date=NEW)
+            rows["qty_up_with_date_move"] = chain.add_row(chained, told=OLD)
+            _change(
+                db, chain, batch, chained, PLANNING_CHANGE_KIND_DELAYED,
+                state=PLANNING_CHANGE_STATE_SUPERSEDED, moves=(OLD, NEW),
+            )
+            _change(db, chain, batch, chained, PLANNING_CHANGE_KIND_QTY_UP, moves=(OLD, NEW))
 
             # Moved, but its change was already applied: purchasing was told, leave it.
             _c, applied = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["applied"] = chain.add_row(applied, told=OLD)
+            applied_batch = PlanningChangeBatch(
+                id=uid(), company_id=company_id, applied_at=datetime(2026, 11, 4, 9, 0)
+            )
+            db.add(applied_batch)
+            db.flush()
             _change(
-                db, chain, batch, applied, PLANNING_CHANGE_KIND_DELAYED,
-                state=PLANNING_CHANGE_STATE_APPLIED,
+                db, chain, applied_batch, applied, PLANNING_CHANGE_KIND_DELAYED,
+                state=PLANNING_CHANGE_STATE_APPLIED, moves=(OLD, NEW),
             )
 
-            # Moved, the pending change is a quantity change, not a date move.
+            # Moved, the pending change is a quantity change that names no date move.
             _c, qty_only = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["qty_change"] = chain.add_row(qty_only, told=OLD)
             _change(db, chain, batch, qty_only, PLANNING_CHANGE_KIND_QTY_UP)
@@ -148,17 +173,17 @@ def seeded():
             # Pending DELAY, but the backfill never touched it (already on the line date).
             _c, matched = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["not_backfilled"] = chain.add_row(matched, told=NEW)
-            _change(db, chain, batch, matched, PLANNING_CHANGE_KIND_DELAYED)
+            _change(db, chain, batch, matched, PLANNING_CHANGE_KIND_DELAYED, moves=(OLD, NEW))
 
             # Pending DELAY, backfilled, then confirmed onward before this ran.
             _c, moved_on = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["moved_since"] = chain.add_row(moved_on, told=OLD)
-            _change(db, chain, batch, moved_on, PLANNING_CHANGE_KIND_DELAYED)
+            _change(db, chain, batch, moved_on, PLANNING_CHANGE_KIND_DELAYED, moves=(OLD, NEW))
 
             # Pending DELAY, backfilled, then cancelled before this ran.
             _c, gone = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["cancelled_since"] = chain.add_row(gone, told=OLD)
-            _change(db, chain, batch, gone, PLANNING_CHANGE_KIND_DELAYED)
+            _change(db, chain, batch, gone, PLANNING_CHANGE_KIND_DELAYED, moves=(OLD, NEW))
             db.flush()
 
             ids = {k: v.id for k, v in rows.items()}
@@ -186,6 +211,7 @@ def test_upgrade_puts_pending_delayed_and_advanced_rows_back_on_the_told_date(se
     assert _pair(db, ids["delayed"]) == (OLD, None)
     assert _pair(db, ids["delayed_with_previous"]) == (OLD, PRIOR)
     assert _pair(db, ids["advanced"]) == (OLD, None)
+    assert _pair(db, ids["qty_up_with_date_move"]) == (OLD, None)
 
 
 def test_upgrade_leaves_every_other_row_alone(seeded):
@@ -200,6 +226,7 @@ def test_upgrade_leaves_every_other_row_alone(seeded):
         ("not_backfilled", (NEW, None)),
         ("moved_since", (LATER, NEW)),
         ("cancelled_since", (NEW, OLD)),
+        ("notice_verb", (NEW, OLD)),
     ):
         assert _pair(db, ids[key]) == pair, key
 
@@ -210,7 +237,10 @@ def test_upgrade_logs_exactly_the_restored_rows(seeded):
     _run(db, RESTORE, "upgrade")
 
     logged = _logged(db, ids.values())
-    assert set(logged) == {ids["delayed"], ids["delayed_with_previous"], ids["advanced"]}
+    assert set(logged) == {
+        ids["delayed"], ids["delayed_with_previous"], ids["advanced"],
+        ids["qty_up_with_date_move"],
+    }
     assert logged[ids["delayed"]] == (NEW, OLD)
     assert logged[ids["advanced"]] == (EARLY, OLD)
 
@@ -250,6 +280,19 @@ def test_downgrade_puts_the_backfilled_dates_back_and_drops_the_log(seeded):
     assert db.execute(text(f"select to_regclass('{LOG}')")).scalar() is None
 
 
+def test_downgrade_keeps_a_confirm_made_after_the_upgrade(seeded):
+    """A row Confirmed onward after the restore is real news; the downgrade leaves it."""
+    db, ids = seeded
+    _run(db, RESTORE, "upgrade")
+    row = _row(db, ids["delayed"])
+    row.previous_delivery_date, row.delivery_date = OLD, LATER
+    db.flush()
+    _run(db, RESTORE, "downgrade")
+
+    assert _pair(db, ids["delayed"]) == (LATER, OLD)
+    assert _pair(db, ids["advanced"]) == (EARLY, OLD)
+
+
 OWNER_SQL = (
     Path(__file__).resolve().parents[2]
     / "documentation" / "plans" / "scm" / "SQL-oi-date-was-fix-count-04nov.sql"
@@ -261,7 +304,7 @@ def _owner_statements():
         line for line in OWNER_SQL.read_text().splitlines() if not line.lstrip().startswith("--")
     )
     statements = [s.strip() for s in body.split(";") if s.strip()]
-    assert len(statements) == 2, statements
+    assert len(statements) == 3, statements
     for statement in statements:
         assert statement.upper().startswith("SELECT"), "read-only: SELECT only"
     return statements
@@ -271,20 +314,38 @@ def test_owner_count_query_selects_exactly_what_the_migration_restores(seeded):
     """The read-only DBeaver query lists the same rows the upgrade restores, with the facts
     the owner asked for (OI no, SO no, line, product, old told date, line date, kind)."""
     db, ids = seeded
-    count_sql, list_sql = _owner_statements()
-    listed = db.execute(text(list_sql)).mappings().all()
+    count_sql, list_sql, _confirmed_sql = _owner_statements()
     product = _row(db, ids["delayed"]).item_code
-    ours = [r for r in listed if r["product_code"] == product]
-    assert len(ours) == 3
-    kinds = sorted(r["pending_change_kind"] for r in ours)
-    assert kinds == ["advanced", "delayed", "delayed"]
-    for r in ours:
+
+    def ours():
+        return [r for r in db.execute(text(list_sql)).mappings() if r["product_code"] == product]
+
+    listed = ours()
+    assert sorted(r["pending_change_kind"] for r in listed) == [
+        "advanced", "delayed", "delayed", "qty_up",
+    ]
+    for r in listed:
         assert r["old_told_date"] == OLD
         assert r["so_line_date_now"] == r["told_date_now"]
         assert r["oi_no"] and r["so_no"] and r["so_line_no"]
 
-    count = db.execute(text(count_sql)).mappings().one()
+    before = db.execute(text(count_sql)).mappings().one()["affected_rows"]
     _run(db, RESTORE, "upgrade")
-    restored = db.execute(text(f"select count(*) from {LOG}")).scalar()
-    assert count["affected_rows"] == restored
-    assert db.execute(text(count_sql)).mappings().one()["affected_rows"] == 0
+    after = db.execute(text(count_sql)).mappings().one()["affected_rows"]
+    assert before - after == len(listed) == 4
+    assert ours() == []
+
+
+def test_owner_query_lists_moves_already_confirmed_without_an_email(seeded):
+    """Statement 3: the applied date move since 4 Nov whose row still holds the backfilled
+    dates, for the owner's resend decision. The migration does not touch it."""
+    db, ids = seeded
+    _c, _l, confirmed_sql = _owner_statements()
+    product = _row(db, ids["delayed"]).item_code
+
+    listed = [
+        r for r in db.execute(text(confirmed_sql)).mappings() if r["product_code"] == product
+    ]
+    assert [(r["old_told_date"], r["confirmed_date"], r["change_kind"]) for r in listed] == [
+        (OLD, NEW, "delayed")
+    ]
