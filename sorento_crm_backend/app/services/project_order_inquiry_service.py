@@ -1562,6 +1562,11 @@ class ProjectOrderInquiryService:
         # allocation, so `auto_place_for_products` holds them for the length of ONE pass
         # (`_document_rows`); None outside a pass, so the Link dialog always reads fresh.
         self._document_rows_memo: Optional[Dict[Tuple[Any, ...], List[Any]]] = None
+        # CONFIRM-SPEED-PR2: the same pass re-read a project line's product / core line
+        # (`_resolve_product_id` x2, `claim_identity` x1 per row) and an inquiry's SO number
+        # (`claim_identity` x1 per row), 3,684 statements over 489 rows on SO373923. Neither
+        # changes inside a pass; held by `auto_place_for_products` for ONE pass, None outside.
+        self._line_identity_memo: Optional[Dict[Tuple[Any, ...], Any]] = None
         # What every link already claims, per target. `auto_place_for_products` asks for
         # it once per ROW through `_candidates_for_row`, which on a full pass is two
         # aggregate queries per row over the whole link table. Cached here and dropped by
@@ -13385,11 +13390,13 @@ class ProjectOrderInquiryService:
         owner = self._document_rows_memo is None
         if owner:
             self._document_rows_memo = {}
+            self._line_identity_memo = {}
         try:
             return self._auto_place_for_products(product_ids, **kwargs)
         finally:
             if owner:
                 self._document_rows_memo = None
+                self._line_identity_memo = None
 
     def _auto_place_for_products(
         self,
@@ -14511,15 +14518,39 @@ class ProjectOrderInquiryService:
     #: The name this check carried before section 3.I. Same call.
     _assert_placeable = _assert_linkable
 
+    def _line_identity(self, so_line_id: str) -> Optional[Tuple[Any, Any]]:
+        """`(product_id, core_sales_order_line_id)` of a project line, None when it is gone;
+        one query, held for the rest of the placement pass running now
+        (`_line_identity_memo`) and read fresh outside one."""
+        memo = self._line_identity_memo
+        key = ("line", str(so_line_id), self._scope_key())
+        if memo is not None and key in memo:
+            return memo[key]
+        line = (
+            self.db.query(
+                ProjectSalesOrderLine.product_id,
+                ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .filter(ProjectSalesOrderLine.id == so_line_id)
+            .first()
+        )
+        value = (line[0], line[1]) if line else None
+        if memo is not None:
+            memo[key] = value
+        return value
+
+    def _scope_key(self) -> Any:
+        """The session's company scope, as `_document_rows` keys it."""
+        scope = get_company_scope(self.db)
+        if isinstance(scope, (set, frozenset)):
+            scope = frozenset(str(company) for company in scope)
+        return scope
+
     def _resolve_product_id(self, row: OrderInquiryRow) -> Optional[str]:
         """The product this row is FOR: the reconciled line's product first, the item
         code second. Never invented when neither resolves."""
         if row.so_line_id:
-            line = (
-                self.db.query(ProjectSalesOrderLine.product_id)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
-                .first()
-            )
+            line = self._line_identity(row.so_line_id)
             if line and line[0]:
                 return line[0]
         if row.item_code:
@@ -14703,29 +14734,34 @@ class ProjectOrderInquiryService:
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """The (so_number, item_code, core so_line_id) the audit claim is written and
         matched on - the same identity `order_link_service.resolve()` already reads."""
-        inquiry = (
-            self.db.query(OrderInquiry).filter(OrderInquiry.id == row.order_inquiry_id).first()
-        )
-        order = (
-            self.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
-            .first()
-            if inquiry is not None
-            else None
-        )
-        so_number = (
-            (order.autocount_doc_no or order.provisional_ref)
-            if order is not None
-            else str(row.order_inquiry_id)
-        )
-        core_line_id = None
-        if row.so_line_id:
-            line = (
-                self.db.query(ProjectSalesOrderLine.core_sales_order_line_id)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
+        memo = self._line_identity_memo
+        memo_key = ("so_number", str(row.order_inquiry_id), self._scope_key())
+        if memo is not None and memo_key in memo:
+            so_number = memo[memo_key]
+        else:
+            inquiry = (
+                self.db.query(OrderInquiry)
+                .filter(OrderInquiry.id == row.order_inquiry_id)
                 .first()
             )
-            core_line_id = line[0] if line else None
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
+                .first()
+                if inquiry is not None
+                else None
+            )
+            so_number = (
+                (order.autocount_doc_no or order.provisional_ref)
+                if order is not None
+                else str(row.order_inquiry_id)
+            )
+            if memo is not None:
+                memo[memo_key] = so_number
+        core_line_id = None
+        if row.so_line_id:
+            line = self._line_identity(row.so_line_id)
+            core_line_id = line[1] if line else None
         return so_number, row.item_code, core_line_id
 
     # ---------------------------------------------------------------- export

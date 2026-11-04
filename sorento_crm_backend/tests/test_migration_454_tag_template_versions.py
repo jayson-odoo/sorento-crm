@@ -56,10 +56,26 @@ def _has_table(db) -> bool:
     return inspect(db.get_bind()).has_table("tag_template_version", schema="dealer_kit")
 
 
+def _drop_foreign_keys_into_versions(db) -> None:
+    """Later tables hold FKs to tag_template_version (spec sheets pin template versions); the
+    downgrade drops that table, so those FKs go first, inside this rolled-back transaction. The
+    migration drops its own FK on tag_template itself."""
+    rows = db.execute(
+        text(
+            "SELECT conrelid::regclass::text AS tbl, conname FROM pg_constraint "
+            "WHERE contype = 'f' AND confrelid = to_regclass('dealer_kit.tag_template_version') "
+            "AND conrelid <> to_regclass('dealer_kit.tag_template')"
+        )
+    ).all()
+    for table, name in rows:
+        db.execute(text(f'ALTER TABLE {table} DROP CONSTRAINT "{name}"'))
+
+
 @pytest.fixture
 def db():
     with pg_session() as session:
         if _has_column(session):
+            _drop_foreign_keys_into_versions(session)
             _run(session, "downgrade")
         yield session
 

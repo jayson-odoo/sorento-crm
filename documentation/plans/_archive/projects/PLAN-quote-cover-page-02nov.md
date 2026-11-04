@@ -1,6 +1,6 @@
 # PLAN: Quotation cover page + terms print (QUOTE-COVER-PAGE)
 
-**Status:** PR open (#2088): reviewer READY, security PASS, browser PASS at 7e2d37bf88; waiting CI and the owner hand test. Track: L (new
+**Status:** Merged (#2088, 92c5bb7f50). Follow-up: PLAN-quote-cover-design-02nov.md. Track: L (new
 columns via migration, new printed page, public countersign payload change). UAC:
 `quote-cover-page-02nov-acceptance-criteria.md`.
 

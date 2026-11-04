@@ -920,3 +920,27 @@ export function defaultBarcodeProps(): BarcodeLayerProps {
     show_code: true,
   };
 }
+
+/**
+ * A layer read the way the PDF renderer reads it. The renderer shows a layer unless `visible` is
+ * false, while the designer hides it unless `visible` is truthy, so a layer saved without the key
+ * draws in the PDF and vanishes on a live canvas. Normalising at the boundary closes the gap
+ * without changing how Tag Templates read their own saved documents.
+ */
+export function normalizeLayer(layer: TagLayer, index: number): TagLayer {
+  const raw = layer as unknown as Record<string, unknown>;
+  const rotation = layer.rotation_deg ?? (raw.rotation as number | undefined) ?? 0;
+  return {
+    ...layer,
+    visible: layer.visible !== false,
+    locked: layer.locked === true,
+    rotation_deg: rotation,
+    z_index: layer.z_index ?? index,
+    slot_binding: layer.slot_binding ?? null,
+    text_override: layer.text_override ?? null,
+  };
+}
+
+export function normalizeLayers(layers: TagLayer[]): TagLayer[] {
+  return layers.map(normalizeLayer);
+}

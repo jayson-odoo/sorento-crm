@@ -919,7 +919,13 @@ QUOTATION_LOSS_REASON_SET_KEY = "project_quotation_loss_reason"
 # nothing ever prints while looking perfectly configured in Setup.
 TEMPLATE_KIND_COVER_LETTER = "cover_letter"
 TEMPLATE_KIND_TERMS = "terms"
-QUOTATION_TEMPLATE_KINDS = (TEMPLATE_KIND_COVER_LETTER, TEMPLATE_KIND_TERMS)
+# QUOTE-COVER-DESIGN: the cover page design. Its intro is body_html, the rest is ``design``.
+TEMPLATE_KIND_COVER_PAGE = "cover_page"
+QUOTATION_TEMPLATE_KINDS = (
+    TEMPLATE_KIND_COVER_LETTER,
+    TEMPLATE_KIND_TERMS,
+    TEMPLATE_KIND_COVER_PAGE,
+)
 
 # What a line is priced per. Sorento quotes a development by repeating unit, not by
 # one flat bill of quantities: 300 house units at one basin each is a different
@@ -1212,6 +1218,8 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # The document's OWN editable copy, rendered from the company template at create. Editing it
     # never touches the template, and editing the template never rewrites a document (AC-E2).
     cover_letter_html = Column(Text, nullable=True)
+    # The cover page's closing text (QUOTE-COVER-DESIGN); the letter above is its intro.
+    cover_closing_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
     # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
@@ -1323,6 +1331,8 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     # Defaults beside the terms template, copied onto a new quotation (kind terms only).
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # kind cover_page only: {show_letterhead, title, rows: [{key, shown, label}], closing_html}.
+    design = Column(JSONB, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1385,7 +1395,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
-    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # Layout 3: the cover design and closing text frozen at send (QUOTE-COVER-DESIGN).
+    cover_design = Column(JSONB, nullable=True)
+    cover_closing_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first, 3 = designed cover page. No python default on purpose:
     # only issue() opts in, so every other path keeps layout 1.
     layout_version = Column(SmallInteger, nullable=False, server_default="1")
     # Frozen with the terms at issue.
@@ -1442,6 +1455,75 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
+        {"schema": "projects"},
+    )
+
+
+class ProjectQuotationSpecSheet(Base, CompanyScopedMixin):
+    """One saved spec sheet of a quotation document (SPEC-SHEET-V2): SS1, SS2, ...
+
+    Frozen on purpose: the items snapshot, the pinned template VERSIONS and the per-page layer
+    edits live on the row, so a later line edit or a re-published template never moves a sheet the
+    customer may already hold. ``issue_id`` NULL means it was built from the draft.
+    """
+
+    __tablename__ = "quotation_spec_sheets"
+    __audit_entity_type__ = "project_quotation_spec_sheets"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    based_on_issue_no = Column(Integer, nullable=True)
+    sheet_no = Column(Integer, nullable=False)
+    cover_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    page_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    single_page_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    cover_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    page_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    single_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    items = Column(JSONB, nullable=False)
+    rows = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    page_edits = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    items_taken_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    page_count = Column(Integer, nullable=False, default=0)
+    last_exported_at = Column(DateTime(timezone=False), nullable=True)
+    created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "sheet_no", name="uq_project_quotation_spec_sheets_no"),
+        Index("ix_project_quotation_spec_sheets_document", "document_id"),
         {"schema": "projects"},
     )
 
