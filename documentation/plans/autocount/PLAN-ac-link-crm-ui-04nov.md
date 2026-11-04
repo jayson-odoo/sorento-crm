@@ -126,3 +126,16 @@ AC-WRITE-QTSO lane before Phase 2.
   (`tests/scm/test_stock_debt_po_link.py::test_the_drill_lines_carry_*`, `*_still_serves_them`).
 - Hand-test path corrected: Procurement > Supply Chain > Stock Debt (`menu.config.tsx`).
 
+
+## Crew pass round 3 (4 Nov, a0a2c090): over-link, other books
+
+- Over-link: a sales order line already covered by POs offered its full outstanding again.
+  The popup's cap is now outstanding (live) less the qty POs already cover; a fully covered
+  line is greyed "Already covered by PO X (n)" and cannot be ticked, and Decide's Link item is
+  greyed with the same reason when every ticked line is covered. The server refuses the same
+  (`{SO} line {n} is already covered by PO …` / `… needs only N more`).
+- Other books: AutoCount keys are per book (`{database}:{DocKey}:{DtlKey}`), so a PO line links
+  only to an SO line of its own book. The picker greys a PO of another book ("In another
+  AutoCount book from this sales order") and the server refuses it. `/write-capabilities` does
+  not name the book it can write; when it does, a book it cannot write can be greyed with the
+  switched-off reason too.
