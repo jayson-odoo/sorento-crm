@@ -166,15 +166,14 @@ describe('AC-ND-10 / AC-ND-11: cancelled line and Nothing to buy', () => {
     expect(line.muted).toBe(true);
   });
 
-  it('O2: a line whose rows are all retired reads Nothing to buy, all zero', () => {
-    const [line] = foldInquiryLines([
-      row({ id: 'a', core_line_id: 'cl-6', qty: '3', redirected_to_pool: true }),
-    ]);
-    expect(line.state).toBe('nothing_to_buy');
-    expect([line.requested, line.taken, line.remaining]).toEqual([0, 0, 0]);
-    expect(line.liveRows).toEqual([]);
-    expect(line.muted).toBe(true);
+  it('a line whose rows are all used is not rendered (was O2 Nothing to buy)', () => {
+    // OI-RESERVE-USED-ROW (owner, 4 Nov 2026, supersedes O2/G6 for this shape): a line left with
+    // only used rows is History, not a line, on both the Lines tab and the Documents counts.
+    expect(
+      foldInquiryLines([row({ id: 'a', core_line_id: 'cl-6', qty: '3', redirected_to_pool: true })]),
+    ).toEqual([]);
   });
+
 });
 
 describe('AC-ND-4 (G4, S2): SO Qty is the sales order line qty the server sends', () => {
@@ -217,13 +216,14 @@ describe('AC-ND-20 (S2): the one Lines fetch carries cancelled rows; they are hi
     expect(lines.map((line) => line.lineNo)).toEqual([1]);
   });
 
-  it('a line of only a used row still renders as Nothing to buy (O2)', () => {
+  it('a line of only a used row and a cancelled row is not rendered', () => {
+    // OI-RESERVE-USED-ROW (owner, 4 Nov 2026, supersedes O2/G6 for this shape): a line left with
+    // only used rows is History, not a line, on both the Lines tab and the Documents counts.
     const lines = foldInquiryLines([
       row({ id: 'u', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true }),
       row({ id: 'x', core_line_id: 'cl-3', line_no: 3, state: 'cancelled' }),
     ]);
-    expect(lines).toHaveLength(1);
-    expect(lines[0].state).toBe('nothing_to_buy');
+    expect(lines).toEqual([]);
   });
 });
 
@@ -324,10 +324,12 @@ describe('S4 (AC-ND-14): the Reserve tab follows whichever live row carries the 
     expect(reserveHistoryRowOf(declined)?.id).toBe('b');
     const [plain] = foldInquiryLines([row({ id: 'c', core_line_id: 'cl-5', reserve_state: 'requested' })]);
     expect(reserveHistoryRowOf(plain)).toBeNull();
-    const [usedOnly] = foldInquiryLines([
-      row({ id: 'd', core_line_id: 'cl-6', reserve_state: 'reserved', redirected_to_pool: true }),
-    ]);
-    expect(reserveHistoryRowOf(usedOnly)).toBeNull();
+    // A used-only line is not rendered at all (OI-RESERVE-USED-ROW), so it has no Reserve tab.
+    expect(
+      foldInquiryLines([
+        row({ id: 'd', core_line_id: 'cl-6', reserve_state: 'reserved', redirected_to_pool: true }),
+      ]),
+    ).toEqual([]);
   });
 });
 
@@ -495,28 +497,24 @@ describe('Review S2 (PR #1266): a line whose only waiting row is a used row read
     expect(line.waitingUsedRows.map((r) => r.id)).toEqual(['used']);
   });
 
-  it('shape b: a line with only a used row, still changed, reads To confirm and is not greyed', () => {
-    const [line] = foldInquiryLines([
-      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
-    ]);
-    expect(line.state).toBe('to_confirm');
-    expect(line.muted).toBe(false);
+  it('shape b re-pinned: a line with only a used row is not rendered, whatever its ack', () => {
+    // OI-RESERVE-USED-ROW (owner, 4 Nov 2026, supersedes O2/G6 for this shape): a line left with
+    // only used rows is History, not a line, on both the Lines tab and the Documents counts.
+    for (const ack_state of ['changed', 'awaiting', 'acknowledged'] as const) {
+      expect(
+        foldInquiryLines([
+          row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state }),
+        ]),
+      ).toEqual([]);
+    }
   });
 
-  it('a used row still awaiting waits too', () => {
+  it('a used row still awaiting beside a confirmed live row waits too', () => {
     const [line] = foldInquiryLines([
       row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'awaiting' }),
+      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'acknowledged' }),
     ]);
     expect(line.state).toBe('to_confirm');
-  });
-
-  it('once the used row is confirmed the line reads Nothing to buy again, greyed', () => {
-    const [line] = foldInquiryLines([
-      row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'acknowledged' }),
-    ]);
-    expect(line.state).toBe('nothing_to_buy');
-    expect(line.muted).toBe(true);
-    expect(line.waitingUsedRows).toEqual([]);
   });
 
   it('a cancelled used row is history and never waits', () => {
@@ -531,6 +529,7 @@ describe('Review S2 (PR #1266): a line whose only waiting row is a used row read
   it('a cancelled SO line still reads Line cancelled while its used row waits', () => {
     const [line] = foldInquiryLines([
       row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed', line_cancelled: true }),
+      row({ id: 'live', core_line_id: 'cl-1', qty: '5', ack_state: 'acknowledged', line_cancelled: true }),
     ]);
     expect(line.state).toBe('line_cancelled');
     expect(line.waitingUsedRows.map((r) => r.id)).toEqual(['used']);
