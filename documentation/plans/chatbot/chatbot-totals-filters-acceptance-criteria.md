@@ -121,6 +121,22 @@ list and the bot asked "How many?". Spend OK crew 5 Nov: USD 0.60 for this round
 | HT1-11 | the prompt text in use does not define the kind slot or the company block (e4aa6d43, dc77a7ac) | any turn | Schema and user block unchanged; today's behaviour |
 | HT1-12 | the copy pinned to the new prompt version | the owner's 5-turn thread x3, and hand-test script steps 3-8 and 10 x3 | Every run: T4 Company Sorento, no Brand line (grand total expected near the script's RM 10,165,851.05 for September, UNVERIFIED for the agent list), T5 the same list, T6 top 5 agents for Company Sorento; script steps as the Expected section. Pass counts reported |
 
+### Crew re-pass on v200 (5 Nov, 1169124c47): bare name flaky 1/3
+
+"Sorento total sale September 2026 delivered" (Mr Loo, nothing held) asked company / brand / both in r1 only; in r2 and
+r3 the parser gave the entity said_as "company" with no kind word in the message and the company ran silently (traces:
+crew/state/handtest/2156/repass-v200/). Owner rule (4 Nov): a bare name asks ONCE. Fix: an evidence key `said_as_text`
+(the word of THIS message that calls the name a company or a brand, as typed; null when there is none), generated
+before said_as. Spend OK crew 5 Nov: USD 0.40 for this round.
+
+| # | Given | When | Expected |
+|---|---|---|---|
+| HT1-13 | the prompt text defines said_as_text | the parse gives said_as "company" (or "brand" / "both") and said_as_text null or empty | said_as is read as null: the HT1-5 / ON-16 rules apply (one company / brand / both question for a company name), never a silent company or brand filter. Said / not said only: the engine never compares said_as_text with the message |
+| HT1-14 | same | said_as non-null and said_as_text a non-empty word | HT1-2..4 unchanged (the slot said_as names) |
+| HT1-15 | a text without "said_as_text" (v200 9ad88b43) | any turn | Today's v200 behaviour: schema, user block and routing unchanged |
+| HT1-16 | the schema with said_as_text | parser output order | said_as_text is generated before said_as (property ordering), so the word is quoted before the kind is chosen |
+| HT1-17 | the copy pinned to the new version | the bare-name block ("Sorento total sale September 2026 delivered", then "company") x3, and the owner thread x3 | Every run asks once on the bare name and runs Company Sorento after "company"; owner thread 5/5 each run |
+
 ## Robustness (#2105 follow-up)
 
 | # | Case | Expected |
