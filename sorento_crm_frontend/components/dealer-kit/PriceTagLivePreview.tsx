@@ -20,7 +20,7 @@ import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { toast } from '@/lib/toast';
 import { linePriceType } from '@/lib/dealer-kit/price-tag-draft-lines';
-import { buildRequestSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
+import { buildRequestSheet, buildSingleTagSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
@@ -96,6 +96,8 @@ export function linesWithoutTemplate(
 export function previewPayload(
   sent: TagPreviewLineInput[],
   response: TagPreviewResponse,
+  /** One-line mode: the tag alone on a page of its own size, upright. */
+  single = false,
 ): TagSheetDesignPayload | null {
   const tags: TagRequestTag[] = sent.map((line) => ({
     id: line.key,
@@ -110,11 +112,13 @@ export function previewPayload(
     },
   }));
   let seq = 0;
-  const doc = buildRequestSheet(
-    tags,
-    response.templates as Record<string, TagTemplate>,
-    () => `preview-${(seq += 1)}`,
-  );
+  const templates = response.templates as Record<string, TagTemplate>;
+  const newId = () => `preview-${(seq += 1)}`;
+  const only = single ? tags[0] : undefined;
+  const doc =
+    only && templates[only.line.id]
+      ? buildSingleTagSheet(only, templates[only.line.id] as TagTemplate, newId)
+      : buildRequestSheet(tags, templates, newId);
   if (doc.sheets.every((sheet) => sheet.tags.length === 0)) return null;
   return designPayloadFromResponse({
     doc,
@@ -157,6 +161,8 @@ export function PriceTagLivePreview({
   const askSeq = useRef(0);
   const sentRef = useRef(sent);
   sentRef.current = sent;
+  const lineKeyRef = useRef(lineKey);
+  lineKeyRef.current = lineKey;
 
   useEffect(() => {
     if (sentRef.current.length === 0) {
@@ -173,7 +179,7 @@ export function PriceTagLivePreview({
       lookupTagPreview(priceMode, lines)
         .then((response) => {
           if (ask !== askSeq.current) return; // a newer edit is on its way
-          setPayload(previewPayload(lines, response));
+          setPayload(previewPayload(lines, response, lineKeyRef.current !== undefined));
           setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
           setFailed(false);
         })

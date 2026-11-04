@@ -33,7 +33,7 @@ vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagPreviewResponse } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import { PriceTagLivePreview, previewLines } from './PriceTagLivePreview';
+import { PriceTagLivePreview, previewLines, previewPayload } from './PriceTagLivePreview';
 
 const template = {
   id: 'tpl',
@@ -73,6 +73,35 @@ describe('previewLines price_type (AC-20)', () => {
       line({ key: 'a', product_id: 'p1', price_type: 'list', manual_sell_price: 599 }),
     ]) as unknown as Array<Record<string, unknown>>;
     expect(sent[0].manual_sell_price == null).toBe(true);
+  });
+});
+
+describe('one line is drawn upright on a page of its own size', () => {
+  it('builds ONE page equal to the template print size with a single rotation-0 placement', () => {
+    const single = previewPayload(
+      [{ key: 'b', line_type: 'product', product_id: 'p2', product_set_id: null, combo_id: null,
+         parts: [], promotion_id: null, manual_sell_price: null, tag_template_id: null }] as never,
+      response(['b']),
+      true,
+    ) as unknown as { doc: { imposition: Record<string, number>; sheets: Array<{ tags: Array<Record<string, number>> }> } };
+    expect(single.doc.sheets).toHaveLength(1);
+    expect(single.doc.sheets[0].tags).toHaveLength(1);
+    expect(single.doc.imposition.page_width_mm).toBe(80);
+    expect(single.doc.imposition.page_height_mm).toBe(50);
+    expect(single.doc.imposition.bleed_mm).toBe(0);
+    const [tag] = single.doc.sheets[0].tags;
+    expect(tag.rotation).toBe(0);
+    expect([tag.x_mm, tag.y_mm]).toEqual([0, 0]);
+  });
+
+  it('the whole-sheet preview keeps the A4 arrange', () => {
+    const whole = previewPayload(
+      [{ key: 'b', line_type: 'product', product_id: 'p2', product_set_id: null, combo_id: null,
+         parts: [], promotion_id: null, manual_sell_price: null, tag_template_id: null }] as never,
+      response(['b']),
+    ) as unknown as { doc: { imposition: Record<string, number> } };
+    expect(whole.doc.imposition.page_width_mm).toBe(210);
+    expect(whole.doc.imposition.page_height_mm).toBe(297);
   });
 });
 
