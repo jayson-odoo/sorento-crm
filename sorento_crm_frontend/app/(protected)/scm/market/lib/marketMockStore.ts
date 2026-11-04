@@ -23,6 +23,7 @@ import type {
   MarketResearchTopicWrite,
   MarketSignal,
 } from '../types/market.types';
+import { sessionStore } from '@/lib/storage';
 
 /** Phase-1 flag - flipped to false in Phase 2 (real endpoints now serve these). */
 export const USE_M5_MARKET_MOCKS = false;
@@ -179,7 +180,7 @@ function freshState(): StoreState {
 function load(): StoreState {
   if (typeof window === 'undefined') return freshState();
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStore.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<StoreState>;
       return { ...freshState(), ...parsed };
@@ -195,7 +196,7 @@ let state: StoreState = load();
 function persist() {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    sessionStore.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     /* sessionStorage unavailable - in-memory state still works for the session */
   }

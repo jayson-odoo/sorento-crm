@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { MY_REQUEST_STAFF_PAGES, myRequestStaffPath } from '@/lib/my-requests-staff-pages';
+import { localStore } from '@/lib/storage';
 
 const FALLBACK = MY_REQUEST_STAFF_PAGES.stock_inquiry.path;
 
@@ -26,7 +27,7 @@ export default function MyRequestsPage() {
     if (isLoading) return;
     let star: string | null = null;
     if (contactId && typeof window !== 'undefined') {
-      star = window.localStorage.getItem(`sorento.portalDefaultTab.${contactId}`);
+      star = localStore.getItem(`sorento.portalDefaultTab.${contactId}`);
     }
     router.replace(myRequestStaffPath(star) ?? FALLBACK);
   }, [typed, isLoading, contactId, router]);

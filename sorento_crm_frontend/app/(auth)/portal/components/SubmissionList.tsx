@@ -91,6 +91,7 @@ import {
   type LandingFilters,
   type LandingSort,
 } from '../lib/landing-fields';
+import { localStore } from '@/lib/storage';
 
 /**
  * One kind's rows in the landing's summary shape, through `client`. Each kind answers its own
@@ -171,7 +172,7 @@ export function usePortalListView(): [
   const [view, setViewState] = useState<ListBoardViewMode>('board');
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(PORTAL_VIEW_KEY);
+    const stored = localStore.getItem(PORTAL_VIEW_KEY);
     if (stored === 'list' || stored === 'board') {
       setViewState(stored);
     }
@@ -179,7 +180,7 @@ export function usePortalListView(): [
   const setView = useCallback((mode: ListBoardViewMode) => {
     setViewState(mode);
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(PORTAL_VIEW_KEY, mode);
+      localStore.setItem(PORTAL_VIEW_KEY, mode);
     }
   }, []);
   return [view, setView];

@@ -1,3 +1,4 @@
+import { localStore } from '@/lib/storage';
 /**
  * When each of the two adoption prompts is shown (AC-P8 to AC-P14).
  *
@@ -62,7 +63,7 @@ export function isMobileUserAgent(userAgent: string | undefined | null): boolean
 
 export function readDismissed(key: string): boolean {
   try {
-    return window.localStorage.getItem(key) === '1';
+    return localStore.getItem(key) === '1';
   } catch {
     return false;
   }
@@ -70,7 +71,7 @@ export function readDismissed(key: string): boolean {
 
 export function markDismissed(key: string): void {
   try {
-    window.localStorage.setItem(key, '1');
+    localStore.setItem(key, '1');
   } catch {
     // Storage unavailable. The cost is one repeated prompt, which is the right
     // failure for a preference this small.

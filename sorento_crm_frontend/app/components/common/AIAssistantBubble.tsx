@@ -44,6 +44,7 @@ import {
 } from '@/lib/aiAssistantChatApi';
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { localStore } from '@/lib/storage';
 
 const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
 const OPEN_STORAGE_KEY = 'sorento.ai.bubbleOpen';
@@ -211,7 +212,7 @@ export default function AIAssistantBubble() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      if (window.localStorage.getItem(OPEN_STORAGE_KEY) === '1') setOpen(true);
+      if (localStore.getItem(OPEN_STORAGE_KEY) === '1') setOpen(true);
     } catch {
       // ignore unreadable storage
     }
@@ -224,7 +225,7 @@ export default function AIAssistantBubble() {
     focusAfterToggleRef.current = value ? 'panel' : 'handle';
     setOpen(value);
     try {
-      window.localStorage.setItem(OPEN_STORAGE_KEY, value ? '1' : '0');
+      localStore.setItem(OPEN_STORAGE_KEY, value ? '1' : '0');
     } catch {
       // ignore unwritable storage
     }
@@ -241,7 +242,7 @@ export default function AIAssistantBubble() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
-      const raw = window.localStorage.getItem(SIZE_STORAGE_KEY);
+      const raw = localStore.getItem(SIZE_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<BubbleSize>;
         if (
@@ -325,7 +326,7 @@ export default function AIAssistantBubble() {
 
   const persistSize = useCallback((size: BubbleSize) => {
     try {
-      window.localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(size));
+      localStore.setItem(SIZE_STORAGE_KEY, JSON.stringify(size));
     } catch {
       // ignore
     }

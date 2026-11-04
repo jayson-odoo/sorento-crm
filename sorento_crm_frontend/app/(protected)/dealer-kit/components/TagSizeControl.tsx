@@ -48,6 +48,7 @@ import {
   type TagSizePreset,
 } from '@/lib/dealer-kit/request-tags';
 import type { TagSizeRecord } from '@/app/(protected)/dealer-kit/services/tagSizeService';
+import { localStore } from '@/lib/storage';
 
 /** No ceiling, floor only - what an absent `bounds` prop means. */
 const FLOOR_ONLY_BOUNDS: TagSizeBounds = {
@@ -76,7 +77,7 @@ const TAG_SIZE_OPEN_KEY = 'dealer-kit.tag-size.open';
 
 function readTagSizeOpen(): boolean {
   try {
-    return window.localStorage.getItem(TAG_SIZE_OPEN_KEY) === '1';
+    return localStore.getItem(TAG_SIZE_OPEN_KEY) === '1';
   } catch {
     return false;
   }
@@ -85,9 +86,9 @@ function readTagSizeOpen(): boolean {
 function writeTagSizeOpen(open: boolean): void {
   try {
     if (open) {
-      window.localStorage.setItem(TAG_SIZE_OPEN_KEY, '1');
+      localStore.setItem(TAG_SIZE_OPEN_KEY, '1');
     } else {
-      window.localStorage.removeItem(TAG_SIZE_OPEN_KEY);
+      localStore.removeItem(TAG_SIZE_OPEN_KEY);
     }
   } catch {
     // Best effort - a failed write just means the next mount collapses.

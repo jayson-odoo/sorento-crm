@@ -48,6 +48,7 @@ import {
   type ValueCellArgs,
 } from '../lib/stockDebtColumns';
 import { formatDateInMalaysia, formatDateRange } from '@/lib/helpers';
+import { localStore } from '@/lib/storage';
 
 /**
  * Stock Debt: one row per product, one column per month, and the cell is that MONTH's own
@@ -155,7 +156,7 @@ export function StockDebtClient() {
   const [showAux, setShowAux] = React.useState(true);
   React.useEffect(() => {
     try {
-      if (window.localStorage.getItem(SHOW_AUX_KEY) === 'false') setShowAux(false);
+      if (localStore.getItem(SHOW_AUX_KEY) === 'false') setShowAux(false);
     } catch {
       // Storage denied: keep the default.
     }
@@ -163,7 +164,7 @@ export function StockDebtClient() {
   const changeShowAux = (next: boolean) => {
     setShowAux(next);
     try {
-      window.localStorage.setItem(SHOW_AUX_KEY, String(next));
+      localStore.setItem(SHOW_AUX_KEY, String(next));
     } catch {
       // Storage denied: the choice lasts for this visit only.
     }
