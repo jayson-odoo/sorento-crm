@@ -47,6 +47,7 @@ import {
   signed,
   type ValueCellArgs,
 } from '../lib/stockDebtColumns';
+import { formatDateInMalaysia, formatDateRange } from '@/lib/helpers';
 
 /**
  * Stock Debt: one row per product, one column per month, and the cell is that MONTH's own
@@ -109,12 +110,12 @@ interface OpenCell {
   balance: number;
 }
 
-/** `2026-11-30` -> `30 Nov 26` (chip), the shared `DateRangePicker`'s own ISO parser
+/** `2026-11-30` -> `30/11/2026` (chip), the shared `DateRangePicker`'s own ISO parser
  *  reused rather than a second one (R14c). */
 function formatDateChip(value: string): string {
   const date = parseIsoDate(value);
   if (!date) return value;
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+  return formatDateInMalaysia(value.slice(0, 10));
 }
 
 const BOOK_LABEL: Record<StockDebtBook, string> = {
@@ -471,11 +472,11 @@ export function StockDebtClient() {
     (onlyDebt ? 0 : 1) +
     (projected ? 1 : 0);
 
-  // R14c: both ends reads "Delivery: 1 Nov 26 to 30 Nov 26"; either end alone reads
+  // R14c: both ends reads "Delivery: 01/11/2026 - 30/11/2026"; either end alone reads
   // "from" or "to" rather than padding the other side with a placeholder.
   const deliveryChipLabel =
     dateFrom && dateTo
-      ? `Delivery: ${formatDateChip(dateFrom)} to ${formatDateChip(dateTo)}`
+      ? `Delivery: ${formatDateRange(dateFrom.slice(0, 10), dateTo.slice(0, 10))}`
       : dateFrom
         ? `Delivery: from ${formatDateChip(dateFrom)}`
         : dateTo

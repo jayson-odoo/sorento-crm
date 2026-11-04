@@ -274,7 +274,7 @@ describe('QuotationLineFileCell, drawing cell: no drawing, escalate', () => {
     const button = escalateButton();
     expect(button).toBeInTheDocument();
     expect(button).toBeEnabled();
-    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30 Oct/);
+    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30\/10\/2026/);
     expect(button?.getAttribute('title') ?? '').toMatch(/no drawing on file/);
   });
 });
@@ -284,7 +284,7 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     renderCell(line(drawing({ escalation: escalation() })));
 
     const label = screen.getByText(/Escalated/);
-    expect(label.textContent).toMatch(/29 Oct/);
+    expect(label.textContent).toMatch(/29\/10\/2026/);
     expect(escalateButton()).not.toBeInTheDocument();
     const hover = screen.getByTitle(/Escalated/);
     expect(hover.getAttribute('title')).toMatch(/^Escalated .+\. Due .+\.$/);
@@ -325,9 +325,9 @@ describe('QuotationLineFileCell, drawing cell: already escalated', () => {
     renderCell(line(drawing({ escalation: escalation({ responded_at: RESPONDED }) })));
 
     const label = screen.getByText(/Replied/);
-    expect(label.textContent).toMatch(/29 Oct/);
+    expect(label.textContent).toMatch(/29\/10\/2026/);
     expect(screen.queryByText(/Escalated 29/)).not.toBeInTheDocument();
-    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29 Oct/);
+    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29\/10\/2026/);
     // It still joins: a later requester is added to the open request.
     expect(screen.getByRole('button', { name: 'Join the drawing request for PRD-CCC-03' })).toBeEnabled();
   });
@@ -552,7 +552,7 @@ describe('QuotationLineFileCell, photo cell: no photo at all, escalate', () => {
 
     const button = photoEscalateButton();
     expect(button).toBeInTheDocument();
-    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30 Oct/);
+    expect(button?.getAttribute('title') ?? '').toMatch(/Last request resolved 30\/10\/2026/);
     expect(button?.getAttribute('title') ?? '').toMatch(/no photo on file/);
   });
 });
@@ -561,7 +561,7 @@ describe('QuotationLineFileCell, photo cell: already escalated', () => {
   it('shows "Escalated <date>", people and due date, as a Join button', () => {
     renderPhotoCell(photoLine(photo({ escalation: escalation() })));
 
-    expect(screen.getByText(/Escalated/).textContent).toMatch(/29 Oct/);
+    expect(screen.getByText(/Escalated/).textContent).toMatch(/29\/10\/2026/);
     expect(photoEscalateButton()).not.toBeInTheDocument();
     const hover = screen.getByTitle(/Escalated/);
     expect(hover.getAttribute('title')).toMatch(/^Escalated .+\. Due .+\.$/);
@@ -589,8 +589,8 @@ describe('QuotationLineFileCell, photo cell: already escalated', () => {
   it('reads "Replied <date>" once the team responded, and still joins', () => {
     renderPhotoCell(photoLine(photo({ escalation: escalation({ responded_at: RESPONDED }) })));
 
-    expect(screen.getByText(/Replied/).textContent).toMatch(/29 Oct/);
-    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29 Oct/);
+    expect(screen.getByText(/Replied/).textContent).toMatch(/29\/10\/2026/);
+    expect(screen.getByTitle(/Responded/).getAttribute('title')).toMatch(/Responded 29\/10\/2026/);
     expect(photoJoinButton()).toBeEnabled();
   });
 

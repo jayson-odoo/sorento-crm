@@ -87,7 +87,7 @@ export function buildTaskTimeline(tasks: ProjectTask[]): TaskTimeline {
   while (cursor.getTime() <= spanEnd) {
     const offset = ((cursor.getTime() - spanStart) / spanMs) * 100;
     months.push({
-      label: `${cursor.toLocaleString('en-MY', { month: 'short', timeZone: 'UTC' })} ${cursor.getUTCFullYear()}`,
+      label: `${cursor.toLocaleString('en-MY', { month: 'short', timeZone: 'UTC' })} ${cursor.getUTCFullYear()}`, // date-format-ok: month label on the timeline axis (Nov 2026), not a calendar date
       leftPercent: Math.max(offset, 0),
     });
     cursor.setUTCMonth(cursor.getUTCMonth() + 1);
