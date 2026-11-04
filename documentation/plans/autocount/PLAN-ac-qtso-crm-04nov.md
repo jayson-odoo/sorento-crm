@@ -63,3 +63,11 @@ the intent (order id + amendment id / revision no), so a double press replays SS
 `/write-capabilities` entries for kinds `quotations` and `sales-orders`, ops `create_doc`, `edit_doc`, `add_line`, `cancel_doc`
 (+ partial line cancel), and POST routes for each with `{outcome, errorCode, docKey, docNo, document}` answers. Crew please pin
 these against SS #191 `57-autocount-write-qtso-contract.md`; any missing op becomes the SS ask.
+
+## Questions for the owner (open)
+
+1. Switch. #2168 already has "AutoCount links from Stock Debt". (a) reuse it; (b) a sibling "AutoCount quotations and sales orders from Project sales", OFF. Recommendation: (b), so links can go live without document creation.
+2. Import file. Create in AutoCount sits beside "Download import file". (a) keep the download as a fallback; (b) hide it once the switch is ON. Recommendation: (a), AutoCount can refuse and CS still needs a way to key it in.
+3. Update source. Published orders are locked today (`so_not_editable`). (a) only a published amendment's change list; (b) also direct line edits. Recommendation: (a), the amendment already carries approval and the reason trail.
+4. Partially delivered SO cancel. (a) cancel the undelivered balance only, delivered lines stay; (b) refuse. Recommendation: (a), matches AutoCount Cancel SO and how the CRM derives cancelled qty (AC-CANCEL-CRM).
+5. Quotation timing. (a) Create on issue, Update on each new issued revision; (b) only once the customer accepted / signed. Recommendation: (b), AutoCount does not fill with quotations never accepted; a later revision of an accepted one goes as Update.
