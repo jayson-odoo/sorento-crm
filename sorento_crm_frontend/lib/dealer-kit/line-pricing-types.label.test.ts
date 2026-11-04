@@ -13,7 +13,7 @@ describe('promotionOptionLabel', () => {
 
   it('keeps the expired suffix', () => {
     expect(promotionOptionLabel({ description: 'Flyer', expired_on: '2026-09-30', sell_price: null })).toBe(
-      'Flyer (expired 30 Sep 2026)',
+      'Flyer (expired 30/09/2026)',
     );
   });
 });
