@@ -114,12 +114,12 @@ describe('ProductTagTemplatesSection default (AC-24)', () => {
     expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'b', 'c'], default_template_id: 'b' });
   });
 
-  it('adding to a single link keeps that link as the default', () => {
+  it('adding a 2nd template to a lone link does not store the lone link as the default', () => {
     manager();
     linked.mockReturnValue({ data: [row('a', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
     fireEvent.click(screen.getByText('add c'));
-    expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'c'], default_template_id: 'a' });
+    expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'c'], default_template_id: null });
   });
 
   it('offers no default choice for a single link, which is its own default', () => {

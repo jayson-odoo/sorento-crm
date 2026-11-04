@@ -10,6 +10,7 @@ import { listTemplates } from '../services/tagTemplateService';
 import {
   assignTemplate,
   isPriceTagFamily,
+  listComboTagTemplates,
   listProductTagTemplates,
   previewTemplateAssignment,
   setComboTagTemplates,
@@ -42,11 +43,28 @@ export function useSetProductTagTemplates(productId: string) {
   });
 }
 
-/** A combo's template links, saved once the combo exists (the combo modal). */
+export const comboTagTemplatesKey = (comboId: string) =>
+  ['combo-tag-templates', comboId] as const;
+
+export function useComboTagTemplates(comboId: string, enabled = true) {
+  return useQuery({
+    queryKey: comboTagTemplatesKey(comboId),
+    queryFn: () => listComboTagTemplates(comboId),
+    enabled: enabled && !!comboId,
+  });
+}
+
+/** A combo's template links: saved once a new combo exists (the combo modal) and from the
+ *  combo's own block on the product page. */
 export function useSetComboTagTemplates() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ combo_id, ...links }: TagTemplateLinks & { combo_id: string }) =>
       setComboTagTemplates(combo_id, links),
+    onSuccess: (rows, { combo_id }) => {
+      queryClient.setQueryData(comboTagTemplatesKey(combo_id), rows);
+      toast.success('Price tag templates saved');
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 }

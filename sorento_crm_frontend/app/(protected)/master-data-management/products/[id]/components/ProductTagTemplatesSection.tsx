@@ -16,8 +16,10 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Label } from '@/components/ui/label';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { explicitDefaultId } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   productTagTemplatesKey,
@@ -74,7 +76,9 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
 
   if (!canView) return null;
   const rows = linked.data ?? [];
-  const defaultId = rows.find((row) => row.is_default)?.id ?? null;
+  // Only a default the user chose is sent back: a lone link is reported as the default for
+  // display, and must not be stored just because a second template was added.
+  const defaultId = explicitDefaultId(rows);
 
   return (
     <Card>
@@ -137,17 +141,21 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
           </div>
         )}
         {canManage && !linked.isLoading && !linked.isError && rows.length > 1 ? (
-          <SearchableSelect
-            clearable
-            value={defaultId ?? ''}
-            onChange={(id) =>
-              save.mutate({ template_ids: rows.map((row) => row.id), default_template_id: id || null })
-            }
-            options={rows.map((row) => ({ value: row.id, label: row.name }))}
-            disabled={save.isPending}
-            placeholder="Default template"
-            emptyMessage="No templates."
-          />
+          <div className="space-y-1.5">
+            <Label htmlFor="product-default-template">Default template</Label>
+            <SearchableSelect
+              id="product-default-template"
+              clearable
+              value={defaultId ?? ''}
+              onChange={(id) =>
+                save.mutate({ template_ids: rows.map((row) => row.id), default_template_id: id || null })
+              }
+              options={rows.map((row) => ({ value: row.id, label: row.name }))}
+              disabled={save.isPending}
+              placeholder="Default template"
+              emptyMessage="No templates."
+            />
+          </div>
         ) : null}
         {!linked.isLoading && !linked.isError && rows.length === 0 ? (
           <div>

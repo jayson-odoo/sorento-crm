@@ -33,6 +33,14 @@ export interface TagTemplateLinks {
   default_template_id: string | null;
 }
 
+/**
+ * The default to send back on a save: only one the user chose. The server reports a lone link
+ * as the default for display, so with fewer than two links nothing was chosen and nothing is sent.
+ */
+export function explicitDefaultId(rows: ProductTagTemplateItem[]): string | null {
+  return rows.length > 1 ? (rows.find((row) => row.is_default)?.id ?? null) : null;
+}
+
 export interface TemplateAssignFilter {
   brand_ids: string[];
   category_ids: string[];
