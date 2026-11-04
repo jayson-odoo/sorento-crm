@@ -17,12 +17,13 @@ import type {
   OrderInquiryMatrixGranularity,
   OrderInquiryMatrixRow,
 } from '../types/orderInquiry.types';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** How a bucket's ISO start date reads at each granularity. */
 function bucketLabelFor(period: string, granularity: OrderInquiryMatrixGranularity): string {
   const date = parseISO(period);
-  if (granularity === 'day' || granularity === 'week') return format(date, 'd MMM yyyy');
-  if (granularity === 'month') return format(date, 'MMM yyyy');
+  if (granularity === 'day' || granularity === 'week') return formatDateInMalaysia(period.slice(0, 10));
+  if (granularity === 'month') return format(date, 'MMM yyyy'); // date-format-ok: month bucket column (Dec 2026), not a calendar date
   return format(date, 'yyyy');
 }
 

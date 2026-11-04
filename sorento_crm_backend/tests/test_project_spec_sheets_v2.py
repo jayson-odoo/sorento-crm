@@ -1622,9 +1622,9 @@ def test_sf3_hints_show_malaysia_time():
         sheet = _make(db, c, source="draft")
         sheet.items_taken_at = datetime(2026, 11, 2, 17, 0)
         db.flush()
-        assert spec.sources(db, c["document"])[-1]["hint"] == "issued 03 Nov 2026"
+        assert spec.sources(db, c["document"])[-1]["hint"] == "issued 03/11/2026"
         label, hint = spec.source_text(db, c["document"], sheet)
-        assert hint == "lines taken 03 Nov 2026 01:00"
+        assert hint == "lines taken 03/11/2026, 1:00 am"
 
 
 def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_for_many_issues():

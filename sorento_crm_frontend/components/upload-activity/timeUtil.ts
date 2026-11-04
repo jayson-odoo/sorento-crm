@@ -10,6 +10,7 @@
  * resulting Date object is anchored to UTC. Centralising this means we never
  * accidentally double-correct.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 const TZ_SUFFIX_RE = /(?:Z|[+-]\d{2}:?\d{2})$/;
 
@@ -29,5 +30,5 @@ export function timeAgo(iso: string | Date): string {
   if (h < 24) return `${h} hr ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d} day${d > 1 ? 's' : ''} ago`;
-  return parseServerDate(iso).toLocaleDateString();
+  return formatDateInMalaysia(parseServerDate(iso));
 }

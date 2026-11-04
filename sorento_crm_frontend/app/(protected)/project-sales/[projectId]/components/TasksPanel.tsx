@@ -32,6 +32,7 @@ import { TaskHistoryDialog } from './TaskHistoryDialog';
 import { TaskStatusDialog } from './TaskStatusDialog';
 import { TaskTimelineView } from './TaskTimelineView';
 import { canWorkOnProject } from '../../_shared/lib/projectApproval';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 const PHASE_TABS: { id: TaskPhase | 'all'; label: string }[] = [
   { id: 'pursuit', label: 'Pursuit' },
@@ -476,5 +477,5 @@ export function formatTaskDate(iso?: string | null): string {
   if (!iso) return '';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }

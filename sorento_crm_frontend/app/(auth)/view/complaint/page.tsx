@@ -13,6 +13,7 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { fetchViewAttachmentBytes, toViewPreviewItem } from '../lib/attachmentDownload';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 interface ViewAttachment {
   id?: string;
@@ -64,7 +65,7 @@ function formatDateStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
+    return Number.isNaN(d.getTime()) ? value : formatDateInMalaysia(d);
   } catch {
     return value;
   }
@@ -74,7 +75,7 @@ function formatDateTimeStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    return Number.isNaN(d.getTime()) ? value : formatDateTimeInMalaysia(d);
   } catch {
     return value;
   }

@@ -32,7 +32,7 @@ export const TOTAL_CLASS = 'font-semibold';
 export const VALUE_CELL_CLASS =
   'block w-full rounded px-2 py-1 text-end text-sm tabular-nums transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
-const MONTH_NAMES = [
+const MONTH_NAMES = [ // date-format-ok: month column header labels, not a calendar date
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 

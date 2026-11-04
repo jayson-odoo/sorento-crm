@@ -5,8 +5,8 @@
  * finished; whether the buyer has finished with it is a fact about the decisions on it, and
  * the two are different questions the same word used to answer.
  */
-import { parseDateTimeAsUTC } from '@/lib/helpers';
-import { DATE_LOCALE, DATE_PARTS, EM_DASH, fmtDate } from '../../lib/format';
+import { formatDateRange, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
+import { EM_DASH, fmtDate } from '../../lib/format';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 
 export type RunListStatus = 'running' | 'planning' | 'confirmed' | 'failed';
@@ -54,7 +54,7 @@ export function runStatusReading(run: {
  * AC-S4.5: one wording for the sales-order window, so the plan header, the plan page
  * subtitle and the plans list never say it three different ways.
  *
- *   both set   -> "01/01/2025 to 31/10/2026"
+ *   both set   -> "01/01/2025 - 31/10/2026"
  *   end only   -> "up to 31/10/2026"
  *   start only -> "from 01/01/2025"
  *   neither    -> "every open order" - "empty = every open order counts" stays true.
@@ -65,17 +65,14 @@ export function describeWindow(
 ): string {
   const hasStart = Boolean(start);
   const hasEnd = Boolean(end);
-  if (hasStart && hasEnd) return `${fmtDate(start)} to ${fmtDate(end)}`;
+  if (hasStart && hasEnd) return formatDateRange(start, end);
   if (hasEnd) return `up to ${fmtDate(end)}`;
   if (hasStart) return `from ${fmtDate(start)}`;
   return 'every open order';
 }
 
 /**
- * A naive-UTC ISO timestamp as `dd/mm/yyyy HH:mm` in Malaysia.
- *
- * Date parts come from `lib/format` rather than being restated, so the plans list cannot
- * drift from the dd/mm/yyyy every other screen uses.
+ * A naive-UTC ISO timestamp as `dd/mm/yyyy, h:mm am/pm` in Malaysia.
  */
 export function runStartedLabel(startedAt: string | null | undefined): string {
   if (!startedAt) return EM_DASH;
@@ -83,15 +80,5 @@ export function runStartedLabel(startedAt: string | null | undefined): string {
   // the same naive-UTC rule and the date-only carve-out iOS Safari needs (16 Sep).
   const d = parseDateTimeAsUTC(startedAt);
   if (Number.isNaN(d.getTime())) return startedAt;
-  const date = new Intl.DateTimeFormat(DATE_LOCALE, {
-    ...DATE_PARTS,
-    timeZone: 'Asia/Kuala_Lumpur',
-  }).format(d);
-  const time = new Intl.DateTimeFormat('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Kuala_Lumpur',
-  }).format(d);
-  return `${date} ${time}`;
+  return formatDateTimeInMalaysia(d);
 }

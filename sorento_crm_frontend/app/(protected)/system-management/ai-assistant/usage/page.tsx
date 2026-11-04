@@ -24,7 +24,7 @@ import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateRange, formatDateTimeInMalaysia, formatMaybeDate } from '@/lib/helpers';
 import { formatUsd } from '../lib/formatUsd';
 import {
   useQueryDetail,
@@ -181,11 +181,9 @@ export default function AIUsagePage() {
                 <CalendarIcon className="h-4 w-4" />
                 {dateRange?.from ? (
                   dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'LLL dd, y')} - {format(dateRange.to, 'LLL dd, y')}
-                    </>
+                    formatDateRange(format(dateRange.from, 'yyyy-MM-dd'), format(dateRange.to, 'yyyy-MM-dd'))
                   ) : (
-                    format(dateRange.from, 'LLL dd, y')
+                    formatDateInMalaysia(format(dateRange.from, 'yyyy-MM-dd'))
                   )
                 ) : (
                   <span>Filter by date range</span>
@@ -281,7 +279,7 @@ export default function AIUsagePage() {
               <ChartContainer config={chartConfig} className="h-64 w-full">
                 <LineChart data={chartData} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={formatMaybeDate} />
                   <YAxis tick={{ fontSize: 11 }} />
                   <ChartTooltip
                     content={(props) => {
@@ -295,7 +293,10 @@ export default function AIUsagePage() {
                         | undefined;
                       return (
                         <div>
-                          <ChartTooltipContent {...(props as ComponentProps<typeof ChartTooltipContent>)} />
+                          <ChartTooltipContent
+                            {...(props as ComponentProps<typeof ChartTooltipContent>)}
+                            labelFormatter={formatMaybeDate}
+                          />
                           {day ? (
                             <div className="mt-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
                               Cost{' '}

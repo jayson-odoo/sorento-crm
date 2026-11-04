@@ -99,7 +99,7 @@ import {
   type DriveFileItem,
 } from '../../attachments/services/driveService';
 import type { Attachment } from '../../attachments/types/attachment.types';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDateRange, formatDateInMalaysia } from '@/lib/helpers';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -1280,11 +1280,10 @@ export default function AttachmentsInFolderPanel({
                             {uploadedRange?.from ? (
                               uploadedRange.to ? (
                                 <span>
-                                  {format(uploadedRange.from, 'dd MMM yyyy')} -{' '}
-                                  {format(uploadedRange.to, 'dd MMM yyyy')}
+                                  {formatDateRange(format(uploadedRange.from, 'yyyy-MM-dd'), format(uploadedRange.to, 'yyyy-MM-dd'))}
                                 </span>
                               ) : (
-                                <span>{format(uploadedRange.from, 'dd MMM yyyy')}</span>
+                                <span>{formatDateInMalaysia(format(uploadedRange.from, 'yyyy-MM-dd'))}</span>
                               )
                             ) : (
                               <span className="text-muted-foreground">Any date</span>

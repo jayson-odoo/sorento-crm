@@ -7,6 +7,7 @@ task). See PLAN-team-coverage-and-reassignment.md section G and UAC section 7.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from datetime import datetime
 from typing import Optional
@@ -62,7 +63,7 @@ def coverage_role_view(
     else:
         parts.append("Self-subscribed.")
     if expires_at is not None:
-        parts.append(f"Active until {expires_at.strftime('%d %b %Y')} ({mode}).")
+        parts.append(f"Active until {fmt_date(expires_at)} ({mode}).")
     else:
         parts.append(f"No end date ({mode}).")
     return {
@@ -404,7 +405,7 @@ class CoverageSubscriptionService:
                 (current.name or current.email) if current else "another colleague"
             ) or "another colleague"
             until = (
-                conflicting.expires_at.date().isoformat()
+                fmt_date(conflicting.expires_at)
                 if getattr(conflicting, "expires_at", None)
                 else "further notice"
             )
@@ -454,7 +455,7 @@ class CoverageSubscriptionService:
 
             covered_name = (target.name or target.email or "a colleague").strip()
             until = (
-                f" until {expires_at.date().isoformat()}"
+                f" until {fmt_date(expires_at)}"
                 if expires_at is not None
                 else ""
             )

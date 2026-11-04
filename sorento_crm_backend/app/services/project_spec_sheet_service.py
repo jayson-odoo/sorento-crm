@@ -21,6 +21,7 @@ A template that places no price prints none (the owner's sample has none).
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date, fmt_datetime
 import io
 import json
 import logging
@@ -703,7 +704,7 @@ def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict
         "prepared_by_phone": (
             document.signatory_phone or (getattr(owner, "contact_number", None) if owner else "") or ""
         ).strip(),
-        "date": issued.strftime("%d %b %Y").upper() if issued else "",
+        "date": fmt_date(issued, naive_is_utc=False) if issued else "",
     }
 
 
@@ -1230,7 +1231,7 @@ def label_of(sheet: ProjectQuotationSpecSheet) -> str:
 
 
 def _issue_date(issue: ProjectQuotationIssue) -> str:
-    return in_malaysia(issue.issued_at).strftime("%d %b %Y") if issue.issued_at else ""
+    return fmt_date(issue.issued_at) if issue.issued_at else ""
 
 
 def _revision_name(issue: ProjectQuotationIssue) -> str:
@@ -1295,7 +1296,7 @@ def source_text(db: Session, document, sheet: ProjectQuotationSpecSheet, issues:
             return _issue_label(document, issue), f"issued {_issue_date(issue)}".strip()
         return "Revision", ""
     taken = (
-        in_malaysia(sheet.items_taken_at).strftime("%d %b %Y %H:%M") if sheet.items_taken_at else ""
+        fmt_datetime(sheet.items_taken_at) if sheet.items_taken_at else ""
     )
     if sheet.based_on_issue_no is None:
         return "Draft", f"lines taken {taken}".strip()

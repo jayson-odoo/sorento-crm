@@ -51,6 +51,7 @@ itself ("Line 2, SRT501-CP"), so a message repeating it renders the same fact tw
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -282,7 +283,7 @@ def _worklist_tiebreak(row: Dict[str, Any]) -> tuple:
 
 
 def _date_phrase(value: Optional[date]) -> str:
-    return f"on {value.strftime('%d %b %Y')}" if value else "with no required date"
+    return f"on {fmt_date(value)}" if value else "with no required date"
 
 
 def _project_sort_key(line: ProjectSalesOrderLine) -> tuple:
@@ -1929,7 +1930,7 @@ def _map_lines(
             if len(group) == 1 and len(their_group) == 1:
                 assignments[str(group[0].id)] = (
                     their_group[0],
-                    f"Matched on product and required date {when.strftime('%d %b %Y')}."
+                    f"Matched on product and required date {fmt_date(when)}."
                     if when
                     else "Matched on product code; neither line carries a required date.",
                 )

@@ -59,6 +59,7 @@ _LAST_MESSAGE_CHAR_CAP = 200
 _ENTITY_TOKEN_CHAR_CAP = 40
 
 _MONTH_ABBR = (
+    # date-format-ok: episode memory lines fed back to the model
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 _WEEKDAY_ABBR = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

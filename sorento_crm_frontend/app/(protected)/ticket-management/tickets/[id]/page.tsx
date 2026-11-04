@@ -46,6 +46,7 @@ import {
 } from '../components/TicketStatusBadge';
 import TicketWatchersSection from '../components/TicketWatchersSection';
 import TicketSourceCard from '../components/TicketSourceCard';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 function htmlToText(html: string): string {
   if (typeof window === 'undefined') return html.replace(/<[^>]+>/g, '').trim();
@@ -358,7 +359,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   <TicketPriorityBadge priority={ticket.priority} />
                   <span className="text-sm text-muted-foreground capitalize">{ticket.category}</span>
                   <span className="ms-auto text-xs text-muted-foreground">
-                    Updated {new Date(ticket.updated_at).toLocaleString()}
+                    Updated {formatDateTimeInMalaysia(ticket.updated_at)}
                   </span>
                   {!editingDetails && ticket.status === 'draft' && (
                     <Button variant="ghost" size="sm" onClick={startEditDetails}>
@@ -542,7 +543,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                 {ticket.responded_by_user && (
                   <div className="text-xs text-muted-foreground mt-2">
                     by {ticket.responded_by_user.display_name}
-                    {ticket.responded_at && ` · ${new Date(ticket.responded_at).toLocaleString()}`}
+                    {ticket.responded_at && ` · ${formatDateTimeInMalaysia(ticket.responded_at)}`}
                   </div>
                 )}
               </Card>
@@ -588,7 +589,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                 {ticket.resolved_by_user && (
                   <div className="text-xs text-muted-foreground mt-2">
                     by {ticket.resolved_by_user.display_name}
-                    {ticket.resolved_at && ` · ${new Date(ticket.resolved_at).toLocaleString()}`}
+                    {ticket.resolved_at && ` · ${formatDateTimeInMalaysia(ticket.resolved_at)}`}
                   </div>
                 )}
               </Card>
@@ -640,7 +641,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Created</span>
-                    <span>{new Date(ticket.created_at).toLocaleString()}</span>
+                    <span>{formatDateTimeInMalaysia(ticket.created_at)}</span>
                   </div>
                 </div>
               </div>

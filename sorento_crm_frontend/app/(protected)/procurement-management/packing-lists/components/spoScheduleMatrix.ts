@@ -18,6 +18,7 @@
  * drill, can re-slice `po_takes` / `demand_lines` against the CURRENTLY EDITED qty on screen
  * without a round-trip, and never disagree with what `create` would actually do with that qty.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 export interface Takeable {
   qty: number;
@@ -119,8 +120,7 @@ function startOfWeekIso(iso: string): string {
 }
 
 function weekLabel(startIso: string): string {
-  const d = new Date(`${startIso}T00:00:00`);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(startIso);
 }
 
 function bucketFor(date: string | null): SpoMatrixBucket {

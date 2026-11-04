@@ -40,6 +40,7 @@ blanking the name for a session with no company set.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date_range
 import dataclasses
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -62,7 +63,7 @@ _RUNS = ChatBackfillRun.__table__
 #: from the CA-4 history backfill, and the note prints one coverage line per era.
 TRACES_BEGIN = date(2026, 9, 5)
 
-TRACES_NOTE = "From bot traces, 5 Sep 2026 on."
+TRACES_NOTE = "From bot traces, 05/09/2026 on."
 COVERAGE_NOTE = (
     f"{TRACES_NOTE} Most asked products: Count by Products, measure Asked "
     "(products the bot looked up)."
@@ -168,17 +169,9 @@ def overview_note(ctx) -> str:
     return _with_history(ctx, COVERAGE_NOTE)
 
 
-def _day_month(day: date) -> str:
-    return f"{day.day} {day:%b}"
-
-
 def _era_label(era: str, first: date, last: date) -> str:
-    """"17 Apr to 21 Jul"; "5 to 22 Sep" inside one month. Era D is only the untraced slice."""
-    dates = (
-        f"{first.day} to {_day_month(last)}"
-        if (first.year, first.month) == (last.year, last.month)
-        else f"{_day_month(first)} to {_day_month(last)}"
-    )
+    """"17/04/2026 - 21/07/2026". Era D is only the untraced slice."""
+    dates = fmt_date_range(first, last)
     return f"{dates}, messages the bot never traced" if era == "D" else dates
 
 

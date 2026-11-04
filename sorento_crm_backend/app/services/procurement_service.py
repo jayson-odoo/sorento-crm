@@ -6,6 +6,7 @@
 # pyright: reportArgumentType=false
 # pyright: reportCallIssue=false
 # pyright: reportReturnType=false
+from app.utils.date_format import fmt_date
 import json
 import logging
 import re
@@ -443,7 +444,7 @@ def _format_duplicate_packing_list_message(existing: "InboundShipment", shipment
     recorded_on = ""
     created_at = getattr(existing, "created_at", None)
     if created_at:
-        recorded_on = f" on {created_at.date().isoformat()}"
+        recorded_on = f" on {fmt_date(created_at)}"
     return (
         f"Container {container} (shipment date {sail_text}, ETA {eta_text}) was already "
         f"recorded{as_number}{recorded_on} and is fully received. This looks like the same "

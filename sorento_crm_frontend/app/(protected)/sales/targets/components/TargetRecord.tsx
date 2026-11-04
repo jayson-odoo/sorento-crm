@@ -56,6 +56,7 @@ import {
   formatPct,
   periodRange,
   scopeSummary,
+  dateRange,
   shortDate,
   splitSummary,
   unitOf,
@@ -1006,15 +1007,15 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                 ) : periods.length ? (
                   <p className="text-xs text-muted-foreground">
                     {periods.length === 1
-                      ? `1 period, ${shortDate(periods[0].start)} to ${shortDate(periods[0].end)}`
-                      : `${periods.length} periods, the last ${shortDate(periods[periods.length - 1].start)} to ${shortDate(periods[periods.length - 1].end)}`}
+                      ? `1 period, ${dateRange(periods[0].start, periods[0].end)}`
+                      : `${periods.length} periods, the last ${dateRange(periods[periods.length - 1].start, periods[periods.length - 1].end)}`}
                   </p>
                 ) : null}
               </div>
             ) : target ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="sm:col-span-2">
-                  <Field label="Start and end date">{`${shortDate(target.start_date)} to ${shortDate(target.end_date)}`}</Field>
+                  <Field label="Start and end date">{dateRange(target.start_date, target.end_date)}</Field>
                 </div>
                 <Field label="Split">{splitSummary(target.split_every, target.split_unit)}</Field>
               </div>
@@ -1058,7 +1059,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   <PeriodsTable unit={unit}>
                     {periods.map((p) => (
                       <tr key={p.start}>
-                        <td className="whitespace-nowrap px-3 py-2">{`${shortDate(p.start)} to ${shortDate(p.end)}`}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{dateRange(p.start, p.end)}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {formatFigure(isTeam ? teamSum : toNumber(draft?.figure ?? ''))}
                         </td>
@@ -1801,7 +1802,7 @@ function ParentTarget({ parentId, today }: { parentId: string; today: string }) 
                   : `${SCOPE_LABEL[parent.product_scope]}: ${scopeSummary(parent.product_scope, parent.scope.length)}`}
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Start and end date">{`${shortDate(parent.start_date)} to ${shortDate(parent.end_date)}`}</Field>
+                <Field label="Start and end date">{dateRange(parent.start_date, parent.end_date)}</Field>
               </div>
               <Field label="Split">{splitSummary(parent.split_every, parent.split_unit)}</Field>
             </div>
@@ -1810,7 +1811,7 @@ function ParentTarget({ parentId, today }: { parentId: string; today: string }) 
                 const future = p.period_start > today;
                 return (
                   <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
-                    <td className="whitespace-nowrap px-3 py-2">{`${shortDate(p.period_start)} to ${shortDate(p.period_end)}`}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{dateRange(p.period_start, p.period_end)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(p.target_value)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                       {future ? '-' : formatFigure(p.achieved_value)}
@@ -2030,7 +2031,7 @@ function CommissionTiers({
   const dealer = (draft?.kind ?? target?.subject_kind) === 'dealer';
   const periodLabel = (start: string) => {
     const p = periodStarts.find((x) => x.start === start);
-    return p ? `${shortDate(p.start)} to ${shortDate(p.end)}` : start ? shortDate(start) : '-';
+    return p ? dateRange(p.start, p.end) : start ? shortDate(start) : '-';
   };
   const empty = (action: ReactNode) => (
     <div className="flex w-full flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">

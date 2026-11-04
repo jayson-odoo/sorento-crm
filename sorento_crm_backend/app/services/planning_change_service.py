@@ -52,6 +52,7 @@ and `scripts/repair_20aug_placed_double_counts.py` for the two live rows this co
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import json
 import logging
 import uuid
@@ -191,9 +192,9 @@ def _qty_of(qty: Decimal, item_code: Optional[str] = None) -> str:
 
 
 def _day(value: Any) -> str:
-    """`20 Nov` - the date in a sentence a person reads, never an ISO string."""
+    """`20/11/2026` - the date in a sentence a person reads, never an ISO string."""
     when = _as_date(value)
-    return f"{when.day} {when.strftime('%b')}" if when else ""
+    return fmt_date(when) if when else ""
 
 
 def _days_word(days: int) -> str:
