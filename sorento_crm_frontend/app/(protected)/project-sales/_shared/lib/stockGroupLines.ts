@@ -8,6 +8,7 @@ import type { GroupByOption } from '@/components/common/group-by/GroupByMenu';
 import type { GroupDimension, GroupNode, Measure } from '@/components/common/group-by/groupByLevels';
 import { spoDetailHref } from '@/lib/spo-detail';
 import { fromMinor, toMinor } from './supplyComposition';
+import { localStore } from '@/lib/storage';
 
 export type StockLineType = 'On hand' | 'S/O' | 'PO' | 'SPO';
 
@@ -174,16 +175,10 @@ export function groupKeysOf<T>(nodes: GroupNode<T>[], keep?: (line: T) => boolea
 export const STOCK_GROUP_STORAGE_KEY = 'cellStockTable.groupBy';
 export const DEFAULT_STOCK_GROUP_LEVELS: readonly string[] = ['location'];
 
-function browserStorage(): Storage | null {
-  try {
-    return typeof window === 'undefined' ? null : window.localStorage;
-  } catch {
-    return null;
-  }
-}
+type LevelStore = Pick<Storage, 'getItem' | 'setItem'>;
 
 /** The remembered levels; anything missing, unreadable or invalid is Location alone. */
-export function readStockGroupLevels(storage: Storage | null = browserStorage()): string[] {
+export function readStockGroupLevels(storage: LevelStore | null = localStore): string[] {
   try {
     const raw = storage?.getItem(STOCK_GROUP_STORAGE_KEY);
     if (!raw) return [...DEFAULT_STOCK_GROUP_LEVELS];
@@ -204,7 +199,7 @@ export function readStockGroupLevels(storage: Storage | null = browserStorage())
 
 export function writeStockGroupLevels(
   levels: readonly string[],
-  storage: Storage | null = browserStorage(),
+  storage: LevelStore | null = localStore,
 ): void {
   try {
     storage?.setItem(STOCK_GROUP_STORAGE_KEY, JSON.stringify(levels));

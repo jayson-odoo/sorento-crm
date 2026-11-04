@@ -16,6 +16,11 @@ vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+const reportClientError = vi.fn();
+vi.mock('@/lib/client-error-report', () => ({
+  reportClientError: (...args: unknown[]) => reportClientError(...args),
+}));
+
 import ProtectedError from './error';
 
 describe('app/(protected)/error.tsx (M5-04)', () => {
@@ -47,5 +52,14 @@ describe('app/(protected)/error.tsx (M5-04)', () => {
 
     const link = screen.getByRole('link', { name: /back to dashboards/i });
     expect(link).toHaveAttribute('href', '/');
+  });
+
+  it('reports the error once to Client Errors, tagged as the protected boundary (CLIENT-ERROR-REPORT)', () => {
+    reportClientError.mockClear();
+    const error = new Error('page broke');
+    const { rerender } = render(<ProtectedError error={error} reset={vi.fn()} />);
+    rerender(<ProtectedError error={error} reset={vi.fn()} />);
+    expect(reportClientError).toHaveBeenCalledTimes(1);
+    expect(reportClientError).toHaveBeenCalledWith(error, 'protected');
   });
 });

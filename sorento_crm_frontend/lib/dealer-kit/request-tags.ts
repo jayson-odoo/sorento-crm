@@ -994,3 +994,26 @@ export function buildRequestSheet(
     sheets: autoArrange(items, gridForSize).sheets,
   };
 }
+
+/**
+ * ONE tag on a page of its own size (PRICETAG-LPSP, the row's eye icon): no arrange packing and
+ * no rotation, so a preview of a single line shows the tag upright, filling the view. The whole
+ * sheet and the PDF keep `buildRequestSheet`.
+ */
+export function buildSingleTagSheet(
+  requestTag: TagRequestTag,
+  template: TagTemplate,
+  newId: () => string,
+): TagSheetDoc {
+  const { width_mm, height_mm } = template.print_size;
+  return {
+    kind: 'tag_sheet',
+    imposition: { preset: 'custom', page_width_mm: width_mm, page_height_mm: height_mm, bleed_mm: 0, gap_mm: 0 },
+    sheets: [
+      {
+        id: 'sheet-1',
+        tags: [{ ...tagForTag(requestTag, template, newId()), x_mm: 0, y_mm: 0, rotation: 0 }],
+      },
+    ],
+  };
+}

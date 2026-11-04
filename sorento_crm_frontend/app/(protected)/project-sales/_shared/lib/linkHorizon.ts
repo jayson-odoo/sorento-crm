@@ -15,6 +15,7 @@
  */
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { AcknowledgeResult, AutoPlaceResult } from '../types/orderInquiry.types';
+import { localStore } from '@/lib/storage';
 
 /** Where the buyer's own choice is remembered between visits (AC-LH5). */
 export const LINK_HORIZON_STORAGE_KEY = 'sorento.order-inquiries.link-up-to';
@@ -50,7 +51,7 @@ export function isHorizonDate(value: string | null | undefined): value is string
 export function readStoredLinkHorizon(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const stored = window.localStorage.getItem(LINK_HORIZON_STORAGE_KEY);
+    const stored = localStore.getItem(LINK_HORIZON_STORAGE_KEY);
     if (isHorizonDate(stored)) return stored;
     return stored === NO_LINK_HORIZON ? NO_LINK_HORIZON : null;
   } catch {
@@ -67,10 +68,10 @@ export function readStoredLinkHorizon(): string | null {
 export function storeLinkHorizon(value: string | null): void {
   if (typeof window === 'undefined') return;
   try {
-    if (isHorizonDate(value)) window.localStorage.setItem(LINK_HORIZON_STORAGE_KEY, value);
+    if (isHorizonDate(value)) localStore.setItem(LINK_HORIZON_STORAGE_KEY, value);
     else if (value === NO_LINK_HORIZON)
-      window.localStorage.setItem(LINK_HORIZON_STORAGE_KEY, NO_LINK_HORIZON);
-    else window.localStorage.removeItem(LINK_HORIZON_STORAGE_KEY);
+      localStore.setItem(LINK_HORIZON_STORAGE_KEY, NO_LINK_HORIZON);
+    else localStore.removeItem(LINK_HORIZON_STORAGE_KEY);
   } catch {
     /* a browser refusing storage is not a reason to refuse the press */
   }

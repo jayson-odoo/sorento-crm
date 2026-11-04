@@ -277,10 +277,11 @@ class PriceTagRequestService:
         detail: str | None = None,
     ) -> None:
         """AC-S6-4: a manual price and a promotion are mutually exclusive on
-        a line, and a manual figure only means anything in Selling mode -
-        List mode prints the list price regardless of what was typed, so a
-        stray manual figure there is a mistake worth naming rather than a
-        value silently thrown away.
+        a line, and a manual figure only means anything on a selling price
+        line (``price_mode`` here is the LINE's effective type, its own
+        ``price_type`` else the request's) - an LP line prints the list price
+        regardless of what was typed, so a stray manual figure there is a
+        mistake worth naming rather than a value silently thrown away.
 
         The ONE seam every arm that can set a line's price basis passes
         through - create, update and revise (`_add_lines`), and the CRM line
@@ -307,7 +308,7 @@ class PriceTagRequestService:
         if price_mode != "selling":
             raise AppException(
                 status_code=422,
-                message="A manual price only applies in Selling mode.",
+                message="A manual price only applies on a selling price line.",
                 detail=detail,
                 code="INVALID_LINE_PRICE",
             )
@@ -324,7 +325,8 @@ class PriceTagRequestService:
         """Append lines in the order given, which is the order the form shows.
 
         ``show_promo_price`` is DERIVED per line (D1/D3/AC-S7-5) from the
-        request's header ``price_mode`` AND the line's own
+        line's effective price type (its own ``price_type``, else the
+        request's header ``price_mode``) AND the line's own
         ``sell_price_basis`` (through ``line_pricing`` - S7): a line in
         Selling mode with no covering promotion and no manual figure is
         still LP, same as a line whose promotion offer does not beat list.
@@ -355,7 +357,6 @@ class PriceTagRequestService:
 
         viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        selling = request.price_mode == "selling"
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
@@ -404,8 +405,12 @@ class PriceTagRequestService:
 
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
+            # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
+            # stored explicitly so a later header change never rewrites the line.
+            price_type = line_data.get("price_type") or request.price_mode
+            selling = price_type == "selling"
             PriceTagRequestService._validate_line_price_basis(
-                promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
+                promotion_id, manual_sell_price, price_type, detail=f"line:{idx}"
             )
             # D1/D3/AC-S7-5: a line's price basis, resolved through the SAME
             # engine the portal's and the CRM's own line-pricing routes call
@@ -523,6 +528,7 @@ class PriceTagRequestService:
                     product_id=product_id,
                     product_set_id=product_set_id,
                     show_promo_price=selling and basis != "list",
+                    price_type=price_type,
                     quantity=line_data.get("quantity", 1),
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
@@ -538,6 +544,7 @@ class PriceTagRequestService:
                         line_type=line_data["line_type"],
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
+                        combo_id=combo_id,
                     ),
                 )
             )
@@ -1067,8 +1074,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         if "manual_sell_price" in data and data["manual_sell_price"] is not None:
             promotion_id = None
 
+        price_type = line.price_type or request.price_mode
         PriceTagRequestService._validate_line_price_basis(
-            promotion_id, manual_sell_price, request.price_mode
+            promotion_id, manual_sell_price, price_type
         )
 
         basis = "list"
@@ -1147,7 +1155,7 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         line.promotion_id = promotion_id
         line.manual_sell_price = manual_sell_price
-        line.show_promo_price = request.price_mode == "selling" and basis != "list"
+        line.show_promo_price = price_type == "selling" and basis != "list"
 
         for tag in line.tags:
             tag.pinned_tag_data = None
@@ -2829,6 +2837,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         foreign key stores; the portal's generic product lookup answers with a code and
         no id at all, which is why a product line could never be saved.
 
+        Each row carries its `list_price` (None when unset or zero) for the option's
+        "CODE  RM <price>" line; a set answers its override only.
+
         Sets come first, then products, each ordered by code and each capped at `limit`
         (so at most `2 * limit` rows reach the picker). Sets lead because they are far
         fewer and are the thing a salesperson is likeliest to miss.
@@ -2844,6 +2855,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.set_code,
                 "name": row.name or "",
+                # The override only: the computed figure needs every member
+                # and its product loaded, per set, for a dropdown row.
+                "list_price": row.list_price_override or None,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -2853,6 +2867,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.product_code,
                 "name": row.product_name or "",
+                "list_price": row.list_price or None,
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

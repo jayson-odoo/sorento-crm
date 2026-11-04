@@ -173,6 +173,9 @@ function openPriceSection() {
 function chooseSelling() {
   openPriceSection();
   fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+  // PRICETAG-LPSP: the header is only the starting value for NEW lines, so a line already on
+  // the form is switched to SP on its own radio.
+  for (const sp of screen.getAllByRole('radio', { name: 'SP' })) fireEvent.click(sp);
 }
 
 // --------------------------------------------------------------------------- AC-S1-1
@@ -258,10 +261,12 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     const input = await screen.findByLabelText('Selling price for line 1');
     fireEvent.change(input, { target: { value: '480' } });
 
-    fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
+    // PRICETAG-LPSP: the typed price belongs to the LINE now, so it goes with the line's own
+    // LP/SP radio, not with the header default.
+    fireEvent.click(screen.getByRole('radio', { name: 'LP' }));
     expect(screen.queryByLabelText('Selling price for line 1')).toBeNull();
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'SP' }));
     const restored = await screen.findByLabelText('Selling price for line 1');
     expect((restored as HTMLInputElement).value).toBe('480');
   });
@@ -284,7 +289,7 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     const remarksIndex = headers.indexOf('Remarks');
     expect(qtyIndex).toBeGreaterThanOrEqual(0);
     expect(remarksIndex).toBeGreaterThan(qtyIndex);
-    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual(['List price']);
+    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual(['Price', 'List price']);
     expect(headers).not.toContain('Promotion');
     expect(headers).not.toContain('Selling price');
 
@@ -311,6 +316,7 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(qtyIndex).toBeGreaterThanOrEqual(0);
     expect(remarksIndex).toBeGreaterThan(qtyIndex);
     expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual([
+      'Price',
       'List price',
       'Promotion',
       'Selling price',
