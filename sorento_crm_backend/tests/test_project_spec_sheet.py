@@ -522,7 +522,9 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quot
         assert doc["prepared_by"] == f"{MARKER} Signer"
         assert doc["prepared_by_phone"] == "012-000 0000"
         # No doc date on this quotation: the issue date.
-        assert doc["date"] == c["issue"].issued_at.strftime("%d %b %Y").upper()
+        from app.services.pdf_render import in_malaysia
+
+        assert doc["date"] == in_malaysia(c["issue"].issued_at).strftime("%d/%m/%Y")
 
         import datetime
 

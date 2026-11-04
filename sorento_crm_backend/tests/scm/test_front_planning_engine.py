@@ -501,7 +501,7 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_
     assert len(proposed) == 1
     assert proposed[0].kind == "buy"
     assert proposed[0].qty == Decimal("358")
-    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert proposed[0].reason == "Beyond purchasing's coverage (31/10/2026) - buy now"
     assert proposed[0].rung == "buy"
 
 
@@ -608,7 +608,7 @@ def test_a_line_beyond_purchasings_coverage_date_is_bought_whole_the_same_way():
 
     assert [c.kind for c in proposed] == ["buy"]
     assert proposed[0].qty == Decimal("358")
-    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert proposed[0].reason == "Beyond purchasing's coverage (31/10/2026) - buy now"
 
 
 def test_a_line_inside_its_window_is_untouched_by_the_rule():

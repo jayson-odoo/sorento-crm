@@ -211,7 +211,7 @@ def test_one_date_format_per_document(db, request_type):
     html = PurchaseRequestPDFService(db)._html(row)
     # Two-digit years are the specific inconsistency being ruled out.
     assert not re.search(r"\b\d{1,2}/\d{1,2}/\d{2}\b", html), "a two-digit year slipped in"
-    assert html.count("6/8/2026" if request_type == "purchase_request" else "6-Aug-2026") >= 2
+    assert html.count("06/08/2026") >= 2
 
 
 @pytest.mark.parametrize("request_type", BOTH_TYPES)

@@ -124,7 +124,7 @@ def _blank(value) -> str:
 
 
 def _date_cell(value) -> str:
-    """``6/8/2026`` - every date on a Purchase Request.
+    """``06/08/2026`` - every date on a Purchase Request (DATE-FORMAT-UNIFY: zero-padded).
 
     The Excel export wrote the header date as ``6/8/26`` and the rest as
     ``6/8/2026``. Two formats on one page invite the reader to wonder what the
@@ -138,7 +138,7 @@ def _date_cell(value) -> str:
     value = in_malaysia(snapshot_date(value))
     if not isinstance(value, (date, datetime)):
         return _blank(value)
-    return f"{value.day}/{value.month}/{value.year}"
+    return fmt_date(value, naive_is_utc=False)
 
 
 def _date_long(value) -> str:

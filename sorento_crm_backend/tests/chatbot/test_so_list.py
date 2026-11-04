@@ -68,7 +68,7 @@ def _date(iso: str) -> str:
     from datetime import date
 
     d = date.fromisoformat(iso)
-    return f"{d.day} {d:%b %Y}"
+    return d.strftime("%d/%m/%Y")
 
 
 def _seed_hanlim(session_factory) -> dict[str, str]:
@@ -174,9 +174,9 @@ class TestSoListMultiGroup:
         lines = reply.strip().split("\n")
         assert lines[0].startswith("Sales orders for HANLIM TRADING SDN BHD, SOON HENG HARDWARE CO.SDN.BHD., MODERNMED SDN BHD"), reply
         assert lines[1:] == [
-            "SO422095 - 21 Sep 2026 - HANLIM TRADING SDN BHD - Closed - fully delivered",
-            "SO421800 - 18 Sep 2026 - SOON HENG HARDWARE CO.SDN.BHD. - Open - not delivered yet",
-            "SO421700 - 17 Sep 2026 - MODERNMED SDN BHD - ❗ Cancelled",
+            "SO422095 - 21/09/2026 - HANLIM TRADING SDN BHD - Closed - fully delivered",
+            "SO421800 - 18/09/2026 - SOON HENG HARDWARE CO.SDN.BHD. - Open - not delivered yet",
+            "SO421700 - 17/09/2026 - MODERNMED SDN BHD - ❗ Cancelled",
         ], reply
 
 
