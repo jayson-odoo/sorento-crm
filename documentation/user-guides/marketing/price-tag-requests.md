@@ -70,20 +70,18 @@ talked about.
   checkbox - greyed until you type your own numbers; **Auto** clears them back to the worked-out
   fit. A grid too small for the tag is refused with a message and the worked-out fit is used
   instead. See [Arranging the sheet](#arranging-the-sheet).
-* On a combo tag, every layer that reads product data (the photo slot, code, name, specs, a price
+* On a combo tag, every layer that reads product data (a picture, a code, a name, specs, a price
   badge, a barcode, or a text layer with a product or spec token) offers a **Product** select in the
-  Inspector. It lists the parent product first, then every product in the line's whole combo,
-  grouped by role (for example *Kitchen Tap*) - not only the candidate this particular tag resolved
-  to, so one tag can bind its slots to every variation and show all of them at once. The candidate
-  this tag itself chose is marked **(this tag)**. Leave a layer on the parent (the default) for most
-  layers - a single-product tag shows no **Product** select at all, since there's nothing to choose
-  between. A price badge's select carries one extra first entry, **Tag total**, the parent plus this
-  tag's own resolved parts added together - the default, and what a price badge has always shown,
-  unchanged even when other slots on the same tag point at a different candidate. A layer pointed at
-  a product has its name suffixed with that product's code in the **LAYERS** panel, so a scan of the
-  list tells you which product each layer draws. Copying a design onto another tag with **Apply to
-  all** falls a part-pointed layer back to the parent when the target has fewer parts, and names the
-  layer in a toast.
+  Inspector. It lists positions in the combo, not individual products: **Main product**, **Fixed
+  part 1**, **Fixed part 2**, one entry per pick in each choice group (for example **Kitchen tap,
+  pick 2**), and **Upgrade 1**. With a combo previewed, each entry shows that combo's own name and
+  code (for example *Kitchen tap, pick 2: SRTKT1863SS*); with none, the group reads **Choice group
+  1, pick 2**. A single-product tag shows no **Product** select, since there is nothing to choose
+  between. A price badge's select has one extra first entry, **Tag total**. Each position prints its
+  own picture, code, description and list price. A position the line has not filled prints an empty
+  tile, never the main product. Copying a design onto another tag with **Apply to all** falls a layer
+  back to the main product when the target lacks that position, and names the layer in a toast. See
+  [Design a combo template](price-tag-packages.md#design-a-combo-template).
 * The merge field `{{product.price_tag_description}}` prints the product's own **Price tag
   description** field - itself a TEMPLATE, not plain text, so it can carry its own `{{product.*}}`
   and `{{spec.*}}` tokens (for example `{{product.name}} in {{spec.material}}`), rendered against
