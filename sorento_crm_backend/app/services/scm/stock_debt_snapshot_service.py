@@ -455,6 +455,17 @@ class StockDebtSnapshotService:
         po_links = po_links_for(self.db, core_ids)
         for line_id, entry in now.items():
             entry["po_links"] = po_links.get(line_id, [])
+        # A snapshot stored before the demand row carried `line_no` reads it off the SO line.
+        missing = [l["sales_order_line_id"] for l in lines if l.get("line_no") is None]
+        if missing:
+            numbers = dict(
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no)
+                .filter(SalesOrderLine.id.in_(sorted(set(missing))))
+                .all()
+            )
+            for line in lines:
+                if line.get("line_no") is None:
+                    line["line_no"] = numbers.get(line["sales_order_line_id"])
         # Security L1: without `projects.projects.view` no order inquiry row is served,
         # frozen or live.
         if not UserPermissionService(self.db).check_user_has_permission(user_id, OI_PERMISSION):

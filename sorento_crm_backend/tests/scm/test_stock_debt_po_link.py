@@ -534,3 +534,26 @@ def test_the_permission_is_seeded_and_granted_to_admin():
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     assert any(p["slug"] == LINK for p in PERMISSION_REGISTRY)
+
+
+def test_the_drill_lines_carry_the_sales_order_line_number(scm_app, fake_ss):
+    """Crew browser pass (4 Nov): the Line column read "-" on every row because the demand
+    row never carried the SO line's number. The snapshot lines serve it (`line_no`)."""
+    w = _world(scm_app, fake_ss)
+    lines = w["c"].get(f"{SNAP}/{w['sid']}/rows/{w['row_id']}/lines").json()["data"]
+    (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
+    assert line["line_no"] == 140
+
+
+def test_a_snapshot_stored_without_line_numbers_still_serves_them(scm_app, fake_ss):
+    """Snapshots saved before the fix have no `line_no` in their frozen lines; the number is
+    read off the SO line when served."""
+    from app.models.stock_debt_snapshot import StockDebtSnapshotRow
+
+    w = _world(scm_app, fake_ss)
+    row = w["db"].get(StockDebtSnapshotRow, w["row_id"])
+    row.lines = [{k: v for k, v in l.items() if k != "line_no"} for l in row.lines]
+    w["db"].flush()
+    lines = w["c"].get(f"{SNAP}/{w['sid']}/rows/{w['row_id']}/lines").json()["data"]
+    (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
+    assert line["line_no"] == 140

@@ -36,6 +36,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from sqlalchemy import String, and_, cast, func, or_, select, union
 from sqlalchemy.orm import Session
 
+from app.services.project_line_split_service import so_line_no
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -642,6 +643,8 @@ class StockDebtService:
         snapshot stores, so the two cannot differ."""
         return {
             "so_number": line.line.so_number,
+            # AC-LINK-CRM-UI (crew browser pass): the drill's Line column.
+            "line_no": so_line_no(line.line.core_line_no, line.line.line_no),
             "agent_code": line.line.agent_code,
             "warehouse_code": line.line.warehouse,
             "required_date": line.line.required_date,
