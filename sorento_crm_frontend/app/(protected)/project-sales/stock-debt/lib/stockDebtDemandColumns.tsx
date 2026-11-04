@@ -6,7 +6,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { OrderInquiryDocumentLink } from '../../order-inquiries/components/OrderInquiryDocumentDialog';
 import type {
   StockDebtAssignedFrom,
@@ -101,9 +101,29 @@ function LentReceiver({ entry, label }: { entry: LentEntry; label?: string }) {
   );
 }
 
-/** OI-RESERVE-USED-ROW (owner, 4 Nov: one line per row): two or more receivers read as ONE
- *  entry, "Lent to 4 SOs (47)"; the list, each linked with its customer / project, opens on
- *  click. */
+/** One receiving ORDER: its lends summed (a line lends to several lines of one SO, e.g.
+ *  SO422058 three times), keyed by the SO, first seen first. `ref` is rebuilt so a merged
+ *  receiver reads "Lent to SO422058 (60)" like a single one. Exported for its test. */
+export function groupLentBySo(entries: LentEntry[]): LentEntry[] {
+  const bySo = new Map<string, LentEntry>();
+  for (const entry of entries) {
+    const key = entry.so_number ?? entry.ref;
+    const seen = bySo.get(key);
+    if (seen) {
+      const qty = seen.qty + entry.qty;
+      bySo.set(key, { ...seen, qty, ref: `Lent to ${entry.so_number ?? ''} (${qty.toLocaleString()})` });
+    } else {
+      bySo.set(key, entry);
+    }
+  }
+  return [...bySo.values()];
+}
+
+/** OI-RESERVE-USED-ROW (owner, 4 Nov: one line per row): two or more receiving SOs read as
+ *  ONE entry, "Lent to 2 SOs (47)" (N counts distinct SOs); the list, each SO linked with its
+ *  qty and customer / project, opens on click. Portalled out of the drill dialog (crew pass:
+ *  inside it the grid's Status pills drew over it and took its clicks), and never wider than
+ *  the screen at 375. */
 export function LentSummary({ entries }: { entries: LentEntry[] }) {
   const total = entries.reduce((sum, entry) => sum + entry.qty, 0);
   const label = `Lent to ${entries.length} SOs (${total.toLocaleString()})`;
@@ -118,17 +138,24 @@ export function LentSummary({ entries }: { entries: LentEntry[] }) {
           {label}
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto max-w-xs space-y-1.5 p-3 text-sm">
-        {entries.map((entry, index) => (
-          <div key={`${entry.so_number}:${index}`} className="min-w-0">
-            <div className="flex items-center justify-between gap-3">
-              <LentReceiver entry={entry} label={entry.so_number ?? entry.ref} />
-              <span className="shrink-0 tabular-nums">{entry.qty.toLocaleString()}</span>
+      <PopoverPortal>
+        <PopoverContent
+          align="start"
+          collisionPadding={16}
+          className="w-[min(20rem,calc(100vw-2rem))] space-y-1.5 p-3 text-sm"
+          data-testid="lent-summary-popover"
+        >
+          {entries.map((entry, index) => (
+            <div key={`${entry.so_number}:${index}`} className="min-w-0">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <LentReceiver entry={entry} label={entry.so_number ?? entry.ref} />
+                <span className="shrink-0 tabular-nums">{entry.qty.toLocaleString()}</span>
+              </div>
+              <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
             </div>
-            <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
-          </div>
-        ))}
-      </PopoverContent>
+          ))}
+        </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
@@ -387,8 +414,12 @@ export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDema
       }
       // OI-RESERVE-USED-ROW (owner, 4 Nov): one line per row. Own sources inline; two or
       // more "Lent to" receivers collapse into one `LentSummary`.
-      const lent = entries.filter((entry): entry is LentEntry => entry.kind === 'lent');
-      const shown = lent.length >= 2 ? entries.filter((entry) => entry.kind !== 'lent') : entries;
+      // Receivers are grouped by SO first, so N counts distinct orders (crew pass, 4 Nov).
+      const lent = groupLentBySo(
+        entries.filter((entry): entry is LentEntry => entry.kind === 'lent'),
+      );
+      const own = entries.filter((entry) => entry.kind !== 'lent');
+      const shown = lent.length >= 2 ? own : [...own, ...lent];
       return (
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden whitespace-nowrap">
           {shown.map((entry, index) => (
