@@ -67,6 +67,9 @@ export interface DraftBorrow {
    */
   donor_core_line_id?: string | null;
   donor_so_number?: string | null;
+  /** Display only: the donor order's customer and project (OI-UX-FILTER-SNAPSHOT). Never posted. */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   same_agent?: boolean;
@@ -164,6 +167,8 @@ export function draftFromLine(line: SupplyLine): DraftLine {
         // stands still checks against that line's live commitment, not free stock.
         donor_core_line_id: component.donor_core_line_id,
         donor_so_number: component.donor_so_number,
+        donor_customer_name: component.donor_customer_name ?? null,
+        donor_project_label: component.donor_project_label ?? null,
         donor_line_no: component.donor_line_no,
         donor_agent_code: component.donor_agent_code,
         same_agent: component.same_agent,

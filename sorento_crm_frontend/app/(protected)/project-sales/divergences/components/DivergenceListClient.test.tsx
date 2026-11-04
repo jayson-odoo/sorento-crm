@@ -157,6 +157,20 @@ describe('DivergenceListClient', () => {
     expect(screen.getByText('4 unanswered')).toBeInTheDocument();
   });
 
+  it('names the order\'s Customer then Project after its number (OI-UX-FILTER-SNAPSHOT)', async () => {
+    listDivergences.mockResolvedValue(
+      envelope([row({ customer_name: 'Maju Debtor', project_label: 'Tower B' })]),
+    );
+    renderList();
+
+    expect(await screen.findByText('Maju Debtor')).toBeInTheDocument();
+    expect(screen.getByText('Tower B')).toBeInTheDocument();
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    const so = headers.indexOf('Sales order');
+    expect(headers[so + 1]).toBe('Customer');
+    expect(headers[so + 2]).toBe('Project');
+  });
+
   it('says amendments are blocked, because that is what an open one costs', async () => {
     listDivergences.mockResolvedValue(envelope([row()]));
     renderList();

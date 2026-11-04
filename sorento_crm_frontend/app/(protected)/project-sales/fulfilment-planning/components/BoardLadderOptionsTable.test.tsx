@@ -106,6 +106,19 @@ describe('BoardLadderOptionsTable', () => {
     ).not.toBeNull();
   });
 
+  it('names the debt order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+    const options = OPTIONS.map((o) =>
+      o.step === 'order_borrow'
+        ? { ...o, debt_customer_name: 'Maju Debtor', debt_project_label: 'Tuju Residences' }
+        : o,
+    );
+    render(<BoardLadderOptionsTable options={options} contributionKey={KEY} />);
+
+    expect(
+      screen.getByTestId(`ladder-option-debt-${KEY}-order_borrow`).textContent,
+    ).toBe('SO414285 · Nov 2026 · Maju Debtor / Tuju Residences');
+  });
+
   it('names the donor and the month a borrow puts the debt in, and nobody else', () => {
     render(<BoardLadderOptionsTable options={OPTIONS} contributionKey={KEY} />);
 

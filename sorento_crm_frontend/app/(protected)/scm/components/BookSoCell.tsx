@@ -1,11 +1,16 @@
 'use client';
 
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
+
 /** The value behind the S/O column, exactly as the backend serves it on both surfaces
  *  (`PurchaseOrderLine` and `OrderInquiryPoDetailLine`). */
 export interface BookSoLinkage {
   /** The sales order the AutoCount book names on this line. One value, never a list: the
    *  book records a purchase line as raised for a single sales-order line. */
   book_so_number?: string | null;
+  /** That sales order's customer (debtor name, else customer master) and project label. */
+  book_so_customer_name?: string | null;
+  book_so_project_label?: string | null;
   /** True when the book named a sales order this CRM does not hold. */
   book_so_unresolved?: boolean | null;
 }
@@ -35,9 +40,15 @@ export const BOOK_SO_UNRESOLVED_LABEL = 'Linked, not held';
 export function BookSoCell({ line }: { line: BookSoLinkage }) {
   if (line.book_so_number) {
     return (
-      <span className="block truncate" title={line.book_so_number}>
-        {line.book_so_number}
-      </span>
+      <>
+        <span className="block truncate" title={line.book_so_number}>
+          {line.book_so_number}
+        </span>
+        <SoCustomerProject
+          customer={line.book_so_customer_name}
+          project={line.book_so_project_label}
+        />
+      </>
     );
   }
   if (line.book_so_unresolved) {

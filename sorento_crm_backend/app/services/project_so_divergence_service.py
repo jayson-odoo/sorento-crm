@@ -38,6 +38,7 @@ from app.models.project_so import (
 )
 from app.models.projects import Project
 from app.services.error_handler import AppException
+from app.services.scm.so_party import EMPTY_PARTY, so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.project_so_divergence_engine import (
     PRESENCE_BOTH,
@@ -125,8 +126,14 @@ class ProjectSODivergenceService:
             .all()
         )
         now = datetime.utcnow()
+        # OI-UX-FILTER-SNAPSHOT: each order names its customer and project.
+        parties = so_parties(
+            self.db,
+            ids=[order.so_id for _d, order, _p in rows],
+            numbers=[order.autocount_doc_no for _d, order, _p in rows],
+        )
         data = [
-            {
+            with_party({
                 "id": divergence.id,
                 "project_sales_order_id": order.id,
                 "project_id": project.id,
@@ -145,7 +152,7 @@ class ProjectSODivergenceService:
                 "age_days": (now - divergence.detected_at).days
                 if divergence.detected_at
                 else 0,
-            }
+            }, parties, order.so_id or order.autocount_doc_no)
             for divergence, order, project in rows
         ]
         return {
@@ -167,11 +174,21 @@ class ProjectSODivergenceService:
             else None
         )
         rows = self._rows(divergence_id)
+        party = (
+            with_party(
+                {},
+                so_parties(self.db, ids=[order.so_id], numbers=[order.autocount_doc_no]),
+                order.so_id or order.autocount_doc_no,
+            )
+            if order
+            else dict(EMPTY_PARTY)
+        )
         return {
             "id": divergence.id,
             "project_sales_order_id": divergence.project_sales_order_id,
             "project_id": order.project_id if order else None,
             "project_title": project.title if project else None,
+            **party,
             "provisional_ref": order.provisional_ref if order else None,
             "autocount_doc_no": divergence.autocount_doc_no,
             "status": divergence.status,

@@ -125,7 +125,7 @@ def _on_hand_entry(warehouse, qty):
     return {
         "kind": "on_hand", "ref": f"On hand {warehouse.warehouse_code}",
         "spo_number": None, "spo_line_number": None, "qty": qty,
-        "lent_from_so_number": None,
+        "lent_from_so_number": None, "customer_name": None, "project_label": None,
     }
 
 
@@ -519,7 +519,7 @@ def test_a_routed_line_due_later_is_listed_in_todays_supply_column_only(scm_app)
     )
     assert home["free_qty"] == 74
     assert home["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 126},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 126, "customer_name": None, "project_label": None},
     ]
 
 

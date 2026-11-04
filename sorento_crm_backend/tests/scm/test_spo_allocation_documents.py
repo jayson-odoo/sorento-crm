@@ -1035,6 +1035,10 @@ def test_document_line_carries_po_and_so_covered_ac_j2(scm_app):
         {
             "document": pso.autocount_doc_no or pso.provisional_ref,
             "customer": project.title,
+            # OI-UX-FILTER-SNAPSHOT verify round: no sales order to read yet, so the row's
+            # project is the inquiry's own project (never two dashes).
+            "customer_name": None,
+            "project_label": project.title,
             "demand_class": "project",
             "qty": 10.0,
             "via_po": None,
@@ -1042,6 +1046,8 @@ def test_document_line_carries_po_and_so_covered_ac_j2(scm_app):
         {
             "document": so.so_number,
             "customer": customer.customer_name,
+            "customer_name": customer.customer_name,
+            "project_label": None,
             "demand_class": "retail",
             "qty": 20.0,
             "via_po": None,
@@ -1092,6 +1098,8 @@ def test_so_covered_reads_the_coverage_record_not_the_planner_claim(scm_app):
         {
             "document": covered_so.so_number,
             "customer": customer.customer_name,
+            "customer_name": customer.customer_name,
+            "project_label": None,
             "demand_class": "retail",
             "qty": 20.0,
             "via_po": None,
@@ -1145,14 +1153,14 @@ def test_two_spo_lines_of_one_product_each_show_their_own_take_of_one_sales_orde
     by_line = {ln["id"]: ln["so_covered"] for ln in body["lines"]}
     assert by_line[str(first.id)] == [
         {
-            "document": so.so_number, "customer": customer.customer_name,
+            "document": so.so_number, "customer": customer.customer_name, "customer_name": customer.customer_name, "project_label": None,
             "demand_class": "retail", "qty": 30.0,
             "via_po": None,
         },
     ]
     assert by_line[str(second.id)] == [
         {
-            "document": so.so_number, "customer": customer.customer_name,
+            "document": so.so_number, "customer": customer.customer_name, "customer_name": customer.customer_name, "project_label": None,
             "demand_class": "retail", "qty": 40.0,
             "via_po": None,
         },

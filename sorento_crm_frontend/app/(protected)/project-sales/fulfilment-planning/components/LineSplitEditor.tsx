@@ -60,6 +60,7 @@ import {
   type SheetDrag,
   type SheetHandlers,
 } from './LineSplitSheet';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 interface Draft {
   lines: SplitLine[];
@@ -852,7 +853,12 @@ export function LineSplitEditor({
   }));
 
   const soDate = formatSplitDate(query.data?.so_date ?? null);
-  const subtitle = [query.data?.so_number, soDate, query.data?.customer]
+  // OI-UX-FILTER-SNAPSHOT: CUSTOMER / project, the shared format.
+  const subtitle = [
+    query.data?.so_number,
+    soDate,
+    soCustomerProjectLabel(query.data?.customer, query.data?.project),
+  ]
     .filter(Boolean)
     .join(' · ');
   const locations = [...new Set(counted.map((line) => line.location))]

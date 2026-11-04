@@ -245,6 +245,34 @@ describe('BoardDecideControl: the Borrow dialog (AC-11, AC-38)', () => {
     expect(option.textContent).not.toMatch(/covers|JEREMY|of \d/);
   });
 
+  it('names each donor order\'s customer and project beside its number (OI-UX-FILTER-SNAPSHOT)', async () => {
+    renderControl({
+      contributions: [
+        row({
+          borrow_candidates: [
+            {
+              source: 'other_location',
+              warehouse_code: 'BRW-BB',
+              warehouse_id: 'wh-donor',
+              free_qty: '100',
+              donor_impact: { free_before: '100', free_after_full_borrow: '60', committed_qty: '0' },
+              donor_so_number: 'SO415472',
+              donor_customer_name: 'Maju Debtor',
+              donor_project_label: 'Tuju Residences',
+            },
+          ],
+        }),
+      ],
+    });
+    openMenu();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Borrow from another order' }));
+
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('donor-or-location');
+    expect(within(select).getByText('SO415472 - Maju Debtor / Tuju Residences')).toBeInTheDocument();
+  });
+
   it('keeps Save disabled until the picker has a value and the reason is non-blank', async () => {
     renderControl({
       contributions: [

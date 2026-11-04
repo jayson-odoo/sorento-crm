@@ -2107,12 +2107,19 @@ def test_link_suggests_reallocate_to_every_sooner_open_row(api):
         db, company_id, product=product, qty="300", delivery_date=date(2027, 1, 15),
         so_number=f"ZZT-CANDZ-{_uid()[:6]}",
     )
+    # OI-UX-FILTER-SNAPSHOT: Y's core order names its debtor and project; Z has no core order.
+    core_y = db.query(SalesOrder).filter(SalesOrder.so_number == _order_y.autocount_doc_no).one()
+    core_y.debtor_name = f"{MARKER} Debtor Sdn Bhd"
+    core_y.project_label = f"{MARKER} Tower"
     db.commit()
 
     body = client.get(LIST, params={"limit": 200}).json()
     wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
     [link] = wire_row["links"]
     suggestion = link["suggestion"]
+    assert suggestion["candidates"][0]["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+    assert suggestion["candidates"][0]["project_label"] == f"{MARKER} Tower"
+    assert suggestion["candidates"][1]["customer_name"] is None
 
     assert suggestion["kind"] == "reallocate"
     assert [c["inquiry_no"] for c in suggestion["candidates"]] == [

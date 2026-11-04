@@ -366,3 +366,20 @@ describe('composeMixture (PLAN-reorder-one-formula.md, AC-6) - the parts are mea
     expect(m).toMatchObject({ stockQty: 50, borrowedQty: 0, usePo: 0, buy: 0 });
   });
 });
+
+import { ledgerDemandRows } from './orderQtyLedger';
+
+describe('ledgerDemandRows (OI-UX-FILTER-SNAPSHOT)', () => {
+  it('names each order CUSTOMER / project, the shared format', () => {
+    const [row] = ledgerDemandRows([
+      { so_number: 'SO1', customer_label: 'ACME', project_title: 'TAMAN JAYA', required_date: null, qty: 1 },
+    ]);
+    expect(row.customer).toBe('ACME / TAMAN JAYA');
+  });
+  it('prints a dash for the project when the order has none (AC-6)', () => {
+    const [row] = ledgerDemandRows([
+      { so_number: 'SO1', customer_label: 'ACME', project_title: null, required_date: null, qty: 1 },
+    ]);
+    expect(row.customer).toBe('ACME / -');
+  });
+});

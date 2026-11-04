@@ -294,6 +294,9 @@ class SalesOpportunityResponse(BaseModel):
     lost_reason_label: Optional[str] = None
     sales_order_id: Optional[str] = None
     sales_order_no: Optional[str] = None
+    #: The linked sales order's customer (debtor name, else customer master) and project.
+    sales_order_customer_name: Optional[str] = None
+    sales_order_project_label: Optional[str] = None
     source: str
     created_by_label: Optional[str] = None
     created_by_contact_id: Optional[str] = None
@@ -349,6 +352,7 @@ class SalesOpportunitySalesOrderOption(BaseModel):
     so_number: str
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     order_date: Optional[DateType] = None
 
 

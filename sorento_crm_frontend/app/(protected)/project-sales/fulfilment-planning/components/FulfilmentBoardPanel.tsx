@@ -107,6 +107,7 @@ import {
   unpostableDecidedFor,
   type UnpostableLine,
   type UnpostableReason,
+  orderPartyLabels,
 } from '../../_shared/lib/fulfilmentBoard';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import type {
@@ -165,6 +166,24 @@ import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
  * is the deliberate switch into the pivoted matrix.
  */
 type BoardView = 'grid' | 'list';
+
+
+/**
+ * OI-UX-FILTER-SNAPSHOT: an order's `CUSTOMER / project` under the line that names it.
+ * `inMenu`: a menu item's accessible name stays its action ("Split delivery SO1"); the
+ * customer / project there is visual context, hidden from the name.
+ */
+function SoPartyLine({ label, inMenu = false }: { label: string | undefined; inMenu?: boolean }) {
+  return label ? (
+    <span
+      className="block truncate text-xs font-normal text-muted-foreground"
+      title={label}
+      aria-hidden={inMenu || undefined}
+    >
+      {label}
+    </span>
+  ) : null;
+}
 
 /**
  * One line of the results block: a server outcome, or an order THIS press could not send.
@@ -1527,6 +1546,13 @@ export function FulfilmentBoardPanel({
   );
   // OI-SPLIT-VIEW (UAC D1, D2): the per-order gear items, for every order with a planning
   // record (the split sheet needs one).
+  // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): every order the panel names also names its
+  // CUSTOMER / project.
+  const partyByOrder = React.useMemo(
+    () => orderPartyLabels(board.data?.orders ?? [], allContributions),
+    [board.data, allContributions],
+  );
+
   const plannedOrders = React.useMemo(
     () =>
       (board.data?.orders ?? []).filter(
@@ -2427,6 +2453,9 @@ export function FulfilmentBoardPanel({
           psoId: pageId,
           salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
+          // OI-UX-FILTER-SNAPSHOT: the order's customer / project (a line carries both).
+          customerName: order.customer_name ?? lines[0]?.customer_name ?? null,
+          projectLabel: lines[0]?.project_label ?? null,
           soDate: order.so_date ?? null,
           remarkType: order.remark_type ?? null,
           covered: lines.map((line) => {
@@ -3277,7 +3306,10 @@ export function FulfilmentBoardPanel({
                         }
                       >
                         <Split className="size-4" aria-hidden />
-                        {`Split delivery ${order.so_number}`}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{`Split delivery ${order.so_number}`}</span>
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
+                        </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onSelect={() =>
@@ -3288,7 +3320,10 @@ export function FulfilmentBoardPanel({
                         }
                       >
                         <Split className="size-4" aria-hidden />
-                        {`View splits ${order.so_number}`}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{`View splits ${order.so_number}`}</span>
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
+                        </span>
                       </DropdownMenuItem>
                     </React.Fragment>
                   ))}
@@ -3343,6 +3378,7 @@ export function FulfilmentBoardPanel({
                           <span className="truncate" title={label}>
                             {label}
                           </span>
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                           {secondLine ? (
                             // `text-foreground/70`, not `text-muted-foreground`
                             // (review round follow-up): the disabled item's own
@@ -3408,6 +3444,11 @@ export function FulfilmentBoardPanel({
                 <span className="font-medium">
                   {board.data?.orders.find((order) => order.sales_order_id === salesOrderId)
                     ?.so_number ?? ''}
+                  {partyByOrder.get(salesOrderId) ? (
+                    <span className="ms-1 font-normal text-muted-foreground">
+                      {partyByOrder.get(salesOrderId)}
+                    </span>
+                  ) : null}
                 </span>
               ) : null}
               <span className="break-words">{`Split edits to confirm: ${labels.join(', ')}`}</span>
@@ -3534,6 +3575,7 @@ export function FulfilmentBoardPanel({
                   >
                     {`${label}: ${resultSentence(result, simulated, createdAt)}`}
                   </span>
+                  <SoPartyLine label={order ? partyByOrder.get(order.sales_order_id) : undefined} />
                   {simulated &&
                     result.ok &&
                     (result.inquiry_rows?.length ?? 0) + (result.transfers?.length ?? 0) > 0 && (

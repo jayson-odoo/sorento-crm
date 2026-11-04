@@ -276,6 +276,23 @@ describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for s
     expect(within(row).getByText('SO391853')).toBeInTheDocument();
   });
 
+  it('names the linked order\'s customer and project under its number (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({
+        book_so_number: 'SO391853',
+        book_so_unresolved: false,
+        book_so_customer_name: 'Maju Debtor',
+        book_so_project_label: 'Tuju Residences',
+      }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Maju Debtor / Tuju Residences')).toBeInTheDocument();
+  });
+
   it('reads a muted dash when the book names no sales order, never a guess', async () => {
     getOrderInquiryPoDetail.mockResolvedValue(
       detailWithLine({ book_so_number: null, book_so_unresolved: false }),
