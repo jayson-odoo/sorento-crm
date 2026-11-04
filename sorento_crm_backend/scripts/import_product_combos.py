@@ -251,6 +251,8 @@ def link_fitting_templates(db, combo, published, apply: bool) -> str:
         product_tag_template_service.set_combo_templates(
             db, combo.id, [*have, *(t.id for t in add)], user_id=None
         )
+        # The link service only flushes; this process owns the transaction.
+        db.commit()
     return f"{'linked' if apply else 'would link'}: {', '.join(t.name for t in add)}"
 
 
@@ -276,6 +278,7 @@ def process_entry(
     notes: list[str] = []
     dropped: list[str] = []
     discontinued: list[str] = []
+    discontinued_codes: list[str] = []
     keep: list[dict] = []
     for part in wanted_parts(entry):
         product = parts_by_code.get(part["code"].upper()) if part["code"] else None
@@ -285,6 +288,7 @@ def process_entry(
             dropped.append(part["code"])
         elif product.is_discontinued:
             discontinued.append(product.product_code)
+            discontinued_codes.append(part["code"])
         elif product.id != host.id and not any(k["product"].id == product.id for k in keep):
             # The host listed among the components is the flyer's own layout, not a drop; a
             # product named twice is one part.
@@ -339,6 +343,9 @@ def process_entry(
     )
     have = {part.part_product_id: part for part in existing.parts} if existing else {}
     want = {k["product"].id: k for k in keep}
+    # A part the seed lists but that is discontinued is held back, not dropped from the flyer:
+    # the existing part stays and is not reported as removed.
+    held_back = {parts_by_code[code.upper()].id for code in discontinued_codes if code.upper() in parts_by_code}
 
     # ---- what differs from the flyer (named by code), judged the same on a dry run
     differences: list[str] = []
@@ -362,7 +369,7 @@ def process_entry(
                 if _wanted(part.topup_amount, k["topup"], True) is not None:
                     differences.append(f"{code} top-up {_show(part.topup_amount)} -> {k['topup']}")
         for product_id, part in have.items():
-            if product_id not in want and part.part_product is not None:
+            if product_id not in want and product_id not in held_back and part.part_product is not None:
                 differences.append(f"removed {part.part_product.product_code}")
         if _wanted(existing.list_price, seed_lp, True) is not None:
             differences.append(f"list price {_show(existing.list_price)} -> {seed_lp}")
@@ -413,7 +420,7 @@ def process_entry(
             service.update(combo_id, update_fields)
         if prune:
             for product_id, part in have.items():
-                if product_id not in want:
+                if product_id not in want and product_id not in held_back:
                     service.delete_part(part.id)
         for k in keep:
             part = have.get(k["product"].id)
