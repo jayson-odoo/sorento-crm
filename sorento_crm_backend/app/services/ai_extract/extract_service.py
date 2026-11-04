@@ -43,7 +43,11 @@ from app.services.ai_extract.form_schema_registry import (
     ExtractFieldSpec,
     get_form_schema,
 )
-from app.services.entity_resolver import TokenResolution, resolve_references
+from app.services.entity_resolver import (
+    TokenResolution,
+    _strip_all_ws,
+    resolve_references,
+)
 from app.services.error_handler import AppException
 from app.services.llm_provider import (
     ChatResult,
@@ -1357,7 +1361,23 @@ class AIExtractService:
                     [tr for tr in result.resolutions if tr.token not in out],
                     suggestions_out,
                 )
+        # Fix round 2 (bug 18): the resolver folds spellings that normalise
+        # alike ("X 1-BL", "x1bl") into ONE token, so only that token carries
+        # the answer. Every spelling the caller sent gets the answer of its
+        # normalised form, using the resolver's own normaliser.
+        self._spread_to_spellings(cleaned, out)
+        if suggestions_out is not None:
+            self._spread_to_spellings(cleaned, suggestions_out)
         return out
+
+    @staticmethod
+    def _spread_to_spellings(codes: list[str], answers: dict) -> None:
+        by_norm = {_strip_all_ws(token.lower()): value for token, value in answers.items()}
+        for code in codes:
+            if code not in answers:
+                hit = by_norm.get(_strip_all_ws(code.lower()))
+                if hit is not None:
+                    answers[code] = hit
 
     def _collect_suggestions(
         self,
