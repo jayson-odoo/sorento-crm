@@ -106,6 +106,14 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "the working tree has uncommitted changes: commit them, so the result is for the exact head" >&2
   exit 2
 fi
+if [ ! -f "$BACKEND/.env.ci-tests" ]; then
+  echo "$BACKEND/.env.ci-tests is missing: run bash scripts/cloud-env-setup.sh first" >&2
+  exit 2
+fi
+# Settings ranks the process environment above the env file, so an exported database or Redis
+# URL (a dev shell) would win over .env.ci-tests and the serial_ddl tests would DROP SCHEMA there.
+# Every test command below runs without them.
+unset DATABASE_URL DIRECT_URL REDIS_URL
 HEAD_SHA="$(git rev-parse HEAD)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

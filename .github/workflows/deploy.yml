@@ -692,6 +692,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.backend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -782,6 +784,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.mcp == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -1485,11 +1489,16 @@ jobs:
       # is built when the head is pushed and not rebuilt when main moves; the
       # next step merges main's head now (CI-STALE-MERGE-REF). The `ref` is
       # empty off a PR, so a release checks out as before.
+      # persist-credentials false (CI-CLOUD-GATE security review): the job
+      # token can edit PRs (the label removal above), and every later step runs
+      # PR-controlled code (npm install scripts, the PR's eslint config and
+      # conftest). Only the main fetch below gets the token, for that command.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: ${{ (github.event_name == 'pull_request' || needs.changes.outputs.frontend == 'true') && '0' || '1' }}
+          persist-credentials: false
 
       # Before every gate, so the alembic head check, the tests, tsc, vitest
       # and the validated-tree marker all see what would land now: run
@@ -1502,8 +1511,13 @@ jobs:
       - name: Merge main's current head into the PR head
         id: merge
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          # The checkout keeps no credentials: the token goes to this one fetch.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
           main=$(git rev-parse refs/remotes/origin/main)
           head=$(git rev-parse HEAD)
           # The runner has no git identity; the merge commit is local, never pushed.
@@ -1733,7 +1747,7 @@ jobs:
           set -o pipefail
           git diff -z --name-only --relative --diff-filter=ACMR "$MAIN" HEAD -- \
               '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' \
-            | xargs -0 -r npx eslint --no-warn-ignored
+            | xargs -0 -r npx eslint --no-warn-ignored --
 
       - name: Run the vitest files related to the change (executing gate)
         if: github.event_name != 'pull_request' && needs.changes.outputs.frontend == 'true'

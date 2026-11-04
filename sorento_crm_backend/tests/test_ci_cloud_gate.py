@@ -185,3 +185,32 @@ def test_crew_tests_drops_ci_excluded_and_missing_files(tmp_path):
 def test_crew_tests_on_a_docs_only_change_runs_nothing(tmp_path):
     plan = _plan(tmp_path, ["documentation/plans/ci/PLAN-x.md"])
     assert plan == {"backend": "", "forms": "false", "mcp": "false", "vitest": "false"}, plan
+
+
+# --- security review (CI-CLOUD-GATE) -----------------------------------------------------------
+
+
+def test_the_pr_gate_checkout_keeps_no_token_for_pr_code():
+    """The job token can edit PRs (the label removal); every step after the checkout runs
+    PR-controlled code. Only the main fetch gets the token, in its own env."""
+    steps = {s.get("name"): s for s in _deploy_jobs()["lean-gate"]["steps"]}
+    assert steps["Checkout"]["with"]["persist-credentials"] is False
+    merge = steps["Merge main's current head into the PR head"]
+    assert merge["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
+    assert "extraheader" in merge["run"]
+    for name, step in steps.items():
+        if name not in {"Remove the ci label so a future add re-triggers CI", "Merge main's current head into the PR head"}:
+            assert "secrets." not in str(step), name
+
+
+def test_eslint_takes_file_names_as_operands_only():
+    run = {s.get("name"): s for s in _deploy_jobs()["lean-gate"]["steps"]}["Lint the changed frontend files"]["run"]
+    assert "git diff -z" in run and "xargs -0 -r npx eslint --no-warn-ignored --" in run
+
+
+def test_crew_tests_never_inherits_a_database_from_the_shell():
+    script = CREW_TESTS.read_text(encoding="utf-8")
+    run_part = script.split("# --- run", 1)[1]
+    assert "unset DATABASE_URL DIRECT_URL REDIS_URL" in run_part
+    assert run_part.index("unset DATABASE_URL") < run_part.index("pytest_pass backend")
+    assert ".env.ci-tests is missing" in run_part

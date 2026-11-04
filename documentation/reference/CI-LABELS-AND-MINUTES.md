@@ -1,7 +1,11 @@
 # CI labels and the minute budget
 
-The repo is private, moving to GitHub Enterprise (50,000 Linux runner minutes a month; owner,
-10 Oct 2026), billed per job and rounded up to the minute. One workflow,
+The repo is private on a 3,000 GitHub-hosted minutes a month quota (CI-CLOUD-GATE, 4 Nov 2026;
+the Enterprise plan of 10 Oct did not happen), billed per job and rounded up to the minute. So
+GitHub runs fast checks and the release build/deploy only; tests run in Claude Code cloud
+sandboxes (`documentation/agents/cloud-lanes.md`, "Tests before crew-done" and "Release
+sweep"; plan `documentation/plans/ci/PLAN-ci-cloud-gate-04nov.md`). No job runs on the Mac
+runner. One workflow,
 `.github/workflows/deploy.yml`, runs everything. This page says what each trigger runs, what it
 costs, and how to read the usage. The workflow file's comments are the authority on the
 mechanics; this page is the operator's view. The design and its measurements:
@@ -11,9 +15,9 @@ mechanics; this page is the operator's view. The design and its measurements:
 
 | Trigger | Runs | Billed minutes (target) |
 | --- | --- | --- |
-| PR labelled `ci` | Two jobs (CI-COST round 2): `Changed areas`, then `PR gate`, whose first steps are the alembic single-head, PII and gitleaks gates, then the app and worker import chains when the backend changed, the changed backend test files plus every test file that imports a changed module (tests/scm included, up to 3,600 estimated CPU-s) on Postgres, the MCP suite when MCP changed, and `tsc` plus `vitest run --changed` when the frontend changed. No shard runs on a PR. A merge tree whose PR gate already passed is not tested again. | ~2 docs-only or re-label, ~10 typical, ~20 at the selection cap |
+| PR labelled `ci` | Two jobs: `Changed areas`, then `PR gate`, fast checks only (CI-CLOUD-GATE): main's head merged in, alembic single head, PII, Outline guides, gitleaks; the app and worker import chains plus `pytest --collect-only` when the backend changed; the MCP import check when MCP changed; `tsc` plus ESLint over the changed files when the frontend changed. No test executes and no Postgres/Redis container starts: the lane posted `crew-tests:` from its sandbox. A merge tree whose PR gate already passed is not checked again. | ~2 docs-only or re-label, ~5 one area, ~9 backend + frontend (see the budget) |
 | PR labelled `ci-full` | REFUSED (owner, 9 Oct 2026: no full suite per PR). One job removes the label and fails with the reason; nothing else runs. | 1 |
-| `workflow_dispatch` on main (the release) | The lean release: the core tier (`sorento_crm_backend/tests/release_core.txt`) plus every test the batch since the last successful release reaches, in one `Release tests` job; build only the images whose service tree changed (an unchanged one is retagged); the owner-approved deploy. A selection over the cap stays in that job with the core tier plus the batch's changed test files (CI-COST). `full_suite=true`, a batch changing `tests/conftest.py` or `tests/_pg_fixture.py`, a batch at the compare API's 300-file cap or no earlier release runs the full shards instead. A tree whose release tests already passed is not tested again. `skip_tests=true`: build and deploy only. | ~25-50 lean; ~470 full (38099410256) |
+| `workflow_dispatch` on main (the release) | Default (`skip_tests` true since CI-CLOUD-GATE): the alembic head check, build only the images whose service tree changed (an unchanged one is retagged), the owner-approved deploy. Dispatched only after a green full-suite cloud sweep on that sha. `-f skip_tests=false`: the lean release tests first (core tier plus what the batch since the last release reaches, one `Release tests` job, ~25-50). `-f full_suite=true` (emergency, wins over `skip_tests`): the full shards. | ~25 default (build-images median 7 + build-and-deploy median 18); ~470 full (38099410256) |
 | Push to main | The alembic single-head gate only (PII and gitleaks ran on the same commits in the PR gate). No tests, no deploy. | 1 |
 | Any other label | Nothing (every job skips). | under 1 |
 
