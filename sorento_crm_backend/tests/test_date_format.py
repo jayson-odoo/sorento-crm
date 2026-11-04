@@ -127,6 +127,26 @@ def test_no_hand_rolled_month_name_table_outside_the_helper():
     assert offenders == []
 
 
+# A dd/mm/yyyy format with a 24-hour clock (`04/11/2026 19:26`), or two dd/mm/yyyy dates joined by
+# " to ": both are the right date in the wrong shape; fmt_datetime / fmt_date_range write them.
+_DMY_24H = re.compile(r"""%d/%m/%Y[^'"\n]*%H""")
+_DMY_TO_RANGE = re.compile(r"""%d/%m/%Y[^\n]*\bto\b[^\n]*%d/%m/%Y""")
+
+
+def test_no_24_hour_dd_mm_yyyy_stamp_or_to_range_outside_the_helper():
+    offenders = []
+    for path in sorted(APP.rglob("*.py")):
+        if path == HELPER:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "date-format-ok:" in line or line.lstrip().startswith("#"):
+                continue
+            writes = "strftime" in line or _FSTRING_SPEC.search(line)  # parse lists (strptime) are input
+            if writes and (_DMY_24H.search(line) or _DMY_TO_RANGE.search(line)):
+                offenders.append(f"{path.relative_to(APP.parent)}:{n}")
+    assert offenders == []
+
+
 def test_no_month_name_or_12_hour_date_style_outside_the_helper():
     """Mark a genuine exception (month bucket, LLM prompt) with `# date-format-ok: <reason>`."""
     assert _offenders() == []

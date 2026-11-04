@@ -472,6 +472,23 @@ export function formatDateRange(
   return from || to || fallback;
 }
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+/**
+ * A raw API value that MAY be a date, shown in the one shape: a bare `YYYY-MM-DD` as
+ * `20/06/2027`, an ISO timestamp (naive UTC or zoned) as `03/11/2026, 4:49 pm` in Malaysia,
+ * anything else unchanged. For audit change chips, chart ticks and free-typed cells where the
+ * value's type is not known up front.
+ */
+export function formatMaybeDate(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  if (ISO_DAY.test(text)) return formatDateInMalaysia(text) || text;
+  if (ISO_INSTANT.test(text)) return formatDateTimeInMalaysia(text.replace(' ', 'T')) || text;
+  return text;
+}
+
 /** `30/09/2026, 12:23 pm`. Reads a naive string as wall clock (no zone shift); for an API
  *  timestamp in UTC use {@link formatDateTimeInMalaysia}. */
 export function formatDateTime(input: Date | string | number): string {

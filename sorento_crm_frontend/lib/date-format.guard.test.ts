@@ -119,6 +119,18 @@ export function findOffenders(files: string[]): string[] {
       const near = src.split('\n').slice(Math.max(0, startLine - 3), startLine + 1).join('\n');
       if (!/date-format-ok: \S/.test(near)) offenders.push(`${file}:${startLine} month-name table`);
     }
+    // A chart axis keyed on a date renders the raw ISO key (`2026-10-06`) unless it formats
+    // its ticks: every date-keyed <XAxis> carries a tickFormatter.
+    for (const m of src.matchAll(/<XAxis\b[^>]*?\/>/gs)) {
+      const tag = m[0];
+      if (/dataKey=["'{]?[`'"]?(date|day|bucket|week|month|period|\w*_at|\w*_date)\b/.test(tag) && !/tickFormatter=/.test(tag)) {
+        offenders.push(`${file}:${src.slice(0, m.index).split('\n').length} XAxis date ticks without tickFormatter`);
+      }
+    }
+    // An audit change chip prints whatever the API stored; a date in it must still read dd/mm/yyyy.
+    for (const m of src.matchAll(/\{\s*(c|change|chg)\.(from|to|before|after)\s*(\?\?[^}]*)?\}/g)) {
+      offenders.push(`${file}:${src.slice(0, m.index).split('\n').length} raw change-chip value (use formatMaybeDate)`);
+    }
     const raw = src.split('\n');
     for (const { line, text } of codeLines(src)) {
       if (/date-format-ok: \S/.test(raw[line - 1])) continue;
