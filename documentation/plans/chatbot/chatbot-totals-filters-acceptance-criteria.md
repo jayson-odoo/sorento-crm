@@ -1,7 +1,8 @@
 # UAC: chatbot totals vs top-N, one name one filter, clear one filter, combined turn
 
-Status: DRAFT, written on the behaviour card's recommended answers (Q1 a, Q2 a, Q3 a, Q4 a, Q5 a). Revised when the
-owner's answers arrive. Plan: `PLAN-chatbot-totals-filters-4nov.md`.
+Status: Q1 (a) and Q3 (a) answered by crew 4 Nov (new path only, no old-path patch; held filters survive every
+follow-up until the user changes them). Q2, Q4, Q5 are with the owner (ask a57420216): rows marked PENDING-Q2 /
+PENDING-Q4 are not built until he answers. Plan: `PLAN-chatbot-totals-filters-4nov.md`.
 
 Scope: the NEW report-ask path (`parser.REPORT_ASK_LINE` marker, `report_ask.from_object`). Production gets these once
 the parser label moves to the lane's prompt text. Staff contact who sees two companies (Sorento, Mocha) unless a row says
@@ -16,7 +17,7 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | AF-3 | a top 10 products ranking | "i want total sales, by qty" | One total; top N and axis dropped; filters, period, basis kept |
 | AF-4 | a breakdown by channel | "top 5" | Ranking on channel, top 5; asks qty-or-amount only if no measure is held or said |
 | AF-5 | nothing | "top 10 products September delivered" | Ranking; asks only "By quantity or by amount?" |
-| AF-6 | nothing | "Total sale for all sale agents on September 2026" (basis held) | Breakdown by sales agent, every agent + grand total, no "How many?" (Q4) |
+| AF-6 PENDING-Q4 | nothing | "Total sale for all sale agents on September 2026" (basis held) | Breakdown by sales agent, every agent + grand total, no "How many?" (Q4) |
 
 ## One name, one filter (R2)
 
@@ -24,9 +25,9 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 |---|---|---|---|
 | ON-1 | Sep, delivered, split by channel | "sorento company only" | Company Sorento only; NO brand filter; split, period, basis kept |
 | ON-2 | Sep, delivered | "Sorento brand only" | Brand SORENTO only; no company filter added |
-| ON-3 | nothing | "Sorento total sale September 2026" | Basis asked; then Company Sorento (Q2), no brand filter, NOT the two-company table |
+| ON-3 PENDING-Q2 | nothing | "Sorento total sale September 2026" | Basis asked; then Company Sorento (Q2), no brand filter, NOT the two-company table |
 | ON-4 | nothing | same as ON-1/ON-2 with Mocha | Same, for Mocha |
-| ON-5 | nothing | a contact who sees one company, "Sorento total sale September 2026" | Brand SORENTO (no company choice exists) |
+| ON-5 PENDING-Q2 | nothing | a contact who sees one company, "Sorento total sale September 2026" | Brand SORENTO (no company choice exists) |
 | ON-6 | nothing | "Cabana sales Sep delivered" | Unchanged #2105 behaviour: "brand or account type?" |
 | ON-7 | overlap detection | any name present in two filter lists | Found from data (the name resolves in both), never from a list of names in code |
 
@@ -47,7 +48,7 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | # | Held before | Message | Expected |
 |---|---|---|---|
 | CT-1 | Sep, delivered, total | "sorento company only, show dealer and project" | Company Sorento AND split by channel in the same reply |
-| CT-2 | split by channel held, an open "How many?" | "Total sale for all sale agents on September 2026" | Breakdown by agent (the typed axis wins over the held one) |
+| CT-2 | split by channel held, an open "How many?" | a message whose report ask is a breakdown on another axis (e.g. "break it down by brand") | Breakdown by that axis (the typed axis wins over the held one); the agent wording itself is AF-6 |
 | CT-3 | total held | "October, by brand" | Period October AND breakdown by brand together |
 
 ## Basis (R5)

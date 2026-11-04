@@ -1,7 +1,8 @@
 # PLAN: chatbot totals vs top-N, company vs brand, clearing a held filter, combined turn (4 Nov 2026)
 
-Status: Plan (M track, LEAD pattern). Replay done; root-cause note and behaviour card next. No code before the
-owner answers the card.
+Status: Build (M track, LEAD pattern). Crew answered Q1 (a) new path only, no old-path patch, and Q3 (a) held filters
+survive every follow-up until the user changes them; spend for prompt gates OK up to USD 0.80. Q2 / Q4 / Q5 are with
+the owner (ask a57420216); their rows wait.
 
 ## Journey
 
@@ -82,12 +83,45 @@ Second replay on the new path (copy on sorento_prod_1020, the e4aa6d43 text save
 
 ## Behaviour card
 
-(filed as one crew --ask before any code)
+`crew/state/files/chatbot-trace-4nov/card-totals-filters.md` (real examples stay in crew state). Answers above.
 
 ## Architecture
 
-(after the card: layer, mechanism, classes)
+Layer: backend chatbot only. Parser report-ask object (`head/parser.py`, marker path), the parser prompt text (a DB row;
+the edits are recorded in `PROMPT-chatbot-totals-filters-<md5>.md`), and `report_ask.from_object`
+(`lanes/business/report_ask.py:3273-3407`). No FE, no migration, no old-path code (PR B deletes it).
 
-## Tickets / tests
+- M1 ask frame. The report-ask object gets `frame`: `total` | `breakdown` | `ranking` | null. `from_object` acts on it:
+  - total: axis None (status `sales_report`), the held axis and top N are not carried.
+  - breakdown: the object's axis (else the held one), `report_breakdown` set, so no count or measure ask. Stray message-level
+    `rank_direction` / `top_n` / `rank_by` do not turn it into a ranking.
+  - ranking: today's path; count and measure are asked only when missing.
+  - A frame with an axis counts as typed for the held-axis rule (`:3337-3346`), so the object's axis wins over a held one.
+  - null or absent: today's inference, byte for byte (texts without the field).
+- M2 one name, one filter. In `from_object`, a name that sits in two of the object's filter slots (`company`, `brands`,
+  `account_types`, `brand_or_account_type`), compared casefold on the parser's own output, is one name. The entity's
+  `kind_said` keeps that slot and drops the name from the other. `kind_said` null leaves today's behaviour (Q2 pending).
+  Same class as #2105's `_account_plan` (parser fields consumed, nothing read from the user's text).
+- M3 clear one filter. No new mechanism: the new path's widen (`turn/decide.py:446-456` `widened_kinds`, `_carry`
+  `:3410-3431`). Tests lock every filter kind; a kind that fails gets the same widen handling.
+- M4 basis. Prompt only: the message's own basis field is filled when the message says it. The V1 never-default guard
+  (`:3313-3315`) stays.
+- M5 DataError. `with_customer_groups` (`:2862-2871`), `arg_names` (`:3025`), `_group_names` (`:3060`) skip non-UUID
+  ids (`fetch.is_uuid`, as `_gate_ids` `:1413-1422`).
+- Prompt. New text = e4aa6d43 + three anchored edits (frame, one name one slot + `kind_said`, message basis), md5 pinned.
+  Gates on gemini-3.5-flash-lite x1 (crew OK USD 0.80): parser-gold TRAIN no-op control both arms + gold rows from the
+  UAC written as whole objects.
 
-(after the card)
+## Tickets
+
+- T1 tester: red tests for the UAC rows not marked PENDING (engine level, stubbed parser objects, no LLM), new file
+  `tests/chatbot/test_report_totals_filters.py`; `test(red):` commit alone.
+- T2 coder: M1, M2, M5 (+ M3 gaps the tests show) until T1 is green; touched suites green.
+- T3 coder: prompt text edits + parser schema key, no live calls; lead reviews the text.
+- T4 lead: gates (gold + TRAIN control), md5 pin, ledger lines.
+- T5 reviewer (opus), kill-proof per mechanism.
+- T6 console pass on the copy pinned to the new text; hand test script; owner moves the label after his pass.
+- T7 user guide: the sales chatbot page under `documentation/user-guides/` (frame, clearing a filter).
+
+Test DB: throwaway `chatbot_totals_filters_ci` (template of an idle throwaway, migrated to head, owner sorento_crm),
+`SORENTO_ENV_FILE=.env.ci-tests`; baseline `tests/chatbot/test_report_semantic_carry.py` 73 passed.
