@@ -1,7 +1,7 @@
 """Sales targets can count Invoiced (TARGET-INVOICED, owner 4 Nov 2026)
 
 Revision ID: tinv_0001_target_invoiced_basis
-Revises: oiod_0001_backfill
+Revises: polh_0001_seen_backfill
 Create Date: 2026-11-04 00:00:00.000000
 
 Widens `sales.targets.ck_sales_targets_basis` to accept `invoiced`. Saved targets keep their
@@ -12,7 +12,7 @@ rewrites a saved basis: while any target counts Invoiced, Postgres refuses the n
 from alembic import op
 
 revision = "tinv_0001_target_invoiced_basis"
-down_revision = "oiod_0001_backfill"
+down_revision = "polh_0001_seen_backfill"
 branch_labels = None
 depends_on = None
 
