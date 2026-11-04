@@ -22,7 +22,16 @@ SWEEP_DNS_IP=104.21.0.1
 
 sweep_log() { echo "[sweep] $*" >&2; }
 
-sweep_sudo() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+# `sweep_sudo cmd ...` or `sweep_sudo -u <user> cmd ...`, as root or through sudo.
+sweep_sudo() {
+  if [ "$(id -u)" -ne 0 ]; then
+    sudo "$@"
+  elif [ "$1" = "-u" ]; then
+    runuser -u "$2" -- "${@:3}"
+  else
+    "$@"
+  fi
+}
 
 # Postgres, Redis, venv, node_modules, MCP package (idempotent). cloud-env-setup.sh also
 # re-bootstraps its own sorento_ci database whenever the checkout's alembic head moved, and
