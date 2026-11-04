@@ -35,8 +35,10 @@
 #   WORKERS_STOP           command (sh -c) that stops worker + worker_fast (the role watcher would stop them a tick later)
 #   SYNC_MODE              off | remote_write | on_commit
 #   Active-active only: ROUTE_FILE (pgbouncer [databases] include, in a directory mounted into the
-#   pgbouncer container), PGB_LOCAL_HOST (the db service, e.g. db), PGB_RELOAD (command, sh -c),
-#   REDIS_CLI (prefix running redis-cli against this node's Redis), PEER_REDIS_PORT (6379)
+#   pgbouncer container), PGB_LOCAL_HOST (the db service, e.g. db), PGB_RELOAD (command, sh -c:
+#   must RELOAD and RECONNECT, or idle server connections keep pointing at the old primary),
+#   REDIS_CLI (prefix running redis-cli against this node's Redis), PEER_REDIS_PORT (6379),
+#   PEER_REDIS_HOST (default PEER_HOST: the peer's Redis on its private address)
 # Passwords: never in this env. The replication user's password sits in a pgpass file read by
 # both the container and the host client (PGPASSFILE), mode 600.
 set -uo pipefail
@@ -54,11 +56,12 @@ PGB_LOCAL_HOST="${PGB_LOCAL_HOST:-db}"
 PGB_RELOAD="${PGB_RELOAD:-true}"
 REDIS_CLI="${REDIS_CLI:-}"
 PEER_REDIS_PORT="${PEER_REDIS_PORT:-6379}"
+PEER_REDIS_HOST="${PEER_REDIS_HOST:-$PEER_HOST}"
 
 name_ok() { [[ "$1" =~ ^[a-z0-9_-]{1,32}$ ]]; }
 name_ok "$NODE_NAME" && name_ok "$PEER_NAME" || { echo "ha-pg: NODE_NAME/PEER_NAME invalid" >&2; exit 2; }
 # Values are spliced into conninfo strings and one-line shell scripts: refuse quotes outright.
-for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA" "$ROUTE_FILE" "$PGB_LOCAL_HOST" "$PEER_REDIS_PORT"; do
+for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA" "$ROUTE_FILE" "$PGB_LOCAL_HOST" "$PEER_REDIS_PORT" "$PEER_REDIS_HOST"; do
   case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) echo "ha-pg: quotes, \$, backslashes and line breaks are not allowed in the HA env" >&2; exit 2 ;; esac
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
@@ -212,21 +215,24 @@ case "$cmd" in
       peer) host=$PEER_HOST; port=$PEER_PORT ;;
       *) echo "ha-pg: route local|peer" >&2; exit 2 ;;
     esac
-    tmp="$ROUTE_FILE.tmp.$$"
-    # Written whole, then renamed: pgbouncer never reads half a file. The directory is mounted,
-    # not the file, so the rename is visible inside the container.
-    printf '; route=%s (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
-      "$target" "$host" "$port" > "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
-    sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed" >&2; exit 1; }
+    # Redis FIRST: a node coming back starts its Redis as a (stale) master; it must be a replica
+    # of the peer before pgbouncer makes this node's app healthy again, or its app would write to
+    # the stale Redis for a moment (drill finding, active-active round 1).
     if [ -n "$REDIS_CLI" ]; then
       if [ "$target" = local ]; then
         # shellcheck disable=SC2086
         timeout 10 $REDIS_CLI REPLICAOF NO ONE >/dev/null || { echo "ha-pg: redis REPLICAOF NO ONE failed" >&2; exit 1; }
       else
         # shellcheck disable=SC2086
-        timeout 10 $REDIS_CLI REPLICAOF "$PEER_HOST" "$PEER_REDIS_PORT" >/dev/null || { echo "ha-pg: redis REPLICAOF peer failed" >&2; exit 1; }
+        timeout 10 $REDIS_CLI REPLICAOF "$PEER_REDIS_HOST" "$PEER_REDIS_PORT" >/dev/null || { echo "ha-pg: redis REPLICAOF peer failed" >&2; exit 1; }
       fi
     fi
+    tmp="$ROUTE_FILE.tmp.$$"
+    # Written whole, then renamed: pgbouncer never reads half a file. The directory is mounted,
+    # not the file, so the rename is visible inside the container.
+    printf '; route=%s (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
+      "$target" "$host" "$port" > "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
+    sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed" >&2; exit 1; }
     ;;
   prune)
     days="${2:-7}"

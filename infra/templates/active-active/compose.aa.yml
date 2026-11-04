@@ -20,6 +20,7 @@ services:
       - ./ha/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro    # templates/active-active/pgbouncer.ini
       - ./ha/route:/etc/pgbouncer/route:ro                    # the DIRECTORY: renames stay visible
       - /etc/sorento-ha/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      - /etc/sorento-ha/pgbouncer-admin.pgpass:/etc/pgbouncer/admin.pgpass:ro   # for RELOAD + RECONNECT
 
   redis:
     environment:

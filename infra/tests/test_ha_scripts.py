@@ -571,7 +571,7 @@ def test_route_local_points_pgbouncer_at_the_local_db_and_makes_redis_master(tmp
     text = route.read_text()
     assert text.splitlines()[0].startswith("; route=local")
     assert "* = host=db port=5432" in text
-    assert log.read_text().splitlines() == ["reload", "redis REPLICAOF NO ONE"]
+    assert log.read_text().splitlines() == ["redis REPLICAOF NO ONE", "reload"]
 
 
 def test_route_peer_points_pgbouncer_at_the_peer_and_makes_redis_a_replica(tmp_path):
@@ -579,7 +579,7 @@ def test_route_peer_points_pgbouncer_at_the_peer_and_makes_redis_a_replica(tmp_p
     r = _adapter(e, "route", "peer")
     assert r.returncode == 0, r.stderr
     assert "* = host=10.9.0.2 port=5432" in route.read_text()
-    assert log.read_text().splitlines() == ["reload", "redis REPLICAOF 10.9.0.2 6379"]
+    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379", "reload"]
 
 
 def test_observe_reports_the_current_route(tmp_path):
@@ -596,8 +596,9 @@ def test_route_refuses_anything_but_local_or_peer(tmp_path, bad):
     assert not route.exists()
 
 
-def test_route_fails_loudly_when_redis_cannot_be_switched(tmp_path):
-    e, _, _ = _route_env(tmp_path)
+def test_route_fails_loudly_when_redis_cannot_be_switched_and_leaves_pgbouncer_alone(tmp_path):
+    e, log, route = _route_env(tmp_path)
     (tmp_path / "redis_fail").write_text("")
-    r = _adapter(e, "route", "local")
+    r = _adapter(e, "route", "peer")
     assert r.returncode == 1 and "redis" in r.stderr
+    assert not route.exists() and "reload" not in log.read_text()  # the app path is not switched

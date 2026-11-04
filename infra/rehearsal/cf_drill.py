@@ -31,7 +31,15 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTROLLER = ROOT / "infra" / "scripts" / "cf_failover.py"
 ADAPTER = ROOT / "infra" / "scripts" / "ha-pg.sh"
 IMAGE = os.environ.get("DRILL_IMAGE", "postgres:17")
-NET = "drill-link"
+REDIS_IMAGE = "redis:7.4"
+HAPROXY_IMAGE = "haproxy:2.9"
+PGB_IMAGE = "edoburu/pgbouncer:v1.23.1-p3"
+REDIS_PW = "drill"
+NET = "drill-link"          # the private link between the two nodes (cut = disconnect from it)
+
+
+def local_net(n):
+    return f"drill-local-{n}"  # one node's own network: its app path never crosses the link
 PGDATA = "/var/lib/postgresql/data/pgdata"
 NODES = {"a": "crm-a", "b": "crm-b"}
 CF_INTERVAL = 2.0
@@ -75,6 +83,46 @@ def role(n):
     return {"f": "primary", "t": "standby"}.get(out, "down")
 
 
+def app_writable(n):
+    """The node's app path: its pgbouncer, wherever that points, answers as a writable database."""
+    try:
+        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"drill-pgb-{n}", "-p", "6432",
+                            "-U", "postgres", "-d", "postgres", "-c", "select pg_is_in_recovery()"],
+                           capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "f"
+
+
+def app_sql(n, sql, timeout=8):
+    """A query through node n's app path (its pgbouncer)."""
+    try:
+        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"drill-pgb-{n}", "-p", "6432",
+                            "-U", "postgres", "-d", "postgres", "-c", sql], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, ""
+    return r.returncode, r.stdout.strip()
+
+
+def app_redis(n, *cmd):
+    """A Redis command through node n's app path (its HAProxy, which picks the master)."""
+    try:
+        r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_PW}", f"drill-redis-{n}", "redis-cli",
+                            "-h", f"drill-rproxy-{n}", "-p", "6380", *cmd], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def redis_role(n):
+    try:
+        r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_PW}", f"drill-redis-{n}", "redis-cli", "role"],
+                           capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return ""
+    return r.stdout.split("\n")[0].strip() if r.returncode == 0 else ""
+
+
 # ---------------------------------------------------------------- fake Cloudflare
 
 
@@ -83,7 +131,8 @@ class FakeCF:
     CF_INTERVAL, unhealthy after 2 failures, healthy after 1 success. Each node's controller calls
     its own URL prefix, so a node whose `net` is off gets no answer (UNKNOWN), like a box cut off."""
 
-    def __init__(self):
+    def __init__(self, active_active=False):
+        self.aa = active_active
         self.lock = threading.Lock()
         self.api_up = True
         self.net = {"a": True, "b": True}
@@ -103,13 +152,18 @@ class FakeCF:
                 with cf.lock:
                     ok = cf.api_up and cf.net.get(caller, False)
                     pool = parts[5].replace("pool-", "") if len(parts) > 5 else ""
-                    healthy = cf.healthy.get(pool)
+                    healthy = True if cf.aa else cf.healthy.get(pool)
                 if not ok or healthy is None:
                     self.send_response(503)
                     self.end_headers()
                     return
+                if cf.aa:  # one pool, both nodes as origins, each with its own health
+                    region = {"healthy": cf.healthy["a"] or cf.healthy["b"], "origins": [
+                        {"origin-a": {"healthy": cf.healthy["a"]}}, {"origin-b": {"healthy": cf.healthy["b"]}}]}
+                else:
+                    region = {"healthy": healthy, "origins": []}
                 body = json.dumps({"success": True, "result": {"pool_id": pool, "pop_health": {
-                    "Singapore, SG": {"healthy": healthy, "origins": []}}}}).encode()
+                    "Singapore, SG": region}}}).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -125,7 +179,9 @@ class FakeCF:
             for n in ("a", "b"):
                 with self.lock:
                     reach = self.net[n] and self.app_ok[n]
-                ok = reach and role(n) == "primary"
+                # The monitor (`/api/v1/health/role`): 200 only when the node's APP reaches a
+                # writable database. Active-passive: its own; active-active: through its pgbouncer.
+                ok = reach and (app_writable(n) if self.aa else role(n) == "primary")
                 with self.lock:
                     self.fails[n] = 0 if ok else self.fails[n] + 1
                     self.healthy[n] = ok or (self.healthy[n] and self.fails[n] < 2)
@@ -144,9 +200,10 @@ class FakeCF:
 
 
 class Stack:
-    def __init__(self, workdir: Path, cf: FakeCF):
+    def __init__(self, workdir: Path, cf: FakeCF, active_active=False):
         self.dir = workdir
         self.cf = cf
+        self.aa = active_active
         self.procs = {}
 
     def adapter_env(self, n):
@@ -163,7 +220,21 @@ class Stack:
             "PEER_PSQL": f"docker exec drill-probe-{n} psql",
             "WORKERS_STOP": "true",
             "SYNC_MODE": "remote_write",
+            **({
+                "ACTIVE_ACTIVE": "1",
+                "ROUTE_FILE": str(self.dir / f"route-{n}" / "route.ini"),
+                "PGB_LOCAL_HOST": cname(n),
+                # RELOAD alone keeps idle server connections to the OLD primary, which hang on a
+                # dead host; RECONNECT closes them so the next query opens one to the new target.
+                "PGB_RELOAD": f"docker exec drill-pgb-{n} psql -h 127.0.0.1 -p 6432 -U postgres pgbouncer -c RELOAD -c RECONNECT",
+                "REDIS_CLI": f"docker exec -e REDISCLI_AUTH={REDIS_PW} drill-redis-{n} redis-cli",
+                "PEER_REDIS_HOST": f"drill-redis-{p}",
+            } if self.aa else {}),
         }
+
+    def node_containers(self, n):
+        extra = [f"drill-pgb-{n}", f"drill-redis-{n}", f"drill-rproxy-{n}"] if self.aa else []
+        return [cname(n), f"drill-probe-{n}", *extra]
 
     def up(self):
         self.down(quiet=True)
@@ -175,11 +246,14 @@ class Stack:
         (init / "repl.sh").write_text('echo "host replication all all trust" >> "$PGDATA/pg_hba.conf"\n')
         sh("docker", "network", "create", NET)
         for n in ("a", "b"):
+            sh("docker", "network", "create", local_net(n))
             sh("docker", "volume", "create", f"drill-{n}-data")
             sh("docker", "run", "-d", "--name", f"drill-probe-{n}", "--network", NET, IMAGE, "sleep", "infinity")
+            sh("docker", "network", "connect", local_net(n), f"drill-probe-{n}")
         sh("docker", "run", "-d", "--name", cname("a"), "--network", NET, "--restart", "no",
            "-v", "drill-a-data:/var/lib/postgresql/data", "-v", f"{init}:/docker-entrypoint-initdb.d:ro",
            *self.pg_args())
+        sh("docker", "network", "connect", local_net("a"), cname("a"))
         self.wait_role("a", "primary", 60)
         psql("a", "create table drill(id bigserial primary key, node text, at timestamptz default now())")
         psql("a", "select pg_create_physical_replication_slot('crm_b', true)")
@@ -191,8 +265,58 @@ class Stack:
            IMAGE, "sh", "-c", f"pg_basebackup -h drill-a -U postgres -D {PGDATA} -X stream && {conf}", timeout=300)
         sh("docker", "run", "-d", "--name", cname("b"), "--network", NET, "--restart", "no",
            "-v", "drill-b-data:/var/lib/postgresql/data", *self.pg_args())
+        sh("docker", "network", "connect", local_net("b"), cname("b"))
         self.wait_role("b", "standby", 60)
         self.wait_streaming("b", 60)
+        if self.aa:
+            self.up_app_tier()
+
+    def up_app_tier(self):
+        """Per node: pgbouncer (target in route/route.ini), Redis (A master, B its replica) and
+        HAProxy sending Redis traffic to whichever is master. Same layout as compose.aa.yml."""
+        for n in ("a", "b"):
+            p = peer(n)
+            rdir = self.dir / f"route-{n}"
+            rdir.mkdir(exist_ok=True)
+            target = cname(n) if n == "a" else cname("a")
+            (rdir / "route.ini").write_text(
+                f"; route={'local' if n == 'a' else 'peer'} (written by the drill setup)\n[databases]\n* = host={target} port=5432\n")
+            (self.dir / f"pgbouncer-{n}.ini").write_text(
+                "%include /etc/pgbouncer/route/route.ini\n\n[pgbouncer]\nlisten_addr = 0.0.0.0\nlisten_port = 6432\n"
+                "auth_type = trust\nauth_file = /etc/pgbouncer/userlist.txt\npool_mode = transaction\n"
+                "server_lifetime = 30\nserver_check_query = select 1\nadmin_users = postgres\nserver_login_retry = 1\n")
+            (self.dir / f"userlist-{n}.txt").write_text('"postgres" ""\n')
+            for f in (rdir, self.dir / f"pgbouncer-{n}.ini", self.dir / f"userlist-{n}.txt"):
+                os.chmod(f, 0o755 if f.is_dir() else 0o644)
+            sh("docker", "run", "-d", "--name", f"drill-pgb-{n}", "--network", local_net(n),
+               "-v", f"{self.dir}/pgbouncer-{n}.ini:/etc/pgbouncer/pgbouncer.ini:ro",
+               "-v", f"{self.dir}/userlist-{n}.txt:/etc/pgbouncer/userlist.txt:ro",
+               "-v", f"{rdir}:/etc/pgbouncer/route:ro", PGB_IMAGE)
+            sh("docker", "network", "connect", NET, f"drill-pgb-{n}")
+            args = ["redis-server", "--requirepass", REDIS_PW, "--masterauth", REDIS_PW, "--appendonly", "no"]
+            if n == "b":
+                args += ["--replicaof", "drill-redis-a", "6379"]
+            sh("docker", "run", "-d", "--name", f"drill-redis-{n}", "--network", NET, REDIS_IMAGE, *args)
+            sh("docker", "network", "connect", local_net(n), f"drill-redis-{n}")
+            (self.dir / f"haproxy-{n}.cfg").write_text(
+                "global\n    maxconn 512\ndefaults\n    mode tcp\n    timeout connect 2s\n    timeout client 1h\n"
+                "    timeout server 1h\n    timeout check 2s\nresolvers docker\n    nameserver dns 127.0.0.11:53\n"
+                "    hold valid 1s\nfrontend redis_in\n    bind 0.0.0.0:6380\n    default_backend redis_master\n"
+                "backend redis_master\n    option tcp-check\n    tcp-check connect\n"
+                f"    tcp-check send AUTH\\ {REDIS_PW}\\r\\n\n    tcp-check expect string +OK\n"
+                "    tcp-check send INFO\\ replication\\r\\n\n    tcp-check expect string role:master\n"
+                "    tcp-check send QUIT\\r\\n\n    tcp-check expect string +OK\n"
+                f"    server local drill-redis-{n}:6379 check inter 1s fall 2 rise 2 resolvers docker init-addr none on-marked-down shutdown-sessions\n"
+                f"    server peer drill-redis-{p}:6379 check inter 1s fall 2 rise 2 backup resolvers docker init-addr none on-marked-down shutdown-sessions\n")
+            os.chmod(self.dir / f"haproxy-{n}.cfg", 0o644)
+            sh("docker", "run", "-d", "--name", f"drill-rproxy-{n}", "--network", NET,
+               "-v", f"{self.dir}/haproxy-{n}.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro", HAPROXY_IMAGE)
+            sh("docker", "network", "connect", local_net(n), f"drill-rproxy-{n}")
+        end = time.time() + 60
+        while time.time() < end and not (app_writable("a") and app_writable("b") and app_redis("b", "ping") == "PONG"):
+            time.sleep(1)
+        if not (app_writable("a") and app_writable("b")):
+            raise RuntimeError("app tier did not come up: " + sh("docker", "logs", "--tail", "20", "drill-pgb-b", check=False))
 
     def pg_args(self):
         return ["-e", "POSTGRES_PASSWORD=drill", "-e", f"PGDATA={PGDATA}", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
@@ -206,23 +330,31 @@ class Stack:
     def down(self, quiet=False):
         for n in list(self.procs):
             self.stop_controller(n)
-        for c in ("drill-a", "drill-b", "drill-probe-a", "drill-probe-b"):
+        for c in ("drill-a", "drill-b", "drill-probe-a", "drill-probe-b", "drill-pgb-a", "drill-pgb-b",
+                  "drill-redis-a", "drill-redis-b", "drill-rproxy-a", "drill-rproxy-b"):
             sh("docker", "rm", "-f", c, check=False)
         for v in ("drill-a-data", "drill-b-data"):
             sh("docker", "volume", "rm", "-f", v, check=False)
-        sh("docker", "network", "rm", NET, check=False)
+        for net in (NET, local_net("a"), local_net("b")):
+            sh("docker", "network", "rm", net, check=False)
 
     def start_controller(self, n):
-        env = {**os.environ, **self.adapter_env(n), **TIMING,
+        env = {**os.environ, **self.adapter_env(n), **TIMING, **({"APP_SICK_AFTER": "0"} if self.aa else {}),
                "PG_CMD": str(ADAPTER),
                "STATE_FILE": str(self.dir / f"state-{n}.json"),
                "CF_API_BASE": f"http://127.0.0.1:{self.cf.port}/node-{n}",
                "CF_ACCOUNT_ID": "drill", "CF_POOL_SELF": f"pool-{n}", "CF_POOL_PEER": f"pool-{peer(n)}",
+               **({"CF_POOL_SELF": "pool-shared", "CF_POOL_PEER": "pool-shared",
+                   "CF_ORIGIN_SELF": f"origin-{n}", "CF_ORIGIN_PEER": f"origin-{peer(n)}"} if self.aa else {}),
                "CF_API_TOKEN_FILE": str(self.dir / "token"),
                "ALERT_CMD": f"cat >> {self.dir}/alerts-{n}.log; echo >> {self.dir}/alerts-{n}.log"}
         (self.dir / "token").write_text("drill-token\n")
         log = open(self.dir / f"controller-{n}.log", "a")
         self.procs[n] = subprocess.Popen([sys.executable, str(CONTROLLER)], env=env, stdout=log, stderr=subprocess.STDOUT)
+        time.sleep(2)
+        if self.procs[n].poll() is not None:
+            tail = (self.dir / f"controller-{n}.log").read_text().strip().splitlines()[-1:]
+            raise SystemExit(f"controller {n} exited at start: {tail}")
 
     def stop_controller(self, n):
         p = self.procs.pop(n, None)
@@ -231,11 +363,12 @@ class Stack:
             p.wait()
 
     def cut(self, n):
-        for c in (cname(n), f"drill-probe-{n}"):
+        """Node n loses the private link; its own network (app -> pgbouncer -> local db) stays."""
+        for c in self.node_containers(n):
             sh("docker", "network", "disconnect", "-f", NET, c, check=False)
 
     def join(self, n):
-        for c in (cname(n), f"drill-probe-{n}"):
+        for c in self.node_containers(n):
             sh("docker", "network", "connect", NET, c, check=False)
 
     def wait_role(self, n, want, timeout):
@@ -264,7 +397,9 @@ class Stack:
 
 
 class Watch:
-    def __init__(self):
+    def __init__(self, active_active=False):
+        self.aa = active_active
+        self.served = {"a": 0, "b": 0}
         self.violations = []
         self.acked = []
         self.stop = False
@@ -279,12 +414,25 @@ class Watch:
             time.sleep(0.3)
 
     def writer(self):
+        turn = 0
         while not self.stop:
-            for n in ("a", "b"):
-                rc, out = psql(n, f"insert into drill(node) values ('{n}') returning id", timeout=5)
-                if rc == 0 and out.isdigit():
-                    self.acked.append(int(out))
-                    break
+            if self.aa:
+                # Like the load balancer: alternate between the two nodes' app paths; a node
+                # whose path fails is skipped, the request goes to the other one.
+                order = ("a", "b") if turn % 2 == 0 else ("b", "a")
+                turn += 1
+                for n in order:
+                    rc, out = app_sql(n, f"insert into drill(node) values ('via-{n}') returning id", timeout=5)
+                    if rc == 0 and out.isdigit():
+                        self.acked.append(int(out))
+                        self.served[n] += 1
+                        break
+            else:
+                for n in ("a", "b"):
+                    rc, out = psql(n, f"insert into drill(node) values ('{n}') returning id", timeout=5)
+                    if rc == 0 and out.isdigit():
+                        self.acked.append(int(out))
+                        break
             time.sleep(0.3)
 
 
@@ -294,10 +442,13 @@ class Watch:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--mode", choices=("aa", "ap"), default="aa",
+                    help="aa: active-active app tier (default, owner 4 Nov); ap: active-passive")
     args = ap.parse_args()
+    aa = args.mode == "aa"
     workdir = Path(tempfile.mkdtemp(prefix="cf-drill-"))
-    cf = FakeCF()
-    st = Stack(workdir, cf)
+    cf = FakeCF(active_active=aa)
+    st = Stack(workdir, cf, active_active=aa)
     results = []
 
     def scenario(name, fn):
@@ -314,7 +465,7 @@ def main():
     if stray:
         raise SystemExit(f"a controller from an earlier drill is still running (pids {stray.split()}); stop it first")
     st.up()
-    watch = Watch()
+    watch = Watch(active_active=aa)
     st.start_controller("a")
     st.start_controller("b")
 
@@ -437,17 +588,161 @@ def main():
         st.wait_streaming(before, 120)
         return f"only the former standby ({follower}) took over; the other rejoined"
 
-    for name, fn in [
-        ("steady state + sync standby", steady),
-        ("link cut only", link_cut_only),
-        ("Cloudflare API down", cf_api_down),
-        ("node A dies", kill_a),
-        ("primary isolated (fence before promote)", isolate_primary_b),
-        ("app sick 20 s + rewind fails -> re-seed", app_sick_with_reseed),
-        ("both nodes reboot", both_reboot),
-        ("both reboot, link down", both_reboot_link_down),
-    ]:
+    # ---- active-active scenarios: both nodes serve; the database moves only on a db/box loss.
+
+    def wait_until(cond, timeout, what):
+        end = time.time() + timeout
+        while time.time() < end:
+            if cond():
+                return time.time()
+            time.sleep(0.5)
+        raise AssertionError(f"not {what} after {timeout}s")
+
+    def routes_follow(primary, only_primary=False):
+        """Each live node's endpoints name the one primary: local there, peer on the other node.
+        `only_primary` while the other box is dead (its controller is dead with it)."""
+        other = peer(primary)
+        r = {n: (st.dir / f"route-{n}" / "route.ini").read_text().split()[1] for n in ("a", "b")}
+        assert r[primary] == "route=local", r
+        assert redis_role(primary) == "master", redis_role(primary)
+        if not only_primary:
+            assert r[other] == "route=peer", r
+            wait_until(lambda: redis_role(other) == "slave", 20, f"{other} Redis a replica")
+
+    def aa_steady():
+        time.sleep(8)
+        assert role("a") == "primary" and role("b") == "standby"
+        assert app_writable("a") and app_writable("b"), "both app paths must reach the primary"
+        with cf.lock:
+            assert cf.healthy["a"] and cf.healthy["b"], cf.healthy
+        routes_follow("a")
+        assert app_redis("a", "set", "drill-key", "from-a") == "OK"
+        assert app_redis("b", "get", "drill-key") == "from-a", "Redis must be shared through the master"
+        rc, out = psql("a", "select count(*) from drill where node = 'via-b'")
+        assert rc == 0 and int(out) > 0, "writes through node B's app must land in A's database"
+        return "both origins healthy; B's writes land on A; one Redis shared"
+
+    def aa_app_down(n):
+        def fn():
+            other = peer(n)
+            primary_before = "a" if role("a") == "primary" else "b"
+            served = dict(watch.served)
+            cf.set(app_ok={n: False})        # node n's app unhealthy; its database untouched
+            wait_until(lambda: not cf.healthy[n], 20, f"origin {n} out of the pool")
+            time.sleep(40)                   # > fence (8 s) + promote (14 s) + app-sick (20 s, off)
+            assert role(primary_before) == "primary" and role(peer(primary_before)) == "standby", "the database moved"
+            with cf.lock:
+                assert cf.healthy[other], "the other node must stay in the pool"
+            assert watch.served[other] > served[other], "the other node must keep serving writes"
+            cf.set(app_ok={n: True})
+            wait_until(lambda: cf.healthy[n], 20, f"origin {n} back in the pool")
+            return f"node {n} out of the pool and back; no fence, no promotion; {other} served"
+        return fn
+
+    def aa_link_cut():
+        primary = "a" if role("a") == "primary" else "b"
+        other = peer(primary)
+        st.cut(other)
+        wait_until(lambda: not cf.healthy[other], 30, f"{other} out of the pool (no route to the primary)")
+        time.sleep(30)
+        assert role(primary) == "primary" and role(other) == "standby"
+        with cf.lock:
+            assert cf.healthy[primary]
+        st.join(other)
+        wait_until(lambda: cf.healthy[other], 40, f"{other} back in the pool")
+        st.wait_streaming(other, 60)
+        return f"{other} dropped out while it could not reach the primary; no failover"
+
+    def aa_kill_primary():
+        primary = "a" if role("a") == "primary" else "b"
+        other = peer(primary)
+        t0 = time.time()
+        st.stop_controller(primary)          # the whole box: controller, Postgres, its app tier, network
+        for c in st.node_containers(primary):
+            if c != f"drill-probe-{primary}":
+                sh("docker", "stop", "-t", "1", c)
+        st.cut(primary)
+        cf.set(net={primary: False})
+        t1 = st.wait_role(other, "primary", 90)
+        wait_until(lambda: cf.healthy[other], 40, f"{other} serving as the new primary")
+        t2 = time.time()
+        routes_follow(other, only_primary=True)
+        cf.set(net={primary: True})
+        for c in st.node_containers(primary):
+            if c not in (cname(primary), f"drill-probe-{primary}"):
+                sh("docker", "start", c)
+        st.join(primary)
+        st.start_controller(primary)         # D1 starts its Postgres read-only, S2 rejoins, R1 routes
+        st.wait_role(primary, "standby", 90)
+        st.wait_streaming(primary, 120)
+        wait_until(lambda: cf.healthy[primary], 60, f"{primary} back in the pool through {other}'s database")
+        routes_follow(other)
+        wait_until(lambda: app_redis(primary, "set", "after-failover", "x") == "OK"
+                   and app_redis(other, "get", "after-failover") == "x", 20, "one Redis shared after the return")
+        return (f"{other} primary {t1 - t0:.0f}s after {primary} died, serving at {t2 - t0:.0f}s; "
+                f"{primary} came back read-only and serves again through {other}")
+
+    def aa_isolate_primary():
+        primary = "a" if role("a") == "primary" else "b"
+        other = peer(primary)
+        t0 = time.time()
+        st.cut(primary)
+        cf.set(net={primary: False})
+        fenced = None
+        end = time.time() + 90
+        while time.time() < end and role(other) != "primary":
+            if fenced is None and role(primary) == "down":
+                fenced = time.time()
+            time.sleep(0.3)
+        t1 = st.wait_role(other, "primary", 5)
+        assert fenced is not None and fenced < t1, f"{primary} was not fenced before {other} promoted"
+        cf.set(net={primary: True})
+        st.join(primary)
+        st.wait_role(primary, "standby", 90)
+        st.wait_streaming(primary, 120)
+        wait_until(lambda: cf.healthy[primary] and cf.healthy[other], 60, "both back in the pool")
+        routes_follow(other)
+        return f"{primary} fenced at {fenced - t0:.0f}s, {other} promoted at {t1 - t0:.0f}s; both serving again"
+
+    def aa_both_reboot():
+        for n in ("a", "b"):
+            st.stop_controller(n)
+        for n in ("a", "b"):
+            sh("docker", "stop", "-t", "5", cname(n))
+        st.start_controller("a")
+        st.start_controller("b")
+        wait_until(lambda: "primary" in (role("a"), role("b")), 90, "a primary")
+        p = "a" if role("a") == "primary" else "b"
+        st.wait_role(peer(p), "standby", 60)
+        st.wait_streaming(peer(p), 120)
+        wait_until(lambda: cf.healthy["a"] and cf.healthy["b"], 60, "both in the pool")
+        routes_follow(p)
+        return f"one writer ({p}), both nodes serving"
+
+    if aa:
+        plan = [
+            ("aa: steady state, both serving", aa_steady),
+            ("aa: app down on A only (no DB failover)", aa_app_down("a")),
+            ("aa: app down on B only (no DB failover)", aa_app_down("b")),
+            ("aa: link cut only", aa_link_cut),
+            ("aa: primary box dies", aa_kill_primary),
+            ("aa: primary isolated (fence before promote)", aa_isolate_primary),
+            ("aa: both nodes reboot", aa_both_reboot),
+        ]
+    else:
+        plan = [
+            ("steady state + sync standby", steady),
+            ("link cut only", link_cut_only),
+            ("Cloudflare API down", cf_api_down),
+            ("node A dies", kill_a),
+            ("primary isolated (fence before promote)", isolate_primary_b),
+            ("app sick 20 s + rewind fails -> re-seed", app_sick_with_reseed),
+            ("both nodes reboot", both_reboot),
+            ("both reboot, link down", both_reboot_link_down),
+        ]
+    for name, fn in plan:
         scenario(name, fn)
+
 
     watch.stop = True
     time.sleep(1)
