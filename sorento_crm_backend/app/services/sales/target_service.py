@@ -1735,6 +1735,8 @@ def list_all_targets(
 def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"
+    if basis == "invoiced":
+        return "Invoiced"
     return "Delivered (by DO date)" if ach.any_do_linked(db, company_id) else "Delivered"
 
 
@@ -2271,7 +2273,9 @@ def period_progress(
                 "is_current": is_current,
                 "metric": target.metric,
                 "threshold_unit": unit,
-                "provisional": target.subject_kind == "dealer",
+                # The SO figure stood in for billing (dealer plan Q3): an Invoiced target counts
+                # the billing documents themselves, net of tax, so it is never provisional.
+                "provisional": target.subject_kind == "dealer" and target.basis != "invoiced",
                 "accounts": [{"code": c.customer_code, "label": account_label(c)} for c in dealer_accounts],
                 "target_value": _r2(figure),
                 "target_points": _r2(period.target_value) if unit == "points" else None,
