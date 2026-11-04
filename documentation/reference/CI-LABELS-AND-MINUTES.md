@@ -7,28 +7,6 @@ costs, and how to read the usage. The workflow file's comments are the authority
 mechanics; this page is the operator's view. The design and its measurements:
 `documentation/plans/ci/PLAN-ci-lean-10oct.md` (CI-LEAN).
 
-## Where it runs (CI-MAC-ONLY, 1 Nov 2026)
-
-The repo is private again and GitHub-hosted minutes bill against **3,000 a month**. Every job
-runs on the Mac mini's self-hosted runner `sorento-mac-1` (free on GitHub's side; the "Billed
-minutes" column below is now Mac runner time, not quota) except `Build and push images` and
-`build-and-deploy` (amd64 images, deploy secrets) and `rollback.yml`. One runner: jobs and
-shards run one at a time and queue when it is busy or offline.
-
-GitHub-hosted minutes per release, measured over the 12 successful releases 28 Oct-1 Nov 2026
-(each job rounded up): `Build and push images` median 7 (2 on a near-full cache hit, 13 worst),
-`build-and-deploy` median 18 (16-23; the blue/green deploy step is about 17 of it), so about
-**25 per successful release**. A release whose tests fail bills **0**: build-images waits for
-every test job (crew/owner, 1 Nov 2026; it used to run beside them and bill about 7 on a red
-release). At the 26 Oct-1 Nov rate (19 successful and 19 failed dispatches in 6 days, about 3
-of each a day) that is about 95 x 25 = **about 2,400 a month** against the 3,000 quota (it was
-about 3,000 with the parallel build). About 120 successful releases a month is the ceiling. A
-green release reaches the deploy approval about 7 minutes later than before.
-
-More Mac runners (separate colima VMs, same `sorento-mac` label) shorten the queue, not the
-bill: `scripts/ci-runner/README.md` "More runners on the same Mac". Before the move the same releases also billed 203-231 test minutes each on
-GitHub-hosted (about 236 per release in all).
-
 ## What runs when
 
 | Trigger | Runs | Billed minutes (target) |

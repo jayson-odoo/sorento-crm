@@ -30,7 +30,7 @@ Each entry below is a top-level group in the left sidebar. Click a group to expa
 * **Marketing Management** - campaigns and offers: **Promotions**, **Promotion Products**, and **Campaigns**.
 * **Forms Management** - downloadable application and marketing **Forms**.
 * **Workflow Forms** - multi-step form **Definitions** that drive approval workflows.
-* **Resource Management** - your document library: **Files**, **Trash**, and **Attachment Types**.
+* **Resource Management** - your document library: **Files**, **Trash**, **Attachment Types**, and **Document Access** (which document types the AI may read, and for whom).
 * **System Management** - administration: **App Store** (modules), import and integration logs, email and messaging settings, and **AI Assistant** settings. Most users won't need this group.
 
 ## 3. Where each kind of information lives
@@ -50,6 +50,8 @@ Each entry below is a top-level group in the left sidebar. Click a group to expa
 | A customer complaint | **Complaint Management → Complaints** |
 | A purchase request you raised | **Project Sales Admin → Purchase Requests** |
 | Your outstanding tasks and SLA deadlines | **SLA Management → My Team Tasks** |
+
+On any record you opened from a list, the **<** and **>** arrows next to the "7 / 73" counter step to the previous or next record and keep you on the tab you have open (for example **Fulfilment DOs** on a complaint). If the next record has no such tab, it opens on its first tab.
 
 ## 4. How to ask the AI assistant
 

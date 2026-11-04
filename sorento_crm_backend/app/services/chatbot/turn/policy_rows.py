@@ -288,7 +288,8 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         tools=["crm_procurement_po_placed_list"],
         escalation_team_code="purchasing",
         switch_words=["po"],
-        narrowing={"product": "narrow_to_code"},
+        # SUPPLIER-ASK (migration `sask_0001_supplier_kind`): one supplier filters, several are asked.
+        narrowing={"product": "narrow_to_code", "supplier": "optional_filter"},
         # answer._CROSSDOMAIN_RUNG_GRANT: the PO rung of the cross-domain climb is
         # refused without it.
         reveal_key="purchase_orders.placed",
@@ -403,6 +404,19 @@ SPECIFICATION_KIND_ROW: dict[str, Any] = dict(
     label="Specification",
     resolver_source="product_spec_registry",
     did_you_mean=False,
+    default_narrowing="optional_filter",
+    family_grouping=None,
+    base_property_words={},
+    roster_cap=50,
+)
+
+# SUPPLIER-ASK (owner, 1 Nov 2026): the supplier a staff member names ("outstanding for
+# supplier X"), resolved through the shared resolver and the span pass's Supplier list.
+SUPPLIER_KIND_ROW: dict[str, Any] = dict(
+    kind="supplier",
+    label="Supplier",
+    resolver_source="suppliers",
+    did_you_mean=True,
     default_narrowing="optional_filter",
     family_grouping=None,
     base_property_words={},
@@ -556,6 +570,8 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
     # property, grounded against the specification registry after the parse.
     SPECIFICATION_KIND_ROW,
     *REFERENCE_KIND_ROWS,
+    # SUPPLIER-ASK (migration `sask_0001_supplier_kind`): a company we buy from, staff-only.
+    SUPPLIER_KIND_ROW,
 ]
 
 # `DEFAULT_TIER_ORDER` used to live here (AC-1502). Gone (AC-1594, S6): the one literal is

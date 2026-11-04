@@ -34,9 +34,7 @@ permissions:
 jobs:
   smoke:
     name: Never-stuck smoke (all routes x 3 personas)
-    # The Mac mini runner (CI-MAC-ONLY, owner 1 Nov 2026: private repo, metered
-    # GitHub-hosted minutes). No fallback: an offline Mac queues the run.
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     services:
       postgres:
@@ -112,9 +110,7 @@ jobs:
         working-directory: sorento_crm_frontend
         run: |
           npm ci --force
-          # No --with-deps: that is an apt install, and the Mac runner's user has
-          # no sudo. scripts/ci-runner/provision.sh installs chromium's libraries.
-          npx playwright install chromium
+          npx playwright install --with-deps chromium
 
       - name: Run the smoke
         if: steps.gate.outputs.run == 'true'

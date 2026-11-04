@@ -8,14 +8,11 @@ routes are the admin surface over the grant table:
 * `GET /field-reveal-keys` - every restricted key that exists, with a label, for
   the Contacts > Access checklist. Sourced from the frozen
   `contact_field_reveal_service.FIELD_REVEAL_KEYS` literal, NOT a live read of
-  `mcp_tools.restricted_fields`: the deployed backend image cannot import
-  `sorento_crm_mcp` (compose builds it with `context: ./sorento_crm_backend`, the
-  package is not in `requirements.txt`), so the startup catalog sync that writes
-  that column never runs in production and the column stays at its migration-488
-  default of `[]` forever. `mcp_tool_registry_service.sync_catalog` still writes
-  it in an environment that CAN import the catalogue (a local checkout, the seed
-  script); this route just does not depend on that having happened. A CI test
-  pins the literal to the catalogue so the two cannot drift (AC-964).
+  `mcp_tools.restricted_fields`: until MCP-REGISTRY-IMAGE (2 Nov 2026) the startup
+  catalog sync that writes that column could not run in the deployed image, so it
+  sat at `[]` in production. The sync works there now, but this route still does
+  not depend on it having run. A CI test pins the literal to the catalogue so the
+  two cannot drift (AC-964).
 * `GET /contacts/{respond_contact_id}/field-reveals` - the keys this contact
   currently holds.
 * `PUT /contacts/{respond_contact_id}/field-reveals` - full-list replace.

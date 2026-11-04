@@ -35,6 +35,9 @@ class FactDef:
     type: FactType
     resolver: Callable[[Any, Session], Any]
     options: OptionsProvider = None
+    #: Narrows the type's operators (`OPERATORS_BY_TYPE`) for this one fact; `None` keeps them
+    #: all. The editor opens a condition on the first one offered.
+    operators: Optional[Tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -253,6 +256,59 @@ def _register_core() -> None:
     )
 
     _register_certificate()
+    _register_order_inquiry()
+
+
+def _register_order_inquiry() -> None:
+    """Facts for the order inquiry handover / undo emails (DEALER-OI-ROUTE). The object is
+    the dispatch context itself (`TriggerSpec.context_facts`), not a row: one email can
+    cover many order inquiries, but every line on it shares one sales order class."""
+    register_fact_source(
+        "order_inquiry",
+        "Order inquiry",
+        [
+            FactDef(
+                key="order_inquiry.salesOrderClass",
+                label="Sales order class",
+                type="enum",
+                resolver=lambda ctx, db: (ctx or {}).get("sales_order_class"),
+                options=[
+                    {"value": "retail", "label": "Retail"},
+                    {"value": "project", "label": "Project"},
+                ],
+            ),
+            # OI-ROUTE-BY-RAISER: who raised the order inquiry (`order_inquiries.raised_by`),
+            # so one person's orders can go to their own people. Every line of one email
+            # passes the same rows (`handover_route_groups`), so the context's one raiser
+            # answers for all of them.
+            FactDef(
+                key="order_inquiry.raisedBy",
+                label="Raised by",
+                type="enum",
+                # No raiser reads "" not None: a null fact fails every operator (D5), and
+                # an OI nobody raised must still reach the "is none of [Agnes]" row.
+                resolver=lambda ctx, db: str((ctx or {}).get("raised_by") or ""),
+                options=_raiser_options,
+                # Owner, 4 Nov: a person pick is always several people, so only "is any of"
+                # and "is none of" (the editor's multi select), never a single "is".
+                operators=("in", "not_in"),
+            ),
+        ],
+    )
+
+
+def _raiser_options(db: Session, current_user: Any) -> List[Dict[str, str]]:
+    """Every person not in the trash, by name. A deactivated raiser stays pickable: a row
+    naming someone who left must still read back, and their open OIs can still be resent."""
+    from app.models.user import User
+
+    rows = (
+        db.query(User.id, User.name, User.email)
+        .filter(User.is_trashed.is_(False))
+        .order_by(User.name, User.email)
+        .all()
+    )
+    return [{"value": str(uid), "label": name or email} for uid, name, email in rows]
 
 
 def _register_certificate() -> None:

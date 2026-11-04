@@ -50,6 +50,9 @@ const deleteQuotationLine = vi.fn();
 const replaceQuotationLines = vi.fn();
 const recomputeQuotationVersion = vi.fn();
 const judgeQuotationLine = vi.fn();
+const replaceQuotationColumns = vi.fn();
+/** The page's Save gate (PS-QUOTE-MATRIX): what the editor reports as a column-busy scope. */
+const setColumnsBusy = vi.fn();
 // Fix round 2: the service the coder must add to _shared/services/projectService.ts, read through
 // the hook `useQuotationLineImages(productId)` in _shared/hooks/useProjects.ts.
 const getQuotationLineImages = vi.fn();
@@ -71,6 +74,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
     recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
     judgeQuotationLine: (...args: unknown[]) => judgeQuotationLine(...args),
+    replaceQuotationColumns: (...args: unknown[]) => replaceQuotationColumns(...args),
     getQuotationLineImages: (...args: unknown[]) => getQuotationLineImages(...args),
     getSeriesSetRows: (...args: unknown[]) => getSeriesSetRows(...args),
   };
@@ -323,11 +327,17 @@ function Harness({
   projectOverrides,
   editing,
   unsaved = false,
+  seriesId,
+  showEditor = true,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
   /** A scope added on the quotation form and not saved yet (#1341, round 3). */
   unsaved?: boolean;
+  /** The series the form has picked for the scope (undefined: the quotation's own). */
+  seriesId?: string | null;
+  /** False unmounts the editor (a section or tab switch) while the session lives on. */
+  showEditor?: boolean;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -347,27 +357,40 @@ function Harness({
             stage: (lines: Parameters<typeof stageScope>[1]) =>
               stageScope(QUOTATION.id, lines),
             toggleRemoved: (key: string) => toggleRemoved(QUOTATION.id, key),
+            setColumnsBusy,
           }
         : null,
     [isEditing, scopes, seedScope, stageScope, toggleRemoved],
   );
 
+  if (!showEditor) return null;
   return (
     <QuotationVersionEditor
       project={project(projectOverrides)}
       quotation={unsaved ? null : QUOTATION}
+      seriesId={seriesId}
       edit={edit}
     />
   );
 }
 
-function renderEditor(overrides: Partial<Project> = {}, editing = false, unsaved = false) {
+function renderEditor(
+  overrides: Partial<Project> = {},
+  editing = false,
+  unsaved = false,
+  seriesId?: string | null,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <Harness projectOverrides={overrides} editing={editing} unsaved={unsaved} />
+      <Harness
+        projectOverrides={overrides}
+        editing={editing}
+        unsaved={unsaved}
+        seriesId={seriesId}
+      />
     </QueryClientProvider>,
   );
 }
@@ -545,7 +568,8 @@ describe('QuotationVersionEditor', () => {
     const pill = await screen.findByText('Minimum price RM 700.00');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
-    expect(screen.getByText('Set on a parent category.').closest('td')).toBe(list.closest('td'));
+    // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
+    expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText('Below floor')).toBeNull();
   });
 
@@ -622,7 +646,7 @@ describe('QuotationVersionEditor', () => {
     // Debounced 400ms, then judged. NOTHING was saved on the way to the badge.
     expect(await screen.findByText('Non-standard', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ product_id: 'p9' }),
     );
     expect(replaceQuotationLines).not.toHaveBeenCalled();
@@ -650,7 +674,7 @@ describe('QuotationVersionEditor', () => {
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ unit_price: '90.00' }),
     );
   });
@@ -1178,7 +1202,7 @@ describe('QuotationVersionEditor', () => {
     await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v2'));
     expect(
       await screen.findByText(
-        '6 lines are no longer non-standard, 1 line is now below floor.',
+        '6 lines are no longer non-standard, 1 line is now below minimum price.',
       ),
     ).toBeInTheDocument();
     // And WHICH lines, because "6 lines" is not something anybody can go and check.
@@ -1299,13 +1323,13 @@ describe('describeRecompute', () => {
         now_below_floor: 1,
       }),
     ).toBe(
-      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below floor, 1 line is now below floor.',
+      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below minimum price, 1 line is now below minimum price.',
     );
   });
 
   it('names the floor moving under a line that did not cross it', () => {
     expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
-      '2 lines picked up a different floor.',
+      '2 lines picked up a different minimum price.',
     );
   });
 });
@@ -1316,8 +1340,8 @@ describe('describeRecompute', () => {
  * like a saved scope, asking the server for nothing it cannot answer.
  */
 describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
-  it('starts with no lines, stages an added line, and reads no version or verdict', async () => {
-    renderEditor({}, true, true);
+  it('starts with no lines, stages an added line, reads no version, and judges the line by series', async () => {
+    renderEditor({}, true, true, 's-new');
 
     await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
     fireEvent.click(await screen.findByRole('button', { name: 'Add a line' }));
@@ -1335,7 +1359,16 @@ describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
     expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
     expect(listQuotationVersions).not.toHaveBeenCalled();
     expect(listQuotationLines).not.toHaveBeenCalled();
-    expect(judgeQuotationLine).not.toHaveBeenCalled();
+    // PRICING-UX-FIXES A: the minimum-price and non-standard alerts are live on a new scope
+    // too, judged against the series the editor holds (no quotation id to ask by).
+    await waitFor(
+      () =>
+        expect(judgeQuotationLine).toHaveBeenCalledWith(
+          { quotationId: null, seriesId: 's-new' },
+          expect.objectContaining({ product_id: 'p9' }),
+        ),
+      { timeout: 5000 },
+    );
     // A revise would write at once; the form never offers it.
     expect(screen.queryByRole('button', { name: /Revise to/ })).toBeNull();
     expectNothingWritten();
@@ -2572,68 +2605,77 @@ describe('QuotationVersionEditor product picker, code only (QUOTE-UI-POLISH AC-Q
   });
 });
 
-describe('QuotationVersionEditor review: suggested lines only (QUOTE-CUSTOMER-AMEND)', () => {
-  it('shows only the suggested lines and folds the rest into one row, until it is turned off', async () => {
-    listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
-      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap body', sort_order: 1 }),
-      line({ id: 'l3', product_code: 'SH-9', description: 'Shower head', sort_order: 2 }),
-    ]);
-    const review = {
-      rows: [
-        {
-          id: 'r1',
-          line_id: 'l2',
-          field: 'quantity' as const,
-          value_from: '10.00',
-          value_to: '8.00',
-          decision: 'pending' as const,
-          decision_reason: null,
-        },
-      ],
-      onDecide: vi.fn(),
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const view = (suggestedOnly: boolean) => (
-      <QueryClientProvider client={client}>
-        <QuotationVersionEditor
-          project={project()}
-          quotation={QUOTATION}
-          review={review}
-          suggestedOnly={suggestedOnly}
-        />
-      </QueryClientProvider>
+describe('QuotationVersionEditor column headers (PS-QUOTE-MATRIX)', () => {
+  it('starts a grid from + Column header: written at once, and the staged quantity moves into it', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: [] });
+    // The server as it stands: the versions read answers whatever the last write left.
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '10.00' })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; label: string; cols: [] }[]) => {
+        stored = { ...editable, matrix_columns: columns };
+        return {
+          version: stored,
+          lines: [line({ quantity: '10.00', qty_cells: { [columns[0].key]: '10.00' } })],
+        };
+      },
     );
-    const { rerender } = render(view(true));
+    await renderEditing();
 
-    expect(await screen.findByText('Basin tap body')).toBeInTheDocument();
-    expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument();
-    expect(screen.queryByText('Shower head')).not.toBeInTheDocument();
-    expect(screen.getByText('2 lines without suggestions')).toBeInTheDocument();
-    // Still line 2: hiding does not renumber.
-    expect(itemNumbers()).toEqual(['2']);
+    fireEvent.click(screen.getByRole('button', { name: 'Column header' }));
 
-    rerender(view(false));
-    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByText(/lines without suggestions/)).not.toBeInTheDocument();
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const [versionId, columns] = replaceQuotationColumns.mock.calls[0];
+    expect(versionId).toBe('v2');
+    expect(columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    // The header is on screen as an editable label, and Qty has made way for it.
+    expect(await screen.findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Total qty' })).toBeInTheDocument();
+    // The staged line carries the quantity in the new column, so Save sends it there.
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [columns[0].key]: '10.00' }, quantity: '10.00' }),
+    );
+    expectNothingWritten();
+  });
+
+  it('offers no column editing on a version that is not editable', async () => {
+    listQuotationVersions.mockResolvedValue(VERSIONS);
+    listQuotationLines.mockResolvedValue([line()]);
+    await renderEditing();
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
   });
 });
 
-describe('QuotationVersionEditor review on a scope with a hand-made draft (fix round 3, S3b)', () => {
-  it('opens on the ISSUED version the suggestions name, and they can be decided there', async () => {
-    // v1 went to the customer; somebody opened v2 by hand since. The rows name v1's lines.
+describe('QuotationVersionEditor feedback marks on the draft (PS-QUOTE-MATRIX fix round 1, E6)', () => {
+  it('carries a note on issued line L1 to its copy L1\' on the draft: amber corner and dot', async () => {
+    const columns = [{ key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }, { key: 'a2', label: 'Yard' }] }];
     listQuotationVersions.mockResolvedValue([
-      version({ id: 'v1', version_no: 1, is_issued: true, total_amount: '9000.00' }),
-      version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
+      version({ id: 'v1', version_no: 1, is_issued: true, matrix_columns: columns }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
     ]);
     listQuotationLines.mockImplementation(async (versionId: string) =>
       versionId === 'v1'
-        ? [line({ id: 'l-issued', version_id: 'v1', product_id: 'p1' })]
-        : [line({ id: 'l-draft', version_id: 'v2', product_id: 'p1' })],
+        ? [line({ id: 'L1', version_id: 'v1', product_id: 'p-sink', qty_cells: { a1: '133.00' } })]
+        : [line({ id: 'L1-draft', version_id: 'v2', product_id: 'p-sink', qty_cells: { a1: '133.00' } })],
     );
-    const onDecide = vi.fn();
+    const note = (overrides: Record<string, unknown>) => ({
+      id: 'f1',
+      line_id: 'L1',
+      scope_id: QUOTATION.id,
+      scope_label: QUOTATION.scope_label,
+      line_description: 'Sink',
+      cell_key: null,
+      cell_label: null,
+      kind: 'note' as const,
+      value_from: null,
+      value_to: null,
+      model: null,
+      note: 'Check',
+      handled_at: null,
+      handled_by_name: null,
+      ...overrides,
+    });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
@@ -2642,31 +2684,261 @@ describe('QuotationVersionEditor review on a scope with a hand-made draft (fix r
         <QuotationVersionEditor
           project={project()}
           quotation={QUOTATION}
-          review={{
-            rows: [
-              {
-                id: 'r1',
-                line_id: 'l-issued',
-                field: 'quantity',
-                value_from: '10.00',
-                value_to: '8.00',
-                decision: 'pending',
-                decision_reason: null,
-              },
-            ],
-            onDecide,
-          }}
-          reviewVersionId="v1"
-          suggestedOnly
+          feedback={[
+            note({ id: 'f1', cell_key: 'a1', cell_label: 'Type A / Kitchen' }),
+            note({ id: 'f2' }),
+            // Another scope's note never lands here.
+            note({ id: 'f3', scope_id: 'other-scope', line_id: 'L1', cell_key: 'a2' }),
+          ]}
         />
       </QueryClientProvider>,
     );
 
-    const reject = await screen.findByRole('button', {
-      name: 'Reject suggested quantity on SRT-WC-01',
-    });
+    // The draft (v2) is what opens, and its line wears the marks the issued line's notes made.
+    expect(await screen.findByTestId('matrix-feedback-corner')).toBeInTheDocument();
+    expect(screen.getAllByTestId('matrix-feedback-corner')).toHaveLength(1);
+    expect(screen.getAllByTestId('line-feedback-dot')).toHaveLength(1);
     expect(listQuotationLines).toHaveBeenCalledWith('v1');
-    expect(reject).toBeEnabled();
-    expect(screen.queryByText('No suggestions on this scope.')).toBeNull();
+  });
+});
+
+describe('QuotationVersionEditor holds the page\'s Save while columns change (review nit)', () => {
+  it('reports busy while a removal counts down and while the column write is on its way', async () => {
+    const columns = [
+      { key: 'a', label: 'Type A', cols: [] },
+      { key: 'b', label: 'Type B', cols: [] },
+    ];
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '4.00', b: '6.00' } })]);
+    let finish: (value: unknown) => void = () => {};
+    replaceQuotationColumns.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderEditing();
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // Parked: Save waits. Undone: Save is back.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // A column write in flight holds it too, until the server answers.
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    await act(async () => {
+      finish({ version: editable, lines: [line({ qty_cells: { a: '4.00', b: '6.00' } })] });
+    });
+    await waitFor(() => expect(setColumnsBusy).toHaveBeenLastCalledWith(false));
+  });
+});
+
+describe('QuotationVersionEditor B1: a header gains its first column (fix round 2)', () => {
+  it('keeps the header\'s quantity: Save sends 995 under the new column', async () => {
+    const before = [
+      { key: 'bt', label: 'Break tank', cols: [] as { key: string; label: string }[] },
+      { key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }] },
+    ];
+    let stored = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: before });
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '995.00', qty_cells: { bt: '995.00' } })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; cols: { key: string }[] }[]) => {
+        stored = { ...stored, matrix_columns: columns as typeof before };
+        const first = columns[0].cols[0].key;
+        // The server's own move-in (set_columns).
+        return { version: stored, lines: [line({ quantity: '995.00', qty_cells: { [first]: '995.00' } })] };
+      },
+    );
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const first = replaceQuotationColumns.mock.calls[0][1][0].cols[0].key as string;
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [first]: '995.00' }, quantity: '995.00' }),
+    );
+    expect(stagedBody()[0].qty_cells).not.toHaveProperty('bt');
+  });
+});
+
+describe('QuotationVersionEditor fix round 3 (M2a): a new header is typed into before the server answers', () => {
+  const columns = [{ key: 'a', label: 'Type A', cols: [] as { key: string; label: string }[] }];
+
+  it('shows the new header focused and selected while the column write is still on its way', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockImplementation(() => new Promise(() => {}));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    const input = screen.getByRole('textbox', { name: 'Column header Header 2' }) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Header 2'.length]);
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+  });
+
+  it('takes the new header back and toasts when the write is refused', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockRejectedValue(new Error('Column labels must be unique'));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(screen.getByRole('textbox', { name: 'Column header Header 2' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Column header Header 2' })).toBeNull(),
+    );
+    expect(toast.error).toHaveBeenCalledWith('Column labels must be unique');
+  });
+});
+
+/**
+ * Crew NO-GO on 36047efdad (round 4). A column write is a whole-matrix save; two in flight and
+ * the last ANSWER won, so a rename made while "+ Column" was saving reverted to "Column 1" on
+ * screen and in the DB. And Edit waited for the server to show a moved quantity.
+ */
+describe('QuotationVersionEditor round 4: column writes are serial, Edit is optimistic', () => {
+  type Columns = { key: string; label: string; cols: { key: string; label: string }[] }[];
+
+  /** A fake column API: every write waits until the test releases it, in any order. */
+  function deferredWrites(base: QuotationVersion) {
+    const calls: { columns: Columns; release: () => void }[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    replaceQuotationColumns.mockImplementation(
+      (_versionId: string, columns: Columns) =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          calls.push({
+            columns,
+            release: () => {
+              inFlight -= 1;
+              resolve({ version: { ...base, matrix_columns: columns }, lines: [] });
+            },
+          });
+        }),
+    );
+    return { calls, maxInFlight: () => maxInFlight };
+  }
+
+  const TANK: Columns = [{ key: 'bt', label: 'Break tank', cols: [] }];
+
+  it('a rename made while "+ Column" is saving survives, on screen and in the last write', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    const name = await screen.findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(name, { target: { value: 'Kitchen' } });
+    fireEvent.blur(name);
+
+    // One write at a time: the rename waits for the add.
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    expect(api.calls[0].columns[0].cols[0].label).toBe('Column 1');
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[0].columns };
+      api.calls[0].release();
+    });
+    // The first answer ("Column 1") does not overwrite the rename made after it was sent.
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns[0].cols[0].label).toBe('Kitchen');
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[1].columns };
+      api.calls[1].release();
+    });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument());
+    expect(screen.queryByRole('textbox', { name: 'Column Column 1' })).toBeNull();
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('edits made during a write merge into ONE follow-up write of the latest matrix', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(api.calls).toHaveLength(1);
+
+    await act(async () => api.calls[0].release());
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns.map((header) => header.label)).toEqual(['Break tank', 'Header 2', 'Header 3']);
+    await act(async () => api.calls[1].release());
+    expect(api.calls).toHaveLength(2);
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('Edit is optimistic: a header holding 5 that gets "+ Column" shows 5 and Total qty 5 at once', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    // Before the write answers: the moved quantity is in the new column, and the totals hold.
+    const cell = screen.getByRole('textbox', { name: /^Qty on SRT-WC-01, Break tank \/ Column 1/ });
+    expect(cell).toHaveValue('5.00');
+    const total = screen.getByRole('columnheader', { name: 'Total qty' });
+    expect(total).toBeInTheDocument();
+    const row = cell.closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('5').length).toBeGreaterThan(0);
+    expect(stagedBody()[0]).toMatchObject({ quantity: '5.00' });
+    expect(api.calls.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('QuotationVersionEditor: an unsaved line keeps its product code across a remount', () => {
+  it('still names the picked product after the editor unmounts and comes back (section switch)', async () => {
+    listQuotationLines.mockResolvedValue([line()]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const view = (showEditor: boolean) => (
+      <QueryClientProvider client={client}>
+        <Harness projectOverrides={{}} editing showEditor={showEditor} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(true));
+    await screen.findByRole('button', { name: /Add a line/i });
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Add a line/i }));
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Product on line 2' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    expect(
+      await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' }),
+    ).toHaveTextContent('SRT-BASIN-02');
+
+    // Another section, then back: the editor (and anything it held) is gone and rebuilt.
+    rerender(view(false));
+    rerender(view(true));
+
+    const picker = await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
+    expect(picker).toHaveTextContent('SRT-BASIN-02');
+    expect(screen.queryByText('Selected product')).toBeNull();
   });
 });

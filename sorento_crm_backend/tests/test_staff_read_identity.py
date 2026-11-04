@@ -1179,12 +1179,13 @@ def test_ac27_module_guard_asks_act_as_too(env, probe, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/api/v1/scm/low-stock-report", "/api/v1/sales/analysis"])
-def test_ac27_contact_attributed_reads_cannot_name_a_user(env, path):
+def test_ac27_contact_attributed_reads_take_a_blank_pair_but_cannot_name_a_user(env, path):
     staff = mk_user(
         env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO
     )
     bare = env.client.get(path, headers=env.ident(staff))
-    assert bare.status_code in (403, 422), f"AC-27: no contact got {bare.status_code}"
+    # AGENTIC-UNIFY AC-7/AC-13: an identity read with a blank pair is the staff path now.
+    assert bare.status_code not in (403, 422), f"AC-27: an identity read with no pair got {bare.status_code}"
     rid, space = mk_contact_in(env.db, [SORENTO])
     paired = env.client.get(path, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
     assert paired.status_code == 403, f"AC-27: a named user cannot be attributed, got {paired.status_code}"
@@ -1303,9 +1304,10 @@ def test_ac27_current_stock_list_does_not_widen_to_a_named_superadmins_grants(en
     assert other.product_code not in identity.text, "AC-27: the widening follows the grants of nobody on an identity read"
 
 
-def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_read(env):
-    """The invoiced/unpaid gates need no two-user check because no identity read reaches them:
-    `top-selling` is off the list, and `report-ask` refuses a pair with the header."""
+def test_ac27_top_selling_is_off_the_list_and_report_ask_refuses_a_pair_with_the_header(env):
+    """`top-selling` is off the list, and `report-ask` refuses a pair with the header. The blank pair
+    is the staff path now (AGENTIC-UNIFY AC-7), whose invoiced and unpaid gates ask both users
+    (`test_panel_agent_side.py`)."""
     staff = mk_user(env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
     top = env.client.get("/api/v1/order-management/top-selling", headers=env.ident(staff))
     assert top.status_code == 403 and INVALID_CODE in top.text, f"top-selling got {top.status_code}"
@@ -1317,9 +1319,15 @@ def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_r
     assert ask.status_code == 403 and INVALID_CODE in ask.text, f"report-ask with a pair got {ask.status_code}"
     blank = env.client.get(
         "/api/v1/order-management/report-ask",
-        params={"contact_id": "", "space_id": ""}, headers=env.ident(staff),
+        params={"contact_id": "", "space_id": "", "date_from": "2026-10-01", "date_to": "2026-10-31"},
+        headers=env.ident(staff),
     )
-    assert blank.status_code == 422, f"report-ask with a blank pair got {blank.status_code}"
+    assert blank.status_code not in (403, 422), f"report-ask with a blank pair got {blank.status_code}"
+    plain = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"date_from": "2026-10-01", "date_to": "2026-10-31"}, headers=env.plain(),
+    )
+    assert plain.status_code == 422, f"a plain key with no pair got {plain.status_code}"
 
 
 # =========================================================================== #
@@ -1364,3 +1372,72 @@ def test_ac6_lookup_resolve_body_pair_is_403_and_a_blank_body_pair_passes(env):
     paired = env.client.post(path, json={**base, "contact_id": rid, "space_id": space}, headers=env.ident(staff))
     assert paired.status_code == 403, f"AC-6: body pair with the header got {paired.status_code}"
     assert INVALID_CODE in paired.text
+
+
+# =========================================================================== #
+# PR 4 H3  a staff report read has no contact, so no location policy to cap it #
+# Plan: PLAN-agentic-unify-tools-1nov.md, "Review of the post-READY should-fixes", H3.   #
+# =========================================================================== #
+def _staff_report(env, basis, *, seed):
+    """A superadmin on Sorento reads the report ask with the blank pair; `seed` adds its own chain first."""
+    from decimal import Decimal
+
+    from tests._report_ask_so_seed import seed_so_line
+    from tests._sales_report_do_seed import seed_customer
+
+    staff = mk_user(env.db, "h3staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    cust = seed_customer(env.db, name=unique_code("Cust"))
+    prod = product(env.db, company_id=SORENTO)
+    seed_so_line(env.db, cust=cust, prod=prod, qty=3, total="1234.50", order_date=date(2026, 9, 10),
+                 company_id=SORENTO, **seed)
+    env.db.commit()
+    resp = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": "", "space_id": "", "basis": basis, "date_from": "2026-09-01", "date_to": "2026-09-30"},
+        headers=env.ident(staff),
+    )
+    assert resp.status_code == 200, resp.text[:300]
+    return resp.json(), Decimal("1234.50")
+
+
+def test_h3_a_staff_ordered_read_totals_the_seeded_line(env):
+    body, amount = _staff_report(env, "ordered", seed={"delivered": 0})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+def test_h3_a_staff_delivered_read_totals_the_seeded_line(env):
+    """Delivered is the same SO line, fully delivered (the seed's default). Invoiced needs a billing chain
+    no helper seeds cheaply, so it is not repeated here."""
+    body, amount = _staff_report(env, "delivered", seed={})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+def test_h3_a_staff_outstanding_read_is_not_empty_for_an_open_line(env):
+    body, amount = _staff_report(env, "outstanding", seed={"delivered": 0})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+@pytest.mark.parametrize("narrow", ["customer_ids", "product_ids"])
+def test_h3_a_staff_outstanding_summary_for_a_named_customer_or_product_counts_the_line(env, narrow):
+    """The summary (documents and amount) is built by `outstanding_summary`, which must not be capped by a
+    contact policy on a staff read either."""
+    from tests._report_ask_so_seed import seed_so_line
+    from tests._sales_report_do_seed import seed_customer
+
+    staff = mk_user(env.db, "h3sum", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    cust = seed_customer(env.db, name=unique_code("Cust"))
+    prod = product(env.db, company_id=SORENTO)
+    seed_so_line(env.db, cust=cust, prod=prod, qty=3, total="1234.50", order_date=date(2026, 9, 10),
+                 company_id=SORENTO, delivered=0)
+    env.db.commit()
+    named = str(cust.id) if narrow == "customer_ids" else str(prod.id)
+    resp = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": "", "space_id": "", "basis": "outstanding", "date_from": "2026-09-01",
+                "date_to": "2026-09-30", narrow: [named]},
+        headers=env.ident(staff),
+    )
+    assert resp.status_code == 200, resp.text[:300]
+    summary = resp.json().get("summary") or {}
+    assert summary.get("documents") == 1, summary
+    assert float(summary.get("amount") or 0) == 1234.5, summary

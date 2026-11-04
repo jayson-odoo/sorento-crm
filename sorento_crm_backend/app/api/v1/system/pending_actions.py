@@ -62,6 +62,7 @@ from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitO
 from app.models.product_companion import ProductCompanionRule
 from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
+from app.models.projects import ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
 from app.models.sales import SalesOpportunity, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
@@ -153,6 +154,7 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
     # The ss comment route is addressed by idea AND comment, and the row only holds the comment.
     "idea_comment.delete": ("idea_id",),
+    "quotation_spec_sheet.reset_page": ("page_key",),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,
@@ -194,6 +196,8 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
 )
 
@@ -216,6 +220,7 @@ def _assert_entity_visible(
     entity_id: str,
     actor_id: Optional[str] = None,
     entity_type: Optional[str] = None,
+    payload: Optional[dict] = None,
 ) -> None:
     """Park-time existence check for every record action on a company-owned record.
 
@@ -254,6 +259,22 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key in ("tag_template.delete", "tag_template.bulk_delete"):
+        # Refused now, not ten seconds later: a template a spec sheet draws from stays.
+        from app.services.dealer_kit import tag_template_service
+
+        tag_template_service.assert_unused(
+            db,
+            [entity_id] if action_key == "tag_template.delete" else list((payload or {}).get("template_ids") or []),
+        )
+    elif action_key == "quotation_spec_sheet.delete":
+        from app.services.record_actions import assert_spec_sheet_editable
+
+        assert_spec_sheet_editable(db, entity_id, actor_id)
+    elif action_key == "quotation_spec_sheet.reset_page":
+        from app.services.record_actions import assert_spec_sheet_page_resettable
+
+        assert_spec_sheet_page_resettable(db, entity_id, (payload or {}).get("page_key"), actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -338,6 +359,8 @@ _PARK_SCOPED_MODELS: dict = {
     "product_supplier_cost.delete": ProductSupplierCost,
     "proforma_invoice.delete": ProformaInvoice,
     "proforma_invoice_packing_line.dismiss": ProformaInvoicePackingLine,
+    # PS-REGISTRATION-V3: a party contact is company scoped (uuid id), read like any record.
+    "project_party_contact.delete": ProjectPartyContact,
     "project_sales_order.undo_confirm": ProjectSalesOrder,
     "promotion_group.delete": PromotionGroup,
     "promotion_product.unlink": PromotionProduct,
@@ -351,6 +374,11 @@ _PARK_SCOPED_MODELS: dict = {
     "supplier_code_alias.forget": SupplierProductCodeAlias,
     "tag_size_preset.delete": TagSizePreset,
     "tag_template.delete": TagTemplate,
+    # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the template the products are
+    # unlinked from; the filter rides in the payload.
+    "tag_template.unassign_products": TagTemplate,
+    # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
+    "product.unlink_tag_templates": Product,
     "team.delete": Team,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
@@ -373,6 +401,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "sample_request.delete",
     "stock_debt_snapshot.delete",
     # `entity_id` is not a company-owned row's id: a click token (the templates ride in
@@ -746,7 +776,9 @@ def create_pending_action(
         else nullcontext()
     )
     with scope:
-        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id, body.entity_type)
+        _assert_entity_visible(
+            db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
+        )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
         try:

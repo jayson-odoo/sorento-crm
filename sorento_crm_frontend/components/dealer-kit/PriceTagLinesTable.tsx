@@ -21,12 +21,13 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionName, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
-import type { LinePartCandidate, PriceMode } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
   itemValue,
+  lineTemplateState,
   packageWarningFor,
   partsAtListTitle,
   type DraftLine,
@@ -131,6 +132,7 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
+              onChooseTemplate={editor.chooseTemplate}
               onResolvePart={editor.resolvePart}
               onRemovePart={editor.removePart}
               onAddPart={editor.addPart}
@@ -166,6 +168,8 @@ interface LineRowProps {
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the Template select on a many-template line. */
+  onChooseTemplate: (key: string, templateId: string) => void;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
@@ -185,12 +189,30 @@ function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
   priceMode: PriceMode,
+  upgradeTopup?: { topup: number | string | null | undefined },
 ): string {
+  const code0 = candidate.code || candidate.name;
+  // An upgrade is offered at a top-up, never at its list price: the top-up when set,
+  // the bare code when blank (the tag prints no amount either).
+  if (upgradeTopup) {
+    const topup = upgradeTopup.topup;
+    return topup == null || topup === '' ? code0 : `${code0}  +${formatRM(Number(topup))}`;
+  }
   const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
   const code = candidate.code || candidate.name;
   if (!price) return code;
   const amount = priceMode === 'selling' ? price.sell_price : price.list_price;
   return `${code}  ${formatRM(amount)}`;
+}
+
+/** An upgrade's top-up from the line's reloaded package lookup (a reopened draft's candidates
+ *  carry none). */
+function comboTopup(combos: ProductComboOption[], productId: string): number | null {
+  for (const combo of combos) {
+    const part = combo.parts.find((p) => p.is_upgrade && p.product_id === productId);
+    if (part) return part.topup_amount ?? null;
+  }
+  return null;
 }
 
 /** One part row under a line: a fixed or hand-added product, or an open group. */
@@ -200,6 +222,7 @@ function PartRow({
   part,
   pricing,
   priceMode,
+  combos,
   colSpan,
   onResolvePart,
   onRemovePart,
@@ -209,6 +232,7 @@ function PartRow({
   part: DraftPart;
   pricing: LinePricingResult | null;
   priceMode: PriceMode;
+  combos: ProductComboOption[];
   /** Matches however many real columns the line's own row currently has
    *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
   colSpan: number;
@@ -219,7 +243,9 @@ function PartRow({
   // (`partsFromCombo`) and reads like a fixed part - no select, even though
   // `candidates` still carries the one entry. A genuinely open row always
   // has two or more.
-  const choosable = part.candidates.length > 1;
+  // An upgrade is always a choice, even with one candidate: the dealer may take it or not.
+  const choosable =
+    part.candidates.length > 1 || (part.role === 'Upgrade' && part.candidates.length > 0);
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
@@ -235,10 +261,19 @@ function PartRow({
                   onChange={(value) => onResolvePart(lineKey, part.key, value)}
                   options={part.candidates.map((candidate) => ({
                     value: candidate.product_id,
-                    label: candidateOptionLabel(candidate, pricing, priceMode),
+                    label: candidateOptionLabel(
+                      candidate,
+                      pricing,
+                      priceMode,
+                      part.role === 'Upgrade'
+                        ? { topup: candidate.topup_amount ?? comboTopup(combos, candidate.product_id) }
+                        : undefined,
+                    ),
                     description: candidate.code,
                   }))}
-                  placeholder={`Not sure, any of ${part.candidates.length}`}
+                  placeholder={
+                    part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`
+                  }
                   emptyMessage="No options."
                   size="sm"
                 />
@@ -293,6 +328,7 @@ function LineRow({
   onUpdate,
   onRemove,
   onChoosePackage,
+  onChooseTemplate,
   onResolvePart,
   onRemovePart,
   onAddPart,
@@ -301,6 +337,7 @@ function LineRow({
   onManualSellPriceChange,
   showNumberErrors,
 }: LineRowProps) {
+  const templateState = lineTemplateState(line);
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // Only when there is a choice to make: one combo is applied on pick, and none
@@ -337,7 +374,7 @@ function LineRow({
   // once per line.
   const lastOpenPartKey = [...line.parts]
     .reverse()
-    .find((part) => !part.product_id && part.candidates.length > 1)?.key;
+    .find((part) => !part.product_id && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // `<td>` columns on the line's own row (above the app's 992px mobile
@@ -428,7 +465,12 @@ function LineRow({
               ? numberFieldError(line.manual_sell_price, { min: 0.01, optional: true })
               : undefined
           }
-          placeholder="Type a price"
+          // A combo's own price prints without a promotion: show it, not a blank box (AC-2.6).
+          placeholder={
+            line.combo_id && pricing?.sell_price_basis !== 'list' && pricing?.sell_price != null
+              ? formatRM(pricing.sell_price)
+              : 'Type a price'
+          }
           aria-label={`Selling price for line ${index + 1}`}
         />
       )}
@@ -530,9 +572,55 @@ function LineRow({
       {line.guard_error && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">
-            <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
+            {/* The anchor the form's Submit scrolls to (`scrollToFirstProblem`): a
+                row's own refusal, the missing-template one included, sits below
+                the fold on a long request (crew browser pass). */}
+            <p
+              data-error-anchor={`line:${index}`}
+              className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
+            >
               {line.guard_error}
             </p>
+          </td>
+        </tr>
+      )}
+      {templateState.kind === 'single' && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            {/* Sticky + capped to the viewport: the table scrolls sideways at
+                375px, and a sub-row spanning every column otherwise runs past
+                the card's right edge (browser pass). */}
+            <p
+              className="sticky left-0 max-w-[calc(100vw-9rem)] truncate border-l-2 border-border pl-3 text-xs text-muted-foreground sm:max-w-none"
+              title={templateState.template.name}
+            >
+              Template: {templateState.template.name}
+            </p>
+          </td>
+        </tr>
+      )}
+      {templateState.kind === 'many' && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            <div className="sticky left-0 max-w-[calc(100vw-9rem)] border-l-2 border-border pl-3 sm:max-w-none">
+              <SearchableSelect
+                clearable
+                truncateTriggerLabel
+                value={line.tag_template_id ?? ''}
+                onChange={(value) => onChooseTemplate(line.key, value)}
+                options={templateState.options.map((template) => ({
+                  value: template.id,
+                  label: template.name,
+                  description:
+                    template.width_mm && template.height_mm
+                      ? `${template.width_mm} x ${template.height_mm} mm`
+                      : undefined,
+                }))}
+                placeholder="Tag template"
+                emptyMessage="No templates."
+                size="sm"
+              />
+            </div>
           </td>
         </tr>
       )}
@@ -565,6 +653,7 @@ function LineRow({
             part={part}
             pricing={pricing}
             priceMode={priceMode}
+            combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
@@ -574,7 +663,10 @@ function LineRow({
             <tr>
               <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
-                  Marketing will prepare one tag per option.
+                  {/* A line with a combo gets one tag listing every option (AC-3.1). */}
+                  {line.combo_id
+                    ? 'The tag will list every option.'
+                    : 'Marketing will prepare one tag per option.'}
                 </p>
               </td>
             </tr>

@@ -26,6 +26,7 @@ import {
 } from '../../fulfilment-planning/lib/lineSplitModel';
 import type { LineSplitView } from '../types/orderInquiry.types';
 import type { LineSplitsPayload } from '../types/lineSplit.types';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /**
  * OI-SPLIT-VIEW (UAC B1, B8, D1, E): the one split chip + (i) popup the Sales Order and
@@ -245,7 +246,12 @@ export function LineSplitInfo({
   if (!view) return null;
   const count = splitCount(view);
   // OI-SPLIT-GUIDE (UAC F29): no line number on the popup (its (i) button's label keeps it).
-  const sub = [soNumber, oiNumber || null]
+  // OI-UX-FILTER-SNAPSHOT: the order's CUSTOMER / project after its number.
+  const sub = [
+    soNumber,
+    payload ? soCustomerProjectLabel(payload.customer, payload.project) : null,
+    oiNumber || null,
+  ]
     .filter(Boolean)
     .join(' · ');
   return (
@@ -355,6 +361,8 @@ export function OrderSplitsDialog({
   }, [payload]);
   const sub = [
     subtitle,
+    // OI-UX-FILTER-SNAPSHOT: the order's CUSTOMER / project.
+    payload ? soCustomerProjectLabel(payload.customer, payload.project) : null,
     sheet && sheet.splitCount > 0
       ? `${sheet.splitCount} ${sheet.splitCount === 1 ? 'split line' : 'split lines'}`
       : null,
@@ -416,6 +424,11 @@ export interface CoveredSheetLine {
   date: string | null;
   /** The purchasing email's words for what Confirm sends (server `saved_remark`). */
   savedRemark: string | null;
+  /**
+   * CONFIRM-ITEM4: the guide's email dry run previewed the order and its email holds no line
+   * for this one, so Confirm sends purchasing nothing for it. Unset = not known.
+   */
+  purchasingSilent?: boolean;
 }
 
 /**
@@ -435,13 +448,22 @@ export function coveredSheetLines(
   const words = new Map(
     covered.flatMap((line) => (line.lineId ? [[line.lineId, line.savedRemark] as const] : [])),
   );
+  const silent = new Set(
+    covered.flatMap((line) => (line.lineId && line.purchasingSilent ? [line.lineId] : [])),
+  );
   const splitIds = new Set(
     covered.flatMap((line) =>
       line.lineId && (byId.get(line.lineId)?.splits.length ?? 0) > 0 ? [line.lineId] : [],
     ),
   );
   const fromRead = linesWithLanding(read, splitIds).map((line) =>
-    words.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
+    words.has(line.lineId)
+      ? {
+          ...line,
+          savedRemark: words.get(line.lineId) ?? null,
+          purchasingSilent: silent.has(line.lineId),
+        }
+      : line,
   );
   const shown = new Set(fromRead.map((line) => line.lineId));
   const built: SplitLine[] = covered
@@ -460,6 +482,7 @@ export function coveredSheetLines(
       pendingChange: false,
       splits: [],
       savedRemark: line.savedRemark,
+      purchasingSilent: Boolean(line.purchasingSilent),
       // A swapped line's REMARK is the read's own words (the email's NEW ITEM CODE), muted
       // under none saved; every other line keeps only what the board says it sends.
       remarkGenerated:

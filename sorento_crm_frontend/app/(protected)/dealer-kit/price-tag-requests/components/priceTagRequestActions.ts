@@ -71,8 +71,10 @@ export function priceTagActions(
     actions.push({ action: 'claim', label: 'Claim' });
   } else if (current === 'new' || current === 'designing' || current === 'changes_requested') {
     actions.push({ action: 'design', label: 'Design tags' });
-  } else if (current === 'proof_ready') {
+  } else if (current === 'proof_ready' && assignedToId) {
     // The proof is with the salesperson; marketing can still look at what was sent.
+    // With nobody assigned it is the salesperson's own generated tag
+    // (PRICETAG-SELF-APPROVAL R8): marketing has nothing to open until he escalates.
     actions.push({ action: 'design', label: 'View design' });
   } else if (current === 'approved' || current === 'ready_for_collection') {
     // D14 (AC-S10-1): once approved, the CTA is "go to the design" - the PDF

@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef, Table } from '@tanstack/react-table';
@@ -26,6 +27,8 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
+import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
+import { orderInquiryDateChange } from '../../_shared/lib/orderInquiryDateChange';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
@@ -299,15 +302,18 @@ function reallocateCandidateLine(
     inquiry_no: string | null;
     item_code: string | null;
     so_number: string | null;
+    customer_name?: string | null;
+    project_label?: string | null;
     delivery_date: string;
     open_qty: string;
   },
   isTarget: boolean,
 ): string {
   const prefix = isTarget ? 'Reallocate to ' : '';
+  const party = soCustomerProjectLabel(candidate.customer_name, candidate.project_label);
   return (
     `${prefix}${candidate.inquiry_no ?? 'another inquiry'} · ` +
-    `${candidate.so_number ?? 'unknown SO'} · ` +
+    `${candidate.so_number ?? 'unknown SO'}${party ? ` (${party})` : ''} · ` +
     `needed ${formatDateInMalaysia(candidate.delivery_date)} · ` +
     `open ${formatInquiryQty(candidate.open_qty)}`
   );
@@ -819,9 +825,11 @@ export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
 export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
   const changed = ackStateOf(row) === 'changed';
   if (!row.delivery_date) return <Muted>No date</Muted>;
+  const dateChange = orderInquiryDateChange(row);
   return (
     <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
       {formatDateInMalaysia(row.delivery_date)}
+      {dateChange ? <BoardChangeTable annotation={dateChange} compact /> : null}
       {changed ? <WorklistPill testId={`delivery-date-changed-${row.id}`}>Changed</WorklistPill> : null}
     </span>
   );
@@ -1182,7 +1190,7 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => (
           <DataGridColumnHeader title="Delivery date" column={column} />
         ),
-        size: 140,
+        size: 180,
         meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <DeliveryDateCell row={row.original} />,
       },

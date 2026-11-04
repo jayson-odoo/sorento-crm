@@ -203,4 +203,19 @@ describe('TagCanvasEditor context menu (S10, AC-S10-1)', () => {
     expect(screen.getByRole('menuitem', { name: /Cut/ })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /Crop image/ })).not.toBeInTheDocument();
   });
+
+  it('menu Copy also runs the browser copy command, so the system clipboard gets the layer marker (DESIGNER-PASTE)', () => {
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, 'execCommand', { value: execCommand, configurable: true });
+    try {
+      const { container } = render(
+        <TagCanvasEditor doc={docWith(imageLayer('img1'))} onChange={vi.fn()} />,
+      );
+      rightClickCanvas(container, INSIDE_IMAGE);
+      fireEvent.click(screen.getByRole('menuitem', { name: /Copy/ }));
+      expect(execCommand).toHaveBeenCalledWith('copy');
+    } finally {
+      delete (document as unknown as { execCommand?: unknown }).execCommand;
+    }
+  });
 });

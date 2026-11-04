@@ -20,9 +20,11 @@ deployed backend image has no copy of `sorento_crm_mcp` (compose builds it with
 so a catalogue read on the turn path would raise in every container and `run_fetch`'s broad
 `except` would turn every live business turn into "MCP tool X failed".
 
-This file is where the frozen set and the catalogue are held together. It imports the
-catalogue, which IS available in CI and in a checkout, and asserts the set equals the
-catalogue's own answer, so drift in either direction fails here rather than in production.
+This file is where the frozen set and the catalogue are held together. It reads the
+catalogue through `_load_catalog_specs`, which returns the backend's verbatim copy
+(`app/services/mcp_catalog_copy.py`, pinned byte for byte to the MCP file by
+`tests/test_mcp_catalog_in_image.py`), and asserts the set equals the catalogue's own
+answer, so drift in either direction fails here rather than in production.
 """
 from __future__ import annotations
 
@@ -69,11 +71,8 @@ UNCALLABLE_READS = {
     "crm_outstanding_report": "retired from the chatbot; outstanding asks run on crm_report_ask",
     # 8 Sep 2026 (turns 87694182 / 0b10a4c0 / 11932963): `metric` is a required query
     # param and the fetch lane never maps one from the parser. Back in when it does.
-    "crm_order_analytics": "requires `metric`; the lane never sends it",
-    # SEAT-AS-PRODUCT (owner rule 13 Oct 2026): a `fits` parse is a product resolution step
-    # (`lanes/business/find.as_linked_products`), never a reply of its own; the MCP tool and
-    # route stay a generic read for other callers.
-    "crm_find": "a seat-cover ask resolves to the linked codes; no find reply lane",
+    # AGENTIC-UNIFY PR 4: `crm_order_analytics` and `crm_find` are now in the pool for the panel agent (plain GETs);
+    # the fetch lane still never calls them, and no chat lane reaches them (AC-0: panel only).
 }
 
 
@@ -193,9 +192,10 @@ def test_the_turn_path_never_reads_the_catalogue() -> None:
     container and take every live business turn down through `run_fetch`'s broad `except`.
 
     **Two doors, not one.** `mcp_tool_capability_service` is banned here as well, because
-    it is the back way to the same place: `_load_catalog_specs` inside it is what actually
-    imports the package, so a turn-path file that reaches for that module has the identical
-    failure with none of the obvious spelling. It is a perfectly good import everywhere
+    it is the back way to the same place: until ASSISTANT-CATALOG-500 `_load_catalog_specs`
+    inside it climbed to the package and took the AI panel down that way (it now reads the
+    backend's copy, but the turn path still has no business building capability documents).
+    It is a perfectly good import everywhere
     else - the seed script and the embedding backfill both use it - just never on a path a
     customer's message runs down.
 

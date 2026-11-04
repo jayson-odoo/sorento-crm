@@ -47,12 +47,7 @@ concurrency:
 
 jobs:
   sync:
-    # The Mac mini runner (CI-MAC-ONLY, owner 1 Nov 2026: private repo, metered
-    # GitHub-hosted minutes; this runs 4x a day). No fallback: an offline Mac
-    # queues the sync. Main-only triggers (push, cron, dispatch), so no PR code
-    # ever runs here with OUTLINE_API_TOKEN; doc.foundryx.my is on the public
-    # internet, which is all the runner's firewall lets a job reach.
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write

@@ -29,6 +29,7 @@ import {
   type POIntakeLinesGridHandle,
 } from './POIntakeLinesGrid';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
+import { QtyOverQuoteDialog } from '../../_shared/components/QtyOverQuoteDialog';
 
 type ReviewTab = 'lines' | 'documents';
 
@@ -117,10 +118,13 @@ export function POIntakeConfirmClient({
 
   // S4: Confirm returns the user to where they came from. With no origin (a deep link or a
   // bookmark) it stays on the page, exactly as before this slice.
-  const handleConfirm = React.useCallback(async () => {
-    const confirmed = await intake.confirm();
-    if (confirmed && originHref) router.push(originHref);
-  }, [intake, originHref, router]);
+  const handleConfirm = React.useCallback(
+    async (qtyOverReason?: string) => {
+      const confirmed = await intake.confirm(qtyOverReason);
+      if (confirmed && originHref) router.push(originHref);
+    },
+    [intake, originHref, router],
+  );
 
   if (intake.isLoading) return <POIntakeSkeleton />;
 
@@ -180,6 +184,12 @@ export function POIntakeConfirmClient({
 
   return (
     <div className="space-y-4">
+      <QtyOverQuoteDialog
+        products={intake.qtyOverProducts ?? null}
+        isSaving={intake.isConfirming}
+        onCancel={() => intake.clearQtyOver?.()}
+        onSubmit={(reason) => handleConfirm(reason)}
+      />
       <PageHeader
         title={
           <span className="inline-flex flex-wrap items-center gap-2">

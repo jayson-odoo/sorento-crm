@@ -931,7 +931,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "REQUIRED: `contact_id` + `space_id`; and for the sales bases `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "channel | account_type (the customer's AutoCount account type) | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
             "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
             "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
             "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
@@ -963,7 +963,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
             "a spec that cannot narrow comes back under `not_applied`, no match is `status: no_products`), "
             "`warehouse_codes` (exact codes; a location outside the contact's visibility "
-            "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
+            "answers `status: refused`), `channel` dealer | project, `account_types` (the customer account: a number such as 4, a numeral IV, a tag A/C IV or a type name; repeated or csv; never an id). OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
             "id naming nothing is 404.\n\n"
             "`company` (a company name, code or id) narrows a contact in several companies to that one (403 "
@@ -1000,7 +1000,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
-            "group_offset",
+            "group_offset", "account_types",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),
@@ -1195,7 +1195,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- sla-management (conversation tracking) ---
     ToolSpec(
         "crm_sla_conversation_tracking_dashboard",
-        "SLA conversation-tracking dashboard metrics.",
+        "SLA conversation-tracking dashboard metrics. average_response_time and average_resolution_time are in "
+        "hours; escalation_rate is a percent (0 to 100).",
         "/api/v1/sla-management/conversation-sla-tracking/dashboard",
         (),
         (),
@@ -1298,12 +1299,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Each row returns complaint_number, complaint_date, delivery_order_number, customer_name, "
             "product_code / product_type, defect_description, status, assigned_to_name, root_cause_name "
             "and resolution_name.\n\n"
-            "ALL FILTERS OPTIONAL - call with none to get the newest complaints page.\n"
+            "ALL FILTERS OPTIONAL - call with none to get the OLDEST complaints page; pass sort=complaint_date&dir=desc for the newest.\n"
             "  • `status` - EXACT single complaint status. Known values: draft, submitted, resubmitted "
             "(submitted again after a rejection), new, "
             "responded, updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO "
             "combined 'open' value: for 'open / unresolved complaints' either omit status (list all "
-            "newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
+            "oldest-first by default, or add sort=complaint_date&dir=desc for newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
             "states.\n"
             "  • `assigned_to` - respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
             "SORT KEYS: complaint_date, created_at, delivery_order_number, customer_name, product_code, "
@@ -1501,7 +1502,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
             "repeated; the line's warehouse - an SPO allocation also matches by its book "
-            "location code). "
+            "location code), `supplier_ids` (the PO's supplier, for 'outstanding POs for supplier "
+            "X'; under a `contact_id` it needs that contact's purchase_orders.supplier reveal, else "
+            "a 403). "
             "Date window: expected_date_from / expected_date_to (filters only; the expected "
             "date is not rendered in the reply).\n\n"
             "SORT: `sort` = expected_date | product | supplier | outstanding_qty | po_date | "
@@ -1516,8 +1519,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
-            "limit", "product_ids", "warehouse_ids", "expected_date_from", "expected_date_to",
-            "group_by", "include_summary", "sort", "dir",
+            "limit", "product_ids", "warehouse_ids", "supplier_ids", "expected_date_from",
+            "expected_date_to", "group_by", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="purchase_order",
@@ -1739,6 +1742,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
             "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "Each row names its document (`document_no`) and `document_kind`: 'proposal' (a priced offer, "
+            "a project may hold several, one per party) or 'quotation' (the one the won project's POs "
+            "are checked against; quote ITS figure when it exists). "
             "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
             "common area', 'why did we lose <project>'. "
             "A project has MANY quotations, one per scope, and each quotation has versions -- the total "

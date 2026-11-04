@@ -384,7 +384,7 @@ class TestNeedByOptionalAtSubmit:
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
         assert res.status_code == 200, res.text
-        assert res.json()["status"] == "new"
+        assert res.json()["status"] == "proof_ready"  # PRICETAG-SELF-APPROVAL: his own proof
 
 
 # ---------------------------------------------------------------------------

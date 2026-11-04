@@ -163,6 +163,7 @@ export interface PriceTagRequestLine {
   name: string;
   code: string;
   show_promo_price: boolean;
+  combo_id?: string | null;
   quantity: number;
   included_accessories: string | null;
   /** Free-text note on the line (D6). Optional: absent on a request created
@@ -188,6 +189,9 @@ export interface PriceTagRequestLine {
   promotion_expired_on?: string | null;
   manual_sell_price?: number | null;
   sell_price_basis?: SellPriceBasis | null;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the template this line prints with, and its name. */
+  tag_template_id?: string | null;
+  tag_template_name?: string | null;
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch. */

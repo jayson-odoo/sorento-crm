@@ -601,6 +601,10 @@ def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[
     return fragment
 
 
+#: SUPPLIER-ASK fix round 9: said when a supplier-scoped turn carried no line of its own.
+SUPPLIER_SCOPE_FALLBACK_LINE = "Which supplier do you mean? Give me its name or code."
+
+
 def _fixed_reply(
     text: str,
     *,
@@ -1519,6 +1523,14 @@ def run_fetch(
     }
     for key, values in narrow.items():
         semantic_input[key] = list(values)
+    if parse_output.get("domain_hint") == "portal_link":
+        from app.services.chatbot import principal as staff_principal
+
+        if staff_principal.current() is not None:
+            # Whether or not the parser named a form: the panel has no contact to send a link to.
+            if trace is not None:
+                trace.add("portal_link", {"refused": "panel"})
+            return _fixed_reply(fetch_mod.PANEL_NO_PORTAL_LINK, refused=True)
     submission_type = fetch_mod.portal_submission_type(parse_output)
     if submission_type and db is not None and not fetch_mod.portal_form_granted(
         db, contact_id, space_id, submission_type
@@ -1544,6 +1556,9 @@ def run_fetch(
     scoped_to_links = bool(customer_scope.get("enforced") and customer_scope.get("ids"))
     if scoped_to_links:
         semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
+    if isinstance(ctx.get("supplier_scope"), dict):
+        # SUPPLIER-ASK fix round 9: read by `entity_ids_transformer`'s guard (`fetch.SupplierScopeViolation`).
+        semantic_input["supplier_scope"] = dict(ctx["supplier_scope"])
     # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026, "Mr Loo"): a contact WITH linked
     # accounts asking for sales is asking about those accounts, staff tier or not - the
     # company analysis route refuses any linked contact outright (`analysis.py:253-258`,
@@ -2159,6 +2174,9 @@ def run_fetch(
                 order_status_raw == report_ask.ASK_NAME
                 and parse_output.get("capability_from") == "sales_analysis"
                 and jsc.js_string(parse_output.get("group_by") or "") in ("", "year")
+                # A follow-up over a held customer is that customer's report, not a company total: the report ask reads
+                # it whole, and its slot holds the customer across any question it still owes.
+                and not (parse_output.get(report_ask.HELD_KEY) or {}).get("customer_ids")
             )
         )
     ):
@@ -2249,10 +2267,14 @@ def run_fetch(
             # Eval rpt-030/-038, as before #1922 (D13): undelivered orders asked by a contact that may see pending
             # delivery only is answered with pending delivery, under the one SO sentence; never refused outright.
             parse_output = {**parse_output, "basis": "pending_delivery"}
+        _own_companies = sales_company_ask._companies(db, contact_id, space_id)
         settled, line = report_ask.settle(
             db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
-            companies=sales_company_ask._companies(db, contact_id, space_id), kinds=_kinds,
+            companies=_own_companies, kinds=_kinds,
         )
+        # SALES-ACCOUNT-TYPE semantic carry: with the report ask marker in the prompt (the engine keeps the key only
+        # then), the ask's ids are kept with their names, on the open question and on the frame (`Held report:` line).
+        _named = report_ask.OBJECT_KEY in parse_output
         if trace is not None:
             trace.add(
                 "required_ask",
@@ -2266,8 +2288,11 @@ def run_fetch(
         if settled is None:
             return _fixed_reply(_with_so_line(line or ""), refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
-            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=settled.slot)
-        semantic_input["report_ask_args"] = report_ask.route_args(settled)
+            _asked = report_ask.with_names(db, settled.slot, _own_companies) if _named else settled.slot
+            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=_asked)
+        semantic_input["report_ask_args"] = report_ask.with_customer_groups(
+            db, report_ask.route_args(settled), customer_scope.get("ids") if customer_scope.get("enforced") else None
+        )
         listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
             semantic_input["report_ask_args"], settled
         )
@@ -2296,6 +2321,10 @@ def run_fetch(
         if so_redirect:
             semantic_input["report_ask_note"] = "\n\n".join(
                 n for n in (fetch_mod.SO_NOT_ENABLED_MESSAGE, semantic_input.get("report_ask_note")) if n
+            )
+        if _named:
+            semantic_input["report_ask_names"] = report_ask.arg_names(
+                db, semantic_input["report_ask_args"], _own_companies, settled.extras.get("agent_words")
             )
         if settled.extras.get("detail"):
             semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
@@ -2408,6 +2437,11 @@ def run_fetch(
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
         if dry_run and tool_name == _LOW_STOCK_TOOL:
             args["dry_run"] = True
+    except fetch_mod.SupplierScopeViolation as violation:
+        # SUPPLIER-ASK fix round 9: no tool is called; the turn says the scope's own line.
+        if trace is not None:
+            trace.add("supplier_scope", {"refused": "unfiltered_list", "tool": tool_name})
+        return _fixed_reply(violation.line or SUPPLIER_SCOPE_FALLBACK_LINE, refused=True)
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -2470,6 +2504,12 @@ def run_fetch(
     _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+        parsed = fetch_mod.parse_mcp_content(raw)
+        if isinstance(parsed, str):
+            # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
+            # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
+            # would be told to the customer as a real empty result ("No stock and no incoming").
+            raise RuntimeError("answered with no readable result")
     except fetch_mod.ToolNotAllowed as refused:
         # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
         # outcome rather than as a tool failure, because the two need different reading:
@@ -2492,7 +2532,7 @@ def run_fetch(
         )
 
     envelope = brand_guard.guard_result(
-        tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
+        tool_name, parsed, semantic_input.get("scope_brand_ids"), db
     )
     second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
     if second_group and isinstance(envelope, dict) and envelope.get("response"):
@@ -2572,6 +2612,11 @@ def run_fetch(
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        if tool_name == _LOW_STOCK_TOOL:
+            # A 502 from the MCP server is the same failure as the raise above: this tool
+            # says its own line and names its filters.
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None

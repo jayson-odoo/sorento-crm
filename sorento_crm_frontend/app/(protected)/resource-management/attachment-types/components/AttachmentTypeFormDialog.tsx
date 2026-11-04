@@ -38,13 +38,6 @@ import { useAttachmentTypeTeams } from '../hooks/useAttachmentTypeTeams';
 import { useDirectoryTree } from '../../attachments/hooks/useAttachments';
 import { flattenDirectoryOptions } from '../../attachment-directories/components/drivePath';
 
-const AI_AUDIENCE_OPTIONS = [
-  { value: 'off', label: 'Off' },
-  { value: 'staff', label: 'Staff only' },
-  { value: 'dealer', label: 'Dealers' },
-  { value: 'public', label: 'Everyone' },
-];
-
 interface AttachmentTypeFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -88,7 +81,6 @@ export default function AttachmentTypeFormDialog({
       max_validity_months: null,
       is_shared: false,
       default_directory_id: null,
-      ai_audience: 'off',
       ai_escalate_team_id: null,
     },
     mode: 'onTouched',
@@ -110,7 +102,6 @@ export default function AttachmentTypeFormDialog({
           max_validity_months: attachmentType.max_validity_months ?? null,
           is_shared: attachmentType.is_shared ?? false,
           default_directory_id: attachmentType.default_directory_id ?? null,
-          ai_audience: attachmentType.ai_audience ?? 'off',
           ai_escalate_team_id: attachmentType.ai_escalate_team_id ?? null,
         });
       } else {
@@ -126,7 +117,6 @@ export default function AttachmentTypeFormDialog({
           max_validity_months: null,
           is_shared: false,
           default_directory_id: null,
-          ai_audience: 'off',
           ai_escalate_team_id: null,
         });
       }
@@ -150,7 +140,6 @@ export default function AttachmentTypeFormDialog({
             max_validity_months: data.max_validity_months ?? null,
             is_shared: data.is_shared ?? false,
             default_directory_id: data.default_directory_id ?? null,
-            ai_audience: data.ai_audience,
             ai_escalate_team_id: data.ai_escalate_team_id ?? null,
           },
         });
@@ -167,7 +156,6 @@ export default function AttachmentTypeFormDialog({
           max_validity_months: data.max_validity_months ?? null,
           is_shared: data.is_shared ?? false,
           default_directory_id: data.default_directory_id ?? null,
-          ai_audience: data.ai_audience,
           ai_escalate_team_id: data.ai_escalate_team_id ?? null,
         });
       }
@@ -418,25 +406,6 @@ export default function AttachmentTypeFormDialog({
                   <p className="text-xs text-muted-foreground">
                     Where an upload of this type files by default - still changeable per upload.
                   </p>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="ai_audience"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>AI can read</FormLabel>
-                  <FormControl>
-                    <SearchableSelect
-                      value={field.value}
-                      onChange={(value) => field.onChange(value || 'off')}
-                      options={AI_AUDIENCE_OPTIONS}
-                      placeholder="Off"
-                    />
-                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

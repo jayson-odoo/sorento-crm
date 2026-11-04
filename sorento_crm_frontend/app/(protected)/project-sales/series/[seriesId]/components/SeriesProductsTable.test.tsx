@@ -65,6 +65,15 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+const toast = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+  info: vi.fn(),
+  custom: vi.fn(),
+}));
+vi.mock('@/lib/toast', () => ({ toast }));
+
 const listingPrefs = vi.fn((_args: unknown) => ({ resetToDefaults: async () => {}, isLoading: false }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: (args: unknown) => listingPrefs(args),
@@ -287,16 +296,16 @@ describe('SeriesProductsTable', () => {
     expect(screen.queryByDisplayValue('0.00')).not.toBeInTheDocument();
   });
 
-  it('shows no floor for a product priced with no discount stated', async () => {
-    // AC-C4 on screen. 21 of the client's 51 priced products look exactly like this, and a
-    // floor here would put every one of them in breach on the first discount.
+  it('Q2: a price-only row shows the floor the server computed (the selling price)', async () => {
+    // Owner ruling Q2 (1 Nov): a price with no max discount allows no discount, so the server
+    // answers floor = price. The screen still prints only what the server said.
     getSeriesProductRows.mockResolvedValue(serverPage([
-      row({ selling_price: '180.00', max_discount_pct: null, derived_floor: null }),
+      row({ selling_price: '180.00', max_discount_pct: null, derived_floor: '180.00' }),
     ]));
     renderTable();
 
     expect(await screen.findByDisplayValue('180.00')).toBeInTheDocument();
-    expect(screen.queryByText('180.00', { selector: 'span' })).not.toBeInTheDocument();
+    expect(screen.getByText('RM 180.00')).toBeInTheDocument();
   });
 
   it('asks the server for this series only once the id is known', async () => {
@@ -384,16 +393,176 @@ describe('SeriesProductsTable', () => {
     );
   });
 
-  it("shows no Remove (bin) button on an in-scope row, and keeps it on others (C6)", async () => {
+  it('Q1: an in-scope row can be removed from the series, like any other', async () => {
     getSeriesProductRows.mockResolvedValue(serverPage([
-      row({ product_id: "p1", product_code: "IN-SCOPE", product_name: "Inside item", in_scope: true }),
-      row({ product_id: "p2", product_code: "OUT-SCOPE", product_name: "Outside item", in_scope: false }),
+      row({ product_id: 'p1', product_code: 'IN-SCOPE', product_name: 'Inside item', in_scope: true }),
+      row({ product_id: 'p2', product_code: 'OUT-SCOPE', product_name: 'Outside item', in_scope: false }),
+    ]));
+    removeSeriesProduct.mockResolvedValue(undefined);
+    renderTable();
+
+    await screen.findByText('Inside item');
+    expect(screen.getByRole('button', { name: 'Remove OUT-SCOPE' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove IN-SCOPE' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(removeSeriesProduct).toHaveBeenCalledWith('s1', 'p1'));
+  });
+
+  it('a saved row shows its product as text: no picker and no clear X to empty it', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item', in_scope: true }),
     ]));
     renderTable();
 
-    await screen.findByText("Inside item");
-    expect(screen.queryByRole("button", { name: "Remove IN-SCOPE" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove OUT-SCOPE" })).toBeInTheDocument();
+    await screen.findByText('Saved item');
+    expect(screen.queryByRole('combobox', { name: /^Product on SAVED-1/ })).not.toBeInTheDocument();
+    expect(screen.getByText('SAVED-1')).toBeInTheDocument();
+  });
+
+  it('a new row with a price but no product says, inline, that it needs a product to save', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([]));
+    renderTable();
+
+    fireEvent.click(await screen.findByRole('button', { name: /add a product/i }));
+    fireEvent.change(await screen.findByRole('textbox', { name: /^Selling price on / }), {
+      target: { value: '150.00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save / }));
+    expect(await screen.findByText('Pick a product to save this row')).toBeInTheDocument();
+    expect(importSeriesProducts).not.toHaveBeenCalled();
+  });
+
+  it('says Saved after a row is saved', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item', in_scope: true }),
+    ]));
+    updateSeriesProductPricing.mockResolvedValue(row({ selling_price: '99.00' }));
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on SAVED-1/ }), {
+      target: { value: '99.00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save SAVED-1/ }));
+    await waitFor(() => expect(updateSeriesProductPricing).toHaveBeenCalled());
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Saved'));
+  });
+
+  it('a search saves a valid edited row first instead of dropping it', async () => {
+    getSeriesProductRows.mockImplementation(async (_id: string, opts?: { query?: string }) =>
+      opts?.query
+        ? serverPage([row({ product_id: 'p2', product_code: 'OTHER', product_name: 'Other item' })])
+        : serverPage([row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item' })]),
+    );
+    updateSeriesProductPricing.mockResolvedValue(row({ selling_price: '99.00' }));
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on SAVED-1/ }), {
+      target: { value: '99.00' },
+    });
+    fireEvent.change(screen.getByLabelText(/search products in this series/i), {
+      target: { value: 'oth' },
+    });
+    await waitFor(() =>
+      expect(updateSeriesProductPricing).toHaveBeenCalledWith(
+        's1',
+        'p1',
+        expect.objectContaining({ selling_price: '99.00' }),
+      ),
+    );
+    await screen.findByText('Other item');
+  });
+
+  it('a search with a row that cannot save warns and keeps the row, rather than dropping it', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item' }),
+    ]));
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Max discount % on SAVED-1/ }), {
+      target: { value: '150' },
+    });
+    fireEvent.change(screen.getByLabelText(/search products in this series/i), {
+      target: { value: 'oth' },
+    });
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(String(toast.warning.mock.calls[0][0])).toContain('SAVED-1');
+    expect(getSeriesProductRows).not.toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({ query: 'oth' }),
+    );
+    expect(screen.getByDisplayValue('150')).toBeInTheDocument();
+    // The box goes back to what the list shows, so the two never disagree.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/search products in this series/i)).toHaveValue(''),
+    );
+  });
+
+  it('a search waits for a save already running, and warns when that save fails', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item' }),
+    ]));
+    let fail: (error: Error) => void = () => {};
+    updateSeriesProductPricing.mockImplementation(
+      () => new Promise((_resolve, reject) => { fail = reject; }),
+    );
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on SAVED-1/ }), {
+      target: { value: '99.00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save SAVED-1/ }));
+    await waitFor(() => expect(updateSeriesProductPricing).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText(/search products in this series/i), {
+      target: { value: 'oth' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(getSeriesProductRows).not.toHaveBeenCalledWith('s1', expect.objectContaining({ query: 'oth' }));
+    fail(new Error('Server said no'));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(String(toast.warning.mock.calls[0][0])).toContain('SAVED-1');
+    expect(getSeriesProductRows).not.toHaveBeenCalledWith('s1', expect.objectContaining({ query: 'oth' }));
+    expect(screen.getByDisplayValue('99.00')).toBeInTheDocument();
+  });
+
+  it('a page change saves edited rows on the page first', async () => {
+    getSeriesProductRows.mockImplementation(async (_id: string, opts?: { page?: number }) =>
+      serverPage(
+        [row({ product_id: `p${opts?.page}`, product_code: `C${opts?.page}`, product_name: `Item page ${opts?.page}` })],
+        120,
+      ),
+    );
+    updateSeriesProductPricing.mockResolvedValue(row());
+    renderTable();
+    await screen.findByText('Item page 1');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on C1/ }), {
+      target: { value: '77.00' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /next page/i }));
+    await screen.findByText('Item page 2');
+    expect(updateSeriesProductPricing).toHaveBeenCalledWith(
+      's1',
+      'p1',
+      expect.objectContaining({ selling_price: '77.00' }),
+    );
+  });
+
+  it('asks before the browser leaves the page with an unsaved row', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item' }),
+    ]));
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Max discount % on SAVED-1/ }), {
+      target: { value: '150' },
+    });
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('moves to the last existing page when the total shrinks under the current page', async () => {

@@ -70,6 +70,10 @@ class PriceTagRequestLineCreate(BaseModel):
     # candidates are known.
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    # PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's template pick. Checked
+    # in the service against the product's published links; anything else is
+    # dropped, never stored.
+    tag_template_id: Optional[str] = None
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -98,6 +102,7 @@ class PriceTagReviseLineIn(BaseModel):
     quantity: int = Field(default=1, ge=1)
     remarks: Optional[str] = None
     promotion_id: Optional[str] = None
+    tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
 
 
@@ -237,6 +242,10 @@ class PriceTagRequestLineResponse(BaseModel):
     # while live), so the read-only line reads "<name> (expired <date>)".
     promotion_expired_on: Optional[date] = None
     manual_sell_price: Optional[Decimal] = None
+    # PRICETAG-TEMPLATE-PER-PRODUCT: the stored template pick, and its name
+    # (resolved, not stored - a bare id is never shown).
+    tag_template_id: Optional[str] = None
+    tag_template_name: Optional[str] = None
     # D3 (S7): why `sell_price` is what it is - `manual` | `promotion` |
     # `list`. Resolved alongside `list_price`/`sell_price`, same reason.
     sell_price_basis: Optional[str] = None
@@ -554,7 +563,23 @@ SLOT_BINDINGS = (
     "alternatives",
     "accessories",
     "set_members",
+    "combo_image",
+    "combo_name",
+    "combo_description",
+    "combo_choices",
+    "combo_topups",
+    # PS-SPEC-SHEET: the technical drawing of the subject.
+    "drawing",
 )
+
+
+class LayerShowWhenDoc(BaseModel):
+    """PS-SPEC-SHEET: print the layer only when the page has part N and/or a spec reads Yes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spec: Optional[str] = Field(default=None, max_length=64)
+    part: Optional[int] = Field(default=None, ge=0, le=20)
 
 
 class _StrictProps(BaseModel):
@@ -720,6 +745,7 @@ class TagLayerDoc(BaseModel):
     slot_binding: Optional[Literal[SLOT_BINDINGS]] = None  # type: ignore[valid-type]
     text_override: Optional[str] = None
     props: TagLayerPropsDoc
+    show_when: Optional[LayerShowWhenDoc] = None
 
     @model_validator(mode="after")
     def _type_agrees_with_props(self) -> "TagLayerDoc":
@@ -1083,8 +1109,10 @@ class LinePricingLineIn(BaseModel):
     part_product_ids: list[str] = Field(default_factory=list, max_length=50)
     candidate_product_ids: list[str] = Field(default_factory=list, max_length=50)
     promotion_id: Optional[str] = None
+    #: PRICETAG-COMBO: the combo the line names, so the lookup answers the combo's price.
+    combo_id: Optional[str] = None
 
-    @field_validator("product_id", "promotion_id", mode="after")
+    @field_validator("product_id", "promotion_id", "combo_id", mode="after")
     @classmethod
     def _validate_id(cls, value):
         return _uuid_or_none(value)
@@ -1174,6 +1202,40 @@ class SpecKeyItem(BaseModel):
     unit: Optional[str] = None
 
 
+class TagComboOption(BaseModel):
+    product_id: str
+    code: str
+    description: str = ""
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+    picked: bool = False
+
+
+class TagComboChoice(BaseModel):
+    role: str
+    options: list[TagComboOption] = []
+
+
+class TagComboUpgrade(BaseModel):
+    product_id: str
+    code: str
+    description: str = ""
+    topup_amount: Optional[float] = None
+    picked: bool = False
+
+
+class TagCombo(BaseModel):
+    """PRICETAG-COMBO AC-2.1: the combo a tag's line names, as the tag shows it.
+    Declared here or `response_model` drops it without a word."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    free_items: Optional[str] = None
+    choices: list[TagComboChoice] = []
+    upgrades: list[TagComboUpgrade] = []
+
+
 class ProductTagData(BaseModel):
     """Everything a product block draws. Resolved per request, never stored."""
 
@@ -1201,6 +1263,8 @@ class ProductTagData(BaseModel):
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
     currency: str = "MYR"
+    #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
+    combo: Optional[TagCombo] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1234,6 +1298,19 @@ class ResolvePreviewIn(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     promotion_id: Optional[str] = None
+    #: PRICETAG-COMBO AC-5.3: with `product_id`, previews that product's combo.
+    combo_id: Optional[str] = None
+
+
+class ComboSearchItem(BaseModel):
+    combo_id: str
+    name: str
+    host_product_id: str
+    host_code: str
+
+
+class ComboSearchOut(BaseModel):
+    data: list[ComboSearchItem] = []
 
 
 class ResolvePreviewOut(BaseModel):
@@ -1358,6 +1435,8 @@ class ResolvedLineData(BaseModel):
     sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
+    #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
+    combo: Optional[TagCombo] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1414,6 +1493,9 @@ class AssetResponse(BaseModel):
     kind: str
     tags: list[str] = []
     url: Optional[str] = None
+    #: A rendition for a screen (the attachment's thumbnail, else a medium copy), never the
+    #: original. The picker grid draws this; ``url`` stays the original.
+    thumb_url: Optional[str] = None
     mime_type: Optional[str] = None
 
 
@@ -1533,3 +1615,87 @@ class RequestVersionSummary(BaseModel):
     commit_message: Optional[str] = None
     created_by_name: Optional[str] = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-TEMPLATE-PER-PRODUCT
+# ---------------------------------------------------------------------------
+
+
+class ProductTagTemplateItem(BaseModel):
+    """One template linked to a product, as the product page and the request
+    line read it. ``published`` False = linked but offered nowhere until it is
+    published again."""
+
+    id: str
+    name: str
+    family: str
+    published: bool
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+
+
+class ProductTagTemplatesUpdate(BaseModel):
+    template_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class TemplateAssignFilter(BaseModel):
+    """Which products a bulk assignment reaches: AND across kinds, OR within."""
+
+    brand_ids: list[str] = Field(default_factory=list, max_length=500)
+    category_ids: list[str] = Field(default_factory=list, max_length=500)
+    item_class_ids: list[str] = Field(default_factory=list, max_length=500)
+    family_codes: list[str] = Field(default_factory=list, max_length=500)
+
+
+class TemplateAssignIn(TemplateAssignFilter):
+    action: Literal["add", "remove"]
+
+
+class TemplateAssignPreviewOut(BaseModel):
+    matched: int
+    already_linked: int
+
+
+class TemplateAssignOut(BaseModel):
+    changed: int
+
+
+class TagPreviewLineIn(BaseModel):
+    """One line of the form in progress, as the live preview reads it."""
+
+    key: str = Field(..., min_length=1, max_length=64)
+    line_type: str = Field(..., pattern=r"^(product|product_set)$")
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    combo_id: Optional[str] = None
+    parts: list[LinePartIn] = Field(default_factory=list, max_length=50)
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
+    tag_template_id: Optional[str] = None
+
+
+class TagPreviewIn(BaseModel):
+    """Either the form in progress (``lines``) or a saved request of the
+    caller's own (``request_id``, #2101's approve screen). ``request_id``
+    wins when both are sent."""
+
+    price_mode: Literal["list", "selling"] = "list"
+    lines: list[TagPreviewLineIn] = Field(default_factory=list, max_length=50)
+    request_id: Optional[str] = None
+
+
+class TagPreviewTemplate(BaseModel):
+    id: str
+    name: str
+    family: str
+    doc: dict
+    print_size: dict
+
+
+class TagPreviewOut(DesignMediaMixin):
+    """Per line key: the template to draw and the resolved tag data
+    (``lines[].line_id`` is the client's key). Nothing is written."""
+
+    lines: list[ResolvedLineData] = []
+    templates: dict[str, TagPreviewTemplate] = {}

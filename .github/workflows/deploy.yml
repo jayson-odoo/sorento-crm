@@ -96,7 +96,7 @@ on:
         default: false
         type: boolean
       runner:
-        description: "Ignored since CI-MAC-ONLY (1 Nov 2026): every test and gate job runs on the Mac mini runner (sorento-mac), images and the deploy on GitHub-hosted. Kept so an existing dispatch with -f runner=... still parses."
+        description: "Where this run's test and fast-gate jobs run: github = GitHub-hosted (the default, and where every PR run goes); auto = the test jobs go to the Mac mini runner when it is online and idle, else GitHub-hosted (fast-gate jobs stay GitHub-hosted); mac = the Mac mini runner (sorento-mac). Images and the deploy always run GitHub-hosted (amd64)."
         required: false
         default: github
         type: choice
@@ -149,29 +149,29 @@ env:
   # (RELEASE5-FIX).
   TZ: UTC
 
-# Where the jobs run (CI-MAC-ONLY, owner 1 Nov 2026: the repo is private, so
-# GitHub-hosted minutes bill against a 3,000 min/month quota; "only the build
-# and deploy to server should be ran on github, others can run on mac mini").
-#   - Every job but build-images and build-and-deploy: `runs-on: [self-hosted,
-#     sorento-mac]`, the self-hosted Linux arm64 runner on the Mac mini
-#     (scripts/ci-runner/). No fallback to GitHub-hosted: a busy or offline Mac
-#     queues the job (crew's ci_backlog alarm covers a stuck queue). One runner,
-#     so jobs (and matrix shards) run one at a time.
-#   - build-images and build-and-deploy: `ubuntu-latest`. Prod images are
-#     amd64 (an amd64 build on the arm64 VM is QEMU and the frontend `next
-#     build` OOMs there), and only build-and-deploy holds the deploy secrets.
-#     build-images waits for every test job, so a red release bills no
-#     GitHub-hosted minute.
-#   - The dispatch input `runner` routes nothing; it stays declared so a
-#     dispatch that passes `-f runner=github` still parses.
-#   - Every job on the Mac declares its token: contents read, plus the label
-#     removal the PR gate and the ci-full refusal need. The repo default is
-#     write-all, and the Mac runner keeps state between jobs. No secret but the
-#     job token reaches a Mac job (validate-backend/validate-mcp build without
-#     a Docker Hub login for that reason).
-#   - XDIST_WORKERS is 2 in every backend test step: the VM is 4 CPU / 6 GB,
-#     and `-n auto` (4 workers) OOM-killed shards there (PLAN-ci-mac-cap-18oct).
-# Pinned by sorento_crm_backend/tests/test_ci_runner_routing.py.
+# Where the jobs run. GitHub-hosted (`ubuntu-latest`) for every job unless a
+# release dispatch asks otherwise (CI-HOSTED-RUNNERS, owner 29 Oct 2026: the
+# repo is public again, so GitHub-hosted minutes are free and jobs run in
+# parallel, where the one Mac runner queued 6-8 PR runs for hours; run
+# 40810095336 waited 109 min for 9 min of work). The repo variables
+# RUNNER_TESTS / RUNNER_FAST no longer route anything, and a PR run has no
+# inputs, so a PR gate never lands on a self-hosted runner (a self-hosted
+# runner on a public repo is what scripts/ci-runner/up.sh refuses).
+#   - workflow_dispatch input `runner`: github (default) | auto | mac.
+#     `mac` sends the test and fast-gate jobs to the self-hosted Linux arm64
+#     runner on the Mac mini (label `sorento-mac`). `auto` sends the test jobs
+#     there when a sorento-mac runner is online and idle, else GitHub-hosted;
+#     it is decided by the first step of `Changed areas` (no extra billed job)
+#     from the runners API with the RUNNERS_READ_TOKEN secret (fine-grained
+#     PAT, this repo only, Administration: read-only); no secret or a failed
+#     call = GitHub-hosted. Fast-gate jobs follow `mac` only.
+#   - Every job that can land on the Mac declares its token: contents read,
+#     plus the label removal the PR gate and the ci-full refusal need. The
+#     repo default is write-all, and the Mac runner keeps state between jobs.
+#   - build-images, build-and-deploy, validate-backend and validate-mcp stay
+#     GitHub-hosted: prod images are amd64, the Mac runners are arm64.
+# Any other value lands on GitHub-hosted. Pinned by
+# sorento_crm_backend/tests/test_ci_runner_routing.py.
 jobs:
   # Fast pre-check: fail in under a minute when the alembic migration graph
   # has more than one head, instead of consuming a 21-35 minute full-CI cycle
@@ -184,7 +184,7 @@ jobs:
   # revision/down_revision graph, and fails unless exactly one head remains.
   check-migration-heads:
     name: Single alembic head (fast gate)
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20
@@ -224,7 +224,7 @@ jobs:
   # only commits that passed it there.
   pii-guard:
     name: PII guard (fast gate)
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20
@@ -355,7 +355,7 @@ jobs:
   # the signal to extend NOT_DOCS_RE below.
   changes:
     name: Changed areas
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     timeout-minutes: 20
     # Same gate as check-migration-heads above, and for the same reason: this
     # is the other root job (no `needs`), so skipping it here skips every job
@@ -402,7 +402,39 @@ jobs:
       base_sha: ${{ steps.filter.outputs.base_sha }}
       # A PR whose merge tree already passed a PR gate (CI-COST round 2).
       validated: ${{ steps.filter.outputs.validated }}
+      # Where the test jobs run (see the routing note above `jobs:`).
+      tests_runner: ${{ steps.runner.outputs.runner }}
     steps:
+      # First, so every early exit of the area filter below still routes the
+      # test jobs. Only ever emits sorento-mac or ubuntu-latest.
+      - name: Pick the test runner
+        id: runner
+        env:
+          OVERRIDE: ${{ inputs.runner }}
+          # This step only: lists the repo's self-hosted runners for `auto`.
+          GH_TOKEN: ${{ secrets.RUNNERS_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          mac=sorento-mac
+          mode="$OVERRIDE"
+          runner=ubuntu-latest
+          case "$mode" in
+            mac|sorento-mac) runner=$mac; why="set to mac" ;;
+            ""|github|ubuntu-latest) why="github (a PR run, or no override)" ;;
+            auto)
+              if [ -z "${GH_TOKEN:-}" ]; then
+                why="auto: no RUNNERS_READ_TOKEN secret"
+              elif idle=$(gh api "repos/$REPO/actions/runners?per_page=100" \
+                  --jq "[.runners[] | select(.status == \"online\" and (.busy | not) and any(.labels[]; .name == \"$mac\"))] | length"); then
+                if [ "${idle:-0}" -ge 1 ]; then runner=$mac; why="auto: $idle idle Mac runner(s)"; else why="auto: no idle Mac runner online"; fi
+              else
+                why="auto: runners API call failed"
+              fi ;;
+            *) why="unknown value '$mode'" ;;
+          esac
+          echo "::notice title=Test runner::$runner ($why)"
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
       - name: Detect changed areas
         id: filter
         env:
@@ -718,18 +750,21 @@ jobs:
     name: Validate backend imports
     needs: [changes]
     if: needs.changes.outputs.backend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
-    permissions:
-      contents: read
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # No Docker Hub login (CI-MAC-ONLY, 1 Nov 2026): a job on the Mac runner
-      # holds no secret but the job token, and the Mac pulls from its own IP,
-      # not a shared GitHub-hosted one. The build stays linux/amd64 (what
-      # ships; QEMU on the arm64 VM) so it shares build-images' gha cache.
+      # Authenticate before any build: build-push-action pulls base images from
+      # Docker Hub, and anonymous pulls share the runner's IP rate-limit, which
+      # surfaces as "registry-1.docker.io ... context deadline exceeded".
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -805,15 +840,20 @@ jobs:
     name: Validate MCP imports
     needs: [changes]
     if: needs.changes.outputs.mcp == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
-    permissions:
-      contents: read
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # No Docker Hub login: see validate-backend.
+      # See validate-backend: authenticate so base-image pulls aren't anonymous
+      # (avoids Docker Hub rate-limit timeouts on shared runner IPs).
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -912,7 +952,7 @@ jobs:
     name: Backend test suite - SCM (Postgres, xdist)
     needs: [changes]
     if: needs.changes.outputs.scm == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 90
@@ -1032,7 +1072,7 @@ jobs:
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
         env:
-          XDIST_WORKERS: "2"
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
@@ -1154,7 +1194,7 @@ jobs:
       needs.changes.outputs.backend == 'true'
       && github.event_name != 'pull_request'
       && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 90
@@ -1300,7 +1340,7 @@ jobs:
         if: matrix.shard != 'serial'
         working-directory: sorento_crm_backend
         env:
-          XDIST_WORKERS: "2"
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 10"
@@ -1433,7 +1473,7 @@ jobs:
       always()
       && ((github.event_name == 'pull_request' && github.event.label.name == 'ci')
       || (github.event_name == 'workflow_dispatch' && needs.changes.outputs.lean == 'true'))
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -1693,7 +1733,7 @@ jobs:
         working-directory: sorento_crm_backend
         env:
           FILES: ${{ steps.select.outputs.files }}
-          XDIST_WORKERS: "2"
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           # The shards' split. tests/scm and the rest run as separate pytest
           # sessions, as on the shards: several main-tree files import
@@ -1731,7 +1771,7 @@ jobs:
         working-directory: sorento_crm_backend
         env:
           FILES: ${{ steps.select.outputs.files }}
-          XDIST_WORKERS: "2"
+          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
         run: |
           chains=""
           for f in tests/test_forms_chain_*.py tests/test_form_handling_lock_routes.py \
@@ -1828,7 +1868,7 @@ jobs:
     name: Validate frontend (vitest)
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
     permissions:
       contents: read
     # A shard measured about 8.5 min over 29 Sep-5 Oct, then grew to 17.7-18.9
@@ -1893,7 +1933,7 @@ jobs:
     name: Type-check frontend
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20
@@ -1960,40 +2000,14 @@ jobs:
   # job reads via `cache-from`.
   build-images:
     name: Build and push images
-    # After the tests, not beside them (CI-MAC-ONLY, crew/owner 1 Nov 2026):
-    # this job is GitHub-hosted and billed against the private repo's 3,000
-    # min/month, and a release whose tests fail used to bill its ~7-minute
-    # build anyway (about 660 min a month at the 26 Oct-1 Nov failure rate).
-    # Now a red release bills 0 GitHub-hosted minutes; a green one reaches the
-    # deploy approval about 7 minutes later.
-    needs:
-      [
-        changes,
-        check-migration-heads,
-        validate-backend,
-        validate-mcp,
-        validate-frontend,
-        test-backend,
-        test-backend-scm,
-        typecheck-frontend,
-        lean-gate,
-      ]
-    # Only build for real on a release (workflow_dispatch on main). A push to
-    # main builds nothing (see the `push` trigger comment), a dispatch on any
-    # other ref runs the suite only, and the full-suite validate-backend/
-    # validate-mcp legs build separately (load: true, no push).
-    # `!cancelled()` and the result checks, as on build-and-deploy: a lean
-    # release skips the shards and a skip_tests release skips every test job
-    # on purpose, and the default success-of-every-need rule would skip this
-    # job with them. A failed or cancelled need stops it.
-    if: >-
-      ${{ !cancelled()
-      && github.event_name == 'workflow_dispatch'
-      && github.ref == 'refs/heads/main'
-      && needs.changes.result == 'success'
-      && needs.check-migration-heads.result == 'success'
-      && !contains(needs.*.result, 'failure')
-      && !contains(needs.*.result, 'cancelled') }}
+    needs: [changes]
+    # Same condition as build-and-deploy: only build for real on a release
+    # (workflow_dispatch on main). A push to main builds nothing (see the
+    # `push` trigger comment), a dispatch on any other ref runs the suite
+    # only, and a PR run still needs the images to exist for its own
+    # validate-backend/validate-mcp legs, which build separately (load:
+    # true, no push) and are unaffected by this job's `if`.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # The frontend build measured 7.6 min (run 38017372957); twice the worst
     # of all three in sequence plus setup.
@@ -2002,8 +2016,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Authenticate so base-image pulls aren't anonymous (avoids Docker Hub
-      # rate-limit timeouts on shared GitHub-hosted runner IPs).
+      # See validate-backend: authenticate so base-image pulls aren't
+      # anonymous (avoids Docker Hub rate-limit timeouts on shared runner IPs).
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -2341,7 +2355,7 @@ jobs:
   # run on the same PR. The full suite runs on a release only.
   refuse-ci-full:
     name: ci-full refused (release-only)
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     timeout-minutes: 20
     if: github.event_name == 'pull_request' && github.event.label.name == 'ci-full'
     permissions:
@@ -2386,7 +2400,7 @@ jobs:
   # sorento_crm_backend/tests/test_ci_docs_only_filter.py.
   ci-gate:
     name: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'ci' && 'CI gate') || 'CI gate (full)' }}
-    runs-on: [self-hosted, sorento-mac]
+    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 20

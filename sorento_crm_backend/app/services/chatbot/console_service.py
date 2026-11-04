@@ -672,8 +672,6 @@ def _run_agent_side(
 ) -> ConsoleTurnResult:
     """The router chose the agent: run it, and never fall back to the bot (card rule 6). A busy or
     failed agent says so in the reply."""
-    from app.services.chatbot.agent import memory as agent_memory
-
     if not operator_user_id:
         # No operator, no rate-limit identity and no audit actor: the agent does not run, and the bot does not stand in.
         return ConsoleTurnResult(
@@ -708,20 +706,27 @@ def _run_agent_side(
         quick_replies=[],
         send_messages=[],
         trace_summary={},
-        agent={
-            "turn_id": result.turn_id,
-            "conversation_id": result.conversation_id,
-            "reply_text": result.reply_text,
-            "status": result.status,
-            "limit_hit": result.limit_hit,
-            "rounds": result.rounds,
-            "usage": result.usage,
-            "tool_calls": result.tool_calls,
-            "steps": agent_memory.steps_for_turn(db, result.turn_id),
-            "pending_action": result.pending_action,
-            "actions": _agent_actions_of(db, contact_respond_id, result.turn_id),
-        },
+        agent=agent_view(db, contact_respond_id, result),
     )
+
+
+def agent_view(db: Session, contact_respond_id: str, result: Any) -> dict[str, Any]:
+    """An agent turn as the console and the panel carry it."""
+    from app.services.chatbot.agent import memory as agent_memory
+
+    return {
+        "turn_id": result.turn_id,
+        "conversation_id": result.conversation_id,
+        "reply_text": result.reply_text,
+        "status": result.status,
+        "limit_hit": result.limit_hit,
+        "rounds": result.rounds,
+        "usage": result.usage,
+        "tool_calls": result.tool_calls,
+        "steps": agent_memory.steps_for_turn(db, result.turn_id),
+        "pending_action": result.pending_action,
+        "actions": _agent_actions_of(db, contact_respond_id, result.turn_id),
+    }
 
 
 def _agent_actions_of(db: Session, contact_respond_id: str, turn_id: str) -> list[dict]:
@@ -774,7 +779,10 @@ def console_thread(db: Session, *, contact_respond_id: str, run_id: str) -> dict
     except AgentRefused:
         ctx = None
     if ctx is not None:
-        waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        # The console shows a contact's own TEST proposal only, never its live WhatsApp one (AGENTIC-WA-W2).
+        waiting = agent_actions.pending_action(
+            db, contact_respond_id, user_id=ctx.user_id, test=True if ctx.principal == "contact" else None
+        )
         pending = agent_actions.pending_dict(waiting) if waiting is not None else None
         conv = agent_memory.latest_conversation(db, contact_respond_id)
         if conv is not None and agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):

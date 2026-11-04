@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }));
 
@@ -40,6 +41,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   updateRequest: vi.fn(),
   deleteRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
@@ -180,7 +184,7 @@ async function pickPrinting() {
 }
 
 function submit() {
-  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  sendToMarketing();
 }
 
 async function lastCreatePayload() {
@@ -296,3 +300,19 @@ describe('PriceTagRequestForm - line remarks (D6, AC-S2-4)', () => {
     expect(payload.lines[0].remarks).toBeNull();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

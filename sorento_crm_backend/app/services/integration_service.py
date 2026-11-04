@@ -10,7 +10,7 @@ from app.config import settings
 from app.models.integration import IntegrationLog
 from app.schemas.integration import IntegrationLogCreate, IntegrationLogUpdate
 from app.services.error_handler import handle_not_found
-from app.services.respond_outbound_service import assert_outbound_enabled
+from app.services.respond_outbound_service import assert_not_panel_thread, assert_outbound_enabled
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,24 @@ WEBHOOK_AUTH_HEADER_CHANNELS = frozenset({"n8n_crm_chat_outbound", "n8n_crm_clos
 # token, so an operator reading a log row can tell "we redacted this" from "the
 # caller sent this literal".
 MASKED_HEADER_VALUE = "***"
+
+# INTLOG-SPEED (PLAN-intlog-speed-03nov.md): the Integration Log list counts at most this many
+# rows past the page's offset. Prod's exact count over ~1.7M rows took 80-275 s per load; a page
+# itself is a 3 ms backward scan of ix_integration_log_created_at. Over the window, the total is
+# reported as offset + cap with total_capped = true ("10,000+" in the UI).
+INTEGRATION_LOG_COUNT_CAP = 10_000
+
+# Columns the list sorts on server-side, keyed by the grid's column id.
+INTEGRATION_LOG_SORT_COLUMNS = (
+    "integration_channel",
+    "business_table",
+    "business_id",
+    "status",
+    "retry_count",
+    "created_at",
+    "processed_at",
+)
+INTEGRATION_LOG_NULLABLE_SORT_COLUMNS = frozenset({"processed_at"})
 
 # Header names whose VALUE is a credential. `dict(request.headers)` is serialised
 # whole into `integration_logs.request_headers`, which is written once per
@@ -347,7 +365,11 @@ class RespondClient:
         return httpx.Client(timeout=timeout, event_hooks={"request": [httpx_request_hook]})
 
     def _contact_api_identifier(self, identifier: str) -> str:
-        """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is."""
+        """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is.
+
+        Every call on a contact's URL builds its path here, so a panel thread's key stops here too:
+        not only a message but an assign, a comment or a close (AGENTIC-UNIFY AC-9)."""
+        assert_not_panel_thread(identifier)
         if not identifier or ":" in identifier:
             return identifier or ""
         return f"id:{identifier}"
@@ -873,6 +895,8 @@ class IntegrationLogService:
         self,
         page: int = 1,
         limit: int = 50,
+        sort: Optional[str] = None,
+        sort_dir: Optional[str] = None,
         status: Optional[list[str] | str] = None,
         integration_channel: Optional[list[str] | str] = None,
         business_table: Optional[list[str] | str] = None,
@@ -884,7 +908,7 @@ class IntegrationLogService:
         exclude_healthcheck: bool = True,
     ):
         """List integration logs with pagination and filtering."""
-        from app.schemas.common import PaginationResponse
+        from app.schemas.integration import IntegrationLogPagination
         from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
 
         try:
@@ -933,11 +957,19 @@ class IntegrationLogService:
                         IntegrationLog.error_message.ilike(f"%{term}%", escape="\\")
                     )
 
-            q = q.order_by(IntegrationLog.created_at.desc())
-            
-            total = q.count()
             offset = (page - 1) * limit
-            logs = q.offset(offset).limit(limit).all()
+            total, total_capped = self._capped_count(q, offset)
+
+            column_name = sort if sort in INTEGRATION_LOG_SORT_COLUMNS else "created_at"
+            descending = (sort_dir or "").lower() != "asc" if sort in INTEGRATION_LOG_SORT_COLUMNS else True
+            column = getattr(IntegrationLog, column_name)
+            ordered = column.desc() if descending else column.asc()
+            if column_name in INTEGRATION_LOG_NULLABLE_SORT_COLUMNS:
+                ordered = ordered.nulls_last()
+            # NOT NULL columns get no NULLS clause: DESC NULLS LAST would not match an index's
+            # order read backward, and created_at/status/integration_channel must stay on theirs.
+            tiebreak = IntegrationLog.id.desc() if descending else IntegrationLog.id.asc()
+            logs = q.order_by(ordered, tiebreak).offset(offset).limit(limit).all()
             
             logger.debug(f"Found {total} integration logs, returning {len(logs)}")
             
@@ -980,13 +1012,32 @@ class IntegrationLogService:
             
             return {
                 "data": log_responses,
-                "pagination": PaginationResponse(total=total, page=page, limit=limit),
+                "pagination": IntegrationLogPagination(
+                    total=total, page=page, limit=limit, total_capped=total_capped
+                ),
                 "empty": total == 0
             }
         except Exception as e:
             logger.error(f"Error in list_integration_logs: {str(e)}", exc_info=True)
             raise
     
+    @staticmethod
+    def _capped_count(q, offset: int) -> tuple[int, bool]:
+        """Count the filtered rows, but never more than ``offset + INTEGRATION_LOG_COUNT_CAP``.
+
+        No ORDER BY (it made Postgres sort every row before counting), and a LIMIT inside the
+        subquery so the scan stops at the window. The window moves with the offset, so the
+        page being read is always inside it and Next stays live while the total is capped.
+        """
+        from sqlalchemy import func, select
+
+        window = offset + INTEGRATION_LOG_COUNT_CAP
+        bounded = q.order_by(None).with_entities(IntegrationLog.id).limit(window + 1).subquery()
+        seen = q.session.execute(select(func.count()).select_from(bounded)).scalar_one()
+        if seen > window:
+            return window, True
+        return seen, False
+
     def update_integration_log(
         self,
         log_id: str,

@@ -842,6 +842,16 @@ SPEC_REGISTRY_SEED: list[dict] = [
         "rank_weight": 2.0,
     },
     {
+        "spec_key": "is_accessible",
+        "label": "Accessible (OKU)",
+        "data_type": "boolean",
+        # PS-SPEC-SHEET Q5: the wheelchair badge on a project spec sheet page, beside Rimless.
+        # Filled by hand in master data (grab bars, OKU WCs and basins); no derivation rule,
+        # because no word in our product names says it reliably.
+        "synonyms": {"true": ["oku", "accessible", "disabled", "wheelchair"]},
+        "rank_weight": 1.0,
+    },
+    {
         "spec_key": "bar_count",
         "label": "Number of bars",
         "data_type": "numeric",

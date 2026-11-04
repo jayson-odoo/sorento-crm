@@ -587,6 +587,8 @@ def test_s14_delivery_and_customers_source_from_order_inquiry_order_rows(db, cha
             decision_state=decision_state, inquiry_state=inquiry_state,
         )
         leg["inquiry_row"].delivery_date = delivery
+        # OI-ONE-DELIVERY-DATE: the sheet buckets by the SO line's date, so the line carries it.
+        leg["core_line"].required_date = delivery
         core_so_id = db.execute(text(
             "SELECT sales_order_id FROM sales_order_lines WHERE id = :l"
         ), {"l": leg["core_line"].id}).scalar()
@@ -637,9 +639,12 @@ def test_s14_undated_order_inquiry_row_lands_under_the_null_month_last(db, chain
     leg_dated = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
                                buy_qty=4)
     leg_dated["inquiry_row"].delivery_date = date(2026, 6, 1)
+    leg_dated["core_line"].required_date = date(2026, 6, 1)
     leg_undated = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
                                  buy_qty=6)
-    # `delivery_date` left NULL (the default `_confirmed_leg` builds).
+    # Undated means the SO line has no date either (OI-ONE-DELIVERY-DATE: a dated line would
+    # give the row its date); the row's own `delivery_date` is left NULL as built.
+    leg_undated["core_line"].required_date = None
     db.flush()
 
     assert svc.write_rows(db, f["run"].id) == 1
@@ -661,6 +666,7 @@ def test_a3_a_superseded_decision_now_contributes_to_the_sheet(db, chain):
     leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
                          buy_qty=9, decision_state="superseded")
     leg["inquiry_row"].delivery_date = date(2026, 9, 1)
+    leg["core_line"].required_date = date(2026, 9, 1)
     db.flush()
 
     assert svc.write_rows(db, f["run"].id) == 1

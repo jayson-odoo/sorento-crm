@@ -8,12 +8,14 @@ import {
   createProductCombo,
   listProductCombos,
   listProductSoldWith,
+  updateProductCombo,
   updateProductComboPart,
 } from '../services/productComboService';
 import type {
   ProductComboCreate,
   ProductComboPartCreate,
   ProductComboPartUpdate,
+  ProductComboUpdate,
 } from '../types/productCombo.types';
 
 // Exported so `useProductComboImage` (a sibling hook, S5) invalidates the
@@ -68,13 +70,29 @@ export function useAddProductComboPart(productId: string) {
   });
 }
 
+export function useUpdateProductCombo(productId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { comboId: string; write: ProductComboUpdate }) =>
+      updateProductCombo(input.comboId, input.write),
+    onSuccess: () => {
+      toast.success('Combo saved');
+      return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the combo'),
+  });
+}
+
 export function useUpdateProductComboPart(productId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: { partId: string; write: ProductComboPartUpdate }) =>
       updateProductComboPart(input.partId, input.write),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: combosKey(productId) }),
-    onError: (error: Error) => toast.error(error.message || 'Failed to save the choice group'),
+    onSuccess: () => {
+      toast.success('Part saved');
+      return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the part'),
   });
 }
 

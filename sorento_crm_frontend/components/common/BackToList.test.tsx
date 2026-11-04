@@ -52,6 +52,16 @@ describe('BackToList', () => {
     );
   });
 
+  it('drops the detail page\'s own `view_*` grid state too (OI-UX-FILTER-SNAPSHOT)', () => {
+    search = 'page=2&status=open&view_q=pump&view_state=placed&view_sort=item_code%3Aasc';
+
+    render(<BackToList listPath="/project-sales/order-inquiries" label="Back to inquiries" />);
+
+    expect(screen.getByRole('link', { name: /Back to inquiries/ }).getAttribute('href')).toBe(
+      '/project-sales/order-inquiries?page=2&status=open',
+    );
+  });
+
   it('S3-01: a caller that owns its whole href keeps it (spec verification worklist)', () => {
     search = 'page=2&limit=50';
 

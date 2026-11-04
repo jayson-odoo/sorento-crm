@@ -37,6 +37,14 @@ export type SlotBinding =
   | 'set_members'
   | 'barcode'
   | 'price_tag_description'
+  | 'combo_image'
+  | 'combo_name'
+  | 'combo_description'
+  | 'combo_choices'
+  | 'combo_topups'
+  // PS-SPEC-SHEET: an image slot showing the subject's technical drawing (the quotation line's
+  // frozen drawing, or a part's first "Technical Specifications" file). Empty when it has none.
+  | 'drawing'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -322,6 +330,18 @@ export interface TagLayer {
   slot_binding: SlotBinding;
   text_override: string | null;
   props: TagLayerProps;
+  /**
+   * PS-SPEC-SHEET: print this layer only when the bound data says so. `spec`: the subject's
+   * spec with that key reads Yes (a Rimless or Accessible badge). `part`: the line has a part
+   * at that index (an accessory row). Absent = always drawn, exactly as before. The editor
+   * canvas always draws the layer so the designer can see it.
+   */
+  show_when?: LayerShowWhen | null;
+}
+
+export interface LayerShowWhen {
+  spec?: string | null;
+  part?: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +357,10 @@ export type TagTemplateFamily =
   | 'shower'
   | 'mirror'
   | 'mirror_cabinet'
-  | 'furniture_set';
+  | 'furniture_set'
+  // PS-SPEC-SHEET: project spec sheet pages, not price tags (`SPEC_SHEET_FAMILIES`).
+  | 'spec_cover'
+  | 'spec_page';
 
 /**
  * The families a tag can belong to, in catalogue order.
@@ -361,8 +384,29 @@ export const TAG_TEMPLATE_FAMILIES: { value: TagTemplateFamily; label: string }[
   { value: 'furniture_set', label: 'Furniture Set' },
 ];
 
+/**
+ * PS-SPEC-SHEET: the project spec sheet's page templates. Designed in the same editor and
+ * printed by the same renderer, but they are pages, not price tags: never offered to a price
+ * tag request (`listPublishedTemplates`) or as a product's tag template (#2100,
+ * `NON_PRICE_TAG_FAMILY_PREFIX` server side).
+ */
+export const SPEC_SHEET_FAMILIES: { value: TagTemplateFamily; label: string }[] = [
+  { value: 'spec_cover', label: 'Spec sheet cover' },
+  { value: 'spec_page', label: 'Spec sheet page' },
+];
+
+/** Every family the template editor can give a template. */
+export const ALL_TEMPLATE_FAMILIES: { value: TagTemplateFamily; label: string }[] = [
+  ...TAG_TEMPLATE_FAMILIES,
+  ...SPEC_SHEET_FAMILIES,
+];
+
+export function isSpecSheetFamily(family: string | null | undefined): boolean {
+  return Boolean(family && family.startsWith('spec_'));
+}
+
 export function familyLabel(family: string): string {
-  return TAG_TEMPLATE_FAMILIES.find((f) => f.value === family)?.label ?? family;
+  return ALL_TEMPLATE_FAMILIES.find((f) => f.value === family)?.label ?? family;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +602,11 @@ export interface ProductTagData {
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
   currency?: string;
+  /** The combo being previewed in the template editor (PRICETAG-COMBO AC-5.3). */
+  combo?: TagCombo | null;
+  /** PS-SPEC-SHEET: brand name and technical drawing, when the source carries them. */
+  brand?: string;
+  drawing?: TagImage | null;
 }
 
 export interface ProductSetMemberTagData {
@@ -604,6 +653,35 @@ export interface TagOpenGroup {
   candidates: { product_id: string; code: string }[];
 }
 
+/** One option of a combo choice group, as the tag shows it (PRICETAG-COMBO AC-2.1). */
+export interface TagComboOption {
+  product_id: string;
+  code: string;
+  description: string;
+  list_price: number | null;
+  /** The option's own selling price, null when blank. */
+  sell_price: number | null;
+  picked: boolean;
+}
+
+export interface TagComboUpgrade {
+  product_id: string;
+  code: string;
+  description: string;
+  topup_amount: number | null;
+  picked: boolean;
+}
+
+/** The combo a tag's line names. Null on a line with no combo and on an older pin. */
+export interface TagCombo {
+  id: string;
+  name: string;
+  description: string | null;
+  free_items: string | null;
+  choices: { role: string; options: TagComboOption[] }[];
+  upgrades: TagComboUpgrade[];
+}
+
 /**
  * One part printed under the host on a tag (D3/D4).
  *
@@ -641,6 +719,20 @@ export interface TagPartData {
   chosen?: boolean;
   /** This part's OWN product's tag copy (r10 S4), not the host's. */
   price_tag_description?: string | null;
+  /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
+  brand?: string;
+  drawing?: TagImage | null;
+}
+
+/** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
+export interface SpecSheetDocFields {
+  project_title: string;
+  ref: string;
+  your_ref: string;
+  quotation_no: string;
+  prepared_by: string;
+  prepared_by_phone: string;
+  date: string;
 }
 
 /**
@@ -698,6 +790,18 @@ export interface LineTagData {
   /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
    *  description of its own, same rule as barcode above. */
   price_tag_description?: string | null;
+  /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
+  combo?: TagCombo | null;
+  /** PS-SPEC-SHEET: present only on a spec sheet page's row. */
+  brand?: string;
+  drawing?: TagImage | null;
+  area?: string;
+  comment?: string;
+  marker?: string;
+  doc?: SpecSheetDocFields;
+  /** A layer pointed at a part this line does not have reads as an empty product rather
+   *  than falling back to the parent (which would print the main item twice). */
+  strict_parts?: boolean;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */
@@ -815,4 +919,28 @@ export function defaultBarcodeProps(): BarcodeLayerProps {
     kind: 'barcode',
     show_code: true,
   };
+}
+
+/**
+ * A layer read the way the PDF renderer reads it. The renderer shows a layer unless `visible` is
+ * false, while the designer hides it unless `visible` is truthy, so a layer saved without the key
+ * draws in the PDF and vanishes on a live canvas. Normalising at the boundary closes the gap
+ * without changing how Tag Templates read their own saved documents.
+ */
+export function normalizeLayer(layer: TagLayer, index: number): TagLayer {
+  const raw = layer as unknown as Record<string, unknown>;
+  const rotation = layer.rotation_deg ?? (raw.rotation as number | undefined) ?? 0;
+  return {
+    ...layer,
+    visible: layer.visible !== false,
+    locked: layer.locked === true,
+    rotation_deg: rotation,
+    z_index: layer.z_index ?? index,
+    slot_binding: layer.slot_binding ?? null,
+    text_override: layer.text_override ?? null,
+  };
+}
+
+export function normalizeLayers(layers: TagLayer[]): TagLayer[] {
+  return layers.map(normalizeLayer);
 }

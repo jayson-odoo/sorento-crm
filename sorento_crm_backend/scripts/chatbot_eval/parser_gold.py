@@ -12,6 +12,9 @@ usage (cwd = the backend dir of the checkout under test):
       carries no CLOSED LISTS section. --reasoning-effort forces the stored parser setting
       `chatbot_parser_reasoning_effort` for this process only, never in the DB ("off" sends none, as the setting's
       off does); without it the DB value is used. Header and rows record the effort the parse read)
+  python -m scripts.chatbot_eval.parser_gold check --gold F
+      (no provider call: builds every row's user block with a bare config carrying the report ask marker,
+      sessions rolled back, and checks that a row's `held` line is the block's one `Held report` line)
 
 Imports only the stdlib at module level and `app.*` inside functions, like replay.py. Output rows carry ids,
 the pass flag, the reasons, the spend and the parse's own routing fields; each row's entities carry `raw`,
@@ -58,10 +61,19 @@ EXPECT_KEYS = frozenset({
     "portal_form", "suggested_team", "size",
     # a product entity whose `raw`, folded like `product`, equals this.
     "product_raw",
+    # SALES-ACCOUNT-TYPE PR 2: the raws of the current-message `account_type` / `brand` entities, folded, compared as a
+    # set ([] means none); the raws whose `kind_said` is true, the same way; and the period the parse read (equality,
+    # "{year}" standing for the current year, as the CURRENT DATE directive gives it).
+    "account_type", "brand", "kind_said", "date_filter_start", "date_filter_end",
+    # SALES-ACCOUNT-TYPE semantic carry: the parse's `report_ask` object (null: the parse carries none), slot by slot
+    # over the slots the row names (`_report_ask_reasons`).
+    "report_ask",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
                 "document", "sales_basis")
+#: The dates are read straight off the verdict too, after "{year}" is the current year (`_expected_date`).
+_DATE_KEYS = ("date_filter_start", "date_filter_end")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
@@ -84,7 +96,25 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "suggested_team": (str, type(None)),
     "size": (int, float, type(None)),
     "product_raw": (str,),
+    "account_type": (list,),
+    "brand": (list,),
+    "kind_said": (list,),
+    "date_filter_start": (str, type(None)),
+    "date_filter_end": (str, type(None)),
+    "report_ask": (dict, type(None)),
 }
+#: The `report_ask` slots (`parser.REPORT_ASK_KEYS`, stdlib-only here like the rest of this module) and the list ones.
+REPORT_ASK_SLOTS = (
+    "kind", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
+    "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+)
+_REPORT_ASK_LIST_SLOTS = frozenset(
+    {"sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type"}
+)
+_REPORT_ASK_DATE_SLOTS = ("date_from", "date_to")
+#: A gold row's `held`: the whole `Held report...` line the engine prints for the conversation before the message
+#: (`context.held_report_line`), "{year}" standing for the current year; null: no report held.
+HELD_PREFIX = "Held report"
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
 #: `last_list` and `pending_task` are the State block's own rendered values; `open_question` may be the
@@ -136,10 +166,17 @@ def load_gold(path: Any) -> list[dict[str, Any]]:
                 raise ValueError(f"line {n}: products_only must be a list of product codes")
             if "context" in row and not _valid_context(row["context"]):
                 raise ValueError(f"line {n}: context must map {sorted(CONTEXT_KEYS)} to text or null")
+            if isinstance(expect.get("report_ask"), dict) and set(expect["report_ask"]) - set(REPORT_ASK_SLOTS):
+                raise ValueError(f"line {n}: unknown report_ask slot")
+            held = row.get("held")
+            if held is not None and not (isinstance(held, str) and held.startswith(HELD_PREFIX) and "\n" not in held):
+                raise ValueError(f"line {n}: held must be one '{HELD_PREFIX}...' line or null")
             seen.add(row["id"])
             gold = {"id": row["id"], "message": row["message"], "expect": expect}
             if "context" in row:
                 gold["context"] = row["context"]
+            if held is not None:
+                gold["held"] = held
             rows.append(gold)
     return rows
 
@@ -160,6 +197,61 @@ def _state_change_fields(changes: Any) -> list[dict[str, Any]] | None:
     if not isinstance(changes, list):
         return None
     return [{k: c.get(k) for k in ("op", "axis", "position")} for c in changes if isinstance(c, dict)]
+
+
+def _expected_date(value: Any) -> Any:
+    """A gold date with "{year}" read as the current year (Malaysia date, as the CURRENT DATE directive)."""
+    if not isinstance(value, str) or "{year}" not in value:
+        return value
+    from app.services.reports.registry import today_malaysia
+
+    return value.replace("{year}", str(today_malaysia().year))
+
+
+def _expected_held(value: Any) -> str | None:
+    """A gold `held` line with "{year}" read as the current year, as `_expected_date` reads a date."""
+    return _expected_date(value) if isinstance(value, str) else None
+
+
+def _folded_names(values: Any) -> set[str]:
+    return {str(v).strip().casefold() for v in values or [] if str(v).strip()}
+
+
+def _report_ask_reasons(got: Any, want: dict[str, Any] | None) -> list[str]:
+    """The `report_ask` checks, one reason per slot that differs. An expected null object wants none; an expected
+    null slot is a null or absent one; a list slot is a case-insensitive set ([] wants an empty or absent list); a
+    date slot reads "{year}"; any other text slot is compared case aside."""
+    if want is None:
+        return [] if got is None else [f"report_ask {got!r} != None"]
+    if not isinstance(got, dict):
+        return [f"report_ask {got!r}: expected an object"]
+    reasons: list[str] = []
+    for slot, value in want.items():
+        have = got.get(slot)
+        if slot in _REPORT_ASK_LIST_SLOTS:
+            if _folded_names(have) != _folded_names(value):
+                reasons.append(f"report_ask.{slot} {have!r} != {value!r}")
+            continue
+        value = _expected_date(value) if slot in _REPORT_ASK_DATE_SLOTS else value
+        same = (
+            str(have).casefold() == value.casefold() if isinstance(value, str) and isinstance(have, str) else have == value
+        )
+        if not same:
+            reasons.append(f"report_ask.{slot} {have!r} != {value!r}")
+    return reasons
+
+
+def _kind_said(value: Any) -> bool:
+    """`kind_said` is the message's own word for the kind: a non-blank string (a bare true still counts)."""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
+def _entity_raws(entities: list[dict[str, Any]], hint: str, *, said: bool = False) -> set[str]:
+    """The folded raws of the current-message entities of one hint (only those with `kind_said` true when `said`)."""
+    return {
+        _fold(e.get("raw")) for e in entities
+        if e.get("hint") == hint and e.get("current_message") is not False and (not said or _kind_said(e.get("kind_said")))
+    }
 
 
 def _warehouse_raws(entities: list[dict[str, Any]]) -> list[Any]:
@@ -289,6 +381,21 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
     for key in _REPORT_KEYS:
         if key in expect and verdict.get(key) != expect[key]:
             reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
+    for key in _DATE_KEYS:
+        if key in expect and verdict.get(key) != _expected_date(expect[key]):
+            reasons.append(f"{key} {verdict.get(key)!r} != {_expected_date(expect[key])!r}")
+    for key, hint in (("account_type", "account_type"), ("brand", "brand")):
+        if key in expect:
+            got, want = _entity_raws(entities, hint), {_fold(w) for w in expect[key]}
+            if got != want:
+                reasons.append(f"{hint} raws {sorted(got)} != {sorted(want)}")
+    if "kind_said" in expect:
+        got = _entity_raws(entities, "brand", said=True) | _entity_raws(entities, "account_type", said=True)
+        want = {_fold(w) for w in expect["kind_said"]}
+        if got != want:
+            reasons.append(f"kind_said raws {sorted(got)} != {sorted(want)}")
+    if "report_ask" in expect:
+        reasons.extend(_report_ask_reasons(verdict.get("report_ask"), expect["report_ask"]))
     if "suggested_team" in expect:
         routing = verdict.get("routing")
         team = routing.get("suggested_team") if isinstance(routing, dict) else None
@@ -374,18 +481,21 @@ def _mode_used(config: Any) -> str:
 _SPAN = threading.local()
 
 
-def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None) -> Any:
-    """The parser's emission for one message, with the user turn the engine builds: for a turn with no
-    history (no held product, so no held ids), or (F1-B) for a gold `context` rendered through the same
-    ContextLayers, as the `State:` block when the version asks for one and as the legacy Current subject /
-    Open question lines otherwise. Index mode renders as the engine does: the candidate block with the
-    index lines and no Product types / Product details lines."""
+def user_block_for(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None,
+                   held_report: str | None = None) -> str:
+    """The user turn the engine builds for one message: for a turn with no history (no held product, so no held
+    ids), or (F1-B) for a gold `context` rendered through the same ContextLayers, as the `State:` block when the
+    version asks for one and as the legacy Current subject / Open question lines otherwise. Index mode renders as
+    the engine does: the candidate block with the index lines and no Product types / Product details lines. A gold
+    `held` line (`held_report`) goes in as the engine's `ContextLayers.held_report`, only for a version that carries the report ask
+    marker (`ParserConfig.report_ask`), as the engine prints it."""
     from app.models.base import set_company_scope
     from app.services.chatbot import engine, turn_runtime
     from app.services.chatbot.head import lookup_lists, parser
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.reports.ask import SALES_CHANNELS
+    from app.services.reports.ask_params import account_type_options
 
     user_turn, latest_user_message = _fresh_turn(message)
     _SPAN.event = None
@@ -401,6 +511,11 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         brands = turn_runtime.active_brands(db)
+        # SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the scoped company, read from the database like the brands,
+        # for a prompt that defines the line (a staff contact: the harness never builds a customer-scoped one).
+        account_types = (
+            [name for name, _label in account_type_options(db)] if getattr(config, "account_types", False) else None
+        )
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         lists_free = config.closed_lists_index or lookup
         product_types = None if lists_free else turn_runtime.product_type_names(db)
@@ -440,15 +555,26 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         current_subject=None if state else held.get("subject"),
         pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None,
-        brands=None if lookup else brands, promotion_kinds=None if lookup else promotion_kinds,
+        brands=None if lookup else brands, account_types=account_types,
+        promotion_kinds=None if lookup else promotion_kinds,
         # REPORT-SMART-L R9: as the engine, only when the prompt names the line (`ParserConfig.sales_channels`).
         sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) and not lookup else None,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
         lookup_lines=lookup_lines or None,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,
+        held_report=_expected_held(held_report) if getattr(config, "report_ask", False) else None,
     )
     user_block, _report = context_mod.assemble(layers)
+    return user_block
+
+
+def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None,
+               held_report: str | None = None) -> Any:
+    """The parser's emission for one message, with the user turn `user_block_for` builds."""
+    from app.services.chatbot.head import parser
+
+    user_block = user_block_for(message, config, factory, context, held_report)
     # The parser call alone is timed (the engine's own `parse_started` span), not the user turn build.
     started = time.perf_counter()
     out = parser.parse(config, user_block)
@@ -565,7 +691,11 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             "closed_lists_mode": mode, "reasoning_effort": effort,
                         }
                         try:
-                            parsed = _parse_one(case["message"], config, factory, context=case.get("context"))
+                            # The held line only when the row has one, so a `_parse_one` double without it still fits.
+                            parsed = _parse_one(
+                                case["message"], config, factory, context=case.get("context"),
+                                **({"held_report": case["held"]} if case.get("held") else {}),
+                            )
                             if getattr(_SPAN, "event", None):  # S2: did the span call fall back to the n-gram lines
                                 row.update(span_fallback=bool(_SPAN.event.get("fallback")),
                                            span_fallback_reason=_SPAN.event.get("fallback_reason"))
@@ -577,11 +707,13 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             row.update(
                                 passed=passed, reasons=reasons,
                                 **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities",
-                                                  "document", "order_status")},
+                                                  "document", "order_status", "group_by", "date_filter_start",
+                                                  "date_filter_end", "by_words")},
                                 warehouse=_warehouse_raws(entities),
                                 **{k: verdict.get(k) for k in ("topic_reset", "entity_op", "broaden_axis", "reference_positions")},
                                 open_question_answer=_answer_fields(verdict.get("open_question_answer")),
                                 state_changes=_state_change_fields(verdict.get("state_changes")),
+                                **({"report_ask": verdict.get("report_ask")} if "report_ask" in verdict else {}),
                             )
                         except replay._CapStop as stop:
                             total["stop"] = total.get("stop") or stop.reason
@@ -597,6 +729,60 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
     finally:
         logging.disable(previous_disable)
     return out
+
+
+def check_blocks(rows: list[dict[str, Any]], *, session_factory: Any, config: Any = None) -> list[dict[str, Any]]:
+    """No provider call, no network: every row's user block as `user_block_for` builds it (sessions rolled back),
+    checked for the `held` line. One result per row: `held_at` (the line index of the `Held report` line, None when
+    there is none), `lines`, `schema_report_ask` (the config's schema offers the object) and `reasons` (empty: the
+    row's held line, "{year}" read, is the block's one `Held report` line, or the row holds none and the block has
+    none). `config` defaults to a bare one carrying the report ask marker (no lookup lists, so no span call)."""
+    from app.services.chatbot.head import parser
+    from app.services.company_scope import register_company_scope_listeners
+    from scripts.chatbot_eval import replay
+
+    register_company_scope_listeners()  # idempotent; as run_live
+    if config is None:
+        config = parser.ParserConfig(
+            system_prompt="stub\n" + parser.REPORT_ASK_LINE + "\n", prompt_version=None, provider="openai",
+            model="stub", api_key="stub", report_ask=True,
+        )
+    offered = "report_ask" in (config.json_schema or parser._base_schema(config))["properties"]
+    out: list[dict[str, Any]] = []
+    with replay._rolled_back(session_factory) as factory:
+        for case in rows:
+            block = user_block_for(case["message"], config, factory, case.get("context"), case.get("held"))
+            lines = block.splitlines()
+            at = [i for i, line in enumerate(lines) if line.startswith(HELD_PREFIX)]
+            want = _expected_held(case.get("held")) if getattr(config, "report_ask", False) else None
+            reasons: list[str] = []
+            if want is None and at:
+                reasons.append(f"a '{HELD_PREFIX}' line with no held report: line {at[0]}")
+            if want is not None and (len(at) != 1 or lines[at[0]] != want):
+                reasons.append(f"want the held line once, got {len(at)} '{HELD_PREFIX}' lines")
+            if any("{year}" in lines[i] for i in at):
+                reasons.append("the held line still carries {year}")
+            out.append({
+                "id": case["id"], "held_at": at[0] if len(at) == 1 else None, "lines": len(lines),
+                "schema_report_ask": offered, "reasons": reasons,
+            })
+    return out
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    rows = load_gold(args.gold)
+    import app
+
+    if not os.path.abspath(app.__file__).startswith(os.getcwd() + os.sep):
+        return _refuse(f"app is imported from {app.__file__}, not from the cwd")
+    from app.database import SessionLocal
+
+    results = check_blocks(rows, session_factory=SessionLocal)
+    for r in results:
+        print(f"{r['id']} held_at {r['held_at']}/{r['lines']} schema_report_ask {r['schema_report_ask']} "
+              f"{'ok' if not r['reasons'] else r['reasons']}")
+    print(f"rows {len(results)} ok {sum(1 for r in results if not r['reasons'])}")
+    return 1 if any(r["reasons"] or not r["schema_report_ask"] for r in results) else 0
 
 
 def _refuse(message: str) -> int:
@@ -667,8 +853,11 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--closed-lists-mode", choices=("block", "index"), default=None)
     # The stored setting's values (head/parser.REASONING_EFFORTS; app is not imported before the args parse).
     live.add_argument("--reasoning-effort", choices=("off", "low"), default=None)
+    # SALES-ACCOUNT-TYPE semantic carry: no provider call; every row's user block with a bare report ask config.
+    check = sub.add_parser("check")
+    check.add_argument("--gold", required=True)
     args = ap.parse_args(argv)
-    return _cmd_live(args)
+    return _cmd_check(args) if args.cmd == "check" else _cmd_live(args)
 
 
 if __name__ == "__main__":

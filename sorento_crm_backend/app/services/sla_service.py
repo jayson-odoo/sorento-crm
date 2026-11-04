@@ -10,7 +10,7 @@ from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, Co
 from app.models.access import RespondContact
 from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyTierCreate, SLAPolicyTierUpdate,
-    ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
+    ConversationSLANoContactCreate, ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
@@ -603,6 +603,18 @@ def compute_tracking_timings(tracking, tier) -> dict:
         "time_remaining_resolution_seconds": time_remaining_resolution_seconds,
         "resolution_due_at": resolution_due_at,
     }
+
+
+#: `source_entity_type` of a staff member's AI panel escalation. It is not a form type, so the row stays a
+#: conversation row (My Pending, the conversation scope); only the marker switches WhatsApp off.
+PANEL_ESCALATION_TYPE = "panel_escalation"
+
+
+def _is_no_contact_task(tracking) -> bool:
+    """A staff member's panel escalation. Nobody in it has a WhatsApp thread, so its people hear in the
+    app and by email, whatever their WhatsApp toggle says. A customer's row whose contact was deleted
+    also has no contact and is NOT this: its people keep their WhatsApp."""
+    return getattr(tracking, "source_entity_type", None) == PANEL_ESCALATION_TYPE
 
 
 def conversation_tracking_scope():
@@ -1530,6 +1542,98 @@ class ConversationSLATrackingService:
         member_ids.discard(str(user_id))
         return self._picker_rows(member_ids)
 
+    def _viewer_routing_tags(self, user_id: str) -> tuple[set[str], set[str]]:
+        """``(segment codes, brand codes)`` across ALL the viewer's team memberships.
+
+        The union, so a project CS tagged in one team is still filtered when another
+        membership of theirs is untagged; both sets empty = serves everything.
+        """
+        from app.models.access import (
+            TeamMember,
+            team_member_brands,
+            team_member_market_segments,
+        )
+        from app.services.user_service import normalise_brand_code
+
+        member_ids = [
+            str(mid)
+            for (mid,) in self.db.query(TeamMember.id)
+            .filter(TeamMember.user_id == str(user_id))
+            .all()
+        ]
+        if not member_ids:
+            return set(), set()
+        segments = {
+            str(code)
+            for (code,) in self.db.query(team_member_market_segments.c.segment_code)
+            .filter(team_member_market_segments.c.team_member_id.in_(member_ids))
+            .all()
+        }
+        brands = {
+            normalise_brand_code(code)
+            for (code,) in self.db.query(team_member_brands.c.brand_code)
+            .filter(team_member_brands.c.team_member_id.in_(member_ids))
+            .all()
+        }
+        brands.discard(None)
+        return segments, brands
+
+    def _narrow_to_served_tasks(self, base, user_id: str):
+        """My Team (MYTEAM-BY-SEGMENT): keep only tasks whose contact segments and brand
+        the viewer serves, by the SAME rules the round-robin draws its pool with
+        (``member_serves_segments`` / ``member_serves_brand``).
+
+        An untagged viewer returns ``base`` untouched (no extra query). Otherwise the open
+        candidate rows are read as (id, contact, brand) only, matched in Python against
+        the shared predicates, and ``base`` is narrowed to the survivors by id so DB
+        pagination and ``count()`` stay exact.
+
+        Exception (crew ruling 3 Nov): a colleague the viewer actively covers shows in
+        full, so the coverage deep link into My Team never lands on an empty list.
+        """
+        from app.models.access import respond_contact_market_segments
+        from app.services.coverage_subscription_service import (
+            CoverageSubscriptionService,
+        )
+        from app.services.market_segment_service import member_serves_segments
+        from app.services.user_service import member_serves_brand
+
+        my_segments, my_brands = self._viewer_routing_tags(user_id)
+        if not my_segments and not my_brands:
+            return base
+        covered = CoverageSubscriptionService(self.db).active_targets_for(user_id)
+        candidates = base.with_entities(
+            ConversationSLATracking.id,
+            ConversationSLATracking.assigned_to_id,
+            ConversationSLATracking.respond_contact_id,
+            ConversationSLATracking.brand_code,
+        ).all()
+        contact_ids = {str(c) for (_id, _a, c, _b) in candidates if c}
+        segments_by_contact: dict[str, set[str]] = {}
+        if my_segments and contact_ids:
+            for cid, code in (
+                self.db.query(
+                    respond_contact_market_segments.c.contact_id,
+                    respond_contact_market_segments.c.segment_code,
+                )
+                .filter(respond_contact_market_segments.c.contact_id.in_(contact_ids))
+                .all()
+            ):
+                segments_by_contact.setdefault(str(cid), set()).add(str(code))
+        visible = [
+            str(tid)
+            for (tid, assignee, contact_id, brand) in candidates
+            if str(assignee) in covered
+            or (
+                member_serves_segments(
+                    my_segments,
+                    segments_by_contact.get(str(contact_id)) if contact_id else None,
+                )
+                and member_serves_brand(my_brands, brand)
+            )
+        ]
+        return base.filter(ConversationSLATracking.id.in_(visible))
+
     def list_team_pending(
         self,
         user_id: str,
@@ -1599,6 +1703,7 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.assigned_to_id != str(user_id),
             )
         )
+        base = self._narrow_to_served_tasks(base, user_id)
         q = (query or "").strip().lower()
         if q:
             # Resolve a capped candidate set, then filter on the resolved fields.
@@ -1780,7 +1885,7 @@ class ConversationSLATrackingService:
                 event_type="reassigned",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -1797,6 +1902,7 @@ class ConversationSLATrackingService:
                 event_type="reassigned",
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                send_whatsapp=not _is_no_contact_task(tracking),
             )
 
             # Old assignee - only when actor != old assignee (someone moved your task).
@@ -1827,7 +1933,7 @@ class ConversationSLATrackingService:
                     event_type="reassigned_away",
                     send_in_app=True,
                     send_email=True,
-                    send_whatsapp=True,
+                    send_whatsapp=not _is_no_contact_task(tracking),
                     email_pref_attr="notify_email_on_assignment",
                     whatsapp_pref_attr="notify_whatsapp_on_assignment",
                 )
@@ -3341,7 +3447,7 @@ class ConversationSLATrackingService:
             event_type=f"deadline_extended:{int(getattr(tracking, 'extension_count', 0) or 0)}",
             send_in_app=True,
             send_email=True,
-            send_whatsapp=True,
+            send_whatsapp=not _is_no_contact_task(tracking),
             email_pref_attr="notify_email_on_deadline_extended",
             whatsapp_pref_attr="notify_whatsapp_on_deadline_extended",
         )
@@ -3372,6 +3478,15 @@ class ConversationSLATrackingService:
             )
             .filter(
                 conversation_tracking_scope(),
+                # The runner (n8n `schedule-sla-policy-checker`) posts each item's contact to
+                # /integration/escalate. A row with no contact (a panel escalation, AGENTIC-UNIFY
+                # AC-14) answers 404 there, which ends the runner's loop and, as it never leaves
+                # this soonest-due list, would starve every customer's escalation behind it. Only the
+                # marked row is left out: a customer's row whose contact was deleted is still due.
+                or_(
+                    ConversationSLATracking.source_entity_type.is_(None),
+                    ConversationSLATracking.source_entity_type != PANEL_ESCALATION_TYPE,
+                ),
                 ConversationSLATracking.is_resolved.is_(False),
                 ConversationSLATracking.current_tier.in_([1, 2]),
                 or_(
@@ -4064,6 +4179,28 @@ class ConversationSLATrackingService:
                 self.db, contact_id=str(contact.id), phone=normalized_phone
             )
         )
+        return self._create_stamped_tracking(tracking_dict)
+
+    def create_no_contact_task(self, tracking_data: ConversationSLANoContactCreate):
+        """AGENTIC-UNIFY AC-14: a conversation SLA row with no contact, for a staff member's panel
+        escalation. Everything after the contact is the same: the assignee, the policy, the clock,
+        My Pending and the notification (in app and email, never WhatsApp, `_is_no_contact_task`).
+        The column has always been nullable; form rows already have none."""
+        tracking_dict = tracking_data.model_dump()
+        tracking_dict.pop("contact_phone_number", None)
+        tracking_dict["current_tier"] = 1
+        tracking_dict["respond_contact_id"] = None
+        tracking_dict["source_entity_type"] = PANEL_ESCALATION_TYPE
+        return self._create_stamped_tracking(tracking_dict)
+
+    def _create_stamped_tracking(self, tracking_dict: dict):
+        """The tracking row, its clock and its notifications, once the contact and company are stamped."""
+        from datetime import timedelta, datetime, timezone
+        from app.models.sla import SLAPolicy, SLAPolicyTier
+
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         # Brand: the second routing axis, stamped once here and read back by every
         # escalation. A legacy suffixed team-set code carries the brand in its name;
@@ -4550,7 +4687,7 @@ class ConversationSLATrackingService:
                 event_type=f"assigned:{occ}",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -4626,6 +4763,7 @@ class ConversationSLATrackingService:
                 event_type=f"assigned:{occ}",
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                send_whatsapp=not _is_no_contact_task(tracking),
                 cover_title=cover_title,
                 cover_body=cover_body,
                 tracking=tracking,

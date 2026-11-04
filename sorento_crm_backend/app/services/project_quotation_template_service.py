@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.models.projects import (
     QUOTATION_TEMPLATE_KINDS,
     TEMPLATE_KIND_COVER_LETTER,
+    TEMPLATE_KIND_COVER_PAGE,
     TEMPLATE_KIND_TERMS,
     Project,
     ProjectParty,
@@ -129,11 +130,13 @@ def find_unknown_tokens(body_html: Optional[str]) -> List[str]:
     """Every ``{{token}}`` in the body that the registry does not declare, de-duplicated."""
     if not body_html:
         return []
-    seen: List[str] = []
+    seen: set[str] = set()
+    found: List[str] = []
     for token in _TOKEN_PATTERN.findall(body_html):
         if token not in MERGE_FIELD_TOKENS and token not in seen:
-            seen.append(token)
-    return seen
+            seen.add(token)
+            found.append(token)
+    return found
 
 
 def assert_tokens_known(body_html: Optional[str]) -> None:
@@ -167,11 +170,36 @@ def render(body_html: Optional[str], context: Dict[str, Any]) -> Optional[str]:
     if not body_html:
         return body_html
 
-    def _replace(match: "re.Match[str]") -> str:
+    from app.services.quotation_cover_service import MAX_HTML
+
+    def _value(match: "re.Match[str]") -> Optional[str]:
         token = match.group(1)
         if token not in MERGE_FIELD_TOKENS:
-            return match.group(0)
+            return None
         return _as_text(context.get(token))
+
+    # Size the result before building it: the values are not capped, so a repeated token with a
+    # large value would otherwise build gigabytes before any limit could see it.
+    total = len(body_html)
+    for match in _TOKEN_PATTERN.finditer(body_html):
+        value = _value(match)
+        if value is not None:
+            total += len(value) - len(match.group(0))
+            if total > MAX_HTML:
+                break
+    if total > MAX_HTML:
+        raise AppException(
+            status_code=422,
+            message=(
+                "The text with its merge fields filled in is too long "
+                f"(over {MAX_HTML} characters)."
+            ),
+            code="quotation_template_rendered_too_long",
+        )
+
+    def _replace(match: "re.Match[str]") -> str:
+        value = _value(match)
+        return match.group(0) if value is None else value
 
     return _TOKEN_PATTERN.sub(_replace, body_html)
 
@@ -202,8 +230,19 @@ def _long_date(value: Optional[date]) -> str:
     return f"{value.day} {value.strftime('%B')} {value.year}"
 
 
+def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:
+    """The project's salesperson: the owner's name, else whoever created the quotation."""
+    from app.models.user import User
+
+    owner_id = (project.owner_user_id if project is not None else None) or document.created_by
+    if not owner_id:
+        return None
+    owner = db.query(User).filter(User.id == owner_id).first()
+    return owner.name if owner else None
+
+
 def build_document_context(
-    db: Session, *, document: ProjectQuotationDocument
+    db: Session, *, document: Any, grand_total: Optional[Decimal] = None
 ) -> Dict[str, Any]:
     """Everything the letter can say about this document, taken from what is already known.
 
@@ -212,7 +251,6 @@ def build_document_context(
     party, so a letter rendered today and a letter rendered next year read the same.
     """
     from app.models.company import Company
-    from app.models.user import User
     from app.services import project_quotation_document_service as documents
 
     project = (
@@ -230,11 +268,7 @@ def build_document_context(
         )
         developer_name = party.name if party else None
 
-    salesperson_name = None
-    owner_id = (project.owner_user_id if project is not None else None) or document.created_by
-    if owner_id:
-        owner = db.query(User).filter(User.id == owner_id).first()
-        salesperson_name = owner.name if owner else None
+    salesperson_name = salesperson_of(db, project, document)
 
     company_name = None
     if document.company_id:
@@ -249,7 +283,9 @@ def build_document_context(
         "our_ref": document.document_no,
         "doc_date": _long_date(document.doc_date),
         "subject_title": document.subject_title,
-        "grand_total": _money(documents.document_total(db, document)),
+        "grand_total": _money(
+            grand_total if grand_total is not None else documents.document_total(db, document)
+        ),
         "salesperson_name": salesperson_name,
         "company_name": company_name,
     }
@@ -279,7 +315,7 @@ def _assert_kind(kind: Optional[str]) -> str:
             status_code=422,
             message=(
                 f"Unknown template kind '{kind}'. A quotation template is either a "
-                "cover_letter or terms."
+                "cover_letter, terms or cover_page."
             ),
             code="quotation_template_kind_invalid",
         )
@@ -371,13 +407,21 @@ def create_template(
             message="Give the template a name, e.g. Standard cover letter 2026.",
             code="quotation_template_name_required",
         )
-    if not (body_html or "").strip():
+    body_html = body_html or ""
+    is_design = kind == TEMPLATE_KIND_COVER_PAGE
+    # A cover page design may have an empty intro: its rows and title are the content.
+    if not body_html.strip() and not is_design:
         raise AppException(
             status_code=422,
             message="A template with no text renders an empty letter. Write the letter first.",
             code="quotation_template_body_required",
         )
     assert_tokens_known(body_html)
+    design = None
+    if is_design:
+        from app.services.quotation_cover_service import default_design, validate_design
+
+        design = validate_design(payload["design"]) if payload.get("design") else default_design()
 
     incumbent = active_template(db, company_id=company_id, kind=kind)
     wants_active = bool(payload.get("is_active")) or incumbent is None
@@ -389,6 +433,9 @@ def create_template(
         kind=kind,
         name=name,
         body_html=body_html,
+        payment_terms=payload.get("payment_terms"),
+        validity=payload.get("validity"),
+        design=design,
         is_active=wants_active,
         created_by=actor_user_id,
     )
@@ -419,7 +466,7 @@ def update_template(
         template.name = name
     if "body_html" in payload and payload["body_html"] is not None:
         body_html = payload["body_html"]
-        if not str(body_html).strip():
+        if not str(body_html).strip() and template.kind != TEMPLATE_KIND_COVER_PAGE:
             raise AppException(
                 status_code=422,
                 message="A template with no text renders an empty letter. Write the letter first.",
@@ -427,6 +474,13 @@ def update_template(
             )
         assert_tokens_known(body_html)
         template.body_html = body_html
+    if template.kind == TEMPLATE_KIND_COVER_PAGE and payload.get("design") is not None:
+        from app.services.quotation_cover_service import validate_design
+
+        template.design = validate_design(payload["design"])
+    for field in ("payment_terms", "validity"):
+        if field in payload:
+            setattr(template, field, payload[field])
     db.flush()
     return template
 
@@ -441,6 +495,23 @@ def activate_template(db: Session, *, template: QuotationTemplate) -> QuotationT
         db, company_id=template.company_id, kind=template.kind, keep_id=template.id
     )
     template.is_active = True
+    db.flush()
+    return template
+
+
+def deactivate_template(db: Session, *, template: QuotationTemplate) -> QuotationTemplate:
+    """Switch a cover page design off, so quotations sent from now on use the default cover.
+
+    Cover page only: the terms template is the standing text a new quotation copies, so a company
+    with none active would get blank terms. Idempotent.
+    """
+    if template.kind != TEMPLATE_KIND_COVER_PAGE:
+        raise AppException(
+            status_code=422,
+            message="Only a cover page design can be deactivated. Activate another template instead.",
+            code="quotation_template_deactivate_kind",
+        )
+    template.is_active = False
     db.flush()
     return template
 
@@ -475,6 +546,9 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "kind": template.kind,
         "name": template.name,
         "body_html": template.body_html,
+        "payment_terms": template.payment_terms,
+        "validity": template.validity,
+        "design": template.design,
         "is_active": bool(template.is_active),
         "created_at": template.created_at,
         "updated_at": template.updated_at,
@@ -501,12 +575,14 @@ __all__ = [
     "MERGE_FIELDS",
     "MERGE_FIELD_TOKENS",
     "TEMPLATE_KIND_COVER_LETTER",
+    "TEMPLATE_KIND_COVER_PAGE",
     "TEMPLATE_KIND_TERMS",
     "activate_template",
     "active_template",
     "assert_tokens_known",
     "build_document_context",
     "count_templates",
+    "deactivate_template",
     "create_template",
     "delete_template",
     "find_unknown_tokens",

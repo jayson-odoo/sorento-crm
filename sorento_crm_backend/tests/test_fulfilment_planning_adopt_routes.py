@@ -282,11 +282,16 @@ def test_start_planning_across_a_company_is_a_404_and_names_nothing(api):
     )
 
 
-def test_start_planning_on_a_retail_order_is_a_named_409(api):
+def test_start_planning_on_a_retail_order_at_a_project_location_is_a_named_409(api):
+    """DEALER-PLANNING PR 2 (owner, 1 Nov 2026): a retail order IS admitted when it has a line at
+    an active dealer-segment location (`planning_predicate.admitted_to_planning`). A location with
+    no segment reads as dealer (`pool_predicate.site_pool_clause`), so the refusal is pinned with
+    the retail line at a PROJECT-segment location, which the ruling still keeps out."""
     client, db, company_id, _core = api
     with company_scope(db, frozenset({company_id})):
         product = _product(db)
         warehouse = _warehouse(db, company_id)
+        warehouse.segment = "project"
         retail = _core_order(db, company_id, demand_class="retail")
         _core_line(db, retail, product, warehouse=warehouse, required_date=D_MID)
         db.commit()

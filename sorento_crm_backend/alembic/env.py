@@ -57,7 +57,11 @@ KNOWN_SCHEMAS = {None} | {
 
 # Tables a migration keeps for its own downgrade, with no model behind them on purpose.
 # Without this, autogenerate proposes dropping them and the downgrade loses its data.
-MIGRATION_ONLY_TABLES = {"stock_visibility_wa_trim_backup"}  # wa_trim_0001_stock_compact
+MIGRATION_ONLY_TABLES = {
+    "stock_visibility_wa_trim_backup",  # wa_trim_0001_stock_compact
+    "promotion_products_selling_price_backup",  # bnsp_0001_brand_no_selling_price
+    "oi_delivery_date_backfill",  # oiod_0001_backfill (projects schema)
+}
 
 
 def include_name(name, type_, parent_names):

@@ -61,6 +61,8 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
   sample_request: [
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'project_title', label: 'Project', type: 'text' },
+    // PS-SAMPLE-TRACKING: the sample team's proposed date when it gave one (+ New date badge).
+    { key: 'delivery_date', label: 'Delivery', type: 'date' },
   ],
   new_product_application: [
     { key: 'customer_name', label: 'Customer', type: 'text' },

@@ -184,10 +184,14 @@ def today_myt() -> date:
 
 
 def earliest_packing_list_shipment(
-    db: Session, product_ids: list[str], regions=None, not_before: Optional[date] = None
+    db: Session,
+    product_ids: list[str],
+    regions=None,
 ) -> dict[str, tuple[str, date, str]]:
-    """R5 (chatbot stock ask v2 S3): the earliest still-incoming shipment WITH a
-    packing list, for each product id, at ANY location (AC-SA304 to AC-SA309).
+    """The packing list FILE for the stock check: the earliest still-incoming shipment WITH a
+    packing list, for each product id, at ANY location (AC-SA304 to AC-SA309). Since Fix B
+    (owner, 2 Nov 2026) it no longer decides incoming vs not: the dates told come from
+    `eta_policy.told_dates`, which needs no packing list.
 
     A candidate line must be `_still_incoming_filter()` (not received, remaining
     quantity > 0) on a `_not_draft_shipment_filter()` shipment that carries an
@@ -201,11 +205,6 @@ def earliest_packing_list_shipment(
     read, so a shipment's line landing outside the asking contact's policy
     locations still qualifies (AC-SA307 - this read has no location dimension to
     filter by in the first place).
-
-    `not_before` (CHAT-FIND round 3, crew live check 13 Oct 2026): a shipment whose promised
-    date is before that day does not qualify. A past date cannot be told to a dealer as the day it
-    comes (R10 has no "to be confirmed" answer), so the next dated one answers, else none.
-    The dealer availability read passes today (`StockService._shipments_from_today`).
 
     Returns `{product_id: (shipment_id, promised date, attachment_id)}` -
     one entry per product id with a qualifying shipment; a product id with none is
@@ -230,19 +229,13 @@ def earliest_packing_list_shipment(
             *product_in_scope_clauses(db, InboundShipmentLine.product_id),
             InboundShipment.attachment_id.isnot(None),
             InboundShipment.estimated_arrival_date.isnot(None),
-            *(
-                (told >= not_before,)
-                if not_before is not None
-                else ()
-            ),
         )
         .order_by(
             InboundShipmentLine.product_id,
             told.asc(),
-            # Nit, review round 1: two qualifying shipments on the same
-            # `estimated_arrival_date` otherwise pick an arbitrary one (Postgres
-            # makes no promise about which `DISTINCT ON` row wins a tie) - id is
-            # not a meaningful order, only a deterministic one.
+            # Nit, review round 1: two qualifying shipments on the same promised date
+            # otherwise pick an arbitrary one - id is not a meaningful order, only a
+            # deterministic one.
             InboundShipment.id.asc(),
         )
         .distinct(InboundShipmentLine.product_id)

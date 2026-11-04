@@ -21,6 +21,11 @@ outstanding, broken down month by month with the orders behind the numbers on re
 * **Narrow after the report is already on screen.** While the report (or its detail offer) is
   still on screen, reply with just the extra filter - "june 2026 only", "only SRTWT7445" - and
   the same report re-runs narrowed, with the header showing the new filter.
+* **Follow up on a report for a customer.** Reply with just what changes - "how about ordered",
+  "and delivered?", "what about last month", "by product". The report re-runs on the same customer,
+  on every account you picked from the list, in the same period, on the same sales basis, unless
+  your reply changes one of them. The header names what it ran on. Name another customer to switch
+  to that customer, say "all customers" to drop the customer, or say "start over" for a new report.
 * **"1" for the sales order list.** After a report with at least one month, reply "1" and the
   bot lists every matching sales order, one item per order, latest date first.
 
@@ -106,6 +111,14 @@ same as any other.
 
 ## Defaults
 
+* **No company named means every company you hold.** The bot never asks "Sorento or Mocha?".
+  When two or more of your companies have figures for what you asked, one line per company sits
+  right above the Total line, and the lines add up to the Total. A company with nothing to show
+  is left out, so a customer or brand that exists in one company prints no company lines. Name a
+  company ("for Mocha") to see that company alone.
+* **A customer you named stays until you name another.** A follow-up such as "invoiced",
+  "breakdown product" or "top 5" keeps the customer of the report on screen, and the header still
+  names it.
 * **A customer-only report, or a customer-and-product report, with no date named shows all
   dates.** The header prints `Delivery date: all`.
 * **A product-only report with no date named shows the current year** instead of everything -
@@ -172,3 +185,4 @@ WhatsApp, to a contact who holds the grant.
 * [Chatbot - outstanding report (sales order backlog and delivery order outstanding)](chatbot-outstanding-report.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
 * [System Management - Data reference for admins](data-analysis.md)
+* [Search sales by account type](../_shared/sales-by-account-type.md), including asking the bot by account type.

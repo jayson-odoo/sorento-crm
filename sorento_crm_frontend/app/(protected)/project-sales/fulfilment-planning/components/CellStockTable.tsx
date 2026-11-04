@@ -769,7 +769,10 @@ export const CellStockTable = React.forwardRef<
                   scope="col"
                   className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}
                 >
-                  {column.label}
+                  {column.key === 'available-for-project' &&
+                  locations.some((entry) => entry.own_pool_no_share)
+                    ? 'Available for this line'
+                    : column.label}
                 </th>
               ))}
             </tr>
@@ -1135,6 +1138,14 @@ export const CellStockTable = React.forwardRef<
                                 filterText={filterText}
                                 jumpTarget={activeJump}
                                 autoCount={autoCount}
+                                poolSubtotal={
+                                  section.rows.find(
+                                    (entry) => entry.pool_subtotal_for_project != null,
+                                  )?.pool_subtotal_for_project
+                                }
+                                ownPoolNoShare={section.rows.some(
+                                  (entry) => entry.own_pool_no_share,
+                                )}
                               />
                             </td>
                           </tr>,
@@ -1542,7 +1553,8 @@ const NUMERIC_COLUMNS: {
   },
   // R-K, S2: what the pool may still give a PROJECT line once its own dealer share is kept
   // back (`min(floor(available x (100 - share) / 100), max(five-pool net, 0))`). Every site
-  // pool row states it, `0` included.
+  // pool row states it, `0` included. On a retail line standing on its own pool nothing is held
+  // back and this is no project's figure, so the header reads for this line (DEALER-PLANNING R9).
   //
   // OUTSIDE A SITE POOL IT IS SIMPLY `Available` (D2, captain 3 Sep): no dealer share is
   // kept back at an own bin, a group sibling or another group, so everything Available
@@ -1636,15 +1648,19 @@ function availableSubtotalOf(
  * A SITE POOL keeps a share back for dealers, so its figure is the share of its own net. No
  * other set keeps anything back, so its figure IS its Available - the same signed number,
  * read off the same place the Available cell reads it, so the two can never disagree.
+ *
+ * A LINE STANDING ON ITS OWN POOL reads what the server states for it (DEALER-PLANNING R12): the
+ * row it stands on and this subtotal follow its class, the share for a project line and Available
+ * for a retail one, so neither disagrees with the suggestion beside them.
  */
 function projectShareSubtotalOf(
   section: StockSection,
   drawn: Map<string, string>,
   poolSharePct: number,
 ): string | null {
-  return section.netOf === POOLS_SET
-    ? availableForProject(section.net, section.net, poolSharePct)
-    : availableSubtotalOf(section, drawn);
+  if (section.netOf !== POOLS_SET) return availableSubtotalOf(section, drawn);
+  const stated = section.rows.find((entry) => entry.pool_subtotal_for_project != null);
+  return stated?.pool_subtotal_for_project ?? availableForProject(section.net, section.net, poolSharePct);
 }
 
 function isNegative(value: string | null): boolean {

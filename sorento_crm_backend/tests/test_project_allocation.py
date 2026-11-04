@@ -443,6 +443,38 @@ def test_the_worklist_shows_claims_by_direction(api):
     assert row["can_answer"] is False, "a claim is not answered any more; it is confirmed"
 
 
+def test_a_claim_names_its_sales_orders_customer_and_project(api):
+    """OI-UX-FILTER-SNAPSHOT: the claim row carries the order's debtor and project label."""
+    from app.models.order import SalesOrder
+    from app.models.project_so import CLAIM_ACCEPTED, AllocationClaim
+
+    client, world = api
+    db = world.db
+    mwh = _warehouse(db, f"ZZT-MWH-{_uid()[:4]}")
+    order, line = _sales_order(db, world.project, product=world.product, qty="10")
+    core = SalesOrder(
+        id=_uid(), so_number=f"ZZT-CORE-{_uid()[:8]}", status="open",
+        debtor_name=f"{MARKER} Debtor Sdn Bhd", project_label=f"{MARKER} Tower",
+    )
+    db.add(core)
+    db.flush()
+    order.so_id = core.id
+    db.add(
+        AllocationClaim(
+            id=_uid(), company_id=world.project.company_id,
+            from_project_id=world.project.id, to_project_id=world.other_project.id,
+            so_line_id=line.id, product_id=world.product.id, warehouse_id=mwh.id,
+            qty=Decimal("10"), state=CLAIM_ACCEPTED, reason="surplus",
+            requested_by=world.eling, decided_by=world.eling, decided_at=datetime.utcnow(),
+        )
+    )
+    db.commit()
+
+    row = client.get(f"{BASE}/allocation-claims?direction=outgoing").json()["data"][0]
+    assert row["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+    assert row["project_label"] == f"{MARKER} Tower"
+
+
 def test_the_order_allocation_list_covers_every_line(api):
     client, world = api
     db = world.db

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { isQtyOver, type QtyOverProduct } from '../lib/qtyOverQuote';
 import {
   acceptPOAnnotation,
   confirmPOVersion,
@@ -97,6 +98,7 @@ export function usePOIntakeController(
   const enabled = options.enabled ?? true;
   const queryClient = useQueryClient();
   const query = usePOVersion(versionId, enabled);
+  const [qtyOverProducts, setQtyOverProducts] = React.useState<QtyOverProduct[] | null>(null);
   const version = query.data ?? null;
   const poId = version?.purchase_order_id;
 
@@ -140,13 +142,17 @@ export function usePOIntakeController(
   });
 
   const confirmMutation = useMutation({
-    mutationFn: () => confirmPOVersion(versionId as string),
+    mutationFn: (qtyOverReason?: string | null) =>
+      confirmPOVersion(versionId as string, qtyOverReason),
     onSuccess: (next) => {
       settle(next);
       invalidatePo();
       toast.success('Confirmed. These lines are now the PO.');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // The qty-over soft stop is not a failure: the screen asks for the reason instead.
+    onError: (error: Error) => {
+      if (!isQtyOver(error)) toast.error(error.message);
+    },
   });
 
   /**
@@ -254,10 +260,18 @@ export function usePOIntakeController(
       await headerMutation.mutateAsync(body).catch(() => undefined);
     },
     updateLine,
-    confirm: async () => {
-      const result = await confirmMutation.mutateAsync().catch(() => null);
-      return result !== null;
+    confirm: async (qtyOverReason?: string) => {
+      try {
+        await confirmMutation.mutateAsync(qtyOverReason);
+        setQtyOverProducts(null);
+        return true;
+      } catch (error) {
+        if (isQtyOver(error)) setQtyOverProducts(error.products);
+        return false;
+      }
     },
+    qtyOverProducts,
+    clearQtyOver: () => setQtyOverProducts(null),
     acceptAnnotation,
     editAnnotation,
     rejectAnnotation,

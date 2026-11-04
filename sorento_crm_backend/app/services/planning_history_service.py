@@ -32,6 +32,7 @@ from app.models.project_so import (
 from app.services.planning_change_service import change_text
 from app.services.project_line_split_service import display_line_nos
 from app.services.project_service import resolve_user_names
+from app.services.scm.so_party import so_parties, with_party
 
 #: The window around a revision in which a row it raised was created (AC-W10).
 _WINDOW = timedelta(seconds=5)
@@ -81,8 +82,17 @@ def history(db: Session, pso_ids: Sequence[str]) -> List[dict]:
     events += _revisions(db, ids)
     events += _updates(db, ids)
     events += _emails(db, ids)
+    # OI-UX-FILTER-SNAPSHOT: each event names its order's customer and project.
+    parties = so_parties(
+        db,
+        ids=[o.so_id for o in orders.values()],
+        numbers=[o.autocount_doc_no for o in orders.values()],
+    )
     for event in events:
         event["so_no"] = so_no.get(event["pso_id"], "")
+        order = orders.get(event["pso_id"])
+        key = (order.so_id or order.autocount_doc_no) if order else None
+        with_party(event, parties, key)
     names = resolve_user_names(db, {e["_actor_id"] for e in events if e.get("_actor_id")})
     for event in events:
         event["actor"] = names.get(event.pop("_actor_id", None))

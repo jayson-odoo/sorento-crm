@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -66,6 +66,7 @@ class ProjectPartyResponse(ProjectPartyBase):
     id: str
     customer_name: Optional[str] = None
     project_count: Optional[int] = None
+    contact_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -188,6 +189,19 @@ class ClashPreviewResponse(BaseModel):
 # ------------------------------------------------------------------- projects
 
 
+class ProjectPartyLinkIn(BaseModel):
+    """A party playing a role on the project (PS-REGISTRATION-V3 Q5): several per role allowed."""
+
+    role: str = Field(..., max_length=32)
+    party_id: str
+
+
+class ProjectPartyLinkOut(BaseModel):
+    role: str
+    party_id: str
+    name: Optional[str] = None
+
+
 class ProjectRegisterRequest(BaseModel):
     """AC-C3. Only title is structurally required.
 
@@ -207,11 +221,15 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
-    # Required to register or submit (422 project_customer_required); a draft and an edit
-    # may leave it out.
+    # Optional everywhere (owner 2 Nov, PS-REGISTRATION-V3 rule 9).
     customer_id: Optional[str] = None
     # A salesperson holding only the submit grant: false saves a draft, true submits it.
     submit: bool = False
+    # Required to register or submit (422 project_lead_source_required); a draft may leave it out.
+    lead_source: Optional[str] = Field(None, max_length=32)
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked at registration, copied into the project's stakeholders (rule 6).
+    contact_ids: Optional[List[str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -237,6 +255,9 @@ class ProjectUpdateRequest(BaseModel):
     # identity: it is the string written on every piece of paper for this job, and
     # without it nobody can tie a document back to the file it belongs to.
     admin_ref: Optional[str] = Field(None, max_length=64)
+    lead_source: Optional[str] = Field(None, max_length=32)
+    # Present = replace every link; absent = keep them.
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -257,6 +278,8 @@ class ProjectUpdateRequest(BaseModel):
     is_critical: Optional[bool] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    # PS-QUOTE-RULES R4.2: route this project's discounts to one person. Null clears it.
+    discount_approver_user_id: Optional[str] = None
 
 
 class ProjectApproveRequest(BaseModel):
@@ -336,6 +359,7 @@ class ProjectResponse(BaseModel):
     # page renders as "registered directly" rather than as an empty section.
     lead_id: Optional[str] = None
     lead_code: Optional[str] = None
+    # The project's own lead source (PS-REGISTRATION-V3), else its lead's.
     lead_source: Optional[str] = None
     lead_created_at: Optional[datetime] = None
     lead_owner_user_id: Optional[str] = None
@@ -347,6 +371,7 @@ class ProjectResponse(BaseModel):
     customer_code: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_attn: Optional[str] = None
+    customer_email: Optional[str] = None
 
     status_id: Optional[str] = None
     status_key: Optional[str] = None
@@ -359,6 +384,8 @@ class ProjectResponse(BaseModel):
     critical_at: Optional[datetime] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    discount_approver_user_id: Optional[str] = None
+    discount_approver_name: Optional[str] = None
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -369,6 +396,7 @@ class ProjectResponse(BaseModel):
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     main_contractor_name: Optional[str] = None
+    party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -1225,6 +1253,11 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     id: str
     project_id: str
     series_name: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: the document this scope sits on, and whether it is a proposal or the
+    # project's quotation.
+    document_id: Optional[str] = None
+    document_no: Optional[str] = None
+    document_kind: Optional[str] = None
 
     outcome: str = "open"
     loss_reason: Optional[str] = None
@@ -1272,6 +1305,7 @@ class ProjectQuotationVersionResponse(BaseModel):
     issued_on: Optional[date] = None
     total_amount: Decimal = Decimal("0")
     notes: Optional[str] = None
+    matrix_columns: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[datetime] = None
 
 
@@ -1291,6 +1325,9 @@ class ProjectQuotationLineBase(BaseModel):
     )
     unit_price: Decimal = Decimal("0")
     quantity: Decimal = Decimal("1")
+    # PS-QUOTE-MATRIX: {leaf_key: number}; checked and summed by the service, which then owns
+    # `quantity` on a scope that has columns.
+    qty_cells: Optional[Dict[str, Any]] = None
     uom: Optional[str] = None
     unit_type: Optional[str] = Field(
         None, description="house_unit | bathroom | facility | common_area"
@@ -1346,6 +1383,7 @@ class ProjectQuotationLineUpdate(BaseModel):
     description_snapshot: Optional[str] = None
     unit_price: Optional[Decimal] = None
     quantity: Optional[Decimal] = None
+    qty_cells: Optional[Dict[str, Any]] = None
     uom: Optional[str] = None
     unit_type: Optional[str] = None
     sort_order: Optional[int] = None
@@ -1528,9 +1566,23 @@ class ProjectQuotationLineResponse(BaseModel):
     floor_value_applied: Optional[Decimal] = None
     floor_level_applied: Optional[str] = None
     is_below_floor: bool = False
+    # Below its default price when priced (PS-QUOTE-RULES R1): any discount needs approval.
+    is_discounted: bool = False
 
     sort_order: int = 0
     notes: Optional[str] = None
+    qty_cells: Dict[str, Any] = Field(default_factory=dict)
+
+
+class QuotationColumnsWrite(BaseModel):
+    """The scope's whole column layout; the engine validates the shape (422 with its own code)."""
+
+    columns: Any = Field(default_factory=list)
+
+
+class QuotationColumnsResponse(BaseModel):
+    version: ProjectQuotationVersionResponse
+    lines: List[ProjectQuotationLineResponse] = Field(default_factory=list)
 
 
 class ProjectQuotationOutcomeRequest(BaseModel):
@@ -1635,6 +1687,8 @@ class ProjectPurchaseOrderUpdate(BaseModel):
     po_date: Optional[date] = None
     po_amount: Optional[Decimal] = None
     notes: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION soft stop: sent on the second save after a 409 po_qty_over_quoted.
+    qty_over_reason: Optional[str] = Field(None, max_length=2000)
     lines: Optional[List["ProjectPurchaseOrderLineWrite"]] = Field(
         None,
         description=(
@@ -1676,6 +1730,13 @@ class ProjectPurchaseOrderResponse(BaseModel):
     published_sales_order_count: int = 0
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
+    # PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quotation.
+    qty_over_reason: Optional[str] = None
+    qty_over_reason_at: Optional[datetime] = None
+    qty_over_reason_by_name: Optional[str] = None
+    # The kind of document the bound version belongs to (proposal | quotation).
+    checked_against_kind: Optional[str] = None
+    checked_against_label: Optional[str] = None
 
     # AC-F9a: erosion since v1, as a number rather than a flag. A negotiation is
     # SUPPOSED to move the price; management wants the size of the move.
@@ -1911,9 +1972,15 @@ class ProjectQuotationDocumentBase(BaseModel):
     attn_name: Optional[str] = None
     subject_title: Optional[str] = None
     cover_letter_html: Optional[str] = None
+    cover_closing_html: Optional[str] = None
     terms_html: Optional[str] = None
     signatory_name: Optional[str] = None
     signatory_phone: Optional[str] = None
+    # Cover page (QUOTE-COVER-PAGE).
+    recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ProjectQuotationFormScopeCreate(BaseModel):
@@ -1926,6 +1993,11 @@ class ProjectQuotationFormScopeCreate(BaseModel):
     )
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: the new scope's column headers, applied before its lines "
+        "in the same transaction so each line's quantity is the sum of its qty_cells.",
+    )
     lines: List["ProjectQuotationLineBulkItem"] = Field(
         default_factory=list,
         description="The scope's lines in display order. Empty means an empty scope, never a "
@@ -1947,6 +2019,11 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     scope_label: Optional[str] = Field(default=None, max_length=150)
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: a NEW scope's (no id) column headers. A saved scope's change "
+        "through PUT .../quotation-versions/{id}/columns, and is refused here with 422.",
+    )
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 
@@ -1967,6 +2044,10 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
 class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
@@ -1984,6 +2065,10 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
 
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeUpdate]] = Field(
         default=None,
@@ -2033,6 +2118,7 @@ class ProjectQuotationIssueResponse(BaseModel):
     document_id: str
     issue_no: int
     our_ref_text: Optional[str] = None
+    revision_label: Optional[str] = None
     issued_at: Optional[datetime] = None
     issued_by: Optional[str] = None
     issued_by_name: Optional[str] = None
@@ -2061,6 +2147,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     document_no: str
     # What the customer quotes back: the number plus the revision they hold.
     our_ref: Optional[str] = None
+    # The project's salesperson (owner, else the creator), as the cover page prints it.
+    prepared_by: Optional[str] = None
 
     recipient_party_id: Optional[str] = None
     recipient_name_snapshot: Optional[str] = None
@@ -2085,6 +2173,9 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     customer_decision: Optional[str] = None
+    # PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link.
+    view_count: int = 0
+    last_viewed_at: Optional[datetime] = None
 
     # AC-H1 gates issuing on the signature, so it has to survive a page refresh. Forward-declared
     # because the signature schema is defined further down; resolved by the model_rebuild below.
@@ -2102,9 +2193,34 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approval_rejected_reason: Optional[str] = None
     requires_approval: bool = False
     below_floor_line_count: int = 0
+    # PS-QUOTE-RULES: any discount and any off-series line need approval, routed to one person.
+    discounted_line_count: int = 0
+    off_series_line_count: int = 0
+    approval_reasons: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_name: Optional[str] = None
+    viewer_may_decide: Optional[bool] = None
+    # PS-PROPOSAL-QUOTATION: quotation lines priced below the proposal revision it came from.
+    below_proposal_count: int = 0
+
+    # PS-PROPOSAL-QUOTATION: proposal or quotation, and the link between them.
+    kind: str = "proposal"
+    source_issue_id: Optional[str] = None
+    source_document_id: Optional[str] = None
+    source_label: Optional[str] = None
+    quotation_document_id: Optional[str] = None
+    recipient_party_type: Optional[str] = None
+    current_revision_label: Optional[str] = None
+    next_revision_label: Optional[str] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class MakeQuotationRequest(BaseModel):
+    """PS-PROPOSAL-QUOTATION: the issued proposal revision a won project's quotation is made from."""
+
+    issue_id: str = Field(min_length=1)
 
 
 class QuotationApprovalMoveRequest(BaseModel):
@@ -2140,11 +2256,19 @@ class QuotationReviseRequest(BaseModel):
 
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
-    body_html: str = Field(min_length=1)
+    # Empty only for a cover_page design (the service refuses it for the other kinds).
+    # The length cap lives on the input schemas only: a template stored before the cap existed
+    # must still list and load.
+    body_html: str = ""
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
-    kind: str = Field(description="cover_letter | terms")
+    body_html: str = Field(default="", max_length=50000)
+    kind: str = Field(description="cover_letter | terms | cover_page")
+    # kind cover_page only; validated by the service.
+    design: Optional[Dict[str, Any]] = None
     # Optional because the FIRST template of a kind is active on arrival whatever the caller
     # says: a company holding a template with nothing active renders an empty letter.
     is_active: Optional[bool] = None
@@ -2159,7 +2283,10 @@ class QuotationTemplateUpdate(BaseModel):
     """
 
     name: Optional[str] = Field(default=None, max_length=150)
-    body_html: Optional[str] = None
+    body_html: Optional[str] = Field(default=None, max_length=50000)
+    design: Optional[Dict[str, Any]] = None
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateResponse(QuotationTemplateBase):
@@ -2167,6 +2294,7 @@ class QuotationTemplateResponse(QuotationTemplateBase):
 
     id: str
     kind: str
+    design: Optional[Dict[str, Any]] = None
     is_active: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -2203,6 +2331,29 @@ class QuotationSignAcceptRequest(QuotationSignatureRequest):
     terms_accepted: bool = False
 
 
+class QuotationSignViewRequest(BaseModel):
+    """The sign page's beacon (PS-QUOTE-VIEWS): a random id the browser keeps, never a person.
+
+    Stored only as a digest, and only for the 30-minute de-duplication.
+    """
+
+    visitor_id: str = Field(min_length=8, max_length=128)
+
+
+class QuotationSignViewResponse(BaseModel):
+    counted: bool
+
+
+class QuotationIssueViewResponse(BaseModel):
+    """One row of a document's view log: when, which revision, what kind of device."""
+
+    id: str
+    viewed_at: datetime
+    issue_no: int
+    our_ref: str
+    device: str
+
+
 class QuotationSignChangesRequest(BaseModel):
     """The customer's other answer: they will not sign this as it stands, and here is why.
 
@@ -2217,82 +2368,77 @@ class QuotationSignChangesRequest(BaseModel):
     requester_name: Optional[str] = Field(None, max_length=200)
 
 
-class QuotationAmendmentLineChange(BaseModel):
-    """One line the customer changed. Quantity and price are STRINGS so a bad value is refused by
-    the service with the lane's own code, not by pydantic. There is deliberately no field for a
-    description, code, brand or spec: the server cannot be asked to write one, and any such key
-    a client sends is ignored."""
+class QuotationFeedbackItem(BaseModel):
+    """One note from the customer: on a whole item, or on one cell (``cell_key``).
+
+    ``value`` and ``model`` are loose here and checked by the service with the lane's own codes.
+    Nothing a client sends here can change a line; the rows only wait for the salesperson.
+    """
 
     line_id: str = Field(max_length=64)
-    quantity: Optional[str] = Field(None, max_length=32)
-    unit_price: Optional[str] = Field(None, max_length=32)
-    remove: bool = False
+    cell_key: Optional[str] = Field(None, max_length=40)
+    kind: str = Field(max_length=16)
+    value: Optional[Union[str, int, Decimal]] = None
+    model: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=1000)
 
 
 class QuotationAmendmentSubmitRequest(BaseModel):
     requester_name: Optional[str] = Field(None, max_length=200)
     note: Optional[str] = Field(None, max_length=4000)
-    lines: List[QuotationAmendmentLineChange] = Field(default_factory=list, max_length=500)
+    items: List[QuotationFeedbackItem] = Field(default_factory=list, max_length=500)
 
 
-class QuotationAmendmentDecideRequest(BaseModel):
-    # Checked by the service (accepted | rejected | pending, reason <= 500), so the rule is
-    # stated once.
-    decision: str = Field(max_length=16)
-    reason: Optional[str] = Field(None, max_length=2000)
+class QuotationFeedbackHandleRequest(BaseModel):
+    handled: bool
 
 
 class QuotationAmendmentRowResponse(BaseModel):
+    """What the customer's page reads of a note already sent: where it points."""
+
     id: str
     line_id: str
+    cell_key: Optional[str] = None
     field: str
-    value_from: Optional[Decimal] = None
-    value_to: Optional[Decimal] = None
-    decision: str = "pending"
-    decision_reason: Optional[str] = None
-
-
-class QuotationAmendmentStaffRowResponse(QuotationAmendmentRowResponse):
-    # Staff only: a floor is internal pricing, so the customer's page has no such keys.
-    below_floor: bool = False
-    floor_value: Optional[Decimal] = None
 
 
 class QuotationAmendmentResponse(BaseModel):
-    """What the customer's page shows of their own request."""
-
     id: str
-    status: str
     submitted_at: Optional[datetime] = None
     requester_name: Optional[str] = None
     note: Optional[str] = None
-    applied_at: Optional[datetime] = None
     rows: List[QuotationAmendmentRowResponse] = Field(default_factory=list)
 
 
-class QuotationAmendmentBlockedScope(BaseModel):
-    quotation_id: str
-    scope_label: str
-    # The issued version the rows name, where the review is still decided.
-    version_id: str
-    # An accepted row sits on this scope, so Apply refuses until it is rejected or the draft issued.
-    has_accepted: bool = False
+class QuotationFeedbackRowResponse(BaseModel):
+    id: str
+    line_id: str
+    scope_id: Optional[str] = None
+    scope_label: Optional[str] = None
+    line_description: Optional[str] = None
+    cell_key: Optional[str] = None
+    cell_label: Optional[str] = None
+    kind: str
+    value_from: Optional[Decimal] = None
+    value_to: Optional[Decimal] = None
+    model: Optional[str] = None
+    note: Optional[str] = None
+    handled_at: Optional[datetime] = None
+    handled_by_name: Optional[str] = None
 
 
-class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
-    rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
-    # Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse.
-    blocked_scopes: List[QuotationAmendmentBlockedScope] = Field(default_factory=list)
-    # Apply drafted a revision (only then does an applied request keep blocking the issue).
-    revised: bool = False
-    # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
-    total_issued: Decimal = Decimal("0")
-    total_after: Decimal = Decimal("0")
+class QuotationFeedbackRequestResponse(BaseModel):
+    id: str
+    issue_label: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    requester_name: Optional[str] = None
+    note: Optional[str] = None
+    rows: List[QuotationFeedbackRowResponse] = Field(default_factory=list)
 
 
-class QuotationAmendmentApplyResponse(BaseModel):
-    request: QuotationAmendmentStaffResponse
-    version_ids: List[str] = Field(default_factory=list)
+class QuotationFeedbackResponse(BaseModel):
+    open_count: int = 0
+    requests: List[QuotationFeedbackRequestResponse] = Field(default_factory=list)
 
 
 class QuotationSignatureResponse(BaseModel):
@@ -2335,20 +2481,76 @@ class QuotationSignScopeLine(BaseModel):
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
+    # Inline data URIs (the PDF's own downscaled bytes), never a storage key or signed link.
+    image_url: Optional[str] = None
+    drawing_url: Optional[str] = None
     brand: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Decimal = Decimal("0")
+    uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
     is_rate_only: bool = False
     amount: Optional[Decimal] = None
+    qty_cells: Dict[str, Any] = Field(default_factory=dict)
+
+
+class QuotationSignColumn(BaseModel):
+    key: str
+    label: str
 
 
 class QuotationSignScope(BaseModel):
     scope_label: str
     scope_total: Decimal = Decimal("0")
+    matrix_columns: List[Dict[str, Any]] = Field(default_factory=list)
+    # The quotation's own column set for this scope (`app.services.quotation_columns`).
+    columns: List[QuotationSignColumn] = Field(default_factory=list)
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
+
+
+class QuotationCoverRow(BaseModel):
+    key: str
+    label: str
+    text: Optional[str] = None
+    html: Optional[str] = None
+
+
+class QuotationCoverPreviewRequest(BaseModel):
+    """The quotation form's staged header and text fields (nothing is saved). ``document_id`` names
+    the saved quotation being edited; absent for one not saved yet."""
+
+    document_id: Optional[str] = None
+    doc_date: Optional[date] = None
+    attn_name: Optional[str] = Field(default=None, max_length=2000)
+    recipient_name_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_address_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_phone_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+
+
+class QuotationDesignPreviewRequest(BaseModel):
+    """An unsaved cover page design and its intro, previewed against fixed sample values."""
+
+    design: Dict[str, Any]
+    body_html: str = Field(default="", max_length=50000)
+
+
+class QuotationCoverPreviewResponse(BaseModel):
+    cover_rows: List[QuotationCoverRow] = Field(default_factory=list)
+    cover_title: str = ""
+    cover_show_letterhead: bool = True
+    cover_intro_html: str = ""
+    cover_closing_html: str = ""
+    sender_name: Optional[str] = None
+    sender_logo_url: Optional[str] = None
 
 
 class QuotationSignPageResponse(BaseModel):
@@ -2359,6 +2561,15 @@ class QuotationSignPageResponse(BaseModel):
     """
 
     our_ref: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: proposal | quotation, so the page names what the customer holds.
+    document_kind: str = "proposal"
+    # The cover page rows (layout 2); null for an issue from before the cover page.
+    cover_rows: Optional[List[QuotationCoverRow]] = None
+    # Layout 3 (QUOTE-COVER-DESIGN): the design copied at send; null for layouts 1 and 2.
+    cover_title: Optional[str] = None
+    cover_show_letterhead: Optional[bool] = None
+    cover_intro_html: Optional[str] = None
+    cover_closing_html: Optional[str] = None
     issue_no: int
     doc_date: Optional[date] = None
     subject_title: Optional[str] = None
@@ -2386,5 +2597,66 @@ class QuotationSignPageResponse(BaseModel):
     amendment_request: Optional[QuotationAmendmentResponse] = None
     superseded_by_ref: Optional[str] = None
     can_sign: bool = True
-    # accepted | superseded | amendment_open | amendment_applied, or null when signable.
+    # accepted | superseded, or null when signable.
     sign_blocked_reason: Optional[str] = None
+
+
+# --------------------------------------------------------------- party contacts (PS-REGISTRATION-V3)
+
+
+class ProjectPartyContactCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: bool = True
+
+
+class ProjectPartyContactUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: Optional[bool] = None
+
+
+class ProjectPartyContactResponse(BaseModel):
+    id: str
+    party_id: str
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_active: bool = True
+
+
+class ProjectPartyPerson(BaseModel):
+    stakeholder_id: str
+    party_contact_id: Optional[str] = None
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ProjectPartyOnProject(BaseModel):
+    """One (role, party) on a project, with the project's people at that party. Shape kept
+    stable for PS-PROPOSAL-QUOTATION's recipient picker."""
+
+    party_id: str
+    party_type: str
+    role: str
+    name: str
+    phone: Optional[str] = None
+    contacts: List[ProjectPartyPerson] = Field(default_factory=list)
+
+
+class ProjectPartyPhoneFill(BaseModel):
+    phone: str = Field(..., max_length=50)
+    stakeholder_id: Optional[str] = None
+
+
+class ProjectPartyPhoneFillResponse(BaseModel):
+    party_id: str
+    stakeholder_id: Optional[str] = None
+    phone: str

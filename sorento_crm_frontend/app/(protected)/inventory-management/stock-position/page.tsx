@@ -1,5 +1,7 @@
 import { Metadata } from 'next';
+import { Suspense } from 'react';
 import { Container } from '@/components/common/container';
+import { ListPageSkeleton } from '@/components/common/ListPageSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import StockPositionGrid from './components/StockPositionGrid';
 
@@ -15,7 +17,10 @@ export default function StockPositionPage() {
         <PageHeader title="Stock position" />
       </Container>
       <Container>
-        <StockPositionGrid />
+        {/* The grid reads its filters, sort and page from the URL (useSearchParams). */}
+        <Suspense fallback={<ListPageSkeleton bodyOnly />}>
+          <StockPositionGrid />
+        </Suspense>
       </Container>
     </>
   );

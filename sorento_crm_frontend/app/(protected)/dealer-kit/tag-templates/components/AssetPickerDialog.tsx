@@ -27,7 +27,10 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import type { ImageSource, TagImage } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  ImageSource,
+  TagImage,
+} from '@/lib/dealer-kit/tag-template-types';
 import {
   listAssets,
   uploadAsset,
@@ -83,7 +86,9 @@ export function AssetPickerDialog({
       });
       setAssets(rows);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load artwork');
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to load artwork',
+      );
     } finally {
       setLoading(false);
     }
@@ -139,8 +144,8 @@ export function AssetPickerDialog({
                 {productImages.length === 0 ? (
                   <p className="py-8 text-center text-xs text-muted-foreground">
                     This block is not bound to a product, or the product has no
-                    photos you can use. Bind the block to a product, or pick from
-                    the asset library.
+                    photos you can use. Bind the block to a product, or pick
+                    from the asset library.
                   </p>
                 ) : (
                   <div className="grid max-h-80 grid-cols-4 gap-2 overflow-auto">
@@ -162,7 +167,7 @@ export function AssetPickerDialog({
                           className="size-full object-contain"
                         />
                         {image.is_primary && (
-                          <span className="absolute left-1 top-1 rounded bg-primary px-1 text-[9px] text-primary-foreground">
+                          <span className="absolute left-1 top-1 rounded bg-primary px-1 text-2xs text-primary-foreground">
                             Primary
                           </span>
                         )}
@@ -204,30 +209,38 @@ export function AssetPickerDialog({
                 </p>
               ) : (
                 <div className="grid max-h-64 grid-cols-5 gap-2 overflow-auto">
-                  {assets.map((asset) => (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className="flex flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
-                      onClick={() => onPick({ type: 'asset', assetId: asset.id })}
-                      title={asset.name}
-                    >
-                      <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
-                        {asset.url ? (
-                                            <img
-                            src={asset.url}
-                            alt=""
-                            className="size-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-[9px] text-muted-foreground">
-                            No preview
-                          </span>
-                        )}
-                      </span>
-                      <span className="w-full truncate text-[10px]">{asset.name}</span>
-                    </button>
-                  ))}
+                  {assets.map((asset) => {
+                    // A rendition for the grid, never 200 originals.
+                    const preview = asset.thumb_url ?? asset.url;
+                    return (
+                      <button
+                        key={asset.id}
+                        type="button"
+                        className="flex flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
+                        onClick={() =>
+                          onPick({ type: 'asset', assetId: asset.id })
+                        }
+                        title={asset.name}
+                      >
+                        <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
+                          {preview ? (
+                            <img
+                              src={preview}
+                              alt=""
+                              className="size-full object-contain"
+                            />
+                          ) : (
+                            <span className="text-2xs text-muted-foreground">
+                              No preview
+                            </span>
+                          )}
+                        </span>
+                        <span className="w-full truncate text-2xs">
+                          {asset.name}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 

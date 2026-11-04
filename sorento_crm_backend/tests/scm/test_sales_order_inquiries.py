@@ -1003,6 +1003,8 @@ def test_planned_counts_mixed(scm_app):
     """
     app, db, _u = _as(scm_app)
     core = _core_order(db)
+    core.demand_class = "project"
+    db.flush()
     decided = _planning_line(db, core)
     told = _planning_line(db, core)
     _untouched = _planning_line(db, core)
@@ -1046,6 +1048,7 @@ def test_closed_delivered_order_without_plan_reads_zero_of_three(scm_app):
     app, db, _u = _as(scm_app)
     core = _core_order(db)
     core.status = "closed"
+    core.demand_class = "project"
     db.flush()
     for _ in range(3):
         _planning_line(db, core, qty=1, delivered=1, line_status="closed")

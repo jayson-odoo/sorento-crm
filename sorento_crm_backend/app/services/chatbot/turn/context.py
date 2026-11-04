@@ -128,6 +128,13 @@ def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
     return f"Known brands: {', '.join(pairs)}"
 
 
+def known_account_types_line(types: list[str] | None) -> str | None:
+    """SALES-ACCOUNT-TYPE PR 2: the `Known account types:` line, the stored debtor types of the contact's company
+    (sorted, deduped), `None` when no customer carries one."""
+    names = sorted({str(t).strip() for t in types or [] if t and str(t).strip()}, key=lambda t: (t.casefold(), t))
+    return f"Known account types: {', '.join(names)}" if names else None
+
+
 def promotion_kinds_line(kinds: list[dict[str, Any]] | None) -> str | None:
     """PROMO-SUBJECT-FILTER R5: the `Promotion kinds:` line, `type_code (name)` pairs read from
     `promotion_types` every turn, so a kind added as a row is heard on the next message."""
@@ -174,6 +181,7 @@ def _brands_and_kinds(layers: "ContextLayers") -> str | None:
         p
         for p in (
             known_brands_line(layers.brands),
+            known_account_types_line(layers.account_types),
             product_types_line(layers.product_types),
             product_details_line(layers.product_details),
             promotion_kinds_line(layers.promotion_kinds),
@@ -199,6 +207,40 @@ def _cut_bytes(value: str, limit: int) -> str:
     if len(encoded) <= limit:
         return value
     return encoded[:limit].decode("utf-8", errors="ignore")
+
+
+HELD_REPORT_PREFIX = "Held report"
+
+
+def held_report_line(ask: dict[str, Any], open_question: str | None = None) -> str:
+    """The `Held report:` line: the report ask in the `report_ask` shape (the caller's keys, in its order, names never
+    ids) as compact JSON; while a field question is open, `Held report (open question: <it>): ` + the ask so far."""
+    head = f"{HELD_REPORT_PREFIX} (open question: {open_question}): " if open_question else f"{HELD_REPORT_PREFIX}: "
+    return head + json.dumps(ask, ensure_ascii=False, separators=(",", ":"))
+
+
+PAGE_LINE_PREFIX = "Current page: "
+_PAGE_LINE_JSON_BYTES = 400
+
+
+def page_line(page: dict[str, Any] | None) -> str | None:
+    """`Current page: {json}` for the parser, or None with no page. Values are folded to one line and
+    the JSON is bounded to 400 bytes by shortening the title, then the path (then the record ref),
+    never by cutting the JSON text, so a title holding `Current user message:` stays a quoted value."""
+    if not page:
+        return None
+    values = {k: _collapse_whitespace(str(v)) for k, v in page.items() if v is not None}
+
+    def encoded() -> str:
+        return json.dumps(values, ensure_ascii=False)
+
+    for key in ("title", "path", "record_ref"):
+        if key not in values:
+            continue
+        excess = len(encoded().encode("utf-8")) - _PAGE_LINE_JSON_BYTES
+        if excess > 0:
+            values[key] = _cut_bytes(values[key], len(values[key].encode("utf-8")) - excess)
+    return PAGE_LINE_PREFIX + encoded()
 
 
 def _previous_response_normalized(value: str) -> str:
@@ -237,6 +279,9 @@ class ContextLayers:
     current_message: str
     reply_to: str | None
     media_line: str | None
+    #: AGENTIC-UNIFY panel: the WHOLE `Current page: {json}` line (`page_line`), printed directly above
+    #: `Current user message:` at every level. None leaves the assembled text untouched.
+    page_line: str | None = None
     #: PR #1247 (stock ask v2 S3 / rounds 8 and 9), carried through the merge with
     #: main: the `Open task: ...` lines (`parser.open_task_lines`), the one question on
     #: the table as its `Open question: {...}` line, and the last exchanges as
@@ -250,6 +295,9 @@ class ContextLayers:
     #: brands:` line at every level. Kept whole, like the task lines: it is what a
     #: misspelt brand word is resolved against.
     brands: list[dict[str, Any]] | None = None
+    #: SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company, one `Known account types:` line
+    #: (set only for a prompt that defines it and a contact that is not customer-scoped).
+    account_types: list[str] | None = None
     #: PROMO-SUBJECT-FILTER R5: the live `promotion_types` rows (`{type_code, type_name}`),
     #: one `Promotion kinds:` line, so the parser fills `promotion_kind` from the table.
     promotion_kinds: list[dict[str, Any]] | None = None
@@ -270,6 +318,10 @@ class ContextLayers:
     #: lines (Current subject, Open task, Open question, Pending, Open question options)
     #: and is never trimmed.
     state_block: str | None = None
+    #: SALES-ACCOUNT-TYPE semantic carry: the one `Held report:` line (`held_report_line`), right after the state
+    #: lines and never trimmed. Set only for a prompt that carries `parser.REPORT_ASK_LINE`; None leaves the block as
+    #: it was.
+    held_report: str | None = None
 
 
 def _l5_segment(fact: dict[str, Any]) -> str:
@@ -421,10 +473,11 @@ def _render_l2(
     open_question_line: str | None = None,
     brands_line: str | None = None,
     state_block: str | None = None,
+    held_report: str | None = None,
 ) -> tuple[str, bool]:
     if state_block:
         # Never cut: the block is the whole state, and the shrink loop below only trims a subject.
-        return "\n".join(p for p in (brands_line, state_block) if p), False
+        return "\n".join(p for p in (brands_line, state_block, held_report) if p), False
     dropped = False
     options_line: str | None = None
     if pending_options:
@@ -463,6 +516,8 @@ def _render_l2(
             parts.append(pending_line)
         if options_line:
             parts.append(options_line)
+        if held_report:
+            parts.append(held_report)
         return "\n".join(parts)
 
     text = _render(subject_text)
@@ -475,7 +530,9 @@ def _render_l2(
     return text, dropped
 
 
-def _render_l1(current_message: str, reply_to: str | None, media_line: str | None) -> tuple[str, bool]:
+def _render_l1(
+    current_message: str, reply_to: str | None, media_line: str | None, page_line: str | None = None
+) -> tuple[str, bool]:
     raw_message = str(current_message or "")
     message = _cut_bytes(raw_message, _CURRENT_MESSAGE_CUT_BYTES)
     dropped = len(raw_message.encode("utf-8")) > _CURRENT_MESSAGE_CUT_BYTES
@@ -493,6 +550,8 @@ def _render_l1(current_message: str, reply_to: str | None, media_line: str | Non
             dropped = True
     if media_line:
         lines.append(str(media_line))
+    if page_line:
+        lines.append(page_line)
     lines.append(f"Current user message: {message}")
     return "\n".join(lines), dropped
 
@@ -504,6 +563,7 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
     previous = _previous_response_normalized(str(layers.previous_response or ""))
     lines = [
         f"Previous response: {previous}",
+        *([layers.page_line] if layers.page_line else []),
         f"Current user message: {layers.current_message}",
         *(layers.candidate_lines or []),
         *(layers.lookup_lines or []),
@@ -525,6 +585,8 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         lines.append(brands_line)
     if layers.state_block:
         lines.append(layers.state_block)
+    if layers.held_report:
+        lines.append(layers.held_report)
     exchanges = recent_exchange_lines(layers.recent_exchanges, previous)
     if exchanges:
         lines.append(_RECENT_EXCHANGES_HEADER)
@@ -572,8 +634,9 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         layers.open_question_line,
         _brands_and_kinds(layers),
         layers.state_block,
+        layers.held_report,
     )
-    l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
+    l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line, layers.page_line)
     if layers.candidate_lines:
         l1_text = "\n".join([l1_text, *layers.candidate_lines])
     if layers.lookup_lines:

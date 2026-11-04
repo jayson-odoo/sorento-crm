@@ -69,6 +69,37 @@ Every suggestion arrives already filled in, ready to post exactly as shown. Ther
   Confirm, for a short window after you click it - see
   [Undo last confirm](local-buy-and-borrow-source.md#undo-last-confirm).
 
+### What the Review split page shows
+
+Confirm opens on **Review split**, one page per order. The page prints what the purchasing email
+will say, line for line:
+
+* It reads the board again as it opens, so a decision you saved a moment ago (on this tab or on
+  another one) is what it shows. You don't need to refresh the page first.
+* If the board can't be read again (it took too long), the page says so and offers **Retry**.
+  Nothing can be confirmed or changed from it until a read succeeds.
+* If the same line was saved again somewhere else after this tab last read it, the board takes
+  the newer decision and tells you which line changed. Saving from a tab that still shows the
+  older decision is refused, and the board reloads the newer one.
+* A line delivered in full that AutoCount still changed (for example a new date) shows the old
+  date under **Delivery date** and the new one under **New date**, the same Was and Now the email
+  prints.
+* A line delivered in full still goes to purchasing on Confirm: the board plans it at its
+  ordered quantity, so its row shows your saved decision's words like any other saved line.
+  Only when the email holds nothing for it does the row say "Delivered in full: nothing goes to
+  purchasing".
+* A line you already saved a decision for keeps that decision, even when AutoCount's change
+  would suggest something else. The page does not ask again; Confirm sends what you saved.
+* Every line the email carries is on the page. A line this Confirm does not change can still be
+  in the email: for example a line that borrowed stock earlier and now owes an **ORDER BACK** to
+  the location the stock came from. Once the email preview is ready, that line appears as a row
+  you can read but not edit, with the email's own words.
+* If stock moved since you planned and the order can no longer be confirmed as saved, the page
+  shows the reason and offers **Retry**, and its remark cells stay empty: nothing for that order
+  is going to purchasing. **Confirm** still sends the other orders; this one is not sent and
+  appears on the result card with its reasons. To send it, close the dialog, plan the line again
+  on the board, save, and open **Confirm** again.
+
 ## What Confirm does to Order Inquiries
 
 Carrying out a suggestion writes to the **Order Inquiries** page:

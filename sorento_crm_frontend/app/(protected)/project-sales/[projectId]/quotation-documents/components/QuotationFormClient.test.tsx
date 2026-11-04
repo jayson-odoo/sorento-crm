@@ -19,6 +19,7 @@ import {
   screen,
   waitFor,
   within,
+  cleanup,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationDocument } from '../../../_shared/services/quotationDocumentService';
@@ -66,6 +67,7 @@ const createQuotationDocument = vi.fn();
 const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
 const getQuotationLetterTemplates = vi.fn();
+const getQuotationFeedback = vi.fn();
 vi.mock(
   '../../../_shared/services/quotationDocumentService',
   async (importOriginal) => {
@@ -83,9 +85,23 @@ vi.mock(
         getQuotationDocument(...args),
       getQuotationLetterTemplates: (...args: unknown[]) =>
         getQuotationLetterTemplates(...args),
+      getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
     };
   },
 );
+
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
 
 const getProject = vi.fn();
 const listQuotations = vi.fn();
@@ -158,13 +174,19 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
     value,
     onChange,
     placeholder,
+    id,
+    'aria-labelledby': labelledBy,
   }: {
     value: string;
     onChange: (html: string) => void;
     placeholder?: string;
+    id?: string;
+    'aria-labelledby'?: string;
   }) => (
     <textarea
-      aria-label={placeholder}
+      id={id}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : placeholder}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -356,9 +378,24 @@ async function openLines(scope = 'Scope 1') {
   return card;
 }
 
+/**
+ * A scope action from the open tab's own "Scope actions" trigger (QUOTE-SCOPE-COMPACT, owner
+ * 4 Nov: the tabs ARE the scope header, so Rename and Remove scope live on the tab).
+ */
+async function scopeAction(scope: string, item: 'Rename' | 'Remove scope') {
+  fireEvent.click(screen.getByRole('button', { name: `Scope actions on ${scope}` }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+}
+
+/** The Remove scope item in the open tab's menu, opened and returned (to read its state). */
+async function removeItemOf(scope: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Scope actions on ${scope}` }));
+  return screen.findByRole('menuitem', { name: 'Remove scope' });
+}
+
 /** The quotation page's Edit scope dialog: name (and series, notes), staged by the form. */
 async function nameScope(card: HTMLElement, label: string) {
-  fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+  await scopeAction(card.getAttribute('aria-label') ?? '', 'Rename');
   const dialog = await screen.findByRole('dialog');
   fireEvent.change(within(dialog).getByRole('textbox', { name: /^Scope/ }), {
     target: { value: label },
@@ -444,16 +481,19 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Attn')).toHaveValue('');
   });
 
-  it('opens Edit scope from a pen beside the name and shows no series out here (owner, 13 Oct)', async () => {
+  it('QUOTE-SCOPE-COMPACT: no scope header repeats the tab; Rename opens Edit scope from the tab', async () => {
     renderForm();
     const card = await openLines();
 
-    const pen = within(card).getByRole('button', { name: 'Edit scope' });
-    expect(pen).not.toHaveTextContent('Edit scope');
-    expect(pen.querySelector('svg')).not.toBeNull();
+    // The tabs are the header: no title, pen or Remove scope button under them (owner, 4 Nov).
+    expect(within(card).queryByRole('button', { name: 'Edit scope' })).toBeNull();
+    expect(within(card).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    expect(within(card).queryByText('Scope 1')).toBeNull();
     expect(within(card).queryByText('No series')).toBeNull();
+    // One container: the old Card wrapper is gone, the editor sits straight in the region.
+    expect(card.querySelector('[data-slot="card"]')).toBeNull();
 
-    fireEvent.click(pen);
+    await scopeAction('Scope 1', 'Rename');
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('textbox', { name: /^Scope/ })).toBeInTheDocument();
     expect(within(dialog).getByText('Series')).toBeInTheDocument();
@@ -472,7 +512,7 @@ describe('QuotationFormClient create', () => {
       expect(screen.getByLabelText('Subject')).toHaveValue('Menara Test'),
     );
     const card = await openLines();
-    expect(within(card).getByRole('button', { name: 'Edit scope' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Scope actions on Scope 1' })).toBeInTheDocument();
     expect(within(card).getByRole('button', { name: 'Add a section' })).toBeInTheDocument();
   });
 
@@ -570,7 +610,7 @@ describe('QuotationFormClient create', () => {
 
     await addScope('Guard House');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() =>
       expect(createQuotationDocument).toHaveBeenCalledTimes(1),
@@ -607,7 +647,7 @@ describe('QuotationFormClient create', () => {
     const card = await openLines();
     await addLine(card, 1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(/Every scope needs a name/i),
@@ -615,7 +655,7 @@ describe('QuotationFormClient create', () => {
     expect(createQuotationDocument).not.toHaveBeenCalled();
 
     await nameScope(card, 'Townhouse');
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(
@@ -632,7 +672,7 @@ describe('QuotationFormClient create', () => {
     const named = scopeCard('Townhouse');
     fireEvent.change(await addLine(named, 1), { target: { value: 'Bespoke vanity top' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText('One line still needs a catalogue product or set.'),
@@ -644,12 +684,13 @@ describe('QuotationFormClient create', () => {
     renderForm();
     await openLines();
 
-    const added = await addScope('Guard House');
-    // Owner, 13 Oct: a red destructive button with the trash icon, not an outline one.
-    const remove = within(added).getByRole('button', { name: 'Remove scope' });
-    expect(remove.className).toMatch(/bg-destructive/);
-    expect(remove.querySelector('svg')).not.toBeNull();
+    await addScope('Guard House');
+    // No confirm (staged until Save; PRINCIPLES.md forbids confirm dialogs on a destructive
+    // action): the menu item removes it at once, in its destructive styling.
+    const remove = await removeItemOf('Guard House');
+    expect(remove.className).toMatch(/text-destructive/);
     fireEvent.click(remove);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
 
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Guard House' })).toBeNull());
     expect(screen.getByRole('region', { name: 'Scope 1' })).toBeInTheDocument();
@@ -670,10 +711,10 @@ describe('QuotationFormClient create', () => {
     await openLines();
 
     expect(
-      screen.getByRole('heading', { level: 1, name: 'New quotation' }),
+      screen.getByRole('heading', { level: 1, name: 'New proposal' }),
     ).toBeInTheDocument();
     // Cancel is an outline button; Save is the only filled one.
-    const save = screen.getByRole('button', { name: 'Save quotation' });
+    const save = screen.getByRole('button', { name: 'Save proposal' });
     const cancel = screen.getByRole('button', { name: 'Cancel' });
     expect(save.className).toMatch(/bg-primary/);
     expect(cancel.className).not.toMatch(/bg-primary/);
@@ -727,7 +768,7 @@ describe('QuotationFormClient edit', () => {
 
     await addScope('Reception');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() =>
       expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
@@ -761,7 +802,7 @@ describe('QuotationFormClient edit', () => {
     expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
     expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2].scopes[0]).toMatchObject({
       id: 'q1',
@@ -796,7 +837,7 @@ describe('QuotationFormClient edit', () => {
     expect(within(card).queryByRole('button', { name: 'Add a line' })).toBeNull();
     expect(within(card).queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() =>
       expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
     );
@@ -808,7 +849,7 @@ describe('QuotationFormClient edit', () => {
     renderForm('d1');
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     // The write replaces the WHOLE set, so a scope nobody touched is never re-sent.
@@ -817,16 +858,18 @@ describe('QuotationFormClient edit', () => {
 
   it('AC-QF058: a saved scope nothing in which was sent can be removed, in the ONE PATCH', async () => {
     renderForm('d1');
-    const card = await openSavedLines();
+    await openSavedLines();
 
-    await waitFor(() =>
-      expect(within(card).getByRole('button', { name: 'Remove scope' })).toBeInTheDocument(),
-    );
-    fireEvent.click(within(card).getByRole('button', { name: 'Remove scope' }));
+    // Offered once the scope's versions are known (nothing in it was sent).
+    await waitFor(async () => {
+      const item = await removeItemOf('Townhouse');
+      expect(item).not.toHaveAttribute('data-disabled');
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove scope' }));
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Townhouse' })).toBeNull());
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     expect(body.remove_scope_ids).toEqual(['q1']);
@@ -839,9 +882,9 @@ describe('QuotationFormClient edit', () => {
       version({ id: 'v1', version_no: 1, is_current: false, is_editable: false, is_issued: true }),
     ]);
     renderForm('d1');
-    const card = await openSavedLines();
+    await openSavedLines();
 
-    expect(within(card).queryByRole('button', { name: 'Remove scope' })).toBeNull();
+    expect(await removeItemOf('Townhouse')).toHaveAttribute('data-disabled');
   });
 
   it('AC-QF060: a header-only edit saves the letterhead with no scope change', async () => {
@@ -849,7 +892,7 @@ describe('QuotationFormClient edit', () => {
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
     fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Mr Tan' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({ attn_name: 'Mr Tan' });
     expect(updateQuotationDocument.mock.calls[0][2]).not.toHaveProperty('remove_scope_ids');
@@ -868,7 +911,7 @@ describe('QuotationFormClient guards', () => {
       target: { value: 'two' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(
@@ -948,7 +991,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
 
     await openTab('Cover letter');
     const letter = await screen.findByRole('textbox', {
-      name: 'The letter the customer reads before the prices',
+      name: 'Intro text',
     });
     expect(letter).toHaveValue('<p>Dear {{attn_name}}</p>');
     fireEvent.change(letter, { target: { value: '<p>Dear {{attn_name}}, edited</p>' } });
@@ -958,7 +1001,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
       await screen.findByRole('textbox', { name: 'The clauses the customer holds us to' }),
     ).toHaveValue('<p>Valid 30 days</p>');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       cover_letter_html: '<p>Dear {{attn_name}}, edited</p>',
@@ -973,10 +1016,10 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
     await openTab('Cover letter');
     expect(
       await screen.findByRole('textbox', {
-        name: 'The letter the customer reads before the prices',
+        name: 'Intro text',
       }),
     ).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).not.toHaveProperty('cover_letter_html');
   });
@@ -987,7 +1030,7 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
     renderForm();
     fireEvent.change(await screen.findByLabelText('Your Ref'), { target: { value: 'NC/30' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     const body = createQuotationDocument.mock.calls[0][1];
@@ -1003,7 +1046,7 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
     fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
     await openTab('Header');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(await screen.findByText(/Every scope needs a name/i)).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
@@ -1016,7 +1059,7 @@ describe('QuotationFormClient from the Overview (AC-QF061)', () => {
     listQuotations.mockResolvedValue([]);
     renderForm();
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'New quotation' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'New proposal' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Your Ref')).toHaveValue('');
     expect(getQuotationDocument).not.toHaveBeenCalled();
     expect(screen.queryByText(/could not be loaded/i)).toBeNull();
@@ -1034,9 +1077,11 @@ describe('QuotationFormClient review round (fix round 2)', () => {
     const card = await openLines('Townhouse');
     await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
 
-    expect(within(card).queryByRole('button', { name: 'Remove scope' })).toBeNull();
-    const added = await addScope('Reception');
-    expect(within(added).getByRole('button', { name: 'Remove scope' })).toBeInTheDocument();
+    expect(await removeItemOf('Townhouse')).toHaveAttribute('data-disabled');
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull());
+    await addScope('Reception');
+    expect(await removeItemOf('Reception')).not.toHaveAttribute('data-disabled');
   });
 
   it('AC-QF052: a scope removed on the form leaves the Header details too', async () => {
@@ -1045,9 +1090,12 @@ describe('QuotationFormClient review round (fix round 2)', () => {
     await openTab('Header');
     expect(await screen.findByText('Baser Ramli')).toBeInTheDocument();
 
-    const card = await openLines('Townhouse');
-    const remove = await within(card).findByRole('button', { name: 'Remove scope' });
-    fireEvent.click(remove);
+    await openLines('Townhouse');
+    await waitFor(async () => {
+      const item = await removeItemOf('Townhouse');
+      expect(item).not.toHaveAttribute('data-disabled');
+    });
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove scope' }));
     await openTab('Header');
     expect(screen.queryByText('Baser Ramli')).toBeNull();
   });
@@ -1063,10 +1111,10 @@ describe('QuotationFormClient review round (fix round 2)', () => {
     renderForm();
     await screen.findByLabelText('Your Ref');
 
-    expect(screen.getByRole('button', { name: 'Save quotation' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save proposal' })).toBeDisabled();
     answer({ cover_letter_html: '<p>Hi</p>', terms_html: null });
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save quotation' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: 'Save proposal' })).toBeEnabled(),
     );
   });
 });
@@ -1104,11 +1152,28 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Townhouse' })).toBeNull());
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     expect(body.remove_scope_ids).toEqual(['q1']);
     expect(body.scopes).toEqual([]);
+  });
+
+  it('QUOTE-SCOPE-COMPACT: only the open tab carries the Scope actions trigger (touch / 375 px)', async () => {
+    renderForm();
+    await openLines();
+    await addScope('Guard House');
+    expect(screen.getByRole('button', { name: 'Scope actions on Guard House' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Scope actions on Scope 1' })).toBeNull();
+  });
+
+  it('QUOTE-SCOPE-COMPACT: the trigger opens the same Rename and Remove scope as the right-click', async () => {
+    renderForm();
+    await openLines();
+    await addScope('Guard House');
+    await scopeAction('Guard House', 'Remove scope');
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Guard House' })).toBeNull());
+    expect(screen.getByRole('region', { name: 'Scope 1' })).toBeInTheDocument();
   });
 
   it('the read page strip (no form handlers) has no context menu', async () => {
@@ -1122,7 +1187,8 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
     );
     fireEvent.contextMenu(screen.getByRole('tab', { name: 'Scope 1' }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByRole('menuitem')).toBeNull();
+    expect(screen.queryByRole('menuitem')).toBeNull();    // Nor the touch trigger: the read page has no scope actions at all.
+    expect(screen.queryByRole('button', { name: 'Scope actions on Scope 1' })).toBeNull();
   });
 
   it('right-clicking a scope tab that is not the active one selects it before the menu opens', async () => {
@@ -1154,7 +1220,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await addScope('Guard House');
     await waitFor(() => expect(editorSeries()).toBe('s1'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Townhouse', series_id: 's1' }),
@@ -1172,7 +1238,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await nameScope(card, 'Townhouse');
     await addScope('Guard House');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Townhouse', series_id: null }),
@@ -1187,7 +1253,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await openTab('Header');
     fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/31' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({ your_ref: 'NC/31', scopes: [] });
   });
@@ -1195,10 +1261,10 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
   it('AC-QUP-4: a new scope whose series was cleared stays cleared, reopened and saved', async () => {
     renderForm();
     await openLines();
-    const card = await addScope('Guard House');
+    await addScope('Guard House');
     await waitFor(() => expect(editorSeries()).toBe('s1'));
 
-    fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+    await scopeAction('Guard House', 'Rename');
     let dialog = await screen.findByRole('dialog');
     await waitFor(() =>
       expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent('Premium Series'),
@@ -1208,14 +1274,14 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
     // Reopened (a rename, say): the cleared series is not put back.
-    fireEvent.click(within(scopeCard('Guard House')).getByRole('button', { name: 'Edit scope' }));
+    await scopeAction('Guard House', 'Rename');
     dialog = await screen.findByRole('dialog');
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent('No series');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Guard House', series_id: null }),
@@ -1235,13 +1301,444 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
 
   it('AC-QUP-1: a saved scope with no series opens Edit scope on the one series', async () => {
     renderForm('d1');
-    const card = await openLines('Townhouse');
-    fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+    await openLines('Townhouse');
+    await scopeAction('Townhouse', 'Rename');
     const dialog = await screen.findByRole('dialog');
     await waitFor(() =>
       expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent(
         'Premium Series',
       ),
     );
+  });
+});
+
+/**
+ * QUOTE-COVER-PAGE (UAC B1, B2): Email and Quotation Purpose on the Header tab, Payment Terms and
+ * Validity on the Terms tab, Prepared By read-only under the header. On create they prefill from
+ * the project's main contact email and the active terms template; Save carries all four.
+ */
+describe('QuotationFormClient cover page fields', () => {
+  const withEmail = (extra: Partial<Project> = {}) =>
+    project({
+      customer_id: 'cust-1',
+      customer_name: 'Gamuda Builders Sdn Bhd',
+      customer_attn: 'Lim Wei Ming',
+      owner_name: 'Ahmad Faizal',
+      ...({ customer_email: 'lim.weiming@example.test' } as unknown as Partial<Project>),
+      ...extra,
+    });
+  const templates = {
+    cover_letter_html: '<p>Dear {{attn_name}}</p>',
+    terms_html: '<p>Valid 30 days</p>',
+    payment_terms: '30 days net',
+    validity: '60 days',
+  };
+
+  it('create prefills Email from the project customer email', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
+    );
+    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('');
+  });
+
+  it('create prefills Payment Terms and Validity from the letter templates', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await openTab('Terms');
+    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('30 days net');
+    expect(screen.getByLabelText('Validity')).toHaveValue('60 days');
+  });
+
+  it('shows Prepared By read-only on the Header tab as the project salesperson', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    expect(await screen.findByText('Prepared By')).toBeInTheDocument();
+    expect(screen.getByText('Ahmad Faizal')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+  });
+
+  it('Save sends recipient_email_snapshot, quotation_purpose, payment_terms and validity', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
+    );
+    fireEvent.change(screen.getByLabelText('Quotation Purpose'), {
+      target: { value: 'Supply of sanitary ware' },
+    });
+    await openTab('Terms');
+    fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
+      recipient_email_snapshot: 'lim.weiming@example.test',
+      quotation_purpose: 'Supply of sanitary ware',
+      payment_terms: '30 days net',
+      validity: '90 days',
+    });
+  });
+
+  it('with no active template Payment Terms and Validity start empty and Save still works', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue({ cover_letter_html: null, terms_html: null });
+    renderForm();
+
+    await openTab('Terms');
+    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('');
+    expect(screen.getByLabelText('Validity')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+  });
+
+  it('edit opens with the saved values and PATCH carries a changed Payment Terms', async () => {
+    getQuotationDocument.mockResolvedValue(
+      document({
+        ...({
+          recipient_email_snapshot: 'saved@example.test',
+          quotation_purpose: 'Saved purpose',
+          payment_terms: 'Saved payment',
+          validity: 'Saved validity',
+        } as unknown as Partial<QuotationDocument>),
+      }),
+    );
+    renderForm('d1');
+
+    await waitFor(() => expect(screen.getByLabelText('Email')).toHaveValue('saved@example.test'));
+    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('Saved purpose');
+    await openTab('Terms');
+    const pay = await screen.findByLabelText('Payment Terms');
+    expect(pay).toHaveValue('Saved payment');
+    fireEvent.change(pay, { target: { value: 'Changed payment' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({
+      payment_terms: 'Changed payment',
+      validity: 'Saved validity',
+    });
+  });
+
+  it('edit shows Prepared By from the saved quotation, not the project owner', async () => {
+    getProject.mockResolvedValue(withEmail({ owner_name: 'Wrong Project Owner' }));
+    getQuotationDocument.mockResolvedValue(
+      document({ ...({ prepared_by: 'Saved Creator' } as unknown as Partial<QuotationDocument>) }),
+    );
+    renderForm('d1');
+
+    expect(await screen.findByText('Saved Creator')).toBeInTheDocument();
+    expect(screen.queryByText('Wrong Project Owner')).not.toBeInTheDocument();
+  });
+});
+
+
+/** QUOTE-COVER-DESIGN (UAC B1, B2): the Cover letter tab is a preview card plus Intro/Closing editors. */
+describe('QuotationFormClient cover page preview and editors', () => {
+  const previewBody = () =>
+    new Response(
+      JSON.stringify({
+        cover_title: 'OFFER SHEET',
+        cover_show_letterhead: true,
+        cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+        cover_intro_html: '<p>INTRO PREVIEW</p>',
+        cover_closing_html: '<p>CLOSING PREVIEW</p>',
+        sender_name: 'Sorento Sdn Bhd',
+        sender_logo_url: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  const lastPreviewBody = () => {
+    const init = coverPreview.mock.calls.at(-1)?.[1] as RequestInit | undefined;
+    return init?.body ? JSON.parse(String(init.body)) : null;
+  };
+
+  beforeEach(() => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(async () => previewBody());
+  });
+
+  it('shows the preview card from the preview endpoint with the design title and rows', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Offer Number')).toBeInTheDocument();
+    expect(screen.getByText('SRT/Q/2026/0141-R1 Menara Test')).toBeInTheDocument();
+    expect((coverPreview.mock.calls[0][1] as RequestInit).method).toBe('POST');
+  });
+
+  it('M1: a new proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
+  it('has Intro text and Closing text editors, the intro prefilled from the template', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByLabelText('Intro text')).toHaveValue('<p>Dear {{attn_name}}</p>');
+    expect(screen.getByLabelText('Closing text')).toBeInTheDocument();
+  });
+
+  it('the preview follows an unsaved intro edit', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Intro text'), { target: { value: '<p>EDITED INTRO</p>' } });
+
+    await waitFor(() => expect(lastPreviewBody()).toMatchObject({ cover_letter_html: '<p>EDITED INTRO</p>' }), {
+      timeout: 4000,
+    });
+  });
+
+  it('B2: the preview body follows unsaved closing, Attn and terms edits from other tabs', async () => {
+    renderForm();
+    await openTab('Header');
+    fireEvent.change(await screen.findByLabelText('Attn'), { target: { value: 'Mr Preview' } });
+    await openTab('Terms');
+    fireEvent.change(await screen.findByRole('textbox', { name: 'The clauses the customer holds us to' }), {
+      target: { value: '<p>TERMS EDITED</p>' },
+    });
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Closing text'), { target: { value: '<p>CLOSING EDITED</p>' } });
+
+    await waitFor(
+      () =>
+        expect(lastPreviewBody()).toMatchObject({
+          cover_closing_html: '<p>CLOSING EDITED</p>',
+          attn_name: 'Mr Preview',
+          terms_html: '<p>TERMS EDITED</p>',
+        }),
+      { timeout: 4000 },
+    );
+  });
+
+  it('save sends cover_letter_html and cover_closing_html', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Intro text'), { target: { value: '<p>Intro typed</p>' } });
+    fireEvent.change(screen.getByLabelText('Closing text'), { target: { value: '<p>Closing typed</p>' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
+      cover_letter_html: '<p>Intro typed</p>',
+      cover_closing_html: '<p>Closing typed</p>',
+    });
+  });
+});
+
+
+/** QUOTE-COVER-DESIGN round 2: the editors' names come from a visible label, not the placeholder. */
+describe('QuotationFormClient cover editor labels', () => {
+  it('Intro text and Closing text are named by their label with seeded text present', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    const intro = await screen.findByRole('textbox', { name: 'Intro text' });
+    expect(intro).toHaveValue('<p>Dear {{attn_name}}</p>');
+    expect(screen.getByRole('textbox', { name: 'Closing text' })).toBeInTheDocument();
+  });
+});
+
+describe('QuotationFormClient: open feedback on the revision-2 draft (PS-QUOTE-MATRIX fix round 2)', () => {
+  it('marks the draft line the v1 note names, while it is being edited', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false, is_issued: true }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [{ ...LINE, id: 'l1', version_id: 'v1' }]
+        : [{ ...LINE, id: 'l1-v2', version_id: 'v2' }],
+    );
+    getQuotationFeedback.mockResolvedValue({
+      open_count: 1,
+      requests: [
+        {
+          id: 'r1',
+          issue_label: 'Rev A',
+          submitted_at: null,
+          requester_name: null,
+          note: null,
+          rows: [
+            {
+              id: 'f1',
+              line_id: 'l1',
+              scope_id: 'q1',
+              scope_label: 'Townhouse',
+              line_description: 'Wall-hung WC',
+              cell_key: null,
+              cell_label: null,
+              kind: 'note',
+              value_from: null,
+              value_to: null,
+              model: null,
+              note: 'Check the WC',
+              handled_at: null,
+              handled_by_name: null,
+            },
+          ],
+        },
+      ],
+    });
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+
+    expect(await screen.findByTestId('line-feedback-dot')).toBeInTheDocument();
+    expect(getQuotationFeedback).toHaveBeenCalledWith('p1', 'd1');
+  });
+});
+
+/**
+ * Owner, hand test (3 Nov): the create view must behave like the edit view. Rule of 28 Oct: create,
+ * edit and view of a form are identical and use the same component. So New proposal has the grid
+ * editor Edit proposal has, column headers included, and Save carries the new scope's columns.
+ */
+describe('QuotationFormClient: New and Edit proposal are one editor (PS-QUOTE-MATRIX)', () => {
+  /** What the open scope's grid offers: the controls and the header/footer it draws. */
+  function gridShape(card: HTMLElement) {
+    const table = within(card).getByRole('table');
+    return {
+      headerInputs: within(table)
+        .queryAllByRole('textbox')
+        .map((input) => input.getAttribute('aria-label'))
+        .filter((label) => label?.startsWith('Column header')),
+      columnHeaders: within(table)
+        .getAllByRole('columnheader')
+        .map((th) => (th.textContent ?? '').trim())
+        .filter(Boolean),
+      footer: (table.querySelector('tfoot')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  it('offers + Column header on a new scope exactly as on a saved one', async () => {
+    renderForm();
+    const created = await openLines();
+    expect(within(created).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+    cleanup();
+
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    expect(within(edited).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+  });
+
+  it('draws the same header and footer for a scope with columns, new or saved', async () => {
+    // Create: a new scope gets its first column header from the same control.
+    renderForm();
+    const created = await openLines();
+    await addLine(created, 1);
+    fireEvent.click(within(created).getByRole('button', { name: 'Column header' }));
+    await within(created).findByRole('textbox', { name: 'Column header Header 1' });
+    const createShape = gridShape(created);
+    cleanup();
+
+    // Edit: a saved scope whose version holds that same header.
+    listQuotationVersions.mockResolvedValue([
+      version({ matrix_columns: [{ key: 'h1', label: 'Header 1', cols: [] }] }),
+    ]);
+    listQuotationLines.mockResolvedValue([{ ...LINE, qty_cells: { h1: '10.00' } }]);
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    await within(edited).findByRole('textbox', { name: 'Column header Header 1' });
+    const editShape = gridShape(edited);
+
+    expect(createShape.headerInputs).toEqual(['Column header Header 1']);
+    expect(createShape.headerInputs).toEqual(editShape.headerInputs);
+    expect(createShape.columnHeaders).toEqual(editShape.columnHeaders);
+    expect(createShape.columnHeaders).toContain('Total qty');
+    expect(createShape.columnHeaders).not.toContain('Qty');
+    expect(createShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+    expect(editShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+  });
+
+  it('Save on create sends the new scope\'s columns and each line\'s cells in the one request', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'Townhouse');
+    const card = scopeCard('Townhouse');
+    await addLine(card, 1);
+    await pickProduct(card, 1);
+    fireEvent.click(within(card).getByRole('button', { name: 'Column header' }));
+    await within(card).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.change(within(card).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1/ }), {
+      target: { value: '995' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [scope] = body.scopes;
+    expect(scope.matrix_columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    const key = scope.matrix_columns[0].key;
+    expect(scope.lines).toEqual([
+      expect.objectContaining({ product_id: 'p9', qty_cells: { [key]: '995' }, quantity: '995.00' }),
+    ]);
+  });
+});
+
+describe('QuotationFormClient round 4: Copy columns from on New proposal', () => {
+  it('a second unsaved section copies the first one\'s headers and columns (fresh keys, no quantities)', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'UNIT');
+    const unit = scopeCard('UNIT');
+    await addLine(unit, 1);
+    await pickProduct(unit, 1);
+    fireEvent.click(within(unit).getByRole('button', { name: 'Column header' }));
+    await within(unit).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.click(within(unit).getByRole('button', { name: '+ Column' }));
+    await within(unit).findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(within(unit).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1 \/ Column 1/ }), {
+      target: { value: '7' },
+    });
+
+    const second = await addScope('LEVEL 9');
+    const trigger = within(second).getByRole('button', { name: /Copy columns from/ });
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'UNIT' }));
+
+    const card = scopeCard('LEVEL 9');
+    expect(await within(card).findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(within(card).getByRole('textbox', { name: 'Column Column 1' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [first, copy] = body.scopes;
+    expect(copy.matrix_columns.map((h: { label: string }) => h.label)).toEqual(['Header 1']);
+    expect(copy.matrix_columns[0].cols.map((c: { label: string }) => c.label)).toEqual(['Column 1']);
+    // Fresh keys, never the source's; and no quantities come across.
+    expect(copy.matrix_columns[0].key).not.toBe(first.matrix_columns[0].key);
+    expect(copy.matrix_columns[0].cols[0].key).not.toBe(first.matrix_columns[0].cols[0].key);
+    expect(copy.lines).toEqual([]);
+  });
+});
+
+describe('QuotationFormClient: an unsaved line keeps its product code across a section switch', () => {
+  it('New proposal: pick a product, open another section and come back, and the code is still there', async () => {
+    renderForm();
+    const first = await openLines();
+    await addLine(first, 1);
+    await pickProduct(first, 1);
+
+    await addScope('Guard House');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /^Scope 1/ }), { button: 0 });
+    const back = await waitFor(() => scopeCard('Scope 1'));
+
+    const picker = await within(back).findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
+    expect(picker).toHaveTextContent('SRT-BASIN-02');
+    expect(within(back).queryByText('Selected product')).toBeNull();
   });
 });

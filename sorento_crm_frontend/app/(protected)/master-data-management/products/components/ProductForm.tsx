@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import {
   Banknote,
   Factory,
@@ -29,6 +29,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -66,7 +67,7 @@ interface ProductFormProps {
 
 export default function ProductForm({ productId, initialProduct, onSuccess }: ProductFormProps) {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  const [formTab, setFormTab] = useUrlTab({ tabs: PRODUCT_FORM_TABS, defaultTab: 'basic' });
   const isEditMode = !!productId;
   const { data: productFromQuery } = useProduct(productId || null);
   /** Use initialProduct when passed (from Edit page); otherwise use query result */
@@ -311,10 +312,9 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         {/* `?tab=` so another screen can send somebody to the right tab rather than to
             Basic Information with instructions. The quotation's "No photo chosen" cell links
             straight to `?tab=attachments`, which is where the product photo is chosen. Unknown
-            values fall back to the first tab rather than rendering nothing. */}
-        <Tabs defaultValue={PRODUCT_FORM_TABS.includes(searchParams.get('tab') ?? '')
-            ? (searchParams.get('tab') as string)
-            : 'basic'} className="w-full">
+            values fall back to the first tab rather than rendering nothing. The pager carries
+            it to the next product's edit screen (NAV-KEEP-TAB). */}
+        <Tabs value={formTab} onValueChange={setFormTab} className="w-full">
           {/* The strip scrolls (S1), so it needs no grid: five equal columns at
               375 gave each tab 66px and every label overlapped its neighbour. */}
           <TabsList className="mb-5">

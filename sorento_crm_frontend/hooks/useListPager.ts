@@ -39,13 +39,20 @@
  *   dead rather than swallowing every further click in silence.
  * - The record is not on the page (deep link into a filtered set, or it was
  *   deleted): `visible` is false and the caller renders nothing. Back still works.
+ * - The walk is kept. Once the record has been seen on the walked page, that page is
+ *   remembered in the QueryClient under its own key (`['list-pager-walk', ...listKey]`),
+ *   which list invalidations never touch. An action on the detail page (reserve, park,
+ *   confirm, ...) invalidates the list, and the refetched page may no longer hold the
+ *   record (it left the filter or moved page); position, neighbours and the counter then
+ *   come from the remembered page instead of the pager vanishing. A record that was never
+ *   on the walked page has no snapshot, so a deep link still hides it.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { SortingState } from '@tanstack/react-table';
-import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { buildDetailSearch, detailViewParams, parseDetailSearch } from '@/lib/listNavQuery';
 import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 
 /** The list query a detail URL describes. */
@@ -108,12 +115,21 @@ export interface UseListPagerResult {
  * `from` (M5-07) names the id itself, so a reader who steps prev/next three
  * times and then hits Back is restored to the row they actually END on, not
  * the one they started from.
+ *
+ * `tab` (NAV-KEEP-TAB, owner ruling 1 Nov 2026) is the tab the reader has open:
+ * the next record opens on the same one. A record that has no such tab shows its
+ * default (`useUrlTab` validates it), so the pager never needs to know the tabs.
+ *
+ * `view` (OI-UX-FILTER-SNAPSHOT, owner 3 Nov) is every `view_*` param: the detail page's own
+ * grid search/filter/sort, so the next record opens filtered the same way.
  */
 function stepHref(
   detailPath: string,
   id: string,
   params: ListPagerParams,
-  hrefFor?: (id: string, search: string) => string,
+  hrefFor: ((id: string, search: string) => string) | undefined,
+  tab: string | null,
+  view: Record<string, string> = {},
 ): string {
   const search = buildDetailSearch(
     {
@@ -122,7 +138,7 @@ function stepHref(
       sorting: params.sorting,
       searchQuery: params.searchQuery,
     },
-    { ...params.filters, from: id },
+    { ...params.filters, from: id, tab, ...view },
   );
   if (hrefFor) return hrefFor(id, search);
   return `${detailPath}/${id}${search ? `?${search}` : ''}`;
@@ -152,6 +168,8 @@ export function useListPager({
     () => parseDetailSearch(new URLSearchParams(searchKey)),
     [searchKey],
   );
+  const tab = useMemo(() => new URLSearchParams(searchKey).get('tab') || null, [searchKey]);
+  const view = useMemo(() => detailViewParams(new URLSearchParams(searchKey)), [searchKey]);
 
   // Same key, same options as the list: when the list cached this page (every
   // list here runs `staleTime: Infinity`) this resolves from the cache without a
@@ -165,9 +183,28 @@ export function useListPager({
     retry: 1,
   });
 
+  // The last answer that held this record, under a key list invalidations do not match.
+  // An observer (`skipToken`, never fetches) keeps it alive as long as the list itself.
+  const walkKey = useMemo<QueryKey>(
+    () => ['list-pager-walk', ...listQueryKey(params)],
+    [listQueryKey, params],
+  );
+  const { data: walked } = useQuery<ListPagerPage>({
+    queryKey: walkKey,
+    queryFn: skipToken,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+  });
+  const liveHolds = Boolean(data?.data?.some((row) => row.id === currentId));
+  useEffect(() => {
+    if (data && liveHolds) queryClient.setQueryData(walkKey, data);
+  }, [data, liveHolds, queryClient, walkKey]);
+  const page =
+    liveHolds || !walked?.data?.some((row) => row.id === currentId) ? data : walked;
+
   // A fresh `[]` on every render would rebuild both step callbacks every time.
-  const items = useMemo(() => data?.data ?? [], [data]);
-  const total = data?.pagination?.total ?? data?.total ?? 0;
+  const items = useMemo(() => page?.data ?? [], [page]);
+  const total = page?.pagination?.total ?? page?.total ?? 0;
   const idx = items.findIndex((row) => row.id === currentId);
   const onPage = idx >= 0;
 
@@ -188,12 +225,12 @@ export function useListPager({
   // prefetch until then, so it is left to the click that already fetches it.
   useEffect(() => {
     if (hasPrevious && idx > 0) {
-      prefetchOnce(stepHref(detailPath, items[idx - 1].id, params, hrefFor));
+      prefetchOnce(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab, view));
     }
     if (hasNext && idx < items.length - 1) {
-      prefetchOnce(stepHref(detailPath, items[idx + 1].id, params, hrefFor));
+      prefetchOnce(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab, view));
     }
-  }, [hasPrevious, hasNext, idx, items, detailPath, params, hrefFor, prefetchOnce]);
+  }, [hasPrevious, hasNext, idx, items, detailPath, params, hrefFor, tab, view, prefetchOnce]);
 
   /** Step to a neighbouring page and land on the row at its near edge. */
   const stepPage = useCallback(
@@ -213,31 +250,31 @@ export function useListPager({
           return;
         }
         const target = edge === 'first' ? rows[0] : rows[rows.length - 1];
-        router.push(stepHref(detailPath, target.id, next, hrefFor));
+        router.push(stepHref(detailPath, target.id, next, hrefFor, tab, view));
       } finally {
         setStepping(false);
       }
     },
-    [detailPath, fetchPage, hrefFor, listQueryKey, params, queryClient, router],
+    [detailPath, fetchPage, hrefFor, listQueryKey, params, queryClient, router, tab, view],
   );
 
   const goPrevious = useCallback(() => {
     if (!hasPrevious) return;
     if (idx > 0) {
-      router.push(stepHref(detailPath, items[idx - 1].id, params, hrefFor));
+      router.push(stepHref(detailPath, items[idx - 1].id, params, hrefFor, tab, view));
       return;
     }
     void stepPage(params.pageIndex - 1, 'last');
-  }, [detailPath, hasPrevious, hrefFor, idx, items, params, router, stepPage]);
+  }, [detailPath, hasPrevious, hrefFor, idx, items, params, router, stepPage, tab, view]);
 
   const goNext = useCallback(() => {
     if (!hasNext) return;
     if (idx < items.length - 1) {
-      router.push(stepHref(detailPath, items[idx + 1].id, params, hrefFor));
+      router.push(stepHref(detailPath, items[idx + 1].id, params, hrefFor, tab, view));
       return;
     }
     void stepPage(params.pageIndex + 1, 'first');
-  }, [detailPath, hasNext, hrefFor, idx, items, params, router, stepPage]);
+  }, [detailPath, hasNext, hrefFor, idx, items, params, router, stepPage, tab, view]);
 
   return {
     // While the first fetch is in flight nothing is known yet, but hiding the

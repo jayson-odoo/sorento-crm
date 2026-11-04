@@ -24,6 +24,7 @@ import {
   PencilLine,
   Plus,
   Trash2,
+  Send,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -66,6 +67,7 @@ import type {
   DebtorOption,
   PriceMode,
   TagItemOption,
+  TagPreviewLineInput,
 } from '../lib/price-tag-request-service';
 import * as portalPriceTagRequest from '../lib/price-tag-request-service';
 import {
@@ -77,15 +79,25 @@ import {
 } from '../lib/submission-client';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
+import {
+  EscalateNote,
+  PriceTagSelfApproval,
+  buildSelfProof,
+  linesWithoutTemplate,
+} from '@/components/dealer-kit/PriceTagSelfApproval';
+import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
 import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
+import { PriceTagLivePreview } from '@/components/dealer-kit/PriceTagLivePreview';
 import {
   usePriceTagLineEditor,
   type PriceTagLineLookups,
 } from '@/hooks/usePriceTagLineEditor';
 import {
   draftLinesPayload,
+  lineNeedsTemplate,
   lineToDraft,
+  MISSING_TAG_TEMPLATE,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
@@ -175,6 +187,19 @@ function lineErrorToast(fields: string[], message: string): void {
   toast.error(`Line ${index + 1}: ${message}`);
 }
 
+/**
+ * A service call that may not exist (PRICETAG-TEMPLATE-PER-PRODUCT's two
+ * lookups on an injected client that predates them). Reading a missing
+ * export off a strict module mock throws rather than answering undefined.
+ */
+function optionalCall<T>(read: () => T | undefined): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
@@ -231,8 +256,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       lookupTagItems: (query) => svc().lookupTagItems(query),
       lookupProductCombos: (productId) => svc().lookupProductCombos(productId),
       lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
+      // PRICETAG-TEMPLATE-PER-PRODUCT. Read at call time and guarded: a
+      // service without it (an older mock) answers "no templates".
+      lookupProductTagTemplates: (productId) => {
+        const fn = optionalCall(() => svc().lookupProductTagTemplates);
+        return fn ? fn(productId) : Promise.resolve([]);
+      },
     };
   }, [client]);
+  const previewLookup = useCallback(
+    (mode: PriceMode, previewRows: TagPreviewLineInput[]) => {
+      const fn = optionalCall(
+        () => clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreview,
+      );
+      return fn ? fn(mode, previewRows) : Promise.reject(new Error('Preview unavailable'));
+    },
+    [client],
+  );
   const designCalls = useMemo(
     () => ({
       loadDesign: (id: string) => client.getPriceTagDesign(id),
@@ -256,6 +296,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Owner ruling 3 Nov: the draft form ends in Approve or Escalate to
+  // marketing, never a plain Submit. The live preview says whether the tag can
+  // be approved as it stands; the note box opens under the buttons.
+  const [previewState, setPreviewState] = useState<{
+    missing: string[];
+    drawn: boolean;
+    failed: boolean;
+  }>({ missing: [], drawn: false, failed: false });
+  const [draftEscalateOpen, setDraftEscalateOpen] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `requestId` prop (the route param) - a retry after
@@ -357,6 +406,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
   const isProofReady = request?.status === 'proof_ready';
+  // PRICETAG-SELF-APPROVAL: his own proof (nobody in marketing drew it). He sees
+  // the generated tag and approves it himself; marketing's proofs keep the
+  // review below.
+  const isOwnProof = !!request?.self_review;
+  const [escalateOpen, setEscalateOpen] = useState(false);
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
   // at what they approved, but Approve/Request Changes only make sense while
@@ -385,7 +439,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // reason sentence under a bold doc-number + colored pill.
   const revisionStatusText = revisionPolicy
     ? revisionPolicy.allowed
-      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      ? // Price tags have no cap (max 0, PRICETAG-SELF-APPROVAL): nothing to count.
+        revisionPolicy.max
+        ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+        : null
       : (revisionPolicy.blocked_reason ?? null)
     : null;
   const { revise, submitting: revising } = useReviseSubmission(
@@ -1134,18 +1191,27 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   }, [requestId, router, homePath, client]);
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
-  const handleSubmit = useCallback(async () => {
+  const handleFinish = useCallback(async (
+    action: { kind: 'approve' } | { kind: 'escalate'; note: string },
+  ) => {
     const { next, emptyRows } = collectProblems();
-    if (Object.keys(next).length > 0 || emptyRows.length > 0) {
+    // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
+    // needs the salesperson's pick; named on the row, like an empty one.
+    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l) ? [index] : []));
+    if (Object.keys(next).length > 0 || emptyRows.length > 0 || templateRows.length > 0) {
       setServerMessage(null);
       setFieldErrors(next);
       setLines((prev) =>
         prev.map((l, index) => ({
           ...l,
-          guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
+          guard_error: emptyRows.includes(index)
+            ? EMPTY_LINE
+            : templateRows.includes(index)
+              ? MISSING_TAG_TEMPLATE
+              : null,
         })),
       );
-      openSectionForProblems(next, emptyRows.length > 0);
+      openSectionForProblems(next, emptyRows.length > 0 || templateRows.length > 0);
       scrollToFirstProblem();
       return;
     }
@@ -1176,8 +1242,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
-      await service().submitRequest(created.id);
-      toast.success('Request submitted');
+      if (action.kind === 'escalate') {
+        await service().submitAndEscalate(created.id, action.note);
+        toast.success('Sent to marketing');
+      } else {
+        // The sheet is built from the SAVED request's own tags, with the same
+        // builder and templates the preview drew, so what is approved is what
+        // was on screen; the server rebuilds each tag's content anyway.
+        const preview = await service().lookupTagPreviewForRequest(created.id);
+        const missing = linesWithoutTemplate(created.lines, preview);
+        if (missing.length > 0) {
+          throw new Error(`No tag template yet for ${missing.join(', ')}. Escalate it to marketing.`);
+        }
+        const built = buildSelfProof(created.lines, preview);
+        if (!built) throw new Error('The tag could not be drawn. Escalate it to marketing.');
+        await service().submitAndApprove(created.id, built.doc);
+        toast.success('Tag approved');
+      }
       router.push(homePath);
     } catch (e) {
       // A refusal that named a field or a row goes THERE, once: the summary then
@@ -1185,7 +1266,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // sentence in two places reads as two problems. A refusal that named
       // nothing we recognise has nowhere to go but the summary and the toast,
       // which is where every other failure lands.
-      const message = e instanceof Error ? e.message : 'Failed to submit request';
+      const message =
+        e instanceof Error
+          ? e.message
+          : action.kind === 'approve'
+            ? 'Failed to approve request'
+            : 'Failed to send to marketing';
       const named = errorFields(e);
       const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
       if (placed > 0) {
@@ -1202,17 +1288,60 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
+  /** Why Approve is off on the draft form, or null when the tag can be approved. */
+  const approveBlockedReason: string | null =
+    previewState.missing.length > 0
+      ? `No tag template yet for ${previewState.missing.join(', ')}. Escalate it to marketing.`
+      : previewState.failed
+        ? 'The tag preview could not be drawn. Escalate it to marketing.'
+        : !previewState.drawn
+          ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
+            ? 'Drawing the tag preview...'
+            : 'Add an item to see its tag before approving.'
+          : null;
+
   // ---- Approve proof ----
-  const handleApprove = useCallback(async () => {
+  // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
+  // a proof marketing drew sends nothing.
+  const handleApprove = useCallback(async (doc?: TagSheetDoc) => {
     if (!requestId) return;
     try {
-      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(requestId);
-      toast.success('Design approved');
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(
+        requestId,
+        doc,
+      );
+      toast.success('Tag approved');
       router.push(homePath);
-    } catch {
-      toast.error('Failed to approve');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to approve');
     }
   }, [requestId, router, homePath, client]);
+
+  // ---- Escalate (PRICETAG-SELF-APPROVAL R6): to marketing, with his note ----
+  const handleEscalate = useCallback(async (note: string) => {
+    if (!requestId) return;
+    try {
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).escalateRequest(
+        requestId,
+        note,
+      );
+      toast.success('Sent to marketing');
+      router.push(homePath);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send to marketing');
+    }
+  }, [requestId, router, homePath, client]);
+
+  const loadSelfProof = useCallback(
+    (id: string) =>
+      clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreviewForRequest(id),
+    [client],
+  );
+
+  const startEdit = useCallback(() => {
+    setReviseMode(true);
+    setReviseReason('');
+  }, []);
 
   // ---- Mark collected (r9 D8): the salesperson has the tags ----
   const handleCollect = useCallback(async () => {
@@ -1441,11 +1570,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             the salesperson opened the request to look at, and their own
             answers below it are the reference, not the headline. It shows for
             longer than the review actions do (D11/AC-S4-4). */}
-        {showDesignPreview && (
+        {escalateOpen && !isOwnProof && (
+          <EscalateNote onEscalate={handleEscalate} onCancel={() => setEscalateOpen(false)} />
+        )}
+
+        {isOwnProof && (
+          <PriceTagSelfApproval
+            request={request}
+            loadPreview={loadSelfProof}
+            onApprove={handleApprove}
+            onEdit={startEdit}
+            onEscalate={handleEscalate}
+          />
+        )}
+
+        {showDesignPreview && !isOwnProof && (
           <PriceTagDesignReview
             request={request}
             reviewable={isProofReady}
-            onApprove={handleApprove}
+            onApprove={() => void handleApprove()}
             onSend={handleSendChanges}
             download={{
               available: exportStatus === 'ready',
@@ -1681,12 +1824,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   onSelect={(event) => {
                     event.preventDefault();
                     setGearOpen(false);
-                    setReviseMode(true);
-                    setReviseReason('');
+                    startEdit();
                   }}
                 >
                   <PencilLine className="size-4" />
-                  Revise
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {request.can_escalate && !isOwnProof && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setGearOpen(false);
+                    setEscalateOpen(true);
+                  }}
+                >
+                  <Send className="size-4" />
+                  Escalate to marketing
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
@@ -1893,6 +2047,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
         </div>
+
+        {/* PRICETAG-TEMPLATE-PER-PRODUCT R5: the tags as they will look, from
+            the first item on, redrawn as the lines change. */}
+        <PriceTagLivePreview
+          lines={lines}
+          priceMode={priceMode}
+          lookupTagPreview={previewLookup}
+          docNumber={request?.doc_number}
+          onReadyChange={setPreviewState}
+        />
       </FormSection>
 
       {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
@@ -2014,7 +2178,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           here - see `showEditForm`) has its Cancel / Submit revision in the
           header above, same spot the read view's Revise gear item sat - not
           a second action row down here, and never Delete. Everything else
-          (a draft or a brand new form) keeps Save Draft / Submit. */}
+          (a draft or a brand new form) keeps Save Draft, then Escalate to marketing
+          and Approve (owner ruling 3 Nov: no plain Submit). */}
       {!reviseMode && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           {/* Delete sits apart from Save and Submit, and asks first; on a CRM page it is parked
@@ -2047,12 +2212,43 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
             Save Draft
           </Button>
-          {/* Enabled whenever the form is idle (D48b): a disabled button with no
-              explanation is what sent the salesperson looking for the reason. */}
-          <Button onClick={handleSubmit} disabled={submitting || saving}>
-            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-            Submit
+          <Button
+            variant="outline"
+            aria-expanded={draftEscalateOpen}
+            onClick={() => setDraftEscalateOpen((open) => !open)}
+            disabled={submitting || saving}
+          >
+            <Send className="size-4 mr-1" />
+            Escalate to marketing
           </Button>
+          {/* A disabled button fires no hover, so the reason sits on its wrapper
+              AND beside it (owner ruling 3 Nov: next to the button, not 1,600 px
+              down under the preview). */}
+          <span title={approveBlockedReason ?? undefined} className="inline-flex">
+            <Button
+              onClick={() => void handleFinish({ kind: 'approve' })}
+              disabled={submitting || saving || approveBlockedReason !== null}
+            >
+              {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+              <Check className="size-4 mr-1" />
+              Approve
+            </Button>
+          </span>
+        </div>
+      )}
+      {!reviseMode && (approveBlockedReason || draftEscalateOpen) && (
+        <div className="space-y-2 sm:text-right">
+          {approveBlockedReason && (
+            <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
+              {approveBlockedReason}
+            </p>
+          )}
+          {draftEscalateOpen && (
+            <EscalateNote
+              onEscalate={(note) => handleFinish({ kind: 'escalate', note })}
+              onCancel={() => setDraftEscalateOpen(false)}
+            />
+          )}
         </div>
       )}
 

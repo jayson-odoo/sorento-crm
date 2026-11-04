@@ -1637,3 +1637,74 @@ def test_product_raw_is_the_folded_raw_of_a_product_entity():
     assert pg.grade_parse(v, {"product_raw": "SRTWC287"})[0] is False
     assert pg.grade_parse({"entities": [{"hint": "customer", "raw": "SRTWC286"}]}, {"product_raw": "SRTWC286"})[0] is False
     assert pg.grade_parse({"entities": []}, {"product_raw": "SRTWC286"})[0] is False
+
+
+def _ents(*rows):
+    return {"entities": [dict({"current_message": True}, **r) for r in rows]}
+
+
+def test_account_type_brand_and_kind_said_graded_as_sets():
+    v = _ents({"hint": "brand", "raw": "Cabana", "kind_said": True}, {"hint": "account_type", "raw": "A/C IV"})
+    assert pg.grade_parse(v, {"brand": ["cabana"], "account_type": ["ac iv"], "kind_said": ["CABANA"]})[0] is True
+    assert pg.grade_parse(v, {"account_type": []})[0] is False
+    assert pg.grade_parse(v, {"brand": ["cabana", "sorento"]})[0] is False
+    assert pg.grade_parse(v, {"kind_said": []})[0] is False
+    assert pg.grade_parse(_ents(), {"brand": [], "account_type": [], "kind_said": []})[0] is True
+
+
+def test_kind_said_is_the_words_the_message_said_a_non_blank_string_counts():
+    said = _ents({"hint": "brand", "raw": "Cabana", "kind_said": "brand"})
+    assert pg.grade_parse(said, {"kind_said": ["cabana"]})[0] is True
+    blank = _ents({"hint": "brand", "raw": "Cabana", "kind_said": "  "})
+    assert pg.grade_parse(blank, {"kind_said": []})[0] is True
+    null = _ents({"hint": "brand", "raw": "Cabana", "kind_said": None})
+    assert pg.grade_parse(null, {"kind_said": ["cabana"]})[0] is False
+    assert pg.grade_parse(null, {"kind_said": []})[0] is True
+
+
+def test_a_carried_entity_is_not_graded_as_this_messages():
+    v = {"entities": [{"hint": "brand", "raw": "cabana", "current_message": False}]}
+    assert pg.grade_parse(v, {"brand": []})[0] is True
+
+
+def test_dates_are_equality_and_year_token_is_the_current_year():
+    from app.services.reports.registry import today_malaysia
+
+    year = today_malaysia().year
+    v = {"date_filter_start": f"{year}-01-01", "date_filter_end": f"{year}-01-31"}
+    assert pg.grade_parse(v, {"date_filter_start": "{year}-01-01", "date_filter_end": "{year}-01-31"})[0] is True
+    assert pg.grade_parse(v, {"date_filter_end": "{year}-02-28"})[0] is False
+    assert pg.grade_parse({}, {"date_filter_start": None, "date_filter_end": None})[0] is True
+    assert pg.grade_parse({}, {"date_filter_start": "{year}-01-01"})[0] is False
+
+
+def test_load_gold_checks_the_account_type_expect_types(tmp_path):
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": "4"})]))
+    assert pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": ["4"], "date_filter_start": None})]))
+
+
+def test_group_by_null_is_graded_not_skipped():
+    assert pg.grade_parse({"group_by": "month"}, {"group_by": None})[0] is False
+    assert pg.grade_parse({"group_by": None}, {"group_by": None})[0] is True
+    assert pg.grade_parse({}, {"group_by": None})[0] is True
+
+
+def test_account_type_gold_open_question_is_the_object_the_engine_sends():
+    """at-17 to at-19 carry the real shape of `turn/question.of_required_ask` for the word question."""
+    from pathlib import Path
+
+    from app.services.chatbot.lanes.business import report_ask
+    from app.services.chatbot.turn import question
+
+    slot = {
+        "ask": report_ask.ASK_NAME, "asking": "kind", "options": [list(o) for o in report_ask.WORD_KIND_OPTIONS],
+        "values": {"basis": {"value": "delivered", "label": "delivered"}}, "extras": {"kind_words": ["Cabana"]},
+    }
+    sent = question.of_required_ask(slot)
+    rows = {r["id"]: r for r in pg.load_gold(Path(pg.__file__).parent / "gold" / "parser_account_type.jsonl")}
+    for row_id in ("at-17", "at-18", "at-19"):
+        asked = rows[row_id]["context"]["open_question"]
+        assert list(asked) == list(sent), (row_id, list(asked), list(sent))
+        assert asked["question"] == sent["question"] == "Brand or account type?"
+        assert asked["options"] == sent["options"] and asked["owed"] == ["kind"]

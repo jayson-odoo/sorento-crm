@@ -12,6 +12,8 @@ admin who edits the graph changes them; the permission rules are by status KEY.
 """
 from __future__ import annotations
 
+import logging
+
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,8 +29,11 @@ from app.models.sample_request import SampleRequest, SampleRequestLine
 from app.models.status import Status, StatusTransition
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
+from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
+
+logger = logging.getLogger(__name__)
 
 ENTITY = "sample_request"
 
@@ -41,6 +46,28 @@ CANCELLED = "cancelled"
 
 #: What the coordinator queue shows until a filter says otherwise (AC-SR-51).
 DEFAULT_OPEN = (SUBMITTED, PROCESSING, CUSTOMER_CONFIRMED)
+
+#: PS-SAMPLE-TRACKING rule 1: the two stages, by status KEY. Draft, Cancelled and any key an
+#: admin adds sit outside both. The graph itself is unchanged (owner Q2 a, 2 Nov).
+STAGE_PROCESSING = "processing"
+STAGE_DELIVERY = "delivery"
+STAGES = {
+    SUBMITTED: STAGE_PROCESSING,
+    PROCESSING: STAGE_PROCESSING,
+    CUSTOMER_CONFIRMED: STAGE_PROCESSING,
+    DELIVERED: STAGE_DELIVERY,
+}
+#: Where the team may still change its date answer (after Start processing, before Delivered).
+DATE_ANSWER_OPEN = (PROCESSING, CUSTOMER_CONFIRMED)
+
+
+def stage_for(key: Optional[str]) -> Optional[str]:
+    return STAGES.get(key or "")
+
+
+def stage_keys(stages: Iterable[str]) -> List[str]:
+    wanted = set(stages)
+    return [key for key, stage in STAGES.items() if stage in wanted]
 
 HEADER_TEXT = (
     "customer_name",
@@ -514,12 +541,21 @@ def update_internal(
             message="A cancelled request cannot be changed.",
             code="SAMPLE_REQUEST_CANCELLED",
         )
-    req.consignment_no = _clean(consignment_no)
+    # A linked consignment owns the number (PS-SAMPLE-TRACKING); free text is for the rest.
+    if not req.consignment_order_id:
+        req.consignment_no = _clean(consignment_no)
     req.po_no = _clean(po_no)
     db.flush()
 
 
-def _record(db: Session, req: SampleRequest, *, actor: Actor, label: str) -> None:
+def _record(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    label: str,
+    template: str = "sample_request_moved",
+) -> None:
     """One project activity row per move, when the request has a project (AC-SR-34)."""
     if not req.project_id:
         return
@@ -531,7 +567,7 @@ def _record(db: Session, req: SampleRequest, *, actor: Actor, label: str) -> Non
     activity.record_project_event(
         db,
         project=project,
-        template="sample_request_moved",
+        template=template,
         payload={"request_id": str(req.id), "request_no": req.request_no, "status": label},
         actor_id=actor.user_id,
         body_text=f"Sample request {req.request_no}: {label}",
@@ -555,6 +591,76 @@ def submit(db: Session, req: SampleRequest, *, actor: Actor) -> None:
     _record(db, req, actor=actor, label=_label(db, SUBMITTED))
 
 
+def _date_error(code: str, field: str, message: str) -> AppException:
+    return AppException(status_code=422, message=message, code=code, details={"field": field})
+
+
+def _apply_date_answer(
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    feasible: Optional[bool],
+    proposed: Optional[date],
+    note: Optional[str],
+) -> None:
+    """Rule 2: Yes, or No with a proposed date (today or later). One-way: the salesperson
+    sees it, nothing waits for them (owner Q1 a)."""
+    if feasible is None:
+        raise _date_error(
+            "SAMPLE_REQUEST_DATE_ANSWER_REQUIRED",
+            "date_feasible",
+            "Say whether the requested delivery date can be met.",
+        )
+    if feasible:
+        proposed = None
+    elif proposed is None:
+        raise _date_error(
+            "SAMPLE_REQUEST_PROPOSED_DATE_REQUIRED",
+            "proposed_delivery_date",
+            "Enter the date the sample team can deliver.",
+        )
+    elif proposed < today_in_malaysia():
+        raise _date_error(
+            "SAMPLE_REQUEST_PROPOSED_DATE_PAST",
+            "proposed_delivery_date",
+            "The proposed date cannot be in the past.",
+        )
+    req.date_feasible = bool(feasible)
+    req.proposed_delivery_date = proposed
+    req.date_note = _clean(note)
+    req.date_answered_at = datetime.utcnow()
+    req.date_answered_by = actor.user_id
+
+
+def _answer_label(req: SampleRequest) -> str:
+    if req.date_feasible:
+        return "the sample team can meet the requested date"
+    return f"the sample team proposes {req.proposed_delivery_date:%d %b %Y}"
+
+
+def answer_date(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    feasible: Optional[bool],
+    proposed: Optional[date],
+    note: Optional[str],
+) -> None:
+    """Change the date answer while the request is in Stage 1, after Start processing."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can answer the delivery date.")
+    if status_key(db, req) not in DATE_ANSWER_OPEN:
+        raise AppException(
+            status_code=409,
+            message="The delivery date can be answered only while the request is being processed.",
+            code="SAMPLE_REQUEST_DATE_ANSWER_CLOSED",
+        )
+    _apply_date_answer(req, actor=actor, feasible=feasible, proposed=proposed, note=note)
+    db.flush()
+    _record(db, req, actor=actor, label=_answer_label(req), template="sample_request_date_answered")
+
+
 def _add_loan(start: date, value: int, unit: str) -> date:
     return start + (relativedelta(months=value) if unit == "months" else relativedelta(days=value))
 
@@ -567,6 +673,9 @@ def move(
     to: str,
     on: Optional[date] = None,
     reason: Optional[str] = None,
+    date_feasible: Optional[bool] = None,
+    proposed_delivery_date: Optional[date] = None,
+    date_note: Optional[str] = None,
 ) -> None:
     frm = status_key(db, req)
     if to == CANCELLED and frm in (DRAFT, SUBMITTED):
@@ -579,6 +688,13 @@ def move(
     # Draft -> Submitted is `submit`, which carries the validation.
     if to == SUBMITTED or not _edge_exists(db, frm, to):
         raise illegal_move(frm, to)
+
+    if to == DELIVERED and req.consignment_order_id:
+        raise AppException(
+            status_code=409,
+            message="This request is delivered by its linked consignment, not by hand.",
+            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
+        )
 
     reason = _clean(reason)
     if to in (CUSTOMER_CONFIRMED, DELIVERED) and on is None:
@@ -596,6 +712,16 @@ def move(
             details={"field": "reason"},
         )
 
+    # Rule 2: Start processing carries the date answer (submit already requires the date).
+    if to == PROCESSING:
+        _apply_date_answer(
+            req,
+            actor=actor,
+            feasible=date_feasible,
+            proposed=proposed_delivery_date,
+            note=date_note,
+        )
+
     _set_status(db, req, to)
     if to == CUSTOMER_CONFIRMED:
         req.confirmed_at = on
@@ -607,6 +733,253 @@ def move(
         req.cancel_reason = reason
     db.flush()
     _record(db, req, actor=actor, label=_label(db, to))
+
+
+# ------------------------------------------------------------------ Stage 2: the consignment
+
+#: Where the sample team may link (or change) the consignment: after Start processing.
+CONSIGNMENT_OPEN = (PROCESSING, CUSTOMER_CONFIRMED, DELIVERED)
+CONSIGNMENT_CANCELLED = "cancelled"
+
+
+DELIVERED_BY_TRACKING = "tracking"
+DELIVERED_BY_CONSIGNMENT = "consignment"
+
+
+def consignment_delivery(db: Session, cg) -> Optional[tuple]:
+    """THE delivery source: (date, where it came from), or None for a voided / vanished CG.
+
+    Owner, 2 Nov: "The sample delivery document is the consignment." Its delivered date is
+    the Overall Tracking `actual_delivery_date` of the `orders` row the tracking import keeps
+    under the CG's number (crew b: 375 CGs since 29 Apr carry one, 0-46 days after the CG,
+    never before), else the CG's own date (its goods leave at issue, CONSIGN-DELIVERED-FIX).
+    The number is matched exactly inside the CG's company (the unique index): it is AutoCount's
+    own DocNo on both sides, never a guess."""
+    if cg is None or cg.status == CONSIGNMENT_CANCELLED:
+        return None
+    from app.models.order import Order
+
+    tracked = (
+        db.query(Order.actual_delivery_date)
+        .filter(
+            Order.company_id == cg.company_id,
+            Order.order_number == cg.so_number,
+            Order.deleted_at.is_(None),
+            Order.is_cancelled.is_(False),
+            Order.actual_delivery_date.isnot(None),
+        )
+        .order_by(Order.actual_delivery_date.asc())
+        .first()
+    )
+    if tracked is not None:
+        on = tracked[0]
+        return (on.date() if isinstance(on, datetime) else on, DELIVERED_BY_TRACKING)
+    if cg.order_date is None:
+        return None
+    return (cg.order_date, DELIVERED_BY_CONSIGNMENT)
+
+
+def _consignment_query(db: Session, company_id: str):
+    from app.models.order import DOC_TYPE_CONSIGNMENT, SalesOrder
+
+    return db.query(SalesOrder).filter(
+        SalesOrder.company_id == company_id,
+        SalesOrder.doc_type == DOC_TYPE_CONSIGNMENT,
+    )
+
+
+def _linked_consignment(db: Session, req: SampleRequest):
+    if not req.consignment_order_id:
+        return None
+    from app.models.order import SalesOrder
+
+    return db.query(SalesOrder).filter(SalesOrder.id == req.consignment_order_id).first()
+
+
+def _deliver_by(db: Session, req: SampleRequest, on: date, *, actor_id: Optional[str], no: str) -> None:
+    """Delivered from the consignment: the graph edge is not asked, the CG is the fact."""
+    changed = status_key(db, req) != DELIVERED or req.delivered_at != on
+    _set_status(db, req, DELIVERED)
+    req.delivered_at = on
+    req.return_due = _add_loan(on, req.loan_value, req.loan_unit)
+    db.flush()
+    if changed:
+        _record(
+            db, req, actor=Actor(user_id=actor_id), label=f"{_label(db, DELIVERED)} by {no}"
+        )
+
+
+def _undeliver(db: Session, req: SampleRequest, *, actor_id: Optional[str], why: str) -> None:
+    """Back to the last Stage 1 step it reached (owner Q4 a)."""
+    if status_key(db, req) != DELIVERED:
+        return
+    back = CUSTOMER_CONFIRMED if req.confirmed_at else PROCESSING
+    _set_status(db, req, back)
+    req.delivered_at = None
+    req.return_due = None
+    db.flush()
+    _record(db, req, actor=Actor(user_id=actor_id), label=f"{_label(db, back)} ({why})")
+
+
+def search_consignments(
+    db: Session, req: SampleRequest, *, actor: Actor, q: str = "", limit: int = 20
+) -> List[Dict[str, Any]]:
+    """The live consignments of the request's company the sample team can pick from."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can link a consignment.")
+    from app.models.order import SalesOrder
+
+    query = _consignment_query(db, req.company_id).filter(
+        SalesOrder.status != CONSIGNMENT_CANCELLED
+    )
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        query = query.filter(
+            or_(
+                SalesOrder.so_number.ilike(like),
+                SalesOrder.debtor_name.ilike(like),
+                SalesOrder.debtor_code.ilike(like),
+            )
+        )
+    rows = (
+        query.order_by(SalesOrder.order_date.desc().nulls_last(), SalesOrder.so_number.desc())
+        .limit(limit)
+        .all()
+    )
+    # OI-UX-FILTER-SNAPSHOT: each consignment names its customer and project.
+    parties = so_parties(db, ids=[r.id for r in rows])
+    return [
+        with_party(
+            {
+                "id": r.id,
+                "so_number": r.so_number,
+                "debtor_code": r.debtor_code,
+                "debtor_name": r.debtor_name,
+                "order_date": r.order_date,
+            },
+            parties,
+            r.id,
+        )
+        for r in rows
+    ]
+
+
+def link_consignment(
+    db: Session, req: SampleRequest, *, actor: Actor, consignment_order_id: Optional[str]
+) -> None:
+    """Link (or, with None, unlink) the consignment that delivers the request."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can link a consignment.")
+    if status_key(db, req) not in CONSIGNMENT_OPEN:
+        raise AppException(
+            status_code=409,
+            message="A consignment can be linked once the request is being processed.",
+            code="SAMPLE_REQUEST_CONSIGNMENT_CLOSED",
+        )
+    if consignment_order_id is None:
+        if req.consignment_order_id:
+            req.consignment_order_id = None
+            req.consignment_no = None
+            _undeliver(db, req, actor_id=actor.user_id, why="consignment unlinked")
+        db.flush()
+        return
+
+    from app.models.order import SalesOrder
+
+    cg = (
+        _consignment_query(db, req.company_id)
+        .filter(SalesOrder.id == consignment_order_id)
+        .first()
+        if _is_uuid(consignment_order_id)
+        else None
+    )
+    delivery = consignment_delivery(db, cg)
+    if delivery is None:
+        raise AppException(
+            status_code=422,
+            message="Choose a live AutoCount consignment of this company.",
+            code="SAMPLE_REQUEST_CONSIGNMENT_INVALID",
+            details={"field": "consignment_order_id"},
+        )
+    req.consignment_order_id = cg.id
+    req.consignment_no = cg.so_number
+    _deliver_by(db, req, delivery[0], actor_id=actor.user_id, no=cg.so_number)
+
+
+def _resync(db: Session, req: SampleRequest, cg) -> None:
+    # Only a request still where a consignment can act follows it (review S2): a Cancelled
+    # request, or any status an admin adds after Delivered, is never pulled back.
+    if status_key(db, req) not in CONSIGNMENT_OPEN:
+        return
+    delivery = consignment_delivery(db, cg)
+    if delivery is None:
+        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
+    else:
+        _deliver_by(db, req, delivery[0], actor_id=None, no=cg.so_number)
+
+
+def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
+    """Re-read every request linked to this CG after the consignment ingest wrote it: a voided
+    or vanished CG undoes the delivery, a live (or restored) one delivers. Returns how many
+    requests it looked at. Called by `AutocountCancelIngestService._project_consignment`."""
+    from app.models.order import SalesOrder
+
+    cg = _consignment_query(db, company_id).filter(SalesOrder.so_number == so_number).first()
+    if cg is None:
+        return 0
+    reqs = db.query(SampleRequest).filter(SampleRequest.consignment_order_id == cg.id).all()
+    for req in reqs:
+        _resync(db, req, cg)
+    return len(reqs)
+
+
+def _isolated(db: Session, what: str, fn, *args) -> int:
+    """Run a re-sync in its own savepoint: a sample-request error (an admin removed a status
+    from the graph, say) is logged and undone, and never fails the host import / ingest."""
+    try:
+        with db.begin_nested():
+            return fn(db, *args)
+    except Exception:
+        logger.exception("Sample request %s re-sync failed; host write kept", what)
+        return 0
+
+
+def sync_consignment_safely(db: Session, company_id: str, so_number: str) -> int:
+    return _isolated(db, "consignment", sync_consignment, company_id, so_number)
+
+
+def sync_tracked_orders_safely(db: Session, orders: Iterable[Any]) -> int:
+    return _isolated(db, "order tracking", sync_tracked_orders, list(orders))
+
+
+def sync_tracked_orders(db: Session, orders: Iterable[Any]) -> int:
+    """After the order tracking import wrote `orders`, refresh the delivered date of every
+    request whose linked CG carries one of those numbers (a tracking date that lands after the
+    link replaces the CG date). Returns how many requests it looked at."""
+    from app.models.order import SalesOrder
+
+    keys = {
+        (str(o.company_id), o.order_number)
+        for o in orders
+        if getattr(o, "order_number", None) and getattr(o, "company_id", None)
+    }
+    if not keys:
+        return 0
+    numbers = {number for _, number in keys}
+    linked = (
+        db.query(SampleRequest, SalesOrder)
+        .join(SalesOrder, SalesOrder.id == SampleRequest.consignment_order_id)
+        .filter(SalesOrder.so_number.in_(numbers))
+        .all()
+    )
+    count = 0
+    for req, cg in linked:
+        if (str(cg.company_id), cg.so_number) not in keys:
+            continue
+        _resync(db, req, cg)
+        count += 1
+    return count
 
 
 # ------------------------------------------------------------------ reads
@@ -888,7 +1261,9 @@ def quotation_prefill(
 LIST_SORTS = {
     "request_no": SampleRequest.request_no,
     "request_date": SampleRequest.request_date,
-    "delivery_date": SampleRequest.delivery_date,
+    # The Delivery date column shows the team's proposed date when it has one (rule 3), so it
+    # sorts by that.
+    "delivery_date": func.coalesce(SampleRequest.proposed_delivery_date, SampleRequest.delivery_date),
     "submitted_at": SampleRequest.submitted_at,
     # The debtor's name when there is one, else the typed name (set in `list_for`).
     "customer_name": None,
@@ -909,6 +1284,7 @@ def list_for(
     *,
     actor: Actor,
     statuses: Optional[List[str]] = None,
+    stages: Optional[List[str]] = None,
     project_id: Optional[str] = None,
     contact_id: Optional[str] = None,
     salesperson_id: Optional[str | Sequence[str]] = None,
@@ -937,6 +1313,10 @@ def list_for(
         query = query.filter(SampleRequest.salesperson_id.in_(salespeople))
     if statuses:
         ids = [s.id for k, s in _statuses(db).items() if k in statuses]
+        query = query.filter(SampleRequest.status_id.in_(ids))
+    if stages:
+        keys = stage_keys(stages)
+        ids = [s.id for k, s in _statuses(db).items() if k in keys]
         query = query.filter(SampleRequest.status_id.in_(ids))
     needle = (q or "").strip()
     if needle:
@@ -968,7 +1348,7 @@ def list_for(
     else:
         # The needed date, soonest first.
         query = query.order_by(
-            SampleRequest.delivery_date.asc().nulls_last(),
+            LIST_SORTS["delivery_date"].asc().nulls_last(),
             SampleRequest.request_no.asc(),
         )
     rows = query.offset((page - 1) * limit).limit(limit).all()
@@ -1023,6 +1403,9 @@ def _row_common(req: SampleRequest, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "ship_to_name": req.ship_to_name,
         "salesperson_name": (user.name if user else None),
         "board_mounting": bool(req.board_mounting),
+        "stage": stage_for(key),
+        "date_feasible": req.date_feasible,
+        "proposed_delivery_date": req.proposed_delivery_date,
     }
 
 
@@ -1065,6 +1448,28 @@ def _source_ref(db: Session, req: SampleRequest) -> Optional[str]:
         else None
     )
     return quotation_label(doc_no, issue_no)
+
+
+def _consignment_block(db: Session, req: SampleRequest) -> Optional[Dict[str, Any]]:
+    cg = _linked_consignment(db, req)
+    if cg is None:
+        return None
+    delivery = consignment_delivery(db, cg)
+    return {
+        "id": cg.id,
+        "so_number": cg.so_number,
+        **with_party({}, so_parties(db, ids=[cg.id]), cg.id),
+        "order_date": cg.order_date,
+        "status": cg.status,
+        "delivered_on": delivery[0] if delivery else None,
+        "delivered_source": delivery[1] if delivery else None,
+    }
+
+
+def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
+    if not user_id:
+        return None
+    return db.query(User.name).filter(User.id == user_id).scalar()
 
 
 def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
@@ -1119,6 +1524,10 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "return_due": req.return_due,
             "cancelled_at": req.cancelled_at,
             "cancel_reason": req.cancel_reason,
+            "consignment": _consignment_block(db, req),
+            "date_note": req.date_note,
+            "date_answered_at": req.date_answered_at,
+            "date_answered_by_name": _user_name(db, req.date_answered_by),
             "consignment_no": req.consignment_no,
             "po_no": req.po_no,
             "created_at": req.created_at,
@@ -1127,6 +1536,18 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
         }
     )
     return row
+
+
+#: Staff-side facts a portal contact never gets (review S3): which staff member answered and
+#: when, and the AutoCount consignment record behind the delivery (its id and AutoCount status).
+PORTAL_HIDDEN = ("consignment", "date_answered_at", "date_answered_by_name")
+
+
+def serialize_portal_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
+    out = serialize_detail(db, req)
+    for key in PORTAL_HIDDEN:
+        out.pop(key, None)
+    return out
 
 
 def render_pdf(db: Session, req: SampleRequest) -> bytes:

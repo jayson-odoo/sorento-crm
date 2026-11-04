@@ -20,15 +20,18 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.price_tag import (
+    ComboSearchOut,
     ProductSearchItem,
     ProductSetSearchItem,
     ProductSetTagData,
     ProductTagData,
+    ProductTagTemplateItem,
+    ProductTagTemplatesUpdate,
     SpecKeyItem,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -36,6 +39,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["tag-data"])
 
 _VIEW = require_permission_with_api_key("dealer_kit.tag_templates.view")
+# PRICETAG-TEMPLATE-PER-PRODUCT (card Q5 a): the links are marketing's, same
+# permission as editing the templates themselves.
+_MANAGE = require_permission("dealer_kit.tag_templates.manage")
 
 
 @router.get("/products/search", response_model=list[ProductSearchItem])
@@ -52,10 +58,22 @@ def search_products(
     ]
 
 
+@router.get("/tag-data/combos", response_model=ComboSearchOut)
+def search_combos(
+    query: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Combos for the template editor's Preview combo picker, in the caller's company scope."""
+    return {"data": tag_data_service.search_combos(db, query, limit=limit)}
+
+
 @router.get("/products/{product_id}/tag-data", response_model=ProductTagData)
 def get_product_tag_data(
     product_id: str,
     promotion_id: Optional[str] = Query(None),
+    combo_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -65,10 +83,11 @@ def get_product_tag_data(
         raise AppException(
             status_code=404, message="Product not found.", code="NOT_FOUND"
         )
+    data = tag_data_service.product_tag_data(
+        db, product, tag_data_service.staff_viewer(), promotion_id
+    )
     return ProductTagData.model_validate(
-        tag_data_service.product_tag_data(
-            db, product, tag_data_service.staff_viewer(), promotion_id
-        )
+        tag_data_service.with_preview_combo(db, product, data, combo_id)
     )
 
 
@@ -122,4 +141,47 @@ def list_spec_keys(
     return [
         SpecKeyItem(key=row.spec_key, label=row.label, unit=row.unit)
         for row in active_registry(db)
+    ]
+
+
+@router.get(
+    "/products/{product_id}/tag-templates", response_model=list[ProductTagTemplateItem]
+)
+def list_product_tag_templates(
+    product_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The templates linked to this product (product page, Overview)."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    product_id = validate_uuid_path(product_id, resource="Product")
+    if not product_tag_template_service.product_exists(db, product_id):
+        raise AppException(status_code=404, message="Product not found.", code="NOT_FOUND")
+    return [
+        ProductTagTemplateItem(**product_tag_template_service.template_item(t))
+        for t in product_tag_template_service.linked_templates(db, product_id)
+    ]
+
+
+@router.put(
+    "/products/{product_id}/tag-templates", response_model=list[ProductTagTemplateItem]
+)
+def set_product_tag_templates(
+    product_id: str,
+    payload: ProductTagTemplatesUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """Replace this product's links with ``template_ids``."""
+    from app.services.uuid_path_param import validate_uuid_path
+
+    product_id = validate_uuid_path(product_id, resource="Product")
+    rows = product_tag_template_service.set_product_templates(
+        db, product_id, payload.template_ids, user_id=(user or {}).get("id")
+    )
+    db.commit()
+    return [
+        ProductTagTemplateItem(**product_tag_template_service.template_item(t))
+        for t in rows
     ]

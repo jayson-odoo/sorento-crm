@@ -2,17 +2,11 @@
 
 One self-hosted GitHub Actions runner, `sorento-mac-1` (labels
 `self-hosted, Linux, ARM64, sorento-mac`), registered to
-`jayson-odoo/sorento-crm` only. Since CI-MAC-ONLY (1 Nov 2026, repo private,
-3,000 GitHub-hosted minutes a month) every CI job runs here: the PR gate, the
-release tests and shards, `outline-user-guides-sync.yml` and
-`never-stuck-nightly.yml` (`runs-on: [self-hosted, sorento-mac]`, no fallback
-to GitHub-hosted; a busy or offline runner queues the job). Image builds, the
-deploy and `rollback.yml` stay on GitHub-hosted (prod is amd64). See the note
-above `jobs:` in `.github/workflows/deploy.yml`.
-
-After pulling a change to `provision.sh` (CI-MAC-ONLY added chromium's
-libraries for the never-stuck smoke), run `REGISTER=0 scripts/ci-runner/up.sh`
-once.
+`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only on a
+release dispatch with `-f runner=mac` (or `auto`); PR runs and the repo
+variables never route here since CI-HOSTED-RUNNERS (29 Oct 2026, repo public
+again). See the note above `jobs:` in `.github/workflows/deploy.yml`.
+Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
 
 ## Layout
 
@@ -49,59 +43,6 @@ colima start ci                             # start again; guard, Docker and run
 colima ssh -p ci -- sudo journalctl -u sorento-runner -f  # runner log
 gh api repos/jayson-odoo/sorento-crm/actions/runners --jq '.runners[] | [.name, .status, .busy] | @tsv'
 ```
-
-## More runners on the same Mac (crew decides; not running today)
-
-Today there is ONE runner, so a release's jobs and matrix shards run one after
-another (a full-suite release queues about 15-19 jobs; the last full release on
-the Mac, run 40745728050, used about 133 runner-minutes). Each extra runner is
-**its own colima VM**, never a second runner in the `ci` VM: `job-started.sh`
-empties the runner user's whole Docker at every job start (it would kill the
-other job's Postgres and Redis), every test job publishes 5432/6379 on the VM's
-localhost (the second job's containers would fail to bind), and 6 GB holds one
-xdist shard or one tsc, not two.
-
-Cost per extra runner, on the Mac: 4 vCPU, 6 GB RAM (`--memory 6`, held while
-the VM is up), 18 GB disk (16 root + 2 data). Check the Mac's headroom first
-(`sysctl -n hw.ncpu hw.memsize`; the Mac mini also runs the dev stack: dev
-Postgres, lane servers, the one `next dev`). Two runners total = 8 vCPU / 12 GB
-for CI, three = 12 vCPU / 18 GB, more vCPUs than a 10-core Mac has, so runs slow
-each other down under load. Throughput is roughly runner-minutes / runners: the
-133-minute release above takes about 70 min on two runners, about 45 on three.
-GitHub-hosted minutes do not change (only build-images and build-and-deploy
-bill).
-
-Add runner N (2, 3), from the repo root on the Mac. A copy of `up.sh` that
-only renames the VM profile and the runner, so the same provisioning,
-firewall, rootless Docker and private-repo check apply. It sits next to
-`up.sh` because `up.sh` copies its own directory into the VM; not piped into
-`bash -s`, because the script's `colima ssh` calls would read the rest of it
-from stdin:
-
-```bash
-N=2
-cd scripts/ci-runner
-sed -e "s/^profile=ci$/profile=ci-$N/" -e "s/sorento-mac-1/sorento-mac-$N/g" up.sh > "up-$N.sh"
-bash "up-$N.sh"; rm -f "up-$N.sh"
-gh api repos/jayson-odoo/sorento-crm/actions/runners --jq '.runners[] | [.name, .status, (.labels | map(.name) | join(","))] | @tsv'
-# expect sorento-mac-N  online  self-hosted,Linux,ARM64,sorento-mac
-```
-
-It registers with the same `sorento-mac` label, so jobs spread across every
-online runner with no workflow change. Start it at login with its own launchd
-agent (the `ci` one starts only the `ci` VM):
-
-```bash
-sed -e "s/colima-ci/colima-ci-$N/g" -e "s|<string>ci</string>|<string>ci-$N</string>|" \
-  my.foundryx.colima-ci.plist > ~/Library/LaunchAgents/my.foundryx.colima-ci-$N.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/my.foundryx.colima-ci-$N.plist
-```
-
-Stop taking jobs without removing it: `colima stop ci-$N` (frees its 6 GB).
-Remove for good: delete `sorento-mac-N` under Settings > Actions > Runners,
-`launchctl bootout gui/$(id -u)/my.foundryx.colima-ci-$N`, `colima delete ci-$N`.
-After a `provision.sh` change, rerun the same two lines with `REGISTER=0 bash
-"up-$N.sh"` for each extra VM too.
 
 Start at login: copy `my.foundryx.colima-ci.plist` to `~/Library/LaunchAgents/`
 and `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/my.foundryx.colima-ci.plist`.

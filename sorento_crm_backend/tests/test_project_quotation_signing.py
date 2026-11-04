@@ -22,8 +22,14 @@ from app.services import project_quotation_document_service as qdocs
 from app.services import project_quotation_service as quotes
 from app.services import project_seed_service
 from app.services.error_handler import AppException
+from app.services.quotation_cover_service import cover_reference
 
 from ._pg_fixture import blank_session
+
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
 
 MARKER = "zzt-qsign"
 
@@ -62,7 +68,7 @@ def _product(db, code: str) -> Product:
         product_name=f"{MARKER} {code}",
         category_id=category.id,
         base_uom_id=uom.id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(FIXTURE_LIST_PRICE),
     )
     db.add(product)
     db.flush()
@@ -437,7 +443,7 @@ def test_the_customer_reaches_the_page_with_no_credential_but_only_their_own_com
             client = TestClient(app)
             response = client.get(f"/api/v1/public/quotation-sign/{token}")
             assert response.status_code == 200, response.text
-            assert response.json()["our_ref"] == record.our_ref_text
+            assert response.json()["our_ref"] == cover_reference(document, record, _project_row)
 
             # Pinned to the issue's own company, not left open to all of them. Asserted HERE,
             # while the resolved issue is the last thing the session touched: these requests
@@ -532,17 +538,21 @@ def _accept_body(**extra):
 
 
 def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored_text():
-    """AC2.3: an issue stored with the old text still shows <document_no>-R<issue_no>."""
+    """AC2.3: an issue stored with the old text still shows the built <document_no>-A."""
     with blank_session() as db:
         _project_row, document, owner, _scopes = _setup(db)
         _sign_draft(db, document, owner)
         record = qdocs.issue(db, document=document, actor_user_id=owner)
+        # Guards old issues (UAC F1/F2): force layout 1.
+        db.flush()
+        db.execute(text("update quotation_issues set layout_version = 1 where id = :i"), {"i": str(record.id)})
+        db.expire_all()
         record.our_ref_text = f"{document.document_no} (R{record.issue_no})"
         db.flush()
 
         page = qdocs.serialize_sign_page(db, record)
 
-        assert page["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+        assert page["our_ref"] == f"{document.document_no}-A"
         assert page["issue_no"] == record.issue_no
 
 
@@ -570,7 +580,7 @@ def test_sign_page_carries_sender_logo_url_and_signatory_phone_over_the_wire():
 
         assert body["sender_logo_url"] == "https://cdn.example.com/logo.png"
         assert body["signatory_phone"] == "+60100000001"
-        assert body["our_ref"] == f"{document.document_no}-R1"
+        assert body["our_ref"] == cover_reference(document, record, _project_row)
 
 
 def test_sign_page_sender_logo_url_is_null_when_the_company_has_none():

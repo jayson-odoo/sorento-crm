@@ -18,11 +18,12 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot.agent import actions, memory, writes
+from app.services.chatbot import principal as staff_principal
+from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
@@ -38,8 +39,10 @@ from app.services.chatbot.agent.tools import (
     KNOWLEDGE,
     REGISTRY,
     RESOLVE,
+    PORTED_READS,
     TOOL_LABELS,
     ToolResult,
+    panel_closed,
     _id_args,
     clip_args,
     dispatch,
@@ -133,8 +136,10 @@ def _normal(token: str) -> str:
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 #: A URL is ASCII URL characters only (no comma, no space), so the text around it is never taken with it.
 _URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*", re.I)
-#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic.
-_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200})\]\((https?://[^\s)]{0,2048})\)", re.I)
+#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic. Both runs are
+#: possessive: their class excludes the bracket that must follow, so giving characters back could never find a
+#: match, and not trying halves the scan (the 100k-character guard in test_agent_ideas_review AC-RC-9).
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200}+)\]\((https?://[^\s)]{0,2048}+)\)", re.I)
 _URL_TAIL = ".,;:!?)]}'\""
 
 
@@ -198,10 +203,11 @@ def _mask(text: str) -> str:
     return _LIST_MARKER.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 
 
-def _figures(text: str) -> list[tuple[int, int, str, set[str]]]:
-    """(start, end, as written, accepted normal forms) for each figure in `text`."""
+def _figures(text: str, blank: Any = None) -> list[tuple[int, int, str, set[str]]]:
+    """(start, end, as written, accepted normal forms) for each figure in `text`. `blank`, when given,
+    blanks data-text spans first (same length, so positions hold)."""
     out = []
-    for m in _NUMBER.finditer(_mask(text)):
+    for m in _NUMBER.finditer(_mask(blank(text) if blank else text)):
         base = _normal(m.group("int") + (m.group("dec") or ""))
         forms = {base}
         if (m.group("unit") or "").lower() == "k":
@@ -349,6 +355,75 @@ def _column_totals(data: Any) -> set[str]:
     return found
 
 
+def _data_strings(data: Any) -> set[str]:
+    """String values, under any key, that hold a letter and a digit (3 characters or more)."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+        elif isinstance(node, str):
+            v = node.strip()
+            if len(v) >= 3 and re.search(r"[^\W\d_]", v) and re.search(r"\d", v):
+                found.add(v)
+
+    walk(data)
+    return found
+
+
+def _data_text_blank(ledger: dict[str, dict] | None, text: str) -> Any:
+    """A function blanking, in an answer, every span that repeats (letter case aside) a string value of
+    one of this turn's ok results (longest first, no overlap), where it stands whole: data text is not a
+    figure, so its digits are neither checked nor redacted. Only strings that occur in `text` are kept.
+    None when the answer repeats none."""
+    values: set[str] = set()
+    for entry in (ledger or {}).values():
+        if entry["status"] == "ok":
+            values |= _data_strings(entry["data"])
+    low = text.casefold()
+    values = {v for v in values if v.casefold() in low}
+    if not values:
+        return None
+    alternation = "|".join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])(?<!\d[.,])(?:{alternation})(?![A-Za-z0-9_])(?![.,]\d)", re.I
+    )
+    return lambda text: pattern.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _rounded_backed(written: str, backed: set[str]) -> bool:
+    """Is the written figure a source number rounded half up to its decimal places? The source must have
+    more places than the figure and at least 3 (an unrounded computed number, not a price). A figure
+    with a unit multiplier ("1.2k") is exact only."""
+    m = _NUMBER.search(written)
+    if not m or (m.group("unit") or "").lower() == "k":
+        return False
+    dec = (m.group("dec") or "")[1:]
+    places = len(dec)
+    try:
+        target = Decimal(m.group("int").replace(",", "") + ("." + dec if dec else ""))
+        quantum = Decimal(1).scaleb(-places)
+        for src in backed:
+            n = Decimal(src)
+            if not n.is_finite():
+                continue
+            if -n.as_tuple().exponent >= max(3, places + 1) and n.quantize(quantum, rounding=ROUND_HALF_UP) == target:
+                return True
+    except (InvalidOperation, ValueError):
+        return False
+    return False
+
+
+def _figure_backed(written: str, forms: set[str], backed: set[str], user_forms: set[str]) -> bool:
+    """The one check for a written figure: held exactly by a result or the user's text, or a result's
+    number rounded to it."""
+    return bool(forms & (backed | user_forms)) or _rounded_backed(written, backed)
+
+
 def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
     args = args if isinstance(args, dict) else {}
     text = args.get("text")
@@ -369,6 +444,37 @@ def _found_ids(ledger: dict[str, dict]) -> set[str]:
     return ids
 
 
+def _returned_ids(ledger: dict[str, dict]) -> set[str]:
+    """Ids of records this turn's ok reads returned (a ported read may be narrowed by them; the others need a
+    clean resolve, `_found_ids`)."""
+    ids: set[str] = set()
+    for entry in ledger.values():
+        if entry["name"] != RESOLVE and entry["status"] == "ok":
+            ids |= _record_ids(entry["data"])
+    return ids
+
+
+def _record_ids(data: Any) -> set[str]:
+    """A record's own `id`, never another nested dict's (a `customer: {id}` reference) and never a `*_id`: each
+    row of a list (top level, or a list value of the top-level dict) and the top-level dict's own `id`."""
+    found: set[str] = set()
+
+    def take(record: Any) -> None:
+        if isinstance(record, dict) and isinstance(record.get("id"), str) and record["id"].strip():
+            found.add(record["id"].strip().lower())
+
+    if isinstance(data, list):
+        for row in data:
+            take(row)
+    elif isinstance(data, dict):
+        take(data)
+        for value in data.values():
+            if isinstance(value, list):
+                for row in value:
+                    take(row)
+    return found
+
+
 def _fold_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.casefold()).strip()
 
@@ -386,6 +492,21 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
             ):
                 return True
         return False
+    if entry["name"] in PORTED_READS and entry["status"] == "empty":
+        # An unfiltered empty read says "none found". One narrowed by an assignee says nothing about the whole;
+        # one narrowed by ids says "none" only for ids this turn resolved cleanly or an ok read returned (an ambiguous
+        # one is not found).
+        if entry["args"].get("assigned_to"):
+            return False
+        ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
+        returned = _returned_ids(ledger)
+        return all(i in found or i in returned for i in ids)
+    if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
+        # An empty find backs a claim for the term it searched, and only that term.
+        term = _fold_text(str(entry["args"].get("query") or ""))
+        return entry["status"] == "empty" and bool(term) and (
+            term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
@@ -403,8 +524,8 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
-    for _, _, written, forms in _figures(text):
-        if not forms & (backed | user_forms) and written not in bad_numbers:
+    for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
+        if not _figure_backed(written, forms, backed, user_forms) and written not in bad_numbers:
             bad_numbers.append(written)
     found = _found_ids(ledger)
     bad_not_found = [
@@ -415,9 +536,9 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     return bad_numbers, [w for w in bad_not_found if w]
 
 
-def _redact_written(text: str, bad: set[str]) -> str:
+def _redact_written(text: str, bad: set[str], blank: Any = None) -> str:
     out, last = [], 0
-    for start, end, written, _ in _figures(text):
+    for start, end, written, _ in _figures(text, blank):
         if written in bad:
             out.append(text[last:start])
             out.append(NOT_VERIFIED)
@@ -445,12 +566,12 @@ def open_parts(args: Any, plan: list[str], on_limit: bool) -> list[str]:
 
 def final_reply(
     args: Any, bad_numbers: list[str], bad_not_found: list[str], *, plan: list[str] | None = None,
-    on_limit: bool = False,
+    on_limit: bool = False, ledger: dict[str, dict] | None = None,
 ) -> tuple[str, bool]:
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
-        text = _redact_written(text, set(bad_numbers))
+        text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
         text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
     if not_checked:
@@ -553,22 +674,32 @@ def _propose(
     # as a write tool sees only its arguments) and whether the turn is a test turn (a console turn makes a test
     # idea, a live one a real idea). Set here, never from the model's arguments.
     loop_args = {"_user_text": user_text, "_is_test": is_test} if name == writes.CREATE_IDEA else None
+    if portal_writes.is_portal_tool(name):
+        # A console turn is a test: its confirm writes nothing (owner W2-Q3 (a)). Set here, never by the model.
+        loop_args = {"_is_test": is_test}
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         return out
     steps.append(step)
+    data = {"action_id": action_id, "step": len(steps), "summary": step["summary"]}
+    definition = writes.WRITES.get(name)
+    if definition is not None and definition.proposal_note:
+        data["note"] = definition.proposal_note
     return ToolResult(
         "proposed",
-        data={"action_id": action_id, "step": len(steps), "summary": step["summary"]},
+        data=data,
         message="Proposed, not done. The user must confirm in a later message.",
     )
 
 
-def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> ToolResult:
-    """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
+def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str], waiting=None) -> ToolResult:
+    """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`.
+    Only the change this turn is waiting on may be decided (never another id the model names)."""
     action_id = args.get("action_id") if isinstance(args, dict) else None
     if not isinstance(action_id, str) or not action_id.strip():
         return ToolResult("invalid", message="action_id is required.")
+    if waiting is None or action_id.strip() != str(waiting.id):
+        return ToolResult("invalid", message="Not done: that is not the waiting change.")
     try:
         if name == CONFIRM_ACTION:
             outcome = actions.confirm(
@@ -587,7 +718,19 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> To
         # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
         for note in outcome.notes:
             reply_text = reply_text.replace(f" {note}", "").replace(note, "")
-        message = "The idea's number and link are added to your reply automatically. Do not write them."
+        # A ticket's link is the only thing a ticket adds; an idea keeps main's exact words.
+        from app.models.chatbot_agent import AgentAction
+
+        row = db.get(AgentAction, outcome.action_id)
+        tools = {
+            s.get("tool") for s in (row.steps if row is not None else [])
+            if s.get("note") and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+        }
+        message = (
+            "The ticket link is added to your reply automatically. Do not write it."
+            if tools == {writes.CREATE_TICKET}
+            else "The idea's number and link are added to your reply automatically. Do not write them."
+        )
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
@@ -749,6 +892,15 @@ class _WrappedProvider:
         )
 
 
+DEALER_REQUESTS_PROTOCOL = (
+    "CUSTOMER REQUESTS: you can send a stock inquiry for this customer, add or remove a note on one of their own "
+    "requests, and withdraw a stock inquiry they sent in the last 10 minutes. Propose with the tool, using only "
+    "what the customer said; nothing is sent until the customer replies yes in their next message. To find the "
+    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a complaint, a "
+    "change to their details) is not something you can do here: say so and suggest their salesman."
+)
+
+
 def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
     from app.services import ai_prompt_registry
 
@@ -762,6 +914,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
         # A customer: no staff knowledge or user guide protocol and no "outside this user's access" line.
         if knowledge_service.KNOWLEDGE_TOOL in tool_names:
             text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
+        if any(portal_writes.is_portal_tool(n) for n in tool_names):
+            text = f"{text.rstrip()}\n\n{DEALER_REQUESTS_PROTOCOL}"
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
@@ -771,7 +925,9 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     # What this user's permissions leave out, by the constant labels (never outside text in the system role).
     names = set(tool_names)
     left_out = list(dict.fromkeys(
-        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES] if n not in names and n in TOOL_LABELS
+        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES]
+        # A panel-only tool is named only on a panel turn: elsewhere it is not "outside access", it does not exist.
+        if n not in names and n in TOOL_LABELS and not panel_closed(n)
     ))
     if left_out:
         text = (
@@ -868,7 +1024,7 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if rows:
             text = f"{head}: {rows} row{'s' if rows != 1 else ''}"
         else:
-            text = f"{head}: nothing found" if _is_rows(out.data) else f"{head}: done"
+            text = f"{head}: nothing found" if _only_empty_lists(out.data) else f"{head}: done"
     elif out.status == "timeout":
         text = f"{head}: timed out"
     elif out.status == "error":
@@ -886,8 +1042,13 @@ def reasoning_for_steps(text: Any) -> str:
     return cleaned if len(cleaned) <= REASONING_CHARS else cleaned[:REASONING_CHARS].rstrip() + "\u2026"
 
 
-def _is_rows(data: Any) -> bool:
-    return isinstance(data, list) or (isinstance(data, dict) and any(isinstance(v, list) for v in data.values()))
+def _only_empty_lists(data: Any) -> bool:
+    """A body that is a list, or holds a list and no record (dict value): rows were asked for and none came."""
+    if isinstance(data, list):
+        return True
+    return isinstance(data, dict) and (
+        any(isinstance(v, list) for v in data.values()) and not any(isinstance(v, dict) for v in data.values())
+    )
 
 
 def _args_for_digest(args: Any) -> Any:
@@ -935,7 +1096,7 @@ def _run(
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
-    from app.services.chatbot.usage import record_turn_llm_usage
+    from app.services.chatbot.usage import feature_name, record_turn_llm_usage
 
     t0 = clock()
     budgets = budgets_from_settings(db)
@@ -948,6 +1109,8 @@ def _run(
     envelope = {"text": text, "agent_conversation_id": str(conv.id)}
     if operator_user_id:
         envelope["operator_user_id"] = str(operator_user_id)
+    if staff_principal.current() is not None:
+        envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
@@ -1083,13 +1246,16 @@ def _run(
 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
-        # A contact has no user to confirm for: a staff user's pending action never reaches its turn.
-        waiting = (
-            None if ctx.principal == "contact"
-            else actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        # A contact's own proposal has no user (user_id ""), so a staff user's pending action never reaches its turn.
+        waiting = actions.pending_action(
+            db, contact_respond_id, user_id=ctx.user_id, test=is_test if ctx.principal == "contact" else None
         )
         offered = permitted_tools(db, ctx)
         reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
+        # The dealer's portal writes (AGENTIC-WA-W2): a contact principal only, under the portal's own gates.
+        dealer = portal_writes.offered(db, ctx)
+        reads += [portal_writes.PORTAL_READS[n] for n in dealer if n in portal_writes.PORTAL_READS]
+        write_tools += [portal_writes.PORTAL_WRITES[n] for n in dealer if n in portal_writes.PORTAL_WRITES]
         system = _system_prompt(
             db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
             principal=ctx.principal,
@@ -1153,7 +1319,7 @@ def _run(
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
-            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True)
+            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
             if named:
@@ -1243,11 +1409,17 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
-                if ctx.principal == "contact" and name not in CONTACT_TOOLS and name != HANDOFF:
-                    # A contact has no user: no write, user read, confirm or cancel, whatever the model names.
+                if ctx.principal == "contact" and not (
+                    name in CONTACT_TOOLS or name == HANDOFF or name in dealer
+                    or (name in (CONFIRM_ACTION, CANCEL_ACTION) and waiting is not None)
+                ):
+                    # A contact has no user: no staff write or user read, and a confirm or cancel only of its own
+                    # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
-                elif name in writes.WRITES:
+                elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
+                elif name in portal_writes.PORTAL_READS:
+                    out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and run.rounds > 1:
@@ -1257,7 +1429,7 @@ def _run(
                         "before any tool runs this turn. Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
-                    out = _decide(db, ctx, name, args, turn_id, confirm_notes)
+                    out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
                     out = dispatch(
                         db, ctx, name, args,
@@ -1339,7 +1511,7 @@ def _run(
 
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
-            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:
@@ -1361,25 +1533,46 @@ def _run(
     if status != "failed":
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.
-        say = next(
+        handoff = next(
             (
-                str((e.get("data") or {}).get("say") or "")
+                e["data"]
                 for e in ledger.values()
                 if e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict)
             ),
-            "",
+            {},
         )
+        say = str(handoff.get("say") or "")
         from app.services import knowledge_service
+        from app.services.chatbot.agent import knowledge_miss
+        from app.services.chatbot.turn import refer
 
         offer_armed = handoff_armed(ledger)
         if say and offer_armed and status != "answered":
             # The offer sentence is in the reply if and only if the offer gets armed: a limited turn arms nothing.
             say = knowledge_service.KNOWLEDGE_MISS_LINE
+        if say and handoff.get("refer") is True:
+            # The salesman line, through the one helper that marks the turn (CUSTOMER-ASKS-REFER-ONLY). Here
+            # and not in the tool: this block runs only for a turn that did not fail, and the line always
+            # reaches the reply from here (appended below unless the model already wrote the whole sentence).
+            say = refer.after(say, sep=" ")
         if say and say not in reply:
             if reply.strip() in ("", NO_ANSWER_REPLY):
                 reply = say  # nothing else to say: the hand-off sentence stands alone
             else:
                 reply = f"{reply}\n\n{say}".strip()
+        # A panel idea create is refused (`propose_step`): the Ideas board link reaches the reply by code, once.
+        # Its own line, not `say`: a hand-off sentence arms the offer and this one must not.
+        ideas_say = next(
+            (
+                str(e["data"]["say"])
+                for e in ledger.values()
+                if e.get("name") == writes.CREATE_IDEA and e.get("status") == "invalid"
+                and isinstance(e.get("data"), dict) and e["data"].get("say")
+            ),
+            "",
+        )
+        if ideas_say and "/ideas" not in reply:
+            reply = f"{reply}\n\n{ideas_say}".strip()
         if ctx.principal == "contact":
             reply = _contact_reply_backstop(db, ctx, reply)
         if (
@@ -1389,7 +1582,7 @@ def _run(
             # The write lives here, after the answer and the backstop: never in a test turn, after a
             # failure, or when the offer sentence did not survive into the reply.
             try:
-                knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
+                knowledge_miss.arm_knowledge_miss_offer(db, ctx.contact_pk)
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
                 db.rollback()
@@ -1432,7 +1625,7 @@ def _run(
         from app.models.ai_assistant import AIAssistantUsageLog
 
         db.query(AIAssistantUsageLog).filter(
-            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == FEATURE
+            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == feature_name(FEATURE)
         ).update({AIAssistantUsageLog.was_answered: False}, synchronize_session=False)
     db.commit()
 

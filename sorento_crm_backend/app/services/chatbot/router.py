@@ -11,16 +11,20 @@ import json
 import logging
 import time
 import uuid
+from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.models.ai_assistant import AIAssistantConfig
+from sqlalchemy import String, cast, literal, or_, select
+
+from app.models.ai_assistant import AIAssistantConfig, AIAssistantConversation, AIAssistantMessage
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import jev_client, session_state
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent import tools as agent_tools
@@ -29,6 +33,7 @@ from app.services.chatbot.agent.access import eligible_contact
 from app.services.chatbot.jev_client import JevError
 from app.services.chatbot.usage import record_turn_llm_usage
 from app.services.llm_provider import resolve_typesafe_key
+from app.services.respond_identifier import PANEL_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +77,11 @@ def decide_route(
         return RouteDecision("chat", f"not_eligible:{refusal}")
     if has_media:
         return RouteDecision("chat", "media")
-    if user is not None and agent_actions.pending_action(db, contact_respond_id, user_id=str(user.id)) is not None:
+    # The agent's own question keeps the reply on the agent (R3): a linked user's proposal, or a contact
+    # principal's own (user_id "", AGENTIC-WA-W2); a staff user's proposal never holds a contact's turn.
+    owner = str(user.id) if user is not None else ""
+    # A contact's console test proposal never holds its WhatsApp message (test=False).
+    if agent_actions.pending_action(db, contact_respond_id, user_id=owner, test=False if user is None else None) is not None:
         return RouteDecision("agent", "pending_action")
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
@@ -96,7 +105,9 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
-    criteria = _with_agent_tools(criteria, agent_tool_labels(db, user))
+    criteria = _with_agent_tools(
+        _with_open_page(criteria), agent_tool_labels(db, user, contact_respond_id=contact_respond_id)
+    )
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -133,7 +144,12 @@ def decide_route(
     if _agent_asked_back(db, contact_respond_id) and not (answer.choice == "chat" and not low):
         side, reason = "agent", "agent_asked"
     else:
-        side, reason = ("chat", "low_confidence") if low else (answer.choice, "classified")
+        # The panel trusts Jev's pick (owner ruling 1 Nov); the floor stays for the console and WhatsApp.
+        side, reason = (
+            (answer.choice, "classified")
+            if staff_principal.current() is not None or not low
+            else ("chat", "low_confidence")
+        )
     return RouteDecision(
         side,
         reason,
@@ -170,6 +186,23 @@ def _daily_cap(contact, settings) -> int:
 
 def _agent_turns_today(db, contact_respond_id: str) -> int:
     midnight = datetime.now(BUSINESS_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    principal = staff_principal.current()
+    if principal is not None:
+        # The cap is the user's, whichever thread they ask in (AC-8). A panel agent turn names its user
+        # on its own envelope, so deleting a thread hands nothing back; a usage row would miss a turn
+        # whose first model call failed. The thread keys count a row that names no user.
+        keys = select(literal(PANEL_KEY_PREFIX) + cast(AIAssistantConversation.id, String)).where(
+            AIAssistantConversation.user_id == principal.user_id
+        )
+        return (
+            db.query(ChatbotTurn.id)
+            .filter(
+                or_(ChatbotTurn.envelope["user_id"].astext == principal.user_id, ChatbotTurn.contact_respond_id.in_(keys)),
+                ChatbotTurn.ingress == "agent",
+                ChatbotTurn.created_at >= midnight,
+            )
+            .count()
+        )
     return (
         db.query(ChatbotTurn.id)
         .filter(
@@ -179,6 +212,34 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
         )
         .count()
     )
+
+
+OPEN_RECORD_CRITERION = (
+    "The user has a record open on their screen, named in current_page in the state. A question about that "
+    "record, in words like this purchase request, this one, what happened here, or its status, needs the "
+    "agent, which holds the record's facts."
+)
+OPEN_PAGE_CRITERION = (
+    "The user is on a screen of the CRM, named in current_page in the state. A question about that screen, "
+    "what it shows or what they are looking at, or about how to use the CRM or how to do something in it, "
+    "needs the agent, which holds the screen's text and the user guides."
+)
+
+
+def _with_open_page(criteria: dict[str, Any]) -> dict[str, Any]:
+    """The criteria Jev is sent. For a panel turn with a page open, a copy with more `agent` criteria
+    (`open_record` only when a record is open); the published label is never touched, so this is panel only
+    and no other caller sees it."""
+    principal = staff_principal.current()
+    if principal is None or not principal.page:
+        return criteria
+    agent = criteria.get("agent")
+    if not isinstance(agent, dict):
+        return criteria
+    extra = {"open_page": OPEN_PAGE_CRITERION}
+    if principal.page.get("record_ref"):
+        extra["open_record"] = OPEN_RECORD_CRITERION
+    return {**criteria, "agent": {**agent, **extra}}
 
 
 def _bot_asked(block: dict[str, Any]) -> bool:
@@ -236,17 +297,51 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     return instructions, criteria, row[1] or jev_client.DEFAULT_MODEL
 
 
-def agent_tool_labels(db=None, user=None) -> list[str]:
+def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = None) -> list[str]:
     """Plain labels of what the agent can do: every write, then every per-user read. `tools.REGISTRY`
     (stock, ETA, cost) is left out on purpose: the bot answers those lookups too and the static
     criteria text already covers them. A tool without a label is skipped (a guard test catches it).
 
     With `db` the labels are the ones THIS contact's agent could do (AGENTIC-KNOWLEDGE W1): a contact with
     no linked user (`user` None) has no writes or user reads, and a linked user only the tools whose slug it
-    holds. Called with nothing, it lists every tool (the guard tests)."""
+    holds. Called with nothing, it lists every tool (the guard tests). The panel's ported reads
+    (`agent_tools.PORTED_READS`) follow the same filter."""
     labels: list[str] = []
     for name, definition in [*agent_writes.WRITES.items(), *agent_writes.USER_READS.items()]:
-        if db is not None and (user is None or not agent_writes.holds(db, str(user.id), definition.user_permission)):
+        if db is not None and (
+            user is None or agent_tools.panel_closed(name)
+            or not agent_writes.holds(db, str(user.id), definition.user_permission)
+        ):
+            continue
+        label = agent_tools.TOOL_LABELS.get(name)
+        if label and label not in labels:
+            labels.append(label)
+    if db is not None and user is None and contact_respond_id:
+        # A contact principal's dealer requests (AGENTIC-WA-W2), under the portal's own gates for that contact.
+        from app.services.chatbot.agent import portal_writes
+
+        for name in portal_writes.offered_for_contact(db, contact_respond_id):
+            label = agent_tools.TOOL_LABELS.get(name)
+            if label and label not in labels:
+                labels.append(label)
+    if db is not None and staff_principal.current() is None:
+        return labels  # a panel-only label is never sent off the panel, and nothing of the panel part runs
+    # AGENTIC-UNIFY PR 4: the panel's reads no chat lane answers, through the tool gate itself (`user_may_use` and the
+    # contact reveal), so the label and the tool are one predicate. A panel-only tool is not sent off the panel.
+    ctx = None
+    if db is not None and user is not None:
+        from app.services.contact_field_reveal_service import staff_reveal_keys
+
+        ctx = SimpleNamespace(
+            user_id=str(user.id), operator_user_id=None, principal="user", stock_allowed=True,
+            grants=frozenset(staff_reveal_keys(db, str(user.id))),
+        )
+    for name, tool in agent_tools.REGISTRY.items():
+        if name not in agent_tools.PORTED_READS:
+            continue
+        if db is not None and (
+            ctx is None or not (agent_tools.user_may_use(db, ctx, tool) and agent_tools.contact_allows(ctx, tool))
+        ):
             continue
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
@@ -266,6 +361,15 @@ def _with_agent_tools(criteria: dict[str, Any], labels: list[str]) -> dict[str, 
 
 def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
     """What Jev reads: the message, the last exchanges (oldest first) and who answered last."""
+    principal = staff_principal.current()
+    if principal is not None:
+        panel = _panel_exchanges(db, principal.conversation_id)
+        return {
+            "latest_message": text,
+            "recent_exchanges": panel,
+            "last_answered_by": panel[-1]["answered_by"] if panel else None,
+            **({"current_page": principal.page} if principal.page else {}),
+        }
     rows = (
         db.query(ChatbotTurn.ingress, ChatbotTurn.envelope, ChatbotTurn.response)
         .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
@@ -294,6 +398,34 @@ def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
         "recent_exchanges": exchanges,
         "last_answered_by": exchanges[-1]["answered_by"] if exchanges else None,
     }
+
+
+def _panel_exchanges(db, conversation_id: str) -> list[dict[str, Any]]:
+    """The thread's last exchanges, oldest first, from its panel messages: a thread can hold answers
+    from before the user moved onto this path, and those were never turns."""
+    rows = (
+        db.query(AIAssistantMessage)
+        .filter(AIAssistantMessage.conversation_id == conversation_id, AIAssistantMessage.role.in_(("user", "assistant")))
+        # An answer and its question can share a timestamp; the answer is the newer of the two.
+        .order_by(AIAssistantMessage.created_at.desc(), (AIAssistantMessage.role == "assistant").desc(), AIAssistantMessage.id.desc())
+        .limit(RECENT_EXCHANGES * 2 + 1)
+        .all()
+    )
+    exchanges: list[dict[str, Any]] = []
+    reply: Any = None
+    for row in rows:
+        if row.role == "assistant":
+            reply = row
+        elif reply is not None:
+            exchanges.append(
+                {
+                    "user": row.content or "",
+                    "reply": (reply.content or "")[:REPLY_CHARS],
+                    "answered_by": "agent" if (reply.metadata_json or {}).get("route") == "agent" else "bot",
+                }
+            )
+            reply = None
+    return list(reversed(exchanges[:RECENT_EXCHANGES]))
 
 
 def _user_text(envelope: Any) -> str:

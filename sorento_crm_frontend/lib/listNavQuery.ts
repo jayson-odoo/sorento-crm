@@ -45,6 +45,26 @@ export function buildDetailSearch(
 export const MAX_LIST_PAGE_SIZE = 100;
 
 /**
+ * The prefix of a detail page's own view-state params (e.g. the OI lines grid's `view_q`,
+ * `view_state`, `view_sort`). The pager carries every such key onto prev/next, so the next
+ * record opens with the same view; they never enter the list query.
+ */
+export const DETAIL_VIEW_PREFIX = 'view_';
+
+export function isDetailViewKey(key: string): boolean {
+  return key.startsWith(DETAIL_VIEW_PREFIX);
+}
+
+/** Every `view_*` param on a detail URL, in order. */
+export function detailViewParams(searchParams: URLSearchParams): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of searchParams.entries()) {
+    if (isDetailViewKey(k) && v !== '') out[k] = v;
+  }
+  return out;
+}
+
+/**
  * Parse a detail-route `URLSearchParams` back into the list query shape the
  * pager and the lists expect. Returns the DataGrid params plus a passthrough map
  * of any extra resource filters present (e.g. assigned_to, status).
@@ -64,11 +84,15 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
 
   const sorting: SortingState = sort ? [{ id: sort, desc: dir === 'desc' }] : [];
 
-  // `from` (M5-07) names the row Back should restore, not a list filter.
-  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id', 'from']);
+  // `from` (M5-07) names the row Back should restore, and `tab` (NAV-KEEP-TAB) the detail
+  // page's open tab: neither is a list filter. A `tab` read as one put `tab=` into the list's
+  // cache key (a miss, a second fetch) and onto the list GET.
+  // `view_*` (OI-UX-FILTER-SNAPSHOT) is the detail page's own grid view (its lines search,
+  // filter, sort): carried by the pager like `tab`, never a list filter.
+  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id', 'from', 'tab']);
   const filters: Record<string, string> = {};
   for (const [k, v] of searchParams.entries()) {
-    if (!reserved.has(k) && v !== '') filters[k] = v;
+    if (!reserved.has(k) && !isDetailViewKey(k) && v !== '') filters[k] = v;
   }
 
   return {

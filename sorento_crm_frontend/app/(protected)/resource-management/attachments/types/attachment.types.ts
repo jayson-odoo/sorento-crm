@@ -72,8 +72,6 @@ export type FieldLinkageEntityType =
   | 'packing_list'
   | 'form';
 
-export type AiAudience = 'off' | 'staff' | 'dealer' | 'public';
-
 export interface AttachmentType {
   id: string;
   type_name: string;
@@ -98,8 +96,11 @@ export interface AttachmentType {
    *  batch 6 Sep 2026); null = no default, same as today. Editable on the type form and
    *  pre-selected in the generic Create Attachment dialog when this type is picked. */
   default_directory_id?: string | null;
-  /** Who the AI may answer from files of this type for; 'off' = never read. */
-  ai_audience?: AiAudience;
+  /** Staff ticked: the AI reads files of this type for staff. */
+  ai_read_staff?: boolean;
+  /** Access codes ticked: the AI reads files of this type for contacts holding them. */
+  ai_read_codes?: string[];
+  is_direct_access?: boolean;
   /** Team a question the documents do not cover is referred to; null = none. */
   ai_escalate_team_id?: string | null;
   ai_escalate_team_name?: string | null;

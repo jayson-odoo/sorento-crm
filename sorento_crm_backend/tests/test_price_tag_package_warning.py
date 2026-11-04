@@ -107,7 +107,19 @@ def _product(db: Session, stem: str, *, class_label: str | None = None) -> Produ
 
 def _combo(db: Session, host: Product, name: str, parts) -> ProductCombo:
     """`parts` is a list of (product, choice_group) in display order."""
-    combo = ProductCombo(id=_uid(), host_product_id=host.id, name=name, sort_order=0)
+    # A picture and a description, so the combo's own "no picture / no description"
+    # note (PRICETAG-COMBO AC-7.1) stays out of what these tests pin.
+    from tests import _ptag_r9_seed as r9
+
+    cover = r9.seed_product_photo(db, host)
+    combo = ProductCombo(
+        id=_uid(),
+        host_product_id=host.id,
+        name=name,
+        sort_order=0,
+        description="ZZT description",
+        image_attachment_id=cover.id,
+    )
     db.add(combo)
     db.flush()
     for index, (product, choice_group) in enumerate(parts):

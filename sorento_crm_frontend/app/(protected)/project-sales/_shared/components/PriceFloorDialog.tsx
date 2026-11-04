@@ -145,19 +145,20 @@ export function PriceFloorDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>
+          {/* pr-6 keeps the longer "minimum price" title clear of the close button at 375px. */}
+          <DialogTitle className="pr-6">
             {lockedTarget
-              ? `${isEdit ? 'Change' : 'Set'} the floor for ${lockedTarget.label}`
+              ? `${isEdit ? 'Change' : 'Set'} the minimum price for ${lockedTarget.label}`
               : isEdit
-                ? 'Edit price floor'
-                : 'Add a price floor'}
+                ? 'Edit minimum price'
+                : 'Add a minimum price'}
           </DialogTitle>
           <DialogDescription>
             {/* This used to end "It is never blocked", which was true until the approval gate
                 landed. Quoting below a floor is still never refused - what is refused is ISSUING
                 that quotation to the customer before a manager approves it. Saying the old thing
                 here would have a salesperson meet the block with no idea a floor caused it. */}
-            A quoted price under the floor is still saved and flagged. What it stops is sending:
+            A quoted price under the minimum price is still saved and flagged. What it stops is sending:
             the quotation cannot be issued to the customer until a manager approves it.
           </DialogDescription>
         </DialogHeader>
@@ -226,7 +227,7 @@ export function PriceFloorDialog({
               ))}
               {isEdit && (
                 <p className="text-xs text-muted-foreground">
-                  To move this floor to a different target, delete it and add a new one.
+                  To move this minimum price to a different target, delete it and add a new one.
                 </p>
               )}
             </div>
@@ -312,7 +313,7 @@ export function PriceFloorDialog({
                 />
                 {percentTooHigh && (
                   <p className="text-xs text-destructive">
-                    A floor above 100% of list would flag every sale at list price.
+                    A minimum price above 100% of list would flag every sale at list price.
                   </p>
                 )}
               </div>
@@ -347,7 +348,7 @@ export function PriceFloorDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={blocked || upsert.isPending}>
-              {isEdit ? 'Save floor' : 'Add floor'}
+              {isEdit ? 'Save minimum price' : 'Add minimum price'}
             </Button>
           </DialogFooter>
         </form>

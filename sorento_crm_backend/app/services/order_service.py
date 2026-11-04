@@ -1548,6 +1548,15 @@ class OrderService:
                 .all()
             )
             by_number = {no: {"id": str(sid), "so_number": no, "line_no": None} for sid, no in rows}
+        # OI-UX-FILTER-SNAPSHOT: each linked SO also names its customer and project.
+        from app.services.scm.so_party import so_parties, with_party
+
+        parties = so_parties(
+            self.db,
+            ids=[r["id"] for r in (*by_line.values(), *by_number.values())],
+        )
+        for ref in (*by_line.values(), *by_number.values()):
+            with_party(ref, parties, ref["id"])
         for line in lines:
             ref = by_line.get(str(line.sales_order_line_id or ""))
             if ref is None and line.from_doc_type in (None, "SO"):
@@ -3494,6 +3503,11 @@ class OrderService:
             ]
             with suppress_embedding_events("order"):
                 self.db.flush()
+                # PS-SAMPLE-TRACKING: a sample request linked to a consignment takes its
+                # delivered date from that CG's Overall Tracking row once one lands.
+                from app.services.sample_request_service import sync_tracked_orders_safely
+
+                sync_tracked_orders_safely(self.db, touched_orders)
                 seen: set[str] = set()
                 touched_ids: list[str] = []
                 for o in changed_orders:

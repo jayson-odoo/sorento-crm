@@ -17,6 +17,9 @@ export interface RelatedRow {
   /** Null for a delivery order a billing document names that the CRM does not hold. */
   id: string | null;
   doc_no: string;
+  /** A sales order row's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   /** YYYY-MM-DD */
   doc_date: string | null;
   status: string | null;
@@ -27,6 +30,8 @@ export interface RelatedRow {
 export type RelatedSortKey =
   | 'type'
   | 'doc_no'
+  | 'customer_name'
+  | 'project_label'
   | 'doc_date'
   | 'status'
   | 'amount';

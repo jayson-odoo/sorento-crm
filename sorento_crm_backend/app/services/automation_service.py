@@ -291,10 +291,14 @@ class AutomationService:
             )
             .all()
         )
+        context = dict(context or {})
         match = automation_triggers.TriggerMatch(
-            context=dict(context or {}),
+            context=context,
             source_kind=source_kind,
             source_id=source_id,
+            # DEALER-OI-ROUTE: a trigger whose facts live on the context (the order
+            # inquiry emails' `sales_order_class`) is filtered by each row's conditions.
+            fact_sources=automation_triggers.context_fact_sources(trigger_type, context),
         )
         results: list[dict[str, Any]] = []
         for automation in automations:
@@ -313,6 +317,24 @@ class AutomationService:
                     automation.id,
                 )
         return {"trigger_type": trigger_type, "fired": len(results), "results": results}
+
+    def passing_rows(
+        self,
+        trigger_type: str,
+        context: dict[str, Any],
+        automations: list[Automation],
+    ) -> list[Automation]:
+        """The rows among ``automations`` whose conditions pass for this context, by the
+        same rule ``dispatch_event`` fires them (an empty tree passes; a trigger with no
+        context facts lets every row through). OI-ROUTE-BY-RAISER: the handover email
+        groups its lines by this, and "Send to purchasing" picks its rows by it."""
+        match = automation_triggers.TriggerMatch(
+            context=dict(context or {}),
+            source_kind=trigger_type,
+            source_id="",
+            fact_sources=automation_triggers.context_fact_sources(trigger_type, context),
+        )
+        return [a for a in automations if self._filter_matches_by_conditions(a, [match])]
 
     def send_match(
         self, automation: Automation, match: "automation_triggers.TriggerMatch"
@@ -403,6 +425,10 @@ class AutomationService:
                 "include_requester": False,
                 "one_email": False,
                 "extra_emails": [],
+                "cc_user_ids": [],
+                "cc_role_ids": [],
+                "cc_emails": [],
+                "explicit_to_cc": False,
             }
         if hasattr(config, "model_dump"):
             data = config.model_dump()
@@ -429,6 +455,13 @@ class AutomationService:
             # template that personalises `{{ recipient.name }}` per copy is unaffected.
             "one_email": bool(data.get("one_email", False)),
             "extra_emails": [str(x).strip() for x in (data.get("extra_emails") or []) if str(x).strip()],
+            # DEALER-OI-ROUTE: explicit Cc. Everything above (users, roles, emails) is To.
+            "cc_user_ids": [str(x) for x in (data.get("cc_user_ids") or [])],
+            "cc_role_ids": [str(x) for x in (data.get("cc_role_ids") or [])],
+            "cc_emails": [str(x).strip() for x in (data.get("cc_emails") or []) if str(x).strip()],
+            # Card Q2 (b): True once saved through the To/Cc picker; until then the row
+            # sends as before (first address To, the rest Cc).
+            "explicit_to_cc": bool(data.get("explicit_to_cc", False)),
         }
 
     def _execute(
@@ -650,15 +683,11 @@ class AutomationService:
                 actor_email = (
                     ((match.context.get("actor") or {}).get("email") or "").strip().lower()
                 )
-                ordered = recipients
-                if actor_email:
-                    non_actor = [
-                        r for r in recipients if r["email"].strip().lower() != actor_email
-                    ]
-                    actor_entries = [
-                        r for r in recipients if r["email"].strip().lower() == actor_email
-                    ]
-                    ordered = non_actor + actor_entries
+                # DEALER-OI-ROUTE: To, then Cc, then the actor last; `to_count` tells
+                # `notification_tasks` where To ends.
+                ordered, to_count = automation_recipients.order_for_email(
+                    recipients, actor_email
+                )
                 primary = ordered[0]
                 ctx = dict(match.context)
                 ctx["recipient"] = {
@@ -673,6 +702,7 @@ class AutomationService:
                     body_html=rendered["body_html"],
                     body_text=rendered["body_text"],
                     metadata={
+                        "to_count": to_count,
                         "automation_id": str(automation.id),
                         "automation_run_id": str(run.id),
                         "promotion_id": match.source_id,

@@ -2064,6 +2064,11 @@ def _designing_combo_request(db):
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: start from the per-candidate tag set a request in flight
+    # (or a hand split) already holds, before the pins are written.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     request.portal_draft_at = None
     request.assigned_to_id = seed.MARKETER_ID
     request.print_by = "office"

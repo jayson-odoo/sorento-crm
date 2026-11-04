@@ -12,6 +12,8 @@
  *   legitimate. Render the list from `blocks`, never from a similarity threshold.
  */
 
+import type { MatrixCells, MatrixHeader } from '../lib/quotationMatrix';
+
 export type ProjectOutcome = 'open' | 'won' | 'lost' | 'dormant';
 
 export type PartyType =
@@ -19,7 +21,60 @@ export type PartyType =
   | 'architect'
   | 'main_contractor'
   | 'trading_house'
-  | 'consultant';
+  | 'consultant'
+  | 'subcontractor'
+  | 'interior_designer'
+  | 'tender_party';
+
+/** Roles a project links beyond developer, architect and main contractor (PS-REGISTRATION-V3). */
+export type PartyLinkRole =
+  | 'subcontractor'
+  | 'trading_house'
+  | 'tender_party'
+  | 'consultant'
+  | 'interior_designer';
+
+export interface PartyLink {
+  role: PartyLinkRole;
+  party_id: string;
+  name?: string | null;
+}
+
+/** A person at a party: the master a registration picks from. */
+export interface PartyContact {
+  id: string;
+  party_id: string;
+  name: string;
+  job_title?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_active: boolean;
+}
+
+export interface PartyContactBody {
+  name?: string;
+  job_title?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_active?: boolean;
+}
+
+/** One (role, party) on a project with the project's people at that party. */
+export interface PartyOnProject {
+  party_id: string;
+  party_type: PartyType;
+  role: string;
+  name: string;
+  phone: string | null;
+  contacts: {
+    stakeholder_id: string;
+    party_contact_id: string | null;
+    name: string;
+    job_title: string | null;
+    phone: string | null;
+    email: string | null;
+  }[];
+}
 
 export type InfluenceLevel = 'high' | 'medium' | 'low';
 
@@ -36,6 +91,8 @@ export interface ProjectParty {
   customer_name?: string | null;
   is_active: boolean;
   project_count?: number | null;
+  /** Active contacts at this party (PS-REGISTRATION-V3). */
+  contact_count?: number;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -163,6 +220,9 @@ export interface Project {
   critical_at?: string | null;
   management_support?: string | null;
   management_notes?: string | null;
+  /** PS-QUOTE-RULES: this project's discounts go to this person; null = owner's superior. */
+  discount_approver_user_id?: string | null;
+  discount_approver_name?: string | null;
 
   registered_company_name?: string | null;
   location?: string | null;
@@ -174,6 +234,8 @@ export interface Project {
   architect_name?: string | null;
   main_contractor_party_id?: string | null;
   main_contractor_name?: string | null;
+  /** Several trading houses, subcontractors, tender parties; one consultant / ID (PS-REGISTRATION-V3). */
+  party_links?: PartyLink[];
   estimated_sales_value?: string | null;
   launch_date?: string | null;
   expected_delivery_from?: string | null;
@@ -196,6 +258,7 @@ export interface Project {
   customer_phone?: string | null;
   /** The customer's main contact, which the quotation header's Attn defaults to. */
   customer_attn?: string | null;
+  customer_email?: string | null;
 
   last_meaningful_activity_at?: string | null;
   days_since_last_activity?: number | null;
@@ -250,8 +313,14 @@ export interface ProjectRegisterBody {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  /** Required on create; edit leaves it optional (PROJECT-REGISTER-V2 A4). */
+  /** Optional everywhere (PS-REGISTRATION-V3 rule 9). */
   customer_id?: string | null;
+  /** A value of the lookup set `project_lead_source`; required on Register / Submit. */
+  lead_source?: string | null;
+  /** Present replaces every link; absent keeps them. */
+  party_links?: PartyLink[];
+  /** Register only: party contacts copied into the project's stakeholders. */
+  contact_ids?: string[];
   /**
    * Only for a user holding `projects.registrations.submit` without edit: false saves a
    * draft, true submits it for approval (PROJECT-REGISTER-V2 J1).
@@ -265,6 +334,7 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   is_critical?: boolean;
   management_support?: string | null;
   management_notes?: string | null;
+  discount_approver_user_id?: string | null;
   loss_reason?: string | null;
 }
 
@@ -483,13 +553,10 @@ export interface TaskHistoryEntry {
  */
 export type LeadOutcome = 'open' | 'qualified' | 'disqualified';
 
-export type LeadSource =
-  | 'site_visit'
-  | 'architect'
-  | 'contractor'
-  | 'dealer'
-  | 'inbound'
-  | 'other';
+/** A value of the editable lookup set `project_lead_source` (PS-REGISTRATION-V3 Q4); the
+ * seed is site_visit, architect, contractor, dealer, inbound, bci, referral, tender_notice,
+ * existing_customer, interior_designer, other, and Settings may add more. */
+export type LeadSource = string;
 
 export interface LeadDuplicateHint {
   lead_id: string;
@@ -620,6 +687,10 @@ export interface ProjectQuotation {
   id: string;
   project_id: string;
   scope_label: string;
+  /** PS-PROPOSAL-QUOTATION: the document this scope sits on, and its kind. */
+  document_id?: string | null;
+  document_no?: string | null;
+  document_kind?: 'proposal' | 'quotation' | null;
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;
@@ -665,6 +736,11 @@ export interface QuotationVersion {
   total_amount: string;
   notes?: string | null;
   created_at?: string | null;
+  /**
+   * PS-QUOTE-MATRIX: column headers over columns, frozen with the version. `[]` (or absent, on a
+   * payload from before the grid) is today's single Qty column.
+   */
+  matrix_columns?: MatrixHeader[];
 }
 
 /**
@@ -809,6 +885,8 @@ export interface QuotationLine {
 
   sort_order: number;
   notes?: string | null;
+  /** PS-QUOTE-MATRIX: quantity per leaf key; `{}` on a scope without columns. */
+  qty_cells?: MatrixCells;
 }
 
 export interface QuotationLineBody {
@@ -831,6 +909,8 @@ export interface QuotationLineBody {
   complete_set?: string | null;
   band_label?: string | null;
   is_rate_only?: boolean;
+  /** Sent only on a version with columns; the server derives `quantity` from it. */
+  qty_cells?: MatrixCells | null;
 }
 
 /**
@@ -864,50 +944,48 @@ export interface StagedQuotationLine {
   removed: boolean;
 }
 
-export type QuotationAmendmentField = 'quantity' | 'unit_price' | 'remove';
-export type QuotationAmendmentDecision = 'pending' | 'accepted' | 'rejected';
+/** What one piece of customer feedback carries as its hint (PS-QUOTE-MATRIX R19-R22). */
+export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
 
 /**
- * One customer suggestion on one ISSUED line (QUOTE-CUSTOMER-AMEND): one field, decided on its
- * own, so a quantity can be accepted and a price on the same line rejected. Money and quantities
- * are decimal strings; `value_to` is null for a removal. The floor fields are staff-only.
+ * One feedback note on an item or a cell. Nothing is accepted or applied: the only state is
+ * Handled (`handled_at`), ticked by staff. Money and quantities are decimal strings.
  */
-export interface QuotationAmendmentRow {
+export interface QuotationFeedbackRow {
   id: string;
   line_id: string;
-  field: QuotationAmendmentField;
+  /** The scope (quotation) the note's line sits in. Absent on a payload from before it. */
+  scope_id?: string | null;
+  scope_label: string;
+  line_description: string | null;
+  /** The cell it points at, or null for the whole item. */
+  cell_key: string | null;
+  /** "<header> / <column>" or the header label; null for an item note. */
+  cell_label: string | null;
+  kind: QuotationFeedbackKind;
   value_from: string | null;
   value_to: string | null;
-  decision: QuotationAmendmentDecision;
-  decision_reason: string | null;
-  below_floor?: boolean;
-  floor_value?: string | null;
+  /** Model swap: the model as the customer typed it. */
+  model: string | null;
+  note: string | null;
+  handled_at: string | null;
+  handled_by_name: string | null;
 }
 
-/** The request as the staff routes answer it. */
-export interface QuotationAmendmentRequest {
+export interface QuotationFeedbackRequest {
   id: string;
-  status: 'open' | 'applied' | 'superseded';
+  issue_label: string | null;
   submitted_at: string | null;
   requester_name: string | null;
+  /** The free note sent with the items. */
   note: string | null;
-  applied_at: string | null;
-  rows: QuotationAmendmentRow[];
-  /** The issue's total, and the total with the accepted rows applied. */
-  total_issued: string;
-  total_after: string;
-  /**
-   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
-   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
-   */
-  blocked_scopes: {
-    quotation_id: string;
-    scope_label: string;
-    version_id: string;
-    has_accepted: boolean;
-  }[];
-  /** Apply drafted a revision. */
-  revised: boolean;
+  rows: QuotationFeedbackRow[];
+}
+
+export interface QuotationFeedback {
+  open_count: number;
+  /** Newest first; rows in line order. */
+  requests: QuotationFeedbackRequest[];
 }
 
 export interface QuotationOutcomeBody {
@@ -1203,6 +1281,13 @@ export interface ProjectPurchaseOrder {
   published_sales_order_count?: number;
   model_mismatch_count: number;
   price_mismatch_count: number;
+  /** PS-PROPOSAL-QUOTATION: why the project's POs order more than the quotation quotes. */
+  qty_over_reason?: string | null;
+  qty_over_reason_at?: string | null;
+  qty_over_reason_by_name?: string | null;
+  /** The kind of document the PO is checked against (proposal | quotation) and its number. */
+  checked_against_kind?: 'proposal' | 'quotation' | null;
+  checked_against_label?: string | null;
 
   /** AC-F9a: erosion since v1 as a NUMBER, not a flag. Null percent = no baseline. */
   v1_total?: string | null;
@@ -1279,6 +1364,8 @@ export interface PurchaseOrderLineBulkItem extends Omit<PurchaseOrderLineBody, '
  * `lines` out entirely is how a header-only save (the record-a-PO modal) leaves them alone.
  */
 export interface ProjectPurchaseOrderSaveBody extends Partial<ProjectPurchaseOrderBody> {
+  /** PS-PROPOSAL-QUOTATION: sent on the second save after a 409 `po_qty_over_quoted`. */
+  qty_over_reason?: string | null;
   lines?: PurchaseOrderLineBulkItem[];
 }
 

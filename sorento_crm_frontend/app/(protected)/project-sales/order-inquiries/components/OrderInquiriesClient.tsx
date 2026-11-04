@@ -481,6 +481,10 @@ export function OrderInquiriesClient({
   const [inquiryNoFilter, setInquiryNoFilter] = React.useState(() =>
     joinMulti(splitMulti(searchParams.get('inquiry_no'))),
   );
+  // OI-RESERVE-ROUND: the reserve request ids a two-or-more-OI email names.
+  const [reserveRequestFilter, setReserveRequestFilter] = React.useState(() =>
+    joinMulti(splitMulti(searchParams.get('reserve_request'))),
+  );
   // OI-BULK-RESERVE v4 (F1): a line's own reserve status, the Documents view's four
   // statuses. URL-seeded and synced like `state`.
   const [reserveFilter, setReserveFilter] = React.useState<OrderInquiryReserveStatus | ''>(
@@ -642,6 +646,7 @@ export function OrderInquiriesClient({
       // LINKAGE-UNIFY U3.
       ['dead_document', deadDocumentFilter],
       ['inquiry_no', inquiryNoFilter],
+      ['reserve_request', reserveRequestFilter],
     ] as const) {
       if (value) next.set(key, value);
       else next.delete(key);
@@ -682,6 +687,7 @@ export function OrderInquiriesClient({
     reserveFilter,
     deadDocumentFilter,
     inquiryNoFilter,
+    reserveRequestFilter,
     linkUpTo,
     horizonCleared,
     pathname,
@@ -719,6 +725,7 @@ export function OrderInquiriesClient({
     reserveFilter,
     deadDocumentFilter,
     inquiryNoFilter,
+    reserveRequestFilter,
   ]);
 
   // S6 (AC-CF-20): once, when the remembered view has resolved, every filter the URL did
@@ -856,6 +863,7 @@ export function OrderInquiriesClient({
       reserve: reserveFilter || undefined,
       dead_document: deadDocumentFilter || undefined,
       inquiry_no: inquiryNoFilter || undefined,
+      reserve_request: reserveRequestFilter || undefined,
     }),
     [
       debounced,
@@ -875,6 +883,7 @@ export function OrderInquiriesClient({
       reserveFilter,
       deadDocumentFilter,
       inquiryNoFilter,
+      reserveRequestFilter,
     ],
   );
 
@@ -996,7 +1005,8 @@ export function OrderInquiriesClient({
     stateFilter ||
     reserveFilter ||
     deadDocumentFilter ||
-    inquiryNoFilter,
+    inquiryNoFilter ||
+    reserveRequestFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -1491,7 +1501,8 @@ export function OrderInquiriesClient({
     (stateFilter ? 1 : 0) +
     (reserveFilter ? 1 : 0) +
     (deadDocumentFilter ? 1 : 0) +
-    (inquiryNoFilter ? 1 : 0);
+    (inquiryNoFilter ? 1 : 0) +
+    (reserveRequestFilter ? 1 : 0);
 
   // S3: the cell already carries its own axis label; only the bucket's granularity-aware
   // reading (`buildOrderInquiryMatrix`'s own label) still has to be looked up.
@@ -1758,6 +1769,7 @@ export function OrderInquiriesClient({
             setReserveFilter('');
             setDeadDocumentFilter('');
             setInquiryNoFilter('');
+            setReserveRequestFilter('');
             // Counted above, so it is cleared here: "Clear filters" that
             // left a card pressed would leave the screen still narrowed.
             setKindFilter(null);
@@ -1813,6 +1825,14 @@ export function OrderInquiriesClient({
                 {
                   label: multiChipLabel('Order inquiries', splitMulti(inquiryNoFilter)),
                   onClear: () => setInquiryNoFilter(''),
+                },
+              ]
+            : []),
+          ...(reserveRequestFilter
+            ? [
+                {
+                  label: `Reserve requests: ${splitMulti(reserveRequestFilter).length}`,
+                  onClear: () => setReserveRequestFilter(''),
                 },
               ]
             : []),

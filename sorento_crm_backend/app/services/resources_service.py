@@ -527,6 +527,24 @@ class AttachmentTypeService:
         if found is None:
             raise handle_unprocessable("Escalate to team does not exist.")
 
+    def _clean_ai_codes(self, codes) -> list:
+        """The ticked access codes de-duplicated, in catalogue order. 400 naming a code that is not an
+        active access type."""
+        from app.models.access import ContactAccessType
+
+        wanted = {str(c) for c in (codes or ())}
+        active = [
+            str(code)
+            for (code,) in self.db.query(ContactAccessType.code)
+            .filter(ContactAccessType.is_active.is_(True))
+            .order_by(ContactAccessType.sort_order, ContactAccessType.code)
+            .all()
+        ]
+        bad = sorted(wanted - set(active))
+        if bad:
+            raise handle_validation_error(f"Access type {', '.join(bad)} does not exist or is not active.")
+        return [c for c in active if c in wanted]
+
     def _attach_team_names(self, types) -> None:
         """Set `ai_escalate_team_name` on each row (the response schema reads it as an attribute)."""
         from app.models.access import Team
@@ -556,7 +574,9 @@ class AttachmentTypeService:
             raise handle_conflict("Attachment type name already exists.")
         
         self._check_team(type_data.ai_escalate_team_id)
-        attachment_type = AttachmentType(**type_data.model_dump())
+        fields = type_data.model_dump()
+        fields["ai_read_codes"] = self._clean_ai_codes(fields.get("ai_read_codes"))
+        attachment_type = AttachmentType(**fields)
         self.db.add(attachment_type)
         self.db.commit()
         self.db.refresh(attachment_type)
@@ -568,10 +588,13 @@ class AttachmentTypeService:
         attachment_type = self.get_type(type_id)
         
         update_data = type_data.model_dump(exclude_unset=True)
-        if update_data.get("ai_audience") is None:
-            update_data.pop("ai_audience", None)  # NOT NULL column: an explicit null leaves it alone
+        for key in ("ai_read_staff", "ai_read_codes", "is_direct_access"):
+            if key in update_data and update_data[key] is None:
+                update_data.pop(key)  # NOT NULL columns: an explicit null leaves them alone
+        if "ai_read_codes" in update_data:
+            update_data["ai_read_codes"] = self._clean_ai_codes(update_data["ai_read_codes"])
         self._check_team(update_data.get("ai_escalate_team_id"))
-        was_off = attachment_type.ai_audience == "off"
+        was_off = not (attachment_type.ai_read_staff or attachment_type.ai_read_codes)
         
         # Check for name uniqueness if type_name is being updated
         if "type_name" in update_data and update_data["type_name"] != attachment_type.type_name:
@@ -586,7 +609,7 @@ class AttachmentTypeService:
         
         self.db.commit()
         self.db.refresh(attachment_type)
-        if was_off and attachment_type.ai_audience != "off":
+        if was_off and (attachment_type.ai_read_staff or attachment_type.ai_read_codes):
             # AGENTIC-KNOWLEDGE: turning AI reading on reads the files already filed under this type.
             from app.services import knowledge_service
 

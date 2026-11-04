@@ -37,7 +37,10 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
 
   // Same URL-held tab as the product record (ProductDetail.tsx): a tab survives
   // stepping to the next supplier with the pager above.
-  const activeTab = searchParams.get('tab') || 'details';
+  const requestedTab = searchParams.get('tab') || 'details';
+  // The pager carries `?tab=` to the next supplier (NAV-KEEP-TAB); Costs hidden by
+  // permission falls back to Details rather than an empty panel.
+  const activeTab = requestedTab === 'prices' && !canViewPrices ? 'details' : requestedTab;
   const handleTabChange = useCallback(
     (tab: string) => {
       const params = new URLSearchParams(searchParams.toString());

@@ -22,6 +22,8 @@ from app.schemas.projects import (
     QuotationSignAcceptRequest,
     QuotationSignChangesRequest,
     QuotationSignPageResponse,
+    QuotationSignViewRequest,
+    QuotationSignViewResponse,
 )
 from app.services import project_quotation_document_service as svc
 from app.services.client_ip import client_ip
@@ -39,12 +41,13 @@ def read_quotation_for_signing(
 ):
     """What the customer sees: the quotation as issued, read-only.
 
-    Rendered from the ISSUE, not from live rows, so the page cannot show them something different
-    from the PDF they were sent.
+    The letter, terms, payment terms, validity and totals are read from the ISSUE (frozen when it
+    was issued). The header (attn, recipient, date, subject, signatory) is read live from the
+    document, exactly as the PDF reads it.
     """
     try:
         record = svc.get_issue_by_sign_token(db, token)
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -77,7 +80,7 @@ def accept_quotation(
             terms_accepted=payload.terms_accepted,
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -107,7 +110,7 @@ def request_quotation_changes(
             requester_name=payload.requester_name,
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -154,10 +157,10 @@ def submit_quotation_amendment(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """The customer suggests quantities and prices, or a line's removal, in ONE request.
+    """The customer leaves notes on items or cells, with optional hints, in ONE request.
 
-    Nothing the customer holds changes: the suggestions wait for the salesperson, and until they
-    are answered the quotation cannot be signed. Answers the page, as `accept` does.
+    Nothing the customer holds changes and nothing is blocked: the notes wait for the
+    salesperson. Answers the page, as `accept` does.
     """
     from app.services import quotation_amendment_service as amendments
 
@@ -167,13 +170,63 @@ def submit_quotation_amendment(
         amendments.submit_request(
             db,
             record=record,
-            lines=[line.model_dump() for line in payload.lines],
+            items=[item.model_dump() for item in payload.items],
             note=payload.note,
             requester_name=payload.requester_name,
             ip_address=client_ip(request),
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+VIEW_BUCKET = "quotation_view_token"
+VIEW_LIMIT_PER_HOUR = 60
+
+
+@router.post("/{token}/view", response_model=QuotationSignViewResponse)
+def record_quotation_view(
+    token: str,
+    payload: QuotationSignViewRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """The sign page's beacon: the customer opened the link (PS-QUOTE-VIEWS).
+
+    A POST the page sends once it has loaded, never the page GET, so link scanners and preview
+    bots that only fetch do not count. Answers whether the open was counted; a refused bot and a
+    repeat inside 30 minutes both answer `counted: false`, not an error.
+
+    Rate limited per token only, keyed on the token's digest: no client IP reaches Redis, and
+    nothing about the caller beyond a coarse device class is kept (`quotation_view_service`).
+    """
+    from app.services import quotation_view_service as views
+    from app.services import rate_limit
+
+    try:
+        gate = rate_limit.hit(
+            VIEW_BUCKET,
+            token_bucket_ident(token),
+            limit=VIEW_LIMIT_PER_HOUR,
+            window_seconds=3600,
+        )
+        if not gate.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please try again later.",
+                headers={"Retry-After": str(gate.retry_after_seconds or 3600)},
+            )
+        record = svc.get_issue_by_sign_token(db, token)
+        counted = views.record_view(
+            db,
+            record=record,
+            visitor_id=payload.visitor_id,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.commit()
+        return {"counted": counted}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

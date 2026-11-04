@@ -15,15 +15,13 @@ the table keeps who granted or revoked a key and when, rather than losing that
 history on the next save.
 
 WHICH KEYS EXIST is a frozen literal here, not a read of `mcp_tools.restricted_fields`
-at request time. `mcp_tool_registry_service.sync_catalog` still writes that column at
-startup by importing `sorento_crm_mcp.catalog` - but the deployed backend image is built
-from `context: ./sorento_crm_backend` only (see `sorento_crm/docker-compose.yml` and
-`.github/workflows/deploy.yml`), `sorento_crm_mcp` is not in `requirements.txt`, and no
-volume mounts it in, so that import raises `ModuleNotFoundError` in every container and
-the startup sync never runs - the column stays at its migration-488 default of `[]`
-forever on prod, and this checklist read "No restricted field exists yet" even though the
-catalogue declares three. A local checkout works because the dev venv happens to have the
-MCP package installed, which is exactly what hid the bug. The precedent is
+at request time. When this literal was introduced, `mcp_tool_registry_service.sync_catalog`
+imported `sorento_crm_mcp.catalog`, which the deployed backend image (built from
+`context: ./sorento_crm_backend` only) does not contain, so the startup sync never ran
+there, the column sat at its migration-488 default of `[]` on prod, and this checklist
+read "No restricted field exists yet" even though the catalogue declared three. The sync
+now reads the backend's own catalog copy (MCP-REGISTRY-IMAGE, 2 Nov 2026); the literal
+stays because a request-time read would still depend on a boot having synced. The precedent is
 `app/services/chatbot/lanes/business/fetch.py::CHATBOT_READ_ONLY_TOOLS`: a frozen set the
 container CAN read, kept honest by a CI test (`tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py`)
 that imports the catalogue - which CI and a checkout both can - and asserts the two agree.
@@ -93,6 +91,44 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
 DEFAULT_ON_KEYS: frozenset[str] = frozenset(
     key for key, _label in FIELD_REVEAL_KEYS if key.startswith("delivery_orders.")
 )
+
+
+#: What a reveal key asks of a staff member (AGENTIC-UNIFY AC-5, AC-7): the slug of the screen that
+#: shows that data. A contact holds these keys as grants; a staff member's permissions answer them
+#: instead. A key not listed is not held, so a key added later stays hidden until it is listed.
+_STAFF_REVEAL_SLUGS: dict[str, str] = {
+    "inventory.sellable": "inventory.stock.view",
+    "purchase_orders.placed": "scm.purchase_orders.view",
+    "purchase_orders.supplier": "procurement.suppliers.view",
+    "purchase_orders.cost": "scm.purchase_orders.view",
+    "sales_orders.outstanding": "order_management.orders.view",
+    "sales_orders.sales_report": "sales.reports.view",
+    "scm.low_stock_report": "scm.reorder.run",
+    "chatbot.analytics": "chatbot.analytics.view",
+    "sales.sales_target": "sales.targets.view",
+}
+#: Every `delivery_orders.*` key is one screen's fields.
+_STAFF_DELIVERY_ORDER_SLUG = "order_management.orders.view"
+
+
+def staff_reveal_keys(db: Session, user_id: str) -> list[str]:
+    """The reveal keys this user's permissions answer, in `granted_keys` form."""
+    from app.services.user_service import UserPermissionService
+
+    service = UserPermissionService(db)
+    needs = {
+        key: _STAFF_DELIVERY_ORDER_SLUG if key.startswith("delivery_orders.") else _STAFF_REVEAL_SLUGS.get(key)
+        for key, _label in FIELD_REVEAL_KEYS
+    }
+    held = {slug for slug in set(needs.values()) if slug and service.check_user_has_permission(user_id, slug)}
+    return sorted(key for key, slug in needs.items() if slug in held)
+
+
+def staff_reveal_keys_for(db: Session, user_ids: list[str]) -> list[str]:
+    """`staff_reveal_keys` of every user a request must satisfy (`user_service.gate_user_ids`: the caller,
+    and on an identity read the key's act-as user), the keys all of them hold."""
+    held = [set(staff_reveal_keys(db, uid)) for uid in user_ids]
+    return sorted(set.intersection(*held)) if held else []
 
 
 def field_reveal_keys() -> list[dict[str, str]]:

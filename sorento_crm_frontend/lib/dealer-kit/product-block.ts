@@ -18,6 +18,7 @@
  */
 
 import type {
+  TagCombo,
   GroupBinding,
   LineTagData,
   ProductSetMemberTagData,
@@ -142,6 +143,8 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     barcode: line.barcode,
     currency: line.currency,
     price_tag_description: line.price_tag_description,
+    brand: line.brand,
+    drawing: line.drawing ?? null,
   };
 }
 
@@ -163,8 +166,28 @@ function productFromPart(part: TagPartData): ProductTagData {
     barcode: part.barcode ?? null,
     currency: part.currency,
     price_tag_description: part.price_tag_description,
+    brand: part.brand,
+    drawing: part.drawing ?? null,
   };
 }
+
+/** PS-SPEC-SHEET: what a layer pointed at a missing part reads on a `strict_parts` line - a
+ *  product with nothing to say, so its slots and tokens print blank instead of the parent. */
+const EMPTY_PART_PRODUCT: ProductTagData = {
+  id: '',
+  code: '',
+  name: '',
+  dimensions: '',
+  spec_lines: [],
+  specs: [],
+  images: [],
+  list_price: null,
+  offer_price: null,
+  promotion_id: null,
+  barcode: null,
+  brand: '',
+  drawing: null,
+};
 
 /**
  * D7: the product data a layer actually reads, once its own `subjectPart` is
@@ -196,10 +219,122 @@ export function subjectOf(
     return { kind: 'product', product: productFromLineParent(data.line) };
   }
   const part = data.line.parts[subjectPart];
+  if (!part && data.line.strict_parts) return { kind: 'product', product: EMPTY_PART_PRODUCT };
   return {
     kind: 'product',
     product: part ? productFromPart(part) : productFromLineParent(data.line),
   };
+}
+
+/** The combo a binding carries: the line's, or the designer preview's product row. */
+export function comboOf(data: TagBindingData | null | undefined): TagCombo | null {
+  if (data?.kind === 'line') return data.line.combo ?? null;
+  if (data?.kind === 'product') return data.product.combo ?? null;
+  return null;
+}
+
+/** A line of a combo listing: `CODE  Description  RM 999`, the description only when it
+ *  says more than the code. */
+function comboLine(code: string, description: string, price: string | null): string {
+  // A product description often ends with its own code; the line already leads with it.
+  const rest = code ? description.split(code).join(' ').replace(/\s+/g, ' ').trim() : description;
+  return [code, rest && rest !== code ? rest : '', price ?? '']
+    .filter(Boolean)
+    .join('  ');
+}
+
+function upgradePrice(amount: number | null): string | null {
+  return amount == null ? null : `+${formatTagPrice(amount)}`;
+}
+
+/**
+ * Combo Choices (AC-4.5): a header per group, then one line per option. A pick narrows
+ * the group to the picked line; on a one-group combo a picked upgrade stands in as its only line (AC-4.5).
+ * Plain text, so the canvas, the preview and the PDF print the same words (AC-4.8).
+ */
+function comboChoicesText(combo: TagCombo | null): string {
+  if (!combo) return '';
+  const upgrade = combo.upgrades.find((entry) => entry.picked);
+  const upgradeLine = upgrade
+    ? comboLine(upgrade.code, upgrade.description, upgradePrice(upgrade.topup_amount))
+    : null;
+  const out: string[] = [];
+  combo.choices.forEach((group) => {
+    const role = group.role.toUpperCase();
+    const pick = group.options.find((option) => option.picked);
+    // One group: the picked upgrade stands in as its only line. More groups print as
+    // usual and the upgrade follows in its own section (AC-4.5).
+    if (upgradeLine && combo.choices.length === 1) {
+      out.push(role, upgradeLine);
+      return;
+    }
+    if (pick) {
+      out.push(
+        role,
+        comboLine(pick.code, pick.description, pick.sell_price == null ? null : formatTagPrice(pick.sell_price)),
+      );
+      return;
+    }
+    out.push(group.options.length > 1 ? `${role}: PICK ONE` : role);
+    for (const option of group.options) {
+      out.push(
+        comboLine(
+          option.code,
+          option.description,
+          option.sell_price == null ? null : formatTagPrice(option.sell_price),
+        ),
+      );
+    }
+  });
+  if (upgradeLine && combo.choices.length !== 1) out.push('UPGRADE', upgradeLine);
+  return out.join('\n');
+}
+
+/** Combo Top-ups (AC-4.6): the upgrades on offer; nothing once one was picked. */
+function comboTopupsText(combo: TagCombo | null): string {
+  if (!combo || combo.upgrades.length === 0 || combo.upgrades.some((entry) => entry.picked)) {
+    return '';
+  }
+  return [
+    'UPGRADE',
+    ...combo.upgrades.map((entry) =>
+      comboLine(entry.code, entry.description, upgradePrice(entry.topup_amount)),
+    ),
+  ].join('\n');
+}
+
+/**
+ * The five Combo slots. Undefined for any other slot, so the caller carries on.
+ * An empty string, never null, where there is nothing to print: null means "use the
+ * layer's own placeholder" and a printed tag must not show one (AC-4.7).
+ */
+function comboSlotText(
+  slot: Exclude<SlotBinding, null>,
+  data: TagBindingData | null | undefined,
+): string | null | undefined {
+  const combo = comboOf(data);
+  switch (slot) {
+    case 'combo_image':
+      return null;
+    case 'combo_name':
+      if (combo) return combo.name;
+      if (data?.kind === 'line') return data.line.code;
+      if (data?.kind === 'product') return data.product.code;
+      return '';
+    case 'combo_description': {
+      const own = combo?.description?.trim();
+      if (own) return combo?.description ?? '';
+      if (data?.kind === 'line') return data.line.price_tag_description ?? '';
+      if (data?.kind === 'product') return data.product.price_tag_description ?? '';
+      return '';
+    }
+    case 'combo_choices':
+      return comboChoicesText(combo);
+    case 'combo_topups':
+      return comboTopupsText(combo);
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -215,6 +350,11 @@ export function resolveSlotText(
 ): string | null {
   const subject = subjectOf(data, layer);
   if (!layer.slot_binding || !subject) return null;
+
+  // PRICETAG-COMBO: the combo slots read the combo off the line (or the preview's
+  // product row), never off a part subject.
+  const comboText = comboSlotText(layer.slot_binding, data);
+  if (comboText !== undefined) return comboText;
 
   // A price on a TEXT layer, which is not the same thing as a price badge and
   // does not replace it. The flyer prints `LP: RM 1,550` as an ordinary line
@@ -346,6 +486,13 @@ export function slotImageAttachmentId(
       : null;
   }
   if (layer.props.kind !== 'image') return null;
+
+  // PS-SPEC-SHEET: the Drawing slot is handed the subject's drawing alone (`slotImagesOf`).
+  if (layer.slot_binding === 'drawing') return images[0]?.attachment_id ?? null;
+
+  // Combo Photo (AC-4.3): the combo's cover leads the line's images already, and a
+  // pinned photo source does not apply - the combo's own picture is the point.
+  if (layer.slot_binding === 'combo_image') return primaryImageOf(images)?.attachment_id ?? null;
 
   const source = imageSourceOf(layer.props);
   if (source?.type === 'asset') return null;
@@ -1062,11 +1209,69 @@ export function layerDisplay(
   }
 }
 
+/** PS-SPEC-SHEET: the technical drawing of whatever is bound, or null. */
+export function drawingOf(data: TagBindingData | null | undefined): TagImage | null {
+  if (data?.kind === 'product') return data.product.drawing ?? null;
+  if (data?.kind === 'line') return data.line.drawing ?? null;
+  return null;
+}
+
+/** A spec value that means Yes: the registry's boolean, however it arrived. */
+function isYes(value: string | undefined): boolean {
+  return ['yes', 'true', '1', 'y'].includes((value ?? '').trim().toLowerCase());
+}
+
+/**
+ * PS-SPEC-SHEET: whether a layer prints against this data (`TagLayer.show_when`).
+ *
+ * A layer with no condition always prints, so every price tag reads exactly as before. A
+ * `part` condition holds when the LINE has that part (an accessory row on a page with one
+ * accessory hides its second row); a `spec` condition holds when the layer's own subject has
+ * that spec reading Yes (the Rimless badge). Print-side only: the editor canvas draws every
+ * layer, because a designer cannot place what they cannot see.
+ */
+export function layerShownFor(
+  layer: Pick<TagLayer, 'show_when' | 'props'>,
+  data: TagBindingData | null | undefined,
+): boolean {
+  const when = layer.show_when;
+  if (!when) return true;
+  if (when.part != null && when.part >= 0) {
+    const parts = data?.kind === 'line' ? data.line.parts ?? [] : [];
+    if (!parts[when.part]) return false;
+  }
+  if (when.spec) {
+    const subject = subjectOf(data, layer);
+    const specs =
+      subject?.kind === 'product'
+        ? subject.product.specs ?? []
+        : subject?.kind === 'line'
+          ? subject.line.specs ?? []
+          : [];
+    const spec = specs.find((row) => row.key === when.spec);
+    if (!spec || !isYes(spec.value)) return false;
+  }
+  return true;
+}
+
 /** The photos of whatever is bound. A set has none of its own. */
 export function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
   if (data?.kind === 'product') return data.product.images;
   if (data?.kind === 'line') return data.line.images;
   return [];
+}
+
+/** The photos a layer chooses from: its subject's, except Combo Photo, which reads the
+ *  line's own list (the combo's cover leads it). */
+export function slotImagesOf(
+  layer: Pick<TagLayer, 'slot_binding' | 'props'>,
+  data: TagBindingData | null | undefined,
+): TagImage[] {
+  if (layer.slot_binding === 'drawing') {
+    const drawing = drawingOf(subjectOf(data, layer));
+    return drawing ? [drawing] : [];
+  }
+  return imagesOf(layer.slot_binding === 'combo_image' ? data : subjectOf(data, layer));
 }
 
 /** The URL a product-photo slot draws, resolved by D42 against the bound data.
@@ -1075,7 +1280,7 @@ function boundImageUrl(
   layer: Pick<TagLayer, 'slot_binding' | 'props'>,
   data: TagBindingData | null | undefined,
 ): string | null {
-  const images = imagesOf(subjectOf(data, layer));
+  const images = slotImagesOf(layer, data);
   const attachmentId = slotImageAttachmentId(layer, images);
   if (!attachmentId) return null;
   return images.find((image) => image.attachment_id === attachmentId)?.url ?? null;

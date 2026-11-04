@@ -83,6 +83,7 @@ function row(overrides: Partial<PlanRow> = {}): PlanRow {
     project_id: 'p1',
     so_number: 'SO397450',
     customer_name: 'Tuju Residences Sdn Bhd',
+    project_label: 'Tower B Fit-out',
     agent_code: 'JEREMY',
     agent_label: 'Jeremy Lee',
     revision_no: 2,
@@ -139,6 +140,9 @@ describe('PlansClient', () => {
 
     expect(await screen.findByText('SO397450')).toBeInTheDocument();
     expect(screen.getByText('Tuju Residences Sdn Bhd')).toBeInTheDocument();
+    // OI-UX-FILTER-SNAPSHOT: Project follows Customer.
+    expect(screen.getByText('Tower B Fit-out')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
     expect(screen.getByText('JEREMY')).toBeInTheDocument();
     expect(screen.getByText('Rev 2')).toBeInTheDocument();
     expect(screen.getByText('Reserve 213 · Buy 45 · 3 lines')).toBeInTheDocument();

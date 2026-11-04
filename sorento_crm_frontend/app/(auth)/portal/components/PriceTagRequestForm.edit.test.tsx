@@ -8,7 +8,7 @@
  *
  *  - No "Edit" button ever renders for a submitted (non-draft) request.
  *  - The header holds exactly ONE gear (`DetailActionsMenu`) with Duplicate,
- *    Download PDF, and Revise - Revise present only when the revision policy
+ *    Download PDF, and Edit (was Revise; PRICETAG-SELF-APPROVAL) - present only when the revision policy
  *    (`useRevisionPolicy`, the same hook `SubmissionForm` reads) allows it;
  *    otherwise the policy's `blocked_reason` renders in the header line and
  *    no Revise item exists at all.
@@ -29,6 +29,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }));
 
@@ -231,7 +232,7 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
     expect(
       screen.getByText(/^(Download PDF|Available after approval)$/),
     ).toBeInTheDocument();
-    expect(gear).toHaveTextContent('Revise');
+    expect(gear).toHaveTextContent('Edit');
   });
 
   it('hides Revise and shows the blocked reason in the header line when the policy refuses it', async () => {
@@ -242,7 +243,7 @@ describe('PriceTagRequestForm - one gear with Duplicate, Download PDF, Revise (A
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    expect(screen.getByTestId('gear-menu')).not.toHaveTextContent('Revise');
+    expect(screen.getByTestId('gear-menu')).not.toHaveTextContent('Edit');
     expect(screen.getByText('You have used all 3 revisions.')).toBeInTheDocument();
   });
 });
@@ -256,7 +257,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByText('Revise'));
+    fireEvent.click(screen.getByText('Edit'));
 
     expect(await screen.findByLabelText(/reason/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit revision' })).toBeInTheDocument();
@@ -270,7 +271,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByText('Revise'));
+    fireEvent.click(screen.getByText('Edit'));
     const reasonField = await screen.findByLabelText(/reason/i);
     fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
 
@@ -307,7 +308,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     expect(screen.queryByText('Office prints')).toBeNull();
     expect(screen.queryByText('I print myself')).toBeNull();
 
-    fireEvent.click(screen.getByText('Revise'));
+    fireEvent.click(screen.getByText('Edit'));
     const reasonField = await screen.findByLabelText(/reason/i);
     fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
 
@@ -339,7 +340,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByText('Revise'));
+    fireEvent.click(screen.getByText('Edit'));
     const reasonField = await screen.findByLabelText(/reason/i);
     fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
@@ -364,7 +365,7 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
     render(<PriceTagRequestForm requestId="req-1" />);
     await screen.findByText('PT-202609-0001');
 
-    fireEvent.click(screen.getByText('Revise'));
+    fireEvent.click(screen.getByText('Edit'));
     const reasonField = await screen.findByLabelText(/reason/i);
     fireEvent.change(reasonField, { target: { value: 'Attaching an updated PO' } });
 

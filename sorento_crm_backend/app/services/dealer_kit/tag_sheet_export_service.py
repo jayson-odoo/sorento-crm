@@ -121,6 +121,49 @@ def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
             )
 
 
+def _current_version_filter(db: Session, request_id: str):
+    """Only exports drawn from the request's LATEST design version count.
+
+    PRICETAG-SELF-APPROVAL R5: an edit and a re-approval write a new version,
+    and a PDF of the version before it must never be served, reported ready or
+    reused as "already in flight" - it prints the old price. A download with no
+    export row (none is written without one today) is left in, and a request
+    with no page has nothing to compare against.
+    """
+    from sqlalchemy import or_
+
+    page_id = (
+        db.query(PriceTagRequest.page_id).filter(PriceTagRequest.id == str(request_id)).scalar()
+    )
+    if not page_id:
+        return None
+    latest_id = (
+        db.query(PageVersion.id)
+        .filter(PageVersion.page_id == page_id)
+        .order_by(PageVersion.version.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_id is None:
+        return None
+    return or_(ExportRequest.id.is_(None), ExportRequest.page_version_id == latest_id)
+
+
+def _request_downloads(db: Session, request_id: str):
+    """This request's tag sheet downloads, of its latest design version only."""
+    query = db.query(UserDownload).outerjoin(
+        ExportRequest, ExportRequest.download_id == UserDownload.id
+    ).filter(
+        UserDownload.source_entity_type == "price_tag_request",
+        UserDownload.source_entity_id == str(request_id),
+        UserDownload.kind == KIND,
+    )
+    current = _current_version_filter(db, request_id)
+    if current is not None:
+        query = query.filter(current)
+    return query
+
+
 def request_tag_sheet_export(
     db: Session,
     *,
@@ -166,11 +209,8 @@ def request_tag_sheet_export(
     # the portal export route can each trigger this same request's export,
     # and the second one to arrive must see the first's, not its own.
     in_flight = (
-        db.query(UserDownload)
+        _request_downloads(db, request_id)
         .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
             UserDownload.status.in_(
                 [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
             ),
@@ -310,13 +350,8 @@ def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownlo
     ``created_at`` alone cannot always tell "latest" from "simultaneous".
     """
     return (
-        db.query(UserDownload)
-        .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
-            UserDownload.status == DownloadStatus.READY.value,
-        )
+        _request_downloads(db, request_id)
+        .filter(UserDownload.status == DownloadStatus.READY.value)
         .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
         .first()
     )
@@ -330,12 +365,7 @@ def latest_export_status(db: Session, request_id: str) -> Optional[str]:
     the portal button has one waiting state, not two.
     """
     row = (
-        db.query(UserDownload)
-        .filter(
-            UserDownload.source_entity_type == "price_tag_request",
-            UserDownload.source_entity_id == str(request_id),
-            UserDownload.kind == KIND,
-        )
+        _request_downloads(db, request_id)
         .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
         .first()
     )
@@ -408,6 +438,16 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
     # asset and font of every other company in reach of a token issued for this
     # one. So the widening stops at the lookup, and everything after it is pinned
     # to the page's own company.
+    # PS-SPEC-SHEET: a project spec sheet prints through this same page and renderer, so its
+    # download is answered here by kind. It has no dealer-kit page or export request of its own.
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+
+    with company_scope(db, None):
+        download = db.query(UserDownload).filter(UserDownload.id == str(download_id)).first()
+    if download is not None and download.kind == spec.KIND:
+        return spec.print_payload_for_download(db, download)
+
     with company_scope(db, None):
         inputs = render_inputs(db, download_id)
     page = inputs["page"]

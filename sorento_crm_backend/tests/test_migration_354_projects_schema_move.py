@@ -42,6 +42,9 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # both of 354's directions leave them exactly where their own migration put them.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # SPEC-SHEET-V2 (migration ssv2_0001_spec_sheets): the saved spec sheets of a quotation,
+    # born straight into `projects`.
+    "quotation_spec_sheets",
     # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
     # SO line, born straight into `projects` beside `sales_order_lines`.
     "so_line_splits",
@@ -92,6 +95,12 @@ BORN_AFTER_THE_MOVE = frozenset({
     # suggested quantities and prices on an issue, born straight into `projects`.
     "quotation_amendment_requests",
     "quotation_amendment_request_rows",
+    # PS-REGISTRATION-V3 (#2099, migration psr3_0001_party_contacts): the people at a party and
+    # the parties a project links by role, born straight into `projects`.
+    "party_contacts",
+    "party_links",
+    # PS-QUOTE-VIEWS (#2102, migration qiv_0001_issue_views): counted opens of a sign link.
+    "quotation_issue_views",
 })
 
 MIGRATION = (

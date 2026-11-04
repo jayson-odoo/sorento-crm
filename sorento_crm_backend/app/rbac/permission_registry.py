@@ -440,6 +440,11 @@ PERMISSION_REGISTRY.extend(
             "description": "Permission to use AI assistant chat in the application.",
         },
         {
+            "slug": "system.ai_assistant_chat.agent",
+            "name": "Use the AI Assistant on the chatbot's brain",
+            "description": "Answer this user's panel messages with the chatbot's Jev, parser, lanes and agent.",
+        },
+        {
             "slug": "system.ai_assistant_settings.view",
             "name": "View AI Assistant Settings",
             "description": "Permission to view AI assistant settings.",
@@ -597,12 +602,13 @@ PERMISSION_REGISTRY.extend([
     },
     {
         "slug": "projects.quotations.approve",
-        "name": "Approve Below-Floor Quotations",
+        "name": "Approve Quotation Discounts and Off-Series Lines",
         "description": (
-            "Sales-manager grant: approve or reject a quotation carrying a line priced "
-            "below its price floor, which is what lets it be issued to the customer. The "
-            "whole access control on that decision - there is no team-tier resolution "
-            "behind it - so it is deliberately narrow."
+            "Sales-manager grant: approve or reject a quotation carrying a discounted line "
+            "or a line outside the project's series, which is what lets it be issued to the "
+            "customer. A request is routed to one approver (off-series approver, project "
+            "override, or the owner's superior); only that approver, someone above them, or "
+            "an admin may decide it."
         ),
     },
     {

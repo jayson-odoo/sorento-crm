@@ -57,11 +57,35 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def expire_proposed(db, contact_respond_id: str) -> None:
-    """Every `proposed` action of the contact becomes `expired` (nobody decided it). Does not commit."""
-    db.query(AgentAction).filter(
+def is_test_action(action) -> bool:
+    """A console proposal: its steps carry the loop's `_is_test` (dealer writes, ideas)."""
+    return any(bool((s.get("args") or {}).get("_is_test")) for s in (action.steps or []))
+
+
+def _is_contact_action(action) -> bool:
+    """A contact principal's own proposal (no user, AGENTIC-WA-W2)."""
+    return str(action.user_id or "") == ""
+
+
+def _decidable_here(action, *, via: str, operator_user_id: str | None) -> bool:
+    """A contact's LIVE proposal is decided only from its own WhatsApp turn, a TEST one only from the console
+    (owner W2-Q3 (a)): a staff confirm can never run a dealer's live write, nor a dealer's yes a console test."""
+    if not _is_contact_action(action):
+        return True
+    live_channel = via == "chat" and not operator_user_id
+    return is_test_action(action) != live_channel
+
+
+def expire_proposed(db, contact_respond_id: str, *, test: bool | None = None) -> None:
+    """Every `proposed` action of the contact becomes `expired` (nobody decided it). With `test`, only the
+    contact's own proposals of that kind (a console test leaves a live WhatsApp proposal alone). Does not commit."""
+    query = db.query(AgentAction).filter(
         AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed"
-    ).update({AgentAction.status: "expired"}, synchronize_session=False)
+    )
+    if test is not None:
+        ids = [str(r.id) for r in query.filter(AgentAction.user_id == "").all() if is_test_action(r) == test]
+        query = query.filter(AgentAction.id.in_(ids)) if ids else query.filter(AgentAction.id.is_(None))
+    query.update({AgentAction.status: "expired"}, synchronize_session=False)
 
 
 def store_proposal(
@@ -69,7 +93,10 @@ def store_proposal(
 ) -> AgentAction:
     """The turn's steps as a `proposed` action. Older `proposed` actions of the contact expire."""
     now = _now()
-    expire_proposed(db, ctx.contact_respond_id)
+    if str(ctx.user_id or "") == "":
+        expire_proposed(db, ctx.contact_respond_id, test=any(bool((s.get("args") or {}).get("_is_test")) for s in steps))
+    else:
+        expire_proposed(db, ctx.contact_respond_id)
     row = AgentAction(
         id=action_id or str(uuid.uuid4()),
         conversation_id=conversation_id,
@@ -90,15 +117,21 @@ def _expires_at(action: AgentAction) -> datetime:
 
 
 def pending_action(
-    db, contact_respond_id: str, *, now: datetime | None = None, user_id: str | None = None
+    db, contact_respond_id: str, *, now: datetime | None = None, user_id: str | None = None,
+    test: bool | None = None,
 ) -> AgentAction | None:
-    """The newest `proposed` action of the contact (of this linked user, when given), unless it has expired."""
+    """The newest `proposed` action of the contact (of this linked user, when given), unless it has expired.
+    With `test`, only a proposal of that kind (console test or live), so the two never answer each other."""
     query = db.query(AgentAction).filter(
         AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed"
     )
     if user_id is not None:
         query = query.filter(AgentAction.user_id == str(user_id))
-    row = query.order_by(AgentAction.created_at.desc(), AgentAction.id.desc()).first()
+    query = query.order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
+    if test is None:
+        row = query.first()
+    else:
+        row = next((r for r in query.limit(25).all() if is_test_action(r) == test), None)
     if row is None or _expires_at(row) < (now or _now()):
         return None
     return row
@@ -151,10 +184,16 @@ def _out_steps(steps: list[dict]) -> list[dict]:
 
 def _recheck(db, ctx, step: dict) -> str | None:
     """Why this step may no longer run, or None. Reads the record again as the user."""
-    definition = writes.WRITES.get(step["tool"])
-    if definition is None:
+    definition = writes.write_def(step["tool"])
+    # A panel-only change confirmed from a thread that is not a panel thread (AGENTIC-UNIFY PR 4, AC-0).
+    if definition is None or writes.panel_closed(step["tool"]):
         return "This change is no longer available."
-    if not writes.holds(db, ctx.user_id, definition.user_permission):
+    if definition.runs_as == "contact":
+        from app.services.chatbot.agent import portal_writes
+
+        if not portal_writes.may_use(db, ctx, definition.name):
+            return "This change is no longer available to you."
+    elif not writes.holds(db, ctx.user_id, definition.user_permission):
         return "You no longer have permission for this change."
     if not writes.holds_ctx(db, ctx, definition.user_permission):
         return "You do not have permission for this change."
@@ -204,7 +243,14 @@ def _load(db, contact_respond_id: str, action_id: str) -> AgentAction:
 def operator_may_decide(db, ctx, action: AgentAction) -> bool:
     """Does the console operator (if any) hold the slug of every step of this action?"""
     return all(
-        (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds_ctx(db, ctx, d.user_permission)
+        (d := writes.write_def(step.get("tool"))) is not None
+        # A dealer write needs no slug, and the console decides only a console TEST of one (owner W2-Q3 (a)).
+        and (
+            # The dealer's own turn decides its live write; a console operator only a console test of one.
+            bool((step.get("args") or {}).get("_is_test")) == bool(getattr(ctx, "operator_user_id", None))
+            if d.runs_as == "contact"
+            else writes.holds_ctx(db, ctx, d.user_permission)
+        )
         for step in action.steps or []
     )
 
@@ -216,13 +262,30 @@ def confirm(
     action = _load(db, contact_respond_id, action_id)
     if action.status != "proposed":
         raise ActionRefused("not_proposed")
-    newest = (
-        db.query(AgentAction)
-        .filter(AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed")
-        .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
-        .first()
-    )
-    if newest is not None and str(newest.id) != str(action.id):
+    if not _decidable_here(action, via=via, operator_user_id=operator_user_id):
+        raise ActionRefused("entry_refused")
+    if _is_contact_action(action):
+        # Newest among the contact's own proposals of the same kind (test or live).
+        newest = next(
+            (
+                r for r in db.query(AgentAction)
+                .filter(AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed",
+                        AgentAction.user_id == "")
+                .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
+                .limit(25)
+                .all()
+                if is_test_action(r) == is_test_action(action)
+            ),
+            None,
+        )
+    else:
+        newest = (
+            db.query(AgentAction)
+            .filter(AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed")
+            .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
+            .first()
+        )
+    if newest is None or str(newest.id) != str(action.id):
         raise ActionRefused("not_newest")
     if _expires_at(action) < (now or _now()):
         raise ActionRefused("expired")
@@ -266,13 +329,18 @@ def confirm(
         if failed:
             step["status"] = "skipped"
             continue
-        definition = writes.WRITES[step["tool"]]
+        definition = writes.write_def(step["tool"])
         try:
             if definition.execute_takes_before:
-                run = lambda user: definition.execute(db, user, step["args"], step.get("before") or {})  # noqa: E731
+                run = lambda who: definition.execute(db, who, step["args"], step.get("before") or {})  # noqa: E731
             else:
-                run = lambda user: definition.execute(db, user, step["args"])  # noqa: E731
-            result = writes.run_as_user(db, ctx, run, tool_name=step["tool"])
+                run = lambda who: definition.execute(db, who, step["args"])  # noqa: E731
+            if definition.runs_as == "contact":
+                from app.services.chatbot.agent import portal_writes
+
+                result = portal_writes.run_as_contact(db, ctx, run, tool_name=step["tool"])
+            else:
+                result = writes.run_as_user(db, ctx, run, tool_name=step["tool"])
             step.update(status="done", result_id=result.get("id"), after=result.get("after"), error=None)
             try:
                 if definition.changes is not None:
@@ -311,7 +379,7 @@ def _finish(
     notes = [
         s["note"] for s in steps
         if s.get("status") == "done" and s.get("note")
-        and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+        and getattr(writes.write_def(s.get("tool")), "note_in_reply", False)
     ]
     return ActionOutcome(str(action.id), status, _reply(status, steps), _out_steps(steps), notes)
 
@@ -321,6 +389,8 @@ def _finish(
 
 def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str | None = None) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
+    if not _decidable_here(action, via="console" if operator_user_id else "chat", operator_user_id=operator_user_id):
+        raise ActionRefused("entry_refused")
     if not operator_user_id:
         # The chat path: only the linked user whose action it is (a contact principal has no user).
         try:
@@ -338,7 +408,7 @@ def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str
             raise ActionRefused("entry_refused")
         theirs = str(operator_user_id)
         may = theirs == str(ctx.user_id) or any(
-            (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds(db, theirs, d.user_permission)
+            (d := writes.write_def(step.get("tool"))) is not None and writes.holds(db, theirs, d.user_permission)
             for step in action.steps or []
         )
         if str(ctx.user_id) != str(action.user_id) or not may:
@@ -431,7 +501,8 @@ def actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[dic
         out.setdefault(str(a.turn_id), []).append(
             {
                 "id": str(a.id),
-                "status": a.status,
+                # A proposal nobody decided in time reads Expired, whatever the row still says.
+                "status": "expired" if a.status == "proposed" and _expires_at(a) < _now() else a.status,
                 "decided_at": a.decided_at,
                 "decided_by_name": names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
                 "steps": [step_out(st, default_status="proposed") for st in a.steps or []],

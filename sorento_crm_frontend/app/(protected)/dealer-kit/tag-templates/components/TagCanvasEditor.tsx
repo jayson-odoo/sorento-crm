@@ -41,6 +41,7 @@ import type {
   TagBindingData,
   TagLayer,
   TagLayerProps,
+  TagPartData,
   TagTemplateDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
@@ -65,7 +66,11 @@ import {
   PRODUCT_BLOCK_SIZE,
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
-import { renderMergeFields, soleMergeField } from '@/lib/dealer-kit/merge-fields';
+import {
+  renderMergeFields,
+  soleMergeField,
+  type MergeFieldGroup,
+} from '@/lib/dealer-kit/merge-fields';
 import {
   moveEdge,
   movePoint,
@@ -163,9 +168,11 @@ import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
-import { getProductTagData } from '../../services/tagDataService';
+import { getProductTagData, comboOptions } from '../../services/tagDataService';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
-import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
+import { CanvasRulers, RULER_THICKNESS as RULER_BASE } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
 import { InsertFieldDialog } from './InsertFieldDialog';
@@ -192,6 +199,15 @@ import {
   setTagClipboard,
   subscribeTagClipboard,
 } from '@/lib/dealer-kit/tag-clipboard';
+import {
+  TAG_LAYERS_MIME,
+  classifyPaste,
+  copiedLayersText,
+  fitPastedImage,
+  pastedImageProblem,
+  readImageSize,
+} from '@/lib/dealer-kit/clipboard-paste';
+import { uploadAsset } from '../../services/assetService';
 import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
@@ -344,6 +360,23 @@ function PreviewEyeButton({
 const ZOOM_BUTTON_FACTOR = 1.25;
 /** Pixels the pointer may wander before a click counts as a marquee drag. */
 const MARQUEE_SLOP_PX = 3;
+/** A control that takes typing, where keys and paste belong to the browser. */
+function isFormControl(node: EventTarget | null): boolean {
+  return (
+    node instanceof HTMLInputElement ||
+    node instanceof HTMLTextAreaElement ||
+    node instanceof HTMLSelectElement ||
+    (node instanceof HTMLElement && node.isContentEditable)
+  );
+}
+
+/** Library name for a pasted picture: browsers call every one `image.png`. */
+function pastedAssetName(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `Pasted image ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
 /** How far a duplicate or a paste lands from its original, in mm. */
 const CLONE_OFFSET_MM = 5;
 /** Arrow-key nudge distances in mm: plain, Shift, Alt/Option. */
@@ -374,9 +407,49 @@ const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 // Component
 // ---------------------------------------------------------------------------
 
+/**
+ * What the spec sheet reader drives on a canvas it embeds (SPEC-SHEET-V2 F4).
+ * Embedded means: only the Konva stage, drawn at `pxPerMm` with no pan or zoom of its own, no
+ * Layers / Inspector / toolbar / save bar / dialogs, no keyboard or clipboard shortcuts, no
+ * rulers. The host owns selection, the Inspector, undo and saving.
+ */
+export interface EmbeddedController {
+  updateLayer: (id: string, changes: Partial<TagLayer>) => void;
+  updateLayerProps: (id: string, changes: Partial<TagLayerProps>) => void;
+}
+
+export interface EmbeddedMode {
+  /** Screen pixels per millimetre the page is drawn at. */
+  pxPerMm: number;
+  /** The selected layer, owned by the host. */
+  selectedLayerId: string | null;
+  onSelect: (layerId: string | null) => void;
+  /**
+   * Layers the HOST changed (undo, redo, an applied change): the canvas adopts them when this
+   * is a different array from the one it last reported. Absent: the canvas owns its layers.
+   */
+  layers?: TagLayer[];
+  /** The handle the host's Inspector and toolbar change layers through. */
+  controllerRef?: React.MutableRefObject<EmbeddedController | null>;
+  /** A view-only canvas: nothing can be dragged or typed. */
+  readOnly?: boolean;
+  /**
+   * A double-click on a text layer: the host may take it (AREA, COMMENT, marker open the page
+   * field box) and answers true; otherwise the canvas opens in-place typing on that layer.
+   */
+  onEditField?: (layerId: string) => boolean;
+}
+
 interface TagCanvasEditorProps {
+  /** SPEC-SHEET-V2 F4: draw only the stage, for the spec sheet reader. See `EmbeddedMode`. */
+  embedded?: EmbeddedMode;
   doc: TagTemplateDoc;
   onChange: (doc: TagTemplateDoc) => void;
+  /**
+   * PS-SPEC-SHEET: this is a project spec sheet page template. Layers can then point at
+   * Accessory 1..N without a combo preview, and carry a "Show only when" condition.
+   */
+  specSheet?: boolean;
   /**
    * Which promotion the preview prices resolve against. A template is not tied
    * to one, so this is normally absent and the badge previews list prices.
@@ -407,6 +480,13 @@ interface TagCanvasEditorProps {
   onUseTemplate?: () => void;
   /** The host owns saving, so the built-in Save bar would be a second Save. */
   hideSaveBar?: boolean;
+  /**
+   * assetId -> url the HOST wants drawn, over the library's. The library lists every asset with
+   * its original; a host that shows one page large (the spec sheet page editor) hands in
+   * renditions so the original is never loaded; an asset it did not list (picked this session)
+   * draws the library's thumbnail, never the original. Absent: the library's urls, as before.
+   */
+  assetUrls?: Record<string, string>;
   /**
    * The template id (template editor) or the placed tag's id (request
    * designer), so the clipboard (S3) can tell a paste back onto the SAME
@@ -474,6 +554,18 @@ interface DragSession {
   dy: number;
 }
 
+/**
+ * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
+ * page data exists. Three, the most the owner's sample prints on one page.
+ */
+const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
+
+const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
+  code: `Accessory ${n}`,
+  name: `Accessory ${n}`,
+  dimensions: '',
+}));
+
 export function TagCanvasEditor({
   doc,
   onChange,
@@ -483,15 +575,24 @@ export function TagCanvasEditor({
   onLayersChange,
   onUseTemplate,
   hideSaveBar,
+  embedded,
+  assetUrls: hostAssetUrls,
   docId,
   toolbarTrailing,
   reviewPins,
   onReviewPinResolve,
+  specSheet = false,
 }: TagCanvasEditorProps) {
+  // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
+  const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   /** Which change-request marker has its comment open (r9 S2/D6). */
   const [openPinId, setOpenPinId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Embedded (spec sheet reader): start from the host's selection, so a canvas the host restarts
+  // does not report "nothing selected" and set off a select / deselect ping-pong.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
+    embedded?.selectedLayerId ? new Set([embedded.selectedLayerId]) : new Set(),
+  );
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   /**
@@ -500,7 +601,16 @@ export function TagCanvasEditor({
    * drag is one undo.
    */
   const [polygonPreview, setPolygonPreview] = useState<PolygonPoint[] | null>(null);
-  const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
+  const [viewState, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
+  // Embedded: the host's scale, no pan. Otherwise the editor's own pan and zoom.
+  const embeddedPxPerMm = embedded?.pxPerMm;
+  const view = useMemo<CanvasView>(
+    () =>
+      embeddedPxPerMm !== undefined
+        ? { zoom: embeddedPxPerMm / CANVAS_PX_PER_MM, panX: 0, panY: 0 }
+        : viewState,
+    [embeddedPxPerMm, viewState],
+  );
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -572,6 +682,57 @@ export function TagCanvasEditor({
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
+  // With a host (the spec sheet page editor) nothing falls back to a library ORIGINAL: an asset the
+  // host did not list (one picked this session) draws its screen rendition.
+  const assetUrls = useMemo(
+    () =>
+      hostAssetUrls
+        ? { ...library.thumbUrls, ...hostAssetUrls }
+        : library.assetUrls,
+    [library.assetUrls, library.thumbUrls, hostAssetUrls],
+  );
+
+  /**
+   * The combo the designer is previewing (PRICETAG-COMBO AC-5.1): editor state only,
+   * like `previews`, so nothing it shows reaches the document Save sends. It outranks
+   * the document's own bindings for every layer, and a block's own preview outranks it.
+   */
+  const [comboPreview, setComboPreview] = useState<{
+    id: string;
+    label: string;
+    data: TagBindingData;
+  } | null>(null);
+  /** combo id -> its host product id, learned from the options the picker lists. */
+  const comboHosts = useRef(new Map<string, { hostId: string; label: string }>());
+
+  const fetchComboOptions = useCallback(async (query: string) => {
+    const rows = await comboOptions(query);
+    for (const row of rows) {
+      comboHosts.current.set(row.value, { hostId: row.hostProductId, label: row.label });
+    }
+    return rows;
+  }, []);
+
+  const handlePreviewCombo = useCallback(
+    async (comboId: string) => {
+      if (!comboId) {
+        setComboPreview(null);
+        return;
+      }
+      const known = comboHosts.current.get(comboId);
+      try {
+        const product = await getProductTagData(known?.hostId ?? '', promotionId ?? null, comboId);
+        setComboPreview({
+          id: comboId,
+          label: known?.label ?? product.combo?.name ?? '',
+          data: { kind: 'product', product },
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load the combo');
+      }
+    },
+    [promotionId],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   /** The whole [left][canvas][right] row, measured to convert px <-> % (S1). */
@@ -652,6 +813,8 @@ export function TagCanvasEditor({
     downClient: { x: number; y: number };
   } | null>(null);
 
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
   const history = useCanvasHistory(doc.layers);
   const { computeSnap, guides, clearGuides } = useSnapGuides();
 
@@ -661,7 +824,7 @@ export function TagCanvasEditor({
   const stageWidth = Math.max(0, containerSize.width - RULER_THICKNESS);
   const stageHeight = Math.max(0, containerSize.height - RULER_THICKNESS);
   /** The hand tool, whether chosen or borrowed by holding Space (D35). */
-  const handMode = tool === 'hand' || spaceHeld;
+  const handMode = tool === 'hand' || spaceHeld || Boolean(embedded?.readOnly);
 
   // -- Commit ----------------------------------------------------------------
 
@@ -923,10 +1086,11 @@ export function TagCanvasEditor({
       // rest of it.
       const previewed = previewBindingFor(layer, previews, groupOfChild);
       if (previewed) return bindings.get(previewed);
+      if (comboPreview) return comboPreview.data;
       if (boundData) return boundData;
       return bindings.get(bindingOf(layer));
     },
-    [bindings, bindingOf, boundData, groupOfChild, previews],
+    [bindings, bindingOf, boundData, comboPreview, groupOfChild, previews],
   );
 
   // Resolve whatever the document already carries, once, on open. A template
@@ -1378,6 +1542,10 @@ export function TagCanvasEditor({
       // steps a level in, exactly as before.
       if (target.props.kind === 'text') {
         setSelectedIds(new Set([target.id]));
+        // Embedded in the spec sheet: AREA / COMMENT / marker open the reader's page field box;
+        // every other text, data-bound included, is typed over in place on this page only.
+        if (embedded?.readOnly) return;
+        if (embedded?.onEditField?.(target.id)) return;
         setEditingLayerId(target.id);
         return;
       }
@@ -1413,7 +1581,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm],
+    [layers, resolveTarget, pointerMm, embedded],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -1716,7 +1884,7 @@ export function TagCanvasEditor({
   }, [cropEditingLayerId, layers]);
 
   const cropImageUrl = cropEditingLayer
-    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), library.assetUrls)?.imageUrl
+    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls)?.imageUrl
     : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
@@ -2193,7 +2361,7 @@ export function TagCanvasEditor({
       x: clientX - rect.left - RULER_THICKNESS,
       y: clientY - rect.top - RULER_THICKNESS,
     };
-  }, []);
+  }, [RULER_THICKNESS]);
 
   /**
    * A guide-drop gesture started on a ruler (D9/D17). The guide is placed (or,
@@ -2382,10 +2550,10 @@ export function TagCanvasEditor({
 
   // Fit once, as soon as the container has a size to fit into.
   useEffect(() => {
-    if (fittedRef.current || stageWidth <= 0 || stageHeight <= 0) return;
+    if (embedded || fittedRef.current || stageWidth <= 0 || stageHeight <= 0) return;
     fittedRef.current = true;
     handleFit();
-  }, [stageWidth, stageHeight, handleFit]);
+  }, [embedded, stageWidth, stageHeight, handleFit]);
 
   // -- Side panels (S1, D7) ---------------------------------------------------
 
@@ -2567,7 +2735,8 @@ export function TagCanvasEditor({
   // so preventDefault there is ignored and the page scrolls instead of zooming.
   useEffect(() => {
     const element = containerRef.current;
-    if (!element) return;
+    // An embedded page scrolls with the reader; the wheel is not a zoom there.
+    if (!element || embeddedPxPerMm !== undefined) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const rect = element.getBoundingClientRect();
@@ -2579,7 +2748,7 @@ export function TagCanvasEditor({
     };
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [embeddedPxPerMm, RULER_THICKNESS]);
 
   // -- Stage pointer handling (D35, D36) -------------------------------------
 
@@ -2841,13 +3010,46 @@ export function TagCanvasEditor({
 
   // -- Keyboard shortcuts ----------------------------------------------------
 
-  useEffect(() => {
-    const isFormControl = (node: EventTarget | null): boolean =>
-      node instanceof HTMLInputElement ||
-      node instanceof HTMLTextAreaElement ||
-      node instanceof HTMLSelectElement ||
-      (node instanceof HTMLElement && node.isContentEditable);
+  /**
+   * Set by the Ctrl+C / Ctrl+X keydown once it has filled the editor's own
+   * clipboard, read by the `copy` / `cut` event the browser fires right after
+   * it, which then writes `TAG_LAYERS_MIME` onto the system clipboard
+   * (DESIGNER-PASTE). Any other keydown clears it, so a copy event that did
+   * not come from the editor's shortcut is left to the browser.
+   */
+  const copyMarkPending = useRef(false);
 
+  /**
+   * After the editor's own Copy/Cut: get the marker onto the system
+   * clipboard. `viaCommand` (the context menu, which has no keystroke of its
+   * own) runs the browser's copy command so the `copy` listener fires. If no
+   * `copy` event came at all, write the copied words with the async clipboard
+   * API instead, so a stale screenshot cannot win the next paste;
+   * `classifyPaste` reads those words back as the layers.
+   */
+  const markSystemClipboard = useCallback((viaCommand: boolean) => {
+    copyMarkPending.current = true;
+    if (viaCommand) {
+      try {
+        document.execCommand?.('copy');
+      } catch {
+        // No copy command here: the fallback below covers it.
+      }
+    }
+    window.setTimeout(() => {
+      if (!copyMarkPending.current) return;
+      copyMarkPending.current = false;
+      const copied = getTagClipboard();
+      if (!copied || typeof navigator === 'undefined' || !navigator.clipboard) return;
+      navigator.clipboard.writeText(copiedLayersText(copied.layers) || ' ').catch(() => {
+        // Clipboard permission refused: nothing more to do.
+      });
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    // Embedded: the reader owns shortcuts (undo, redo); several canvases must not all answer.
+    if (embeddedPxPerMm !== undefined) return;
     const handler = (e: KeyboardEvent) => {
       // The listener is on `window`, so `e.target` is only ever right when
       // the control that has focus is also what dispatched the event. A
@@ -2860,6 +3062,7 @@ export function TagCanvasEditor({
       // selection, out from under whatever the user is actually typing in.
       const isInput = isFormControl(e.target) || isFormControl(document.activeElement);
       const modifier = e.ctrlKey || e.metaKey;
+      copyMarkPending.current = false;
 
       // B/I/U/Shift+X format the selected text layer(s) whether the inline
       // editor has focus or not (AC-S2-4, D4) - checked ahead of the
@@ -3006,17 +3209,19 @@ export function TagCanvasEditor({
         e.preventDefault();
         selectAll();
       }
-      if (e.key === 'c' && modifier) {
-        e.preventDefault();
+      // Copy, cut and paste are NOT `preventDefault`ed: cancelling the keydown
+      // would cancel the browser's own `copy` / `cut` / `paste` event too, and
+      // that event is the only way to reach the system clipboard (a pasted
+      // screenshot, DESIGNER-PASTE). Ctrl+V is handled entirely by the `paste`
+      // listener below; Ctrl+C / Ctrl+X fill the editor clipboard here and
+      // leave a marker for the `copy` / `cut` listener to write.
+      if (e.key === 'c' && modifier && selectionRoots.length > 0) {
         handleCopy();
+        markSystemClipboard(false);
       }
-      if (e.key === 'x' && modifier) {
-        e.preventDefault();
+      if (e.key === 'x' && modifier && selectionRoots.length > 0) {
         handleCut();
-      }
-      if (e.key === 'v' && modifier) {
-        e.preventDefault();
-        handlePaste();
+        markSystemClipboard(false);
       }
 
       // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
@@ -3050,6 +3255,7 @@ export function TagCanvasEditor({
       window.removeEventListener('keyup', release);
     };
   }, [
+    embeddedPxPerMm,
     selectedIds,
     selectedGuideId,
     editingLayerId,
@@ -3065,7 +3271,8 @@ export function TagCanvasEditor({
     handleRedo,
     handleCopy,
     handleCut,
-    handlePaste,
+    markSystemClipboard,
+    selectionRoots,
     handleFit,
     handleZoomReset,
     nudgeSelection,
@@ -3075,6 +3282,151 @@ export function TagCanvasEditor({
     cancelCropMode,
     commitCrop,
   ]);
+
+  // -- System clipboard (DESIGNER-PASTE) -------------------------------------
+
+  /**
+   * A pasted picture: uploaded exactly as the Image tool's picker uploads
+   * (`uploadAsset`, kind `decorative`, same types and 20 MB cap), then either
+   * swapped into the one selected image layer or added as a new image layer,
+   * centred and fitted to the canvas. One history entry either way, so one
+   * Ctrl+Z takes it back.
+   */
+  const handlePasteImage = useCallback(
+    async (file: File) => {
+      const problem = pastedImageProblem(file);
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+      const only = selectedIds.size === 1 ? layers.find((l) => selectedIds.has(l.id)) : undefined;
+      const replaceId = only && only.props.kind === 'image' && !only.locked ? only.id : null;
+      const canvas = { width_mm: doc.width_mm, height_mm: doc.height_mm };
+      const toastId = toast.loading('Uploading pasted image');
+      try {
+        const [asset, natural] = await Promise.all([
+          uploadAsset({ file, kind: 'decorative', name: pastedAssetName() }),
+          readImageSize(file),
+        ]);
+        const source: ImageSource = { type: 'asset', assetId: asset.id };
+        // Reusing the replace target's id when it vanished mid-upload (deleted,
+        // undone) keeps the selection below pointing at a layer that exists.
+        const layerId = replaceId ?? newLayerId();
+        setLayers((prev) => {
+          const target = replaceId ? prev.find((l) => l.id === replaceId) : undefined;
+          let next: TagLayer[];
+          if (target && target.props.kind === 'image') {
+            // The old crop was cut to the old picture's pixels.
+            const props = { ...target.props, source };
+            delete props.cropRect;
+            next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
+          } else {
+            const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const layer: TagLayer = {
+              id: layerId,
+              type: 'image',
+              ...fitPastedImage(natural, canvas),
+              rotation_deg: 0,
+              z_index: z,
+              locked: false,
+              visible: true,
+              slot_binding: null,
+              text_override: null,
+              props: { ...defaultImageProps(), source },
+            };
+            next = [...prev, layer];
+          }
+          history.pushState(next);
+          return next;
+        });
+        setSelectedIds(new Set([layerId]));
+        // A freshly uploaded asset is not in the library map yet (as in
+        // `handleImagePicked`), so the layer would draw empty until reloaded.
+        void library.reload();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Upload failed');
+      } finally {
+        toast.dismiss(toastId);
+      }
+    },
+    [selectedIds, layers, doc.width_mm, doc.height_mm, history, library],
+  );
+
+  /** Pasted text from another app: a new text layer holding it, centred. */
+  const handlePasteText = useCallback(
+    (text: string) => {
+      const lineCount = text.split('\n').length;
+      const width = Math.min(doc.width_mm, 80);
+      const height = Math.min(doc.height_mm, Math.max(10, lineCount * 6));
+      addLayer({ ...makeBaseLayer('text', width, height), props: { ...defaultTextProps(), text } });
+    },
+    [addLayer, makeBaseLayer, doc.width_mm, doc.height_mm],
+  );
+
+  useEffect(() => {
+    if (embeddedPxPerMm !== undefined) return;
+    /** Focus is somewhere typing belongs, or in a dialog other than the editor's own. */
+    const elsewhere = (target: EventTarget | null): boolean => {
+      if (editingLayerId) return true;
+      if (isFormControl(target) || isFormControl(document.activeElement)) return true;
+      const active = document.activeElement;
+      const dialog = active instanceof Element ? active.closest('[role="dialog"]') : null;
+      return Boolean(dialog && !(containerRef.current && dialog.contains(containerRef.current)));
+    };
+
+    // WebKit fires copy/cut/paste on a page with nothing editable focused
+    // only when the matching `before*` event was cancelled. There is no
+    // keydown fallback for Ctrl+V: on macOS Cmd+V reaches the page through
+    // the app's Edit menu AFTER the keydown, so a timer would race the real
+    // paste event and paste twice.
+    const onBeforeCopyOrCut = (e: Event) => {
+      if (copyMarkPending.current) e.preventDefault();
+    };
+    const onBeforePaste = (e: Event) => {
+      if (!elsewhere(e.target)) e.preventDefault();
+    };
+
+    const onCopyOrCut = (e: ClipboardEvent) => {
+      if (!copyMarkPending.current) return;
+      copyMarkPending.current = false;
+      const copied = getTagClipboard();
+      if (!copied || !e.clipboardData || elsewhere(e.target)) return;
+      e.clipboardData.setData(TAG_LAYERS_MIME, copied.sourceDocId ?? 'tag-layers');
+      // Plain text alongside, so pasting into a text box elsewhere gives the
+      // words that were copied rather than nothing.
+      e.clipboardData.setData('text/plain', copiedLayersText(copied.layers));
+      e.preventDefault();
+    };
+
+    const onPaste = (e: ClipboardEvent) => {
+      if (elsewhere(e.target)) return;
+      const copied = getTagClipboard();
+      const intent = classifyPaste(
+        e.clipboardData,
+        copied && copied.layers.length > 0 ? copiedLayersText(copied.layers) : null,
+      );
+      if (intent.kind === 'none') return;
+      e.preventDefault();
+      if (intent.kind === 'layers') handlePaste();
+      else if (intent.kind === 'image') void handlePasteImage(intent.file);
+      else handlePasteText(intent.text);
+    };
+
+    window.addEventListener('beforecopy', onBeforeCopyOrCut);
+    window.addEventListener('beforecut', onBeforeCopyOrCut);
+    window.addEventListener('beforepaste', onBeforePaste);
+    window.addEventListener('copy', onCopyOrCut);
+    window.addEventListener('cut', onCopyOrCut);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('beforecopy', onBeforeCopyOrCut);
+      window.removeEventListener('beforecut', onBeforeCopyOrCut);
+      window.removeEventListener('beforepaste', onBeforePaste);
+      window.removeEventListener('copy', onCopyOrCut);
+      window.removeEventListener('cut', onCopyOrCut);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [embeddedPxPerMm, editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
   useEffect(() => {
@@ -3096,6 +3448,39 @@ export function TagCanvasEditor({
   useEffect(() => {
     onLayersChange?.(layers);
   }, [layers, onLayersChange]);
+
+  // -- Embedded in the spec sheet reader (F4) --------------------------------
+
+  const embeddedSelected = embedded?.selectedLayerId ?? null;
+  const embeddedOnSelect = embedded?.onSelect;
+  const embeddedLayers = embedded?.layers;
+  const embeddedController = embedded?.controllerRef;
+  // The host's selection in: a layer picked elsewhere (or cleared) is the selection here.
+  useEffect(() => {
+    if (!embeddedOnSelect) return;
+    setSelectedIds((prev) => {
+      if (embeddedSelected === null) return prev.size === 0 ? prev : new Set();
+      return prev.size === 1 && prev.has(embeddedSelected) ? prev : new Set([embeddedSelected]);
+    });
+  }, [embeddedOnSelect, embeddedSelected]);
+  // The canvas selection out: a click on a layer is reported to the host.
+  useEffect(() => {
+    if (!embeddedOnSelect) return;
+    const first = selectedIds.size > 0 ? (Array.from(selectedIds)[0] ?? null) : null;
+    if (first !== embeddedSelected) embeddedOnSelect(first);
+    // Only a change of the canvas selection is news; the host value is read, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds]);
+  useEffect(() => {
+    if (embeddedController) embeddedController.current = { updateLayer, updateLayerProps };
+    return () => {
+      if (embeddedController) embeddedController.current = null;
+    };
+  }, [embeddedController, updateLayer, updateLayerProps]);
+  // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
+  useEffect(() => {
+    if (embeddedLayers && embeddedLayers !== layersRef.current) setLayers(embeddedLayers);
+  }, [embeddedLayers]);
 
   // -- Derived state for toolbar ---------------------------------------------
 
@@ -3124,7 +3509,12 @@ export function TagCanvasEditor({
    * `boundData` at all) - neither carries parts, so the picker never shows
    * (AC-S4-2).
    */
-  const subjectParts = boundData?.kind === 'line' ? boundData.line.parts : undefined;
+  const subjectParts =
+    boundData?.kind === 'line'
+      ? boundData.line.parts
+      : specSheet
+        ? SPEC_SHEET_ACCESSORY_PARTS
+        : undefined;
   const subjectParentCode =
     boundData?.kind === 'line'
       ? boundData.line.code
@@ -3251,12 +3641,37 @@ export function TagCanvasEditor({
   // this open - otherwise a selection change with nothing typed would flush
   // whatever was left over from a PREVIOUS edit session against the newly
   // opened layer.
+  const editingSeedRef = useRef('');
   useEffect(() => {
-    if (editingLayerId) editingTextRef.current = editingContent;
+    if (editingLayerId) {
+      editingTextRef.current = editingContent;
+      editingSeedRef.current = editingContent;
+    }
     // Only re-seed when a NEW edit session opens, not on every keystroke -
     // `editingTextRef` itself is the up-to-date value once one is in progress.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingLayerId]);
+
+  // The canvas unmounting with typing still open (the spec sheet reader unloads a page scrolled far
+  // away): no blur or click outside will come, so hand the host the typed text now, the same way a
+  // commit writes it, or it is lost without a word.
+  const unloadRef = useRef({ editingLayerId, layers, onLayersChange });
+  unloadRef.current = { editingLayerId, layers, onLayersChange };
+  useEffect(
+    () => () => {
+      const { editingLayerId: id, layers: now, onLayersChange: report } = unloadRef.current;
+      const text = editingTextRef.current;
+      if (!id || !report || text === editingSeedRef.current) return;
+      report(
+        now.map((layer) => {
+          if (layer.id !== id) return layer;
+          if (layer.slot_binding) return { ...layer, text_override: text };
+          return layer.props.kind === 'text' ? { ...layer, props: { ...layer.props, text } } : layer;
+        }),
+      );
+    },
+    [],
+  );
 
   /**
    * The inline editor's own commit (S2, D5): Esc, Cmd/Ctrl+Enter or blur
@@ -3358,7 +3773,7 @@ export function TagCanvasEditor({
       left: Math.min(Math.max(rawLeft, RULER_THICKNESS + 2), maxLeft),
       top: Math.max(rawTop, RULER_THICKNESS + 2),
     };
-  }, [view.panX, view.panY, canvasWidthPx, containerSize.width]);
+  }, [view.panX, view.panY, canvasWidthPx, containerSize.width, RULER_THICKNESS]);
 
   const sortedLayers = useMemo(
     () => [...layers].sort((a, b) => a.z_index - b.z_index),
@@ -3380,154 +3795,8 @@ export function TagCanvasEditor({
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
 
-  return (
-    <div className="flex h-full flex-col overflow-x-hidden">
-      {/* Toolbar */}
-      <CanvasToolbar
-        tool={tool}
-        onToolChange={setTool}
-        onAddText={handleAddText}
-        onAddShape={handleAddShape}
-        onAddImage={handleAddImage}
-        onAddProductSlot={handleAddProductSlot}
-        onAddPriceBadge={handleAddPriceBadge}
-        onAddBadge={handleAddBadge}
-        onAddBarcode={handleAddBarcode}
-        onAddProduct={() => setPicker({ kind: 'add-product' })}
-        onAddSet={() => setPicker({ kind: 'add-set' })}
-        onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={history.canUndo}
-        canRedo={history.canRedo}
-        zoom={view.zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-        onFit={handleFit}
-        onDeleteSelected={deleteSelectedLayers}
-        onDuplicateSelected={duplicateSelectedLayers}
-        onGroupSelected={groupSelectedLayers}
-        onUngroupSelected={ungroupSelectedLayers}
-        hasSelection={hasSelection}
-        hasMultiSelection={selectedIds.size >= 2}
-        selectionIsGroup={selectionIsGroup}
-        trailing={toolbarTrailing}
-      />
-
-      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
-        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
-            clickable while the panel itself is at collapsedSize={0}. */}
-        {panelLayout.leftCollapsed && (
-          <button
-            type="button"
-            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
-            title="Expand Lines + Layers"
-            aria-label="Expand Lines + Layers"
-            onClick={() => {
-              leftPanelRef.current?.expand(leftPercent);
-              handleFit();
-            }}
-          >
-            <ChevronRight className="size-3.5" />
-          </button>
-        )}
-
-        <ResizablePanelGroup direction="horizontal" className="flex-1">
-          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
-          <ResizablePanel
-            ref={leftPanelRef}
-            id="canvas-left"
-            order={1}
-            collapsible
-            collapsedSize={0}
-            minSize={leftMinPercent}
-            maxSize={leftMaxPercent}
-            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
-            onResize={handleLeftResize}
-            onCollapse={() => {
-              if (!hasHydratedRef.current || !isGroupInteractive) return;
-              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
-            }}
-            onExpand={() => {
-              if (!hasHydratedRef.current || !isGroupInteractive) return;
-              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
-            }}
-            className="relative hidden md:flex md:flex-col md:overflow-hidden"
-          >
-            <button
-              type="button"
-              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Collapse Lines + Layers"
-              aria-label="Collapse Lines + Layers"
-              onClick={() => {
-                leftPanelRef.current?.collapse();
-                handleFit();
-              }}
-            >
-              <ChevronLeft className="size-3.5" />
-            </button>
-            {leftRail ? (
-              <ResizablePanelGroup direction="vertical" className="h-full">
-                <ResizablePanel
-                  ref={railPanelRef}
-                  id="canvas-left-rail"
-                  order={1}
-                  minSize={railMinPercent}
-                  maxSize={railMaxPercent}
-                  defaultSize={railPercent}
-                  onResize={handleRailResize}
-                  className="flex flex-col"
-                >
-                  {/* D9: no scroll on this wrapper any more - LINES (the
-                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
-                      sits below it, both always in view. */}
-                  <div className="flex h-full flex-col">{leftRail}</div>
-                </ResizablePanel>
-                <ResizableHandle
-                  withHandle
-                  onDragging={handlePanelDragEnd}
-                  aria-label="Resize Lines and Layers"
-                />
-                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
-                  <LayersPanel
-                    layers={layers}
-                    selectedIds={selectedIds}
-                    onSelect={handleSelect}
-                    onToggleVisibility={handleToggleVisibility}
-                    onToggleLock={handleToggleLock}
-                    onMoveLayer={handleMoveLayer}
-                    overflowingIds={overflowingIds}
-                    subjectParts={subjectParts}
-                  />
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            ) : (
-              <div className="min-h-0 flex-1">
-                <LayersPanel
-                  layers={layers}
-                  selectedIds={selectedIds}
-                  onSelect={handleSelect}
-                  onToggleVisibility={handleToggleVisibility}
-                  onToggleLock={handleToggleLock}
-                  onMoveLayer={handleMoveLayer}
-                  overflowingIds={overflowingIds}
-                  subjectParts={subjectParts}
-                />
-              </div>
-            )}
-          </ResizablePanel>
-          <ResizableHandle
-            withHandle
-            className="hidden md:flex"
-            onDragging={handlePanelDragEnd}
-            aria-label="Resize Lines and Layers panel"
-          />
-
-          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
-              a pan offset inside (D33), so there is nothing to scroll. */}
-          <ResizablePanel id="canvas-centre" order={2} className="flex">
+  const canvasArea = (
+    <>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -3539,6 +3808,7 @@ export function TagCanvasEditor({
               )}
               onContextMenu={handleStageContextMenu}
             >
+              {!embedded && (
               <CanvasRulers
                 widthMm={doc.width_mm}
                 heightMm={doc.height_mm}
@@ -3552,6 +3822,7 @@ export function TagCanvasEditor({
                 horizontalGuideMm={horizontalGuide?.position_mm ?? null}
                 onGuideRemove={handleGuideRemove}
               />
+              )}
 
               <div
                 className="absolute"
@@ -3619,7 +3890,7 @@ export function TagCanvasEditor({
                           key={`${layer.id}-ghost`}
                           layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -3659,7 +3930,7 @@ export function TagCanvasEditor({
                           key={layer.id}
                           layer={withPolygonPreview(layer)}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -4202,7 +4473,9 @@ export function TagCanvasEditor({
                   key={editingLayer.id}
                   layer={editingLayer}
                   value={editingResolvedValue ?? editingContent}
-                  readOnly={editingResolvedValue != null}
+                  // The template editor shows a data field's value read-only; a spec sheet page
+                  // types over it (that page only), starting from what it prints.
+                  readOnly={editingResolvedValue != null && !embedded}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}
@@ -4219,12 +4492,22 @@ export function TagCanvasEditor({
           <ContextMenuContent className="w-56">
             {hasSelection && !menuOnEmpty ? (
               <>
-                <ContextMenuItem onSelect={handleCut}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCut();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Scissors />
                   Cut
                   <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
                 </ContextMenuItem>
-                <ContextMenuItem onSelect={handleCopy}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCopy();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Copy />
                   Copy
                   <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
@@ -4342,6 +4625,183 @@ export function TagCanvasEditor({
             )}
           </ContextMenuContent>
         </ContextMenu>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="relative flex h-full w-full overflow-hidden">{canvasArea}</div>;
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-x-hidden">
+      {/* Toolbar */}
+      <CanvasToolbar
+        tool={tool}
+        onToolChange={setTool}
+        onAddText={handleAddText}
+        onAddShape={handleAddShape}
+        onAddImage={handleAddImage}
+        onAddProductSlot={handleAddProductSlot}
+        onAddPriceBadge={handleAddPriceBadge}
+        onAddBadge={handleAddBadge}
+        onAddBarcode={handleAddBarcode}
+        onAddProduct={() => setPicker({ kind: 'add-product' })}
+        onAddSet={() => setPicker({ kind: 'add-set' })}
+        onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
+        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        zoom={view.zoom}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomReset={handleZoomReset}
+        onFit={handleFit}
+        onDeleteSelected={deleteSelectedLayers}
+        onDuplicateSelected={duplicateSelectedLayers}
+        onGroupSelected={groupSelectedLayers}
+        onUngroupSelected={ungroupSelectedLayers}
+        hasSelection={hasSelection}
+        hasMultiSelection={selectedIds.size >= 2}
+        selectionIsGroup={selectionIsGroup}
+        trailing={toolbarTrailing}
+      />
+
+      {/* Preview combo (AC-5.1): template editor only - the request designer already
+          has its line's combo on the canvas. */}
+      {!boundData && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-1">
+          <div className="w-full max-w-xs">
+            <SearchableSelect
+              value={comboPreview?.id ?? ''}
+              onChange={(value: string) => void handlePreviewCombo(value)}
+              fetchOptions={fetchComboOptions}
+              selectedOption={
+                comboPreview ? { value: comboPreview.id, label: comboPreview.label } : undefined
+              }
+              placeholder="Preview combo"
+              aria-label="Preview combo"
+              clearable
+              size="sm"
+            />
+          </div>
+        </div>
+      )}
+
+      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
+        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
+            clickable while the panel itself is at collapsedSize={0}. */}
+        {panelLayout.leftCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
+            title="Expand Lines + Layers"
+            aria-label="Expand Lines + Layers"
+            onClick={() => {
+              leftPanelRef.current?.expand(leftPercent);
+              handleFit();
+            }}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        )}
+
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
+          <ResizablePanel
+            ref={leftPanelRef}
+            id="canvas-left"
+            order={1}
+            collapsible
+            collapsedSize={0}
+            minSize={leftMinPercent}
+            maxSize={leftMaxPercent}
+            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
+            onResize={handleLeftResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
+            }}
+            className="relative hidden md:flex md:flex-col md:overflow-hidden"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Lines + Layers"
+              aria-label="Collapse Lines + Layers"
+              onClick={() => {
+                leftPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            {leftRail ? (
+              <ResizablePanelGroup direction="vertical" className="h-full">
+                <ResizablePanel
+                  ref={railPanelRef}
+                  id="canvas-left-rail"
+                  order={1}
+                  minSize={railMinPercent}
+                  maxSize={railMaxPercent}
+                  defaultSize={railPercent}
+                  onResize={handleRailResize}
+                  className="flex flex-col"
+                >
+                  {/* D9: no scroll on this wrapper any more - LINES (the
+                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
+                      sits below it, both always in view. */}
+                  <div className="flex h-full flex-col">{leftRail}</div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  onDragging={handlePanelDragEnd}
+                  aria-label="Resize Lines and Layers"
+                />
+                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
+                  <LayersPanel
+                    layers={layers}
+                    selectedIds={selectedIds}
+                    onSelect={handleSelect}
+                    onToggleVisibility={handleToggleVisibility}
+                    onToggleLock={handleToggleLock}
+                    onMoveLayer={handleMoveLayer}
+                    overflowingIds={overflowingIds}
+                    subjectParts={subjectParts}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="min-h-0 flex-1">
+                <LayersPanel
+                  layers={layers}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelect}
+                  onToggleVisibility={handleToggleVisibility}
+                  onToggleLock={handleToggleLock}
+                  onMoveLayer={handleMoveLayer}
+                  overflowingIds={overflowingIds}
+                  subjectParts={subjectParts}
+                />
+              </div>
+            )}
+          </ResizablePanel>
+          <ResizableHandle
+            withHandle
+            className="hidden md:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Lines and Layers panel"
+          />
+
+          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
+              a pan offset inside (D33), so there is nothing to scroll. */}
+          <ResizablePanel id="canvas-centre" order={2} className="flex">
+{canvasArea}
           </ResizablePanel>
 
           {/* Right sidebar: Inspector panel (AC-S1-2, AC-S1-3). */}
@@ -4409,7 +4869,9 @@ export function TagCanvasEditor({
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
               subjectParts={subjectParts}
-              subjectParentCode={subjectParentCode}
+              subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
+              specSheet={specSheet}
+              specKeys={library.specKeys}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -4489,6 +4951,8 @@ export function TagCanvasEditor({
         value={selectedContent}
         data={selectedData ?? null}
         specKeys={library.specKeys}
+        // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.
+        groups={specSheet ? undefined : PRICE_TAG_FIELD_GROUPS}
         onCancel={() => setInsertFieldOpen(false)}
         onDone={(content) => {
           setInsertFieldOpen(false);

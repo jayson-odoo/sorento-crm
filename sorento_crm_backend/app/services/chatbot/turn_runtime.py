@@ -32,6 +32,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_AGENT,
     DEFAULT_SUGGESTED_TEAM,
@@ -55,6 +56,7 @@ from app.services.chatbot.turn.reconcile import hits_for_token
 from app.services.chatbot.turn.state import (
     EXTRA_KIND_ALIASES,
     KIND_FIELD_MAP,
+    STAFF_TIER,
     Focus,
     Profile,
     State,
@@ -269,7 +271,7 @@ _MEMORY_COLUMNS = "c.id, c.chatbot_memory_level FROM respond_contacts c"
 
 def resolve_contact_pk(
     db: Session, contact_respond_id: str, space_id: str | None
-) -> tuple[str, str | None] | None:
+) -> tuple[str | None, str | None] | None:
     """The ONE `respond_contacts` row this `contact_respond_id` resolves to -
     workspace first, then the NULL-workspace fallback, exactly `_profile_rows`'s
     own two-tier lookup (chatbot memory lane A, security review 26 Sep 2026, B1).
@@ -283,7 +285,12 @@ def resolve_contact_pk(
     just those two flags) because a wrong pick here would leak or corrupt a
     DIFFERENT contact's stored profile facts and episodes, not just this turn's
     business answer.
+
+    A staff principal has no row: `(None, None)` keeps its thread's own frames and exchanges, at
+    the system's level, and every profile fact write skips on the empty pk.
     """
+    if staff_principal.current() is not None:
+        return None, None
     if not space_id:
         rows = list(
             db.execute(
@@ -479,7 +486,11 @@ def load_profile(
     (contract 59); wiring THIS field to that list would deny every domain that declares
     no `reveal_key` at all, since a domain with no key falls back to its bare name. The
     trigger for wiring it is S5's grant sweep, which gives every domain a key.
+
+    A staff principal is an office user with no contact's switches: stock allowed, no salesman job.
     """
+    if staff_principal.current() is not None:
+        return Profile(tier=STAFF_TIER), False
     try:
         if space_id is None:
             from app.services.chatbot.head.access import default_space_id
@@ -608,12 +619,14 @@ def _promotion_words_naming_no_promotion(db: Session, entities: Any) -> list[dic
     (case and surrounding whitespace aside)."""
     from app.models.marketing import Promotion
 
+    # A staff member who may not read promotions is told none matched, whatever the word.
+    denied = staff_principal.lacks(db, *staff_principal.PROMOTION_READERS)
     out: list[dict[str, Any]] = []
     for e in entities or []:
         if not (isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip().lower() == "promotion"):
             continue
         folded = " ".join(jsc.nullish_str(e.get("raw")).casefold().split())
-        if not folded or db.query(Promotion.id).filter(func.lower(func.trim(Promotion.description)) == folded).first() is None:
+        if denied or not folded or db.query(Promotion.id).filter(func.lower(func.trim(Promotion.description)) == folded).first() is None:
             out.append(e)
     return out
 
@@ -795,6 +808,8 @@ def _promotions_hold(
     from app.services.contact_access_type_service import ContactAccessTypeService
     from app.services.marketing_service import PromotionService
 
+    if staff_principal.lacks(db, *staff_principal.PROMOTION_READERS):
+        return False
     if access_levels is not None and not access_levels:
         # Reviewer R1: a contact whose levels the tier gate emptied (a dealer lacking the
         # asked brand) sees no promotion; None alone means no level filter (staff).
@@ -816,6 +831,8 @@ def promotion_kind_rows(db: Session) -> list[dict[str, Any]]:
     each turn; the parser is shown these and answers `promotion_kind` with one code."""
     from app.models.marketing import PromotionType
 
+    if staff_principal.lacks(db, *staff_principal.PROMOTION_READERS):
+        return []
     rows = db.query(PromotionType).order_by(PromotionType.match_priority, PromotionType.type_code).all()
     return [{"type_code": r.type_code, "type_name": r.type_name} for r in rows]
 
@@ -3216,7 +3233,7 @@ def fill_customer_names(db: Session, entities: list[dict[str, Any]]) -> None:
         uuid = row.get("uuid")
         if uuid:
             wanted.setdefault(str(uuid), []).append(row)
-    if not wanted:
+    if not wanted or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
         return
     try:
         found = (
@@ -3948,6 +3965,7 @@ def make_tool_runner(
     not_checked: list[str] | None = None,
     asked_promo_filter: dict[str, list[str]] | None = None,
     profile: Any = None,
+    supplier_scope: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -4071,6 +4089,8 @@ def make_tool_runner(
             # The contact's customer scope (`engine._customer_scope_gate`), read by
             # `lanes.business.run_fetch`; a lane-only key, never on the engine's own ctx.
             "customer_scope": customer_scope,
+            # SUPPLIER-ASK fix round 9: the turn's supplier scope (`engine._supplier_scope`), guarded at the tool call.
+            "supplier_scope": supplier_scope,
             # CHAT-LANGUAGE: read by `output_structurer` (render-only).
             "localizer": localizer,
             # PHOTO-SEND-CAP: link mode prints each file's link under its row
@@ -5948,17 +5968,23 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     for row in plan_rows:
         if row.get("uuid"):
             settled.setdefault((row["entity_type"], _code_of(row)), set()).add(str(row["uuid"]))
+    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
+    # O-R3 rule A (owner, 3 Nov 2026): a kind the plan names only by rows with no uuid that no resolver row answers by
+    # code is answered by the resolver's rows of that kind this turn. The customer-or-supplier pick's answer is such a
+    # row (the option carries no rows, its code is the typed word): the resolver's customer row is the customer.
+    unplaced = {row["entity_type"] for row in plan_rows} - {
+        row["entity_type"] for row in plan_rows if row.get("uuid") or (row["entity_type"], _code_of(row)) in returned
+    }
 
     def answers_the_plan(e: dict[str, Any]) -> bool:
         kind, code = e.get("entity_type"), _code_of(e)
         if kind not in kinds or not codes:
             return True
         held = settled.get((kind, code))
-        return code in codes and (held is None or str(e.get("uuid")) in held)
+        return (code in codes or kind in unplaced) and (held is None or str(e.get("uuid")) in held)
 
     picked = [e for e in compatible if answers_the_plan(e)]
     answered = {e.get("entity_type") for e in picked}
-    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
     kept = {str(e.get("uuid")) for e in picked}
     return picked + [
         row for row in plan_rows
@@ -6117,6 +6143,14 @@ def envelope_of(
         # composer's generic line), only read by `engine._run_answer` to open no fit line.
         "refused": bool(fragment.get("refused")),
         "entities": codes,
+        # SUPPLIER-ASK fix round 3 (#2066, owner turn 3): a supplier subject is a record named with its code
+        # ("NAME (400-X006)"); the header keeps it whole instead of folding it by the customer-account rule.
+        "supplier_subjects": [
+            name for name in (
+                _answer_subject(e) for e in entities
+                if isinstance(e, dict) and jsc.lower_or_empty(e.get("entity_type")) == "supplier"
+            ) if name
+        ],
         # The PRODUCT subjects alone, for the composer's "No stock found for X" line: a
         # customer pinned from an earlier turn is a subject too, and is not a stock code.
         "product_codes": [
@@ -6291,6 +6325,11 @@ def envelope_of(
     return envelope
 
 
+#: SUPPLIER-ASK fix round 3 (#2066, owner turn 3): the window a tool filters on, named as that tool's date. The PO
+#: list filters the expected date (`purchase_order_service._apply_expected_date_window`), not an order date.
+_DATE_LINE_LABELS = {"crm_procurement_po_placed_list": "Expected date"}
+
+
 def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str | None:
     """`Order date: 01/09/2026 to 30/09/2026`, or None when the fetch had no window.
 
@@ -6312,4 +6351,4 @@ def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str 
         return None
     from app.services.chatbot.lanes.business import order_date_text
 
-    return f"Order date: {order_date_text(start, end)}"
+    return f"{_DATE_LINE_LABELS.get(tool or '', 'Order date')}: {order_date_text(start, end)}"

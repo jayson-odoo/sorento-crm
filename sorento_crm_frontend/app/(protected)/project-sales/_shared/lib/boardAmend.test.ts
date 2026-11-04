@@ -435,6 +435,8 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         // group-aware facts are stated.
         rung: null,
         donor_so_number: null,
+        donor_customer_name: null,
+        donor_project_label: null,
         donor_line_no: null,
         donor_agent_code: null,
         donor_core_line_id: null,
@@ -943,6 +945,24 @@ describe('decideComposition: the six Decide items (D1, AC-5 to AC-9, AC-51)', ()
     expect(result.skip).toBeUndefined();
     expect(result.warning).toBe('only 30 free at own location');
     expect(result.reserve).toEqual([{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '100' }]);
+  });
+
+  it('Use own location on a line standing on its pool stops at what confirm allows there', () => {
+    const row = decideRow({
+      locations: [
+        {
+          location: 'BRW',
+          where: 'own',
+          warehouse_id: 'wh-own',
+          qty_free_remaining: '40',
+          stands_on_pool: true,
+          available_for_project: '15',
+        },
+      ],
+    });
+
+    const result = decideComposition(row, 'own');
+    expect(result.warning).toBe('only 15 free at own location');
   });
 
   it('AC-7: Use BRW fills from site_pool rows only, within the pool-share allowance', () => {

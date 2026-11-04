@@ -21,6 +21,10 @@ from app.schemas.price_tag import (
     ProductTagData,
     ResolvePreviewIn,
     ResolvePreviewOut,
+    TemplateAssignFilter,
+    TemplateAssignIn,
+    TemplateAssignOut,
+    TemplateAssignPreviewOut,
     TagTemplateCreate,
     TagTemplateFromTagCreate,
     TagTemplatePublishIn,
@@ -89,6 +93,21 @@ def list_tag_templates(
     return [_response_for(t, published=published) for t in templates]
 
 
+# PRICETAG-TEMPLATE-PER-PRODUCT: declared before ``/{template_id}`` for the
+# same reason as ``/resolve-preview`` below.
+@router.get("/family-codes", response_model=list[str])
+def list_family_codes(
+    q: str | None = Query(None, max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Model families the bulk "Assign to products" filter can name."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.family_codes(db, q, limit=limit)
+
+
 # DECLARED BEFORE ``/{template_id}``, and that order is load-bearing: FastAPI
 # matches in declaration order, so a uuid path param registered first would
 # swallow ``/resolve-preview`` whole and answer 404 for a template nobody named.
@@ -121,13 +140,9 @@ def resolve_preview(
             raise AppException(
                 status_code=404, message="Product not found.", code="NOT_FOUND"
             )
-        return ResolvePreviewOut(
-            product=ProductTagData.model_validate(
-                tag_data_service.product_tag_data(
-                    db, product, viewer, payload.promotion_id
-                )
-            )
-        )
+        data = tag_data_service.product_tag_data(db, product, viewer, payload.promotion_id)
+        data = tag_data_service.with_preview_combo(db, product, data, payload.combo_id)
+        return ResolvePreviewOut(product=ProductTagData.model_validate(data))
 
     product_set = tag_data_service.get_product_set(db, payload.product_set_id)
     if product_set is None:
@@ -365,3 +380,42 @@ def restore_tag_template_version(
     db.commit()
     db.refresh(t)
     return _response_for(t)
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-TEMPLATE-PER-PRODUCT: bulk assignment to products
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{template_id}/assign/preview", response_model=TemplateAssignPreviewOut)
+def preview_template_assignment(
+    template_id: str,
+    payload: TemplateAssignFilter,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """How many products the filter matches, and how many already carry the
+    template - the dialog's live count."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return TemplateAssignPreviewOut(
+        **product_tag_template_service.bulk_preview(db, template_id, payload.model_dump())
+    )
+
+
+@router.post("/{template_id}/assign", response_model=TemplateAssignOut)
+def assign_template_to_products(
+    template_id: str,
+    payload: TemplateAssignIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """Add the template to (or remove it from) every product the filter matches."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    data = payload.model_dump()
+    result = product_tag_template_service.bulk_assign(
+        db, template_id, data, data["action"], user_id=_user_id(user)
+    )
+    db.commit()
+    return TemplateAssignOut(**result)

@@ -1,178 +1,127 @@
-import {
-  compareMoney,
-  formatQty,
-  multiplyMoney,
-  subtractMoney,
-  sumMoney,
-} from '@/app/(protected)/project-sales/_shared/lib/money';
+import { compareMoney } from '@/app/(protected)/project-sales/_shared/lib/money';
 import type {
-  QuotationSignAmendmentBody,
+  QuotationFeedbackBody,
+  QuotationFeedbackItem,
   QuotationSignLine,
-  QuotationSignScope,
 } from '../../services/quotationSignService';
 
 /**
- * The customer's suggest mode (QUOTE-CUSTOMER-AMEND), as plain functions over the typed values so
- * the table, the summary row and Send all read one answer.
+ * The customer's feedback (PS-QUOTE-MATRIX R19), as plain functions so the form, its Send button
+ * and the tests read one answer.
  *
- * The same bounds the backend enforces: quantity 1 to 9,999,999.99 and price above 0, both with
- * at most two decimals. The server still checks; this keeps a bad value from being sent at all.
+ * A note sits on a whole item or on one cell of a grid scope, and may carry ONE optional hint:
+ * a quantity (item or cell), a price, "remove this item", or another model at an optional price
+ * (item only). Nothing is accepted or applied: the hint is shown to the salesperson next to
+ * today's value. The bounds are the backend's: quantity 0 to 9,999,999.99, price above 0, two
+ * decimals at most, a model 1 to 200 characters, a note up to 1,000.
  */
 
-export type LineEdit = {
-  quantity: string;
-  unit_price: string;
-  remove: boolean;
+export type FeedbackHint = 'none' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
+
+/** What the form is about: an item, or one of its cells. */
+export type FeedbackTarget = {
+  line: QuotationSignLine;
+  /** The item as the customer reads it. */
+  itemLabel: string;
+  scopeLabel: string;
+  /** A cell of a grid scope; absent for the whole item. */
+  cell?: { key: string; label: string; value: string };
 };
-export type LineEdits = Record<string, LineEdit>;
+
+export type FeedbackDraft = {
+  note: string;
+  hint: FeedbackHint;
+  /** The quantity or price hint, or a model swap's optional price. */
+  value: string;
+  model: string;
+};
+
+export const EMPTY_FEEDBACK: FeedbackDraft = { note: '', hint: 'none', value: '', model: '' };
 
 const AMOUNT = /^\d+(\.\d{1,2})?$/;
 const MAX_QTY = '9999999.99';
 const MAX_PRICE = '9999999999.99';
+export const MAX_NOTE = 1000;
+export const MAX_MODEL = 200;
 
-export const QTY_ERROR = 'Quantity must be at least 1.';
-export const PRICE_ERROR = 'Unit rate must be above 0.';
-
-/** A zero-priced line that is not rate-only: its money sits on the line above it. */
-export function priceIsEditable(line: QuotationSignLine): boolean {
-  return line.is_rate_only || compareMoney(line.unit_price, '0') === 1;
+/** The hints a target offers: a cell takes a quantity only, an item every kind. */
+export function hintsFor(target: FeedbackTarget): FeedbackHint[] {
+  return target.cell
+    ? ['none', 'quantity']
+    : ['none', 'quantity', 'unit_price', 'remove', 'model_swap'];
 }
 
-/** What the inputs open at: the issued values, as the page prints them. */
-export function startingEdit(line: QuotationSignLine): LineEdit {
-  return {
-    quantity: formatQty(line.quantity),
-    unit_price: line.unit_price,
-    remove: false,
-  };
-}
+export const HINT_LABELS: Record<FeedbackHint, string> = {
+  none: 'Just a note',
+  quantity: 'Quantity',
+  unit_price: 'Price',
+  remove: 'Remove this item',
+  model_swap: 'Another model',
+};
 
-export function editOf(edits: LineEdits, line: QuotationSignLine): LineEdit {
-  return edits[line.id] ?? startingEdit(line);
-}
-
-export function quantityError(value: string): string | null {
+function quantityError(value: string): string | null {
   const text = value.trim();
-  if (!AMOUNT.test(text)) return QTY_ERROR;
-  if (compareMoney(text, '1') === -1) return QTY_ERROR;
+  if (!AMOUNT.test(text)) return 'Quantity must be a number, 0 or more, with at most 2 decimals.';
   if (compareMoney(text, MAX_QTY) === 1) return 'Quantity is too large.';
   return null;
 }
 
-export function priceError(value: string): string | null {
+function priceError(value: string, label = 'Price'): string | null {
   const text = value.trim();
-  if (!AMOUNT.test(text) || compareMoney(text, '0') !== 1) return PRICE_ERROR;
-  if (compareMoney(text, MAX_PRICE) === 1) return 'Unit rate is too large.';
+  if (!AMOUNT.test(text) || compareMoney(text, '0') !== 1) return `${label} must be above 0.`;
+  if (compareMoney(text, MAX_PRICE) === 1) return `${label} is too large.`;
   return null;
 }
 
-function differs(value: string, issued: string): boolean {
-  return compareMoney(value.trim(), issued) !== 0;
+/** Why the form cannot be sent yet, or null when it can. */
+export function feedbackError(target: FeedbackTarget, draft: FeedbackDraft): string | null {
+  const note = draft.note.trim();
+  if (note.length > MAX_NOTE) return `Keep the note under ${MAX_NOTE} characters.`;
+  if (!hintsFor(target).includes(draft.hint)) return 'Pick a suggestion this item takes.';
+  switch (draft.hint) {
+    case 'none':
+      return note ? null : 'Write a note.';
+    case 'quantity':
+      return quantityError(draft.value);
+    case 'unit_price':
+      return priceError(draft.value);
+    case 'remove':
+      return null;
+    case 'model_swap': {
+      const model = draft.model.trim();
+      if (!model) return 'Name the other model.';
+      if (model.length > MAX_MODEL) return `Keep the model under ${MAX_MODEL} characters.`;
+      return draft.value.trim() ? priceError(draft.value) : null;
+    }
+  }
 }
 
-/** The changed fields of one line, or null when it is as issued. */
-export function changeOf(
-  line: QuotationSignLine,
-  edit: LineEdit,
-): {
-  quantity: string | null;
-  unit_price: string | null;
-  remove: boolean;
-} | null {
-  if (edit.remove) return { quantity: null, unit_price: null, remove: true };
-  const quantity = differs(edit.quantity, line.quantity)
-    ? edit.quantity.trim()
-    : null;
-  const price =
-    priceIsEditable(line) && differs(edit.unit_price, line.unit_price)
-      ? edit.unit_price.trim()
-      : null;
-  if (quantity === null && price === null) return null;
-  return { quantity, unit_price: price, remove: false };
+/** The one item the form sends. Call only when `feedbackError` is null. */
+export function feedbackItem(target: FeedbackTarget, draft: FeedbackDraft): QuotationFeedbackItem {
+  const note = draft.note.trim();
+  const item: QuotationFeedbackItem = {
+    line_id: target.line.id,
+    kind: draft.hint === 'none' ? 'note' : draft.hint,
+  };
+  if (target.cell) item.cell_key = target.cell.key;
+  if (note) item.note = note;
+  if (draft.hint === 'quantity' || draft.hint === 'unit_price') item.value = draft.value.trim();
+  if (draft.hint === 'model_swap') {
+    item.model = draft.model.trim();
+    if (draft.value.trim()) item.value = draft.value.trim();
+  }
+  return item;
 }
 
-/** True when any line that is not staged for removal holds a value that cannot be sent. */
-export function hasErrors(
-  scopes: QuotationSignScope[],
-  edits: LineEdits,
-): boolean {
-  return scopes.some((scope) =>
-    scope.lines.some((line) => {
-      const edit = edits[line.id];
-      if (!edit || edit.remove) return false;
-      return (
-        quantityError(edit.quantity) !== null ||
-        (priceIsEditable(line) && priceError(edit.unit_price) !== null)
-      );
-    }),
-  );
-}
-
-/** A line's amount with the edit applied. A removed or rate-only line adds nothing. */
-export function editedAmount(line: QuotationSignLine, edit: LineEdit): string {
-  if (edit.remove || line.is_rate_only) return '0.00';
-  return (
-    multiplyMoney(
-      edit.quantity.trim(),
-      priceIsEditable(line) ? edit.unit_price.trim() : line.unit_price,
-    ) ??
-    line.amount ??
-    '0.00'
-  );
-}
-
-/** The request body: only changed lines, and a blank note as null. */
-export function suggestionBody(
-  scopes: QuotationSignScope[],
-  edits: LineEdits,
+/** The submit body: the items, a blank note or name as null. */
+export function feedbackBody(
+  items: QuotationFeedbackItem[],
   note: string,
   requesterName: string,
-): QuotationSignAmendmentBody {
-  const lines: QuotationSignAmendmentBody['lines'] = [];
-  for (const scope of scopes) {
-    for (const line of scope.lines) {
-      const change = changeOf(line, editOf(edits, line));
-      if (change) lines.push({ line_id: line.id, ...change });
-    }
-  }
+): QuotationFeedbackBody {
   return {
-    requester_name: requesterName.trim() || null,
+    items,
     note: note.trim() || null,
-    lines,
+    requester_name: requesterName.trim() || null,
   };
-}
-
-/** How many lines differ from what was issued (a removal counts). */
-export function changedLineCount(
-  scopes: QuotationSignScope[],
-  edits: LineEdits,
-): number {
-  let count = 0;
-  for (const scope of scopes) {
-    for (const line of scope.lines) {
-      if (changeOf(line, editOf(edits, line))) count += 1;
-    }
-  }
-  return count;
-}
-
-/**
- * What `base` (a section subtotal, or the grand total, as issued) comes to with the edits on
- * `lines` applied: each changed line's issued amount out, its edited amount in. A removed or
- * rate-only line adds nothing, by the same rule as every total.
- */
-export function totalAfter(
-  lines: QuotationSignLine[],
-  edits: LineEdits,
-  base: string,
-): string {
-  const removed: string[] = [];
-  const added: string[] = [];
-  for (const line of lines) {
-    const edit = editOf(edits, line);
-    if (!changeOf(line, edit)) continue;
-    removed.push(line.is_rate_only ? '0.00' : (line.amount ?? '0.00'));
-    added.push(editedAmount(line, edit));
-  }
-  return subtractMoney(sumMoney([base, ...added]), sumMoney(removed)) ?? base;
 }

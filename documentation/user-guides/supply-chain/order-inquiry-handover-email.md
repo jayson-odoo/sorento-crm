@@ -105,14 +105,77 @@ Never sends anything:
 Open **[System Management → Automation](/system-management/automation)** and edit the row
 named **Order inquiry to purchasing**.
 
-* **Recipients** - pick **Specific users**, **By role**, or type an address under **External
-  emails** and click **Add** (for example `purchasing@` and the CS manager's own address).
-* **Cc the person who raised it** - keeps the CS admin who made the change on the thread.
-* **One email, everyone on the thread** - sends a single mail with the first purchasing address
-  in **To** and everyone else, including the person who raised it, in **Cc**, so a reply-all
-  reaches the whole thread instead of landing back with only one recipient.
+* **To** and **Cc** - each has **Specific users**, **By role**, and **External emails** (type an
+  address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
+  **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
+  **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
+  you add, remove or move an address under **To** or **Cc** here and save. Saving any other
+  change (a condition, the name, a tick box) leaves it sending as before. Once you change an
+  address, To and Cc mean exactly what the boxes say, so check both boxes before you save.
+* **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
+  on the thread.
+* **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
+  reaches the whole thread. The person who raised it goes on Cc, even if they are also picked
+  under **To**; only when nobody else is on the mail are they on To. With this off, each person
+  gets a separate copy and To / Cc does not apply.
 * **Enabled** - untick this to stop the mail once the manual email is retired. Nothing else
   needs to change.
+
+## Retail and project orders go to different people
+
+The mail routes by the sales order's class. A **Retail** (dealer) order's lines can go to
+dealer purchasing while a **Project** order's lines keep going to project purchasing. A sales
+order whose class is **Other** counts as Retail; one with no class counts as Project.
+
+When one Confirm touches both a retail and a project order, two mails go out: one with only the
+retail lines and one with only the project lines.
+
+Which row sends which class is set by the row's **Conditions** (the **Sales order class**
+field). A row with no condition sends for every class.
+
+**To set up dealer purchasing (once):**
+
+1. In **System Management → Automation**, open the existing **Order inquiry to purchasing**
+   row, click **Add condition**, pick **Sales order class**, **is**, **Project**, and save. From
+   now on it only sends project lines.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing**, the same email
+   template, and give it a name such as **Order inquiry to dealer purchasing**.
+3. Under **To**, pick dealer purchasing. Under **Cc**, pick project purchasing and tick **Cc the
+   person who raised it**. Tick **One email, everyone on the thread**.
+4. Add the condition **Sales order class**, **is**, **Retail**, and save.
+
+Do step 1 before or together with step 4. Until the old row has its **Project** condition, a
+retail mail goes to both rows' recipients.
+
+**Undo mails follow the same rule.** The **Order inquiry undone** row works the same way: give
+the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
+
+## One person's orders go to their own people
+
+A row can also be set by who raised the order inquiry, with the condition **Raised by**: pick
+one or more people with **is any of** (only their order inquiries) or **is none of** (everyone
+else's). An order inquiry nobody is named as raising counts as "none of" anyone.
+
+**Example: Agnes' project orders skip Eling.**
+
+1. Open the project row that sends to Eling. Click **Add condition**, pick **Raised by**,
+   **is none of**, **Agnes**, and save. It keeps its **Sales order class is Project** condition.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing** and
+   the same email template, and name it, for example **Order inquiry - Agnes' project orders**.
+3. Pick the people Agnes' orders should reach under **To** and **Cc**.
+4. Add the conditions **Sales order class**, **is**, **Project** and **Raised by**, **is any
+   of**, **Agnes**, and save.
+5. Do the same on the **Order inquiry undone** rows so undo mails follow the same people.
+
+When one Confirm covers order inquiries raised by different people, each line goes only to the
+rows it matches: Agnes' lines in one mail to her row, everyone else's lines together in one mail
+to Eling's row. A row with no **Raised by** condition gets every line, still once.
+
+**Send to purchasing (resend)** goes through every enabled row whose conditions match the order
+inquiry's sales order class and raiser, the same rows the automatic mail uses, one mail per
+row. When every row is switched off, it uses the oldest switched-off row that matches. If no
+row matches, the order inquiry is not sent and the preview lists it as skipped: it never goes
+to another class's or another raiser's people.
 
 ## Parallel run
 

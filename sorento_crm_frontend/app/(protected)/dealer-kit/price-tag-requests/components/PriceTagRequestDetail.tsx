@@ -69,6 +69,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { PageHeader } from '@/components/common/PageHeader';
 import AttachmentPreviewModal, {
@@ -192,7 +193,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [reviewTagId, setReviewTagId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
-  const [tab, setTab] = useState<DetailTab>('request');
+  const [tab, setTab] = useUrlTab<DetailTab>({
+    tabs: ['request', 'lines', 'attachments'],
+    defaultTab: 'request',
+  });
   // Which lines already have a tag drawn, so the Lines tab can say so per row
   // without a second page of clicking (D25/AC-S10-2). Fetched once, off the
   // same tag-sheet doc the designer itself reads and writes.
@@ -527,6 +531,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               .filter((p) => p.product_id)
               .map((p) => p.product_id as string),
             candidate_product_ids: [],
+            combo_id: l.combo_id ?? null,
             promotion_id: override?.locked ? override.promotion_id : undefined,
           };
         }),
@@ -912,7 +917,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           instead of stacked cards - view and edit are the same layout, and
           there is no edit here beyond what the header's own actions already
           do. */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="request">
             <FileText />
@@ -938,6 +943,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             tagLabels={tagLabels}
             onCommentsChange={setReviewComments}
             currentRound={request.review_round}
+            withSalesperson={request.status === 'proof_ready' && !request.assigned_to_id}
           />
 
           <Card>
@@ -1138,10 +1144,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                             )}
                             {effectivePromotionId(line.id) ? (
                               <p className="text-sm font-medium whitespace-nowrap">
-                                RM{' '}
-                                {(
-                                  linePricing[line.id]?.sell_price ?? 0
-                                ).toLocaleString('en-MY')}
+                                {linePricing[line.id]?.sell_price != null
+                                  ? `RM ${linePricing[line.id]!.sell_price!.toLocaleString('en-MY')}`
+                                  : '-'}
                               </p>
                             ) : canEditLinePrice ? (
                               <NumberInput
@@ -1159,7 +1164,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 }
                                 onChange={(e) => setManualLinePrice(line.id, e.target.value)}
                                 onBlur={() => commitManualLinePrice(line.id)}
-                                placeholder="Type a price"
+                                placeholder={
+                                  line.combo_id &&
+                                  linePricing[line.id]?.sell_price_basis !== 'list' &&
+                                  linePricing[line.id]?.sell_price != null
+                                    ? `RM ${linePricing[line.id]!.sell_price!.toLocaleString('en-MY')}`
+                                    : 'Type a price'
+                                }
                                 aria-label={`Selling price for ${line.code || line.name}`}
                                 disabled={savingLinePrice === line.id}
                                 error={manualPriceError[line.id]}

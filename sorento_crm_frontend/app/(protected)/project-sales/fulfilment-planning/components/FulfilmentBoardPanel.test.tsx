@@ -188,7 +188,7 @@ vi.mock('../../_shared/services/lineSplitService', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -815,10 +815,11 @@ describe('FulfilmentBoardPanel: AC-S4-1 (panel) - the List view reads AutoCount 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     const table = await screen.findByRole('table');
-    // Select, Line, Sales order, Agent, Customer, PRODUCT, OI, ... - S6
+    // Select, Line, Sales order, Agent, Customer, Project, PRODUCT, OI, ... - S6
     // (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13) inserted the leftmost Line column
-    // ahead of Sales order, so PRODUCT_CELL shifts from 4 to 5.
-    const PRODUCT_CELL = 5;
+    // ahead of Sales order, and OI-UX-FILTER-SNAPSHOT the Project column after Customer,
+    // so PRODUCT_CELL is 6.
+    const PRODUCT_CELL = 6;
     const productSequence = within(table)
       .getAllByRole('row')
       .slice(1) // the header row
@@ -1256,6 +1257,9 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
     // Confirm's own success invalidates the board (it changes what every OTHER order can be
     // offered) - held open here so the in-flight moment can be asserted.
     let resolveRefetch: (value: PlanningBoard) => void = () => {};
+    // The guided Confirm re-reads the board as it opens (CONFIRM-PREVIEW-STALE); that read
+    // answers at once, so the held one below is Confirm's own refetch.
+    getPlanningBoard.mockResolvedValueOnce(allSaved(boardOf([demand()])));
     getPlanningBoard.mockImplementationOnce(
       () =>
         new Promise<PlanningBoard>((resolve) => {
@@ -1645,6 +1649,32 @@ describe('FulfilmentBoardPanel: states', () => {
     ).toBeInTheDocument();
     // The retired wording is gone from the component AND from this file.
     expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
+  });
+
+  /**
+   * DEALER-PLANNING PR 2, R3. An order with no demand class is left off the board, and the
+   * board says so in its own words (`unplanned_orders`, one `{so_number, reason}` each). The
+   * empty state must not blame cancelled or returned lines when the true cause is the class.
+   */
+  it('gives the true reason for an order left off the board, not the cancelled-lines one', async () => {
+    getPlanningBoard.mockResolvedValue({
+      ...boardOf([]),
+      unplanned_orders: [
+        {
+          so_number: 'SO403340',
+          reason: 'Sales order SO403340 has no demand class, so it is not planned here.',
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+
+    expect(
+      await screen.findByText(/SO403340 has no demand class/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Every line is cancelled, fully returned or marked no purchase needed.'),
+    ).not.toBeInTheDocument();
   });
 
   /**
@@ -2282,7 +2312,11 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
-    expect(previewConfirmMany).not.toHaveBeenCalled();
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's quiet email dry run may run; the press
+    // itself runs no dry run after the failed adopt, and posts nothing.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(0);
     expect(confirmMany).not.toHaveBeenCalled();
     // Nothing was committed, so the work is still the planner's.
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -2844,7 +2878,9 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
       ...screen
         .getByTestId('fulfilment-board-matrix')
         .querySelectorAll('tbody tr'),
-    ].map((row) => (row.querySelector('th')?.textContent ?? '').trim());
+      // The row's LABEL (its first span); a sales-order row's CUSTOMER / project line under
+      // it (OI-UX-FILTER-SNAPSHOT) is covered in `fulfilmentBoard.test.ts`.
+    ].map((row) => (row.querySelector('th span')?.textContent ?? '').trim());
   }
 
   async function pivotTo(value: string) {
@@ -4265,7 +4301,9 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     // the wire underneath it, and its own confirm attempt was refused, never committed.
     await pressPreviewThenConfirm();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
+    // Three reads: the mount, the guided Confirm's own re-read as it opens
+    // (CONFIRM-PREVIEW-STALE), and Confirm's refetch.
+    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(3));
 
     expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
   });
@@ -4602,7 +4640,10 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(previewConfirmMany).toHaveBeenCalledTimes(1);
+    // ONE press dry run per press; the guide's quiet email dry runs are not the press's.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(1);
     const [body] = confirmMany.mock.calls[0] as [
       { orders: { lines: { project_line_id: string }[]; only_line_ids?: string[] }[]; preview?: boolean },
     ];
@@ -4810,15 +4851,47 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
+  it("posts nothing when the press's own dry run fails, and Confirm is offered again", async () => {
+    // The guide's quiet email dry run answers; only the press's own dry run fails (the case
+    // this test pinned before the guide ran one of its own).
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockImplementation((body: { quiet?: boolean; orders: { pso_id: string }[] }) =>
+      body.quiet
+        ? Promise.resolve({
+            results: body.orders.map((order) => ({ pso_id: order.pso_id, ok: true, preview: true })),
+          })
+        : Promise.reject(new Error('Network down')),
+    );
+
+    renderPanel(['SO403340']);
+    await walkConfirmGuide();
+
+    await waitFor(() =>
+      expect(
+        previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+      ).toHaveLength(1),
+    );
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
   it('posts nothing when the dry run itself fails', async () => {
     getPlanningBoard.mockResolvedValue(twoLines());
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    await walkConfirmGuide();
-
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    // CONFIRM-PREVIEW-STALE round 3: the guide runs the dry run as it opens (popup = email).
+    // CONFIRM-DIALOG-SPEED review B2: a failed one keeps the sheet and holds Confirm behind
+    // its own Retry, so nothing can be posted from it.
+    await openConfirmGuide();
+    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
+    expect(await screen.findByTestId('confirm-guide-words-failed')).toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
     expect(confirmMany).not.toHaveBeenCalled();
   });
 

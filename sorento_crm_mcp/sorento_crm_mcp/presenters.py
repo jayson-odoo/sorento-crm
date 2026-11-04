@@ -1078,6 +1078,17 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
             b.attach(a.get("attachment") or a)
 
 
+# CABANA-NO-SELLING-PRICE: a brand whose promotions carry no selling price. A blank field
+# let the model invent one ("defined inside the flyer"), so the fact is stated outright.
+NO_SELLING_PRICE_TEXT = "None. This brand's promotions carry no selling price; the price is the List Price."
+
+
+def _selling_price(pp: dict) -> str | None:
+    if pp.get("no_selling_price") is True:
+        return NO_SELLING_PRICE_TEXT
+    return _money(pp.get("selling_price"))
+
+
 def _promotion_products(rows: list[dict], b: _Builder) -> None:
     for pp in rows:
         prod = pp.get("product") or {}
@@ -1089,7 +1100,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
-                ("Selling Price", _money(pp.get("selling_price"))),
+                ("Selling Price", _selling_price(pp)),
                 ("List Price", _money(prod.get("list_price"))),
                 ("Dimensions", _dims(prod)),
             ],
@@ -1599,6 +1610,9 @@ def _verdict_tail(entry: dict) -> str:
     if branch == "incoming":
         # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the cross says the stock
         # state too, not the date alone. Still no refer: the ETA is the answer.
+        if not entry.get("eta"):
+            # The dealer's ETA field is revoked: incoming, no date, no refer.
+            return f"{STOCK_NO} No stock, No ETA."
         return f"{STOCK_NO} No stock, ETA {entry.get('eta')}."
     available = entry.get("available_qty")
     if (
@@ -2583,6 +2597,8 @@ def _outstanding_envelope(report: dict) -> dict:
 #: The three lines the low stock report can answer with (AC-61). Written here, once, and
 #: handed to the lane verbatim: one writer, one wording.
 _LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
+#: A staff member's pending (the AI panel, AGENTIC-UNIFY AC-13): nothing is pushed anywhere.
+_LOW_STOCK_PENDING_DOWNLOADS = "Preparing the low stock report - it will be in your My Downloads when ready."
 #: A test turn's pending (the console, `dry_run`): the route never hands it to the worker,
 #: so nothing is pushed; the file still lands in My Downloads.
 _LOW_STOCK_PENDING_DRY_RUN = (
@@ -2690,7 +2706,13 @@ def _low_stock_envelope(payload: dict) -> dict:
         return {"result_type": "low_stock_report", "response": busy_line,
                 "attachments": [], "has_result": True}
     if status == "pending":
-        line = _LOW_STOCK_PENDING_DRY_RUN if payload.get("dry_run") is True else _LOW_STOCK_PENDING
+        line = (
+            _LOW_STOCK_PENDING_DRY_RUN
+            if payload.get("dry_run") is True
+            else _LOW_STOCK_PENDING_DOWNLOADS
+            if payload.get("delivery") == "my_downloads"
+            else _LOW_STOCK_PENDING
+        )
         return {"result_type": "low_stock_report", "response": line,
                 "attachments": [], "has_result": True}
     # Unknown / error / a raw error body: the error line verbatim, never pending and never
@@ -3393,6 +3415,7 @@ _REPORT_ASK_PLURALS = {
     "sales_agent": "sales agents",
     "location": "locations",
     "channel": "channels",
+    "account_type": "account types",
     "month": "months",
     "year": "years",
     "sales_order": "sales orders",
@@ -3427,6 +3450,16 @@ def _ask_figures(figures: dict, measure: Any) -> str:
         count = int(figures.get("count") or 0)
         return f"{count:,} {one if count == 1 else many}, {rm}, {pcs}"
     return f"{pcs}, {rm}" if measure == "qty" else f"{rm}, {pcs}"
+
+
+def _ask_companies(body: dict, measure: Any) -> list[str]:
+    """Owner O-R2 (3 Nov): an ask naming no company runs over every company the contact holds; with two or more holding
+    figures the route sends each one's total (`companies`, the contact's company order), printed one line each right
+    before the combined Total. Fewer than two: nothing."""
+    companies = [c for c in body.get("companies") or [] if isinstance(c, dict)]
+    if len(companies) < 2:
+        return []
+    return [f"{c.get('name')} {_ask_figures(c, measure)}" for c in companies]
 
 
 def _ask_before(figures: dict, measure: Any) -> str:
@@ -3668,8 +3701,9 @@ def _report_ask(body: dict) -> str:
         # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary in the pre-#1922
         # frame (header, a blank line, the block), its breakdowns the route's (the defaults, or the axis the user named).
         return "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *_ask_summary(body["basis"], body["summary"])])
+    companies = _ask_companies(body, measure)
     if not group_by and outstanding_kind:
-        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], f"Total {figures}"])
+        text = "\n".join([*facts, "", _ASK_OUTSTANDING_BLOCKS[body["basis"]], *companies, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure.
             text += "\n\n" + _ASK_SO_LIST_OFFER
@@ -3682,7 +3716,7 @@ def _report_ask(body: dict) -> str:
             else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
             else f"Sales by {basis}"
         )
-        text = "\n".join([head, *facts, f"Total {figures}"])
+        text = "\n".join([head, *facts, *companies, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
             text += "\n\n" + _ASK_SO_LIST_OFFER
@@ -3701,7 +3735,9 @@ def _report_ask(body: dict) -> str:
     count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
     of = f" of {count:,}" if count > len(rows) else ""
     by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
-    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    # A month or year split is a trend, not a ranking: it opens "By month, invoiced", never "Top N".
+    opening = f"By {group_by}, {basis}" if group_by in ("month", "year") else f"{lead} {len(rows)}{of} {plural} by {by}"
+    lines = [opening, *facts]
     items = group_by in ("product", "category")
     if items and body.get("sort") == "asc":
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
@@ -3716,6 +3752,7 @@ def _report_ask(body: dict) -> str:
             lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
     if more > 0:
         lines.append(f"and {more} more")
+    lines.extend(companies)
     lines.append(f"Total {figures}")
     text = "\n".join(lines)
     offer = _REPORT_ASK_OFFERS.get(group_by)
@@ -3877,6 +3914,8 @@ def _sales_analysis_envelope(payload: dict) -> dict:
         return {**envelope, "response": _SALES_ANALYSIS_ERROR}
     text = _sales_analysis_text(payload)
     if status == "pending":
+        if payload.get("delivery") == "my_downloads":
+            return {**envelope, "response": f"{text}\n\nThe file will be in your My Downloads when ready."}
         return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_PENDING}"}
     if status == "error":
         return {**envelope, "response": f"{text}\n\n{_SALES_ANALYSIS_FILE_FAILED}"}

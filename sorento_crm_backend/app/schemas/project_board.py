@@ -97,6 +97,8 @@ class BoardSource(BaseModel):
     #: because a missing key read as "older than v4" everywhere.
     ladder: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
@@ -341,6 +343,8 @@ class BoardLadderOption(BaseModel):
     #: in. Set on the borrow steps only: `use` draws the free pile and `buy` orders new
     #: stock, so neither owes anybody.
     debt_so_number: Optional[str] = None
+    debt_customer_name: Optional[str] = None
+    debt_project_label: Optional[str] = None
     debt_month: Optional[str] = None
     #: The step the engine proposed. At most ONE option carries it, and none does when
     #: nothing covers the unit.
@@ -395,6 +399,8 @@ class BoardDecisionBorrow(BaseModel):
     #: `group_borrow`. `None` on an ordinary location/project Borrow.
     rung: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
@@ -504,6 +510,9 @@ class BoardLineLending(BaseModel):
     so_number: Optional[str] = None
     #: Its line on that order, so two lines of one order are told apart.
     line_no: Optional[int] = None
+    #: That order's customer and project (OI-UX-FILTER-SNAPSHOT).
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class BoardProposed(BaseModel):
@@ -569,6 +578,10 @@ class BoardLineDraftBody(BaseModel):
 
     decision: Dict[str, Any]
     proposed: Optional[List[BoardSource]] = None
+    #: CONFIRM-PREVIEW-STALE: the `saved_at` of the draft the caller's decision stands on
+    #: (`null` = it holds none). When SENT, a stored draft saved after it refuses the write
+    #: (409 `board_line_draft_newer`); left out, last writer wins as before.
+    based_on_saved_at: Optional[datetime] = None
 
 
 class BoardContribution(BaseModel):
@@ -613,6 +626,11 @@ class BoardContribution(BaseModel):
     #: Shown as the code's `title`, never in place of the code.
     agent_label: Optional[str] = None
     project_label: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the order's Customer and Project exactly as the SO list names them
+    #: (`so_party`). What the board's CUSTOMER / project labels and the List view's Project
+    #: column print; `project_label` above keeps its note fallback for the pivot by project.
+    so_customer_name: Optional[str] = None
+    so_project_label: Optional[str] = None
     #: What a pivot BY PROJECT groups on: the project string, normalised. An order adopted from
     #: the AutoCount book has no project registration by design, so the string is the only
     #: identity a project has here.
@@ -835,6 +853,8 @@ class BorrowCandidate(BaseModel):
     #: donor row, `None` for a plain `other_location`/`other_project` donor.
     rung: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     donor_core_line_id: Optional[str] = None
@@ -925,6 +945,8 @@ class StockDetailHold(BaseModel):
     #: The order holding it. Null when its line has not been reconciled to a core order yet,
     #: which is the only case with no number a person could read.
     so_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     location: Optional[str] = None
     #: The holder's own required date, which is where the hold sits in the walk.
     required_date: Optional[date] = None
@@ -1009,6 +1031,7 @@ class PileQueueLine(BaseModel):
     #: What the order calls the line (AutoCount's number), the mirror's `line_no` without one.
     so_line_no: Optional[int] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: str
     required_date: Optional[date] = None
     order_date: Optional[date] = None
@@ -1138,7 +1161,8 @@ class BoardCellLocation(BaseModel):
     #: and `stock-detail` bound a pool-share composition by the net WITHOUT that addition
     #: (`fact.pools_net`). `poolShareLimitsOf` (D5) read `net` and so admitted a split the
     #: server's own guard would refuse the instant this line's own demand padded the figure
-    #: past what the raw pile actually carries. Absent wherever `net` is.
+    #: past what the raw pile actually carries. Absent wherever `net` is. For a line standing
+    #: on its own pool `fact.pools_net` holds that line's add-back, and so does this.
     net_raw: Optional[str] = None
     #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers' share
     #: is kept back - `min(floor(available_qty x (100 - pool_share_pct) / 100), max(net, 0))`,
@@ -1146,6 +1170,12 @@ class BoardCellLocation(BaseModel):
     #: an addressable pool row; absent on `own` / `group` / `other_group`, which keep no
     #: dealer share and where a zero would read as an empty location.
     available_for_project: Optional[str] = None
+    #: DEALER-PLANNING R12: the asking line stands on this pool, so `available_for_project` is
+    #: what the walk reads for it, and `pool_subtotal_for_project` is what the pools' subtotal
+    #: prints. `own_pool_no_share` says no dealer share is held back from it here (R9).
+    stands_on_pool: bool = False
+    own_pool_no_share: bool = False
+    pool_subtotal_for_project: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -1289,6 +1319,13 @@ class BoardPolicy(BaseModel):
     discriminates_nothing: bool = False
 
 
+class BoardUnplannedOrder(BaseModel):
+    """A selected order the board does not carry because it is not admitted to planning."""
+
+    so_number: str
+    reason: str
+
+
 class PlanningBoard(BaseModel):
     """`GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing."""
 
@@ -1311,6 +1348,9 @@ class PlanningBoard(BaseModel):
     #: confirm-all call all need EVERY decidable line, not only the ones currently rendered in
     #: the grid, so they read this list rather than flattening `cells`.
     contributions: List[BoardContribution] = []
+    #: DEALER-PLANNING R3: selected orders left out with the true reason, so the empty state
+    #: never tells a planner an open order's lines are all cancelled.
+    unplanned_orders: List[BoardUnplannedOrder] = []
 
     # ---- selection-scoped totals -------------------------------------------------
     #

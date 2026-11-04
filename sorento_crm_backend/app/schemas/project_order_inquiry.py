@@ -248,6 +248,8 @@ class OrderInquiryLineSplitOut(BaseModel):
     change: str = ""
     sits_on_line_id: Optional[str] = None
     sits_on_line_no: Optional[int] = None
+    #: The SO line date of the line the part sits on (core first, mirror fallback).
+    sits_on_line_date: Optional[date] = None
     remark: str = ""
 
 
@@ -839,6 +841,8 @@ class AcknowledgeFilter(BaseModel):
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (the Lines chip with "Select all").
     inquiry_no: Optional[str] = None
+    #: OI-RESERVE-ROUND: reserve request ids, comma-joined (the same chip family).
+    reserve_request: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
 
@@ -1028,6 +1032,9 @@ class OrderInquiryPoCandidateClaim(BaseModel):
     """
 
     so_number: Optional[str] = None
+    #: That order's customer (debtor name, else customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     item_code: Optional[str] = None
     qty: str
     placed_date: Optional[datetime] = None
@@ -1086,6 +1093,8 @@ class OrderInquiryPoCandidate(BaseModel):
     # dialog greys the row "Dedicated to SO xxxx". `None` when nobody but this row's own
     # SO (or nobody at all) claims it.
     dedicated_to: Optional[str] = None
+    dedicated_customer_name: Optional[str] = None
+    dedicated_project_label: Optional[str] = None
     # G12's project-bin lock: this line sits at a `segment = 'project'` warehouse and NO
     # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
     # link manually". Always `False` for a pool-destination line (AC-6.10).
@@ -1306,6 +1315,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
     #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (no value cap).
     inquiry_no: Optional[str] = None
+    #: OI-RESERVE-ROUND: reserve request ids, comma-joined (no value cap).
+    reserve_request: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
 
     @field_validator("state")
     @classmethod
@@ -1362,6 +1373,8 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: linkage does not depend on which screen it is read from. `response_model` silently
     #: drops an undeclared field, which is exactly why both of these are declared.
     book_so_number: Optional[str] = None
+    book_so_customer_name: Optional[str] = None
+    book_so_project_label: Optional[str] = None
     #: True when the book named a sales order this CRM does not hold. Three states, not
     #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
     #:
@@ -1798,7 +1811,7 @@ class HandoverResendEmailOut(ParkedEmailOut):
 class HandoverResendSkipOut(BaseModel):
     inquiry_id: str
     inquiry_no: Optional[str] = None
-    reason: Literal["nothing_open", "no_recipient", "failed"]
+    reason: Literal["nothing_open", "no_recipient", "failed", "partly_failed"]
 
 
 class HandoverResendPreviewOut(BaseModel):

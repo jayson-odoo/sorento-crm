@@ -17,17 +17,26 @@ import type { SearchableSelectOption } from '@/components/common/SearchableSelec
 import type {
   PriceMode,
   ProductCombosLookup,
+  ProductTagTemplateOption,
   TagItemOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { distinctName } from '@/lib/product-display';
-import { emptyDraftLine, newPartKey, partsFromCombo, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import {
+  emptyDraftLine,
+  MISSING_TAG_TEMPLATE,
+  newPartKey,
+  partsFromCombo,
+  type DraftLine,
+} from '@/lib/dealer-kit/price-tag-draft-lines';
 
 /** The three catalogue calls the editor makes. */
 export interface PriceTagLineLookups {
   lookupTagItems: (query?: string) => Promise<TagItemOption[]>;
   lookupProductCombos: (productId: string) => Promise<ProductCombosLookup>;
   lookupLinePricing: (priceMode: PriceMode, lines: LinePricingLineInput[]) => Promise<LinePricingResult[]>;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: optional so a caller without it simply shows no Template field. */
+  lookupProductTagTemplates?: (productId: string) => Promise<ProductTagTemplateOption[]>;
 }
 
 interface Options {
@@ -60,6 +69,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.product_id,
           l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
+          l.combo_id,
         ]),
       ),
     [lines],
@@ -77,6 +87,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           p.candidates.map((c) => c.product_id),
         ),
         promotion_id: l.promotion_id,
+        combo_id: l.combo_id,
       }));
     if (inputs.length === 0) {
       setLinePricing({});
@@ -207,6 +218,72 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
         });
     }
   }, [lines, lookups, setLines]);
+
+  /**
+   * PRICETAG-TEMPLATE-PER-PRODUCT: the product's published templates, asked
+   * once per product on a line (same reasoning as the combos effect above: a
+   * reopened draft or an AI-extracted line never goes through the picker).
+   * One template is applied on the spot; several keep a pick only when it is
+   * one of them, so a re-picked product never carries the old product's choice.
+   */
+  const templatesAskedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const lookup = lookups.lookupProductTagTemplates;
+    if (!lookup) return;
+    const pending = lines.filter(
+      (l) =>
+        l.line_type === 'product' &&
+        l.product_id &&
+        l.tag_templates_for !== l.product_id &&
+        !templatesAskedRef.current.has(`${l.key}:${l.product_id}`),
+    );
+    for (const line of pending) {
+      const productId = line.product_id as string;
+      const asked = `${line.key}:${productId}`;
+      templatesAskedRef.current.add(asked);
+      const apply = (options: ProductTagTemplateOption[]) => {
+        templatesAskedRef.current.delete(asked);
+        setLines((prev) =>
+          prev.map((l) => {
+            if (l.key !== line.key || l.product_id !== productId) return l;
+            const kept = options.some((o) => o.id === l.tag_template_id)
+              ? (l.tag_template_id ?? null)
+              : null;
+            return {
+              ...l,
+              tag_templates: options,
+              tag_templates_for: productId,
+              tag_template_id: options.length === 1 ? options[0].id : kept,
+            };
+          }),
+        );
+      };
+      // A failed lookup shows no field, which is what a product with no link
+      // looks like; the server's own rule still decides at Submit.
+      lookup(productId).then(apply).catch(() => apply([]));
+    }
+  }, [lines, lookups, setLines]);
+
+  /** The Template select on a line whose product allows several (AC-14). */
+  const chooseTemplate = useCallback(
+    (key: string, templateId: string) => {
+      setLines((prev) =>
+        prev.map((l) =>
+          l.key === key
+            ? {
+                ...l,
+                tag_template_id: templateId || null,
+                // The row's own "pick a template" message goes once one is picked;
+                // any other message (a duplicate product) stays.
+                guard_error:
+                  templateId && l.guard_error === MISSING_TAG_TEMPLATE ? null : l.guard_error,
+              }
+            : l,
+        ),
+      );
+    },
+    [setLines],
+  );
 
   /** The Package select on a line with two or more combos (AC-S2-2). Clearing it
    *  takes the parts with it - they belonged to the package. */
@@ -474,6 +551,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     updateLine,
     handleItemSelect,
     choosePackage,
+    chooseTemplate,
     choosePromotion,
     setManualSellPrice,
     removePart,

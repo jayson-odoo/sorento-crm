@@ -13,10 +13,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
+const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/sales/teams/north',
   useRouter: () => router,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 // The gear renders its items as buttons inside `data-testid="gear"`, so a test can tell an
@@ -158,6 +159,7 @@ function member(id: string, label: string) {
 
 beforeEach(() => {
   router.push.mockReset();
+  nav.search = '';
   perms.granted = new Set(['sales.teams.view', 'sales.teams.edit', 'sales.teams.delete']);
   save.mutateAsync.mockReset();
   save.mutateAsync.mockResolvedValue({});
@@ -440,5 +442,36 @@ describe('SalesTeamDetail', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     openTab('Agents');
     expect(screen.queryByRole('button', { name: /add agents/i })).toBeNull();
+  });
+});
+
+// NAV-KEEP-TAB: this record walks its own in-memory list (not `useListPager`), so its
+// prev/next must carry the open tab itself.
+describe('SalesTeamDetail keeps the tab on prev/next', () => {
+  const selected = () =>
+    screen.getAllByRole('tab').find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
+
+  it('opens on the tab the URL names', () => {
+    nav.search = 'tab=agents';
+    render(<SalesTeamDetail id="north" />);
+    expect(selected()).toMatch(/Agents/);
+  });
+
+  it('Next and Previous carry ?tab= to the neighbouring team', () => {
+    nav.search = 'tab=agents';
+    render(<SalesTeamDetail id="north" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Next sales team' }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/teams/south?tab=agents');
+    fireEvent.click(screen.getByRole('button', { name: 'Previous sales team' }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/teams/central?tab=agents');
+  });
+
+  it('a tab just picked is carried, and the default tab adds nothing', () => {
+    render(<SalesTeamDetail id="north" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Next sales team' }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/teams/south');
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /Targets/ }), { button: 0, ctrlKey: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Next sales team' }));
+    expect(router.push).toHaveBeenLastCalledWith('/sales/teams/south?tab=targets');
   });
 });

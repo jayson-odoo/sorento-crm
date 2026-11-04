@@ -86,6 +86,8 @@ export function StockDocumentsPanel({
   filterText,
   jumpTarget,
   autoCount = null,
+  poolSubtotal,
+  ownPoolNoShare = false,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
@@ -117,6 +119,10 @@ export function StockDocumentsPanel({
    * listed (outside Available, as the PO qty column is).
    */
   autoCount?: StockStatus | null;
+  /** DEALER-PLANNING R12: the pools' subtotal for a line standing on its own pool, and whether
+   *  no dealer share is held back from it there (a retail line, R9). */
+  poolSubtotal?: string | null;
+  ownPoolNoShare?: boolean;
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
@@ -242,9 +248,9 @@ export function StockDocumentsPanel({
         doc_type: 'Hold' as const,
         doc_no: hold.so_number ?? '-',
         sales_order_id: null,
-        party: null,
+        party: hold.customer_name ?? null,
         agent_code: null,
-        project_label: null,
+        project_label: hold.project_label ?? null,
         location: hold.location ?? null,
         doc_date: null,
         due_date: hold.required_date ?? null,
@@ -571,6 +577,26 @@ export function StockDocumentsPanel({
         meta: { headerTitle: 'Customer / supplier' },
       },
       {
+        // The order's project (OI-UX-FILTER-SNAPSHOT): sales-order and hold rows only, a
+        // purchase document has none.
+        id: 'project_label',
+        accessorFn: (row) => row.project_label ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span
+            className={cn('block truncate text-sm', emphasis(row.original))}
+            title={row.original.project_label ?? ''}
+          >
+            {row.original.project_label || '-'}
+          </span>
+        ),
+        size: 180,
+        minSize: 130,
+        meta: { headerTitle: 'Project' },
+      },
+      {
         // Who sold it. A purchase row has no agent - it is not a sales document - so this
         // reads "-" there rather than a guess.
         id: 'agent_code',
@@ -723,14 +749,16 @@ export function StockDocumentsPanel({
       // (`five_pool_net`) - a GROUP set (`IB`, `BB`, ...) keeps the raw pile, unlabelled and
       // uncapped, exactly as it always has.
       const balanceHeading = isPoolsSection
-        ? 'Available for Project'
+        ? ownPoolNoShare
+          ? 'Available for this line'
+          : 'Available for Project'
         : 'Balance after';
       const fivePoolNet = isPoolsSection
         ? (detail.data?.five_pool_net ?? null)
         : null;
       const sharePct = detail.data?.pool_share_pct;
       const displayedBalance = (balance: string | null): string | null =>
-        isPoolsSection
+        isPoolsSection && !ownPoolNoShare
           ? (availableForProject(balance, fivePoolNet, sharePct) ?? balance)
           : balance;
       list.push({
@@ -744,7 +772,9 @@ export function StockDocumentsPanel({
           <DataGridColumnHeader title={balanceHeading} column={column} />
         ),
         cell: ({ row }) => {
-          const shown = displayedBalance(row.original.balance);
+          // The closing row states what the footer and the Stock tab's subtotal state (R12).
+          const closes = poolSubtotal != null && row.original.key === rows[rows.length - 1]?.key;
+          const shown = closes ? poolSubtotal : displayedBalance(row.original.balance);
           return (
             <span
               data-testid={`stock-balance-${row.original.key}`}
@@ -767,7 +797,9 @@ export function StockDocumentsPanel({
         footer: () => {
           const closing =
             rows.length > 0 ? rows[rows.length - 1].balance : null;
-          const shown = displayedBalance(closing);
+          // A line standing on its pool: the Stock tab's subtotal is the walk's figure, not the
+          // share of the true net, and this closing figure foots to that summary cell.
+          const shown = poolSubtotal ?? displayedBalance(closing);
           return (
             <span
               className={cn(
@@ -790,6 +822,8 @@ export function StockDocumentsPanel({
     isGroup,
     rows,
     isPoolsSection,
+    poolSubtotal,
+    ownPoolNoShare,
     detail.data?.five_pool_net,
     detail.data?.pool_share_pct,
   ]);

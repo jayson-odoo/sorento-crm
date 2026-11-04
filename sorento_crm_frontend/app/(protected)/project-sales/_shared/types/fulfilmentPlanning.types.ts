@@ -97,6 +97,8 @@ export interface FulfilmentPlanningRow {
   so_number?: string | null;
   /** AC-CONSIGN-CRM: the core sales order's doc_type ('consignment' / 'sales_order'). */
   so_doc_type?: string | null;
+  /** The class stored on the core order: project, retail or other (DEALER-PLANNING R6). */
+  demand_class?: string | null;
   /** Whether the planning record was authored here or adopted from the core book. */
   origin?: 'authored' | 'adopted' | null;
   provisional_ref?: string | null;
@@ -225,6 +227,8 @@ export interface FulfilmentPlanningListParams {
   query?: string;
   /** One state, or several comma-joined (OR-ed). */
   review_state?: string;
+  /** Empty means Project, on the server too (DEALER-PLANNING R6). */
+  demand_class?: string[];
   project_id?: string;
   sales_order_id?: string;
   /** One of `FULFILMENT_PLANNING_SORT_FIELDS`. Omitted leaves the server's own order. */
@@ -292,6 +296,9 @@ export interface SupplyComponent {
   rung?: string | null;
   /** The donor sales order for a `group_borrow` component (section E.4). */
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** The donor shares this line's own sales agent (section 8). */
@@ -380,6 +387,9 @@ export interface BorrowCandidate {
   rung?: string | null;
   /** The donor sales-order line this row names, for `group_borrow` (section E.4). */
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
@@ -989,6 +999,9 @@ export interface BoardLadderOption {
    * Debt view. Both absent on `use` and `buy`, which owe nobody.
    */
   debt_so_number?: string | null;
+  /** The debt order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  debt_customer_name?: string | null;
+  debt_project_label?: string | null;
   debt_month?: string | null;
   /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
   chosen: boolean;
@@ -1102,6 +1115,9 @@ export interface BoardDecisionBorrow {
   /** Ladder v2 (section E.4): the donor sales-order line this Borrow named. */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   same_agent?: boolean;
@@ -1228,6 +1244,10 @@ export interface BoardContribution {
   /** Who the code belongs to, shown as the code's `title`, never in place of the code. */
   agent_label?: string | null;
   project_label?: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: the order's Customer and Project as the SO list names them;
+   *  what the CUSTOMER / project labels and the List view's Project column print. */
+  so_customer_name?: string | null;
+  so_project_label?: string | null;
   /**
    * The project's normalised key, for grouping only, never rendered.
    *
@@ -1521,6 +1541,9 @@ export interface BoardLineLending {
   so_number?: string | null;
   /** Its line on that order, so two lines of one order are told apart. */
   line_no?: number | null;
+  /** That order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /** The order inquiry a board row belongs to, in the two words a person reads it by. */
@@ -1648,6 +1671,9 @@ export interface BoardSource {
   /** Ladder v2 (section E): which rung produced this source. */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   same_agent?: boolean;
@@ -1708,6 +1734,9 @@ export interface BoardBorrowCandidate {
    */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
@@ -1798,6 +1827,14 @@ export interface BoardCellLocation {
    * figure past what the raw pile carries.
    */
   net_raw?: string | null;
+  /**
+   * DEALER-PLANNING R12: the asking line stands on this pool, so `available_for_project` is what
+   * the walk reads for it, whatever `where` says, and `pool_subtotal_for_project` is what the
+   * pools' subtotal prints. `own_pool_no_share`: no dealer share is held back from it here (R9).
+   */
+  stands_on_pool?: boolean;
+  own_pool_no_share?: boolean;
+  pool_subtotal_for_project?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -1908,6 +1945,8 @@ export interface BoardAxisRow {
   label: string;
   /** Secondary text for the row header, e.g. a product's name under its code. */
   description?: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: a sales-order row's `CUSTOMER / project`, printed under it. */
+  party?: string | null;
 }
 
 /**
@@ -2045,6 +2084,8 @@ export interface BoardCommitPreview {
  */
 export interface PlanningBoard {
   granularity: BoardGranularity;
+  /** DEALER-PLANNING R3: selected orders left out because they are not admitted, and why. */
+  unplanned_orders?: { so_number: string; reason: string }[];
   /** Which policy produced the ranking on show. Always stated (13.5). */
   policy: BoardPolicy;
   /** The date the board was built against, so `is_past` is reproducible in a test. */
@@ -2337,6 +2378,9 @@ export interface StockDetailIncoming {
 export interface StockDetailHold {
   /** The order holding it. Null when its line has not been reconciled to a core order yet. */
   so_number?: string | null;
+  /** The holding order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  customer_name?: string | null;
+  project_label?: string | null;
   location?: string | null;
   /** The holder's own required date, which is where the hold sits in the walk. */
   required_date?: string | null;
@@ -2482,6 +2526,8 @@ export interface PileQueueLine {
   /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
   so_line_no?: number | null;
   customer_name?: string | null;
+  /** The order's project label (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   qty: string;
   required_date?: string | null;
   order_date?: string | null;
@@ -2574,6 +2620,8 @@ export interface PlanRow {
   project_id?: string | null;
   so_number?: string | null;
   customer_name?: string | null;
+  /** The order's project label (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   agent_code?: string | null;
   agent_label?: string | null;
   revision_no: number;
@@ -2592,6 +2640,7 @@ export interface PlanRow {
 export const PLAN_SORT_FIELDS = [
   'so_number',
   'customer_name',
+  'project_label',
   'agent_code',
   'revision_no',
   'state',
@@ -2670,6 +2719,11 @@ export interface ConfirmManyBody {
   batch_id?: string | null;
   /** Run the press and roll it back: the answer names what it WOULD raise (FULFIL-CONFIRM-SCOPE v2). */
   preview?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (review round 3, S3): with `preview`, the guided Confirm's own dry run
+   * for the email's words. The server records no refusal for it.
+   */
+  quiet?: boolean;
 }
 
 /** One order inquiry row a previewed press would raise. */
@@ -2756,6 +2810,11 @@ export interface ConfirmManyOrderResult {
   /** The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362). */
   lines_fulfilled_skipped?: number | null;
   /**
+   * CONFIRM-PREVIEW-STALE: on a dry run only, the purchasing email's own lines for this order,
+   * rendered by the same builder the real send uses. The guided Confirm prints their REMARK.
+   */
+  email_lines?: ConfirmEmailLine[] | null;
+  /**
    * #1362 (owner, 29 Sep 2026): lines the server's recheck refused, left out so the rest of
    * the order confirmed. Each keeps its saved decision.
    */
@@ -2808,6 +2867,9 @@ export interface PlanningHistoryEvent {
   actor: string | null;
   pso_id: string;
   so_no: string;
+  /** The order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   lines: PlanningHistoryLine[];
   preview?: boolean;
   revision_no?: number;
@@ -2822,4 +2884,14 @@ export interface PlanningHistoryEvent {
 
 export interface PlanningHistory {
   events: PlanningHistoryEvent[];
+}
+
+/** One line of the purchasing email a Confirm would send (CONFIRM-PREVIEW-STALE). */
+export interface ConfirmEmailLine {
+  /** The planning line it is told for. Addressing only, never rendered. */
+  so_line_id: string;
+  item_code?: string | null;
+  qty?: string | null;
+  delivery_date?: string | null;
+  remark: string;
 }

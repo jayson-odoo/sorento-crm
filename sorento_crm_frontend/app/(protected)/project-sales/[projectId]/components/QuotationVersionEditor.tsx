@@ -19,7 +19,10 @@ import {
 import type { ProductSetLineRef } from '@/app/(protected)/master-data-management/product-sets/types/productSet.types';
 import type { ProductLineRef } from '@/app/(protected)/master-data-management/products/types/product.types';
 import {
+  useProjectQuotationVersions,
+  useQuotationColumnsMutation,
   useQuotationLines,
+  useQuotationLinesOf,
   useQuotationRecomputeMutation,
   useQuotationVersions,
   useSeriesPricedRows,
@@ -28,15 +31,21 @@ import {
 import type {
   Project,
   ProjectQuotation,
+  QuotationFeedbackRow,
   QuotationLine,
   QuotationLineBulkItem,
   QuotationRecomputeResult,
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
+import { hasColumns, reshapeCells, type MatrixHeader } from '../../_shared/lib/quotationMatrix';
+import { carryFeedback } from '../../_shared/lib/quotationFeedbackMarks';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
-import { QuotationLinesGrid, type QuotationLinesReview } from './QuotationLinesGrid';
+import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
 import {
+  PICKED_CODE_KEY,
+  cellsPatch,
   completeSetText,
+  draftCells,
   lineErrors,
   serverToDraft,
   toBody,
@@ -91,6 +100,18 @@ export type QuotationScopeEditing = {
   seed: (versionId: string, lines: StagedQuotationLine[]) => void;
   stage: (lines: StagedQuotationLine[]) => void;
   toggleRemoved: (key: string) => void;
+  /**
+   * PS-QUOTE-MATRIX: true while a column removal counts down or a column write is on its way.
+   * The page's Save waits: a line write racing a column write 422s on cells under a removed key.
+   */
+  setColumnsBusy?: (busy: boolean) => void;
+  /**
+   * PS-QUOTE-MATRIX: a scope with no saved version yet (added on the form) holds its column
+   * headers here, edited through the same header controls, and Save sends them with its lines.
+   * Ignored for a saved scope, whose columns are its version's (written at once).
+   */
+  columns?: MatrixHeader[];
+  setColumns?: (next: MatrixHeader[]) => void;
 };
 
 /**
@@ -110,20 +131,23 @@ export function QuotationVersionEditor({
   seriesId,
   edit,
   locked = false,
-  review,
-  suggestedOnly = false,
-  reviewVersionId = null,
+  feedback,
+  siblingScopes,
+  formCopySources,
 }: {
   project: Project;
-  /** The customer's suggestions to decide on the lines (QUOTE-CUSTOMER-AMEND). A read only. */
-  review?: QuotationLinesReview;
-  /** With a review: show only the lines the customer made a suggestion on. */
-  suggestedOnly?: boolean;
   /**
-   * The version the review's rows name, when it is not the current one: a scope where somebody
-   * opened a draft by hand after issuing. The editor opens on it and the review is decided there.
+   * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, and
+   * on their copies in a later revision (same product, same occurrence), so a draft shows them.
    */
-  reviewVersionId?: string | null;
+  feedback?: QuotationFeedbackRow[];
+  /** The document's other scopes, offered by Copy columns from while editing. */
+  siblingScopes?: ProjectQuotation[];
+  /**
+   * The form's other sections not saved yet, with the headers they hold (round 4): offered by
+   * Copy columns from too, so on New proposal a second section can copy the first.
+   */
+  formCopySources?: { label: string; columns: MatrixHeader[] }[];
   /** The quotation is locked for approval: no per-scope revise is offered. */
   locked?: boolean;
   /**
@@ -153,10 +177,21 @@ export function QuotationVersionEditor({
     [versions.data],
   );
   const current = rows.find((version) => version.is_current) ?? null;
-  const selected =
-    rows.find((version) => version.id === selectedId) ??
-    rows.find((version) => version.id === reviewVersionId) ??
-    current;
+  const selected = rows.find((version) => version.id === selectedId) ?? current;
+  // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column. A scope
+  // added on the form has no version yet: its headers are the form's, until Save.
+  const formColumns = isUnsaved ? edit?.columns : undefined;
+  /**
+   * A saved scope's header as edited here, ahead of the server: the source of truth until every
+   * column write has answered (round 4). An answer never overwrites a change made after its
+   * request went out; when the queue drains the server's columns take over again.
+   */
+  const [localColumns, setLocalColumns] = React.useState<MatrixHeader[] | null>(null);
+  const matrixColumns = React.useMemo<MatrixHeader[]>(
+    () => (isUnsaved ? (formColumns ?? []) : (localColumns ?? selected?.matrix_columns ?? [])),
+    [formColumns, isUnsaved, localColumns, selected?.matrix_columns],
+  );
+  const withCells = hasColumns(matrixColumns);
 
   const lines = useQuotationLines(selected?.id);
 
@@ -344,7 +379,10 @@ export function QuotationVersionEditor({
         const storedSet = stored?.product_set_id === setId;
         return {
           value: `${SET_OPTION_PREFIX}${setId}`,
-          label: picked?.set_code ?? (storedSet ? (stored?.product_code ?? 'Selected set') : 'Selected set'),
+          label:
+            picked?.set_code ??
+            (storedSet ? stored?.product_code : null) ??
+            (draft[PICKED_CODE_KEY] || 'Selected set'),
           description:
             picked?.name ?? (storedSet ? (stored?.description ?? undefined) : undefined),
         };
@@ -361,10 +399,11 @@ export function QuotationVersionEditor({
       }
       return {
         value: productId,
+        // The stored code, else the code carried on the draft since the pick (a line not saved
+        // yet, after a section switch rebuilt this editor and its lookup).
         label:
-          stored?.product_id === productId
-            ? (stored.product_code ?? 'Selected product')
-            : 'Selected product',
+          (stored?.product_id === productId ? stored.product_code : null) ??
+          (draft[PICKED_CODE_KEY] || 'Selected product'),
         description:
           stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
       };
@@ -412,11 +451,12 @@ export function QuotationVersionEditor({
         id: line.id,
         key: line.id,
         line,
-        draft: serverToDraft(line),
+        draft: serverToDraft(line, withCells),
         removed: false,
       })),
     );
   }, [
+    withCells,
     isEditing,
     isUnsaved,
     lines.isFetching,
@@ -441,42 +481,181 @@ export function QuotationVersionEditor({
             id: line.id,
             key: line.id,
             line,
-            draft: serverToDraft(line),
+            draft: serverToDraft(line, withCells),
             removed: false,
           })),
-    [gridEditing, sortedLines, staged],
+    [gridEditing, sortedLines, staged, withCells],
   );
 
-  // The review applies on the version the customer holds only: the suggestions name its lines.
-  // That is the current one, or the issued one under a hand-made draft (`reviewVersionId`).
-  const gridReview =
-    !gridEditing && selected && selected.id === (reviewVersionId ?? current?.id) ? review : undefined;
-  const suggestedIds = React.useMemo(
+  /**
+   * The header editor (PS-QUOTE-MATRIX R11): only on the editable version, in an edit session.
+   * A change is written at once (the server moves quantities in and out); the lines staged in
+   * this session are reshaped by the same rule, so unsaved typing survives the change.
+   */
+  const columnsMutation = useQuotationColumnsMutation(project.id);
+  const stagedRef = React.useRef(staged);
+  stagedRef.current = staged;
+  const stageForColumns = edit?.stage;
+  const versionForColumns = selected?.id ?? null;
+  // One editor for create and edit (owner, 28 Oct): a scope not saved yet edits its header too,
+  // held by the form; a saved one needs its version to be editable.
+  const setFormColumns = edit?.setColumns;
+  const canEditColumns =
+    gridEditing &&
+    project.can_edit &&
+    (isUnsaved ? Boolean(setFormColumns) : Boolean(selected?.is_editable));
+  const siblingVersions = useProjectQuotationVersions(canEditColumns ? siblingScopes : undefined);
+  const copySources = React.useMemo(
     () =>
-      gridReview && suggestedOnly
-        ? new Set(gridReview.rows.map((row) => row.line_id))
-        : null,
-    [gridReview, suggestedOnly],
+      (canEditColumns ? (siblingScopes ?? []) : []).map((scope) => ({
+        label: scope.scope_label,
+        columns:
+          siblingVersions.rows.find(
+            (row) => row.quotation.id === scope.id && row.version.is_current,
+          )?.version.matrix_columns ?? [],
+      })).concat(canEditColumns ? (formCopySources ?? []) : []),
+    [canEditColumns, formCopySources, siblingScopes, siblingVersions.rows],
   );
-  const withoutSuggestions = suggestedIds
-    ? gridLines.filter((line) => !line.line || !suggestedIds.has(line.line.id)).length
-    : 0;
+  /** The staged lines carried across a header change, by the server's own rule (R12). */
+  const reshapeStaged = React.useCallback(
+    (before: MatrixHeader[], after: MatrixHeader[]) => {
+      const held = stagedRef.current;
+      if (!held || !stageForColumns) return;
+      stageForColumns(
+        held.map((line) => {
+          const reshaped = reshapeCells(before, after, draftCells(line.draft), line.draft.quantity ?? '');
+          return { ...line, draft: { ...line.draft, ...cellsPatch(reshaped.cells, reshaped.quantity) } };
+        }),
+      );
+    },
+    [stageForColumns],
+  );
+  /**
+   * Column writes for a saved scope, one in flight at a time (round 4). Each is the WHOLE matrix,
+   * so two racing writes let the later ANSWER win: a rename made while "+ Column" was saving went
+   * back to "Column 1", on screen and in the database. A change made while a write is out only
+   * replaces `queued`; when the write answers, the latest matrix goes out once. A refused write
+   * puts the header and the staged lines back as they were before the batch, and toasts (the
+   * mutation's own toast).
+   */
+  const writes = React.useRef<{
+    inFlight: boolean;
+    queued: MatrixHeader[] | null;
+    /** The staged lines and header before the first unanswered change, for a rollback. */
+    before: { lines: StagedQuotationLine[] | null; columns: MatrixHeader[] } | null;
+  }>({ inFlight: false, queued: null, before: null });
+  const [writing, setWriting] = React.useState(false);
+  const pump = React.useCallback(async () => {
+    const queue = writes.current;
+    if (queue.inFlight || !queue.queued || !versionForColumns) return;
+    queue.inFlight = true;
+    setWriting(true);
+    try {
+      while (queue.queued) {
+        const columns = queue.queued;
+        queue.queued = null;
+        await columnsMutation.mutateAsync({ versionId: versionForColumns, columns });
+      }
+      queue.before = null;
+      // Drained: the server's columns (set from the last answer) take over.
+      setLocalColumns(null);
+    } catch {
+      const before = queue.before;
+      queue.queued = null;
+      queue.before = null;
+      setLocalColumns(null);
+      if (before?.lines && stageForColumns) stageForColumns(before.lines);
+    } finally {
+      queue.inFlight = false;
+      setWriting(false);
+    }
+  }, [columnsMutation, stageForColumns, versionForColumns]);
+  const changeColumns = React.useCallback(
+    async (next: MatrixHeader[]): Promise<boolean> => {
+      const before = matrixColumns;
+      if (isUnsaved) {
+        // Nothing to write yet: the form holds the header and sends it with the lines on Save.
+        if (!setFormColumns) return false;
+        setFormColumns(next);
+        reshapeStaged(before, next);
+        return true;
+      }
+      if (!versionForColumns) return false;
+      const queue = writes.current;
+      if (!queue.before) queue.before = { lines: stagedRef.current, columns: before };
+      // Optimistic, like create: the header and the moved quantities are on screen at once.
+      setLocalColumns(next);
+      reshapeStaged(before, next);
+      queue.queued = next;
+      void pump();
+      return true;
+    },
+    [isUnsaved, matrixColumns, pump, reshapeStaged, setFormColumns, versionForColumns],
+  );
+  /**
+   * The notes as marks on the version on screen (R20, E6). They name the ISSUED version's lines;
+   * when a note's line is not on screen, the other versions' lines are read (cached per version)
+   * to carry it to its copy here.
+   */
+  const scopeNotes = React.useMemo(
+    () =>
+      (feedback ?? []).filter(
+        (note) => !note.scope_id || !quotation || note.scope_id === quotation.id,
+      ),
+    [feedback, quotation],
+  );
+  const shownIds = React.useMemo(() => new Set(sortedLines.map((line) => line.id)), [sortedLines]);
+  const needsSources = scopeNotes.some((note) => !shownIds.has(note.line_id));
+  const sourceVersionIds = React.useMemo(
+    () =>
+      needsSources
+        ? rows.filter((version) => version.id !== selected?.id).map((version) => version.id)
+        : [],
+    [needsSources, rows, selected?.id],
+  );
+  const sourceLines = useQuotationLinesOf(sourceVersionIds);
+  const gridFeedback = React.useMemo(
+    () => carryFeedback(scopeNotes, sourceLines, sortedLines),
+    [scopeNotes, sourceLines, sortedLines],
+  );
+
+  const [removalPending, setRemovalPending] = React.useState(false);
+  const setColumnsBusy = edit?.setColumnsBusy;
+  // Save waits only while a removal counts down or a column write is out (normally well under a
+  // second): lines sent across a column write would 422 on cells under keys not stored yet. The
+  // screen is already right meanwhile (optimistic), so nothing reads blank or 0.
+  const columnsBusy = removalPending || writing;
+  React.useEffect(() => {
+    setColumnsBusy?.(columnsBusy);
+  }, [columnsBusy, setColumnsBusy]);
+  // Leaving the scope never leaves the page's Save waiting on a grid that is gone.
+  React.useEffect(() => () => setColumnsBusy?.(false), [setColumnsBusy]);
+
+  const matrix = React.useMemo<QuotationLinesMatrix>(
+    () => ({
+      columns: matrixColumns,
+      onChange: canEditColumns ? changeColumns : undefined,
+      // Never locks the header: changes made while a write is out are queued and merged.
+      saving: false,
+      copySources,
+      onRemovalPending: setRemovalPending,
+    }),
+    [canEditColumns, changeColumns, copySources, matrixColumns],
+  );
 
   // Matched on the LIVE draft, so a description typed seconds ago is already findable, plus the
   // saved code the draft does not carry as text.
   const needle = lineSearch.trim().toLowerCase();
   const rowFilter = React.useMemo(() => {
-    if (!needle && !suggestedIds) return undefined;
+    if (!needle) return undefined;
     return (line: StagedQuotationLine) =>
-      (!suggestedIds || (line.line !== null && suggestedIds.has(line.line.id))) &&
-      (!needle ||
-        [
-          line.line?.product_code,
-          line.draft.description,
-          line.draft.brand_snapshot,
-          line.draft.band_label,
-        ].some((value) => (value ?? '').toLowerCase().includes(needle)));
-  }, [needle, suggestedIds]);
+      [
+        line.line?.product_code,
+        line.draft.description,
+        line.draft.brand_snapshot,
+        line.draft.band_label,
+      ].some((value) => (value ?? '').toLowerCase().includes(needle));
+  }, [needle]);
 
   const stageLines = edit?.stage;
   const toggleRemoved = edit?.toggleRemoved;
@@ -591,6 +770,7 @@ export function QuotationVersionEditor({
           lines={gridLines}
           editing={gridEditing}
           quotationId={quotation?.id ?? null}
+          seriesId={(seriesId !== undefined ? seriesId : quotation?.series_id) ?? null}
           rowFilter={rowFilter}
           emptyHint={
             gridEditing
@@ -599,9 +779,7 @@ export function QuotationVersionEditor({
                 ? 'No lines yet.'
                 : 'This version was frozen without any lines.'
           }
-          filterEmptyHint={
-            needle ? `No line matches "${lineSearch.trim()}".` : 'No suggestions on this scope.'
-          }
+          filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
           fetchProducts={fetchProducts}
           resolveProduct={resolveProduct}
           productCodeOf={productCodeOf}
@@ -624,14 +802,9 @@ export function QuotationVersionEditor({
           brandOptions={brandOptions}
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
-          review={gridReview}
+          matrix={matrix}
+          feedback={gridFeedback}
         />
-      )}
-
-      {withoutSuggestions > 0 && (
-        <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-          {`${withoutSuggestions} ${withoutSuggestions === 1 ? 'line' : 'lines'} without suggestions`}
-        </p>
       )}
 
       {revising && current && quotation && (
@@ -674,17 +847,17 @@ export function describeRecompute(result: QuotationRecomputeResult): string {
   }
   if (result.no_longer_below_floor > 0) {
     parts.push(
-      `${result.no_longer_below_floor} ${result.no_longer_below_floor === 1 ? 'line is' : 'lines are'} no longer below floor`,
+      `${result.no_longer_below_floor} ${result.no_longer_below_floor === 1 ? 'line is' : 'lines are'} no longer below minimum price`,
     );
   }
   if (result.now_below_floor > 0) {
     parts.push(
-      `${result.now_below_floor} ${result.now_below_floor === 1 ? 'line is' : 'lines are'} now below floor`,
+      `${result.now_below_floor} ${result.now_below_floor === 1 ? 'line is' : 'lines are'} now below minimum price`,
     );
   }
   if (result.floor_changed > 0) {
     parts.push(
-      `${result.floor_changed} ${result.floor_changed === 1 ? 'line' : 'lines'} picked up a different floor`,
+      `${result.floor_changed} ${result.floor_changed === 1 ? 'line' : 'lines'} picked up a different minimum price`,
     );
   }
   if (parts.length === 0) {

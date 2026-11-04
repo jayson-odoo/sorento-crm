@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
@@ -526,8 +526,13 @@ export function useConfirmManyMutation() {
  */
 export function usePreviewConfirmManyMutation() {
   return useMutation({
-    mutationFn: (body: ConfirmManyBody) => previewConfirmMany(body),
+    // CONFIRM-REMARK-FIX: the guide's email dry run passes a `signal` so a superseded one is
+    // cancelled; it is never part of the body.
+    mutationFn: ({ signal, ...body }: ConfirmManyBody & { signal?: AbortSignal }) =>
+      previewConfirmMany(body, signal),
     onError: (error: Error) => {
+      // A dry run this screen cancelled (a newer one replaced it) is not a failure.
+      if (error.name === 'AbortError') return;
       toast.error(error.message);
     },
   });
@@ -588,6 +593,28 @@ export function patchContributionDraft<
 }
 
 /**
+ * CONFIRM-REMARK-FIX (F3): when a planning board READ last answered, as an epoch-ms stamp (0
+ * until one does). A draft save patches the board cache (`setQueriesData` below), which moves
+ * the query's `dataUpdatedAt` as well; only a finished fetch moves this, so a screen keyed on
+ * it reacts once per read, not once per patch and again per read.
+ */
+export function usePlanningBoardReadAt(): number {
+  const queryClient = useQueryClient();
+  const [readAt, setReadAt] = useState(0);
+  useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' || event.query.queryKey[0] !== PLANNING_BOARD_KEY) return;
+        // `setQueryData` dispatches a `manual` success; a fetch's own success is not manual.
+        if (event.action.type !== 'success' || event.action.manual) return;
+        setReadAt(event.query.state.dataUpdatedAt);
+      }),
+    [queryClient],
+  );
+  return readAt;
+}
+
+/**
  * Save decision / Undo (S4, R-F): a line's decision on the SERVER, surviving a reload,
  * another device, another planner.
  *
@@ -622,6 +649,7 @@ export function useLineDraftMutation() {
       key,
       decision,
       proposed,
+      basedOnSavedAt,
     }: {
       key: string;
       decision: BoardDecision;
@@ -631,7 +659,14 @@ export function useLineDraftMutation() {
       // so a Decide save asks this mutation to stay quiet rather than toasting it a second
       // time.
       silent?: boolean;
-    }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
+      // CONFIRM-PREVIEW-STALE: the draft this decision stands on (`putLineDraft`).
+      basedOnSavedAt?: string | null;
+    }) =>
+      basedOnSavedAt !== undefined
+        ? putLineDraft(key, decision, proposed, basedOnSavedAt)
+        : proposed
+          ? putLineDraft(key, decision, proposed)
+          : putLineDraft(key, decision),
     onSuccess: (saved, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, saved) : current,
@@ -643,8 +678,9 @@ export function useLineDraftMutation() {
   });
 
   const remove = useMutation({
-    mutationFn: (key: string) => deleteLineDraft(key),
-    onSuccess: (_result, key) => {
+    mutationFn: ({ key, basedOnSavedAt }: { key: string; basedOnSavedAt?: string | null }) =>
+      basedOnSavedAt !== undefined ? deleteLineDraft(key, basedOnSavedAt) : deleteLineDraft(key),
+    onSuccess: (_result, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, null) : current,
       );
@@ -665,9 +701,16 @@ export function useLineDraftMutation() {
       key: string,
       decision: BoardDecision,
       proposed?: BoardSource[],
-      options?: { silent?: boolean },
+      options?: { silent?: boolean; basedOnSavedAt?: string | null },
     ): Promise<BoardLineDraft> =>
-      save.mutateAsync({ key, decision, proposed, silent: options?.silent }),
-    remove: (key: string): Promise<void> => remove.mutateAsync(key),
+      save.mutateAsync({
+        key,
+        decision,
+        proposed,
+        silent: options?.silent,
+        basedOnSavedAt: options?.basedOnSavedAt,
+      }),
+    remove: (key: string, basedOnSavedAt?: string | null): Promise<void> =>
+      remove.mutateAsync({ key, basedOnSavedAt }),
   };
 }

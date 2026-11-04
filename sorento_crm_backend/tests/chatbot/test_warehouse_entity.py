@@ -427,8 +427,9 @@ class TestGateKeepsWarehouseOnPurchaseOrder:
 
         # REF-PROBES (#1569): the row also admits the four reference kinds the resolver
         # may place a typed number as. A customer or transporter token still never rides in.
+        # SUPPLIER-ASK: and a supplier ("POs for supplier X").
         assert set(ALLOWED.get("purchase_order") or []) == {
-            "product", "warehouse", "category", "brand",
+            "product", "warehouse", "category", "brand", "supplier",
             "sales_order", "customer_po_ref", "purchase_order", "purchase_request",
         }
         assert not {"customer", "transporter"} & set(ALLOWED["purchase_order"])

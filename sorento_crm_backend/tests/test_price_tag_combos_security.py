@@ -202,37 +202,23 @@ def _request_with_open_tag(db, *, company_id: str, candidates: int = 2):
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: start from the per-candidate tag set a request in flight
+    # (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     db.commit()
     return request, basins
 
 
-def _revision_config(db):
-    """Revisions are OFF until the tenant enables them per entity type.
+def _with_the_salesperson(db, request):
+    """PRICETAG-SELF-APPROVAL: revise is allowed on his own proof (proof_ready, nobody assigned).
 
-    `PortalRevisionService.revise` refuses outright without this row, so the two
-    quantity cases below would fail on the config rather than on what they are
-    about. Seeded exactly as tests/test_portal_price_tag_revise.py does.
+    Settings > Portal revisions no longer applies to price tags, so no config row is seeded.
     """
-    from app.models.portal import PortalRevisionConfig
-
-    existing = (
-        db.query(PortalRevisionConfig)
-        .filter(PortalRevisionConfig.source_entity_type == "price_tag_request")
-        .first()
-    )
-    if existing is not None:
-        return existing
-    row = PortalRevisionConfig(
-        id=_uid(),
-        source_entity_type="price_tag_request",
-        is_enabled=True,
-        max_revisions=None,
-        allowed_statuses=["new", "changes_requested"],
-        restart_stage_code=None,
-    )
-    db.add(row)
+    request.status = "proof_ready"
+    request.assigned_to_id = None
     db.commit()
-    return row
 
 
 def _tags_of(db, request) -> list[PriceTagRequestTag]:
@@ -786,8 +772,8 @@ def test_revise_carries_the_quantity_onto_a_single_tag(db):
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
 
-    _revision_config(db)
     request, _basins = _request_with_open_tag(db, company_id=SORENTO, candidates=1)
+    _with_the_salesperson(db, request)
     line = request.lines[0]
     product_id = line.product_id
     assert _tags_of(db, request)[0].quantity == 1
@@ -823,8 +809,8 @@ def test_revise_leaves_a_split_lines_per_tag_quantities_alone(db):
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
 
-    _revision_config(db)
     request, basins = _request_with_open_tag(db, company_id=SORENTO)
+    _with_the_salesperson(db, request)
     line = request.lines[0]
     product_id = line.product_id
 

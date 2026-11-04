@@ -709,7 +709,11 @@ def serialize_projects(
     permissions = permissions or set()
     is_manager = MANAGE_PERMISSION in permissions
 
-    owner_names = _name_map(db, [p.owner_user_id for p in projects])
+    owner_names = _name_map(
+        db,
+        [p.owner_user_id for p in projects]
+        + [getattr(p, "discount_approver_user_id", None) for p in projects],
+    )
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
@@ -725,6 +729,9 @@ def serialize_projects(
         [pr.architect_party_id for pr in profiles.values()]
         + [pr.main_contractor_party_id for pr in profiles.values()],
     )
+    from app.services.project_party_contact_service import party_links_for
+
+    party_links = party_links_for(db, [p.id for p in projects])
 
     status_ids = [p.status_id for p in projects if p.status_id]
     statuses = (
@@ -845,8 +852,10 @@ def serialize_projects(
                     if project.lead_id in leads
                     else None
                 ),
+                # The project's own (PS-REGISTRATION-V3 rule 8), else the lead's.
                 "lead_source": (
-                    leads[project.lead_id].source if project.lead_id in leads else None
+                    (profile.lead_source if profile else None)
+                    or (leads[project.lead_id].source if project.lead_id in leads else None)
                 ),
                 "lead_created_at": (
                     leads[project.lead_id].created_at
@@ -871,6 +880,8 @@ def serialize_projects(
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,
                 "management_notes": project.management_notes,
+                "discount_approver_user_id": project.discount_approver_user_id,
+                "discount_approver_name": owner_names.get(project.discount_approver_user_id),
                 "registered_company_name": (
                     profile.registered_company_name if profile else None
                 ),
@@ -884,6 +895,7 @@ def serialize_projects(
                     if profile
                     else None
                 ),
+                "party_links": party_links.get(project.id, []),
                 "main_contractor_party_id": (
                     profile.main_contractor_party_id if profile else None
                 ),
@@ -1194,6 +1206,7 @@ _PROFILE_FIELDS = (
     "mukim",
     "architect_party_id",
     "main_contractor_party_id",
+    "lead_source",
     "estimated_sales_value",
     "launch_date",
     "expected_delivery_from",
@@ -1307,6 +1320,42 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
+    if "discount_approver_user_id" in payload:
+        # Routing an approval is a manager act (PS-QUOTE-RULES R4.2), like reassigning the owner:
+        # a salesperson must not pick who approves their own discount.
+        wanted = payload["discount_approver_user_id"] or None
+        if wanted != project.discount_approver_user_id:
+            if MANAGE_PERMISSION not in (permissions or set()):
+                raise AppException(
+                    status_code=403,
+                    message="Only a sales manager can choose who approves this project's discounts.",
+                    code="project_discount_approver_forbidden",
+                )
+            if wanted is not None:
+                from app.models.user import User, UserStatus
+
+                person = db.query(User).filter(User.id == str(wanted)).first()
+                if (
+                    person is None
+                    or person.is_integration
+                    or person.is_trashed
+                    or person.status != UserStatus.ACTIVE.value
+                ):
+                    # Routing would skip them silently, while the card named them.
+                    raise AppException(
+                        status_code=422,
+                        message="Pick an active person as the discount approver.",
+                        code="project_discount_approver_unknown",
+                    )
+            project.discount_approver_user_id = wanted
+
+    from app.services import project_party_contact_service as party_contacts
+
+    if payload.get("lead_source"):
+        party_contacts.assert_lead_source(db, payload["lead_source"], required=False)
+    if "party_links" in payload and payload["party_links"] is not None:
+        party_contacts.set_party_links(db, project, payload["party_links"])
+
     apply_sales_details(db, project, payload)
     return project
 
@@ -1340,6 +1389,7 @@ def _customers_for(db: Session, customer_ids: List[str]) -> Dict[str, Dict[str, 
             or row.mobile_number
             or (contact.phone or contact.mobile if contact else None),
             "customer_attn": contact.full_name if contact else None,
+            "customer_email": contact.email if contact else None,
         }
     return out
 
@@ -1350,13 +1400,19 @@ def _customer_fields(
     if customer:
         if with_contact:
             return customer
-        return {**customer, "customer_phone": None, "customer_attn": None}
+        return {
+            **customer,
+            "customer_phone": None,
+            "customer_attn": None,
+            "customer_email": None,
+        }
     return {
         "customer_id": None,
         "customer_name": None,
         "customer_code": None,
         "customer_phone": None,
         "customer_attn": None,
+        "customer_email": None,
     }
 
 

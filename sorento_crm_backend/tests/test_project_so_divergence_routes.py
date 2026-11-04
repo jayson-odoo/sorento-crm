@@ -355,6 +355,37 @@ def test_the_detail_returns_rows_that_agree_as_well(seeded):
         _restore(originals)
 
 
+def test_the_list_and_detail_name_the_orders_customer_and_project(seeded):
+    """OI-UX-FILTER-SNAPSHOT: the core order behind the project order names both."""
+    from app.models.order import SalesOrder
+
+    db, company_id, user_id = seeded
+    _, po, customer, order, product = _seed_order(db, company_id, user_id)
+    core = SalesOrder(
+        id=_uid(), so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 2, 1), status="open",
+        debtor_name=f"{MARKER} Debtor Sdn Bhd", project_label=f"{MARKER} Tower",
+    )
+    db.add(core)
+    db.flush()
+    order.so_id = core.id
+    db.flush()
+    client, originals = _client(db, user_id, EDITOR)
+    try:
+        created = client.post(
+            f"{BASE}/sales-orders/ingest", json=_payload(po, customer, product)
+        ).json()
+
+        listed = client.get(f"{BASE}/divergences", params={"status": "open"}).json()["data"]
+        mine = [row for row in listed if row["project_sales_order_id"] == order.id]
+        assert mine[0]["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+        assert mine[0]["project_label"] == f"{MARKER} Tower"
+        detail = client.get(f"{BASE}/divergences/{created['divergence_id']}").json()
+        assert detail["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+        assert detail["project_label"] == f"{MARKER} Tower"
+    finally:
+        _restore(originals)
+
+
 def test_a_reader_may_read_a_reconciliation(seeded):
     db, company_id, user_id = seeded
     _, po, customer, order, product = _seed_order(db, company_id, user_id)

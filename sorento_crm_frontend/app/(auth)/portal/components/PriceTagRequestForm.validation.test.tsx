@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }));
 
@@ -32,6 +33,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   updateRequest: vi.fn(),
   deleteRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
@@ -123,6 +127,7 @@ import {
   lookupDebtors,
   lookupTagItems,
   submitRequest,
+  submitAndEscalate,
   updateRequest,
 } from '../lib/price-tag-request-service';
 import { uploadAttachment } from '../lib/portal-client';
@@ -290,7 +295,7 @@ describe('Save Draft validates nothing (D48a)', () => {
   });
 });
 
-describe('Submit says what is missing (D48b)', () => {
+describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)', () => {
   it('is enabled on an empty form and reports instead of posting', async () => {
     // Need by no longer blocks Submit (D-P2b, AC-P8b). r10 AC-S1-3: Printing
     // no longer blocks Submit either - the control (and its refusal) is gone,
@@ -299,9 +304,9 @@ describe('Submit says what is missing (D48b)', () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
-    const submit = screen.getByRole('button', { name: 'Submit' });
-    expect(submit).not.toBeDisabled();
-    fireEvent.click(submit);
+    // Approve waits for a drawn tag; Escalate is the path that checks a blank form.
+    expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
+    sendToMarketing();
 
     expect(
       await screen.findByText('Select the dealer these tags are for.'),
@@ -327,7 +332,7 @@ describe('Submit says what is missing (D48b)', () => {
     await selectOption('Debtor', 'ZZTD01');
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
 
     expect(
       await screen.findByText('Pick a set or a product for this line.'),
@@ -338,7 +343,7 @@ describe('Submit says what is missing (D48b)', () => {
   it('clears the error once the field is filled in', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await screen.findByText('Select the dealer these tags are for.');
 
     await selectOption('Debtor', 'ZZTD01');
@@ -351,7 +356,7 @@ describe('Submit says what is missing (D48b)', () => {
   });
 
   it('lands a server set-guard refusal on the row it named', async () => {
-    asMock(submitRequest).mockRejectedValue(
+    asMock(submitAndEscalate).mockRejectedValue(
       Object.assign(
         new Error("Product 'CBF-1234' is classified as 'Bathroom Furniture'."),
         { code: 'SET_GUARD_VIOLATION', fields: ['line:0'] },
@@ -362,9 +367,9 @@ describe('Submit says what is missing (D48b)', () => {
     await addLineWithAProduct();
     await pickPrinting();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
 
-    await waitFor(() => expect(submitRequest).toHaveBeenCalled());
+    await waitFor(() => expect(submitAndEscalate).toHaveBeenCalled());
     expect(
       await screen.findByText(
         "Product 'CBF-1234' is classified as 'Bathroom Furniture'.",
@@ -374,7 +379,7 @@ describe('Submit says what is missing (D48b)', () => {
   });
 
   it('lands a server completeness refusal under the field it named', async () => {
-    asMock(submitRequest).mockRejectedValue(
+    asMock(submitAndEscalate).mockRejectedValue(
       Object.assign(new Error('This request needs a dealer.'), {
         code: 'SUBMIT_INCOMPLETE',
         fields: ['debtor_name'],
@@ -385,7 +390,7 @@ describe('Submit says what is missing (D48b)', () => {
     await addLineWithAProduct();
     await pickPrinting();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
 
     // The form's own wording goes under the field: it says the same thing and
     // says it as a next action. The server sentence is not repeated beside it.
@@ -395,3 +400,19 @@ describe('Submit says what is missing (D48b)', () => {
     expect(screen.queryByText('This request needs a dealer.')).toBeNull();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

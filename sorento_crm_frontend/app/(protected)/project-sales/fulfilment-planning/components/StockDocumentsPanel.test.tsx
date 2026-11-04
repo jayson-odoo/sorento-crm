@@ -131,6 +131,14 @@ afterEach(() => {
 });
 
 describe('StockDocumentsPanel', () => {
+  it('names the order\'s project on a sales-order row (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+    renderPanel();
+    const table = await screen.findByRole('table');
+    expect(within(table).getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
+    expect(within(table).getByText('MYRA DAHLIA 9307')).toBeInTheDocument();
+  });
+
   it('asks by IDS, because two products share the code B2155-NL-BLUE on the live book', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
@@ -522,7 +530,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     // Document, bin, balance after: an On hand row has no document, and the Bin column is
     // what says which pile it opened. There is no Doc date column on this reading, so Bin
     // is the sixth cell.
-    const documents = rowsOf().map((cells) => [cells[1], cells[5], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[6], cells[8]]);
     expect(documents).toEqual([
       ['-', 'BRW-IB', '100'],
       ['-', 'MWH-IB', '120'],
@@ -588,7 +596,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     const table = await screen.findByRole('table');
 
     expect(table.textContent).toContain('Not counted');
-    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[8]]);
     expect(documents).toEqual([
       ['-', '100'],
       ['-', '120'],
@@ -629,7 +637,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     const table = await screen.findByRole('table');
 
     expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
-    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[8]]);
     expect(documents).toEqual([
       ['-', '100'],
       ['-', '120'],
@@ -698,6 +706,30 @@ describe('StockDocumentsPanel: the group reading', () => {
       ['On hand', '-', '120'],
       ['Hold', 'SO404352', '114'],
     ]);
+  });
+
+  it('names a hold\'s customer and project (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [],
+      holds: [
+        {
+          so_number: 'SO404352',
+          customer_name: 'HOLDER DEBTOR SDN BHD',
+          project_label: 'HOLDER TOWER',
+          location: 'BRW-IB',
+          required_date: '2026-06-29',
+          qty: '6',
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(within(table).getByText('HOLDER DEBTOR SDN BHD')).toBeInTheDocument();
+    expect(within(table).getByText('HOLDER TOWER')).toBeInTheDocument();
   });
 
   it('says which bin each document sits at, which the per-bin reading never has to', async () => {
@@ -789,6 +821,38 @@ describe('StockDocumentsPanel: the site pool ledger (R-K, AC-2.6b)', () => {
     // 102 on hand -> 51, less the 1-unit dealer order -> 50, plus the 510 SPO -> 305.
     // The share is applied to the BALANCE the walk landed on, never to the row's own qty.
     expect(balancesOf()).toEqual(['51', '50', '305']);
+  });
+
+  it('R12: on a line standing on its pool the footer states the subtotal the Stock tab prints', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '30' });
+    await screen.findByRole('table');
+
+    const footer = [...(screen.getByRole('table').querySelector('tfoot')?.querySelectorAll('td') ?? [])];
+    expect(footer.map((entry) => entry.textContent)).toContain('30');
+  });
+
+  it('R12: a retail line on its own pool reads for this line, and its last row is the footer', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '30', ownPoolNoShare: true });
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for this line')).toBeTruthy();
+    expect(screen.queryByText('Available for Project')).toBeNull();
+    // Nothing is held back from it, so the rows are the plain running balance, not a share of it.
+    expect(balancesOf()).toEqual(['102', '101', '30']);
+  });
+
+  it('R12: a project line on its own pool keeps the share, and its last row is the footer', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '15' });
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for Project')).toBeTruthy();
+    expect(balancesOf()).toEqual(['51', '50', '15']);
   });
 
   it('caps every shared balance by the five-pool net, so the ledger cannot promise past the pile', async () => {

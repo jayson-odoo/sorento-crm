@@ -80,19 +80,22 @@ class _without:
         UserPermissionService.check_user_has_permission = self.original
 
 
-def test_an_adopted_order_is_saved_with_the_module_permission_alone(api):
+def test_saving_an_adopted_order_passes_the_route_gate_and_reaches_the_service_rule(api):
+    """The module permission alone gets an adopted order past the route (no "Project not
+    found"), and the SERVICE then refuses the edit. DEALER-PLANNING PR 2 (#2068) made that
+    refusal deliberate: an adopted order mirrors the AutoCount book, so it is changed there,
+    never edited here (`ProjectSODraftService._assert_not_adopted`)."""
     client, world = api
     order = _adopted(world)
 
     response = client.put(f"{BASE}/sales-orders/{order.id}", json={"area_group": "TOWER B"})
 
-    assert response.status_code == 200, response.text
-    assert response.json()["area_group"] == "TOWER B"
-    assert response.json()["project_id"] is None
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "so_not_editable"
 
     detail = client.get(f"{BASE}/sales-orders/{order.id}")
     assert detail.status_code == 200, detail.text
-    assert detail.json()["area_group"] == "TOWER B"
+    assert detail.json()["area_group"] != "TOWER B"
 
 
 def test_saving_an_adopted_order_is_denied_without_the_edit_permission(api):

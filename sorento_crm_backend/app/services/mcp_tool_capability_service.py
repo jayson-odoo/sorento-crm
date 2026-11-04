@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
-import sys
 from typing import Any
 
 
@@ -2033,25 +2032,17 @@ def load_tool_definitions(definitions_file: str | None = None) -> list[ToolDefin
 
 
 def _load_catalog_specs():
-    repo_root = Path(__file__).resolve().parents[3]
-    mcp_root = repo_root / "sorento_crm_mcp"
-    if str(mcp_root) not in sys.path:
-        sys.path.append(str(mcp_root))
-    try:
-        from sorento_crm_mcp.catalog import CATALOG  # type: ignore
-        return CATALOG
-    except ModuleNotFoundError:
-        # Fallback for environments where package import paths differ
-        # (e.g. backend runtime without editable install of sorento_crm_mcp).
-        import importlib.util
+    """The MCP tool catalog, read from the backend's own verbatim copy.
 
-        catalog_file = mcp_root / "sorento_crm_mcp" / "catalog.py"
-        spec = importlib.util.spec_from_file_location("sorento_crm_mcp_catalog_runtime", catalog_file)
-        if spec is None or spec.loader is None:
-            raise
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return getattr(module, "CATALOG")
+    The backend image is built from `./sorento_crm_backend` alone (deploy.yml, compose), so the
+    monorepo's `sorento_crm_mcp/` is not in it: reading it from there returned 500 on every AI
+    panel data question in production (ASSISTANT-CATALOG-500, 2 Nov 2026). The MCP package stays
+    the source of truth; `tests/test_mcp_catalog_in_image.py` fails when the copy drifts and
+    prints the `cp` that resyncs it.
+    """
+    from app.services.mcp_catalog_copy import CATALOG
+
+    return CATALOG
 
 
 def _intent_for(tool_name: str) -> ToolIntent | None:

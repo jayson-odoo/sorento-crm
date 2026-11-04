@@ -1292,17 +1292,17 @@ describe('R21 - the four figures open the shared lightbox', () => {
     expect(within(dialog).queryByText('SO-2201')).not.toBeInTheDocument();
     // Column 6 is S5's Taken column (dash - nothing here is covered by another SPO); Take
     // (7) is an editable input, seeded from the cascade (R19).
-    const projectTakeInput = projectRows[1].querySelectorAll('td')[7].querySelector('input');
+    const projectTakeInput = projectRows[1].querySelectorAll('td')[8].querySelector('input');
     expect(projectTakeInput).toHaveValue(40);
 
     fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     const retailRows = within(dialog).getAllByRole('row');
     expect(retailRows[1].textContent).toContain('SO-2201');
     expect(retailRows[2].textContent).toContain('SO-2202');
-    expect(retailRows[2].querySelectorAll('td')[5].textContent).toBe('90');
+    expect(retailRows[2].querySelectorAll('td')[6].textContent).toBe('90');
     // 40 and 30 are served in full, and the order nobody ticked gets nothing.
-    expect(retailRows[1].querySelectorAll('td')[7].querySelector('input')).toHaveValue(30);
-    expect(retailRows[2].querySelectorAll('td')[7].querySelector('input')).toHaveValue(0);
+    expect(retailRows[1].querySelectorAll('td')[8].querySelector('input')).toHaveValue(30);
+    expect(retailRows[2].querySelectorAll('td')[8].querySelector('input')).toHaveValue(0);
     // The footer is shared beneath BOTH tabs - still reads 30 after switching tabs.
     expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
   });
@@ -1476,7 +1476,7 @@ describe('R19 - Take is editable and re-flows only the rows after it (AC-I2, AC-
     within(dialog)
       .getByText(document_)
       .closest('tr')!
-      .querySelectorAll('td')[7]
+      .querySelectorAll('td')[8]
       .querySelector('input') as HTMLInputElement;
 
   beforeEach(() => {
@@ -2228,7 +2228,7 @@ describe('SpoPlannerTable - review round 1', () => {
       within(dialog)
         .getByText(document_)
         .closest('tr')!
-        .querySelectorAll('td')[7]
+        .querySelectorAll('td')[8]
         .querySelector('input') as HTMLInputElement;
 
     // Delivery date ascending: SO-3001 is first on screen and takes the whole 38.

@@ -16,7 +16,15 @@ export interface RecipientConfig {
   /** When set, sends one email for the whole match (every resolved address on it,
    * the actor's address last) instead of one email per recipient. */
   one_email?: boolean;
+  /** To: `user_ids`, `role_ids` and these. */
   extra_emails: string[];
+  /** DEALER-OI-ROUTE: explicit Cc. Rows saved before Cc existed have none. */
+  cc_user_ids?: string[];
+  cc_role_ids?: string[];
+  cc_emails?: string[];
+  /** Set on save by the To/Cc picker for a new row, or once a To/Cc address is changed.
+   * Unset = the row still sends "first address To, the rest Cc" (DEALER-OI-ROUTE card Q2 (b)). */
+  explicit_to_cc?: boolean;
 }
 
 import type { RuleGroup } from '@/components/rule-builder/types';
@@ -31,6 +39,8 @@ export interface Automation {
   /** Optional condition tree filtering which trigger matches this automation
    * acts on. Null = match all. Wire shape mirrors the rule engine. */
   conditions_json: RuleGroup | null;
+  /** The conditions in words, read-only on the detail page; null when there are none. */
+  conditions_text?: string | null;
   action_type: string;
   email_template_id: string;
   email_template_name?: string | null;

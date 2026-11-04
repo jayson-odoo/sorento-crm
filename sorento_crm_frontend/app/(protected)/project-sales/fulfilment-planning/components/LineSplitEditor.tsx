@@ -60,6 +60,7 @@ import {
   type SheetDrag,
   type SheetHandlers,
 } from './LineSplitSheet';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 interface Draft {
   lines: SplitLine[];
@@ -263,7 +264,7 @@ export function LineSplitEditor({
    */
   lineRemarks?: ReadonlyMap<
     string,
-    { words: string | null; own: string | null; editable: boolean }
+    { words: string | null; own: string | null; editable: boolean; silent?: boolean }
   >;
   /** Saves the edited remarks of `lineRemarks` lines (line id -> remark, '' = the default). */
   onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
@@ -852,7 +853,12 @@ export function LineSplitEditor({
   }));
 
   const soDate = formatSplitDate(query.data?.so_date ?? null);
-  const subtitle = [query.data?.so_number, soDate, query.data?.customer]
+  // OI-UX-FILTER-SNAPSHOT: CUSTOMER / project, the shared format.
+  const subtitle = [
+    query.data?.so_number,
+    soDate,
+    soCustomerProjectLabel(query.data?.customer, query.data?.project),
+  ]
     .filter(Boolean)
     .join(' · ');
   const locations = [...new Set(counted.map((line) => line.location))]
@@ -871,6 +877,7 @@ export function LineSplitEditor({
             return {
               ...line,
               savedRemark: entry.words,
+              purchasingSilent: Boolean(entry.silent),
               remarkInDraft: entry.editable,
               remarkStored: savedLines
                 .find((saved) => saved.lineId === line.lineId)

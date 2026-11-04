@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
 }));
 
@@ -38,6 +39,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   };
@@ -235,7 +239,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await screen.findByText(MIRROR.code);
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
 
     const [line] = submittedLines();
@@ -325,7 +329,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     );
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(submittedLines()[0].parts[1]).toEqual({
       product_id: BASIN_BLACK.product_id,
@@ -355,7 +359,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.getByLabelText('Not sure, any of 2')).toHaveValue('');
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(submittedLines()[0].parts[1].product_id).toBeNull();
     expect(submittedLines()[0].parts[1].candidates).toEqual([
@@ -386,7 +390,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.queryByText(/Undo/)).toBeNull();
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(
       submittedLines()[0].parts.map((part: { product_id: string | null }) => part.product_id),
@@ -406,7 +410,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.queryByLabelText('Add part')).toBeNull();
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     const [line] = submittedLines();
     expect(line.combo_id).toBeNull();
@@ -705,3 +709,19 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

@@ -100,6 +100,10 @@ def get_purchase_orders_placed(
             "allocation also matches by its book location code."
         ),
     ),
+    supplier_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by supplier UUIDs (csv / JSON / repeated): the PO's / SPO's supplier.",
+    ),
     expected_date_from: Optional[str] = Query(
         None, description="Filter by expected date from (inclusive). Line expected_date, else header's."
     ),
@@ -134,7 +138,7 @@ def get_purchase_orders_placed(
     route gives; A6 answers "last in" separately.
 
     `warehouse_ids` narrows PO lines by their warehouse and SPO allocations by warehouse or
-    location code. `sort` is one of expected_date | product | supplier | outstanding_qty |
+    location code; `supplier_ids` narrows both to that supplier (SUPPLIER-ASK). `sort` is one of expected_date | product | supplier | outstanding_qty |
     po_date | ordered_qty and `dir` asc | desc; anything else is a 422
     (PLAN-po-spo-warehouse-29sep O1).
     """
@@ -165,6 +169,19 @@ def get_purchase_orders_placed(
     try:
         resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         resolved_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
+        resolved_supplier_ids = parse_uuid_list(supplier_ids, param_name="supplier_ids")
+        if resolved_supplier_ids and contact_id:
+            # SUPPLIER-ASK (security review): asked on behalf of a contact, a supplier filter needs
+            # the reveal that shows the supplier (`purchase_orders.supplier`); without it the filter
+            # would still say which lines belong to that supplier.
+            from app.services import contact_field_reveal_service
+            from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+            pk = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+            if not pk or "purchase_orders.supplier" not in contact_field_reveal_service.granted_keys(db, pk):
+                raise AppException(
+                    403, "Filtering by supplier is not available for this contact.", code="supplier_not_revealed"
+                )
         _from = _parse_flex_date(expected_date_from)
         _to = _parse_flex_date(expected_date_to, end_of_day=True)
         # CHAT-PO-LOCATION-SCOPE: under a `contact_id` the on-order rows are scoped exactly
@@ -191,6 +208,7 @@ def get_purchase_orders_placed(
             db,
             product_ids=resolved_product_ids,
             warehouse_ids=resolved_warehouse_ids,
+            supplier_ids=resolved_supplier_ids,
             expected_date_from=_from.date() if _from else None,
             expected_date_to=_to.date() if _to else None,
             sort=sort or "expected_date",
@@ -221,6 +239,7 @@ def get_purchase_orders_placed(
                         db,
                         product_ids=resolved_product_ids,
                         warehouse_ids=resolved_warehouse_ids,
+                        supplier_ids=resolved_supplier_ids,
                         expected_date_from=expected_date_from,
                         expected_date_to=expected_date_to,
                     )

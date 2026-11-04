@@ -73,6 +73,7 @@ vi.mock('../../hooks/useProductCombos', () => ({
   useProductComboPartDelete: () => ({ run: partDeleteRun, targetId: null, isPending: false }),
   useAddProductComboPart: () => ({ mutateAsync: addPartMutateAsync, isPending: false }),
   useUpdateProductComboPart: () => ({ mutate: updatePartMutate }),
+  useUpdateProductCombo: () => ({ mutate: vi.fn() }),
 }));
 
 // AC-S5-5 extended (captain's ruling, phase 3 review): the combo image

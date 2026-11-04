@@ -57,6 +57,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.composers import format as composers_format
 from app.services.chatbot.label_catalog import IDENTITY, Localizer, defaults as label_defaults
 from app.services.chatbot.contracts import (
+    SUPPLIER_GRANT,
     SALES_REPORT_GROUP_BYS,
     UNDOMAINED_CHATBOT_TOOLS,
     is_timeline,
@@ -343,6 +344,9 @@ TYPE_TO_PARAM: dict[str, str] = {
     # tools that already take `product_ids` (orders list, orders by product) all
     # take `brand_ids` the same way.
     "brand": "brand_ids",
+    # SUPPLIER-ASK: `crm_procurement_po_placed_list` only. A supplier entity exists on a turn
+    # only for an asker `contracts.supplier_visible` admits (`resolve_gate`).
+    "supplier": "supplier_ids",
 }
 
 _UUID_RE = re.compile(
@@ -948,6 +952,15 @@ def entity_ids_transformer(
         "unmapped_types": unmapped_types,
     }
 
+    # SUPPLIER-ASK (security review): the second refusal below the resolver, as
+    # `RESTRICTED_SORT_KEYS` refuses a supplier sort: a supplier filter says which lines belong
+    # to a supplier, so it is never sent for an asker without the supplier reveal.
+    if "supplier_ids" in out:
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if SUPPLIER_GRANT not in attributes:
+            out["_diagnostics"]["refused"] = {"supplier_ids": out.pop("supplier_ids")}
+
     out["view"] = "render"
     # `out.date_mode = semantic_input?.date_mode` - an ABSENT key leaves `undefined` here,
     # and `JSON.stringify` drops an undefined value rather than writing null. So the key is
@@ -1324,6 +1337,14 @@ def entity_ids_transformer(
     if isinstance(predicate, dict) and predicate.get("certificate_ids"):
         out["certificate_ids"] = predicate["certificate_ids"]
 
+    # SUPPLIER-ASK fix round 9: the structural guard. A supplier-scoped turn never lists without a supplier filter.
+    supplier_scope = jsc.get(semantic_input, "supplier_scope") if isinstance(semantic_input, dict) else None
+    if isinstance(supplier_scope, dict) and tool_name in SUPPLIER_GUARDED_TOOLS and not out.get("supplier_ids"):
+        raise SupplierScopeViolation(
+            f"{tool_name} would list without the supplier this turn is about",
+            line=str(supplier_scope.get("line") or ""),
+        )
+
     # PLAN-chatbot-customer-scope-29sep.md D4, the LAST step before `contact_id`: a
     # customer-scoped contact's `customer_ids` are its linked customers on every
     # customer-scoped tool, whatever the earlier steps built. Defence in depth behind
@@ -1418,6 +1439,31 @@ class ScopeViolation(ToolNotAllowed):
         self.dropped: list[str] = list(dropped or [])
 
 
+class SupplierScopeViolation(ScopeViolation):
+    """SUPPLIER-ASK fix round 9 (crew sweep at c5333b37: 全部 under the supplier question listed every customer's orders;
+    "outstanding PO for zzqqxx supplier" once listed the PO book): a turn about a supplier (`ctx["supplier_scope"]`,
+    set by the engine) reached a list tool with no `supplier_ids`. Never a tool call; `run_fetch` answers with the
+    scope's own line (the supplier question again, or "couldn't find a supplier")."""
+
+    def __init__(self, message: str, *, line: str) -> None:
+        super().__init__(message)
+        self.line = line
+
+
+#: The list tools a supplier-scoped turn may never run without `supplier_ids`: the PO book (the only one that takes
+#: them) and the customer-side lists an order-side reading would fall to.
+SUPPLIER_GUARDED_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_procurement_po_placed_list",
+        "crm_order_management_orders_list",
+        "crm_order_management_orders_by_product_list",
+        "crm_outstanding_report",
+        "crm_report_ask",
+        "crm_sales_report",
+    }
+)
+
+
 #: The MCP tools that return per-customer data: every catalogue tool whose `query_params`
 #: carry `customer_ids` (pinned by `tests/chatbot/test_customer_scope_fetch.py`).
 CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
@@ -1442,16 +1488,19 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
 # image does not contain that package: `sorento_crm/docker-compose.yml` builds the backend
 # with `context: ./sorento_crm_backend`, the Dockerfile's `COPY . .` therefore copies only
 # the backend, `mcp` is not in `requirements.txt` and no volume mounts it. A catalogue read
-# on the turn path would raise `ModuleNotFoundError` in every container, the path fallback
-# in `mcp_tool_capability_service._load_catalog_specs` would look for `/sorento_crm_mcp/`
-# and fail too, and `run_fetch`'s broad `except` would turn EVERY live business turn into
-# "MCP tool X failed". A frozen set costs nothing and cannot fail.
+# on the turn path would raise `ModuleNotFoundError` in every container, and `run_fetch`'s
+# broad `except` would turn EVERY live business turn into "MCP tool X failed". (The
+# backend now carries a verbatim copy, `app/services/mcp_catalog_copy.py`, which
+# `mcp_tool_capability_service._load_catalog_specs` reads; the security-boundary reason
+# below is why this set stays a frozen literal anyway.) A frozen set costs nothing and
+# cannot fail.
 #
 # The catalogue is still the source of truth for WHICH names belong here, and the two are
-# pinned together by `tests/chatbot/test_tool_pool_is_read_only.py`, which imports the
-# catalogue (available in CI and in a checkout, never in the container) and asserts this
-# set EQUALS "method GET, or the spec's own `read_only` flag". Drift in either direction
-# fails CI, which is where the catalogue is readable, instead of at 3am in production.
+# pinned together by `tests/chatbot/test_tool_pool_is_read_only.py`, which reads the
+# backend's copy (itself pinned byte for byte to the MCP file by
+# `tests/test_mcp_catalog_in_image.py`) and asserts this set EQUALS "method GET, or the
+# spec's own `read_only` flag". Drift in either direction fails CI instead of at 3am in
+# production.
 #
 # The six the audit found, deliberately absent: `crm_complaint_close`, `crm_order_cancel`,
 # `crm_purchase_request_approve`, `crm_purchase_request_reject`,
@@ -1661,6 +1710,13 @@ def portal_submission_type(parse_output: dict[str, Any]) -> str | None:
 #: CHATBOT-FAIL-TRIAGE AC-3 (review round 2 security nit): a portal link ask for a form the
 #: contact is not granted. MS / ZH in `label_catalog`.
 FORM_NOT_AVAILABLE_MESSAGE = "That form is not available on your account."
+
+
+#: A panel turn has no contact to send a portal link to. MS / ZH in `label_catalog`.
+PANEL_NO_PORTAL_LINK = (
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. "
+    "If you want the steps for something, ask me how to do it."
+)
 
 
 def portal_form_granted(db: Any, contact_respond_id: Any, space_id: Any, submission_type: str) -> bool:
@@ -2944,7 +3000,7 @@ _LIST_OFFERS = {
 _ARG_FILTERS = {
     "product_code": "product", "product_ids": "product", "brand_ids": "brand", "category_ids": "category",
     "spec": "spec", "warehouse_codes": "location", "channel": "channel", "customer_ids": "customer",
-    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent",
+    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent", "account_types": "account_type",
 }
 
 
@@ -3005,6 +3061,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     if frame is not None:
         frame.pop("shown", None)
         frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
+        names = semantic_input.get("report_ask_names") if isinstance(semantic_input, dict) else None
+        if isinstance(names, dict):
+            frame["names"] = names  # semantic carry: each id's name, for the `Held report:` line (never a route param)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):

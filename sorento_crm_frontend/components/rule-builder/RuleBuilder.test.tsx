@@ -285,6 +285,43 @@ describe('RuleBuilder - editing', () => {
     expect(screen.getByTestId('multi-opt-cabana_office')).toBeInTheDocument();
   });
 
+  it('a fact limited to any of / none of opens on the multi-select (OI raiser, owner 4 Nov)', () => {
+    useRuleFactsMock.mockReturnValue({
+      data: [
+        {
+          key: 'order_inquiry.raisedBy',
+          label: 'Raised by',
+          type: 'enum',
+          operators: ['in', 'not_in'],
+          source: 'order_inquiry',
+          sourceLabel: 'Order inquiry',
+          options: [
+            { value: 'u-agnes', label: 'Agnes' },
+            { value: 'u-bob', label: 'Bob' },
+          ],
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    const onChange = vi.fn();
+    render(<RuleBuilder sources={['order_inquiry']} value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
+
+    const opSelect = screen.getByTestId('select-Operator') as HTMLSelectElement;
+    expect(Array.from(opSelect.options).map((o) => o.value)).toEqual(['in', 'not_in']);
+    // Two people picked, both kept.
+    fireEvent.click(screen.getByTestId('multi-opt-u-agnes'));
+    fireEvent.click(screen.getByTestId('multi-opt-u-bob'));
+    const tree = onChange.mock.calls.at(-1)![0] as RuleGroup;
+    expect(tree.rules[0]).toMatchObject({
+      fact: 'order_inquiry.raisedBy',
+      operator: 'in',
+      value: ['u-agnes', 'u-bob'],
+    });
+  });
+
   it('adding a nested group creates a child group with its own condition', () => {
     dataState();
     render(<RuleBuilder sources={['promotion']} value={null} onChange={vi.fn()} />);

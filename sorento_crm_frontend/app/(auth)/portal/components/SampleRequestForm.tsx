@@ -54,6 +54,7 @@ import {
   useSubmissionClient,
 } from '../lib/submission-client';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { dateAnswerText } from '@/lib/sample-request-tracking';
 import { AsyncCombobox } from './AsyncCombobox';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 
@@ -391,6 +392,18 @@ export default function SampleRequestForm({
                   value={state.delivery_date}
                   onChange={(e) => set('delivery_date', e.target.value)}
                 />
+                {request && dateAnswerText(request, formatDateInMalaysia) && (
+                  // PS-SAMPLE-TRACKING rule 3: the sample team's answer, read-only.
+                  <p className="mt-1.5 text-sm" data-testid="sr-date-answer">
+                    <span className="text-muted-foreground">Sample team: </span>
+                    <span className="font-medium">
+                      {dateAnswerText(request, formatDateInMalaysia)}
+                    </span>
+                    {request.date_note ? (
+                      <span className="text-muted-foreground"> ({request.date_note})</span>
+                    ) : null}
+                  </p>
+                )}
               </FormField>
 
               <FormField label="Ship To *" htmlFor="sr-ship-to" error={errors.ship_to_name}>

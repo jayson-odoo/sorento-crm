@@ -49,6 +49,7 @@ whichever line the database happened to return first.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from contextlib import contextmanager
 from collections import defaultdict
@@ -71,7 +72,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, null, nullslast, or_, text
+from sqlalchemy import and_, case, func, literal_column, null, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -118,6 +119,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
@@ -132,6 +134,7 @@ from app.services.scm.spo_conversion_service import (
 )
 from app.services.scm import sales_agent_service
 from app.services.scm.demand import demand_qty, is_open_demand, is_transferable_order
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, planning_class
 from app.services.scm.group_netting import GroupNetting
 from app.services.scm.pool_predicate import is_project_reserve
 from app.services.scm.planning_predicate import (
@@ -159,6 +162,7 @@ from app.services.scm.front_planning_engine import (
     group_water_reason,
     landed_on,
     later_order_can_wait,
+    pool_allowance,
     pool_reserve_capacity,
     pool_share_reason,
     qty_text,
@@ -304,6 +308,14 @@ def _pile_key(code: str, water: bool, per_half: bool) -> str:
     every other caller budgets the bin as one pile, which is what it was before.
     """
     return f"{code}\x00water" if (per_half and water) else code
+
+
+#: The confirmation's one running pools' net, on `_CapacityLedger` beside its bins, as
+#: `_group_budget_key` keeps a group's book. No warehouse id can collide with it.
+_POOLS_NET_BUDGET = "pools-net"
+#: `Session.info` key of the parsed active-decision snapshots, keyed by row version
+#: (`_active_decision_snapshots_reused`).
+_ACTIVE_SNAPSHOT_CACHE = "active_decision_snapshots_by_version"
 
 
 def _group_budget_key(group: str) -> str:
@@ -635,6 +647,12 @@ def _preview_move_facts(move: Any) -> Tuple[Any, ...]:
     )
 
 
+#: A dry run that waited past its lock timeout behind another save of the same order.
+PREVIEW_LOCK_BUSY_MESSAGE = (
+    "Another change to this order is being saved right now. Try again in a moment."
+)
+
+
 def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
     """What went wrong, and which lines it named, off any exception `confirm` can raise.
 
@@ -769,6 +787,16 @@ class _LineFacts:
     #: see `_group_offer`, where un-netting the plan quantity would add back more than was
     #: ever subtracted.
     owed_qty: Decimal = _ZERO
+    #: What `_add_back_own_pool_demand` put back into `pools_net` and `pool_available`: this
+    #: line's quantity in the book of the site pool it stands on, zero for any other line.
+    pool_book_back: Decimal = _ZERO
+    #: The sales order's class (`scm.demand_class`).
+    demand_class: Optional[str] = None
+    #: This line's location IS its active site pool (`_add_back_own_pool_demand`).
+    stands_on_pool: bool = False
+    #: A retail line standing on its own dealer location: no share is held back from it there
+    #: (DEALER-PLANNING R9, `front_planning_engine.pool_allowance`).
+    own_pool_no_share: bool = False
     required_date: Optional[date] = None
     warehouse: Optional[Warehouse] = None
     pool: Optional[Warehouse] = None
@@ -832,8 +860,8 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
-    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` owes
-    #: nothing back for goods taken from its own bin.
+    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` is
+    #: planned at its own bin (`planned_at_own_bin`).
     doc_type: Optional[str] = None
     #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
     #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
@@ -1055,6 +1083,8 @@ class _UnitCheck:
 
     fact: _LineFacts
     timely_left: Decimal
+    #: The unit's own add-back still unspent in this confirmation (`_pool_draw`).
+    pool_back_left: Decimal = _ZERO
     #: Whether this unit's step-1 own-group slice has been added to the confirmation's
     #: capacity ledger yet (ladder v7.1). The slice belongs to the UNIT, so it is added
     #: once, on whichever of its member lines is checked first, and its members then share
@@ -1948,7 +1978,8 @@ class ProjectSupplyService:
             if planned_at_own_bin(fact.warehouse, fact.doc_type) and fact.open_qty > _ZERO:
                 # CONSIGN-PLAN (owner Q1): the goods are already at the own bin, so the
                 # proposal is a plain Borrow of the whole plan quantity from it - never a
-                # Buy, nothing to purchasing - and it draws on no shared pile.
+                # Buy - and it draws on no shared pile. Confirmed, it is owed back at that
+                # bin like any own-bin Borrow (owner ruling 2 Nov 2026).
                 own = fact.own_code
                 out[key] = (
                     (
@@ -2050,7 +2081,10 @@ class ProjectSupplyService:
             # `pool_warehouse_id` (BRW-IB on the live book) still draws BRW through them.
             product_id = unit_fact.product_id
             if product_id and product_id not in net_left:
-                net_left[product_id] = _dec(unit_fact.pools_net)
+                # Free of any line's add-back, which is that line's alone (read below). Not
+                # floored later either: a later line's add-back is measured from the true net
+                # however negative, and the engine floors what it reads.
+                net_left[product_id] = _dec(unit_fact.pools_net) - unit_fact.pool_book_back
             if product_id:
                 # Seeded off the CHAIN, which is what the walk itself reads (`_pool_chain`:
                 # this line's own site pool first, then the others by on hand), one entry per
@@ -2066,8 +2100,11 @@ class ProjectSupplyService:
                     if not code:
                         continue
                     if code not in shares:
+                        back = _dec(entry.get("own_back"))
                         shares[code] = available_for_project(
-                            entry.get("available"), unit_fact.pools_net, pct
+                            _dec(entry.get("available")) - back,
+                            unit_fact.pools_net - unit_fact.pool_book_back,
+                            pct,
                         )
                     # The FLOOR beside the share, off the same chain and for the same
                     # reason (AC-N.12): the share is what the policy lets a pool lend and
@@ -2132,8 +2169,24 @@ class ProjectSupplyService:
                 # when the LINE was reached, and reading it back afterwards would state what
                 # was left instead.
                 floors_open = pool_free_left.get(product_id) if product_id else None
-                net_open = net_left.get(product_id) if product_id else None
-                share_open = share_left.get(product_id) if product_id else None
+                # This line's own add-back joins the two pool ledgers for this line only. A
+                # draw spends it first, and only what goes beyond it comes off the ledgers.
+                raw_net = net_left.get(product_id) if product_id else None
+                net_open = None if raw_net is None else raw_net + fact.pool_book_back
+                share_ledger = share_left.get(product_id) if product_id else None
+                share_open = share_ledger
+                share_back = _ZERO
+                if (
+                    share_ledger is not None
+                    and fact.pool_book_back > _ZERO
+                    and fact.pool_code
+                    and not fact.own_pool_no_share
+                ):
+                    share_back = self._own_pool_share_back(fact)
+                    share_open = dict(share_ledger)
+                    share_open[fact.pool_code] = (
+                        share_ledger.get(fact.pool_code, _ZERO) + share_back
+                    )
                 borrow_open = dict(donors) if donors is not None else {}
                 other_group_open = dict(other_group) if other_group is not None else {}
                 supply_open = dict(supply) if supply is not None else {}
@@ -2184,8 +2237,8 @@ class ProjectSupplyService:
                         ),
                         _ZERO,
                     )
-                    net_left[product_id] = max(net_open - drawn_net, _ZERO)
-                if share_open is not None:
+                    net_left[product_id] = raw_net - max(drawn_net - fact.pool_book_back, _ZERO)
+                if share_ledger is not None:
                     # Per POOL, off what each one actually gave (R-L): a draw at MWH does
                     # not spend BRW's share, and the free half is what the share bounds -
                     # a pool BORROW (R34) is a later order's stock, not the pile's share.
@@ -2195,9 +2248,15 @@ class ProjectSupplyService:
                         code = component.source_location
                         if not code:
                             continue
-                        share_open[code] = max(
-                            share_open.get(code, _ZERO) - component.qty, _ZERO
-                        )
+                        taken = component.qty
+                        if code == fact.pool_code:
+                            if fact.own_pool_no_share:
+                                # R9: it holds no part of the pile's project share.
+                                continue
+                            spent_back = min(share_back, taken)
+                            share_back -= spent_back
+                            taken -= spent_back
+                        share_ledger[code] = max(share_ledger.get(code, _ZERO) - taken, _ZERO)
                 if donors is not None:
                     self._draw_donors(donors, fact, components)
                 for component in components:
@@ -2303,6 +2362,17 @@ class ProjectSupplyService:
             ),
         )
 
+    def _own_pool_share_back(self, fact: _LineFacts) -> Decimal:
+        """How much of the pool's project share this line's own add-back is worth: the spare
+        of what it stands on, with no net in the sum. The net binds later, on the line's own
+        read; differencing two net-bound figures grew the answer as the pools got shorter."""
+        pct = self._fulfilment_settings().get("pool_share_pct")
+
+        def spare(available: Decimal) -> Decimal:
+            return available_for_project(available, max(available, _ZERO), pct)
+
+        return spare(fact.pool_available) - spare(fact.pool_available - fact.pool_book_back)
+
     def _member_fact(self, unit_fact: _LineFacts, member: _LineFacts) -> _LineFacts:
         """One contributing line of a unit, carrying the UNIT's own context (R-E).
 
@@ -2397,7 +2467,11 @@ class ProjectSupplyService:
         out: Dict[str, "_UnitCheck"] = {}
         for members in units.values():
             unit_fact = self._unit_fact(members)
-            check = _UnitCheck(fact=unit_fact, timely_left=unit_fact.timely_qty)
+            check = _UnitCheck(
+                fact=unit_fact,
+                timely_left=unit_fact.timely_qty,
+                pool_back_left=unit_fact.pool_book_back,
+            )
             for key, _fact in members:
                 out[str(key)] = check
         return out
@@ -2436,9 +2510,15 @@ class ProjectSupplyService:
         # one and not the ask, for the reason its docstring gives. On a unit whose members
         # have no delivery the two are the same number, which is nearly every unit.
         owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
+        # `first` carries only its own add-back, and the unit stands on all of its lines'.
+        unit_book_back = sum((fact.pool_book_back for _key, fact in members), _ZERO)
+        more_back = unit_book_back - first.pool_book_back
         unit = dataclass_replace(
             first,
             open_qty=total,
+            pools_net=first.pools_net + more_back,
+            pool_available=first.pool_available + more_back,
+            pool_book_back=unit_book_back,
             owed_qty=owed_total,
             unit_core_line_ids=member_ids,
             group_offer=(
@@ -2652,6 +2732,10 @@ class ProjectSupplyService:
                     "warehouse_id": str(fact.pool.id),
                     "free": fact.pool_free if stated is None else stated,
                     "available": fact.pool_available,
+                    # What this line stands on here and nowhere else (`pool_share_capacity`).
+                    "own_back": fact.pool_book_back,
+                    "no_share": fact.own_pool_no_share,
+                    "retail_line": planning_class(fact.demand_class) == DEFAULT_DEMAND_CLASS,
                     "on_hand": self._pile_facts()
                     .get(
                         (fact.product_id, str(fact.pool.id)),
@@ -2685,6 +2769,7 @@ class ProjectSupplyService:
                     "warehouse_id": pool_id,
                     "free": free,
                     "available": available,
+                    "retail_line": planning_class(fact.demand_class) == DEFAULT_DEMAND_CLASS,
                     "on_hand": triple["on_hand"],
                 }
             )
@@ -3322,37 +3407,57 @@ class ProjectSupplyService:
         """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
         company, spo_number, placed, received)` for every live order-inquiry SPO placement
         on a line holding one of `refs`. The SPO row must be for the line's own product and
-        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
-        query = (
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN).
+
+        Statement shape matters: the one-join form let the planner drive from `spo_allocations`
+        by product (estimated 11 rows a loop, actual 1,302; 1.45M loops), 2.4-5.4 s on the prod
+        clone. The SO lines are read first in a MATERIALIZED CTE, then their live inquiry rows,
+        links and the SPO rows by id: 15-400 ms, the same rows. An index on
+        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s).
+
+        The CTE gets no company-scope criteria from do_orm_execute on the core lines (the old
+        statement did); rows stay identical because the SPO join pairs company with the line's
+        company and the scoped SPO read filters the rest."""
+        lines = (
             self.db.query(
-                SalesOrderLine.source_ref,
-                SalesOrderLine.product_id,
-                SalesOrderLine.company_id,
-                SPOAllocation.spo_number,
-                OrderInquiryLink.qty,
-                SPOAllocation.quantity_received,
+                SalesOrderLine.source_ref.label("source_ref"),
+                SalesOrderLine.product_id.label("product_id"),
+                SalesOrderLine.company_id.label("company_id"),
+                ProjectSalesOrderLine.id.label("so_line_id"),
             )
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
             )
-            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+            .filter(
+                SalesOrderLine.source_ref.in_(list(refs)),
+                SalesOrderLine.product_id.in_(list(product_ids)),
+            )
+        )
+        if company_id is not None:
+            lines = lines.filter(SalesOrderLine.company_id == company_id)
+        lines = lines.cte("oi_placement_lines").prefix_with("MATERIALIZED")
+        return (
+            self.db.query(
+                lines.c.source_ref,
+                lines.c.product_id,
+                lines.c.company_id,
+                SPOAllocation.spo_number,
+                OrderInquiryLink.qty,
+                SPOAllocation.quantity_received,
+            )
+            .select_from(lines)
+            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == lines.c.so_line_id)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
             .join(
                 SPOAllocation,
                 (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-                & (SPOAllocation.product_id == SalesOrderLine.product_id)
-                & (SPOAllocation.company_id == SalesOrderLine.company_id),
+                & (SPOAllocation.product_id == lines.c.product_id)
+                & (SPOAllocation.company_id == lines.c.company_id),
             )
-            .filter(
-                SalesOrderLine.source_ref.in_(list(refs)),
-                SalesOrderLine.product_id.in_(list(product_ids)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
+            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
         )
-        if company_id is not None:
-            query = query.filter(SalesOrderLine.company_id == company_id)
-        return query.all()
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
@@ -4980,9 +5085,63 @@ class ProjectSupplyService:
                     warehouse.warehouse_code if warehouse else None
                 ),
                 doc_type=row.get("so_doc_type"),
+                demand_class=row.get("demand_class"),
             )
             self._apply_group_nets(facts[str(row["key"])])
+        self._add_back_own_pool_demand(facts.values())
         return facts
+
+    def _add_back_own_pool_demand(self, facts: Iterable[_LineFacts]) -> None:
+        """A line standing on its own site pool gets back what that pool's book counted for it
+        (a dealer location such as BRW, DEALER-PLANNING R7).
+
+        Such a line is inside the pool's book, so its own demand is netted against the stock
+        it stands on: 10 on hand and 10 ordered reads a net of zero and buys all 10. This is
+        the arithmetic `_group_offer` does for a group, and every other line's demand stays
+        netted. A line at a project bin that merely draws the pool is booked at its own bin,
+        so it has nothing in the pool to put back.
+
+        WHAT GOES BACK IS WHAT THE BOOK COUNTED, read with `_pile_read`'s own predicate (R8). A
+        closed order, a non-transferable order or a covered line was never subtracted, so
+        adding it would offer stock the pool does not have, and `owed_qty` cannot say so.
+
+        One line's figures only. The walk and the confirm keep the ledgers they share between
+        lines free of this, because one line's add-back is not stock another line may be
+        promised. A retail line standing on a pool also holds no dealer share there (R9), add-back
+        or none: the share is what project work leaves the dealers, and this is their own line.
+        """
+        pools = self._site_pool_warehouses()
+        standing = {
+            self._core_id_of(fact): fact
+            for fact in facts
+            if fact.warehouse is not None
+            and fact.pool is not None
+            and str(fact.warehouse.id) == str(fact.pool.id)
+            and str(fact.pool.id) in pools
+            and self._core_id_of(fact)
+        }
+        if not standing:
+            return
+        for fact in standing.values():
+            fact.stands_on_pool = True
+            fact.own_pool_no_share = planning_class(fact.demand_class) == DEFAULT_DEMAND_CLASS
+        rows = (
+            self.db.query(SalesOrderLine.id, demand_qty().label("owed"))
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(
+                SalesOrderLine.id.in_(list(standing)),
+                SalesOrder.status == "open",
+                is_open_demand(),
+                is_transferable_order(),
+            )
+            .all()
+        )
+        for row in rows:
+            fact = standing[str(row.id)]
+            back = max(_dec(row.owed), _ZERO)
+            fact.pool_book_back = back
+            fact.pools_net += back
+            fact.pool_available += back
 
     def _apply_group_nets(self, fact: _LineFacts) -> None:
         """Ladder v4 (section 1d): stamp the two piles on the line, and net rung 1 against
@@ -5072,7 +5231,6 @@ class ProjectSupplyService:
         because `lineBlockers` ran with no `limits` at all and the whole-line rule saw a mix.
         This is the sheet's OWN source for those limits, one line at a time.
         """
-        pct = self._fulfilment_settings().get("pool_share_pct")
         allowances: Dict[str, str] = {}
         for entry in self.pool_chain_for(fact):
             # By the pool's own id, never its code: two companies may each own an `HQ`
@@ -5080,10 +5238,32 @@ class ProjectSupplyService:
             warehouse_id = entry.get("warehouse_id")
             if not warehouse_id:
                 continue
-            allowances[warehouse_id] = qty_text(
-                available_for_project(entry.get("available"), fact.pools_net, pct)
-            )
+            allowances[warehouse_id] = qty_text(self._chain_allowance(fact, entry))
         return allowances
+
+    def own_pool_figures(self, fact: _LineFacts) -> Tuple[Decimal, Decimal]:
+        """`(its own row, the pools' subtotal)` for a line standing on its own pool (R12): what
+        `pool_share_capacity` may give it there, and over the whole chain before any floor. The
+        other pools share the true net less what went beyond the line's own add-back."""
+        own = _ZERO
+        others = _ZERO
+        for entry in self.pool_chain_for(fact):
+            allowance = self._chain_allowance(fact, entry)
+            if entry.get("location") == fact.pool_code:
+                own = allowance
+            else:
+                others += allowance
+        back = fact.pool_book_back
+        room = max(fact.pools_net - back, _ZERO) - max(own - back, _ZERO)
+        return own, own + min(others, max(room, _ZERO))
+
+    def _chain_allowance(self, fact: _LineFacts, entry: Mapping[str, Any]) -> Decimal:
+        """What one pool of `fact`'s chain may give it, before any ledger: `pool_share_capacity`'s
+        reading. The line's own add-back is read at the pool it stands on and nowhere else."""
+        net = fact.pools_net if _dec(entry.get("own_back")) > _ZERO else (
+            fact.pools_net - fact.pool_book_back
+        )
+        return pool_allowance(entry, net, self._fulfilment_settings().get("pool_share_pct"))
 
     def _serialize_line(
         self,
@@ -6170,21 +6350,38 @@ class ProjectSupplyService:
         # LADDER V6: seeded from the UNIT's fact, which is the quantity the ladder walked
         # these rungs with. The ledger is shared across the whole confirmation, so the unit's
         # members draw the same seeded balance down between them in payload order.
-        pools = self._pool_chain(unit.fact, pool_free_left=None)
+        #
+        # DEALER-PLANNING R10: the pools read ONE running net, spent as drawn, the walk's own
+        # rule. Each pool's capacity is what its own ledger holds (seeded from its free floor,
+        # never from a chain walk, which handed the whole net to the first pool's floor and left
+        # the second pool short of its own proposal) capped by the net. The ledger holds the
+        # TRUE net, because one unit's add-back is not stock another may be promised; a unit
+        # standing on a pool reads that add-back at that pool alone (`_pool_read`), and a draw
+        # spends it first (`_pool_draw`).
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
-        for location, live_qty in pool_reserve_capacity(
-            pools=pools,
-            pools_net=unit.fact.pools_net,
-        ):
-            source = self._warehouse_by_code(location)
+        pool_codes: Set[str] = set()
+        for entry_pool in self._pool_chain(unit.fact, pool_free_left=None):
+            location = str(entry_pool.get("location") or "")
+            source = self._warehouse_by_code(location) if location else None
             if source is None:
                 continue
+            pool_codes.add(location)
             location_ids[location] = str(source.id)
-            capacity[location] = capacity_left.capacity(
-                fact.product_id, str(source.id), live_qty,
+            capacity_left.capacity(
+                fact.product_id, str(source.id), max(_dec(entry_pool.get("free")), _ZERO),
                 own=(location == unit.fact.pool_code),
             )
+        # The room this LINE has at the pools it does not stand on: `left` in
+        # `pool_share_capacity`, since a line's draw there is paid by the add-back but is still a
+        # draw on the net as far as this line's own list goes.
+        others_room = self._pool_net_left(capacity_left, fact.product_id, unit)
+        for location in pool_codes:
+            room = self._pool_read(
+                capacity_left, fact.product_id, unit, location, location_ids[location], others_room
+            )
+            if room > _ZERO:
+                capacity[location] = room
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #
         # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
@@ -6458,11 +6655,19 @@ class ProjectSupplyService:
             #
             # REVISIT when the BB group's book is cleaned up or a queue-jumping complaint
             # arrives, whichever first (PLAN-scm-cs-planning-uat.md).
+            #
+            # NEVER FOR A LINE STANDING ON ITS POOL (DEALER-PLANNING R11). The lift is about a
+            # group oversold on paper; at a pool the book is one pile shared with every other
+            # order, so a reason must not let a Reserve take stock the book owes or has reserved.
             own_group_bin = warehouse == fact.own_code or (
                 sales_agent_service.group_of_warehouse_code(warehouse) == fact.group_code
                 and fact.group_code is not None
             )
-            if own_group_bin and (getattr(entry, "amend_reason", None) or "").strip():
+            if (
+                own_group_bin
+                and not fact.stands_on_pool
+                and (getattr(entry, "amend_reason", None) or "").strip()
+            ):
                 capacity[warehouse] = max(capacity.get(warehouse, _ZERO), qty)
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for
@@ -6490,6 +6695,19 @@ class ProjectSupplyService:
             warehouse_id = location_ids.get(warehouse)
             if warehouse_id:
                 capacity_left.take(fact.product_id, warehouse_id, qty)
+            if warehouse in pool_codes:
+                others_room = self._pool_draw(
+                    capacity_left, fact.product_id, unit, warehouse, qty, others_room
+                )
+                for location in pool_codes:
+                    if location in capacity:
+                        capacity[location] = min(
+                            capacity[location],
+                            self._pool_read(
+                                capacity_left, fact.product_id, unit, location,
+                                location_ids[location], others_room,
+                            ),
+                        )
             lender = sales_agent_service.group_of_warehouse_code(warehouse)
             if lender and lender != fact.group_code:
                 # R-M: and off the LENDING GROUP's budget, so the next line of this
@@ -6617,6 +6835,63 @@ class ProjectSupplyService:
                 "proposal.",
             )
 
+    @staticmethod
+    def _pool_net_left(
+        capacity_left: "_CapacityLedger", product_id: Optional[str], unit: "_UnitCheck"
+    ) -> Decimal:
+        """What the confirmation's running net still holds, seeded once from the true net."""
+        return capacity_left.capacity(
+            product_id,
+            _POOLS_NET_BUDGET,
+            max(unit.fact.pools_net - unit.fact.pool_book_back, _ZERO),
+        )
+
+    def _pool_read(
+        self,
+        capacity_left: "_CapacityLedger",
+        product_id: Optional[str],
+        unit: "_UnitCheck",
+        location: str,
+        warehouse_id: str,
+        others_room: Decimal,
+    ) -> Decimal:
+        """What one pool may still give this line of the confirmation.
+
+        Its own ledger, capped by the net. The pool the unit stands on reads the true net plus
+        what is left of the unit's add-back, floored only after the sum: where the true net is
+        negative the add-back merely cancels it, so another order's stock stays theirs. Any other
+        pool reads the net alone, less what this line has already taken from the others.
+        """
+        free = capacity_left.capacity(product_id, warehouse_id, _ZERO)
+        if location == unit.fact.pool_code and unit.fact.pool_book_back > _ZERO:
+            true_net = unit.fact.pools_net - unit.fact.pool_book_back
+            running = min(true_net, self._pool_net_left(capacity_left, product_id, unit))
+            return min(free, max(running + unit.pool_back_left, _ZERO))
+        return min(free, max(others_room, _ZERO))
+
+    def _pool_draw(
+        self,
+        capacity_left: "_CapacityLedger",
+        product_id: Optional[str],
+        unit: "_UnitCheck",
+        location: str,
+        qty: Decimal,
+        others_room: Decimal,
+    ) -> Decimal:
+        """Spend one draw on the running net, and return the line's room at its other pools.
+
+        The add-back pays first, wherever the units came from, and only the rest comes off the
+        net: the line's own demand is already in the true net, so the part it covers costs
+        nobody anything (`compose_lines`' `net_left` is the same sum). The ROOM keeps the whole
+        of a draw at another pool, though, or the add-back would become a claim on it.
+        """
+        from_back = min(unit.pool_back_left, qty)
+        unit.pool_back_left -= from_back
+        rest = qty - from_back
+        capacity_left.take(product_id, _POOLS_NET_BUDGET, rest)
+        stands_here = location == unit.fact.pool_code and unit.fact.pool_book_back > _ZERO
+        return others_room - (rest if stands_here else qty)
+
     def _is_pool_share_split(
         self, fact: _LineFacts, entry: Any, from_stock: Decimal
     ) -> bool:
@@ -6676,10 +6951,17 @@ class ProjectSupplyService:
         pooled = sum(per_pool.values(), _ZERO)
         if pooled <= _ZERO or pooled != from_stock:
             return False
-        pct = settings.get("pool_share_pct")
-        return pooled <= max(_dec(fact.pools_net), _ZERO) and all(
-            qty <= available_for_project(chain[code].get("available"), fact.pools_net, pct)
-            for code, qty in per_pool.items()
+        # `pool_share_capacity`'s own reading: the add-back is read at the pool the line stands
+        # on, and the other pools have the true net less what went beyond it.
+        back = fact.pool_book_back
+        own = per_pool.get(fact.pool_code or "", _ZERO)
+        room = (
+            max(fact.pools_net - back, _ZERO) - max(own - back, _ZERO)
+            if back > _ZERO
+            else max(_dec(fact.pools_net), _ZERO) - own
+        )
+        return pooled - own <= room and all(
+            qty <= self._chain_allowance(fact, chain[code]) for code, qty in per_pool.items()
         )
 
     def _check_reserve_against_on_hand(
@@ -8449,7 +8731,9 @@ class ProjectSupplyService:
         """"Borrow from another order" OFF (D4, B3): every borrow that is not a document is
         owed back on the BORROWING line, at its own date, at the location it left from. The
         line's own location and its own group included (Q3): a project line is demand only
-        through its OI rows, so nothing else would replace what it took. One row per (line,
+        through its OI rows, so nothing else would replace what it took. A consignment's Borrow
+        at its own bin too, like a sales order line's (owner ruling 2 Nov 2026,
+        CONSIGN-OWN-BIN-EMAIL, reversing CONSIGN-PLAN Q1 for it). One row per (line,
         location).
 
         `unnamed_order_borrows_only` is the switch-ON reading: only a later order's stock
@@ -8462,12 +8746,6 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if getattr(item, "supply_key", None):
-                    continue
-                if planned_at_own_bin(fact.warehouse, fact.doc_type) and str(
-                    item.warehouse_id
-                ) == str(fact.warehouse.id):
-                    # CONSIGN-PLAN: the goods ARE the consignment's own bin; nothing was
-                    # lent, so nothing is owed back and purchasing hears nothing.
                     continue
                 if unnamed_order_borrows_only and (
                     not getattr(item, "donor_core_line_id", None)
@@ -8844,11 +9122,14 @@ class ProjectSupplyService:
                 pool = next(
                     (p for p in pool_chain if str(p.get("location")) == candidate), None
                 )
-                pct = self._fulfilment_settings().get("pool_share_pct")
-                allowance = available_for_project(
-                    pool.get("available") if pool else None, fact.pools_net, pct
+                allowance = self._chain_allowance(fact, pool or {})
+                return pool_share_reason(
+                    str(location),
+                    qty,
+                    allowance,
+                    no_share=bool((pool or {}).get("no_share")),
+                    retail_line=planning_class(fact.demand_class) == DEFAULT_DEMAND_CLASS,
                 )
-                return pool_share_reason(str(location), qty, allowance)
         for candidate in self._group_take_candidates(fact):
             # A confirmed RESERVE is floor stock by definition; the water half of question 1
             # is confirmed as `timely_spo` and reads through `_timely_reason`.
@@ -9570,6 +9851,9 @@ class ProjectSupplyService:
                         outside_fulfilment_planning(
                             warehouse,
                             getattr(core_orders.get(str(core.sales_order_id)), "doc_type", None),
+                            getattr(
+                                core_orders.get(str(core.sales_order_id)), "demand_class", None
+                            ),
                         )
                         and str(core.id) not in decided_anywhere
                     )
@@ -9581,8 +9865,12 @@ class ProjectSupplyService:
                 doc_type=getattr(core_orders.get(str(core.sales_order_id)), "doc_type", None)
                 if core
                 else None,
+                demand_class=getattr(core_orders.get(str(core.sales_order_id)), "demand_class", None)
+                if core
+                else None,
             )
             self._apply_group_nets(facts[str(line.id)])
+        self._add_back_own_pool_demand(facts.values())
         return facts
 
     # -------------------------------------------------------------- fact readers
@@ -10403,15 +10691,43 @@ class ProjectSupplyService:
         rather than two, because the answer cannot change mid-request.
         """
         if self._active_decision_rows is None:
-            self._active_decision_rows = (
-                self.db.query(
-                    SOSupplyDecision.project_sales_order_id,
-                    SOSupplyDecision.line_snapshots,
-                )
-                .filter(SOSupplyDecision.state == DECISION_ACTIVE)
-                .all()
-            )
+            self._active_decision_rows = self._active_decision_snapshots_reused()
         return self._active_decision_rows
+
+    def _active_decision_snapshots_reused(self) -> List[Tuple[Any, Any]]:
+        """The same rows as a plain read, reusing the parsed `line_snapshots` across orders
+        and services on this session (SIMULATE-CONFIRM-SPEED: the JSON is megabytes and was
+        re-read once per order and per Simulate probe).
+
+        Each active row is keyed by `(id, xmin, ctid)`. Any write to a row (an in-place
+        snapshot rewrite, a state change) makes a new tuple version with a new `ctid`, and a
+        rolled-back savepoint brings the old version back, so a key that is still in the table
+        is a row whose content is the cached one. Only rows with a new key are read.
+        Consumers only read the snapshots; nothing may mutate what this returns.
+        """
+        version = (literal_column("xmin::text"), literal_column("ctid::text"))
+        active = SOSupplyDecision.state == DECISION_ACTIVE
+        keys = {
+            (str(row[0]), row[1], row[2])
+            for row in self.db.query(SOSupplyDecision.id, *version).filter(active)
+        }
+        cache: Dict[Tuple[str, str, str], Tuple[Any, Any]] = self.db.info.get(
+            _ACTIVE_SNAPSHOT_CACHE, {}
+        )
+        kept = {key: cache[key] for key in keys if key in cache}
+        missing = [key[0] for key in keys if key not in kept]
+        if missing:
+            # A row a concurrent commit changed between the two reads comes back under its
+            # newer key, and that is the version this read answers with.
+            for row in self.db.query(
+                SOSupplyDecision.id,
+                *version,
+                SOSupplyDecision.project_sales_order_id,
+                SOSupplyDecision.line_snapshots,
+            ).filter(active, SOSupplyDecision.id.in_(missing)):
+                kept[(str(row[0]), row[1], row[2])] = (row[3], row[4])
+        self.db.info[_ACTIVE_SNAPSHOT_CACHE] = kept
+        return list(kept.values())
 
     def _decided_anywhere_cached(self) -> Set[str]:
         """Core lines ANY active decision covers - the lines being replaced INCLUDED.
@@ -11535,7 +11851,11 @@ class ProjectSupplyService:
             ProjectSalesOrder.project_id,
             SalesOrder.id.label("sales_order_id"),
             SalesOrder.so_number,
-            Customer.customer_name,
+            # OI-UX-FILTER-SNAPSHOT: the SO list's own customer (debtor name, else master).
+            func.coalesce(
+                func.nullif(func.trim(SalesOrder.debtor_name), ""), Customer.customer_name
+            ).label("customer_name"),
+            SalesOrder.project_label.label("project_label"),
             SalesAgent.sales_agent.label("agent_code"),
             SalesAgent.person_label.label("agent_label"),
             User.name.label("decided_by_name"),
@@ -11559,6 +11879,8 @@ class ProjectSupplyService:
             base = base.filter(
                 SalesOrder.so_number.ilike(needle)
                 | Customer.customer_name.ilike(needle)
+                | SalesOrder.debtor_name.ilike(needle)
+                | SalesOrder.project_label.ilike(needle)
                 | SalesAgent.sales_agent.ilike(needle)
             )
 
@@ -11578,6 +11900,7 @@ class ProjectSupplyService:
                 sales_order_id=sales_order_id,
                 so_number=so_number,
                 customer_name=customer_name,
+                project_label=project_label,
                 agent_code=row_agent_code,
                 agent_label=agent_label,
                 decided_by_name=decided_by_name,
@@ -11588,6 +11911,7 @@ class ProjectSupplyService:
                 sales_order_id,
                 so_number,
                 customer_name,
+                project_label,
                 row_agent_code,
                 agent_label,
                 decided_by_name,
@@ -11598,7 +11922,10 @@ class ProjectSupplyService:
     def _plan_sort_column(self, sort: Optional[str]) -> Any:
         columns = {
             "so_number": SalesOrder.so_number,
-            "customer_name": Customer.customer_name,
+            "customer_name": func.coalesce(
+                func.nullif(func.trim(SalesOrder.debtor_name), ""), Customer.customer_name
+            ),
+            "project_label": SalesOrder.project_label,
             "agent_code": SalesAgent.sales_agent,
             "revision_no": SOSupplyDecision.revision_no,
             "state": SOSupplyDecision.state,
@@ -11614,6 +11941,7 @@ class ProjectSupplyService:
         sales_order_id: Optional[str],
         so_number: Optional[str],
         customer_name: Optional[str],
+        project_label: Optional[str],
         agent_code: Optional[str],
         agent_label: Optional[str],
         decided_by_name: Optional[str],
@@ -11623,7 +11951,8 @@ class ProjectSupplyService:
             "sales_order_id": str(sales_order_id) if sales_order_id else None,
             "project_id": str(project_id) if project_id else None,
             "so_number": so_number,
-            "customer_name": customer_name,
+            "customer_name": (customer_name or "").strip() or None,
+            "project_label": (project_label or "").strip() or None,
             "agent_code": agent_code,
             "agent_label": agent_label,
             "revision_no": decision.revision_no,
@@ -11659,12 +11988,24 @@ class ProjectSupplyService:
 
     # --------------------------------------------------- confirm all approved (D3)
 
+    def _bound_preview_locks(self) -> None:
+        """CONFIRM-REMARK-FIX: a Confirm dry run (`confirm_many(preview=True)`) must not sit
+        on a lock behind a real save, the same bound Simulate takes (`SIMULATE_LOCK_TIMEOUT`).
+        SET LOCAL: the transaction's end restores the session's value, so it is set again after
+        any rollback inside the dry run. A real press and Simulate (its own session) never
+        come here."""
+        from app.services.confirm_simulation import SIMULATE_LOCK_TIMEOUT
+
+        self.db.execute(text(f"SET LOCAL lock_timeout = '{SIMULATE_LOCK_TIMEOUT}'"))
+
     def _write_holding_back(
         self,
         order: ProjectSalesOrder,
         entry: Any,
         write: Callable[[ProjectSalesOrder, Any], Dict[str, Any]],
         hold_back: bool,
+        *,
+        preview: bool = False,
     ) -> Tuple[Dict[str, Any], Any, List[Dict[str, Any]]]:
         """#1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): one line's
         stale or conflicting decision must not refuse the whole order.
@@ -11699,6 +12040,10 @@ class ProjectSupplyService:
                 ):
                     raise
                 self.db.rollback()
+                # The rollback ended the transaction and its SET LOCAL with it: a dry run's
+                # retry is bounded again (review N1).
+                if preview:
+                    self._bound_preview_locks()
                 held.extend(
                     {k: v for k, v in f.items() if k != "project_line_id"} for f in failing
                 )
@@ -11783,7 +12128,10 @@ class ProjectSupplyService:
             held_back: List[Dict[str, Any]] = []
             if preview:
                 self.db.info["confirm_preview"] = True
+            started = time.monotonic()
             try:
+                if preview:
+                    self._bound_preview_locks()
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
                 only = getattr(entry, "only_line_ids", None)
@@ -11813,8 +12161,18 @@ class ProjectSupplyService:
                     active = self.active_decision(str(order.id))
                     before_decision_id = str(active.id) if active is not None else None
                     before_rows, before_moves = self._preview_baseline(order)
+                from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+                queued_before = len(self.db.info.get(_HANDOVER_PENDING_KEY) or [])
                 body, entry, held_back = self._write_holding_back(
-                    order, entry, write, can_hold_back(entry)
+                    order, entry, write, can_hold_back(entry), preview=preview
+                )
+                # CONFIRM-PREVIEW-STALE (crew final pass, 2 Nov 2026; owner rule "popup =
+                # email = Excel"): a dry run answers the purchasing email's OWN lines for this
+                # order, read off the handover queue this very write filled and the context
+                # builder the real email renders through, before the rollback discards them.
+                email_lines = (
+                    self._preview_email_lines(pso_id, queued_before) if preview else None
                 )
                 previewed = None
                 if observe:
@@ -11834,6 +12192,7 @@ class ProjectSupplyService:
                         "pso_id": pso_id,
                         "ok": True,
                         **({"preview": True, **previewed} if observe else {}),
+                        **({"email_lines": email_lines} if email_lines is not None else {}),
                         "decision_revision": body.get("revision_no"),
                         "inquiry_rows_created": body.get("inquiry_rows_created"),
                         "lines_decided": body.get("lines_decided"),
@@ -11871,6 +12230,11 @@ class ProjectSupplyService:
             except Exception as exc:  # noqa: BLE001 - every order must get an answer
                 self.db.rollback()
                 message, failing_lines = _error_detail(exc)
+                if preview:
+                    from app.services.confirm_simulation import is_lock_busy
+
+                    if is_lock_busy(exc):
+                        message = PREVIEW_LOCK_BUSY_MESSAGE
                 if raw_errors:
                     from app.services.confirm_simulation import error_text
 
@@ -11882,12 +12246,54 @@ class ProjectSupplyService:
                         "error": message,
                         "failing_lines": failing_lines,
                         **({"preview": True} if observe else {}),
+                        # Simulate only (SIMULATE-CONFIRM-SPEED): tells an order-level
+                        # refusal from a line's; the route pops it before replying.
+                        **({"error_class": type(exc).__name__} if raw_errors else {}),
                     }
                 )
             finally:
                 if preview:
                     self.db.info.pop("confirm_preview", None)
+                if raw_errors and results and results[-1].get("pso_id") == pso_id:
+                    # Simulate only: its server log times each order (the route pops it).
+                    results[-1]["elapsed_ms"] = int((time.monotonic() - started) * 1000)
         return results
+
+    def _preview_email_lines(self, pso_id: str, queued_before: int) -> List[Dict[str, Any]]:
+        """The purchasing email's lines this order's write queued (CONFIRM-PREVIEW-STALE),
+        each `{so_line_id, item_code, qty, delivery_date, remark, was}` exactly as the email
+        prints it: `_build_handover_context` over the queued items, the same call the real
+        send makes, so the guided Confirm's REMARK and the email's are one rendering."""
+        from app.services.project_order_inquiry_service import (
+            _HANDOVER_PENDING_KEY,
+            _build_handover_context,
+            _handover_sorted,
+        )
+
+        queued = [
+            item
+            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])[queued_before:]
+            if str(item.get("pso_id") or "") == pso_id
+        ]
+        if not queued:
+            return []
+        built = _build_handover_context(queued)
+        if not built:
+            return []
+        context, _source = built
+        lines = (context.get("handover") or context).get("lines") or []
+        ordered = _handover_sorted(queued)
+        return [
+            {
+                "so_line_id": str(item.get("so_line_id") or ""),
+                "item_code": line.get("item_code"),
+                "qty": line.get("qty"),
+                "delivery_date": line.get("delivery_date"),
+                "remark": line.get("remark") or "",
+                "was": line.get("was"),
+            }
+            for item, line in zip(ordered, lines)
+        ]
 
     def _preview_baseline(
         self, order: ProjectSalesOrder
@@ -11965,6 +12371,7 @@ class ProjectSupplyService:
             for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
             if before_rows.get(str(row.id)) != _preview_row_facts(row)
         ]
+        needed_by = resolve_oi_date(self.db, changed_rows)
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
@@ -11973,7 +12380,7 @@ class ProjectSupplyService:
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
                 "qty": row.qty,
-                "delivery_date": row.delivery_date,
+                "delivery_date": needed_by[str(row.id)].date,
                 "stock_location": row.stock_location,
                 "note": row.note,
                 "state": row.state,

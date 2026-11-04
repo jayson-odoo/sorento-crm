@@ -127,16 +127,30 @@ def resolve_for_prompt(db: Session, *, ctx: dict) -> dict:
     from app.services.chatbot.lanes.business.resolve_gate import _allowed_entity_types
 
     hints = _allowed_entity_types(ctx, entities)
+    if not hints:
+        # SUPPLIER-ASK (#2066) drops a null hint (the resolver route rejects None). When the
+        # parser typed none of the words, an empty list makes `_resolve_input` skip its
+        # cross-type fallback (it runs only under a non-empty whitelist) and the clarifier
+        # sees no entity at all. A blank entry names no type (the resolver skips it), so, as
+        # the null hints did before, the typed pass places nothing and every word goes to
+        # that fallback; `without_denied_kinds` below still drops the kinds this asker may
+        # not see.
+        hints = [""]
     goal = out.get("user_goal")
 
-    return _resolve_input(
+    from app.services.chatbot.lanes.business.services import without_denied_kinds
+
+    return without_denied_kinds(
         db,
-        goal if jsc.truthy(goal) else NOTHING,
-        raws if len(raws) else [NOTHING],
-        match_mode="or",
-        allowed_entity_types=hints if len(raws) else [NOTHING],
-        access_levels=jsc.array(out.get("access_levels")),
-        fallback_to_all_types=True,
+        _resolve_input(
+            db,
+            goal if jsc.truthy(goal) else NOTHING,
+            raws if len(raws) else [NOTHING],
+            match_mode="or",
+            allowed_entity_types=hints if len(raws) else [NOTHING],
+            access_levels=jsc.array(out.get("access_levels")),
+            fallback_to_all_types=True,
+        ),
     )
 
 
@@ -320,6 +334,10 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
             messages,
             temperature=0.0,
             max_tokens=CLARIFIER_MAX_TOKENS,
+            # One attempt's time, no second try after a hang: a turn can make a parser call
+            # and this one, the queue cap (`dispatch.max_queue_wait_seconds`) counts one 35 s
+            # model call, and a clarifier that fails has an honest canned reply to send.
+            deadline_seconds=llm_call.ATTEMPT_TIMEOUT_SECONDS,
             # One cache bucket per prompt version, as the parser's (GEMINI-EXPLICIT-CACHE:
             # on Gemini this also puts the system prompt in an explicit context cache).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
