@@ -345,6 +345,9 @@ export interface TagItemOption {
   id: string;
   code: string;
   name: string;
+  /** None when unpriced or zero; a set answers its override only. Optional so a
+   *  caller that builds one by hand need not invent a price. */
+  list_price?: number | null;
 }
 
 /** One part of a combo, as the combos lookup answers it. */

@@ -2837,6 +2837,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         foreign key stores; the portal's generic product lookup answers with a code and
         no id at all, which is why a product line could never be saved.
 
+        Each row carries its `list_price` (None when unset or zero) for the option's
+        "CODE  RM <price>" line; a set answers its override only.
+
         Sets come first, then products, each ordered by code and each capped at `limit`
         (so at most `2 * limit` rows reach the picker). Sets lead because they are far
         fewer and are the thing a salesperson is likeliest to miss.
@@ -2852,6 +2855,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.set_code,
                 "name": row.name or "",
+                # The override only: the computed figure needs every member
+                # and its product loaded, per set, for a dropdown row.
+                "list_price": row.list_price_override or None,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -2861,6 +2867,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.product_code,
                 "name": row.product_name or "",
+                "list_price": row.list_price or None,
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

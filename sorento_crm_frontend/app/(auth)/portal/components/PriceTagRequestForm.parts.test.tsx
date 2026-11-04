@@ -122,6 +122,9 @@ const SINK = {
 };
 
 const MIRROR = { product_id: 'prod-mirror', code: 'SRTMR502-BL', name: 'ZZT Mirror' };
+/** Owner, 4 Nov: a catalogue option's label IS its code now ("CODE  RM <price>"), so the
+ *  Item and Add part pickers list MIRROR's code too; a part ROW is what these tests read. */
+const NOT_AN_OPTION = { ignore: 'option, script, style' };
 const TOP = { product_id: 'prod-top', code: 'SRTTT800', name: 'ZZT Table Top' };
 const BASIN_WHITE = { product_id: 'prod-basin-wh', code: 'SRTBS900-WH', name: 'ZZT Basin White' };
 const BASIN_BLACK = { product_id: 'prod-basin-bk', code: 'SRTBS900-BK', name: 'ZZT Basin Black' };
@@ -210,7 +213,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await pickTheCabinet();
 
     // The fixed part is a product row named by its own code.
-    expect(await screen.findByText(MIRROR.code)).toBeInTheDocument();
+    expect(await screen.findByText(MIRROR.code, NOT_AN_OPTION)).toBeInTheDocument();
 
     // The two basins are ONE open row, not two product rows: the salesperson
     // picks one of them, and listing both as parts would read as buying both.
@@ -236,7 +239,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByText(MIRROR.code);
+    await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     await pickPrinting();
     sendToMarketing();
@@ -279,7 +282,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(within(packageSelect).getByText('4 in 1')).toBeInTheDocument();
     // Nothing chosen means no parts - the form must not guess which catalogue
     // page the salesperson meant.
-    expect(screen.queryByText(MIRROR.code)).toBeNull();
+    expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull();
     expect(screen.queryByLabelText(/Not sure, any of/)).toBeNull();
   });
 
@@ -305,7 +308,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.getByLabelText('Not sure, any of 2')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Package'), { target: { value: '' } });
-    await waitFor(() => expect(screen.queryByText(MIRROR.code)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull());
     expect(screen.queryByLabelText(/Not sure, any of/)).toBeNull();
   });
 
@@ -392,14 +395,14 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByText(MIRROR.code);
+    await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     fireEvent.click(
       // The row is named by its choice group, or by its code when it is fixed.
       screen.getByRole('button', { name: `Remove part ${MIRROR.code} from line 1` }),
     );
 
-    await waitFor(() => expect(screen.queryByText(MIRROR.code)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull());
     // A part row is unsaved form state, not a record: nothing is parked and
     // nothing asks.
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -468,7 +471,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     fireEvent.change(screen.getByLabelText('Package'), {
       target: { value: COMBO_3_IN_1.combo_id },
     });
-    expect(await screen.findByText(MIRROR.code)).toBeInTheDocument();
+    expect(await screen.findByText(MIRROR.code, NOT_AN_OPTION)).toBeInTheDocument();
     expect(screen.getByLabelText('Not sure, any of 2')).toBeInTheDocument();
   });
 
@@ -591,7 +594,7 @@ describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', (
     (getRequest as ReturnType<typeof vi.fn>).mockResolvedValue(draftRequest);
 
     render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByText(MIRROR.code);
+    await screen.findByText(MIRROR.code, NOT_AN_OPTION);
     await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(CABINET.id));
 
     expect(screen.queryByLabelText('Add part')).toBeNull();
@@ -673,19 +676,19 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_ONE_FIXED] });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByText(MIRROR.code);
+    await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     fireEvent.click(
       screen.getByRole('button', { name: `Remove part ${MIRROR.code} from line 1` }),
     );
-    await waitFor(() => expect(screen.queryByText(MIRROR.code)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull());
 
     expect(await screen.findByText('Missing: SRTMR502-BL')).toBeInTheDocument();
     const restore = screen.getByRole('button', { name: 'Restore' });
 
     fireEvent.click(restore);
 
-    expect(await screen.findByText(MIRROR.code)).toBeInTheDocument();
+    expect(await screen.findByText(MIRROR.code, NOT_AN_OPTION)).toBeInTheDocument();
     expect(screen.queryByText(/Missing:/)).toBeNull();
   });
 
@@ -693,7 +696,7 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_TWO_FIXED_ONE_GROUP] });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByText(MIRROR.code);
+    await screen.findByText(MIRROR.code, NOT_AN_OPTION);
     await screen.findByText(TOP.code);
     await screen.findByLabelText('Not sure, any of 2');
 
@@ -713,7 +716,7 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     expect(await screen.findByText(TOP.code)).toBeInTheDocument();
     expect(await screen.findByLabelText('Not sure, any of 2')).toBeInTheDocument();
     // MIRROR was never removed - exactly one row for it, not duplicated.
-    expect(screen.getAllByText(MIRROR.code)).toHaveLength(1);
+    expect(screen.getAllByText(MIRROR.code, NOT_AN_OPTION)).toHaveLength(1);
   });
 
   it('AC-S14-3: no Restore button on a line with no combo_id (nothing missing to restore)', async () => {

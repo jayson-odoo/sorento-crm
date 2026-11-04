@@ -27,6 +27,7 @@ import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
+  itemOptionDescription,
   itemValue,
   linePriceType,
   lineTemplateState,
@@ -372,12 +373,9 @@ function LineRow({
   const selectedItem: SearchableSelectOption | undefined = picked
     ? {
         value: picked,
-        label: line.name || line.code,
-        description: distinctName(line.code, line.name)
-          ? `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`
-          : isSet
-            ? 'Set'
-            : 'Product',
+        // The same code-once shape as the options (owner, 4 Nov).
+        label: line.code || line.name,
+        description: itemOptionDescription(isSet, line.code, line.name),
       }
     : undefined;
 

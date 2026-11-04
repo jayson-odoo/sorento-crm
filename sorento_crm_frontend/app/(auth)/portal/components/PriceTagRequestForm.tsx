@@ -801,6 +801,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         value: id,
         label: code,
         description: distinctName(code, name) ?? undefined,
+        code,
+        name: name || code,
       });
       const suggested = (p.suggestions ?? [])
         .filter(
@@ -835,8 +837,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         ? {
             kind: 'product',
             id: option.value,
-            code: option.label,
-            name: option.description || option.label,
+            code: option.code ?? option.label,
+            name: option.name ?? option.label,
           }
         : null;
       setAiMatchStatuses((prev) => ({ ...prev, [code]: option ? 'picked' : 'not_found' }));
