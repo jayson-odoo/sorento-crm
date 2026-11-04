@@ -119,7 +119,10 @@ if args[0] == "compose":
             if os.path.exists(os.path.join(d, "psql_fail")):
                 sys.stderr.write('psql: error: database "x" does not exist\n')
                 sys.exit(2)
-            if "version_num" in joined:
+            if "pg_is_in_recovery" in joined:
+                # HA-CF-FAILOVER node role: a primary unless a test says otherwise.
+                sys.stdout.write(rd("in_recovery", "f\n"))
+            elif "version_num" in joined:
                 if os.path.exists(os.path.join(d, "versions_fail")):
                     sys.exit(2)
                 sys.stdout.write(rd("db_versions"))
@@ -1068,3 +1071,87 @@ def test_a_failed_heads_read_logs_why(box):
     r = _run(box)
     assert "no such image" in r.stderr, r.stderr
     assert _index(_calls(box), "pg_dump") != -1
+
+
+# --- HA-CF-FAILOVER: the same release on the standby node ------------------------------
+# Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 2 row 1. The standby
+# runs the release with SKIP_MIGRATIONS=1, no snapshot, no worker steps, and only after the
+# primary's migrations have replicated to it.
+
+
+def _role_box(box, in_recovery: str):
+    _ha_box(box)
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "skip.log"), "a").write(" ".join(args[:6]) + " SKIP_MIGRATIONS=" + os.environ.get("SKIP_MIGRATIONS", "<unset>") + "\\n")\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["stub"] / "in_recovery").write_text(in_recovery)
+
+
+def _at_head(box, image="rev2", db="rev2"):
+    (box["stub"] / "image_heads").write_text(f"{image} (head)\n")
+    (box["stub"] / "db_versions").write_text(f"{db}\n")
+
+
+@pytest.mark.parametrize("in_recovery, want", [("t\n", "standby"), ("f\n", "primary"), ("", "unknown")])
+def test_ha_role_flag_prints_the_role_and_changes_nothing(box, in_recovery, want):
+    _role_box(box, in_recovery)
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == want
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_ha_role_flag_without_ha_is_single(box):
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0 and r.stdout.strip() == "single", r.stdout + r.stderr
+    assert not _calls(box)
+
+
+def test_ha_standby_release_skips_migrations_snapshot_and_workers(box):
+    _role_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and all(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+    assert (box["root"] / ".ha-image-tag").read_text().strip() == SHA
+
+
+def test_ha_standby_waits_for_the_primary_migration_and_never_starts_behind(box):
+    _role_box(box, "t\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA, STANDBY_SCHEMA_WAIT_SECONDS="30")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "deploy the primary first" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert not _started_new_colour(calls) and not _swapped(calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+
+
+def test_ha_unreadable_role_refuses_before_any_change(box):
+    _role_box(box, "")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "primary or standby" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_ha_primary_release_is_the_normal_release(box):
+    _role_box(box, "f\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert any("pg_dump" in l for l in calls), calls
+    assert any("--force-recreate" in l and "worker" in l for l in calls), calls
+    ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
+    assert ups and not any(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups

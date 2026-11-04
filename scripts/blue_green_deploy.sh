@@ -30,6 +30,14 @@
 #     so the two never overlap.
 # Tunables may be set on the box in .deploy.env next to docker-compose.yml (sourced below).
 # `blue_green_deploy.sh --preflight` checks all of it and changes nothing (runbook step 3).
+# `blue_green_deploy.sh --role` prints this node's role (single | primary | standby | unknown)
+# and changes nothing; the two-node release (scripts/ha_release.sh) deploys the primary first.
+#
+# HA standby mode (HA-CF-FAILOVER, documentation/plans/infra/PLAN-ha-cf-failover-04nov.md
+# section 2 row 1): on a node whose Postgres is a read-only standby the release runs with
+# SKIP_MIGRATIONS=1, takes no snapshot (the primary took it), WAITS until the replica holds the
+# new image's alembic heads (the primary's migration replicated), and never touches the workers
+# (they run only on the primary). It still records .ha-image-tag for a later promotion.
 
 set -euo pipefail
 
@@ -39,7 +47,8 @@ MODE=deploy
 case "${1:-}" in
   "") ;;
   --preflight) MODE=preflight ;;
-  *) echo "usage: $0 [--preflight]"; exit 2 ;;
+  --role) MODE=role ;;
+  *) echo "usage: $0 [--preflight|--role]"; exit 2 ;;
 esac
 
 cd "$(dirname "$0")/.."   # repo root containing docker-compose.yml
@@ -62,8 +71,8 @@ if [ -f .deploy.env ]; then
   if [ -n "${COMPOSE_FILE:-}" ]; then export COMPOSE_FILE; fi
 fi
 
-# HA mode: this node runs Patroni (compose.ha.yml replaces `db`). Patroni allows only local peer
-# auth, so admin commands run inside `db` as OS user postgres AND DB user postgres.
+# HA mode: this node runs the HA Postgres (compose.ha.yml replaces `db`). Admin commands run
+# inside `db` as OS user postgres AND DB user postgres (local peer auth).
 # Outside HA mode every command below is exactly what it was before.
 HA_MODE=0
 case "${COMPOSE_FILE:-}" in *compose.ha.yml*) HA_MODE=1 ;; esac
@@ -100,7 +109,22 @@ SNAPSHOT_DIR="${SNAPSHOT_DIR:-backups/pre-migrate}"
 SNAPSHOT_KEEP_MINUTES="${SNAPSHOT_KEEP_MINUTES:-2880}"   # 48 h
 # Free space the dump may not eat into: Postgres PANICs when its own disk fills (lesson 95).
 SNAPSHOT_MIN_FREE_MB="${SNAPSHOT_MIN_FREE_MB:-10240}"
-NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB"
+# Standby release: how long to wait for the primary's migration to reach the replica.
+STANDBY_SCHEMA_WAIT_SECONDS="${STANDBY_SCHEMA_WAIT_SECONDS:-900}"
+NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB STANDBY_SCHEMA_WAIT_SECONDS"
+
+# single (no HA) | primary | standby | unknown (HA, but the local Postgres did not answer).
+node_role() {
+  local r
+  if [ "$HA_MODE" = 0 ]; then echo single; return; fi
+  r=$(docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -Atc 'select pg_is_in_recovery()' 2>/dev/null || true)
+  case "$r" in t) echo standby ;; f) echo primary ;; *) echo unknown ;; esac
+}
+
+if [ "$MODE" = role ]; then
+  node_role
+  exit 0
+fi
 
 ACTIVE=$(cat .active_color 2>/dev/null || echo blue)
 if [ "$ACTIVE" = "blue" ]; then
@@ -485,6 +509,17 @@ if ! ha_msgs=$(ha_checks); then
   exit 1
 fi
 
+ROLE=$(node_role)
+echo "==> Node role: ${ROLE}"
+if [ "$ROLE" = unknown ]; then
+  echo "ERROR: HA node, but the local Postgres did not say whether it is primary or standby. Nothing was changed."
+  exit 1
+fi
+if [ "$ROLE" = standby ]; then
+  # compose.ha.yml passes it to both colours: start.sh must not run alembic on a replica.
+  export SKIP_MIGRATIONS=1
+fi
+
 echo "==> Recording Postgres state"
 record_postgres_baseline
 
@@ -516,11 +551,26 @@ check_memory
 #     with no new migration has nothing to protect, and the dump is the slowest step (10+
 #     minutes on 3 Nov), so it is skipped only when the database is provably at the new
 #     image's head; any doubt takes it exactly as before.
-echo "==> Pre-migration snapshot"
-if no_pending_migrations; then
-  echo "    no pending migrations: snapshot skipped"
+if [ "$ROLE" = standby ]; then
+  # The primary migrated (and snapshotted) first; wait until that reached this replica, so the
+  # new colour never starts against a schema older than its code.
+  echo "==> Standby: waiting up to ${STANDBY_SCHEMA_WAIT_SECONDS}s for the image's migrations to replicate"
+  waited=0
+  until no_pending_migrations; do
+    if [ "$waited" -ge "$STANDBY_SCHEMA_WAIT_SECONDS" ]; then
+      echo "ERROR: the replica never reached the new image's alembic head; deploy the primary first (scripts/ha_release.sh). Nothing was started."
+      exit 1
+    fi
+    sleep 10
+    waited=$((waited + 10))
+  done
 else
-  take_snapshot
+  echo "==> Pre-migration snapshot"
+  if no_pending_migrations; then
+    echo "    no pending migrations: snapshot skipped"
+  else
+    take_snapshot
+  fi
 fi
 
 # 1d. Memory again, right before the overlap starts: the dump took time.
@@ -588,6 +638,9 @@ sudo nginx -s reload
 echo "==> Draining ${DRAIN_SECONDS}s"
 sleep "$DRAIN_SECONDS"
 
+if [ "$ROLE" = standby ]; then
+  echo "==> Standby: workers are not touched (they run only on the primary)"
+else
 # 6. Recreate worker + worker_fast on new image (small background-job blip;
 #    safe — RQ pulls atomically)
 echo "==> Recreating worker + worker_fast on new image"
@@ -663,6 +716,8 @@ if [ -z "$worker_fast_ok" ]; then
   echo "ERROR: worker_fast did not log its role startup line within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
   docker logs --tail=100 "$worker_fast_cid" || true
   exit 1
+fi
+
 fi
 
 # 7. Stop and remove old color (tolerate first-deploy where OLD doesn't exist)
