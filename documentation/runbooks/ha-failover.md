@@ -208,9 +208,10 @@ Templates: `infra/templates/active-active/`.
    # READ-ONLY: nothing below changes prod.
    cd /opt/sorento-crm2
    # Existing files: every attachment must live in object storage, none on a local path.
-   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At \
-     -c "select coalesce(storage_provider, (null)::text) as provider, count(*) from attachments group by 1 order by 1" \
-     -c "select count(*) as not_a_url from attachments where coalesce(file_path, (\x27\x27)::text) <> \x27\x27 and file_path not like \x27http%\x27"'
+   docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At' <<'SQL'
+   select coalesce(storage_provider, 'none') as provider, count(*) from attachments group by 1 order by 1;
+   select count(*) as not_a_url from attachments where coalesce(file_path, '') <> '' and file_path not like 'http%';
+   SQL
    # Which database / Redis host each app service uses today (host:port only, never the password).
    docker compose config --format json | python3 -c 'import json,sys,re
    for n,svc in sorted(json.load(sys.stdin)["services"].items()):
