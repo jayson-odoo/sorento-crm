@@ -790,3 +790,157 @@ def test_rb1_a_held_non_uuid_customer_id_does_not_break_the_next_report(rbot, wo
     text, calls = rbot.say(_follow("sales_report", ra, sales_company=sorento, **OCTF), "and 1 to 9 october")
     assert _ran(calls), f"RB-1: the report did not run after a bad held id: {text!r}"
     assert NOT_A_UUID not in str(_ran(calls)[-1].get("customer_ids")), _ran(calls)[-1]
+
+
+# ------------------------------------------------------------------------------------------ reviewer round (R1, R2, R3, R4, R7)
+
+Y26 = dict(date_from="2026-01-01", date_to="2026-12-31")
+Y26F = dict(date_filter_start="2026-01-01", date_filter_end="2026-12-31")
+
+
+def _held_month_ceramic(rbot, sorento: str) -> None:
+    ra = _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y26)
+    v = _v("sales_analysis", ra, _ent(AGENT_1, "sales_agent"), _ent("ceramic", "account_type", None, "account type"),
+           basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento, domain_in_message=True, **Y26F)
+    text, calls = rbot.say(v, "agent a ceramic account type sales by month 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("account_types") == ["CERAMIC"], f"setup: {text!r}"
+
+
+@pytest.mark.parametrize("frame", ["breakdown", "ranking"])
+def test_r1_c_a_frame_does_not_make_a_one_row_axis_over_a_one_value_slot_a_breakdown(rbot, world, frame) -> None:
+    """C6-2(c) (turn 23d6cb50) with the new `frame` on the object: the message types no axis; the held ask filters to ONE
+    account type, so by account_type is one row. A plain total runs, as it does without a frame."""
+    sorento, _m = world
+    ra = _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y26)
+    v = _v("sales_report", ra, _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_basis="invoiced", sales_company=sorento,
+           domain_in_message=True, **Y26F)
+    text, calls = rbot.say(v, "sorento invoiced sales agent a 2026")
+    assert _ran(calls), f"setup: {text!r}"
+    ra2 = _ra(basis="invoiced", group_by="account_type", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y26)
+    ra2["frame"] = frame
+    v2 = _v("sales_analysis", ra2, _ent("ceramic", "account_type", None, "account type"), sales_basis="invoiced",
+            group_by="account_type", continuation=True, entity_op="replace_combine", sales_company=sorento, **Y26F)
+    text, calls = rbot.say(v2, "for ceramic account type")
+    ran = _ran(calls)
+    assert ran, f"no run: {text!r}"
+    assert ran[0].get("account_types") == ["CERAMIC"], ran[0]
+    assert not ran[0].get("group_by"), f"R1 (c, frame {frame}): a one-row breakdown ran by {ran[0].get('group_by')!r}: {ran[0]}"
+
+
+@pytest.mark.parametrize("frame", ["breakdown", "ranking"])
+def test_r1_b_a_frame_on_an_open_question_reply_does_not_swap_the_held_axis(rbot, world, frame) -> None:
+    """C6-2(b) (turn f26a5645) with `frame` on the object: the reply "invoiced" answers the open question; the object swapped
+    month for sales_agent. The held month stays."""
+    from tests.chatbot.test_report_all_companies_r7 import _sorento_type
+
+    sorento, _m = world
+    _sorento_type(rbot)
+    ra = _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"],
+             brand_or_account_type=["SORENTO"], **Y26)
+    v = _v("sales_analysis", ra, _ent(AGENT_1, "sales_agent"), _ent("ceramic", "account_type", None, "account type"),
+           _ent("sorento", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
+           domain_in_message=True, **Y26F)
+    text, calls = rbot.say(v, "agent a ceramic account type sorento by month 2026 invoiced")
+    assert not _ran(calls) and "brand, account type or company?" in text.lower(), f"setup: {text!r} {calls}"
+    ra2 = _ra(basis="invoiced", group_by="sales_agent", company=sorento, sales_agents=[AGENT_1], account_types=[], **Y26)
+    ra2["frame"] = frame
+    fill = {"mode": "fill", "items": [], "picked": [], "qty_for_all": None}
+    v2 = _v("sales_ranking", ra2, basis="invoiced", group_by="sales_agent", entity_op="reuse", continuation=True,
+            open_question_answer=fill, sales_company=sorento)
+    text, calls = rbot.say(v2, "invoiced")
+    ran = _ran(calls)
+    assert ran, f"R1 (b, frame {frame}): the reply is not the run: {text.strip()!r}"
+    assert ran[0].get("group_by") == "month", f"R1 (b, frame {frame}): month swapped for {ran[0].get('group_by')!r}"
+    assert ran[0].get("account_types") == ["CERAMIC"], ran[0]
+
+
+def test_r1_positive_a_frame_breakdown_with_a_new_axis_on_a_fresh_ask_still_wins_over_the_held_axis(rbot, world) -> None:
+    sorento, _m = world
+    _held_month_ceramic(rbot, sorento)
+    ra = _ra(basis="invoiced", group_by="sales_agent", company=sorento, sales_agents=[], account_types=[], **Y26)
+    ra["frame"] = "breakdown"
+    v = _v("sales_analysis", ra, basis="invoiced", sales_basis="invoiced", group_by="sales_agent", by_words="by sales agent",
+           sales_company=sorento, domain_in_message=True, **Y26F)
+    text, calls = rbot.say(v, "sales by sales agent 2026 invoiced")
+    ran = _ran(calls)
+    assert ran and ran[-1].get("group_by") == "sales_agent", f"R1 positive (AF-2): the new axis lost: {ran or text!r}"
+
+
+@pytest.mark.parametrize("said", ["syarikat", "compnay", "company and brand", "both", "x"])
+def test_r2_kind_said_is_read_as_said_or_not_said_never_word_matched(rbot, world, said) -> None:
+    """The same name in company and brands, any non-null kind_said: both filters, no question (the value of kind_said is
+    never matched against a word)."""
+    sorento, _m = world
+    ra = _ra2(None, basis="delivered", company=sorento, brands=["SORENTO"], **SEP)
+    v = _v("sales_report", ra, _ent("sorento", "brand", "SORENTO", said), basis="delivered", sales_company=sorento,
+           domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "sorento total sale September 2026")
+    assert _kind_slot(rbot).get("asking") != "kind", f"R2 (kind_said {said!r}): asked though a kind was said: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"R2 (kind_said {said!r}): want both filters: {args}"
+
+
+def test_r3_slots_decide_a_fresh_thread_brand_only_object_is_a_brand_with_no_question(rbot, world) -> None:
+    ra = _ra2(None, basis="delivered", brands=["SORENTO"], company=None, **SEP)
+    text, calls = rbot.say(
+        _v("sales_report", ra, _ent("sorento", "brand", "SORENTO", None), basis="delivered", domain_in_message=True, **SEPF),
+        "Sorento brand Sep delivered",
+    )
+    assert _kind_slot(rbot).get("asking") != "kind", f"R3: a brand-only object was asked a kind: {text!r}"
+    args = _args(calls)
+    assert args.get("brand_ids") and "company" not in args, f"R3: want the brand only: {args}"
+
+
+def test_r3_slots_decide_a_fresh_thread_company_only_object_is_a_company_with_no_question(rbot, world) -> None:
+    sorento, _m = world
+    ra = _ra2(None, basis="delivered", company=sorento, brands=[], **SEP)
+    text, calls = rbot.say(
+        _v("sales_report", ra, _ent("sorento", "brand", "SORENTO", None), basis="delivered", sales_company=sorento,
+           domain_in_message=True, **SEPF),
+        "Sorento company Sep delivered",
+    )
+    assert _kind_slot(rbot).get("asking") != "kind", f"R3: a company-only object was asked a kind: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"R3: want the company only: {args}"
+
+
+def _schema_keys(monkeypatch, session_factory, text: str) -> set[str]:
+    from tests.chatbot.test_report_semantic_carry import _object_part, _schema
+    from tests.chatbot.test_chat_state_parser_input import _resolve
+
+    config = _resolve(monkeypatch, session_factory, text)
+    return set(_object_part(_schema(config)["properties"]["report_ask"])["properties"])
+
+
+def test_r4_a_prompt_text_without_the_frame_and_company_or_brand_definitions_gets_neither_schema_key(monkeypatch, session_factory) -> None:
+    from tests.chatbot.test_report_semantic_carry import CLOSED, LINE
+
+    keys = _schema_keys(monkeypatch, session_factory, CLOSED + LINE + "\nsection text without the new definitions\n")
+    assert "frame" not in keys, f"R4: frame is in the schema of a text that does not define it: {sorted(keys)}"
+    assert "company_or_brand" not in keys, f"R4: company_or_brand is in the schema of a text that does not define it: {sorted(keys)}"
+    assert "brand_or_account_type" in keys and "brands" in keys, sorted(keys)
+
+
+def test_r4_a_prompt_text_that_defines_them_gets_both_schema_keys(monkeypatch, session_factory) -> None:
+    from tests.chatbot.test_report_semantic_carry import CLOSED, LINE
+
+    text = CLOSED + LINE + '\n"frame": total, breakdown or ranking.\n"company_or_brand": a name that may be either.\n'
+    keys = _schema_keys(monkeypatch, session_factory, text)
+    assert "frame" in keys and "company_or_brand" in keys, f"R4: {sorted(keys)}"
+
+
+def test_r7_with_customer_groups_drops_a_non_uuid_id_when_no_group_is_found(rbot, world) -> None:
+    from tests._mc_lookup_seed import customer
+
+    from app.services.chatbot.lanes.business import report_ask
+
+    db = rbot.console.session_factory()
+    try:
+        out = report_ask.with_customer_groups(db, {"customer_ids": [NOT_A_UUID], "basis": "delivered"})
+        assert NOT_A_UUID not in (out.get("customer_ids") or []), f"R7: the route would answer 400: {out}"
+        real = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZ R7 UNGROUPED TRADING").id
+        db.commit()
+        out = report_ask.with_customer_groups(db, {"customer_ids": [NOT_A_UUID, real]})
+        assert NOT_A_UUID not in (out.get("customer_ids") or []) and real in out["customer_ids"], f"R7 (mixed): {out}"
+    finally:
+        db.close()
