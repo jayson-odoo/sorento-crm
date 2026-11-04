@@ -13,6 +13,7 @@ copied here as literals. Contract the coder implements:
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
@@ -38,6 +39,14 @@ from tests.chatbot.test_sales_account_type_lane import _entity_props, _sent_sche
 from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401 - fixtures
 from tests.chatbot.conftest import session_factory  # noqa: F401 - fixture
 from tests.chatbot import test_span_extract as se
+
+@pytest.fixture
+def said_as_text(rbot, monkeypatch) -> None:
+    """Opt-in over `rbot`'s config: the prompt text in use defines `said_as` (`ParserConfig.said_as`), as the parses these
+    tests send carry the key. The shared harness default (`test_report_semantic_carry._flag_on`) is left as it is."""
+    current = parser_mod.resolve_config
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda *a, **k: dataclasses.replace(current(*a, **k), said_as=True))
+
 
 COMPANY_HDR = "Company candidates (pick one only if the message means it):"
 BRAND_HDR = se.HDR["brand"]
@@ -159,6 +168,7 @@ def _every_agent(args: dict[str, Any]) -> None:
     assert args.get("group_by") == "sales_agent" and not args.get("agent") and not args.get("sales_agents"), args
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_2_said_as_company_is_company_sorento_only_for_every_agent(rbot, world) -> None:
     sorento, _m = world
     _hold_agents(rbot, None)
@@ -169,6 +179,7 @@ def test_ht1_2_said_as_company_is_company_sorento_only_for_every_agent(rbot, wor
     _every_agent(args)
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_3_said_as_brand_is_the_brand_only(rbot, world) -> None:
     _hold_agents(rbot, None)
     text, calls = rbot.say(_t4("brand"), "sorento brand only")
@@ -177,6 +188,7 @@ def test_ht1_3_said_as_brand_is_the_brand_only(rbot, world) -> None:
     assert args.get("brand_ids") and "company" not in args, f"HT1-3: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_4_said_as_both_applies_both_filters(rbot, world) -> None:
     _hold_agents(rbot, None)
     text, calls = rbot.say(_t4("both"), "sorento company and brand")
@@ -185,6 +197,7 @@ def test_ht1_4_said_as_both_applies_both_filters(rbot, world) -> None:
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"HT1-4: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_5_said_as_null_with_no_company_held_asks_one_company_brand_both_question(rbot, world) -> None:
     _hold_agents(rbot, None)
     text, calls = rbot.say(_t4(None), "sorento company only")
@@ -194,6 +207,7 @@ def test_ht1_5_said_as_null_with_no_company_held_asks_one_company_brand_both_que
     assert not _ran(calls), f"HT1-5: a report ran: {_ran(calls)}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_6_lock_cp5_a_held_company_with_said_as_null_adds_the_brand_and_asks_nothing(rbot, world) -> None:
     """Lock: green today (CP-5)."""
     sorento, _m = world
@@ -204,6 +218,7 @@ def test_ht1_6_lock_cp5_a_held_company_with_said_as_null_adds_the_brand_and_asks
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"HT1-6: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_ht1_7_lock_a_one_company_contact_with_said_as_null_is_a_brand_no_question(rbot) -> None:
     """Lock: green today (ON-5 / ON-15)."""
     text, calls = rbot.say(_t4(None, continuation=False, entity_op="replace_combine", domain_in_message=True), "sorento total")
@@ -275,6 +290,7 @@ def _g4(sorento: str, ent: dict[str, Any], *, frame: str, basis: str | None, gro
     return _v(status, ra, ent, **over)
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_g4_tf28_company_sorento_over_the_held_brand_list_is_company_only_for_every_agent(rbot, world) -> None:
     """tf-28: held every-agent breakdown with brands [SORENTO]; "company sorento": company AND brands, said_as company."""
     sorento, _m = world
@@ -291,6 +307,7 @@ def test_g4_tf28_company_sorento_over_the_held_brand_list_is_company_only_for_ev
     _every_agent(args)
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_g4_tf29_brand_only_runs_the_brand_with_no_company_filter(rbot, world) -> None:
     """tf-29: fresh "Sorento brand only Sep 2026 delivered": company AND brands, said_as brand, kind_said brand."""
     sorento, _m = world
@@ -302,6 +319,7 @@ def test_g4_tf29_brand_only_runs_the_brand_with_no_company_filter(rbot, world) -
     assert args.get("brand_ids") and "company" not in args, f"tf-29: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_g4_tf13_a_bare_name_with_said_as_null_asks_one_question_and_runs_nothing(rbot, world) -> None:
     """tf-13: fresh "Sorento total sale September 2026": company AND brands, said_as null (the model's own parse,
     except basis "delivered": the model left it null, which asks the basis question first, a different row's rule)."""
@@ -313,6 +331,7 @@ def test_g4_tf13_a_bare_name_with_said_as_null_asks_one_question_and_runs_nothin
     assert "company" in text.lower() and "brand" in text.lower(), text
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_g4_tf30_company_and_brand_runs_both_filters(rbot, world) -> None:
     """tf-30: fresh "sorento company and brand, Sep 2026 delivered": company AND brands, said_as both, kind_said brand."""
     sorento, _m = world
@@ -332,6 +351,7 @@ def _fresh(ent: dict[str, Any], *, company: Any, brands: list[str], message: str
     return _v("sales_analysis", ra, ent, basis=basis, entity_op="replace_combine", domain_in_message=True, **SEPF)
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_f2_said_as_brand_beats_a_same_name_company_when_the_entity_has_no_canonical_code(rbot, world) -> None:
     """F2: fresh, object company "Sorento" + brands [SORENTO]; the entity has canonical_code null, kind_said brand, said_as
     brand. said_as present and non-null decides: Brand only, no company filter, no question (ON-17's company reading applies
@@ -370,6 +390,7 @@ def test_f5_m7_a_company_row_is_never_a_spans_resolved_match_but_the_block_still
 
 
 @pytest.mark.parametrize("said_as,both", [("company", False), ("both", True)], ids=["company", "both"])
+@pytest.mark.usefixtures("said_as_text")
 def test_f5_m9_said_as_company_or_both_beats_a_kind_said_brand(rbot, world, said_as, both) -> None:
     """Depends on report_ask._word_kinds' `said_as in ("company", "both")` branch (report_ask.py:3422, covers company/brand/both), which sits
     before the kind_said branch: without it kind_said "brand" wins and the report runs as the brand only."""
@@ -398,6 +419,7 @@ def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many
 # ------------------------------------------------------------------------------------------ review round 3
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_company(rbot, world) -> None:
     """Lock 1: HT1-6 with said_as "brand". Depends on the brand branch applying the held company (report_ask.py:3612,
     `ask["company"] = held_company`): without it the object's same-name company is dropped even though it is the held
@@ -410,6 +432,7 @@ def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_com
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"R3-1: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_r3_lock_said_as_brand_decides_before_the_c6_1_company_reading_with_kind_said_null(rbot, world) -> None:
     """Lock 2: F2's shape with kind_said null. Depends on the said_as branch sitting ahead of the C6-1 `loose` company reading
     in `_word_kinds` (report_ask.py:3422 before :3426-3432): reordered, the null kind_said + same-name company reads as the
@@ -423,6 +446,7 @@ def test_r3_lock_said_as_brand_decides_before_the_c6_1_company_reading_with_kind
     assert args.get("brand_ids") and "company" not in args, f"R3-2: {args}"
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_r3_said_as_decides_the_slot_only_for_a_company_name_a_brand_that_is_no_company_still_asks_on6(rbot, world) -> None:
     """ON-6 latent regression: Cabana is a brand and an account type, not one of the contact's companies; said_as "brand"
     must not settle it, the brand-or-account-type question stays."""
@@ -437,6 +461,7 @@ def test_r3_said_as_decides_the_slot_only_for_a_company_name_a_brand_that_is_no_
     assert not _ran(calls) and text.strip() == QUESTION, (calls, text)
 
 
+@pytest.mark.usefixtures("said_as_text")
 def test_r3_a_held_company_carries_the_same_with_a_same_name_object_company_as_with_a_null_one(rbot, world) -> None:
     """Owner Q3, an equivalence: from the same held Mocha report, "Sorento brand only" with the object's company "Sorento" +
     brands [SORENTO] + said_as brand answers exactly as the same object with company null (route args and reply text), and

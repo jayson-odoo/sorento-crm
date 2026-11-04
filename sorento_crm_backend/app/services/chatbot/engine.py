@@ -1411,8 +1411,10 @@ def _known_account_types(db: Session, parser_config: Any, contact_respond_id: An
 def _contact_companies(db: Session, parser_config: Any, contact_respond_id: Any) -> list[Any]:
     """CHATBOT-TOTALS-FILTERS: every company the contact holds, as the report lane reads them
     (`sales_company_ask._companies`: id, name, code), read once per turn for a prompt that names the `Known companies`
-    line or carries the report ask (`report_ask.from_object` reads them for `said_as`). Empty otherwise or on a failure."""
-    if not (getattr(parser_config, "known_companies", False) or getattr(parser_config, "report_ask", False)):
+    line, or carries the report ask and defines `said_as` (`report_ask.from_object` reads them for it). Empty otherwise
+    or on a failure."""
+    uses_said_as = getattr(parser_config, "report_ask", False) and getattr(parser_config, "said_as", False)
+    if not (getattr(parser_config, "known_companies", False) or uses_said_as):
         return []
 
     def read() -> list[Any]:
