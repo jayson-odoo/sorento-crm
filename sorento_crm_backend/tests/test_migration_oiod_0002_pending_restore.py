@@ -151,6 +151,8 @@ def seeded():
             # Moved, but its change was already applied: purchasing was told, leave it.
             _c, applied = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["applied"] = chain.add_row(applied, told=OLD)
+            # Same applied line, but its Was was changed after the backfill: not listed.
+            rows["applied_was_changed"] = chain.add_row(applied, told=OLD)
             applied_batch = PlanningChangeBatch(
                 id=uid(), company_id=company_id, applied_at=datetime(2026, 11, 4, 9, 0)
             )
@@ -214,6 +216,7 @@ def seeded():
             moved = _row(db, ids["moved_since"])
             moved.previous_delivery_date, moved.delivery_date = NEW, LATER
             _row(db, ids["cancelled_since"]).state = INQUIRY_CANCELLED
+            _row(db, ids["applied_was_changed"]).previous_delivery_date = PRIOR
             db.flush()
             yield db, ids
 
@@ -252,6 +255,7 @@ def test_upgrade_leaves_every_other_row_alone(seeded):
         ("redirected", (NEW, OLD)),
         ("superseded_in_applied", (NEW, OLD)),
         ("applied_elsewhere", (NEW, OLD)),
+        ("applied_was_changed", (NEW, PRIOR)),
     ):
         assert _pair(db, ids[key]) == pair, key
 

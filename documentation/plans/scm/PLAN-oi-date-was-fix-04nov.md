@@ -1,6 +1,6 @@
 # PLAN: OI date change, restore pending DELAY/ADVANCE emails + Was column in OI export
 
-Status: in progress, waiting on owner (full track: ships a data migration, so not the small fix track). Owner 4 Nov ~18:00: Gap B DROPPED; Gap A migration kept ready but not for merge until the owner has seen the prod count from `SQL-oi-date-was-fix-count-04nov.sql`.
+Status: built and reviewed (READY), merge on hold until the owner has seen the prod count (full track: ships a data migration, so not the small fix track). Owner 4 Nov ~18:00: Gap B DROPPED; Gap A migration kept ready but not for merge until the owner has seen the prod count from `SQL-oi-date-was-fix-count-04nov.sql`.
 
 Lane: OI-DATE-WAS-FIX. Follows OI-ONE-DELIVERY-DATE (#2145, `PLAN-oi-one-delivery-date-03nov.md`).
 
