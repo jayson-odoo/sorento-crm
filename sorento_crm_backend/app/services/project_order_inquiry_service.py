@@ -39,7 +39,6 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
-import io
 import logging
 import re
 import uuid
@@ -1093,12 +1092,8 @@ def _format_handover_was(was: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     return formatted
 
 
-# The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
-# as `e2e/fixtures/project-cs/expected-order-inquiry-2026-03-04.xlsx`. Read off the file
-# rather than retyped: this is the spreadsheet purchasing already works from, and a
-# renamed column is a column their own filters stop finding.
-EXPORT_TITLE = "ORDER INQUIRY"
-EXPORT_SHEET = "NEW"
+# OI-EXPORT-SHARED (owner, 3 Nov 2026): the per-project download prints the shared OI
+# exporter's header row (`order_inquiry_export.HEADINGS`) - LOCATION, no title row above it.
 EXPORT_HEADINGS = (
     "SO DATE",
     "S/O NO",
@@ -1106,7 +1101,7 @@ EXPORT_HEADINGS = (
     "QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
-    "STOCK LOCATION",
+    "LOCATION",
     "REMARK",
 )
 
@@ -14797,37 +14792,32 @@ class ProjectOrderInquiryService:
         Generated on demand rather than stored, for the same reason the AutoCount import
         file is: a stored file goes stale the moment an amendment publishes, and a stale
         instruction is exactly what this slice exists to stop being emailed around.
+
+        Written by the shared OI exporter (`order_inquiry_export`, OI-EXPORT-SHARED): header
+        row first, rows by S/O then delivery date.
         """
-        import openpyxl
+        from app.services import order_inquiry_export
 
         rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
-        serialized = self.serialize_rows(rows)
-
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.title = EXPORT_SHEET
-        sheet.append([EXPORT_TITLE])
-        sheet.append(list(EXPORT_HEADINGS))
-        for row in serialized:
-            sheet.append(
-                [
-                    self._as_naive(row.get("so_date")),
-                    row.get("sales_order_ref") or "",
-                    row.get("item_code") or "",
-                    float(_dec(row.get("qty"))),
-                    row.get("delivery_date"),
-                    row.get("project_customer") or "",
-                    # Empty rather than a guess when no allocation is confirmed.
-                    row.get("stock_location") or "",
-                    row.get("remark") or "",
-                ]
-            )
-        buffer = io.BytesIO()
-        workbook.save(buffer)
+        records = [
+            {
+                "SO DATE": self._as_naive(row.get("so_date")),
+                "S/O NO": row.get("sales_order_ref") or "",
+                "ITEM CODE": row.get("item_code") or "",
+                "QTY": float(_dec(row.get("qty"))),
+                "DELIVERY DATE": row.get("delivery_date"),
+                "PROJECT/CUSTOMER": row.get("project_customer") or "",
+                # Empty rather than a guess when no allocation is confirmed.
+                "LOCATION": row.get("stock_location") or "",
+                "REMARK": row.get("remark") or "",
+            }
+            for row in self.serialize_rows(rows)
+        ]
+        body = order_inquiry_export.xlsx(records, EXPORT_HEADINGS)
         project = self.db.query(Project).filter(Project.id == project_id).first()
         stem = (project.project_code if project else "project") or "project"
         filename = f"order-inquiry-{stem}-{date.today().isoformat()}.xlsx"
-        return filename, buffer.getvalue()
+        return filename, body
 
     def _as_naive(self, value: Any) -> Any:
         if isinstance(value, datetime):
@@ -14929,6 +14919,27 @@ def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
     )
 
 
+def _handover_sorted(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The handover email's line order, which is the OI export's order (OI-EXPORT-SHARED,
+    owner 3 Nov 2026): S/O, then DELIVERY DATE earliest first, the date being the one the
+    attachment's DELIVERY DATE column prints (the old date on a changed line). A split
+    line's later rows (`continued`) stay under its first row. Lines due the same day keep
+    `_handover_sort_key`'s order (line sequence, then item code). The email, the Confirm
+    preview and the attachment all read this, so the three tally."""
+    from app.services import order_inquiry_export
+
+    def printed_date(item: Dict[str, Any]) -> Any:
+        line = item.get("line") or {}
+        return (line.get("was") or {}).get("delivery_date") or line.get("delivery_date")
+
+    return order_inquiry_export.in_export_order(
+        sorted(items, key=_handover_sort_key),
+        so=lambda item: item.get("so_number"),
+        when=printed_date,
+        continued=lambda item: bool((item.get("line") or {}).get("continued")),
+    )
+
+
 def _so_remark_of(
     pending: Sequence[Dict[str, Any]], pso_id: Any, flags: Sequence[bool]
 ) -> str:
@@ -14953,8 +14964,9 @@ def _build_handover_context(
     and formatted eagerly (see its own docstring for why: a fresh drain-time session
     cannot see a write that is still open under a savepoint). `None` on an empty queue.
 
-    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sort_key` -
-    every queued item sorts the same way, whichever path queued it. The SO
+    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sorted` (S/O, then
+    delivery date, OI-EXPORT-SHARED) - every queued item sorts the same way, whichever
+    path queued it, and the attached Excel prints the same order. The SO
     summary table (`orders`) is separately re-sorted by S/O no after it is built, so
     the two tables agree on which order comes first (reviewer nit) - everything ELSE
     below (`so_numbers`/location aggregation for the subject, `first_inquiry_id`)
@@ -14997,7 +15009,7 @@ def _build_handover_context(
     }
 
     lines: List[Dict[str, Any]] = []
-    for item in sorted(pending, key=_handover_sort_key):
+    for item in _handover_sorted(pending):
         line = dict(item["line"])
         if label_by_pso.get(item.get("pso_id")) and item.get("is_mockup"):
             text = (line.get("remark") or "").strip()
@@ -15205,11 +15217,11 @@ def _lines_by_inquiry(
     items: Sequence[Dict[str, Any]], lines: Sequence[Dict[str, Any]], inquiry_ids: Sequence[str]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """The email's lines per OI. `_build_handover_context` builds one line per item, in
-    `_handover_sort_key` order, so the two zip; a line naming no OI goes with the first OI so no
+    `_handover_sorted` order, so the two zip; a line naming no OI goes with the first OI so no
     email line is ever missing from the Excel."""
     first = inquiry_ids[0] if inquiry_ids else None
     out: Dict[str, List[Dict[str, Any]]] = {}
-    for item, line in zip(sorted(items, key=_handover_sort_key), lines):
+    for item, line in zip(_handover_sorted(items), lines):
         out.setdefault(item.get("order_inquiry_id") or first, []).append(line)
     return out
 
