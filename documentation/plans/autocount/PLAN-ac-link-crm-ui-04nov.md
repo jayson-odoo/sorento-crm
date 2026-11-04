@@ -117,3 +117,12 @@ AC-WRITE-QTSO lane before Phase 2.
   LOCATION_NOT_MOVED "Linked, still at HQ" + "Move to <location>" (SS `/po-links/relocate`);
   refused VENDOR_UNSUPPORTED "Not linked: AutoCount cannot do this yet. Nothing was changed.";
   needs_attention "Needs attention" + Resume.
+
+## Crew browser pass (4 Nov, 2db372b6): NO-GO, fixed
+
+- The drill's Line column read "-" on every row: the demand row never carried the SO line's
+  number. `_demand_row` now emits `line_no` (`so_line_no` rule), and the snapshot lines fill
+  it from the SO line for snapshots saved before the fix
+  (`tests/scm/test_stock_debt_po_link.py::test_the_drill_lines_carry_*`, `*_still_serves_them`).
+- Hand-test path corrected: Procurement > Supply Chain > Stock Debt (`menu.config.tsx`).
+
