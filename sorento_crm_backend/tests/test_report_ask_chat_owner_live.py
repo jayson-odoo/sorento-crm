@@ -4,7 +4,7 @@ E3  a salesperson ranking with the default askers prints `Unclassified askers: N
     never `Unclassified askers left out` (nothing is left out by default, so the route's
     `unclassified_left_out` is null).
 E4  the period has asks but the filters match none: "No asks match those filters in that period.";
-    "No asks in that period. Chat data starts 5 Sep 2026." stays for a truly empty period.
+    "No asks in that period. Chat data starts 05/09/2026." stays for a truly empty period.
 """
 from __future__ import annotations
 
