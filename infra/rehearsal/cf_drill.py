@@ -60,8 +60,11 @@ def cname(n):
 
 
 def psql(n, sql, timeout=10):
-    r = subprocess.run(["docker", "exec", "-u", "postgres", cname(n), "psql", "-XAtq", "-d", "postgres", "-c", sql],
-                       capture_output=True, text=True, timeout=timeout)
+    try:
+        r = subprocess.run(["docker", "exec", "-u", "postgres", cname(n), "psql", "-XAtq", "-d", "postgres", "-c", sql],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, ""
     return r.returncode, r.stdout.strip()
 
 
@@ -99,7 +102,7 @@ class FakeCF:
                 caller = parts[0].replace("node-", "")
                 with cf.lock:
                     ok = cf.api_up and cf.net.get(caller, False)
-                    pool = parts[4].replace("pool-", "") if len(parts) > 4 else ""
+                    pool = parts[5].replace("pool-", "") if len(parts) > 5 else ""
                     healthy = cf.healthy.get(pool)
                 if not ok or healthy is None:
                     self.send_response(503)
@@ -192,7 +195,10 @@ class Stack:
         return ["-e", "POSTGRES_PASSWORD=drill", "-e", f"PGDATA={PGDATA}", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
                 IMAGE, "-c", "wal_level=replica", "-c", "wal_log_hints=on", "-c", "hot_standby=on",
                 "-c", "max_wal_senders=5", "-c", "max_replication_slots=5", "-c", "wal_keep_size=256MB",
-                "-c", "max_slot_wal_keep_size=1GB"]
+                "-c", "max_slot_wal_keep_size=1GB",
+                # A cut link sends no RST: the primary notices the dead standby only after this,
+                # and until then a synchronous commit waits (prod value: plan section 3, P4).
+                "-c", "wal_sender_timeout=3s", "-c", "wal_receiver_timeout=3s"]
 
     def down(self, quiet=False):
         for n in list(self.procs):
@@ -316,7 +322,7 @@ def main():
 
     def link_cut_only():
         st.cut("b")  # B and its probe off the link; Cloudflare still reaches both
-        time.sleep(4)
+        time.sleep(10)
         rc, out = psql("a", "show synchronous_standby_names")
         assert out == "", f"sync names not dropped: {out!r}"
         rc, _ = psql("a", "insert into drill(node) values ('sync-check')")
