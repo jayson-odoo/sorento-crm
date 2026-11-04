@@ -1,6 +1,6 @@
 # PLAN: DATE-FORMAT-UNIFY (every CRM date as dd/mm/yyyy)
 
-Status: Plan (inventory in progress). Track: standard (wide mechanical diff, no migration, no auth change).
+Status: Review (built; reviewer READY round 1, fixes applied; browser pass + owner hand test pending). Track: standard (wide mechanical diff, no migration, no auth change). PR #2163.
 
 ## Owner ask (4 Nov 2026, verbatim)
 "all the dates need to use dd/mm/yyyy format like a standardized format across the system"
@@ -10,6 +10,25 @@ Status: Plan (inventory in progress). Track: standard (wide mechanical diff, no 
 - Range: `dd/mm/yyyy - dd/mm/yyyy` (separator decided in the inventory ask).
 - Date-time: `dd/mm/yyyy, h:mm am/pm`.
 - Wire formats (ISO) unchanged.
+
+## Crew answers (4 Nov)
+- Q1 (a) range `01/01/2026 - 31/03/2026`, plain hyphen (the range picker's own shape).
+- Q2 (a) formatting only, `dd/mm/yyyy, h:mm am/pm` lower case; no instant moves. The non-Malaysia
+  `formatDateTime` callers (SLA module x11, PortalIdeaCard, ActivityTimeline, import logs x2,
+  AttachmentBrowser, account/user logs x2, IdeaDetail) are a follow-up.
+- Q3 (a) keep month buckets / column headers, chat day pills, relative times, machine stamps, LLM
+  prompt dates; SLA line becomes `dd/mm/yyyy, h:mm am`.
+- Q4 (a) native `<input type="date">` stays; crew opens a follow-up lane onto the shared DatePicker.
+
+## What shipped
+- FE: `lib/helpers.ts` `formatDateInMalaysia` / `formatDateTimeInMalaysia` / new `formatDateRange`;
+  every straggler moved; guard `lib/date-format.guard.test.ts` (in-place `date-format-ok:` reasons).
+- BE: `app/utils/date_format.py` `fmt_date` / `fmt_datetime` / `fmt_date_range`; guard
+  `tests/test_date_format.py` (month-name / 12-hour strftime, month-name tables).
+- Left as is, with reasons: OI remark `Was X on <iso>` (parsed by `decision_trail_service.py:63`
+  and `orderInquiryWorklist.ts:63`), episode-memory header `Thu 25 Sep` (parsed by
+  `_has_legacy_header`, model-facing), escalation n8n parity stamp, ops health-alert email (UTC),
+  "from X to Y" inside chatbot sentences.
 
 ## Steps
 1. Inventory of every formatter (FE + BE text surfaces), counts per pattern, existing helpers.
