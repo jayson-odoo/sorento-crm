@@ -97,6 +97,30 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | HF-1 | Customer filter from a dealer thread | "Total sale deliver for 1/10-9/10/26 Sorento brand" | Customer kept; the header lists it |
 | HF-2 | Company Sorento held | "Total sale for all sale agents on September 2026" | Company kept; no brand appears that the user never said |
 
+## Owner hand test 1 (4 Nov, contact 404285551, v199 on 75a7233602): FAIL, rows from the real thread
+
+Thread: "total sales for all sals agent sep 2026" -> basis -> "invoiced" (no data) -> "delivere?" (every agent, no
+company) -> T4 "sorento company only" -> T5 "company sorento" -> T6 "top 5". Traces: crew/state/handtest/2156/owner-ht1/
+(b3f49ca3 = T4, eac60ba4 = T5, 7da38dac = T6). Root cause: the parser user block listed "Brand candidates: SORENTO" and no
+company candidate (the span pass has no company list), so the model filled brands [SORENTO], company null, kind_said
+null, though its own user_goal said "by Sorento company"; T5 then framed a ranking with no count over the held every-agent
+list and the bot asked "How many?". Spend OK crew 5 Nov: USD 0.60 for this round.
+
+| # | Given | When | Expected |
+|---|---|---|---|
+| HT1-1 | contact holds 2+ companies (Mocha, Sorento), a span of the message matches one of them | the parser user block is built | Next to any Brand candidates, a Company candidates block lists that company (by its own name), from data, gated on the prompt text naming it; a prompt text without the phrase gets the block byte for byte unchanged; a one-company contact gets no company block |
+| HT1-2 | the T4 parse with the entity kind slot filled "company" (brands [SORENTO], company null) | the report runs | Company: Sorento only, every sales agent (the held breakdown), no Brand line, no question |
+| HT1-3 | same, kind "brand" | the report runs | Brand SORENTO only, no question (ON-2) |
+| HT1-4 | same, kind "both" | the report runs | Company Sorento AND Brand SORENTO, no question (ON-8) |
+| HT1-5 | the T4 parse exactly as v199 gave it (brands [SORENTO], company null, kind null), no company held | the report runs | ONE "Sorento: company, brand or both?" question, never a silent brand filter |
+| HT1-6 | Company Sorento already held (CP-5) | "Sorento brand only" with kind null | Unchanged CP-5: brand added, company kept, no question |
+| HT1-7 | a one-company contact (ON-5 / ON-15) | brands [SORENTO], kind null | Brand, no question (unchanged) |
+| HT1-8 | held breakdown by sales agent (every row), no count held | T5 parse: frame ranking, top_n null, rank_direction top, only a filter changed | The list re-runs on the held axis with the new filter, every row; never "How many?" |
+| HT1-9 | same held breakdown | a parse with frame ranking and its own count ("top 5") | Ranking cut to 5 (unchanged AF-7 / CP-6) |
+| HT1-10 | same held breakdown | frame ranking, top_n null, rank_direction bottom | Unchanged: the count is asked (a bottom ranking is not the held list) |
+| HT1-11 | the prompt text in use does not define the kind slot or the company block (e4aa6d43, dc77a7ac) | any turn | Schema and user block unchanged; today's behaviour |
+| HT1-12 | the copy pinned to the new prompt version | the owner's 5-turn thread x3, and hand-test script steps 3-8 and 10 x3 | Every run: T4 Company Sorento, no Brand line (grand total expected near the script's RM 10,165,851.05 for September, UNVERIFIED for the agent list), T5 the same list, T6 top 5 agents for Company Sorento; script steps as the Expected section. Pass counts reported |
+
 ## Robustness (#2105 follow-up)
 
 | # | Case | Expected |
