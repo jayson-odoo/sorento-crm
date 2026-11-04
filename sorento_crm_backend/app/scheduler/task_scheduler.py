@@ -388,9 +388,16 @@ def _handler_api_call_log_prune(db, task):
     settings = db.query(SystemSetting).first()
     payload_days = int(getattr(settings, "api_call_log_payload_retention_days", 30) or 30) if settings else 30
     row_days = int(getattr(settings, "api_call_log_row_retention_days", 180) or 180) if settings else 180
-    return prune_api_call_log(
+    result = prune_api_call_log(
         db, payload_retention_days=payload_days, row_retention_days=row_days
     )
+    # Browser crash reports (CLIENT-ERROR-REPORT) ride this daily task rather than a
+    # scheduled task of their own: same kind of telemetry, one fixed 30-day window.
+    from app.services.client_error_report_service import prune_client_error_reports
+
+    result["client_error_reports_deleted"] = int(prune_client_error_reports(db))
+    db.commit()
+    return result
 
 
 def _handler_import_job_rows_prune(db, task):

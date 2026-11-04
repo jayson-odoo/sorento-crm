@@ -6,24 +6,9 @@ import { MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-const CHUNK_FAILURE_PATTERNS = [
-  /Loading (CSS )?chunk [\w-]+ failed/i, // webpack
-  /Failed to load chunk/i, // turbopack
-  /Failed to fetch dynamically imported module/i, // Chromium native import()
-  /Importing a module script failed/i, // Safari native import()
-  /error loading dynamically imported module/i, // Firefox native import()
-];
-
-/**
- * A chunk the browser asked for no longer exists on the server: the tab still runs
- * the previous build and a deploy replaced its chunks. Retrying the render cannot
- * fix that; only a full page load, which fetches the new build, can.
- */
-export function isChunkLoadError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if (error.name === 'ChunkLoadError') return true;
-  return CHUNK_FAILURE_PATTERNS.some((p) => p.test(error.message));
-}
+// Lives in a dependency-free module so the root boundary can use it too.
+export { isChunkLoadError } from '@/lib/chunk-load-error';
+import { isChunkLoadError } from '@/lib/chunk-load-error';
 
 export function reloadPage(): void {
   window.location.reload();
