@@ -512,9 +512,9 @@ def _plural(count: int, word: str) -> str:
 def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """RESERVE-EMAIL-FULL-TABLE: the ONE context every reserve email is rendered from, built
     from one or more request contexts (`_build_context` / `_build_commit_context`). The
-    flat table is `reserve.lines` (one entry per request row, OI NO on each, sorted by item
-    code, then real delivery date, then OI no); the small sentences that are awkward in
-    Jinja are precomputed here (`what`, `short`, `tag`, `lines_text`, `verdict`). The keys an
+    flat table is `reserve.lines` (one entry per request row, OI NO on each, in the OI
+    export's order: S/O, then delivery date, `order_inquiry_export.in_export_order`); the
+    small sentences that are awkward in Jinja are precomputed here (`what`, `short`, `tag`, `lines_text`, `verdict`). The keys an
     admin-edited template reads stay (`rows`, `ordinal`, `inquiry_no`, `so_number`, `link`,
     `oi_count`, `line_count`, `more_count`), and `requests` exists only for 2 or more OIs."""
     from app.services import park_send
@@ -565,9 +565,15 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                     "reason": reason or "",
                 }
             )
-    # A line with no delivery date sorts last within its item code.
-    lines.sort(
-        key=lambda line: (line["item_code"], line["delivery_iso"] or "9999-12-31", line["oi_no"])
+    # The OI export's order (OI-EXPORT-SHARED, owner 3 Nov 2026): S/O, then delivery date
+    # earliest first, a line with no date last within its S/O; same-day lines by item code,
+    # then OI no.
+    from app.services.order_inquiry_export import in_export_order
+
+    lines = in_export_order(
+        sorted(lines, key=lambda line: (line["item_code"], line["oi_no"])),
+        so=lambda line: line["so_number"],
+        when=lambda line: line["delivery_iso"],
     )
     ordered = sorted(per_inquiry.values(), key=lambda entry: entry["inquiry_no"])
     inquiry_count = len(ordered)

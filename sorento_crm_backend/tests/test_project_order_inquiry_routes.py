@@ -340,18 +340,18 @@ def test_the_export_downloads_a_workbook_with_the_clients_headings(api):
     assert "attachment;" in response.headers["content-disposition"]
     assert response.headers["content-disposition"].endswith(".xlsx")
     sheet = openpyxl.load_workbook(io.BytesIO(response.content)).worksheets[0]
-    assert sheet.cell(row=1, column=1).value == "ORDER INQUIRY"
-    assert [cell.value for cell in sheet[2][:8]] == [
+    assert sheet.title == "ORDER INQUIRY"
+    assert [cell.value for cell in sheet[1][:8]] == [
         "SO DATE",
         "S/O NO",
         "ITEM CODE",
         "QTY",
         "DELIVERY DATE",
         "PROJECT/CUSTOMER",
-        "STOCK LOCATION",
+        "LOCATION",
         "REMARK",
     ]
-    assert sheet.max_row == 4
+    assert sheet.max_row == 3
 
 
 def test_the_export_honours_the_same_filters_as_the_list(api):
@@ -363,7 +363,7 @@ def test_the_export_honours_the_same_filters_as_the_list(api):
     )
 
     sheet = openpyxl.load_workbook(io.BytesIO(response.content)).worksheets[0]
-    codes = [row[2] for row in sheet.iter_rows(min_row=3, values_only=True)]
+    codes = [row[2] for row in sheet.iter_rows(min_row=2, values_only=True)]
     assert codes == ["CB6633"]
 
 
