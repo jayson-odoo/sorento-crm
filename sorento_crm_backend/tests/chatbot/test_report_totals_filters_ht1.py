@@ -254,3 +254,70 @@ def test_ht1_10_lock_a_bottom_ranking_without_a_count_still_asks_how_many(rbot, 
     _hold_agents(rbot, sorento)
     text, calls = rbot.say(_t5(None, "bottom", company=sorento), "bottom agents")
     assert TOP_N_Q in text, f"HT1-10: {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ gate 4: the model's own parses
+# The exact entity + report_ask the model gave on gate 4 (TFPS5 9ad88b43, gate head 9bb6bed561): the object puts the name in
+# `company` AND `brands`; the entity's said_as says which one the message meant. What matters is what the engine does.
+
+
+def _g4_ent(raw: str, kind_said: Any, said_as: Any) -> dict[str, Any]:
+    ent = _ent(raw, "brand", "SORENTO", kind_said)
+    ent["said_as"] = said_as
+    return ent
+
+
+def _g4(sorento: str, ent: dict[str, Any], *, frame: str, basis: str | None, group_by: str | None, status: str, **flat: Any):
+    ra = _ra2(frame, basis=basis, group_by=group_by, company=sorento, brands=["SORENTO"], **SEP)
+    over = dict(basis=basis, group_by=group_by, entity_op="replace_combine", domain_in_message=True, sales_company=None, **SEPF)
+    over.update(flat)
+    return _v(status, ra, ent, **over)
+
+
+def test_g4_tf28_company_sorento_over_the_held_brand_list_is_company_only_for_every_agent(rbot, world) -> None:
+    """tf-28: held every-agent breakdown with brands [SORENTO]; "company sorento": company AND brands, said_as company."""
+    sorento, _m = world
+    ra0 = _ra2("breakdown", basis="delivered", group_by="sales_agent", measure="amount", brands=["SORENTO"], **SEP)
+    text0, calls0 = rbot.say(_v("sales_analysis", ra0, basis="delivered", group_by="sales_agent", measure="amount",
+                                domain_in_message=True, **SEPF), "sorento brand sales by agent September")
+    assert _ran(calls0), f"setup: {text0!r}"
+    v = _g4(sorento, _g4_ent("sorento", None, "company"), frame="breakdown", basis="delivered", group_by="sales_agent",
+            status="sales_ranking", continuation=False, ranking_refine=True, domain_in_message=False)
+    text, calls = rbot.say(v, "company sorento")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"tf-28: {args}"
+    _every_agent(args)
+
+
+def test_g4_tf29_brand_only_runs_the_brand_with_no_company_filter(rbot, world) -> None:
+    """tf-29: fresh "Sorento brand only Sep 2026 delivered": company AND brands, said_as brand, kind_said brand."""
+    sorento, _m = world
+    v = _g4(sorento, _g4_ent("Sorento", "brand", "brand"), frame="total", basis="delivered", group_by=None,
+            status="sales_analysis")
+    text, calls = rbot.say(v, "Sorento brand only Sep 2026 delivered")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("brand_ids") and "company" not in args, f"tf-29: {args}"
+
+
+def test_g4_tf13_a_bare_name_with_said_as_null_asks_one_question_and_runs_nothing(rbot, world) -> None:
+    """tf-13: fresh "Sorento total sale September 2026": company AND brands, said_as null (the model's own parse,
+    except basis "delivered": the model left it null, which asks the basis question first, a different row's rule)."""
+    sorento, _m = world
+    v = _g4(sorento, _g4_ent("Sorento", None, None), frame="total", basis="delivered", group_by=None, status="sales_analysis")
+    text, calls = rbot.say(v, "Sorento total sale September 2026")
+    assert not _ran(calls), f"tf-13: a report ran: {_ran(calls)}"
+    assert _kind_slot(rbot).get("asking") == "kind", f"tf-13: no kind question: {_kind_slot(rbot)} / {text!r}"
+    assert "company" in text.lower() and "brand" in text.lower(), text
+
+
+def test_g4_tf30_company_and_brand_runs_both_filters(rbot, world) -> None:
+    """tf-30: fresh "sorento company and brand, Sep 2026 delivered": company AND brands, said_as both, kind_said brand."""
+    sorento, _m = world
+    v = _g4(sorento, _g4_ent("sorento", "brand", "both"), frame="total", basis="delivered", group_by=None,
+            status="sales_analysis")
+    text, calls = rbot.say(v, "sorento company and brand, Sep 2026 delivered")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"tf-30: {args}"
