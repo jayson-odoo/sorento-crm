@@ -100,6 +100,7 @@ import {
   draftLinesPayload,
   lineNeedsTemplate,
   lineToDraft,
+  linePickProblems,
   MISSING_TAG_TEMPLATE,
   linePriceType,
   partsFromCombo,
@@ -1482,7 +1483,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
   /** Why Approve is off on the draft form, or null when the tag can be approved. */
-  const approveBlockedReason: string | null =
+  const previewBlockedReason: string | null =
     previewState.missing.length > 0
       ? `No tag template yet for ${previewState.missing.join(', ')}. Escalate it to marketing.`
       : previewState.failed
@@ -1492,6 +1493,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             ? 'Drawing the tag preview...'
             : ''
           : null;
+  // AC-C5, C6, D2: short picks, a discontinued pick, an LP line with no combo list price.
+  const pickProblems = linePickProblems(lines, lineEditor.linePricing, priceMode);
+  const approveBlockedReason: string | null =
+    previewBlockedReason ?? (pickProblems.length > 0 ? pickProblems.join(' ') : null);
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);

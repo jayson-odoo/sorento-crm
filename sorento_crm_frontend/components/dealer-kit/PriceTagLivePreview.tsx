@@ -21,7 +21,7 @@ import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { toast } from '@/lib/toast';
 import { buildRequestSheet, buildSingleTagSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import { partsPayload, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import type {
   PriceMode,
@@ -60,11 +60,7 @@ export function previewLines(lines: DraftLine[], priceMode?: PriceMode): TagPrev
       product_id: l.line_type === 'product' ? l.product_id : null,
       product_set_id: l.line_type === 'product_set' ? l.product_set_id : null,
       combo_id: l.combo_id,
-      parts: l.parts.map((part) => ({
-        product_id: part.product_id,
-        role: part.role,
-        candidates: part.product_id ? [] : part.candidates.map((c) => c.product_id),
-      })),
+      parts: partsPayload(l.parts),
       promotion_id: l.promotion_id,
       // A typed price only applies to an SP line (the server refuses it otherwise).
       manual_sell_price: (l.price_type ?? priceMode) === 'list' ? null : l.manual_sell_price,

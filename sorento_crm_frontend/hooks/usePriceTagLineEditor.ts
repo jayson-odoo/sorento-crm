@@ -28,6 +28,8 @@ import {
   MISSING_TAG_TEMPLATE,
   newPartKey,
   partsFromCombo,
+  pickedProductIds,
+  trimPicksToTemplate,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 
@@ -98,7 +100,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.key,
           l.line_type,
           l.product_id,
-          l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
+          l.parts.map((p) => [p.product_id, p.product_ids, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
           l.combo_id,
         ]),
@@ -111,9 +113,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       .map((l) => ({
         key: l.key,
         product_id: l.product_id,
-        part_product_ids: l.parts
-          .filter((p) => p.product_id)
-          .map((p) => p.product_id as string),
+        part_product_ids: pickedProductIds(l.parts),
         candidate_product_ids: l.parts.flatMap((p) =>
           p.candidates.map((c) => c.product_id),
         ),
@@ -310,14 +310,15 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       setLines((prev) =>
         prev.map((l) =>
           l.key === key
-            ? {
+            ? // AC-C4: a template that needs fewer keeps the first picks.
+              trimPicksToTemplate({
                 ...l,
                 tag_template_id: templateId || null,
                 // The row's own "pick a template" message goes once one is picked;
                 // any other message (a duplicate product) stays.
                 guard_error:
                   templateId && l.guard_error === MISSING_TAG_TEMPLATE ? null : l.guard_error,
-              }
+              })
             : l,
         ),
       );
@@ -435,6 +436,27 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
             }),
           };
         }),
+      );
+    },
+    [setLines],
+  );
+
+  /** A multi-pick row (K5): the ordered picks of a group the template needs 2 or more from. */
+  const resolvePicks = useCallback(
+    (key: string, partKeyToResolve: string, productIds: string[]) => {
+      setLines((prev) =>
+        prev.map((l) =>
+          l.key !== key
+            ? l
+            : {
+                ...l,
+                parts: l.parts.map((part) =>
+                  part.key === partKeyToResolve
+                    ? { ...part, product_id: null, code: '', name: '', product_ids: productIds }
+                    : part,
+                ),
+              },
+        ),
       );
     },
     [setLines],
@@ -584,6 +606,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     removePart,
     restoreParts,
     resolvePart,
+    resolvePicks,
     addPart,
     fetchItemOptions,
     fetchPartOptions,

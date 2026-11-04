@@ -19,19 +19,23 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionName, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
+  isOpenPart,
   itemValue,
   linePriceType,
   lineTemplateState,
   packageWarningFor,
   partsAtListTitle,
+  picksNeeded,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -146,6 +150,7 @@ export function PriceTagLinesTable({
               onChoosePackage={editor.choosePackage}
               onChooseTemplate={editor.chooseTemplate}
               onResolvePart={editor.resolvePart}
+              onResolvePicks={editor.resolvePicks}
               onRemovePart={editor.removePart}
               onAddPart={editor.addPart}
               onRestoreParts={editor.restoreParts}
@@ -184,6 +189,7 @@ interface LineRowProps {
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the Template select on a many-template line. */
   onChooseTemplate: (key: string, templateId: string) => void;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
   onRestoreParts: (key: string) => void;
@@ -240,7 +246,9 @@ function PartRow({
   priceMode,
   combos,
   colSpan,
+  picksK,
   onResolvePart,
+  onResolvePicks,
   onRemovePart,
 }: {
   lineKey: string;
@@ -252,7 +260,10 @@ function PartRow({
   /** Matches however many real columns the line's own row currently has
    *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
   colSpan: number;
+  /** How many picks the chosen template reads from this group (2 or more = a multi-select). */
+  picksK: number;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
   // D17: a group with exactly one candidate resolves on the spot
@@ -263,12 +274,34 @@ function PartRow({
   const choosable =
     part.candidates.length > 1 || (part.role === 'Upgrade' && part.candidates.length > 0);
   const label = part.role || part.code || part.name;
+  const discontinued = (candidate: LinePartCandidate) =>
+    candidate.is_discontinued ??
+    combos.some((combo) =>
+      combo.parts.some((p) => p.product_id === candidate.product_id && p.is_discontinued),
+    );
+  const multi = choosable && picksK >= 2;
   return (
     <tr className="align-top">
       <td colSpan={colSpan} className="px-2 pb-2 pl-9">
         <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
           <div className="min-w-0 flex-1">
-            {choosable ? (
+            {multi ? (
+              <SearchableMultiSelect
+                value={part.product_ids ?? (part.product_id ? [part.product_id] : [])}
+                onChange={(ids) => onResolvePicks(lineKey, part.key, ids)}
+                max={picksK}
+                options={part.candidates.map((candidate) => ({
+                  value: candidate.product_id,
+                  label: candidateOptionLabel(candidate, pricing, priceMode),
+                  description: distinctName(candidate.code, candidate.name) ?? undefined,
+                  disabled: discontinued(candidate),
+                  badgeText: discontinued(candidate) ? 'Discontinued' : undefined,
+                }))}
+                placeholder={`Pick ${picksK}`}
+                emptyMessage="No options."
+                size="sm"
+              />
+            ) : choosable ? (
               <div className="space-y-1">
                 <SearchableSelect
                   clearable
@@ -287,7 +320,10 @@ function PartRow({
                     ),
                     // Owner, 4 Nov: the code is already the option's first line; a second
                     // line only when the name says something the code does not.
-                    description: distinctName(candidate.code, candidate.name) ?? undefined,
+                    description: discontinued(candidate)
+                      ? 'Discontinued'
+                      : (distinctName(candidate.code, candidate.name) ?? undefined),
+                    disabled: discontinued(candidate),
                   }))}
                   placeholder={
                     part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`
@@ -348,6 +384,7 @@ function LineRow({
   onChoosePackage,
   onChooseTemplate,
   onResolvePart,
+  onResolvePicks,
   onRemovePart,
   onAddPart,
   onRestoreParts,
@@ -393,7 +430,7 @@ function LineRow({
   // once per line.
   const lastOpenPartKey = [...line.parts]
     .reverse()
-    .find((part) => !part.product_id && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
+    .find((part) => isOpenPart(part) && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // `<td>` columns on the line's own row (above the app's 992px mobile
@@ -658,14 +695,21 @@ function LineRow({
                 truncateTriggerLabel
                 value={line.tag_template_id ?? ''}
                 onChange={(value) => onChooseTemplate(line.key, value)}
-                options={templateState.options.map((template) => ({
-                  value: template.id,
-                  label: template.name,
-                  description:
+                options={templateState.options.map((template) => {
+                  const size =
                     template.width_mm && template.height_mm
                       ? `${template.width_mm} x ${template.height_mm} mm`
-                      : undefined,
-                }))}
+                      : '';
+                  // AC-B4: what the template reads, in this combo's own words.
+                  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+                  const needs =
+                    combo && template.needs ? needsText(template.needs, comboShape(combo.parts)) : '';
+                  return {
+                    value: template.id,
+                    label: template.name,
+                    description: [size, needs].filter(Boolean).join('. ') || undefined,
+                  };
+                })}
                 placeholder="Tag template"
                 emptyMessage="No templates."
                 size="sm"
@@ -705,9 +749,25 @@ function LineRow({
             priceMode={linePriceType(line, priceMode)}
             combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
+            picksK={picksNeeded(line, part.role)}
             onResolvePart={onResolvePart}
+            onResolvePicks={onResolvePicks}
             onRemovePart={onRemovePart}
           />
+          {/* AC-C5: how many picks a multi-pick group still lacks. */}
+          {(() => {
+            const k = picksNeeded(line, part.role);
+            const held = part.product_ids?.length ?? (part.product_id ? 1 : 0);
+            return k >= 2 && part.candidates.length > 1 && held < k ? (
+              <tr>
+                <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+                  <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
+                    {`${part.role}: pick ${k - held} more.`}
+                  </p>
+                </td>
+              </tr>
+            ) : null;
+          })()}
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
           {part.key === lastOpenPartKey && (
             <tr>

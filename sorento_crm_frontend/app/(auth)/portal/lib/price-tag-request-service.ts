@@ -119,6 +119,8 @@ export interface LinePartCandidate {
   name: string;
   /** Set on an upgrade candidate: its top-up. */
   topup_amount?: number | null;
+  /** The product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /**

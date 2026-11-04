@@ -15,7 +15,7 @@ import type {
   ProductComboOption,
   ProductTagTemplateOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import { comboShape, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
+import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 
 /**
@@ -154,7 +154,12 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
     seen.add(part.choice_group);
     const candidates = combo.parts
       .filter((p) => !p.is_upgrade && p.choice_group === part.choice_group)
-      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name }));
+      .map((p) => ({
+        product_id: p.product_id,
+        code: p.code,
+        name: p.name,
+        is_discontinued: p.is_discontinued ?? false,
+      }));
     // D17 (AC-S12-1): one candidate is not a choice - the group resolves on
     // the spot, same as a fixed part. `candidates` is kept (not cleared) so
     // the row still knows what it came from if it is ever removed and
@@ -227,7 +232,7 @@ export function packageWarningFor(line: DraftLine): string | null {
 /** AC-S1-2: an unresolved choice group prices as nothing, and the List price
  *  cell says so rather than silently under-counting. */
 export function hasOpenGroup(line: DraftLine): boolean {
-  return line.parts.some((part) => !part.product_id && part.candidates.length > 0);
+  return line.parts.some((part) => isOpenPart(part) && part.candidates.length > 0);
 }
 
 /** RM amounts round to whole ringgit everywhere on this form (mock pricing
@@ -366,6 +371,11 @@ export type LineTemplateState =
   | { kind: 'single'; template: ProductTagTemplateOption }
   | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null };
 
+function comboShapeOf(line: DraftLine) {
+  const combo = line.combo_id ? line.combos.find((c) => c.combo_id === line.combo_id) : undefined;
+  return combo ? comboShape(combo.parts) : null;
+}
+
 export function lineTemplateState(line: DraftLine): LineTemplateState {
   if (line.line_type !== 'product' || !line.product_id) return { kind: 'none' };
   if (
@@ -374,7 +384,11 @@ export function lineTemplateState(line: DraftLine): LineTemplateState {
   ) {
     return { kind: 'loading' };
   }
-  const options = line.tag_templates ?? [];
+  // AC-B4: only templates that fit the line's combo are offered.
+  const shape = comboShapeOf(line);
+  const options = (line.tag_templates ?? []).filter(
+    (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
+  );
   if (options.length === 0) return { kind: 'none' };
   if (options.length === 1) return { kind: 'single', template: options[0] };
   return {
@@ -390,6 +404,31 @@ export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 export function lineNeedsTemplate(line: DraftLine): boolean {
   const state = lineTemplateState(line);
   return state.kind === 'many' && state.picked === null;
+}
+
+/** The parts as the server takes them: a multi-pick row becomes one resolved part per pick, in order. */
+export function partsPayload(parts: DraftPart[]) {
+  return parts.flatMap((part) =>
+    part.product_ids && part.product_ids.length > 0
+      ? part.product_ids.map((product_id) => ({ product_id, role: part.role, candidates: [] as string[] }))
+      : [
+          {
+            product_id: part.product_id,
+            role: part.role,
+            candidates: part.product_id ? [] : part.candidates.map((candidate) => candidate.product_id),
+          },
+        ],
+  );
+}
+
+/** Every product the parts have resolved so far, picks included. */
+export function pickedProductIds(parts: DraftPart[]): string[] {
+  return parts.flatMap((p) => (p.product_ids?.length ? p.product_ids : p.product_id ? [p.product_id] : []));
+}
+
+/** A row is still open while nothing is picked from it. */
+export function isOpenPart(part: DraftPart): boolean {
+  return !part.product_id && !part.product_ids?.length;
 }
 
 /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
@@ -408,19 +447,7 @@ export function draftLinesPayload(
     included_accessories: l.included_accessories || null,
     remarks: l.remarks || null,
     product_class: null,
-    parts: l.parts.flatMap((part) =>
-      part.product_ids && part.product_ids.length > 0
-        ? part.product_ids.map((product_id) => ({ product_id, role: part.role, candidates: [] }))
-        : [
-            {
-              product_id: part.product_id,
-              role: part.role,
-              candidates: part.product_id
-                ? []
-                : part.candidates.map((candidate) => candidate.product_id),
-            },
-          ],
-    ),
+    parts: partsPayload(l.parts),
     // D1/D2 (S6): the line's own price basis - built here for create,
     // update AND revise, the one function all three send through, so the
     // server never sees a line missing what `choosePromotion`/
