@@ -245,3 +245,13 @@ Q6. A "+" line with NO stored combo (all 4 in the owner's paste; owner mock note
     the tag prints today with no catalogue change; (b) would turn one dealer's negotiated SP into
     a catalogue price for everyone (the 4 typed SPs are stored nowhere today), and (c) blocks a
     request on a marketing task. Saving stays an explicit, permissioned act.
+
+## Answers (owner via crew, 4 Nov)
+
+Q1 (a), the owner edits the templates himself. Q2 held (being explained); built as "the header
+toggle is the default for new lines". Q3 (a). Q4: LP never typed; SP typed only on a line with no
+promotion (or after unlinking it), else the promotion price (today's basis rule, now per line).
+Q5 (b): no minimum price on tags, R6 and the pill dropped. Q6 (a). New: a DEFAULT template per
+product and per combo, preselected on the line. New: remove the hint "Add an item to see its tag
+before approving.". An SP line with no selling price available shows a hint and prints LP (not
+blocked). Plan: `PLAN-pricetag-lpsp-04nov.md`; UAC: `pricetag-lpsp-acceptance-criteria.md`.
