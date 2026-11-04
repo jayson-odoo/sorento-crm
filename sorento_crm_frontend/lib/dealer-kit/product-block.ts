@@ -372,6 +372,17 @@ export function resolveSlotText(
     return amount == null ? null : formatTagPrice(amount, false);
   }
 
+  // PRICETAG-LPSP: one slot for the figure a line shows and one for its label, so a single
+  // template serves an LP line and an SP line alike.
+  if (layer.slot_binding === 'price' || layer.slot_binding === 'price_label') {
+    const { listPrice, offerPrice } = priceBadgeInput(subject);
+    if (layer.slot_binding === 'price_label') {
+      return offerPrice != null ? 'SP' : listPrice != null ? 'LP' : null;
+    }
+    const amount = offerPrice ?? listPrice;
+    return amount == null ? null : formatTagPrice(amount, false);
+  }
+
   if (subject.kind === 'line') {
     switch (layer.slot_binding) {
       case 'code':

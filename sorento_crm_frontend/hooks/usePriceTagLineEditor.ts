@@ -24,11 +24,39 @@ import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/l
 import { distinctName } from '@/lib/product-display';
 import {
   emptyDraftLine,
+  formatRM,
   MISSING_TAG_TEMPLATE,
   newPartKey,
   partsFromCombo,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
+
+/** The Item picker option's second line (owner, 4 Nov): the name only when it adds
+ *  something other than the code, and "Set" in front for a set (D47). A product with
+ *  nothing to add has no second line. */
+function itemOptionDescription(
+  isSet: boolean,
+  code: string | null | undefined,
+  name: string | null | undefined,
+): string | undefined {
+  const extra = distinctName(code, name);
+  if (isSet) return extra ? `Set - ${extra}` : 'Set';
+  return extra ?? undefined;
+}
+
+/** One Item / part picker option: "CODE  RM <list price>" (the price only when known
+ *  and above 0), the name under it per `itemOptionDescription`, and the code and name
+ *  carried on the option so a pick never parses them back out of the text. */
+function tagItemOption(item: TagItemOption): SearchableSelectOption {
+  const price = item.list_price != null && item.list_price > 0 ? item.list_price : null;
+  return {
+    value: `${item.kind}:${item.id}`,
+    label: price === null ? item.code : `${item.code}  ${formatRM(price)}`,
+    description: itemOptionDescription(item.kind === 'product_set', item.code, item.name),
+    code: item.code,
+    name: item.name || item.code,
+  };
+}
 
 /** The three catalogue calls the editor makes. */
 export interface PriceTagLineLookups {
@@ -36,7 +64,10 @@ export interface PriceTagLineLookups {
   lookupProductCombos: (productId: string) => Promise<ProductCombosLookup>;
   lookupLinePricing: (priceMode: PriceMode, lines: LinePricingLineInput[]) => Promise<LinePricingResult[]>;
   /** PRICETAG-TEMPLATE-PER-PRODUCT: optional so a caller without it simply shows no Template field. */
-  lookupProductTagTemplates?: (productId: string) => Promise<ProductTagTemplateOption[]>;
+  lookupProductTagTemplates?: (
+    productId: string,
+    comboId?: string | null,
+  ) => Promise<ProductTagTemplateOption[]>;
 }
 
 interface Options {
@@ -127,6 +158,8 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
 
   // ---- Line management ----
   const addLine = useCallback(() => {
+    // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
+    // toggle (or the paste) sets it.
     setLines((prev) => [...prev, emptyDraftLine()]);
   }, [setLines]);
 
@@ -234,33 +267,40 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       (l) =>
         l.line_type === 'product' &&
         l.product_id &&
-        l.tag_templates_for !== l.product_id &&
-        !templatesAskedRef.current.has(`${l.key}:${l.product_id}`),
+        (l.tag_templates_for !== l.product_id ||
+          (l.tag_templates_combo ?? null) !== (l.combo_id ?? null)) &&
+        !templatesAskedRef.current.has(`${l.key}:${l.product_id}:${l.combo_id ?? ''}`),
     );
     for (const line of pending) {
       const productId = line.product_id as string;
-      const asked = `${line.key}:${productId}`;
+      const comboId = line.combo_id ?? null;
+      const asked = `${line.key}:${productId}:${comboId ?? ''}`;
       templatesAskedRef.current.add(asked);
       const apply = (options: ProductTagTemplateOption[]) => {
         templatesAskedRef.current.delete(asked);
         setLines((prev) =>
           prev.map((l) => {
+            // An answer for a product or package the row has since left is dropped.
             if (l.key !== line.key || l.product_id !== productId) return l;
-            const kept = options.some((o) => o.id === l.tag_template_id)
-              ? (l.tag_template_id ?? null)
-              : null;
+            if ((l.combo_id ?? null) !== comboId) return l;
+            // PRICETAG-LPSP: a pick that is still offered stays; else the default; else the
+            // only one; else none (several and no default = the salesperson picks).
+            const kept = options.find((o) => o.id === l.tag_template_id);
+            const fallback =
+              options.find((o) => o.is_default) ?? (options.length === 1 ? options[0] : null);
             return {
               ...l,
               tag_templates: options,
               tag_templates_for: productId,
-              tag_template_id: options.length === 1 ? options[0].id : kept,
+              tag_templates_combo: comboId,
+              tag_template_id: (kept ?? fallback)?.id ?? null,
             };
           }),
         );
       };
       // A failed lookup shows no field, which is what a product with no link
       // looks like; the server's own rule still decides at Submit.
-      lookup(productId).then(apply).catch(() => apply([]));
+      (comboId ? lookup(productId, comboId) : lookup(productId)).then(apply).catch(() => apply([]));
     }
   }, [lines, lookups, setLines]);
 
@@ -406,7 +446,8 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       if (!option) return;
       const [kind, id] = option.value.split(':');
       if (kind !== 'product') return;
-      const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
+      const code = option.code ?? '';
+      const name = option.name ?? option.label;
       setLines((prev) =>
         prev.map((l) => {
           if (l.key !== key) return l;
@@ -419,7 +460,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
                 key: newPartKey(),
                 product_id: id,
                 code,
-                name: option.label,
+                name,
                 role: null,
                 candidates: [],
               },
@@ -432,20 +473,14 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   );
 
   // ---- Item options: sets and products in ONE list (D47) ----
-  // The label carries the word Set or Product, because the two look alike in a
-  // dropdown and picking the wrong one produces a different tag.
+  // Owner, 4 Nov: one line per option with the code shown once, "CODE  RM <list
+  // price>", and the name under it only when it adds something. A set keeps its
+  // marker (a set and a product look alike in a dropdown and picking the wrong one
+  // produces a different tag); a product gets no word at all.
   const fetchItemOptions = useCallback(
     async (query: string): Promise<SearchableSelectOption[]> => {
       const items = await lookups.lookupTagItems(query);
-      return items.map((i) => ({
-        value: `${i.kind}:${i.id}`,
-        label: i.name || i.code,
-        description: distinctName(i.code, i.name)
-          ? `${i.kind === 'product_set' ? 'Set' : 'Product'} - ${i.code}`
-          : i.kind === 'product_set'
-            ? 'Set'
-            : 'Product',
-      }));
+      return items.map(tagItemOption);
     },
     [lookups],
   );
@@ -455,13 +490,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   const fetchPartOptions = useCallback(
     async (query: string): Promise<SearchableSelectOption[]> => {
       const items = await lookups.lookupTagItems(query);
-      return items
-        .filter((i) => i.kind === 'product')
-        .map((i) => ({
-          value: `product:${i.id}`,
-          label: i.name || i.code,
-          description: distinctName(i.code, i.name) ? `Product - ${i.code}` : undefined,
-        }));
+      return items.filter((i) => i.kind === 'product').map(tagItemOption);
     },
     [lookups],
   );
@@ -500,7 +529,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       }
       const [kind, id] = option.value.split(':');
       const isSet = kind === 'product_set';
-      const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
+      const code = option.code ?? '';
       // R3-7: refuse a product/set already on another line, inline - the
       // same guard the backend now enforces (DUPLICATE_LINE), so a save
       // never round-trips just to be told this.
@@ -519,9 +548,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
         line_type: isSet ? 'product_set' : 'product',
         product_id: isSet ? null : id,
         product_set_id: isSet ? id : null,
-        name: option.label,
-        // The description reads "Set - CODE" / "Product - CODE"; the code is what
-        // the row shows, so it is stored without the word in front of it.
+        name: option.name ?? option.label,
         code,
         guard_error: null,
         // A set is printed as one thing and carries no package (D2: a cabinet

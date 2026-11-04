@@ -227,11 +227,16 @@ def test_extract_products_calls_resolver_once_with_whole_code_list_exact_only(
     with company_scope(db, frozenset({SORENTO})):
         AIExtractService(db)._extract_products(_parsed("SRT-A", "SRT-B", "SRT-C"))
 
-    assert len(calls) == 1, "resolve_references must be called exactly once for the batch"
+    # The whole code list goes in ONE call, never one call per code. PRICETAG-LPSP (crew
+    # re-pass on 61006bce): codes that missed are retried ONCE, again as one batch, joined
+    # with their own description ("SRTSH2626" + "GY"); nothing else is ever sent.
+    assert len(calls) == 2, "one call for the batch, one batch retry for its misses"
     _db_arg, codes, kwargs = calls[0]
     assert codes == ["SRT-A", "SRT-B", "SRT-C"]
-    assert kwargs.get("enable_prefix_fallback") is False
-    assert kwargs.get("enable_embedding_fallback") is False
+    assert calls[1][1] == ["SRT-A raw name", "SRT-B raw name", "SRT-C raw name"]
+    for _db, _codes, call_kwargs in calls:
+        assert call_kwargs.get("enable_prefix_fallback") is False
+        assert call_kwargs.get("enable_embedding_fallback") is False
 
 
 # --------------------------------------------------------------------------- #
@@ -260,7 +265,11 @@ def test_extract_products_chunks_a_long_batch_into_calls_of_100(db, monkeypatch)
     with company_scope(db, frozenset({SORENTO})):
         AIExtractService(db)._extract_products(_parsed(*codes))
 
-    assert len(calls) == 2, "150 codes must resolve as two chunked calls, not one truncated one"
+    # Two chunked calls for the 150 codes, then the misses' description retry, chunked the
+    # same way (PRICETAG-LPSP crew re-pass).
+    assert len(calls) == 4, "150 codes must resolve as two chunked calls, not one truncated one"
+    assert calls[2][1] == [f"{c} raw name" for c in codes[:100]]
+    assert calls[3][1] == [f"{c} raw name" for c in codes[100:]]
     first_codes, first_kwargs = calls[0][1], calls[0][2]
     second_codes, second_kwargs = calls[1][1], calls[1][2]
     assert first_codes == codes[:100]
