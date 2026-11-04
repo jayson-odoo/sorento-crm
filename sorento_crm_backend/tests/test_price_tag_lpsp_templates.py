@@ -543,3 +543,56 @@ class TestComboLineTemplate:
         res = c.get(f"{PORTAL}/lookups/product-tag-templates/{mine}?combo_id={foreign_combo.id}")
         assert [row["id"] for row in res.json()] == [h]
         assert foreign_host
+
+
+# --------------------------------------------------------------------------- deferred unlink
+class TestDeferredComboUnlink:
+    """`combo.unlink_tag_templates`: unticking a template on an existing combo parks, like the
+    product's `product.unlink_tag_templates`."""
+
+    def test_the_action_is_registered_and_removes_only_the_named_links(self, env):
+        from app.models.base import set_company_scope
+        from app.models.dealer_kit import ComboTagTemplate
+        import app.services.record_actions  # noqa: F401  (registers the actions)
+        from app.services.form_action_registry import get_action
+
+        db, _c, _ = env
+        combo = _combo(db, _product(db, _reference(db)))
+        a, b = _template(db, "A"), _template(db, "B")
+        _combo_link(db, combo.id, a, b, default=b)
+
+        action = get_action("combo.unlink_tag_templates")
+        assert action is not None, "record_actions did not register the key"
+        assert action.permission == "dealer_kit.tag_templates.manage"
+        set_company_scope(db, frozenset({SORENTO}))
+        result = action.execute(db, {"entity_id": combo.id, "template_ids": [a]})
+        assert result == {"changed": 1}, result
+        assert {r.template_id for r in db.query(ComboTagTemplate).filter_by(combo_id=combo.id)} == {b}
+
+    def test_a_combo_of_another_company_is_404_and_untouched(self, env):
+        from app.models.base import set_company_scope
+        from app.models.dealer_kit import ComboTagTemplate
+        from app.services.dealer_kit import product_tag_template_service as svc
+        from app.services.error_handler import AppException
+
+        db, _c, _ = env
+        _host, combo = _foreign_combo(db)
+        a = _template(db, "A")
+        _combo_link(db, combo.id, a)
+        set_company_scope(db, frozenset({SORENTO}))
+        with pytest.raises(AppException) as exc:
+            svc.unlink_combo_templates(db, combo.id, [a])
+        assert exc.value.status_code == 404
+        assert db.query(ComboTagTemplate).filter_by(combo_id=combo.id).count() == 1
+
+    def test_the_park_check_refuses_a_foreign_combo(self, env):
+        from app.api.v1.system.pending_actions import _assert_entity_visible
+        from app.models.base import company_scope
+        from app.services.error_handler import AppException
+
+        db, _c, _ = env
+        _host, combo = _foreign_combo(db)
+        with company_scope(db, frozenset({SORENTO})):
+            with pytest.raises(AppException) as exc:
+                _assert_entity_visible(db, "combo.unlink_tag_templates", combo.id, MANAGER_ID)
+        assert exc.value.status_code == 404

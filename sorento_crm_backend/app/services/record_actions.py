@@ -1758,6 +1758,27 @@ register(
 )
 
 
+def _unlink_combo_tag_templates(db: Session, payload: dict):
+    """PRICETAG-LPSP: unticking templates on an existing combo."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_combo_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="combo.unlink_tag_templates",
+        entity_types=("product_combo",),
+        execute=_unlink_combo_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from combo",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through

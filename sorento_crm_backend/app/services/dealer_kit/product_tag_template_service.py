@@ -383,6 +383,27 @@ def unlink_product_templates(db: Session, product_id: str, template_ids: list[st
     return {"changed": changed}
 
 
+def unlink_combo_templates(db: Session, combo_id: str, template_ids: list[str]) -> dict:
+    """A combo's Remove, committed after its countdown (``combo.unlink_tag_templates``), the
+    combo twin of ``unlink_product_templates``. Only links of a combo in scope are touched
+    (scope = its host product's company); ids it does not hold are ignored."""
+    if not combo_exists(db, combo_id):
+        raise _not_found("Combo")
+    ids = [tid for tid in (_uuid_or_none(t) for t in template_ids or []) if tid]
+    if not ids:
+        return {"changed": 0}
+    changed = (
+        db.query(ComboTagTemplate)
+        .filter(
+            ComboTagTemplate.combo_id == _uuid_or_none(combo_id),
+            ComboTagTemplate.template_id.in_(ids),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return {"changed": changed}
+
+
 # ---------------------------------------------------------------------------
 # Bulk assignment (Tag Templates list)
 # ---------------------------------------------------------------------------
