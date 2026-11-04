@@ -93,3 +93,50 @@ def test_a_part_repeated_across_two_plus_lines_resolves_on_both(db):
     assert [p.product_id for p in second.set_parts] == [shared.id]
     assert first.combo_id == combo_a.id
     assert second.combo_id == combo_b.id
+
+
+# --------------------------------------------------------------------------- crew re-pass, run 1
+def test_a_code_split_from_its_colour_by_the_model_is_joined_back(db):
+    """Crew re-pass on 61006bce, run 1 of 3: the model returned 'Srtsh2626 GY' as code
+    'SRTSH2626' with 'GY' in the description, so every SRTSH2626 row read Not found. When the
+    code alone has no match, code + description goes through the SAME resolver (exact on the
+    normalised form); nothing fuzzy, no word list."""
+    gy = _product(db, "SRTZSH2626-GY")
+    gry = _product(db, "SRTZSH2626-GRY")
+    rg = _product(db, "SRTZSH2626-RG")
+    with company_scope(db, frozenset({SORENTO})):
+        rows = AIExtractService(db)._extract_products(
+            {
+                "products": [
+                    {"product_code": "SRTZSH2626", "product_name": "GY", "price_type": "list"},
+                    {"product_code": "SRTZSH2626", "product_name": "GRY", "price_type": "list"},
+                    {"product_code": "SRTZSH2626", "notes": "RG", "price_type": "selling",
+                     "typed_sell_price": 199},
+                ]
+            }
+        )
+    assert [(r.match, r.product_id, r.product_code) for r in rows] == [
+        ("product", gy.id, "SRTZSH2626-GY"),
+        ("product", gry.id, "SRTZSH2626-GRY"),
+        ("product", rg.id, "SRTZSH2626-RG"),
+    ]
+    assert rows[2].typed_sell_price == 199
+
+
+def test_a_code_that_matches_on_its_own_is_not_joined_with_its_description(db):
+    bare = _product(db, "SRTZBARE100")
+    _product(db, "SRTZBARE100-GY")
+    with company_scope(db, frozenset({SORENTO})):
+        (row,) = AIExtractService(db)._extract_products(
+            {"products": [{"product_code": "SRTZBARE100", "product_name": "GY"}]}
+        )
+    assert (row.match, row.product_id) == ("product", bare.id)
+
+
+def test_a_description_that_does_not_complete_a_code_leaves_the_row_unmatched(db):
+    _product(db, "SRTZNOPE200-GY")
+    with company_scope(db, frozenset({SORENTO})):
+        (row,) = AIExtractService(db)._extract_products(
+            {"products": [{"product_code": "SRTZNOPE200", "product_name": "Rain shower head"}]}
+        )
+    assert row.match is None and row.product_id is None

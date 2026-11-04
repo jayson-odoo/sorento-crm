@@ -1480,6 +1480,26 @@ class AIExtractService:
         everything = list(dict.fromkeys([c for c in raw_codes if c] + [c for cs in set_codes for c in cs]))
         resolved = self._resolve_product_codes(everything, suggestions_out=suggestions)
 
+        # Crew re-pass on 61006bce: the model sometimes splits "Srtsh2626 GY" into the code
+        # "SRTSH2626" and a description "GY". A code with no match of its own is retried as
+        # code + description (name, else notes) through the SAME resolver, exact on the
+        # normalised form; a joined code that matches nothing changes nothing.
+        joined_for: dict[int, str] = {}
+        for idx, (item, raw_code) in enumerate(zip(items, raw_codes)):
+            if not raw_code or raw_code in resolved:
+                continue
+            for field in ("product_name", "notes"):
+                extra = str(item.get(field) or "").strip()
+                if extra and len(extra) <= 64:
+                    joined_for[idx] = f"{raw_code} {extra}"
+                    break
+        if joined_for:
+            joined = self._resolve_product_codes(list(dict.fromkeys(joined_for.values())))
+            for idx, candidate in joined_for.items():
+                if candidate in joined:
+                    raw_codes[idx] = candidate
+                    resolved[candidate] = joined[candidate]
+
         def _coerce_float(raw: Any) -> float | None:
             if raw is None or raw == "":
                 return None
