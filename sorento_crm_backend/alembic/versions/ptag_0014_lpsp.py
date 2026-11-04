@@ -20,7 +20,7 @@ Idempotent (IF NOT EXISTS everywhere): a database built by ``create_all`` alread
 it. Downgrade drops everything added.
 
 Revision ID: ptag_0014_lpsp
-Revises: tinv_0001_target_invoiced_basis
+Revises: cer_0001_client_error_report
 Create Date: 2026-11-04
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "ptag_0014_lpsp"
-down_revision = "tinv_0001_target_invoiced_basis"
+down_revision = "cer_0001_client_error_report"
 branch_labels = None
 depends_on = None
 
