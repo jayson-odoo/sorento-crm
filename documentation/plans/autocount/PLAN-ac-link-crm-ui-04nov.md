@@ -92,6 +92,9 @@ AC-WRITE-QTSO lane before Phase 2.
   (Request CS to reserve, Link to PO, Unlink from PO, Move PO to another sales order); popup with
   checkboxes like Request CS to reserve; PO number and line shown separately; Bin renamed
   Location; Delivery date shown; "Would be" column dropped; plain wording, no system terms.
+- Owner Lavish note on v2 ("need to show the PO qty here also", Outstanding header), applied in v3:
+  drill gains "PO qty" (qty of the PO lines covering the SO line) beside Outstanding; the Link to PO
+  popup gains "PO qty" (the picked PO line's qty) and "Free" beside Outstanding.
 
 ## SS contract (PR #191, pinned)
 
