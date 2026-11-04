@@ -372,7 +372,7 @@ function LayerRow({
             say the opposite of what is happening. */}
         {isDynamic(layer) && (
           <span
-            className="shrink-0 font-mono text-[10px] leading-none text-sky-600"
+            className="shrink-0 font-mono text-2xs leading-none text-sky-600"
             title="Draws from product data through merge fields"
           >
             {'{}'}

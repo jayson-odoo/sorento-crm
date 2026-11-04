@@ -3,7 +3,7 @@
  * Harness copied from `TagCanvasEditor.combo-preview.test.tsx`.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
