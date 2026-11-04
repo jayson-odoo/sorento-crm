@@ -61,6 +61,9 @@ class DivergenceDetail(BaseModel):
     project_sales_order_id: str
     project_id: Optional[str] = None
     project_title: Optional[str] = None
+    #: The sales order's customer (debtor name, else customer master) and its project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     provisional_ref: Optional[str] = None
     autocount_doc_no: Optional[str] = None
     status: str
@@ -82,6 +85,8 @@ class DivergenceRowSummary(BaseModel):
     project_sales_order_id: str
     project_id: Optional[str] = None
     project_title: Optional[str] = None
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     sales_order_ref: Optional[str] = None
     provisional_ref: Optional[str] = None
     autocount_doc_no: Optional[str] = None

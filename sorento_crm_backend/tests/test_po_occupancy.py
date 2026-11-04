@@ -348,6 +348,14 @@ def test_every_placement_names_the_inquiry_the_order_the_customer_and_the_agent(
     customer and the agent by the labels the order-inquiry worklist already prints. A UUID
     on this panel would tell the buyer nothing they could act on.
     """
+    # A pre-order is issued in AutoCount under a stand-in debtor; the panel still names the
+    # party the inquiry was raised for (OI-UX-FILTER-SNAPSHOT seam rule, below).
+    world.db.execute(
+        text(
+            "UPDATE sales_orders SET debtor_name = 'ZZT STAND-IN DEBTOR', project_label = NULL "
+            "WHERE so_number IN ('SO416191', 'SO324132')"
+        )
+    )
     (block,) = world.svc.get_one(occupied["po"])["allocations"]
     placements = sorted(block["placements"], key=lambda p: (p["so_number"], p["qty"]))
 
@@ -357,6 +365,10 @@ def test_every_placement_names_the_inquiry_the_order_the_customer_and_the_agent(
         ("SO416191", 7, "BRW"),
     ]
     assert {p["customer"] for p in placements} == {"YOTU BUILDER SDN BHD"}
+    # OI-UX-FILTER-SNAPSHOT seam rule: the two halves are the OI worklist's own split
+    # (issuing-party customer; project title with its PRE-ORDER note), never replaced by the
+    # sales order's debtor.
+    assert {p["customer_name"] for p in placements} == {"YOTU BUILDER SDN BHD"}
     assert {p["agent"] for p in placements} == {"CONTACT N"}
     assert all(p["inquiry_no"] for p in placements)
 

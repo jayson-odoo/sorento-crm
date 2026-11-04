@@ -40,7 +40,7 @@ KIND_KEYS = {
 }
 
 #: The `/related` table's sortable columns (owner rule 27 Oct: every grid column sorts server side).
-SORT_KEYS = ("type", "doc_no", "doc_date", "status", "amount")
+SORT_KEYS = ("type", "doc_no", "customer_name", "project_label", "doc_date", "status", "amount")
 RELATED_SORT_PATTERN = "^(" + "|".join(SORT_KEYS) + ")$"
 
 
@@ -349,6 +349,9 @@ def related_table(
                     "status": item.get("status"),
                     "amount": item.get("amount"),
                     "currency_code": item.get("currency_code"),
+                    # OI-UX-FILTER-SNAPSHOT: a sales order row names its customer and project.
+                    "customer_name": item.get("customer_name"),
+                    "project_label": item.get("project_label"),
                 }
             )
     rows.sort(key=lambda r: r["doc_no"])  # stable tiebreak under the chosen column
@@ -411,4 +414,10 @@ def related_response(
         key: (relations[key] if can_view(db, user_id, kind) else None)
         for kind, key in KIND_KEYS.items()
     }
+    from app.services.scm.so_party import so_parties, with_party
+
+    orders = masked.get(KIND_KEYS[SALES_ORDER])
+    if orders:
+        parties = so_parties(db, ids=[o.get("id") for o in orders])
+        masked[KIND_KEYS[SALES_ORDER]] = [with_party(dict(o), parties, o.get("id")) for o in orders]
     return {**masked, "rows": related_table(masked, sort=sort, dir=dir)}

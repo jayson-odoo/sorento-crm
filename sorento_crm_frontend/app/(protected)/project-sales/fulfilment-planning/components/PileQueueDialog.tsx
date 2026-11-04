@@ -130,6 +130,22 @@ export function PileQueueDialog({
         meta: { headerTitle: 'Customer' },
       },
       {
+        id: 'project_label',
+        accessorFn: (row) => row.project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className={cellClass(row.original, position)}
+            title={row.original.project_label ?? ''}
+          >
+            {row.original.project_label || '-'}
+          </span>
+        ),
+        size: 200,
+        minSize: 140,
+        meta: { headerTitle: 'Project' },
+      },
+      {
         id: 'qty',
         accessorFn: (row) => Number(row.qty || 0),
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,

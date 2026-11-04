@@ -42,6 +42,7 @@ import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/hel
 import { SHORT_MONTHS } from './boardChangeAnnotations';
 import { fromMinor, toMinor } from './supplyComposition';
 import { unpostableNotices } from './unpostableNotices';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /**
  * A column header with the week-commencing abbreviation taken off.
@@ -1656,9 +1657,14 @@ function sumMinor(rows: { qty: string }[]): number {
 function axisKeyOf(
   contribution: BoardContribution,
   axis: BoardRowAxis,
-): { key: string; label: string } {
+): { key: string; label: string; party?: string | null } {
   if (axis === 'sales_order') {
-    return { key: contribution.sales_order_id, label: contribution.so_number };
+    // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): an order names its CUSTOMER / project.
+    return {
+      key: contribution.sales_order_id,
+      label: contribution.so_number,
+      party: soCustomerProjectLabel(contribution.so_customer_name, contribution.so_project_label),
+    };
   }
   if (axis === 'customer') {
     const label = contribution.customer_name || 'Customer not recorded';
@@ -1697,8 +1703,8 @@ export function boardAxis(
 
   for (const cell of cells) {
     for (const contribution of cell.contributions) {
-      const { key, label } = axisKeyOf(contribution, axis);
-      if (!rows.has(key)) rows.set(key, { key, label });
+      const { key, label, party } = axisKeyOf(contribution, axis);
+      if (!rows.has(key)) rows.set(key, party ? { key, label, party } : { key, label });
       const cellKey = `${key}|${cell.bucket_key}`;
       const existing = grouped.get(cellKey);
       if (existing) existing.lines.push(contribution);
@@ -1971,4 +1977,33 @@ export function confirmNoticeLines(result: {
   const landed = (result.landed_buy_notices ?? []).map((line) => failingLineText(line));
   const short = (result.stock_short_notices ?? []).map((line) => failingLineText(line));
   return [...held, ...landed, ...short];
+}
+
+/**
+ * OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): each board order's `CUSTOMER / project`, keyed by
+ * `sales_order_id`. The customer is the order's own (`BoardOrderStanding.customer_name`), else
+ * its first line's; the project is its first line's that names one. An order neither names is
+ * left out, so a caller prints nothing rather than a placeholder.
+ */
+export function orderPartyLabels(
+  orders: Array<{ sales_order_id: string }>,
+  contributions: Array<{
+    sales_order_id: string;
+    so_customer_name?: string | null;
+    so_project_label?: string | null;
+  }>,
+): Map<string, string> {
+  // Every line of one order carries the same two halves (the SO list's Customer and Project,
+  // named by the server), so the first line of each order speaks for it.
+  const firstLine = new Map<string, (typeof contributions)[number]>();
+  for (const line of contributions) {
+    if (!firstLine.has(line.sales_order_id)) firstLine.set(line.sales_order_id, line);
+  }
+  const out = new Map<string, string>();
+  for (const order of orders) {
+    const line = firstLine.get(order.sales_order_id);
+    const label = soCustomerProjectLabel(line?.so_customer_name, line?.so_project_label);
+    if (label) out.set(order.sales_order_id, label);
+  }
+  return out;
 }

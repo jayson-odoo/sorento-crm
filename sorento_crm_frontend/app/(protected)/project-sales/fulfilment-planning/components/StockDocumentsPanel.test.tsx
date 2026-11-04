@@ -131,6 +131,14 @@ afterEach(() => {
 });
 
 describe('StockDocumentsPanel', () => {
+  it('names the order\'s project on a sales-order row (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getStockDetail.mockResolvedValue(captainsPosition());
+    renderPanel();
+    const table = await screen.findByRole('table');
+    expect(within(table).getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
+    expect(within(table).getByText('MYRA DAHLIA 9307')).toBeInTheDocument();
+  });
+
   it('asks by IDS, because two products share the code B2155-NL-BLUE on the live book', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
@@ -522,7 +530,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     // Document, bin, balance after: an On hand row has no document, and the Bin column is
     // what says which pile it opened. There is no Doc date column on this reading, so Bin
     // is the sixth cell.
-    const documents = rowsOf().map((cells) => [cells[1], cells[5], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[6], cells[8]]);
     expect(documents).toEqual([
       ['-', 'BRW-IB', '100'],
       ['-', 'MWH-IB', '120'],
@@ -588,7 +596,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     const table = await screen.findByRole('table');
 
     expect(table.textContent).toContain('Not counted');
-    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[8]]);
     expect(documents).toEqual([
       ['-', '100'],
       ['-', '120'],
@@ -629,7 +637,7 @@ describe('StockDocumentsPanel: the group reading', () => {
     const table = await screen.findByRole('table');
 
     expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
-    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    const documents = rowsOf().map((cells) => [cells[1], cells[8]]);
     expect(documents).toEqual([
       ['-', '100'],
       ['-', '120'],
@@ -698,6 +706,30 @@ describe('StockDocumentsPanel: the group reading', () => {
       ['On hand', '-', '120'],
       ['Hold', 'SO404352', '114'],
     ]);
+  });
+
+  it('names a hold\'s customer and project (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [],
+      holds: [
+        {
+          so_number: 'SO404352',
+          customer_name: 'HOLDER DEBTOR SDN BHD',
+          project_label: 'HOLDER TOWER',
+          location: 'BRW-IB',
+          required_date: '2026-06-29',
+          qty: '6',
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(within(table).getByText('HOLDER DEBTOR SDN BHD')).toBeInTheDocument();
+    expect(within(table).getByText('HOLDER TOWER')).toBeInTheDocument();
   });
 
   it('says which bin each document sits at, which the per-bin reading never has to', async () => {

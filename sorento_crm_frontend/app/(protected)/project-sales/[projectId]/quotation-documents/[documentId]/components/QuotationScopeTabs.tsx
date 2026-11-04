@@ -1,13 +1,19 @@
 'use client';
 
 import * as React from 'react';
-import { DollarSign, Plus } from 'lucide-react';
+import { DollarSign, MoreHorizontal, Plus } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatMyrExact } from '../../../../_shared/lib/money';
@@ -56,6 +62,58 @@ function ScopeValueButton({ scope }: { scope: QuotationScope }) {
   );
 }
 
+/**
+ * The open tab's "Scope actions" trigger: the same Rename and Remove scope the right-click
+ * offers, for a touch screen where there is no right-click (QUOTE-SCOPE-COMPACT, owner 4 Nov:
+ * the tabs ARE the scope header). Shown on a coarse pointer and below `sm`; a mouse at desk
+ * width has the right-click and does not need the extra mark. The pattern is the line table's
+ * own "Line actions" menu (`QuotationLinesGrid.tsx`): a ghost ⋯ opening a DropdownMenu, opened
+ * on click so a pointerdown open is not toggled shut again by the click.
+ */
+function ScopeActionsButton({
+  scope,
+  onRename,
+  onRemove,
+  removeDisabled,
+}: {
+  scope: QuotationScope;
+  onRename?: (scopeId: string) => void;
+  onRemove?: (scopeId: string) => void;
+  removeDisabled: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Scope actions on ${scope.scope_label}`}
+          title="Scope actions"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => setOpen(true)}
+          className="me-0.5 hidden size-6 shrink-0 cursor-pointer items-center justify-center rounded-sm text-primary-foreground transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring max-sm:inline-flex pointer-coarse:inline-flex"
+        >
+          <MoreHorizontal className="size-3.5" aria-hidden />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-44">
+        {onRename && (
+          <DropdownMenuItem onSelect={() => onRename(scope.id)}>Rename</DropdownMenuItem>
+        )}
+        {onRemove && (
+          <DropdownMenuItem
+            variant="destructive"
+            disabled={removeDisabled}
+            onSelect={() => onRemove(scope.id)}
+          >
+            Remove scope
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function QuotationScopeTabs({
   scopes,
   activeScopeId,
@@ -72,9 +130,9 @@ export function QuotationScopeTabs({
   canEdit: boolean;
   onAddScope?: () => void;
   /**
-   * The quotation form's own scope handlers. Given, a right-click on a tab offers Rename and
-   * Remove scope, exactly as the pen and the Remove scope button do; the read page passes
-   * neither, so its tabs have no menu.
+   * The quotation form's own scope handlers. Given, a right-click on a tab (or the open tab's
+   * "Scope actions" ⋯ on touch) offers Rename and Remove scope; there is no scope header any
+   * more, the tabs are it. The read page passes neither, so its tabs have no menu.
    */
   onRename?: (scopeId: string) => void;
   onRemove?: (scopeId: string) => void;
@@ -109,6 +167,14 @@ export function QuotationScopeTabs({
                   </span>
                 </TabsTrigger>
                 <ScopeValueButton scope={scope} />
+                {hasMenu && scope.id === activeScopeId && (
+                  <ScopeActionsButton
+                    scope={scope}
+                    onRename={onRename}
+                    onRemove={onRemove}
+                    removeDisabled={canRemove ? !canRemove(scope.id) : false}
+                  />
+                )}
               </div>
             );
             if (!hasMenu) return chip;

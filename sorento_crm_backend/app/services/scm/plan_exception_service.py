@@ -31,6 +31,7 @@ from app.models.product import Product
 from app.models.scm import PlanException, PlanExceptionBatch
 from app.services.error_handler import AppException
 from app.services.scm.coverage_service import CoverageService
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm.plan_exception_engine import (
     ItemReading,
     PlacedSupply,
@@ -504,6 +505,14 @@ def report(db: Session, *, run_id: Optional[str] = None, status: Optional[str] =
     actors = _actor_names(db, [r.decided_by for r in rows if r.decided_by])
 
     visible = [r for r in rows if status is None or r.status == status]
+    parties = so_parties(
+        db,
+        numbers=[
+            a.get("candidate_so_number")
+            for r in visible
+            for a in (r.actions_json or [])
+        ],
+    )
     # Open first, then the type that can miss a customer date, then product code. The SERVER
     # owns this: a client free to re-sort could disagree with the urgency beside the row.
     order = {"shortfall_earlier": 0, "supply_wrong_location": 1, "supply_early": 2,
@@ -529,12 +538,12 @@ def report(db: Session, *, run_id: Optional[str] = None, status: Optional[str] =
             "rejected_count": sum(1 for r in rows if r.status == "rejected"),
         },
         "rows": [
-            _row_out(r, codes, warehouses, po_numbers, actors) for r in visible
+            _row_out(r, codes, warehouses, po_numbers, actors, parties) for r in visible
         ],
     }
 
 
-def _row_out(r: PlanException, codes, warehouses, po_numbers, actors) -> dict:
+def _row_out(r: PlanException, codes, warehouses, po_numbers, actors, parties=None) -> dict:
     code, name = codes.get(str(r.product_id), (None, None))
     return {
         "exception_id": str(r.id),
@@ -549,7 +558,11 @@ def _row_out(r: PlanException, codes, warehouses, po_numbers, actors) -> dict:
         "quantity": float(r.quantity or 0.0),
         "timeline": r.timeline_json or {},
         "reading": r.reading_json or {},
-        "actions": r.actions_json or [],
+        # OI-UX-FILTER-SNAPSHOT: the candidate sales order names its customer and project.
+        "actions": [
+            with_party(dict(a), parties or {}, a.get("candidate_so_number"))
+            for a in (r.actions_json or [])
+        ],
         "status": r.status,
         "decided_by": actors.get(str(r.decided_by)) if r.decided_by else None,
         "decided_at": r.decided_at.isoformat() if r.decided_at else None,

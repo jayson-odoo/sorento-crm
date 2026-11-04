@@ -197,6 +197,18 @@ describe('SampleRequestDetail consignment', () => {
     expect(screen.queryByText('Voided in AutoCount')).toBeNull();
   });
 
+  it('names the consignment\'s customer and project under its number (OI-UX-FILTER-SNAPSHOT)', () => {
+    state.data = {
+      ...(state.data as Detail),
+      status: 'delivered',
+      status_label: 'Delivered',
+      delivered_at: '2026-11-22',
+      consignment: { ...CG, customer_name: 'Maju Debtor', project_label: 'Tower B' },
+    };
+    render(<Page />);
+    expect(screen.getByText('Maju Debtor / Tower B')).toBeInTheDocument();
+  });
+
   it('drops the source label when the live source no longer gives the stored date', () => {
     state.data = {
       ...(state.data as Detail),

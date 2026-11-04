@@ -32,6 +32,23 @@ checked against the quotation, not against the proposals.
 
 To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.
 
+## Scopes on the Lines tab
+
+A proposal is split into scopes (for example *Townhouse*, *Guard house*), one tab each across the
+top of the **Lines** tab. New proposal and Edit proposal work the same way.
+
+* **Add a scope:** click **+** at the end of the tabs and name it.
+* **See a scope's value:** click the **$** on its tab.
+* **Rename or remove a scope:** right-click its tab and choose **Rename** or **Remove scope**. On a
+  phone or tablet, tap the **...** on the open tab instead. **Rename** also sets the scope's series
+  and notes.
+* **Remove scope** takes the scope off straight away, with no question asked. Nothing is deleted
+  until you click **Save proposal**, so **Cancel** brings it back. It is greyed out for a scope
+  that was already sent to the customer, and for a saved scope when you do not have the right to
+  delete one.
+* A saved scope's outcome (**Open**, **Won**, **Lost**, **Dormant**) shows at the right of the
+  tabs.
+
 ## Make the quotation (project Won)
 
 1. Mark the project Won (the customer signing a proposal does this, or set the scope's outcome).

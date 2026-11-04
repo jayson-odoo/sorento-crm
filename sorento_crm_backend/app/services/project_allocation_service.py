@@ -50,6 +50,7 @@ from app.models.project_so import (
 from app.models.projects import Project, ProjectCollaborator
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.scm.so_party import EMPTY_PARTY, so_parties, with_party
 from app.services.project_allocation_engine import (
     LineNeed,
     ProjectHold,
@@ -641,8 +642,19 @@ class ProjectAllocationService:
         # computed, because offering a button no route serves is the thing it was added
         # to stop.
         can_answer = False
+        # OI-UX-FILTER-SNAPSHOT: the claim's sales order names its customer and project.
+        party = (
+            with_party(
+                {},
+                so_parties(self.db, ids=[order.so_id], numbers=[order.autocount_doc_no]),
+                order.so_id or order.autocount_doc_no,
+            )
+            if order
+            else dict(EMPTY_PARTY)
+        )
 
         return {
+            **party,
             "id": claim.id,
             "state": claim.state,
             "can_answer": can_answer,

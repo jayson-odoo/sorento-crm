@@ -29,6 +29,7 @@ import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import SalesOpportunityPortalDetail from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { getSalesOpportunitySalesOrderOptions } from '../../services/salesOpportunityService';
 import {
   useSalesOpportunities,
@@ -161,7 +162,9 @@ function StaffSalesOpportunityDetail({ id }: { id: string }) {
     const rows = await getSalesOpportunitySalesOrderOptions(id, q);
     return rows.map((r) => ({
       value: r.id,
-      label: r.customer_name ? `${r.so_number} - ${r.customer_name}` : r.so_number,
+      label: soCustomerProjectLabel(r.customer_name, r.project_label)
+        ? `${r.so_number} - ${soCustomerProjectLabel(r.customer_name, r.project_label)}`
+        : r.so_number,
     }));
   };
 
@@ -484,6 +487,11 @@ function StaffSalesOpportunityDetail({ id }: { id: string }) {
                     <div>
                       <dt className="text-xs text-muted-foreground">Sales order</dt>
                       <dd className="text-sm font-medium">{opportunity.sales_order_no}</dd>
+                      <SoCustomerProject
+                        customer={opportunity.sales_order_customer_name}
+                        project={opportunity.sales_order_project_label}
+                        className="text-sm"
+                      />
                     </div>
                   ) : null}
                   {opportunity.lost_reason_label ? (
