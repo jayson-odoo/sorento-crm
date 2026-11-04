@@ -12,6 +12,10 @@ it); free items, certificates and logos are static template assets; a flyer that
 the combo record; tag description and barcode data are complete in production (out of scope);
 small and DIY tags are fine (out of scope).
 
+Owner Lavish note on mock v4 (4 Nov): "this is kitchen sink only ... make this more flexible and
+general". So nothing below is sink- or tap-specific: the combo record names its own groups, a
+template points at positions in the combo, and its needs are read from its layers (R1-R3).
+
 Existing rulings this card keeps: no Submit (Approve / Escalate / Save Draft, #2101); LP or SP
 per line, LP never typed, SP typed only with no promotion, no minimum price on tags (#2158);
 Cabana has no selling price (#2104); combos are saved catalogue records, never made on the fly.
@@ -48,31 +52,38 @@ Any new layer must keep that single path.
 
 ### Rules
 
-R1. **One template per tap count.** A sink (or basin) combo template is built for a fixed number
-    of taps: "Sink combo, 2 taps", "3 taps", "4 taps", "5 taps". Each tap position on it is made of
-    ordinary layers (picture, code, tag description, price) whose subject is **"Picked option k"**
-    (k = 1..N), a new subject beside today's fixed `subjectPart` index
-    (`lib/dealer-kit/product-block.ts:200-227`). The template's tap count N is read from its own
-    layers (the highest k used); no new column. The sink, the combo name, the combo codes line and
-    the price are ordinary layers as today.
-R2. **Templates are linked to combos** through the existing combo template link
-    (`dealer_kit.combo_tag_template`, `app/models/dealer_kit.py:846-875`). A combo can print with
-    every N-tap template up to the size of its option group (a combo with 3 taps to choose from
-    links the 1, 2 and 3 tap templates).
-R3. **Salesperson picks the combo, the template, then exactly N taps**, in the existing line row
-    (`components/dealer-kit/PriceTagLinesTable.tsx`): the Package select and the Template select
-    are unchanged (the template's option description adds "3 taps"); the tap group's part row
-    (PartRow :235-331) swaps its single `SearchableSelect` for the existing
-    `SearchableMultiSelect` when N >= 2, with one new prop `max` (hides "Select all", disables
-    the rest once N are picked). Pick order = print order. The hint row under it reads "Pick 1
-    more tap for this template."; Approve's existing reason line (`approveBlockedReason`,
-    `PriceTagRequestForm.tsx:1485`) says the same until N are picked. A smaller template keeps
-    the first picks and drops the rest. Stored as resolved line parts sharing the group's role
-    (`price_tag_request_line_parts`, `app/models/price_tag.py:299-351`); no new table.
-R4. **Each tap slot prints that tap's own picture, full code, tag description and its own LP**
-    from the product master (owner Q-B, 4 Nov). A picked tap with no picture shows an empty
-    tile, never the sink's picture (today a missing index falls back to the host,
-    `product-block.ts:220-226`; the new subject never does).
+R1. **No combo types; the combo record says what it is made of.** A combo (existing Combos card,
+    `ProductCombosSection.tsx`) is: a main product, its fixed parts (part with no choice group),
+    its choice groups (parts sharing a group name the combo itself gives: "Kitchen tap", "Tap
+    colour", "Basin"), and its upgrades (part ticked Upgrade, with a top-up). Nothing in the code
+    knows "sink" or "tap"; the names on tags and pickers are the combo's own group names.
+R2. **A template layer points at a position in the combo**, through the designer's existing
+    "Product" select (`InspectorPanel.tsx` SubjectInspector): "Main product", "Fixed part n",
+    "<group n>, pick k", "Upgrade n". Groups and fixed parts are numbered in the order the Combos
+    card lists them. With a combo previewed, the select shows that combo's own names and codes
+    ("Kitchen tap, pick 2: SRTKT1863SS"); with none, "Choice group 1, pick 2". Any layer kind
+    can take it (picture, text, price), so one template can draw any shape. Old templates keep
+    `subjectPart` and print as today.
+R3. **A template's needs are read from its own layers** ("2 fixed parts, 3 from choice group 1,
+    upgrade 1"); no type column. They show where a person decides:
+    - on the combo's template picker (`ComboTemplatesPicker.tsx`), each template's description
+      reads its needs in THIS combo's names ("105 x 148 mm. Needs 3 from Kitchen tap"), and a
+      template the combo cannot fill is listed disabled with the reason ("Needs 3 from choice
+      group 1; Kitchen tap has 2");
+    - on the request line's Template select, the same description.
+R3b. **The salesperson picks per group, exactly what the template needs.** The request line
+    already shows one row per choice group, labelled with the combo's group name, and fixed parts
+    as plain rows (`PriceTagLinesTable.tsx` PartRow). A group the template needs 1 from keeps
+    today's single select; a group it needs k >= 2 from uses the existing `SearchableMultiSelect`
+    with one new prop `max` (hides "Select all", disables the rest at k), pick order = print
+    order, placeholder "Pick 3". The hint row names the group: "Kitchen tap: pick 1 more." and
+    Approve's existing reason says the same. A group the template does not use stays as today.
+    Stored as resolved line parts sharing the group's role (`price_tag_request_line_parts`); no
+    new table.
+R4. **Each pointed-at product prints its own picture, full code, tag description and its own LP**
+    from the product master (owner Q-B, 4 Nov). A position the line has not filled prints an
+    empty tile, never the main product (today a missing index falls back to the host,
+    `product-block.ts:220-226`).
 R5. **Combo price, never calculated** (owner Q-A, 4 Nov). The tag's combo price is the combo's
     stored price or nothing; the sum of parts is never printed, on LP or SP lines.
     - SP line, combo with no stored SP: behaves like a product with no SP; the salesperson types
@@ -90,42 +101,57 @@ R7. **Top-up.** Unchanged in storage (`is_upgrade`, `topup_amount`). Prints in t
     picture with a subject "Upgrade k".
 R8. **Combo codes line.** A slot "Combo codes" prints the full codes joined with "+":
     `SRTKS7061+SRTKT1862SS+SRTKT1863SS+SRTKT1871SS` for a 3-tap tag.
-R9. **Re-seed combos from the current flyers, Cabana included.** A script reads each current
-    flyer PDF page through the existing AI document read (semantic, 28 Oct ruling), returns
-    combos (host, parts, option groups, top-ups, prices), resolves every code through the one
-    product resolver and writes a review report (`new`, `matches`, `differs` with what differs,
-    `unsure` with why, flyer page). After the owner approves it, `--apply` writes through
-    `ProductComboService`: a combo that differs from the flyer is **updated to the flyer** (owner
-    Q4), prices included, and linked to the N-tap templates its option group allows (R2). A combo
-    the flyer no longer shows is reported, never deleted. **Cabana: no SP, option SP or top-up is
-    ever written** (#2104); a flyer price read for one is listed as "not loaded".
-R10. **The seeded "Kitchen Sink - Combo" template** (three tap blocks with no subject, which
-    print the sink three times, `scripts/tag_template_seed_docs.py:604-609`) is rebuilt as the
-    3-tap template on R1's subject. The 2, 4 and 5 tap templates are new seeds on the same
-    layout grid (105 x 148).
-R11. **One renderer.** The new subject resolves inside `subjectOf`, which the canvas, the
+R9. **How we get every combo: re-seed from the current flyers, Cabana included.** A script reads
+    each current flyer PDF page through the existing AI document read (semantic, 28 Oct ruling)
+    and returns, per combo on the page: the main product, fixed parts, choice groups WITH their
+    name taken from the flyer's own wording (a "choose one of these taps" block becomes group
+    "Kitchen tap"; the same code in two finishes becomes group "Tap colour"), upgrades with
+    top-up, and prices. Every code resolves through the one product resolver; a discontinued
+    product is listed, not loaded silently. The review report shows each combo's full shape
+    (main, fixed, groups with names, upgrades, prices), its status (`new`, `matches`, `differs`
+    with what differs, `unsure` with why) and the flyer page. After the owner approves it,
+    `--apply` writes through `ProductComboService`: a combo that differs from the flyer is
+    **updated to the flyer** (owner Q4), and links every template whose needs the combo can fill
+    (R3). A combo the flyer no longer shows is reported, never deleted. Group names stay editable
+    on the Combos card afterwards. **Cabana: no SP, option SP or top-up is ever written** (#2104);
+    a flyer price read for one is listed as "not loaded".
+R10. **Seeded templates, one per PDF shape**, all 105 x 148 on the R2 positions: "Sink + 1 tap"
+    to "Sink + 5 taps" (1..5 from group 1, upgrade 1), "Basin + tap" and "Basin + tap, 2
+    colours" (1 or 2 from group 1, free item asset placeholder), "Furniture set, 3 parts" (main +
+    fixed 1 + fixed 2). The seeded "Kitchen Sink - Combo" (three blocks with no subject that print
+    the sink three times, `scripts/tag_template_seed_docs.py:604-609`) becomes "Sink + 3 taps".
+    Names are plain text a designer can change; nothing reads them.
+R11. **One renderer.** The new positions resolve inside `subjectOf`, which the canvas, the
     preview and the PDF print page already share, so the three cannot disagree.
 
 Out of scope (owner): small and DIY tags, tag description and barcode gaps, lead times.
 
-### Examples
+### Examples (every combo shape in the reference PDF; exact system codes)
 
-E1. SRTKS7061, 3-tap template, salesperson picks SRTKT1862SS, SRTKT1863SS, SRTKT1871SS: sink
-    on the left, three tap tiles each with its own picture, code, description and LP, SP RM 849
-    NETT (combo SP once the re-seed sets it; typed by the salesperson until then).
-E2. Same combo, 2-tap template, picks SRTKT1863SS and SRTKT1871SS (taps 2 and 3): two tiles.
-E3. Five-tap sink: 5-tap template, all five picked; tiles in two rows (3 + 2).
-E4. Basin + tap: SRTWB1419-BL with SRTWT7449-BL and -RG on the 2-tap basin template; the free
-    pop-up waste is a picture asset the designer placed (R6). Today no combo exists: re-seed `new`.
-E5. Top-up: SRTKS7061 with SRTKT71SS: "TOP UP RM 150, UPGRADE TO SRTKT71SS" plus its picture.
-E6. Bathroom furniture SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM: unchanged layout (combo-level
-    picture and description); SP RM 2,099 from the combo once re-seeded, typed until then.
+E1. Kitchen sink + 1..5 taps: SRTKS7061, group "Kitchen tap" (SRTKT1862SS and others), template
+    "Sink + 3 taps" needs 3 from group 1. Line: one "Kitchen tap" multi-select, pick 3.
+E2. Wash basin + tap + free item: SRTWB1419-BL + one tap; the free pop-up waste and any logo are
+    picture assets on the template (R6). One option in the group resolves on the spot (today's
+    D17), so the line shows the tap as a plain row; nothing to pick.
+E3. Colour choice: SRTWB1419-BL with group "Tap colour" = SRTWT7449-BL / SRTWT7449-RG. Template
+    "Basin + tap, 2 colours" needs 2 from group 1 (both colours side by side); template "Basin +
+    tap" needs 1 (single select, dealer's colour).
+E4. Bathroom furniture set: SRTBF11829 + fixed parts SRTMCB8083-BL, SRTWT6203-GM. Template
+    "Furniture set, 3 parts" uses Main product, Fixed part 1, Fixed part 2 (or the combo picture,
+    as today). Line: two plain part rows; nothing to pick. Price from the combo or typed (R5).
+E5. Top-up: SRTKS7061 with upgrade SRTKT71SS, top-up RM 150: "TOP UP RM 150, UPGRADE TO
+    SRTKT71SS"; a template may place "Upgrade 1"'s picture. Line: today's "No upgrade" select.
 
 ### Edge cases
 
-- A tap removed from the combo after a request picked it: the request keeps it (a request is a
+- A part removed from the combo after a request picked it: the request keeps it (a request is a
   record, AC-S1-5); the picker shows it as "No longer in this combo".
-- A template whose N is larger than the combo's option group is not offered for that combo.
+- A template whose needs the combo cannot fill (more picks than the group has, a fixed part it
+  lacks) is listed disabled with the reason on the combo's template picker, and never offered
+  on the request line.
+- Two combos whose groups are in a different order: the template's "choice group 1" is the
+  FIRST group on each combo's Combos card; the needs text shows each combo's own name, so a
+  wrong order is visible on the picker before any tag is drawn.
 - The same tap picked twice: refused by the picker.
 - A discontinued tap in a combo's option group (`products.is_discontinued`, `app/models/product.py:354`;
   for example SRTWT5831-BL, CB890SS): the tap picker lists it disabled with a "Discontinued"
