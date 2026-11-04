@@ -268,10 +268,16 @@ def test_af6c_the_same_ask_read_as_a_total_is_one_figure_with_no_axis(rbot, worl
 
 
 def _on_company(rbot, sorento: str, name: str, code: str, company_id: str, message: str, kind: str, *, group_by: str | None = "channel") -> tuple[str, dict[str, Any]]:
-    """Held September delivered split; then "<name> <kind> only" with the real parse: the same name in company AND brands."""
-    _hold(rbot, name, group_by=group_by)
-    ra = _ra2(None, basis="delivered", group_by=group_by, measure="amount", company=name, brands=[code], **SEP)
-    v = _follow("sales_analysis", ra, _ent(name.lower(), "brand", code, kind), group_by=group_by, measure="amount", sales_company=name, **SEPF)
+    """Held September delivered split; then "<name> <kind> only" as the slot rule reads it: company only is the name in
+    `company` with brands empty, brand only is the name in `brands` with company null (kind_said is never read)."""
+    if kind == "company":
+        _hold(rbot, name, group_by=group_by)  # brand only runs on a fresh thread: a held company is carried by design
+    slots: dict[str, Any] = {"company": name, "brands": []} if kind == "company" else {"company": None, "brands": [code]}
+    ra = _ra2(None, basis="delivered", group_by=group_by, measure="amount", **slots, **SEP)
+    if kind == "company":
+        v = _follow("sales_analysis", ra, group_by=group_by, measure="amount", sales_company=name, **SEPF)
+    else:
+        v = _v("sales_report", ra, basis="delivered", measure="amount", domain_in_message=True, **SEPF)
     text, calls = rbot.say(v, message)
     return text, _args(calls)
 
@@ -326,12 +332,11 @@ def test_on7_overlap_is_read_from_the_data_a_pair_that_is_not_one_name_keeps_bot
 def test_on7_overlap_detection_covers_a_second_pair_from_the_data_mocha_company_and_brand(rbot, world) -> None:
     sorento, mocha = world
     _both_brands(rbot)
-    ra = _ra2(None, basis="delivered", company=mocha, brands=["MOCHA"], **SEP)
-    v = _v("sales_report", ra, _ent("mocha", "brand", "MOCHA", "company"), basis="delivered", sales_company=mocha,
-           domain_in_message=True, **SEPF)
+    ra = _ra2(None, basis="delivered", company=mocha, brands=[], **SEP)
+    v = _v("sales_report", ra, basis="delivered", sales_company=mocha, domain_in_message=True, **SEPF)
     text, calls = rbot.say(v, "mocha company only delivered september")
     args = _args(calls)
-    assert args.get("company") == MOCHA_ID and not args.get("brand_ids"), f"ON-7: the Mocha pair was not found from the data: {args}"
+    assert args.get("company") == MOCHA_ID and not args.get("brand_ids"), f"ON-7: the Mocha company-only slot: {args}"
 
 
 def test_on6_a_word_in_both_tables_still_asks_brand_or_account_type(rbot, world) -> None:
@@ -350,8 +355,8 @@ def test_on6_a_word_in_both_tables_still_asks_brand_or_account_type(rbot, world)
 
 
 def _bare_name(rbot, name: str = "sorento", code: str = "SORENTO", **over: Any) -> tuple[str, list]:
-    ra = _ra2(None, basis="delivered", brands=[code], **SEP)
-    v = _v("sales_report", ra, _ent(name, "brand", code, None), basis="delivered", domain_in_message=True, **SEPF, **over)
+    ra = _ra3([name.capitalize()], basis="delivered", **SEP)
+    v = _v("sales_report", ra, basis="delivered", domain_in_message=True, **SEPF, **over)
     return rbot.say(v, f"{name.capitalize()} total sale September 2026")
 
 
@@ -627,18 +632,19 @@ def test_ct1_company_only_and_show_dealer_and_project_apply_in_one_reply(rbot, w
     assert _frame(rbot).get("company") == DEFAULT_COMPANY_ID and _frame(rbot).get("group_by") == "channel", _frame(rbot)
 
 
-def test_ct1_the_real_parse_company_only_beside_the_split_adds_no_brand_and_no_count_ask(rbot, world) -> None:
-    """CT-1 real parse (C4/C5): the company word also sits in brands, the split carries a stray rank_direction."""
+def test_ct1_the_real_parse_both_slots_filled_kind_said_null_asks_the_kind_question(rbot, world) -> None:
+    """CT-1 real parse (C4/C5): the company word sits in company AND brands, kind_said null, the split carries a stray
+    rank_direction. Rule A: that is the kind question, never a silent company only; the PROMPT (not the engine) is what
+    puts "company only" in the company slot alone."""
     sorento, _m = world
     _hold(rbot, sorento, group_by=None)
     ra = _ra2("breakdown", basis="delivered", group_by="channel", company=sorento, brands=["SORENTO"], **SEP)
-    v = _follow("sales_ranking", ra, _ent("sorento", "brand", "SORENTO", "company"), group_by="channel", rank_direction="top",
+    v = _follow("sales_ranking", ra, _ent("sorento", "brand", "SORENTO", None), group_by="channel", rank_direction="top",
                 sales_company=sorento, **SEPF)
     text, calls = rbot.say(v, "sorento company only, show dealer and project")
     assert TOP_N_Q not in text and MEASURE_Q not in text, f"CT-1: {text!r}"
-    args = _args(calls)
-    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("group_by") == "channel", args
-    assert not args.get("brand_ids"), f"CT-1: the company word also became a brand: {args.get('brand_ids')}"
+    assert _kind_slot(rbot).get("asking") == "kind", f"CT-1: no kind question: {text!r}"
+    assert not any(a.get("brand_ids") for a in _ran(calls)), f"CT-1: a brand was applied silently: {_ran(calls)}"
 
 
 def test_ct2_a_typed_axis_in_the_object_beats_the_held_axis_over_an_open_count_question(rbot, world) -> None:

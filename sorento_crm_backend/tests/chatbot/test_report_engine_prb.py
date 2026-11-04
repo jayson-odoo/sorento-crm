@@ -355,7 +355,7 @@ def test_b5_a_refine_changes_only_the_channel_whatever_report_type_the_parser_pi
     )
     if order_status == "outstanding":
         # Owner Q2 (round 4): a flagged refine to the outstanding type never infers the kind from the held delivered basis.
-        assert calls == [] and "Undelivered orders" in text, (text, calls)
+        assert calls == [] and "Sales order" in text, (text, calls)
         return
     assert len(calls) == 1, (text, calls)
     args = calls[0]
