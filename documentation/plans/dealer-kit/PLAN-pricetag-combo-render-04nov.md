@@ -167,6 +167,19 @@ Choosing a `slot:` value writes `subjectSlot` and `subjectPart: undefined`.
    `linePickProblems(lines, pricingByKey, priceMode)`, `layerSubjectSuffix(layer, parts, slots?)`,
    `subjectSlots` prop, `flyer_combo_read.main(argv, *, provider=None, out=None)`).
 
+## Review rulings (4 Nov, captain)
+
+- `slots` is NOT part of `data_hash`: pinned slots are frozen (only picks are re-chosen among
+  the pinned candidates), so nothing prints from live data; adding it would invalidate every
+  stored Keep acknowledgement on combo rows. Follow-up: flag a part's master-data price change
+  on an approved combo tag (the existing `parts` list has the same gap).
+- Ruled deviation from AC-D1's letter: the line's price BASIS (`sell_price_basis`, which only
+  drives `show_promo_price`) still reads the part total on a combo line. No figure from it
+  reaches a tag or a lookup: the printed / shown combo price is the combo's own or nothing.
+- The flyer reader's "code on page" check is a whitespace-free substring match; a truncated or
+  run-together code can still pass. Backstop: the importer dry-run report and the owner's
+  approval before `--apply`.
+
 ## Slices (one lane, one PR)
 
 1. Tests first (tester): the list below, red.
