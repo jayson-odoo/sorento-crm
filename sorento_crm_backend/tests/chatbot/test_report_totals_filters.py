@@ -209,6 +209,58 @@ def test_af_guard_no_frame_a_plain_total_runs_with_no_axis(rbot, world) -> None:
     assert not args.get("group_by") and args["company"] == DEFAULT_COMPANY_ID, (args, text)
 
 
+# Owner ruling Q4: "all sale agents" is a breakdown by sales agent, every agent plus the grand total.
+
+AF6_MSG = "Total sale for all sale agents on September 2026"
+
+
+def test_af6a_all_sale_agents_on_a_fresh_thread_asks_the_basis_then_runs_every_agent_with_no_count_or_measure_ask(rbot, world) -> None:
+    from tests.chatbot.test_sales_account_type_lane import BASIS_Q
+
+    ra = _ra2("breakdown", basis=None, group_by="sales_agent", **SEP)
+    v1 = _v("sales_analysis", ra, group_by="sales_agent", domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v1, AF6_MSG)
+    assert not _ran(calls) and text.strip() == BASIS_Q, f"AF-6a: want the basis question first, got {text!r}"
+    ra2 = _ra2("breakdown", basis="invoiced", group_by="sales_agent", **SEP)
+    v2 = _v("sales_ranking", ra2, basis="invoiced", continuation=True, entity_op="reuse", domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v2, "Invoiced")
+    assert TOP_N_Q not in text and MEASURE_Q not in text, f"AF-6a: a breakdown was asked a ranking question: {text!r}"
+    args = _args(calls)
+    assert args.get("group_by") == "sales_agent" and args["basis"] == "invoiced", args
+    assert (args.get("top_n") or 0) >= 100, f"AF-6a: not every agent (top_n {args.get('top_n')!r}): {args}"
+    assert "Total" in text, f"AF-6a: no grand total in the reply: {text!r}"
+    assert _frame(rbot).get("group_by") == "sales_agent", _frame(rbot)
+
+
+def test_af6b_all_sale_agents_on_a_held_thread_is_the_agent_breakdown_with_company_kept_and_no_basis_ask(rbot, world) -> None:
+    from tests.chatbot.test_sales_account_type_lane import BASIS_Q
+
+    sorento, _m = world
+    _hold(rbot, sorento, group_by="channel")
+    ra = _ra2("breakdown", basis="delivered", group_by="sales_agent", company=sorento, **SEP)
+    v = _follow("sales_analysis", ra, group_by="sales_agent", sales_company=sorento, **SEPF, **_widen("sales_agent"))
+    text, calls = rbot.say(v, AF6_MSG)
+    assert BASIS_Q not in text and TOP_N_Q not in text and MEASURE_Q not in text, f"AF-6b: asked {text!r}"
+    args = _args(calls)
+    assert args.get("group_by") == "sales_agent" and args["basis"] == "delivered", args
+    assert args.get("company") == DEFAULT_COMPANY_ID and (args.get("top_n") or 0) >= 100, args
+    assert _frame(rbot).get("group_by") == "sales_agent" and _frame(rbot).get("company") == DEFAULT_COMPANY_ID, _frame(rbot)
+
+
+def test_af6c_the_same_ask_read_as_a_total_is_one_figure_with_no_axis(rbot, world) -> None:
+    from tests.chatbot.test_sales_account_type_lane import BASIS_Q
+
+    sorento, _m = world
+    _hold(rbot, sorento, group_by="channel")
+    ra = _ra2("total", basis="delivered", company=sorento, **SEP)
+    v = _follow("sales_report", ra, sales_company=sorento, **SEPF, **_widen("sales_agent"))
+    text, calls = rbot.say(v, AF6_MSG)
+    assert BASIS_Q not in text and TOP_N_Q not in text and MEASURE_Q not in text, f"AF-6c: asked {text!r}"
+    args = _args(calls)
+    assert not args.get("group_by") and args["basis"] == "delivered" and args.get("company") == DEFAULT_COMPANY_ID, args
+    assert not _frame(rbot).get("group_by"), _frame(rbot)
+
+
 # ------------------------------------------------------------------------------------------ ON: one name, one filter (R2)
 
 
