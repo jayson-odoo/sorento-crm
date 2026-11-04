@@ -284,6 +284,10 @@ class OrderInquiryHeaderService:
                 OrderInquiryReserveRequest,
                 OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
             )
+            # OI-RESERVE-USED-ROW: a request row on a used row is not listed on Lines, so it
+            # gives the document no reserve status either (the repair moves it to the live row).
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryReserveRequestRow.row_id)
+            .filter(live_row_clause())
             .group_by(OrderInquiryReserveRequest.order_inquiry_id)
             .subquery()
         )

@@ -374,3 +374,20 @@ def test_the_cancelled_state_count_matches_the_cancelled_list(api):
     )
     assert summary.status_code == 200, summary.text
     assert summary.json()["by_state"]["cancelled"] == len(listed) == 1
+
+
+def test_documents_reserve_status_reads_live_rows_and_the_repair_restores_it(api):
+    """Browser pass: a request stuck on a used row gave the document "Needs reserve" while
+    Lines (live rows only) could not show it. Documents now reads live rows too; once the
+    repair moves the request to the live row, both tabs show it."""
+    client, db, company_id = api
+    order, *_rest, used, live = _split_line(db, company_id)
+    _request(db, order, used, "33")
+    db.commit()
+    assert _header_of(client, order.inquiry.id)["reserve_status"] is None
+    assert _lines_tab(client, order.inquiry.id, reserve="needs_reserve") == []
+
+    repair.run(db, apply=True, expect=1, inquiry_id=order.inquiry.id)
+    db.commit()
+    assert _header_of(client, order.inquiry.id)["reserve_status"] == "needs_reserve"
+    assert [r["id"] for r in _lines_tab(client, order.inquiry.id, reserve="needs_reserve")] == [live.id]

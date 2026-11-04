@@ -59,6 +59,7 @@ from app.models.project_so import (
     RESERVE_RESERVED,
 )
 from app.services.certificate_service import today_malaysia
+from app.services.oi_row_visibility import live_row_clause
 from app.services.error_handler import AppException
 from app.services.oi_delivery_date import OiDate, resolve as resolve_oi_date
 
@@ -1530,6 +1531,9 @@ class OrderInquiryReserveService:
             )
             .select_from(rr)
             .join(req, req.id == rr.request_id)
+            # OI-RESERVE-USED-ROW: counted on LIVE rows only, as Lines lists them.
+            .join(OrderInquiryRow, OrderInquiryRow.id == rr.row_id)
+            .filter(live_row_clause())
             .one()
         )
         keys = (

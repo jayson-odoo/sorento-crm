@@ -123,7 +123,7 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
     {
       id: 'now',
       header: ({ column }) => <DataGridColumnHeader title="Now" column={column} />,
-      size: 170,
+      size: 190,
       cell: ({ row }) => <NowCell line={row.original} />,
     },
   ];
