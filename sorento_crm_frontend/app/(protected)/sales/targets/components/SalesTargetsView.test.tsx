@@ -105,12 +105,14 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => perms.granted.has(slug),
 }));
 
+const statement = vi.hoisted(() => ({ mutate: vi.fn(), isPending: false }));
 const hooks = vi.hoisted(() => ({
   useSalesTargets: vi.fn(),
   usePointRatios: () => ({ data: { rows: [] }, isLoading: false }),
   useSavePointRatio: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useImportDealerTargets: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDownloadDealerTemplate: () => ({ mutate: vi.fn(), isPending: false }),
+  useDownloadCommissionStatement: () => statement,
 }));
 vi.mock('../hooks/useSalesTargets', () => hooks);
 
@@ -269,7 +271,7 @@ describe('SalesTargetsView', () => {
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim()).filter(Boolean);
     expect(headers).toEqual([
       'Number', 'Name', 'Dealer', 'Counts', 'Pays to', 'Measures', 'Dates', 'Target',
-      'Achieved (provisional, incl. tax)', '%', 'Commission',
+      'Achieved (sales orders, incl. tax)', '%', 'Commission',
     ]);
     expect(screen.getByText('Dealer A Sdn Bhd')).toBeTruthy();
     expect(screen.getByText('5,400')).toBeTruthy();
@@ -291,7 +293,7 @@ describe('SalesTargetsView', () => {
     openTab('Dealers');
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
     expect(headers).toContain('Achieved');
-    expect(headers.join(' ')).not.toMatch(/provisional/);
+    expect(headers.join(' ')).not.toMatch(/incl\. tax/);
     expect(screen.getByText('Invoiced')).toBeTruthy();
   });
 
@@ -309,10 +311,21 @@ describe('SalesTargetsView', () => {
     render(<SalesTargetsView />);
     openTab('Dealers');
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
-    expect(headers).toContain('Achieved (* provisional, incl. tax)');
+    expect(headers).toContain('Achieved (* sales orders, incl. tax)');
     expect(screen.getByText('5,678 *')).toBeTruthy();
     expect(screen.getByText('1,234')).toBeTruthy();
     expect(screen.queryByText('1,234 *')).toBeNull();
   });
-});
 
+  it('ticking targets offers one commission statement for all of them (lane TARGET-COMMISSION-VIEW)', () => {
+    statement.mutate.mockReset();
+    withRows([row(), row({ target_id: 't2', target_no: 'TGT-000002', name: 'South FY26 H2' })]);
+    render(<SalesTargetsView />);
+    expect(screen.queryByRole('button', { name: /Commission statement/ })).toBeNull();
+    const boxes = screen.getAllByRole('checkbox', { name: /select row/i });
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Commission statement (2)' }));
+    expect(statement.mutate).toHaveBeenCalledWith(['t1', 't2']);
+  });
+});
