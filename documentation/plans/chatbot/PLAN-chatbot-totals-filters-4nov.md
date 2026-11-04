@@ -2,7 +2,8 @@
 
 Status: Build (M track, LEAD pattern). Answers 4 Nov: Q1 (a) new path only; Q3 (a) held filters survive until the user
 changes them; Q2 (c) ask once, both must work; Q5 no code (owner raised the limit); Q4 open (neither path lists
-per-agent totals today). Prompt gates OK up to USD 0.80. Candidate prompt md5 1b576855.
+per-agent totals today). Prompt gates OK up to USD 0.80 (raise to 1.30 asked). Combined candidate with #2120 PARTY_SIDE: v198 md5 8098801c
+(gate 1: 13 of 23). Round 2 text md5 768d73d1 (company_or_brand slot), tests ON-13..16 first, then coder round 2.
 
 ## Journey
 
