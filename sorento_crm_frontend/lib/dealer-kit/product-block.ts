@@ -396,6 +396,17 @@ function comboSlotText(
 }
 
 /**
+ * A price on a text layer: the bare figure, or `RM 849` when the layer sets `showCurrency` (the
+ * price badge's flag). With the flag on, no amount prints nothing at all rather than the layer's
+ * own text, so an empty price leaves no stray label (AC-A3).
+ */
+function priceText(layer: { props?: TagLayerProps }, amount: number | null): string | null {
+  const showCurrency = layer.props?.kind === 'text' && layer.props.showCurrency === true;
+  if (amount == null) return showCurrency ? '' : null;
+  return formatTagPrice(amount, showCurrency);
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -427,7 +438,7 @@ export function resolveSlotText(
     // AC-A1/A2: a TEXT layer prints the bare figure. The BADGE (`price_badge`
     // props, drawn through `priceBadgeInput`/`formatTagPrice`'s default arg)
     // still prints `RM` - this branch only ever serves a text-slot binding.
-    return amount == null ? null : formatTagPrice(amount, false);
+    return priceText(layer, amount);
   }
 
   // PRICETAG-LPSP: one slot for the figure a line shows and one for its label, so a single
@@ -437,8 +448,7 @@ export function resolveSlotText(
     if (layer.slot_binding === 'price_label') {
       return offerPrice != null ? 'SP' : listPrice != null ? 'LP' : null;
     }
-    const amount = offerPrice ?? listPrice;
-    return amount == null ? null : formatTagPrice(amount, false);
+    return priceText(layer, offerPrice ?? listPrice);
   }
 
   if (subject.kind === 'line') {

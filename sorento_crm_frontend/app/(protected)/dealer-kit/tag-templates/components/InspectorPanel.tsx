@@ -570,6 +570,8 @@ export function InspectorPanel({
 // Text inspector
 // ---------------------------------------------------------------------------
 
+const PRICE_SLOTS: string[] = ['list_price', 'sell_price', 'price'];
+
 function TextInspector({
   layer,
   props,
@@ -685,6 +687,15 @@ function TextInspector({
             </div>
           )}
         </div>
+        {PRICE_SLOTS.includes(layer.slot_binding as string) && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <Checkbox
+              checked={props.showCurrency ?? false}
+              onCheckedChange={(v) => onChange({ ...props, showCurrency: !!v })}
+            />
+            Show currency
+          </label>
+        )}
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,

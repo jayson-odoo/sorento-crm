@@ -187,6 +187,9 @@ export interface TextLayerProps {
   subjectPart?: number;
   /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
   subjectSlot?: SubjectSlot;
+  /** Same meaning as `PriceBadgeLayerProps.showCurrency`, for a text layer bound to a price slot.
+   *  Absent = the bare figure; true = `RM 849`, and nothing at all when there is no amount. */
+  showCurrency?: boolean;
 }
 
 export interface ShapeLayerProps {

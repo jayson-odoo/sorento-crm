@@ -145,3 +145,53 @@ describe('the print page prints a position the way the canvas does', () => {
     expect(screen.queryByText('SRTKS7061')).toBeNull();
   });
 });
+
+describe('an empty price or picture prints nothing (AC-A3)', () => {
+  const priceLayer = (showCurrency: boolean | undefined, slot: unknown): TagLayer => {
+    const base = codeLayer(slot);
+    return {
+      ...base,
+      slot_binding: 'list_price',
+      props: { ...(base.props as object), showCurrency },
+    } as unknown as TagLayer;
+  };
+
+  it('a price with showCurrency prints RM and the figure, and no RM when the price is empty', () => {
+    const slots = { fixed: [part('A')], groups: [], upgrades: [] };
+    const layer = priceLayer(true, { kind: 'fixed', index: 0 });
+    const { container, unmount } = render(
+      <TagSheetRenderer doc={docWith(layer)} resolvedData={{ [TAG_ID]: resolved(slots) }} />,
+    );
+    expect(container.textContent).toContain('RM 100');
+    unmount();
+    const empty = render(
+      <TagSheetRenderer
+        doc={docWith(priceLayer(true, { kind: 'fixed', index: 3 }))}
+        resolvedData={{ [TAG_ID]: resolved(slots) }}
+      />,
+    );
+    expect(empty.container.textContent).not.toContain('RM');
+    expect(empty.container.textContent).not.toContain('placeholder');
+  });
+
+  const imageLayer = (slot: unknown): TagLayer =>
+    ({
+      ...codeLayer(slot),
+      type: 'image',
+      slot_binding: 'product_image',
+      props: { kind: 'image', source: null, fit: 'contain', subjectSlot: slot },
+    }) as unknown as TagLayer;
+
+  it('a picture with no photo draws no box and no img', () => {
+    const slots = { fixed: [part('A')], groups: [], upgrades: [] };
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith(imageLayer({ kind: 'fixed', index: 0 }))}
+        resolvedData={{ [TAG_ID]: resolved(slots) }}
+      />,
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.innerHTML).not.toContain('#f5f5f5');
+    expect(container.innerHTML).not.toContain('rgb(245, 245, 245)');
+  });
+});
