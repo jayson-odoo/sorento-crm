@@ -17,6 +17,7 @@ read off `sales_order_lines.qty_ordered` / `qty_delivered` instead.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -78,7 +79,7 @@ def _delivery_words(lines: list[tuple[Any, Any]]) -> str | None:
 def _card(so: SalesOrder, name: str | None, lines: list[tuple[Any, Any]]) -> str:
     head = f"*{so.so_number}*" + (f" - {name}" if name else "")
     status = _status_words(so.status)
-    second = f"Ordered {so.order_date.day} {so.order_date:%b %Y} - {status}" if so.order_date else status
+    second = f"Ordered {fmt_date(so.order_date)} - {status}" if so.order_date else status
     out = [head, second]
     if status != CANCELLED_MARK:
         delivery = _delivery_words(lines)
@@ -308,7 +309,7 @@ def reply_text(result: SoLookup, *, refusal: str, kind_word: str | None = None) 
 
 
 def _day(d: Any) -> str:
-    return f"{d.day} {d:%b %Y}"
+    return fmt_date(d)
 
 
 def period_reply(start: Any, end: Any, subject: str | None) -> str | None:

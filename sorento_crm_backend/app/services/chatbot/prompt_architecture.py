@@ -84,7 +84,7 @@ def describe(db: Session, version: AIPromptVersion) -> dict[str, Any]:
     mode = closed_lists_index.read_mode(db)
     uses = gate_on(raw)
     blanks = dict(closed_lists_index.SYSTEM_BLANKS) if uses and mode == closed_lists_index.MODE_INDEX else {}
-    today = date.today().strftime("%A, %d %B %Y")
+    today = date.today().strftime("%A, %d %B %Y")  # date-format-ok: LLM system-prompt date, read by the model not a person
     groups = _groups(db, raw, blanks, today)
 
     lists: list[dict[str, Any]] = []

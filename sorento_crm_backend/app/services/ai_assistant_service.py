@@ -164,7 +164,7 @@ def _current_date_directive() -> str:
     regardless of the server's own timezone.
     """
     now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
-    today = now.strftime("%A, %d %B %Y")
+    today = now.strftime("%A, %d %B %Y")  # date-format-ok: LLM system-prompt date, read by the model not a person
     return (
         f"CURRENT DATE: {today} (Asia/Kuala_Lumpur).\n"
         "When the user's message contains a relative date or period - e.g. "

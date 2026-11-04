@@ -1,0 +1,113 @@
+"""DATE-FORMAT-UNIFY: the one way the backend writes a date a person reads.
+
+Owner, 4 Nov 2026: "all the dates need to use dd/mm/yyyy format like a standardized format
+across the system". Emails, PDFs, xlsx cells written as text, chatbot replies, notifications and
+remark/audit text all go through ``app.utils.date_format``; the guard at the bottom fails on a new
+month-name or 12-hour strftime anywhere else in ``app/``.
+"""
+from __future__ import annotations
+
+import re
+from datetime import date, datetime, timezone, timedelta
+from pathlib import Path
+
+import pytest
+
+from app.utils.date_format import fmt_date, fmt_date_range, fmt_datetime
+
+MYT = timezone(timedelta(hours=8))
+
+
+# --- fmt_date -------------------------------------------------------------------------------
+
+def test_fmt_date_zero_pads_a_calendar_day():
+    assert fmt_date(date(2026, 1, 1)) == "01/01/2026"
+
+
+def test_fmt_date_reads_a_naive_datetime_as_utc_and_shows_malaysia():
+    # 16:30 UTC on 31 Mar is 00:30 on 1 Apr in Malaysia.
+    assert fmt_date(datetime(2026, 3, 31, 16, 30)) == "01/04/2026"
+
+
+def test_fmt_date_naive_wall_clock_is_not_shifted_when_told():
+    assert fmt_date(datetime(2026, 3, 31, 16, 30), naive_is_utc=False) == "31/03/2026"
+
+
+def test_fmt_date_converts_an_aware_datetime():
+    assert fmt_date(datetime(2026, 3, 31, 23, 0, tzinfo=MYT)) == "31/03/2026"
+
+
+def test_fmt_date_parses_iso_strings():
+    assert fmt_date("2026-10-01") == "01/10/2026"
+    assert fmt_date("2026-03-31T16:30:00") == "01/04/2026"
+    assert fmt_date("2026-03-31T16:30:00Z") == "01/04/2026"
+
+
+def test_fmt_date_fallback_for_missing_or_unparseable():
+    assert fmt_date(None) == ""
+    assert fmt_date(None, fallback="-") == "-"
+    assert fmt_date("", fallback="-") == "-"
+    assert fmt_date("ASAP") == "ASAP"
+
+
+# --- fmt_datetime ---------------------------------------------------------------------------
+
+def test_fmt_datetime_is_dd_mm_yyyy_comma_h_mm_lower_am_pm():
+    assert fmt_datetime(datetime(2026, 9, 30, 4, 23)) == "30/09/2026, 12:23 pm"
+    assert fmt_datetime(datetime(2026, 9, 30, 16, 5)) == "01/10/2026, 12:05 am"
+    assert fmt_datetime(datetime(2026, 8, 17, 1, 0)) == "17/08/2026, 9:00 am"
+
+
+def test_fmt_datetime_wall_clock():
+    assert fmt_datetime(datetime(2026, 8, 18, 10, 0), naive_is_utc=False) == "18/08/2026, 10:00 am"
+
+
+def test_fmt_datetime_of_a_plain_date_is_the_date():
+    assert fmt_datetime(date(2026, 8, 18)) == "18/08/2026"
+
+
+def test_fmt_datetime_fallback():
+    assert fmt_datetime(None, fallback="-") == "-"
+
+
+# --- fmt_date_range -------------------------------------------------------------------------
+
+def test_fmt_date_range_joins_with_a_plain_hyphen():
+    assert fmt_date_range(date(2026, 1, 1), date(2026, 3, 31)) == "01/01/2026 - 31/03/2026"
+
+
+def test_fmt_date_range_one_end_or_none():
+    assert fmt_date_range(date(2026, 1, 1), None) == "01/01/2026"
+    assert fmt_date_range(None, "2026-03-31") == "31/03/2026"
+    assert fmt_date_range(None, None, fallback="-") == "-"
+
+
+# --- guard ----------------------------------------------------------------------------------
+
+APP = Path(__file__).resolve().parents[1] / "app"
+HELPER = APP / "utils" / "date_format.py"
+
+# A strftime / format spec that spells a month or weekday name, or a 12-hour clock: a private
+# date style. `%Y-%m-%d`, `%Y%m%d` and `%Y-%m` stay legal (keys, filenames, wire values).
+_PRIVATE_STYLE = re.compile(r"""['"][^'"\n]*%[-#]?[bBaAIp][^'"\n]*['"]""")
+
+_FSTRING_SPEC = re.compile(r"\{[^{}]*:%")
+
+
+def _offenders() -> list[str]:
+    out: list[str] = []
+    for path in sorted(APP.rglob("*.py")):
+        if path == HELPER:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
+            if "date-format-ok:" in line:
+                continue
+            if _PRIVATE_STYLE.search(code) and ("strftime" in code or _FSTRING_SPEC.search(code)):
+                out.append(f"{path.relative_to(APP.parent)}:{n}")
+    return out
+
+
+def test_no_month_name_or_12_hour_date_style_outside_the_helper():
+    """Mark a genuine exception (month bucket, LLM prompt) with `# date-format-ok: <reason>`."""
+    assert _offenders() == []

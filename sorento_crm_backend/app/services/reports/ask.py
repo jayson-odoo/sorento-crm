@@ -11,6 +11,7 @@ resolves to nothing is answered HERE with zero rows, never handed to the engine 
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
@@ -589,7 +590,7 @@ def _earliest_day(db: Session) -> date:
 
 def _no_asks(db: Session) -> str:
     d = _earliest_day(db)
-    return f"No asks in that period. Chat data starts {d.day} {d.strftime('%b %Y')}."
+    return f"No asks in that period. Chat data starts {fmt_date(d)}."
 
 
 NO_MATCH = "No asks match those filters in that period."

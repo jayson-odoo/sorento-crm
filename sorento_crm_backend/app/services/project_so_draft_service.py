@@ -32,6 +32,7 @@ publishes once acknowledged with a reason, and the reason stays on the order for
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import csv
 import io
 import logging
@@ -1842,7 +1843,7 @@ class ProjectSODraftService:
                 "yet, so only the order value was compared."
             )
         else:
-            as_of = customer.ar_as_of.strftime("%d %b %Y") if customer.ar_as_of else "an unknown date"
+            as_of = fmt_date(customer.ar_as_of) if customer.ar_as_of else "an unknown date"
             detail = (
                 f"{customer.customer_name} owes {_money(outstanding)} as of {as_of}; with "
                 f"this order at {order_value} that is {_money(exposure)} against a limit of "

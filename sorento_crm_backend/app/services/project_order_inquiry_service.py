@@ -39,6 +39,7 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 import re
 import uuid
@@ -3518,7 +3519,7 @@ class ProjectOrderInquiryService:
         for link in received_links:
             document = link.document or "the document"
             arrived = received[str(link.id)]
-            when = arrived.strftime("%d %b %Y") if arrived else "in full"
+            when = fmt_date(arrived) if arrived else "in full"
             fragments.append(f"{document} received {when}")
         location = f", goods are {row.stock_location} stock" if row.stock_location else ""
         fragment = (
@@ -3568,7 +3569,7 @@ class ProjectOrderInquiryService:
         location = f" into {row.stock_location}" if row.stock_location else ""
         fragments = [
             f"{link.document or 'the document'} received "
-            f"{arrived.strftime('%d %b %Y') if arrived else 'in full'}"
+            f"{fmt_date(arrived) if arrived else 'in full'}"
             for link, arrived in cached
         ]
         return f"{'; '.join(fragments)}{location}"

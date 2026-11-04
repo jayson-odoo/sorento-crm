@@ -40,6 +40,7 @@ blanking the name for a session with no company set.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import dataclasses
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -169,7 +170,7 @@ def overview_note(ctx) -> str:
 
 
 def _day_month(day: date) -> str:
-    return f"{day.day} {day:%b}"
+    return fmt_date(day)
 
 
 def _era_label(era: str, first: date, last: date) -> str:

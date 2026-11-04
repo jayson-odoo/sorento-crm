@@ -30,6 +30,7 @@ screen.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date, fmt_datetime
 from itertools import groupby
 import logging
 from datetime import date, datetime
@@ -1069,11 +1070,11 @@ def ack_label(row: Dict[str, Any]) -> str:
     if state == ACK_ACKNOWLEDGED:
         who = row.get("acknowledged_by_name")
         when = row.get("acknowledged_at")
-        stamp = when.strftime("%Y-%m-%d %H:%M") if when else ""
+        stamp = fmt_datetime(when) if when else ""
         return " ".join(part for part in ("Acknowledged", who, stamp) if part)
     if state == ACK_CHANGED:
         when = row.get("changed_at")
-        return f"Changed {when.strftime('%Y-%m-%d')}" if when else "Changed"
+        return f"Changed {fmt_date(when)}" if when else "Changed"
     if state == ACK_REJECTED:
         reason = (row.get("rejected_reason") or "").strip()
         who = row.get("rejected_by_name")
