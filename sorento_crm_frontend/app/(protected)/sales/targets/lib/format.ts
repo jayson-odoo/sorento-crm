@@ -29,6 +29,25 @@ export function formatFigure(value: number | null | undefined): string {
   return value === null || value === undefined ? '-' : NUMBER.format(value);
 }
 
+const MONEY = new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** `3681.1` -> `3,681.10`: RM with 2 decimals (owner's 4 Nov rule); `null` -> `-`. */
+export function formatMoney(value: number | null | undefined): string {
+  return value === null || value === undefined ? '-' : MONEY.format(value);
+}
+
+/** `2026-10-01` -> `01/10/2026` (owner's 4 Nov rule). A calendar date: no timezone applies. */
+export function ddmmyyyy(day: string | null | undefined): string {
+  if (!day) return '';
+  const [year, month, date] = day.split('-');
+  return `${date}/${month}/${year}`;
+}
+
+/** `01/10/2026 to 31/12/2026`. */
+export function periodRange(start: string, end: string): string {
+  return `${ddmmyyyy(start)} to ${ddmmyyyy(end)}`;
+}
+
 /** `50` -> `50%`; `null` (no target, or a target of 0) -> `-`. */
 export function formatPct(value: number | null | undefined): string {
   return value === null || value === undefined

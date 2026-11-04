@@ -43,6 +43,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { ListLoadFailure } from '@/components/common/ListLoadFailure';
+import { localStore } from '@/lib/storage';
 
 type StartAction = 'upload-po' | 'upload-schedule' | null;
 
@@ -105,7 +106,7 @@ export function PipelineClient() {
   });
 
   React.useEffect(() => {
-    const stored = window.localStorage.getItem(VIEW_STORAGE_KEY);
+    const stored = localStore.getItem(VIEW_STORAGE_KEY);
     if (stored === 'board' || stored === 'grid') setView(stored);
   }, []);
 
@@ -206,7 +207,7 @@ export function PipelineClient() {
 
   function switchView(next: PipelineView) {
     setView(next);
-    window.localStorage.setItem(VIEW_STORAGE_KEY, next);
+    localStore.setItem(VIEW_STORAGE_KEY, next);
   }
 
   const searchSlot = (
