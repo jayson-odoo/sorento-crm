@@ -2,7 +2,8 @@
  * Which tag templates a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT).
  *
  *   GET  /api/v1/dealer-kit/products/{id}/tag-templates            -> ProductTagTemplateItem[]
- *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids } -> same
+ *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids, default_template_id } -> same
+ *   GET|PUT /api/v1/dealer-kit/combos/{id}/tag-templates           same shapes, for a combo (PRICETAG-LPSP)
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign/preview      filter -> { matched, already_linked }
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign              filter + { action } -> { changed }
  *
@@ -22,6 +23,14 @@ export interface ProductTagTemplateItem {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
+  /** The link preselected on a request line; a lone link counts. */
+  is_default?: boolean;
+}
+
+/** The wire body of a links save. `default_template_id` must be one of `template_ids`. */
+export interface TagTemplateLinks {
+  template_ids: string[];
+  default_template_id: string | null;
 }
 
 export interface TemplateAssignFilter {
@@ -61,13 +70,34 @@ export async function listProductTagTemplates(productId: string): Promise<Produc
 
 export async function setProductTagTemplates(
   productId: string,
-  templateIds: string[],
+  links: TagTemplateLinks,
 ): Promise<ProductTagTemplateItem[]> {
   return unwrap(
     await apiFetch(`${DK}/products/${encodeURIComponent(productId)}/tag-templates`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ template_ids: templateIds }),
+      body: JSON.stringify(links),
+    }),
+    'Failed to save the price tag templates',
+  );
+}
+
+export async function listComboTagTemplates(comboId: string): Promise<ProductTagTemplateItem[]> {
+  return unwrap(
+    await apiFetch(`${DK}/combos/${encodeURIComponent(comboId)}/tag-templates`),
+    'Failed to load the price tag templates',
+  );
+}
+
+export async function setComboTagTemplates(
+  comboId: string,
+  links: TagTemplateLinks,
+): Promise<ProductTagTemplateItem[]> {
+  return unwrap(
+    await apiFetch(`${DK}/combos/${encodeURIComponent(comboId)}/tag-templates`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(links),
     }),
     'Failed to save the price tag templates',
   );

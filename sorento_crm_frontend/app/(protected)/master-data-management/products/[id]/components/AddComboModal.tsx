@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Dialog,
   DialogBody,
@@ -13,6 +13,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
+import {
+  usePriceTagTemplateOptions,
+  useSetComboTagTemplates,
+} from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
 import { useCreateProductCombo } from '../../hooks/useProductCombos';
 
 interface AddComboModalProps {
@@ -36,14 +43,34 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateProductCombo(productId);
+  // PRICETAG-LPSP: the combo's own price tag templates, for those who manage templates.
+  const canManageTemplates = useHasPermission('dealer_kit.tag_templates.manage');
+  const templateOptions = usePriceTagTemplateOptions(canManageTemplates);
+  const saveLinks = useSetComboTagTemplates();
+  const [templateIds, setTemplateIds] = useState<string[]>([]);
+  const [defaultId, setDefaultId] = useState('');
+  const selectOptions = useMemo(
+    () =>
+      (templateOptions.data ?? []).map((template) => ({
+        value: template.id,
+        label: template.name,
+        description:
+          template.print_size.width_mm && template.print_size.height_mm
+            ? `${template.print_size.width_mm} x ${template.print_size.height_mm} mm`
+            : undefined,
+      })),
+    [templateOptions.data],
+  );
 
   useEffect(() => {
     if (!open) return;
     setName('');
     setError(null);
+    setTemplateIds([]);
+    setDefaultId('');
   }, [open]);
 
-  const canSave = name.trim().length > 0 && !create.isPending;
+  const canSave = name.trim().length > 0 && !create.isPending && !saveLinks.isPending;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -51,6 +78,16 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
     setError(null);
     try {
       const combo = await create.mutateAsync({ name: name.trim() });
+      if (canManageTemplates && templateIds.length > 0) {
+        // A failed link save is toasted by the hook; the combo itself exists by now.
+        await saveLinks
+          .mutateAsync({
+            combo_id: combo.id,
+            template_ids: templateIds,
+            default_template_id: templateIds.includes(defaultId) ? defaultId : null,
+          })
+          .catch(() => undefined);
+      }
       onCreated?.(combo.id);
       onOpenChange(false);
     } catch (caught) {
@@ -87,6 +124,34 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
               />
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
             </div>
+            {canManageTemplates ? (
+              <div className="space-y-1.5">
+                <Label>Price tag templates</Label>
+                <SearchableMultiSelect
+                  clearable
+                  value={templateIds}
+                  onChange={(ids) => {
+                    setTemplateIds(ids);
+                    if (!ids.includes(defaultId)) setDefaultId('');
+                  }}
+                  options={selectOptions}
+                  loadError={templateOptions.error ?? undefined}
+                  onRetry={() => void templateOptions.refetch()}
+                  placeholder="Search templates"
+                  emptyMessage="No templates."
+                />
+                {templateIds.length > 1 ? (
+                  <SearchableSelect
+                    clearable
+                    value={defaultId}
+                    onChange={setDefaultId}
+                    options={selectOptions.filter((option) => templateIds.includes(option.value))}
+                    placeholder="Default template"
+                    emptyMessage="No templates."
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button

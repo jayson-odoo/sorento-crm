@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -73,6 +74,7 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
 
   if (!canView) return null;
   const rows = linked.data ?? [];
+  const defaultId = rows.find((row) => row.is_default)?.id ?? null;
 
   return (
     <Card>
@@ -101,7 +103,12 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
               const removed = current.filter((id) => !ids.includes(id));
               // Keep every current link on the add: the removed ones go through
               // the countdown below, not this save.
-              if (added.length > 0) save.mutate([...current, ...added]);
+              if (added.length > 0) {
+                save.mutate({
+                  template_ids: [...current, ...added],
+                  default_template_id: defaultId,
+                });
+              }
               if (removed.length > 0) {
                 const names = rows.filter((row) => removed.includes(row.id)).map((row) => row.name);
                 setUnlink({
@@ -124,10 +131,24 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
               <Badge key={row.id} variant="secondary" className="font-normal" title={row.name}>
                 <span className="max-w-[16rem] truncate">{row.name}</span>
                 {row.published ? null : <span className="ml-1 text-muted-foreground">(Draft)</span>}
+                {row.is_default && rows.length > 1 ? <span className="ml-1">Default</span> : null}
               </Badge>
             ))}
           </div>
         )}
+        {canManage && !linked.isLoading && !linked.isError && rows.length > 1 ? (
+          <SearchableSelect
+            clearable
+            value={defaultId ?? ''}
+            onChange={(id) =>
+              save.mutate({ template_ids: rows.map((row) => row.id), default_template_id: id || null })
+            }
+            options={rows.map((row) => ({ value: row.id, label: row.name }))}
+            disabled={save.isPending}
+            placeholder="Default template"
+            emptyMessage="No templates."
+          />
+        ) : null}
         {!linked.isLoading && !linked.isError && rows.length === 0 ? (
           <div>
             <p className="text-sm font-medium">No tag template yet</p>
