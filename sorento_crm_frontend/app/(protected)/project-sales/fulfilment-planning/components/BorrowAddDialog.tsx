@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import {
   Dialog,
@@ -487,5 +488,6 @@ function donorSoLabel(candidate: BorrowCandidate): string {
     candidate.donor_line_no !== null && candidate.donor_line_no !== undefined
       ? ` line ${candidate.donor_line_no}`
       : '';
-  return `${so}${line}`;
+  const party = soCustomerProjectLabel(candidate.donor_customer_name, candidate.donor_project_label);
+  return `${so}${line}${party ? ` - ${party}` : ''}`;
 }

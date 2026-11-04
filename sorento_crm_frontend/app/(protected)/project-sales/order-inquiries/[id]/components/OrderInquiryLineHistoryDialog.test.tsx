@@ -217,3 +217,10 @@ describe('Decisions tab', () => {
     expect(getDecisionTrail).not.toHaveBeenCalled();
   });
 });
+
+describe('OI-UX-FILTER-SNAPSHOT: History names the order customer / project', () => {
+  it('prints CUSTOMER / project under the title', () => {
+    renderDialog([row({ id: 'r1', customer_name: 'ACME SDN BHD', project_title: 'TAMAN JAYA' })]);
+    expect(screen.getByText('ACME SDN BHD / TAMAN JAYA')).toBeInTheDocument();
+  });
+});

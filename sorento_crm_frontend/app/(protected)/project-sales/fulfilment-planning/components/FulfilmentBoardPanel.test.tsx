@@ -815,10 +815,11 @@ describe('FulfilmentBoardPanel: AC-S4-1 (panel) - the List view reads AutoCount 
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     const table = await screen.findByRole('table');
-    // Select, Line, Sales order, Agent, Customer, PRODUCT, OI, ... - S6
+    // Select, Line, Sales order, Agent, Customer, Project, PRODUCT, OI, ... - S6
     // (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-13) inserted the leftmost Line column
-    // ahead of Sales order, so PRODUCT_CELL shifts from 4 to 5.
-    const PRODUCT_CELL = 5;
+    // ahead of Sales order, and OI-UX-FILTER-SNAPSHOT the Project column after Customer,
+    // so PRODUCT_CELL is 6.
+    const PRODUCT_CELL = 6;
     const productSequence = within(table)
       .getAllByRole('row')
       .slice(1) // the header row
@@ -2877,7 +2878,9 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
       ...screen
         .getByTestId('fulfilment-board-matrix')
         .querySelectorAll('tbody tr'),
-    ].map((row) => (row.querySelector('th')?.textContent ?? '').trim());
+      // The row's LABEL (its first span); a sales-order row's CUSTOMER / project line under
+      // it (OI-UX-FILTER-SNAPSHOT) is covered in `fulfilmentBoard.test.ts`.
+    ].map((row) => (row.querySelector('th span')?.textContent ?? '').trim());
   }
 
   async function pivotTo(value: string) {

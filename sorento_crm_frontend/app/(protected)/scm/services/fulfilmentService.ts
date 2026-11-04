@@ -1761,6 +1761,7 @@ export interface SpoCoverageLine {
   kind: 'project' | 'retail';
   document: string | null;
   customer_name: string | null;
+  project_label?: string | null;
   required_date: string | null;
   /** What this piece of demand still needs. */
   qty: number;

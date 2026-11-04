@@ -60,6 +60,9 @@ export interface SPODocumentRow {
 export interface SPODocumentLineSOCovered {
   document: string | null;
   customer: string | null;
+  /** The order's own customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   demand_class: 'project' | 'retail' | 'other';
   qty: number;
   /** LINKAGE-UNIFY U4: the PO number a placement reached this SPO line through (placed on

@@ -1,5 +1,6 @@
 'use client';
 
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { useMemo } from 'react';
 import Link from 'next/link';
 import { type ColumnDef } from '@tanstack/react-table';
@@ -35,14 +36,17 @@ import { RelatedDocumentsPanel } from '@/app/(protected)/order-management/shared
  */
 type Tab = 'details' | 'lines' | 'related';
 
-function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<string, string> }) {
+export function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<string, string> }) {
   if (!line.from_doc_type || !line.from_doc_no) return null;
   const so = line.sales_order;
   if (line.from_doc_type === 'SO' && so) {
     return (
-      <Link href={`/scm/sales-orders/${so.id}`} className="block truncate text-primary hover:underline" title={so.doc_no}>
-        SO {so.doc_no}
-      </Link>
+      <>
+        <Link href={`/scm/sales-orders/${so.id}`} className="block truncate text-primary hover:underline" title={so.doc_no}>
+          SO {so.doc_no}
+        </Link>
+        <SoCustomerProject customer={so.customer_name} project={so.project_label} />
+      </>
     );
   }
   const label = `${line.from_doc_type} ${line.from_doc_no}`;
@@ -50,6 +54,7 @@ function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<strin
   // for a viewer without the DO view slug (the server masks it), so the number stays text.
   const doId = line.from_doc_type === 'DO' ? doIds.get(line.from_doc_no) : undefined;
   return (
+    <>
     <span className="block truncate" title={so ? `${label} (${so.doc_no})` : label}>
       {doId ? (
         <Link href={`/order-management/orders/${doId}`} className="text-primary hover:underline">
@@ -67,6 +72,8 @@ function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<strin
         </>
       ) : null}
     </span>
+    <SoCustomerProject customer={so?.customer_name} project={so?.project_label} />
+    </>
   );
 }
 

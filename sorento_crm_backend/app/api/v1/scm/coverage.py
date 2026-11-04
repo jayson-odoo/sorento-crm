@@ -100,6 +100,8 @@ def _payload(cov: Coverage) -> dict:
                 "item_code": u.item_code,
                 "qty": u.qty,
                 "location": u.location,
+                "customer_name": u.customer_name,
+                "project_label": u.project_label,
             }
             for u in cov.undated_demand
         ],

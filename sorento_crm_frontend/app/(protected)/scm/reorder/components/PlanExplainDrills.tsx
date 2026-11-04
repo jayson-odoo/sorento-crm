@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Info } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { EM_DASH, fmtDecimal, fmtInt, fmtSigned } from '../../lib/format';
 import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
 import type { M8PlanRow } from '../lib/planRow';
@@ -144,12 +145,12 @@ export function NetDrill({ row }: { row: M8PlanRow }) {
             {nb.committed_sos.map((so) => (
               <div key={so.so_number} className="flex items-center justify-between gap-2 text-xs">
                 <span className="font-medium">{so.so_number}</span>
-                <span
-                  className="min-w-0 flex-1 truncate text-muted-foreground"
-                  title={so.customer_name ?? undefined}
-                >
-                  {so.customer_name ?? EM_DASH}
-                </span>
+                <SoCustomerProject
+                  customer={so.customer_name}
+                  project={so.project_label}
+                  emptyText={EM_DASH}
+                  className="min-w-0 flex-1"
+                />
                 <span className="tabular-nums">{fmtInt(so.qty)}</span>
               </div>
             ))}

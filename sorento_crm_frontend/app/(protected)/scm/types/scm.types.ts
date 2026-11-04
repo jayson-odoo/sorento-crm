@@ -726,6 +726,9 @@ export interface PurchaseOrderLine {
    * (`PLAN-scm-book-linkage-on-document-lines.md`).
    */
   book_so_number?: string | null;
+  /** That sales order's customer (debtor name, else customer master) and project label. */
+  book_so_customer_name?: string | null;
+  book_so_project_label?: string | null;
   /** True when the book named a sales order this CRM does not hold. Three display states,
    *  not two - see `BookSoCell`. */
   book_so_unresolved?: boolean | null;
@@ -787,6 +790,9 @@ export interface PurchaseOrderPlacement {
   so_number: string | null;
   /** `YOTU BUILDER / LOT 2752` - the same label the worklist's PROJECT/CUSTOMER prints. */
   customer: string | null;
+  /** That order's own customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   /** Who sold it, by person label or agent code. Null on an order with no agent. */
   agent: string | null;
   /** How much of the PO line this placement occupies. */
@@ -829,6 +835,9 @@ export interface PurchaseOrderLineAllocation {
 export interface PurchaseOrderDedication {
   /** The sales order document number - never an id. */
   so_number: string;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   /** What the claim reserves: that order line's LIVE outstanding. */
   reserved: number;
   /** How much of `reserved` the order has not placed on this line yet - what is actually
@@ -854,6 +863,9 @@ export interface SpoPlanPull {
 export interface SpoPlanCover {
   so_number: string | null;
   customer: string | null;
+  /** That order's own customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   qty: number;
   warehouse: string | null;
 }

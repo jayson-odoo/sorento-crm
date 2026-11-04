@@ -129,6 +129,8 @@ function claim(overrides: Partial<AllocationClaimRow> = {}): AllocationClaimRow 
     so_line_id: 'l1',
     sales_order_id: 'so-1',
     sales_order_ref: 'PSO-000123',
+    customer_name: 'Maju Debtor',
+    project_label: 'Tower B',
     line_no: 7,
     delivery_date: '2026-07-01',
     requested_by_name: 'Eling',
@@ -306,6 +308,9 @@ describe('StockClaimsClient', () => {
     expect(screen.getByText('SRT382-6')).toBeInTheDocument();
     expect(screen.getByText('WH-KL')).toBeInTheDocument();
     expect(screen.getByText('PSO-000123')).toBeInTheDocument();
+    // OI-UX-FILTER-SNAPSHOT: Customer then Project after the order.
+    expect(screen.getByText('Maju Debtor')).toBeInTheDocument();
+    expect(screen.getByText('Tower B')).toBeInTheDocument();
     expect(screen.getByText('Released')).toBeInTheDocument();
     expect(screen.getByText(/^Eling on /)).toBeInTheDocument();
   });

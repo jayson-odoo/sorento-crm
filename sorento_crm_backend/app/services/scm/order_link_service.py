@@ -820,7 +820,11 @@ def book_so_ref_of(
     return ref
 
 
-def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict:
+def book_so_fields(
+    ref: Optional[str],
+    by_ref: Optional[dict[str, str]],
+    parties: Optional[dict[str, dict]] = None,
+) -> dict:
     """The three-state `book_so_number` / `book_so_unresolved` pair for ONE line's
     `from_so_line_ref`, against a `book_so_numbers_by_ref(...)` result (or
     `BOOK_SO_NOT_RESOLVED`).
@@ -838,12 +842,18 @@ def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict
       * `by_ref is BOOK_SO_NOT_RESOLVED` -> `(None, None)` on every line, whatever `ref`
         says: this path never asked the question.
     """
+    no_party = {"book_so_customer_name": None, "book_so_project_label": None}
     if by_ref is BOOK_SO_NOT_RESOLVED:
-        return {"book_so_number": None, "book_so_unresolved": None}
+        return {"book_so_number": None, "book_so_unresolved": None, **no_party}
     if not ref:
-        return {"book_so_number": None, "book_so_unresolved": False}
+        return {"book_so_number": None, "book_so_unresolved": False, **no_party}
     number = by_ref.get(ref)
-    return {"book_so_number": number, "book_so_unresolved": number is None}
+    out = {"book_so_number": number, "book_so_unresolved": number is None}
+    # OI-UX-FILTER-SNAPSHOT: the named order's customer and project, from `so_parties`.
+    party = (parties or {}).get(number or "", {})
+    out["book_so_customer_name"] = party.get("customer_name")
+    out["book_so_project_label"] = party.get("project_label")
+    return out
 
 
 def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:

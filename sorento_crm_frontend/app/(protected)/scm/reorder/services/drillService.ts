@@ -29,6 +29,7 @@ export interface NetCommittedSo {
   so_number: string;
   qty: number;
   customer_name: string | null;
+  project_label?: string | null;
   order_date: string | null;
 }
 

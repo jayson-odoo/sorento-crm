@@ -262,6 +262,34 @@ def test_the_plans_page_lists_an_active_decision_with_its_summary(world):
         _restore(originals)
 
 
+def test_the_plans_page_names_the_orders_customer_and_project(world):
+    """OI-UX-FILTER-SNAPSHOT: debtor name over the master, the order's project label, both
+    declared on the wire and both sortable on the server."""
+    db = world.db
+    farah = _user(db, f"{MARKER} Farah")
+    customer = _customer(db, f"{MARKER} Master Sdn Bhd")
+    core = _core_so(db, world.company_id, customer=customer, agent=_agent(db, f"ZZT-AGT-{_uid()[:4]}"))
+    core.debtor_name = f"{MARKER} Debtor Sdn Bhd"
+    core.project_label = f"{MARKER} Tower"
+    order = _project_so(db, world.project, so_id=core.id)
+    line = _project_line(db, order, world.product, line_no=10)
+    _decision(
+        db, order, revision_no=1, state=DECISION_ACTIVE, decided_by=farah,
+        snapshots=[{"line_no": 10, "project_line_id": line.id, "components": []}],
+    )
+    db.commit()
+
+    client, originals = _client(db, farah, [VIEW])
+    try:
+        rows = {r["project_sales_order_id"]: r for r in client.get(f"{BASE}/plans").json()["data"]}
+        assert rows[order.id]["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+        assert rows[order.id]["project_label"] == f"{MARKER} Tower"
+        for sort in ("customer_name", "project_label"):
+            assert client.get(f"{BASE}/plans", params={"sort": sort}).status_code == 200
+    finally:
+        _restore(originals)
+
+
 # --------------------------------------------------------------------------- state filter
 
 

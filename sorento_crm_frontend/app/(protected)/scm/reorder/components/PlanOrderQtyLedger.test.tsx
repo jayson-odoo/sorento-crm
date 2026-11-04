@@ -957,7 +957,8 @@ describe('order-qty ledger - the orders behind the line (AC-R8)', () => {
     renderLedger({ runId: 'run-1' });
 
     expect(screen.getByText('SO414285')).toBeInTheDocument();
-    expect(screen.getByText('TUJU RESIDENCE')).toBeInTheDocument();
+    // OI-UX-FILTER-SNAPSHOT (AC-6): a missing project half prints a dash.
+    expect(screen.getByText('TUJU RESIDENCE / -')).toBeInTheDocument();
     expect(screen.getByText('30/09/2026')).toBeInTheDocument();
     expect(screen.getByText('20')).toBeInTheDocument();
     expect(screen.getByText('Linked')).toBeInTheDocument();

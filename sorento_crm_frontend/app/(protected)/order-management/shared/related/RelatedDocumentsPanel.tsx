@@ -129,6 +129,46 @@ export function RelatedDocumentsPanel({
         meta: { headerTitle: 'Number' },
       },
       {
+        id: 'customer_name',
+        accessorKey: 'customer_name',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Customer" column={column} />
+        ),
+        size: 180,
+        cell: ({ row }) =>
+          row.original.customer_name ? (
+            <span
+              className="block truncate"
+              title={row.original.customer_name}
+            >
+              {row.original.customer_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        meta: { headerTitle: 'Customer' },
+      },
+      {
+        id: 'project_label',
+        accessorKey: 'project_label',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project" column={column} />
+        ),
+        size: 180,
+        cell: ({ row }) =>
+          row.original.project_label ? (
+            <span
+              className="block truncate"
+              title={row.original.project_label}
+            >
+              {row.original.project_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        meta: { headerTitle: 'Project' },
+      },
+      {
         id: 'doc_date',
         accessorKey: 'doc_date',
         header: ({ column }) => (

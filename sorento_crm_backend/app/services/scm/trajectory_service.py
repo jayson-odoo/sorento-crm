@@ -31,6 +31,7 @@ from app.services.scm.customer_label import (
     customer_key_filter,
 )
 from app.services.scm.demand import PROJECT_CLASS
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm.trajectory import (
     DEFAULT_PROJECT_MONTHS,
     DEFAULT_RETAIL_MONTHS,
@@ -441,8 +442,9 @@ def orders_for_customer(
         text(f"SELECT count(*) FROM ({sql}) t"), params
     ).scalar() or 0
 
+    parties = so_parties(db, numbers=[r["so_number"] for r in rows])
     lines = [
-        {
+        with_party({
             "so_number": r["so_number"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "qty": float(r["qty"] or 0),
@@ -450,7 +452,7 @@ def orders_for_customer(
             # price we do not know, and 0.00 is a price we would be claiming.
             "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
             "warehouse_code": r["warehouse_code"],
-        }
+        }, parties, r["so_number"])
         for r in rows
     ]
     return {"lines": lines, "total": int(total), "shown": len(lines)}

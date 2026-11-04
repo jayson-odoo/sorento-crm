@@ -236,6 +236,15 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
     expect(within(section).getByText(/cannot be placed on the axis/i)).toBeInTheDocument();
   });
 
+  it('names the customer and project of each undated order (OI-UX-FILTER-SNAPSHOT)', () => {
+    withData(UNDATED);
+    const section = screen.getByRole('region', { name: 'Undated demand' });
+    expect(within(section).getByText('Customer')).toBeInTheDocument();
+    expect(within(section).getByText('Project')).toBeInTheDocument();
+    expect(within(section).getByText('Bina Jaya Sdn Bhd')).toBeInTheDocument();
+    expect(within(section).getByText('Tuju Residences')).toBeInTheDocument();
+  });
+
   it('states the horizon exclusion on screen, never silently (AC-B5)', () => {
     withData(UNDATED);
     expect(

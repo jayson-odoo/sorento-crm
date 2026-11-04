@@ -435,6 +435,8 @@ describe('borrowCandidatesOf: only a donor the confirmation can name', () => {
         // group-aware facts are stated.
         rung: null,
         donor_so_number: null,
+        donor_customer_name: null,
+        donor_project_label: null,
         donor_line_no: null,
         donor_agent_code: null,
         donor_core_line_id: null,

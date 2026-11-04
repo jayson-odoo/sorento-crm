@@ -1,5 +1,6 @@
 'use client';
 
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
@@ -222,6 +223,11 @@ export function DivergenceReviewClient({
             AutoCount differences
             {data.autocount_doc_no ? ` - ${data.autocount_doc_no}` : ''}
           </h2>
+          <SoCustomerProject
+            customer={data.customer_name}
+            project={data.project_label}
+            className="text-sm"
+          />
           <p className="text-sm text-muted-foreground break-words">
             <span
               className="inline-block max-w-full truncate align-bottom"
