@@ -476,3 +476,96 @@ def test_r3_a_held_company_carries_the_same_with_a_same_name_object_company_as_w
     text_b, calls_b = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
     assert mocha in text_a or (_ran(calls_a) and _args(calls_a).get("company") == MOCHA_ID), f"R3-4 A did not carry Mocha: {text_a!r}"
     assert _ran(calls_b) == _ran(calls_a) and text_b == text_a, f"R3-4: A {_ran(calls_a)} {text_a!r} / B {_ran(calls_b)} {text_b!r}"
+
+
+# ------------------------------------------------------------------------------------------ HT1-13..16 said_as_text
+
+
+def _with_said_as_text(rbot, monkeypatch, on: bool) -> None:
+    """The harness config, with the prompt text defining `said_as_text` (opt in) or not (v200 text). The flag is the
+    ParserConfig field `said_as_text` the engine reads; the words ride in the stub system prompt as well."""
+    import dataclasses
+
+    from tests.chatbot.test_report_semantic_carry import LINE
+
+    def _cfg(db, *, current_date, override_version_id=None):
+        words = "said_as said_as_text" if on else "said_as"
+        base = parser_mod.ParserConfig(
+            system_prompt=f"stub {words}\n{LINE}\n", prompt_version=39, provider="openai", model="gpt-test",
+            api_key="sk-test",
+        )
+        fields = {f.name for f in dataclasses.fields(base)}
+        base = dataclasses.replace(base, report_ask=True, **({"said_as": True} if "said_as" in fields else {}))
+        if on:
+            if "said_as_text" in fields:
+                base = dataclasses.replace(base, said_as_text=True)
+            else:  # the field is not there yet: the engine cannot see it either way, which is the red
+                object.__setattr__(base, "said_as_text", True)
+        return base
+
+    monkeypatch.setattr(parser_mod, "resolve_config", _cfg)
+
+
+def _with_text(verdict: dict[str, Any], said_as_text: Any) -> dict[str, Any]:
+    verdict["entities"][0]["said_as_text"] = said_as_text
+    return verdict
+
+
+def _r2(sorento: str, said_as: Any, said_as_text: Any):
+    """The v200 repass r2 parse: fresh "Sorento total sale September 2026 delivered", entity said_as set with no kind word
+    (kind_said null), object company Sorento + brands [SORENTO]."""
+    ent = _g4_ent("Sorento", None, said_as)
+    ent["said_as_text"] = said_as_text
+    return _g4(sorento, ent, frame="total", basis="delivered", group_by=None, status="sales_analysis")
+
+
+@pytest.mark.parametrize("said_as_text", [None, ""], ids=["null", "empty"])
+def test_ht1_13_said_as_without_its_typed_word_is_read_as_null_and_asks_the_one_question(rbot, world, monkeypatch, said_as_text) -> None:
+    sorento, _m = world
+    _with_said_as_text(rbot, monkeypatch, True)
+    text, calls = rbot.say(_r2(sorento, "company", said_as_text), "Sorento total sale September 2026 delivered")
+    assert not _ran(calls), f"HT1-13: a report ran: {_ran(calls)}"
+    assert _kind_slot(rbot).get("asking") == "kind", f"HT1-13: no kind question: {_kind_slot(rbot)} / {text!r}"
+    assert "company" in text.lower() and "brand" in text.lower(), text
+
+
+@pytest.mark.parametrize("said_as,word,company,brand", [
+    ("company", "company", True, False),
+    ("brand", "brand", False, True),
+    ("both", "company and brand", True, True),
+], ids=["company", "brand", "both"])
+def test_ht1_14_lock_said_as_with_its_typed_word_decides_the_slot(rbot, world, monkeypatch, said_as, word, company, brand) -> None:
+    _with_said_as_text(rbot, monkeypatch, True)
+    _hold_agents(rbot, None)
+    text, calls = rbot.say(_with_text(_t4(said_as), word), f"sorento {word} only")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert (args.get("company") == DEFAULT_COMPANY_ID) is company, f"HT1-14 {said_as}: {args}"
+    assert bool(args.get("brand_ids")) is brand, f"HT1-14 {said_as}: {args}"
+
+
+def test_ht1_15_lock_a_text_without_said_as_text_keeps_v200_the_company_runs_silently(rbot, world, monkeypatch) -> None:
+    """The gate is the prompt text: v200 defines `said_as` only, so the r2 parse (said_as company, no typed word) is the
+    Company, no question, exactly today's behaviour."""
+    sorento, _m = world
+    _with_said_as_text(rbot, monkeypatch, False)
+    text, calls = rbot.say(_r2(sorento, "company", None), "Sorento total sale September 2026 delivered")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"HT1-15: {args}"
+
+
+def test_ht1_16_the_entity_schema_offers_said_as_text_before_said_as_only_when_the_prompt_defines_it(monkeypatch, session_factory) -> None:
+    assert getattr(parser_mod, "SAID_AS_TEXT_WORD", None) == "said_as_text"
+    _c, schema = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to by_words kind_said said_as said_as_text.\n")
+    entity = schema["properties"]["entities"]["items"]
+    props, required = list(entity["properties"]), entity["required"]
+    assert entity["properties"].get("said_as_text") == {"type": ["string", "null"]}, props
+    assert "said_as_text" in required and "said_as" in required, required
+    assert props.index("said_as_text") < props.index("said_as"), props
+    assert required.index("said_as_text") < required.index("said_as"), required
+    if "propertyOrdering" in entity:
+        assert entity["propertyOrdering"].index("said_as_text") < entity["propertyOrdering"].index("said_as"), entity["propertyOrdering"]
+    _c, v200 = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to by_words kind_said said_as.\n")
+    assert "said_as_text" not in _entity_props(v200) and "said_as" in _entity_props(v200)
+    assert "said_as_text" not in v200["properties"]["entities"]["items"]["required"]
