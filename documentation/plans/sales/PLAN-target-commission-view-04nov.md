@@ -1,21 +1,39 @@
 # PLAN: Target commission view + shareable commission statement (TARGET-COMMISSION-VIEW)
 
-Status: Plan (card first: crew report --ask + Lavish mock). Track: standard (export surface, no migration expected).
+Status: Built, in review (standard track: export surface, no migration). PR #2164.
+Mock: `mockups/target-commission-view-04nov.html` (owner approved 4 Nov, "ok").
+UAC: `target-commission-view-04nov-acceptance-criteria.md`.
 
-Lane: TARGET-COMMISSION-VIEW. Coordinates with TARGET-INVOICED (#2162), which adds the Invoiced basis on the same screen.
+Lane TARGET-COMMISSION-VIEW. Coordinates with TARGET-INVOICED (#2162): that lane adds the
+Invoiced basis (`_achieved_invoiced`); the document breakdown for Invoiced targets follows on
+rebase (trigger: #2162 merges).
 
 ## Journey
-Owner opens Sales > Targets > TGT-000008 (A CRAFT IDEA SDN BHD 2026 quarterly). He wants to see the
-total commission earned to date (Q1 3,681.10 + Q2 3,237.02 = 6,918.12), per period, and which
-account it pays to, then send a statement to stakeholders to cross-check.
+The owner opens Sales > Targets > TGT-000008 (A CRAFT IDEA SDN BHD 2026 quarterly) and asks: about
+6k earned? paid to which account? what is the 1,235.58? Then: "we need to better visualize,
+because I want to send to stakeholders to cross check".
 
-## Scope
-1. Commission summary on the target (total to date, per period: target, achieved, %, tier hit, rate,
-   commission, pays to).
-2. Accounts tab: per account, sales + commission per period, clear labels, "Pays to" beside the
-   commission.
-3. Commission statement export per target and for many targets (Targets list multi-select), with
-   the documents behind "Achieved" and the tier table. One computation shared with the screen.
-4. Card: how "Achieved" is computed today, with file:line.
+## Owner answers (4 Nov, card)
+- Q1 xlsx only. Q2 one row per document. Q3 no paid tracking ("Payment is not tracked in the CRM").
+- Q4 earned to date = ended periods; the current period apart, "so far, not final".
+- Q5 Accounts tab: sales per account per period + a period total row with the commission and the
+  account it pays to; commission never split per selling account.
 
-Details follow in the card and the mock.
+## Design (one computation)
+- `target_service.target_detail` gains per-period `tier_rates` (the reached main tier's rates,
+  from `tier_ladder`, the engine's own ordering) and target-level `commission_to_date` /
+  `commission_current` (`_earned`).
+- `achievement_service.achieved_by_period_and_line`: the achievement statement grouped also by
+  sales order line, so document rows add up to Achieved by construction.
+- `target_service.commission_statements` = `target_detail` + documents + tier table per period.
+- `commission_statement_xlsx.build` writes it (openpyxl). Route
+  `GET /api/v1/sales/targets/commission-statement?ids=` (view permission, at most 50 targets).
+- FE: commission summary card above the tabs; Periods: Tier reached, Rate, Pays to, Total row;
+  Accounts: per period rows + Period total; gear item Export commission statement; Targets list
+  bulk action Commission statement (N). Commission figures RM with 2 decimals; the commission
+  surfaces show dates dd/mm/yyyy.
+
+## Not built (triggers named)
+- Paid / not paid tracking: when finance wants to record payouts in the CRM.
+- PDF statement: when a stakeholder asks for a non-editable copy.
+- Invoiced document breakdown: when #2162 merges (rebase, group `_achieved_invoiced` by doc).
