@@ -290,11 +290,29 @@ describe('layers without a position', () => {
     expect(code(data, l)?.code).toBe('SRTKT1863SS');
   });
 
-  it('a binding that carries no slots ignores subjectSlot (older rows)', () => {
+  it('a binding from a payload that predates slots ignores subjectSlot (older rows)', () => {
     const data = lineWith(undefined);
     expect(subjectOf(data, layer({ kind: 'pick', group: 0, index: 0 }))).toBe(data);
+  });
+
+  it('a line with null slots (no parts, no combo) reads every position but main as empty, never the line', () => {
     const nullSlots = lineWith(null);
-    expect(subjectOf(nullSlots, layer({ kind: 'pick', group: 0, index: 0 }))).toBe(nullSlots);
+    for (const slot of [
+      { kind: 'pick', group: 0, index: 0 },
+      { kind: 'fixed', index: 0 },
+      { kind: 'upgrade', index: 0 },
+    ] as Slot[]) {
+      expect(code(nullSlots, layer(slot))?.code).toBe('');
+    }
+    expect(code(nullSlots, layer({ kind: 'main' }))?.code).toBe(HOST);
+  });
+
+  it('main reads slots.main when present: its own picture and list price, not the combo\'s', () => {
+    const main = part(HOST, 1234, { images: [{ attachment_id: 'att-main', url: 'https://cdn/m.jpg', is_primary: true }] });
+    const data = lineWith({ ...S1, main } as unknown as Slots);
+    const product = code(data, layer({ kind: 'main' }, 'image'));
+    expect(product?.list_price).toBe(1234);
+    expect(slotImageAttachmentId(layer({ kind: 'main' }, 'image'), imagesOf(subjectOf(data, layer({ kind: 'main' }, 'image'))))).toBe('att-main');
   });
 });
 

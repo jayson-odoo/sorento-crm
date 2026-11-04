@@ -153,6 +153,8 @@ export type SubjectSlot =
 
 /** K2: where each product of a tag sits. */
 export interface TagSlots {
+  /** The main product's own data; absent on a payload that predates it. */
+  main?: TagPartData | null;
   fixed: TagPartData[];
   groups: { role: string; size: number; picks: TagPartData[] }[];
   upgrades: TagPartData[];

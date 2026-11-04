@@ -255,15 +255,22 @@ export function subjectOf(
   data: TagBindingData | null | undefined,
   layer: { props?: TagLayerProps } | undefined,
 ): TagBindingData | null | undefined {
-  // K3: a position wins over `subjectPart`; a binding with no `slots` (older rows) ignores it.
+  // K3: a position wins over `subjectPart`. A binding whose payload predates `slots` (undefined)
+  // ignores it; `slots: null` means the line has no parts or combo, so every position but the
+  // main product is empty (AC-A3) and never the line itself.
   const slot = layer?.props ? subjectSlotOf(layer.props) : undefined;
-  if (slot && data) {
-    const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : null;
-    if (slots) {
+  if (slot && (data?.kind === 'line' || data?.kind === 'product')) {
+    const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
+    if (slots !== undefined) {
       if (slot.kind === 'main') {
-        return data.kind === 'line' ? { kind: 'product', product: productFromLineParent(data.line) } : data;
+        if (data.kind !== 'line') return data;
+        // The main product's OWN picture and list price, not the combo's (AC-A2).
+        return {
+          kind: 'product',
+          product: slots?.main ? productFromPart(slots.main) : productFromLineParent(data.line),
+        };
       }
-      return { kind: 'product', product: productAtSlot(slot, slots) };
+      return { kind: 'product', product: slots ? productAtSlot(slot, slots) : EMPTY_PART_PRODUCT };
     }
   }
   if (!data || data.kind !== 'line') return data;
