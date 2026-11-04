@@ -3587,6 +3587,17 @@ def from_object(
         held_measure = (held_ask or {}).get("measure") if carrying else None
         ask["measure"] = held_measure if held_measure in METRICS else "amount"
     if carrying:
+        held_company = held_ask.get("company")
+        if (
+            held_company and ask.get("company") and _squash(ask["company"]) != _squash(held_company)
+            and not _current_kinds(verdict) and pick is None
+            and _squash(verdict.get("sales_company") or "") != _squash(ask["company"])
+        ):
+            # HT1-18: a message that names nothing (no entity of its own, no pick of an offered option, and the parse's own
+            # `sales_company` does not name the object's company) does not change the held company: the object's other
+            # company is an echo, not an ask. One that names something keeps today's path (a switch, or the forbidden
+            # line). Parser fields only, as `_customer_stays`.
+            ask["company"] = held_company
         # CP-1: while a clarification is open, every held filter the parse leaves out stays (the channel too).
         _carry(ask, held_ask, verdict, slot_of_axis, answering=bool(_dict(getattr(focus, "required_ask", None)).get("asking")))
     breakdown = frame == "breakdown" and axis is not None
