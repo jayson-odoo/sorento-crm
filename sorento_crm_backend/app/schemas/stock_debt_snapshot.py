@@ -133,6 +133,8 @@ class SnapshotOiRow(BaseModel):
     state: str
     now_state: Optional[str] = None
     reserve_state: Optional[Literal["requested", "parked", "reserved", "cancelled"]] = None
+    #: OI-RESERVE-USED-ROW: the qty the latest request asked for, or CS answered when reserved.
+    reserve_qty: Optional[float] = None
     remaining: Optional[float] = None
     requestable: bool = False
     after_snapshot: bool = False

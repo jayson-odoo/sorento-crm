@@ -376,7 +376,7 @@ def _uuid_str(value):
 UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
 
 Metric = Literal["amount", "quantity"]
-Basis = Literal["ordered", "delivered"]
+Basis = Literal["ordered", "delivered", "invoiced"]
 ProductScope = Literal["all", "categories", "products", "brands"]
 SplitUnit = Literal["day", "week", "month"]
 

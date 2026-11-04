@@ -66,6 +66,8 @@ function num(value: string | null | undefined): number {
   return Number(value ?? '0') || 0;
 }
 
+/** The ONE row visibility rule, twin of the backend's `oi_row_visibility.is_live_row`: not
+ *  cancelled and not used. Listed, counted and requestable only when live. */
 export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
   return row.state !== 'cancelled' && !row.redirected_to_pool;
 }
@@ -141,9 +143,10 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   // AC-ND-7 (review B1): a live buy row CS amended after purchasing took it on waits on
   // purchasing again, and the approved mockup reads that line "To confirm". Only an
   // explicit `changed`: every fresh row is born `awaiting`, and AC-ND-8's fresh 4 still
-  // reads To buy. Review S2: a waiting used row makes it To confirm too, whether the
-  // line's live rows are already confirmed or it has none at all.
-  else if (liveBuy.some((row) => row.ack_state === 'changed') || waitingUsedRows.length > 0) {
+  // reads To buy. OI-RESERVE-USED-ROW (owner, 4 Nov): only a LIVE row makes it To confirm,
+  // the rule the Documents counts and Lines filter read; a waiting used row is still swept
+  // by the line's Confirm (G6, server side) but no longer holds the line open.
+  else if (liveBuy.some((row) => row.ack_state === 'changed')) {
     state = 'to_confirm';
   } else if (liveRows.length === 0) state = 'nothing_to_buy';
   else state = pickPrimary(
@@ -189,7 +192,10 @@ export function foldInquiryLines(rows: OrderInquiryWorklistRow[]): OrderInquiryL
     else groups.set(key, [row]);
   }
   const lines = [...groups.entries()]
-    .filter(([, group]) => group.some((row) => row.state !== 'cancelled'))
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): a line renders only with a LIVE row, the rule the
+    // Documents counts (`oi_row_visibility.py`) and Order Inquiries > Lines list by. A line
+    // left with only used or cancelled rows is History, not a line.
+    .filter(([, group]) => group.some(isLiveInquiryRow))
     .map(([key, group]) => buildLine(key, group));
   return lines
     .map((line, index) => ({ line, index }))

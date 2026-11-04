@@ -9,6 +9,7 @@
  * Same harness as `StockDebtCellDialog.test.tsx`: the service is mocked, never the
  * component.
  */
+import userEvent from '@testing-library/user-event';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
@@ -209,16 +210,18 @@ describe('StockDebtCellDialog, lendable landed pins', () => {
     expect(within(row).getByText('covered')).toBeInTheDocument();
   });
 
-  it('AC-V2: a lending line lists every receiver, linking the receiving order', async () => {
+  it('AC-V2: a lending line reads "Lent to 3 SOs (88)" on one line; the list links each receiving order', async () => {
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): one line per row, 2+ receivers collapse.
+    const user = userEvent.setup();
     renderDialog(MAR_CELL, '2027-03', -88);
     const row = (await screen.findByText('SO381065')).closest(
       'tr',
     ) as HTMLElement;
-    const link = within(row).getByRole('link', {
-      name: 'Lent to SO396071 (32)',
-    });
+    expect(within(row).queryByText('Lent to SO402118 (29)')).not.toBeInTheDocument();
+    await user.click(within(row).getByRole('button', { name: /Lent to 3 SOs \(88\)/ }));
+    const link = await screen.findByRole('link', { name: 'SO396071' });
     expect(link).toHaveAttribute('href', '/scm/sales-orders/so-396071');
-    expect(within(row).getByText('Lent to SO402118 (29)')).toBeInTheDocument();
-    expect(within(row).getByText('Lent to SO404890 (27)')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'SO402118' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'SO404890' })).toBeInTheDocument();
   });
 });

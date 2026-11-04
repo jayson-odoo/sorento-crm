@@ -41,7 +41,7 @@ const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 const PRE_UNTICK_COVERED_LINES = true;
 
 /** A line as one OI group shows it: the frozen line plus only that OI's rows. */
-type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
+export type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
 
 interface OiGroup {
   oiId: string | null;
@@ -53,47 +53,33 @@ const NEUTRAL = 'bg-muted text-foreground';
 const AMBER = 'bg-amber-100 text-amber-800';
 const GREEN = 'bg-emerald-100 text-emerald-800';
 const RED = 'bg-red-100 text-red-800';
-const SKY = 'bg-sky-100 text-sky-800';
 
-function stateLabel(state: string): string {
-  const text = state.replace(/_/g, ' ');
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-const RESERVE_LABEL: Record<string, { text: string; tone: string }> = {
-  parked: { text: 'Reserve parked', tone: AMBER },
-  requested: { text: 'Reserve requested', tone: AMBER },
-  reserved: { text: 'Reserved', tone: GREEN },
-  cancelled: { text: 'Reserve cancelled', tone: NEUTRAL },
-};
-
-function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
-  return <span className={cn(STATUS_PILL_BASE, 'normal-case', tone)}>{children}</span>;
-}
-
-/** What the line and its OI rows read like NOW (AC-12). */
-function NowCell({ line }: { line: GroupLine }) {
+/** OI-RESERVE-USED-ROW (owner, 4 Nov): "Now" is ONE pill per line, the first match wins -
+ *  SO cancelled (or gone) > Reserved N > Reserve requested N / Reserve parked N > Open N. The
+ *  only live column of the drill: what changed since the snapshot. The OI row's own state
+ *  stays on the OI page. Exported for its test. */
+export function nowPill(line: GroupLine): { text: string; tone: string } {
   const soStatus = line.now.so_status;
+  if (soStatus !== 'open') return { text: `SO ${soStatus ?? 'missing'}`, tone: RED };
+  const sum = (state: string) =>
+    line.group_oi_rows
+      .filter((oi) => oi.reserve_state === state)
+      .reduce((total, oi) => total + (oi.reserve_qty ?? 0), 0);
+  const has = (state: string) => line.group_oi_rows.some((oi) => oi.reserve_state === state);
+  if (has('reserved')) return { text: `Reserved ${sum('reserved').toLocaleString()}`, tone: GREEN };
+  if (has('requested')) {
+    return { text: `Reserve requested ${sum('requested').toLocaleString()}`, tone: AMBER };
+  }
+  if (has('parked')) return { text: `Reserve parked ${sum('parked').toLocaleString()}`, tone: AMBER };
+  return { text: `Open ${line.now.open_qty.toLocaleString()}`, tone: NEUTRAL };
+}
+
+function NowCell({ line }: { line: GroupLine }) {
+  const pill = nowPill(line);
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1">
-      {soStatus === 'open' ? (
-        <Pill tone={NEUTRAL}>{`Open ${line.now.open_qty.toLocaleString()}`}</Pill>
-      ) : (
-        <Pill tone={RED}>{`SO ${soStatus ?? 'missing'}`}</Pill>
-      )}
-      {line.group_oi_rows.map((oi) => {
-        const reserve = oi.reserve_state ? RESERVE_LABEL[oi.reserve_state] : null;
-        return (
-          <React.Fragment key={oi.row_id}>
-            <Pill tone={NEUTRAL}>
-              {oi.now_state === 'missing' ? 'Row gone' : stateLabel(oi.now_state ?? oi.state)}
-            </Pill>
-            {reserve && <Pill tone={reserve.tone}>{reserve.text}</Pill>}
-            {oi.after_snapshot && <Pill tone={SKY}>after the snapshot</Pill>}
-          </React.Fragment>
-        );
-      })}
-    </div>
+    <span className={cn(STATUS_PILL_BASE, 'normal-case whitespace-nowrap', pill.tone)} title={pill.text}>
+      {pill.text}
+    </span>
   );
 }
 
@@ -114,9 +100,10 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
       id: 'oi_row',
       header: ({ column }) => <DataGridColumnHeader title="OI row" column={column} />,
       size: 110,
+      // OI-RESERVE-USED-ROW (owner, 4 Nov): the server sends live rows only, one line per row.
       cell: ({ row }) =>
         row.original.group_oi_rows.length ? (
-          <div className="flex flex-wrap gap-x-2">
+          <div className="flex flex-nowrap gap-x-2 overflow-hidden whitespace-nowrap">
             {row.original.group_oi_rows.map((oi) => (
               <Link
                 key={oi.row_id}
@@ -136,7 +123,7 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
     {
       id: 'now',
       header: ({ column }) => <DataGridColumnHeader title="Now" column={column} />,
-      size: 260,
+      size: 190,
       cell: ({ row }) => <NowCell line={row.original} />,
     },
   ];

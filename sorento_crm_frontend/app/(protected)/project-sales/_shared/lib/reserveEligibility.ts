@@ -37,6 +37,10 @@ export function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | 
   if (!['raised', 'partly_linked', 'placed'].includes(row.state)) {
     return `${item}: not open for a reserve request`;
   }
+  if (row.redirected_to_pool) {
+    // OI-RESERVE-USED-ROW: the server refuses it too (`reserve_request_used_row`).
+    return `${item}: a used row, request on its line's live row`;
+  }
   if (rowRequestable(row) <= 0) {
     return (row.links ?? []).some((link) => link.kind === 'po' || link.kind === 'spo')
       ? `${item}: on a PO/SPO not received yet, nothing left to request`
