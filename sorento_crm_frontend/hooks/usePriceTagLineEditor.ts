@@ -430,9 +430,11 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
               const chosen = part.candidates.find(
                 (candidate) => candidate.product_id === productId,
               );
+              // A single pick replaces any multi-pick row's picks (K5), or the payload would keep them.
+              const single = { ...part, product_ids: undefined };
               return chosen
-                ? { ...part, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
-                : { ...part, product_id: null, code: '', name: '' };
+                ? { ...single, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
+                : { ...single, product_id: null, code: '', name: '' };
             }),
           };
         }),
