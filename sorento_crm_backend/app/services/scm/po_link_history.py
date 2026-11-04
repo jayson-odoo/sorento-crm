@@ -226,17 +226,26 @@ def _seen_batch(after: Optional[str], batch: int):
         .limit(1)
         .scalar_subquery()
     )
-    has_event = sa.exists().where(
-        _audit.c.entity_type == _ENTITY,
-        _audit.c.entity_id == sa.cast(_lines.c.id, sa.String),
-        _audit.c.event.in_((EVENT_CHANGE, EVENT_SEEN)),
+    # A per-line index probe on (entity_type, entity_id): a scalar subquery with LIMIT 1 is never
+    # flattened into a join. As NOT EXISTS the planner, on stats that predate the rows this run
+    # just inserted, materialised every link event and filtered it per line: quadratic, 63 s for
+    # a fresh run on the prod clone and 134 s for a rerun right after it.
+    has_event = (
+        sa.select(sa.literal(1))
+        .where(
+            _audit.c.entity_type == _ENTITY,
+            _audit.c.entity_id == sa.cast(_lines.c.id, sa.String),
+            _audit.c.event.in_((EVENT_CHANGE, EVENT_SEEN)),
+        )
+        .limit(1)
+        .scalar_subquery()
     )
     code = sa.func.coalesce(_products.c.product_code, "Line")
     label = sa.func.coalesce(so_number, "an S/O not held here")
     where = [
         _lines.c.from_so_line_ref.isnot(None),
         _lines.c.from_so_line_ref != "",
-        ~has_event,
+        has_event.is_(None),
     ]
     if after is not None:
         where.append(_lines.c.id > after)

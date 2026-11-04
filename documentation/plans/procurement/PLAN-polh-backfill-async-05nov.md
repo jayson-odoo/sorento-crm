@@ -1,6 +1,6 @@
 # PLAN: move the polh_0001 "first seen" backfill out of the deploy migration (lane POLH-BACKFILL-ASYNC)
 
-Status: Build. Track: small fix (S): release fix, no new revision, no DDL, no auth/RBAC change.
+Status: PR (built, proven on the prod-clone copy). Track: small fix (S): release fix, no new revision, no DDL, no auth/RBAC change.
 UAC: `polh-backfill-async-acceptance-criteria.md` (alongside).
 
 ## Why
@@ -33,8 +33,10 @@ serves 9c6b581e6a. polh_0001 never committed on prod, so it is edited in place.
   never reaches the migration block, and one cheap idempotent pass per backend start needs no queue.
 - `po_link_history.backfill_seen(db, batch=5000) -> int`: the polh_0001 SELECT moved verbatim (private
   Core `Table`s, so a test's `schema_translate_map` applies and the ORM company-scope filter, which is
-  fail-closed with no scope set, never touches it), except the claim time comes from ONE pre-aggregated
-  `order_link_claim` subquery joined per batch. Keyset by line id, one INSERT ... SELECT per batch,
+  fail-closed with no scope set, never touches it), except two plan fixes measured on the copy: the claim
+  time comes from ONE pre-aggregated `order_link_claim` subquery joined per batch, and "no link event yet"
+  is a scalar `LIMIT 1` subquery (a per-line index probe) instead of NOT EXISTS, which the planner, on
+  stats that predate the rows the run just inserted, materialised and filtered per line (quadratic). Keyset by line id, one INSERT ... SELECT per batch,
   `db.commit()` after each batch, one INFO log line per batch and a total. Resumable: a killed run keeps
   its committed batches, and the next run's NOT EXISTS skips them.
 - `scripts/backfill_po_link_seen.py`: one dedicated connection, `pg_try_advisory_lock(<own key>)`; a
@@ -61,8 +63,19 @@ has a change event, so it is skipped (correct: its current ref is no longer the 
 - the script does nothing while another session holds its advisory lock, and never raises;
 - `start.sh` runs the script in the background after `alembic upgrade head`, before gunicorn.
 
-## Proof
+## Proof (5 Nov, `polh_proof_throwaway`)
 
-Copy of the clone at `oiod_0001_backfill` (copy built from the relevant tables only: the full clone is
-28 GB against 34 GB free): `alembic upgrade head` < 60 s; the script seeds 57,876 rows; a second run
-seeds 0.
+Copy: `pg_dump` of the 18 tables the five revisions and the backfill read or write, at full
+sorento_prod_1020 volume (the full clone is 28 GB against 34 GB free and has live connections), the
+later revisions' objects dropped, link events deleted (prod has none: the writer ships in this
+release), `alembic_version` = `oiod_0001_backfill`.
+
+| Step | Wall time |
+| --- | --- |
+| `alembic upgrade head` (polh_0001 -> oiod_0002, 5 revisions) | 3.5 s |
+| backfill, fresh: 57,876 rows, 12 batches, 12 commits | 5.4 s |
+| backfill rerun right after (stale stats) | 1.3 s, 0 rows |
+| backfill rerun after ANALYZE | 1.4 s, 0 rows |
+
+Each script time includes ~1 s of Python start-up. Before the two plan fixes the fresh run took 63 s and
+the immediate rerun 134 s.
