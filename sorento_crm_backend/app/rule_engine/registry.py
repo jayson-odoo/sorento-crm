@@ -35,6 +35,9 @@ class FactDef:
     type: FactType
     resolver: Callable[[Any, Session], Any]
     options: OptionsProvider = None
+    #: Narrows the type's operators (`OPERATORS_BY_TYPE`) for this one fact; `None` keeps them
+    #: all. The editor opens a condition on the first one offered.
+    operators: Optional[Tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -286,6 +289,9 @@ def _register_order_inquiry() -> None:
                 # an OI nobody raised must still reach the "is none of [Agnes]" row.
                 resolver=lambda ctx, db: str((ctx or {}).get("raised_by") or ""),
                 options=_raiser_options,
+                # Owner, 4 Nov: a person pick is always several people, so only "is any of"
+                # and "is none of" (the editor's multi select), never a single "is".
+                operators=("in", "not_in"),
             ),
         ],
     )

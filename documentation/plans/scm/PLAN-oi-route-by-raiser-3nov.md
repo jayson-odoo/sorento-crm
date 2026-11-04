@@ -33,6 +33,8 @@ people Agnes' orders should reach. Confirms, undos and "Send to purchasing" then
 
 6. **To/Cc split kept on save (crew finding, 4 Nov).** `AutomationForm` set `explicit_to_cc: true` on every save (on main since #2083), so adding only a condition to a legacy row flipped it from "first address To, the rest Cc" to "everyone To". Per the 1 Nov Q2 (b) ruling it now keeps the saved flag unless one of the six To/Cc address lists changed; a new row stays explicit.
 
+7. **Raised by is always a multi select (owner hand test, 4 Nov).** The enum fact opened on "is" (a single dropdown). `FactDef.operators` narrows one fact's operators; Raised by allows only `in` / `not_in`, so the editor (which narrows to the API's list and opens on its first) shows "is any of" with the searchable multi select. `schemas.operators_for` serves both the facts endpoint and the save-time validator, so a single "is" is refused on save.
+
 ## Not changed
 
 - No migration; no condition-editor code (the RuleBuilder already renders the picker); reserve emails untouched.
