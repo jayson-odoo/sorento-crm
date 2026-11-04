@@ -182,6 +182,21 @@ def test_af4_top_5_on_a_held_breakdown_ranks_the_channel_and_asks_no_measure_whe
     assert _frame(rbot).get("top_n") == 5, _frame(rbot)
 
 
+@pytest.mark.parametrize("flat", [{}, {"top_n": 5}], ids=["object_top_n", "object_and_message_top_n"])
+def test_af7_top_5_with_a_breakdown_frame_keeps_the_objects_own_count_never_every_row(rbot, world, flat) -> None:
+    """The live parse of "top 5" on a held channel breakdown: frame "breakdown", top_n 5 in the object, message-level
+    order_status sales_analysis. A top 5 ranking by channel, never every row (top_n 100), and no question."""
+    sorento, _m = world
+    _hold(rbot, sorento, group_by="channel")
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", top_n=5, company=sorento, **SEP)
+    v = _follow("sales_analysis", ra, group_by="channel", sales_company=sorento, **flat, **SEPF)
+    text, calls = rbot.say(v, "top 5")
+    assert MEASURE_Q not in text and TOP_N_Q not in text, f"AF-7: looped a question: {text!r}"
+    args = _args(calls)
+    assert args.get("group_by") == "channel" and args.get("top_n") == 5, f"AF-7: want top_n 5, got {args.get('top_n')!r}: {args}"
+    assert _frame(rbot).get("top_n") == 5, _frame(rbot)
+
+
 def test_af5_top_10_products_asks_only_the_measure(rbot, world) -> None:
     sorento, _m = world
     ra = _ra2("ranking", basis="delivered", group_by="product", top_n=10, company=sorento, **SEP)
@@ -849,10 +864,12 @@ def test_r1_b_a_frame_on_an_open_question_reply_does_not_swap_the_held_axis(rbot
            domain_in_message=True, **Y26F)
     text, calls = rbot.say(v, "agent a ceramic account type sorento by month 2026 invoiced")
     assert not _ran(calls) and "brand, account type or company?" in text.lower(), f"setup: {text!r} {calls}"
-    ra2 = _ra(basis="invoiced", group_by="sales_agent", company=sorento, sales_agents=[AGENT_1], account_types=[], **Y26)
+    # The new axis is NOT over a one-value slot (no single agent or customer filter), so only the fresh-ask clause
+    # (`open_question_answer.mode is None`) can keep the held month from being swapped.
+    ra2 = _ra(basis="invoiced", group_by="customer", company=sorento, sales_agents=[], account_types=[], **Y26)
     ra2["frame"] = frame
     fill = {"mode": "fill", "items": [], "picked": [], "qty_for_all": None}
-    v2 = _v("sales_ranking", ra2, basis="invoiced", group_by="sales_agent", entity_op="reuse", continuation=True,
+    v2 = _v("sales_ranking", ra2, basis="invoiced", group_by="customer", entity_op="reuse", continuation=True,
             open_question_answer=fill, sales_company=sorento)
     text, calls = rbot.say(v2, "invoiced")
     ran = _ran(calls)
