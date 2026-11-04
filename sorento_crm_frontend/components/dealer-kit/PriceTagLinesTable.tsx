@@ -422,6 +422,7 @@ function LineRow({
       compact
       ariaLabel={`Price type for line ${index + 1}`}
       value={linePriceType(line, priceMode)}
+      title={line.price_type ? undefined : 'Follows Preferred Default'}
       onChange={(mode) => onUpdate(line.key, { price_type: mode })}
     />
   );

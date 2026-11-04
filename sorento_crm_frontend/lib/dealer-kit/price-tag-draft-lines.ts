@@ -287,7 +287,7 @@ export function itemValue(line: DraftLine): string {
   return line.product_id ? `product:${line.product_id}` : '';
 }
 
-export function lineToDraft(line: DraftLineSource): DraftLine {
+export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
     line_type: line.line_type,
@@ -328,7 +328,10 @@ export function lineToDraft(line: DraftLineSource): DraftLine {
     tag_template_id: line.tag_template_id ?? null,
     tag_templates: [],
     tag_templates_for: null,
-    price_type: line.price_type ?? null,
+    // The server stores an explicit type on every line, so a line whose type equals the
+    // request's mode is read as FOLLOWING Preferred Default (price_type null); only a line that
+    // differs keeps its own.
+    price_type: line.price_type && line.price_type !== requestMode ? line.price_type : null,
   };
 }
 
@@ -373,7 +376,10 @@ export function lineNeedsTemplate(line: DraftLine): boolean {
 /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
  *  place, in display order. A resolved part sends its product, an open one
  *  sends the candidate ids it is still choosing between. */
-export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[] {
+export function draftLinesPayload(
+  lines: DraftLine[],
+  priceMode?: PriceMode,
+): PriceTagRequestLineInput[] {
   return lines.map((l) => ({
     line_type: l.line_type,
     product_id: l.product_id,
@@ -397,9 +403,10 @@ export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[
     promotion_id: l.promotion_id,
     // PRICETAG-LPSP: a typed price only means something on an SP line with no promotion; the
     // server refuses it anywhere else.
-    price_type: l.price_type ?? null,
+    // An untyped line follows Preferred Default: it is saved with the header's value now.
+    price_type: l.price_type ?? priceMode ?? null,
     manual_sell_price:
-      l.price_type === 'list' || l.promotion_id ? null : l.manual_sell_price,
+      (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
   }));
 }

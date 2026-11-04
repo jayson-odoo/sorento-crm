@@ -22,6 +22,8 @@ interface PriceModeToggleProps {
   ariaLabel?: string;
   /** PRICETAG-LPSP: the compact per-line form, "LP" / "SP". */
   compact?: boolean;
+  /** Tooltip on the group (a per-line toggle that follows the default says so). */
+  title?: string;
 }
 
 export function PriceModeToggle({
@@ -30,6 +32,7 @@ export function PriceModeToggle({
   labelledBy,
   ariaLabel,
   compact = false,
+  title,
 }: PriceModeToggleProps) {
   const labels = compact ? { list: 'LP', selling: 'SP' } : { list: 'List price', selling: 'Selling price' };
   const pad = compact ? 'rounded px-2 py-1 text-xs transition-colors' : 'rounded px-3 py-1.5 text-sm transition-colors';
@@ -38,6 +41,7 @@ export function PriceModeToggle({
       role="radiogroup"
       aria-labelledby={labelledBy}
       aria-label={labelledBy ? undefined : ariaLabel}
+      title={title}
       className="inline-flex items-center rounded-md border p-0.5"
     >
       <button

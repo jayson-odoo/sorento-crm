@@ -68,19 +68,23 @@ function setup(
 const typeOf = (line: DraftLine) => (line as unknown as { price_type?: string | null }).price_type;
 
 describe('usePriceTagLineEditor new line price type (AC-19)', () => {
-  it.each(['list', 'selling'] as const)('a new line takes the header default (%s)', (mode) => {
+  // Owner, 4 Nov: a line never set explicitly FOLLOWS Preferred Default, so a new line is untyped.
+  it.each(['list', 'selling'] as const)('a new line is untyped and follows the header (%s)', (mode) => {
     const { hook } = setup([], () => [], mode);
     act(() => hook.result.current.editor.addLine());
     expect(hook.result.current.lines).toHaveLength(1);
-    expect(typeOf(hook.result.current.lines[0])).toBe(mode);
+    expect(typeOf(hook.result.current.lines[0]) ?? null).toBeNull();
   });
 
-  it('changing the header default does not rewrite lines already set', () => {
+  it('changing the header default leaves an untyped line untyped and an explicit one alone', () => {
     const { hook } = setup([], () => [], 'list');
     act(() => hook.result.current.editor.addLine());
-    act(() => hook.result.current.setPriceMode('selling'));
     act(() => hook.result.current.editor.addLine());
-    expect(hook.result.current.lines.map(typeOf)).toEqual(['list', 'selling']);
+    const [first, second] = hook.result.current.lines.map((l) => l.key);
+    act(() => hook.result.current.editor.updateLine(second, { price_type: 'list' } as never));
+    act(() => hook.result.current.setPriceMode('selling'));
+    expect(hook.result.current.lines.map((l) => typeOf(l) ?? null)).toEqual([null, 'list']);
+    expect(first).toBeTruthy();
   });
 
   it('a line can be set to the other type on its own', () => {

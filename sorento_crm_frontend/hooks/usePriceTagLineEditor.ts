@@ -130,10 +130,10 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
 
   // ---- Line management ----
   const addLine = useCallback(() => {
-    // PRICETAG-LPSP: the header is the starting value for a NEW line only; changing it later
-    // leaves lines already added as they are.
-    setLines((prev) => [...prev, { ...emptyDraftLine(), price_type: priceMode }]);
-  }, [setLines, priceMode]);
+    // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
+    // toggle (or the paste) sets it.
+    setLines((prev) => [...prev, emptyDraftLine()]);
+  }, [setLines]);
 
   const removeLine = useCallback(
     (key: string) => {

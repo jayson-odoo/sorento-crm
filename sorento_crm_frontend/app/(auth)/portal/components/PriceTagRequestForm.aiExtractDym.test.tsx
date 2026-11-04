@@ -56,11 +56,19 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     id?: string;
     value: string;
     onChange?: (v: string) => void;
+    onOptionChange?: (o: { value: string; label: string; description?: string } | null) => void;
     placeholder?: string;
-    options?: { value: string; label: string }[];
-    selectedOption?: { value: string; label: string };
+    options?: { value: string; label: string; description?: string }[];
+    fetchOptions?: (q: string, page: number) => Promise<{ value: string; label: string; description?: string }[]>;
+    selectedOption?: { value: string; label: string; description?: string };
   }) => {
-    const options = [...(props.options ?? [])];
+    const [fetched, setFetched] = React.useState<
+      { value: string; label: string; description?: string }[]
+    >([]);
+    React.useEffect(() => {
+      if (props.fetchOptions) void props.fetchOptions('', 0).then(setFetched);
+    }, [props.fetchOptions]);
+    const options = [...(props.options ?? fetched)];
     if (props.selectedOption && !options.some((o) => o.value === props.selectedOption?.value)) {
       options.push(props.selectedOption);
     }
@@ -68,7 +76,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       <select
         aria-label={props.id === 'debtor' ? 'Customer' : (props.placeholder ?? '')}
         value={props.value}
-        onChange={(e) => props.onChange?.(e.target.value)}
+        onChange={(e) => {
+          props.onChange?.(e.target.value);
+          props.onOptionChange?.(options.find((o) => o.value === e.target.value) ?? null);
+        }}
       >
         <option value="" />
         {options.map((o) => (
@@ -134,7 +145,7 @@ const BARE_MISS = {
   suggestions: [],
 };
 
-const PICKER = 'Did you mean?';
+const PICKER = 'Pick a combo or product...';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -158,6 +169,13 @@ function cell(p: Record<string, unknown>, i = 0) {
   return <div data-testid={`cell-${i}`}>{captured.renderRowStatus?.(p, i)}</div>;
 }
 
+/** The row's picker once its options (suggestions first, then the catalogue search) arrived. */
+async function loadedPicker(c: ReturnType<typeof within>) {
+  const picker = c.getByLabelText(PICKER) as HTMLSelectElement;
+  await waitFor(() => expect(picker.options.length).toBeGreaterThan(1));
+  return picker;
+}
+
 describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () => {
   // Owner, 4 Nov (PRICETAG-LPSP): one line per option, the code once; the name is the
   // option's second line, never a repeat of the code.
@@ -168,7 +186,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     const c = within(getByTestId('cell-0'));
 
     expect(c.getByText('Not found')).toBeTruthy();
-    const picker = c.getByLabelText(PICKER) as HTMLSelectElement;
+    const picker = await loadedPicker(c);
     expect(picker.value).toBe('');
     const labels = Array.from(picker.options).map((o) => o.textContent);
     expect(labels).toContain(REAL.product_code);
@@ -201,6 +219,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     openSalesOrderSection();
 
     const { getByTestId } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },
@@ -223,6 +242,7 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     openSalesOrderSection();
 
     const { getByTestId, rerender } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },
@@ -250,18 +270,19 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     );
   });
 
-  it('AC-F5: a not-found row with no suggestions shows plain Not found and no picker', async () => {
+  it('AC-F5 (LPSP): a not-found row with no suggestions still gets the picker, over the catalogue search', async () => {
     await mountAndExtract([BARE_MISS]);
 
     const { getByTestId } = render(cell(BARE_MISS));
     const c = within(getByTestId('cell-0'));
     expect(c.getByText('Not found')).toBeTruthy();
-    expect(c.queryByLabelText(PICKER)).toBeNull();
+    expect(c.getByLabelText(PICKER)).toBeTruthy();
   });
 
   it('a fresh extraction forgets an earlier pick (nothing carries over unasked)', async () => {
     await mountAndExtract([MISREAD]);
     const { getByTestId, rerender } = render(cell(MISREAD));
+    await loadedPicker(within(getByTestId('cell-0')));
     await act(async () => {
       fireEvent.change(within(getByTestId('cell-0')).getByLabelText(PICKER), {
         target: { value: REAL.product_id },

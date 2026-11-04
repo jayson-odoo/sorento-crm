@@ -47,7 +47,7 @@ interface Props {
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
-export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
+export function previewLines(lines: DraftLine[], priceMode?: PriceMode): TagPreviewLineInput[] {
   return lines
     .filter((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
     .map((l) => ({
@@ -63,7 +63,7 @@ export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
       })),
       promotion_id: l.promotion_id,
       // A typed price only applies to an SP line (the server refuses it otherwise).
-      manual_sell_price: l.price_type === 'list' ? null : l.manual_sell_price,
+      manual_sell_price: (l.price_type ?? priceMode) === 'list' ? null : l.manual_sell_price,
       tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
       price_type: l.price_type ?? null,
     }));
@@ -130,8 +130,11 @@ export function PriceTagLivePreview({
 }: Props) {
   const sent = useMemo(
     () =>
-      previewLines(lineKey === undefined ? lines : lines.filter((l) => l.key === lineKey)),
-    [lines, lineKey],
+      previewLines(
+        lineKey === undefined ? lines : lines.filter((l) => l.key === lineKey),
+        priceMode,
+      ),
+    [lines, lineKey, priceMode],
   );
   // Only what changes the drawing re-asks: a remark or a quantity does not.
   const signature = useMemo(() => JSON.stringify([priceMode, sent]), [priceMode, sent]);

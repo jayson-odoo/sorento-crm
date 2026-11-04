@@ -128,6 +128,7 @@ vi.mock('./AttachmentDropzone', () => ({
 }));
 
 type CapturedProps = {
+  renderRowStatus?: (p: Record<string, unknown>, i: number) => React.ReactNode;
   onExtracted?: (products: unknown[]) => void;
   onApply?: (payload: { productLines: unknown[]; files?: File[]; alsoAttach?: boolean }) => void;
 };
@@ -273,9 +274,21 @@ describe('PriceTagRequestForm per-line price type (AC-19)', () => {
     expect(payload.lines[0].price_type).toBe('selling');
   });
 
-  it('changing the default afterwards does not rewrite a line already added', async () => {
+  it('a line never set explicitly follows a later change of the default', async () => {
     render(<PriceTagRequestForm />);
     await pickCustomerAndAddLine();
+    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.price_mode).toBe('selling');
+    expect(payload.lines[0].price_type).toBe('selling');
+  });
+
+  it('a line the user toggled to LP stays LP after the default switches to Selling', async () => {
+    render(<PriceTagRequestForm />);
+    await pickCustomerAndAddLine();
+    fireEvent.click(screen.getByRole('radio', { name: 'SP' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'LP' }));
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
     sendToMarketing();
     const payload = await lastCreatePayload();
@@ -312,6 +325,46 @@ describe('PriceTagRequestForm per-line price type (AC-19)', () => {
 });
 
 describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
+  it('a paste with no price type follows the default: all 3 lines are selling after the switch', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    await applyExtract([
+      { product_code: P1.code },
+      { product_code: P2.code },
+      { product_code: P3.code },
+    ]);
+    await selectOption('Customer', 'ZZTD01');
+    await screen.findByLabelText('Quantity for line 3');
+    await openPriceSection();
+    fireEvent.click(await screen.findByRole('radio', { name: 'Selling price' }));
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.lines.map((l: { price_type: string }) => l.price_type)).toEqual([
+      'selling',
+      'selling',
+      'selling',
+    ]);
+  });
+
+  it('a pasted line under an LP header stays LP after the default switches', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    await applyExtract([
+      { product_code: P1.code, price_type: 'list' },
+      { product_code: P2.code },
+    ]);
+    await selectOption('Customer', 'ZZTD01');
+    await screen.findByLabelText('Quantity for line 2');
+    await openPriceSection();
+    fireEvent.click(await screen.findByRole('radio', { name: 'Selling price' }));
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.lines.map((l: { price_type: string }) => l.price_type)).toEqual([
+      'list',
+      'selling',
+    ]);
+  });
+
   it('applies each matched row price type, defaulting an unmarked one to the header', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
@@ -363,10 +416,27 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     expect(payload.lines[1].manual_sell_price == null).toBe(true);
   });
 
-  it('a matched set row becomes a combo line with the stored combo id', async () => {
+  const part = (product: { id: string; code: string; name: string }, group: string | null = null) => ({
+    product_id: product.id,
+    code: product.code,
+    name: product.name,
+    choice_group: group,
+    is_upgrade: false,
+    topup_amount: null,
+  });
+
+  it('a matched set row becomes the MATCHED combo line, built like a hand pick', async () => {
+    // Two combos on the host: a lone combo would be auto-picked and mask a dropped combo id.
     asMock(lookupProductCombos).mockResolvedValue({
       host_guarded: false,
-      combos: [{ combo_id: 'combo-1', name: 'CBF-1234 + CBF-5678', parts: [] }],
+      combos: [
+        { combo_id: 'combo-a', name: 'CBF-1234 + CBF-9999', parts: [part(P3)] },
+        {
+          combo_id: 'combo-b',
+          name: 'CBF-1234 + CBF-5678',
+          parts: [part(P2), part(P3, 'Mirror'), part(P1, 'Mirror')],
+        },
+      ],
     });
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
@@ -375,9 +445,9 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
         product_code: P1.code,
         price_type: 'selling',
         typed_sell_price: 1729,
-        combo_id: 'combo-1',
+        combo_id: 'combo-b',
         combo_name: 'CBF-1234 + CBF-5678',
-        set_parts: [{ product_id: P2.id, product_code: P2.code, product_name: P2.name }],
+        set_parts: [{ product_id: P2.id, product_code: P2.code }],
       },
     ]);
     await selectOption('Customer', 'ZZTD01');
@@ -385,9 +455,88 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     sendToMarketing();
     const payload = await lastCreatePayload();
     expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0].combo_id).toBe('combo-1');
+    expect(payload.lines[0].combo_id).toBe('combo-b');
     expect(payload.lines[0].price_type).toBe('selling');
     expect(payload.lines[0].manual_sell_price).toBe(1729);
+    // The fixed part AND the open choice-group row, exactly as partsFromCombo builds them.
+    expect(payload.lines[0].parts).toEqual([
+      { product_id: P2.id, role: null, candidates: [] },
+      { product_id: null, role: 'Mirror', candidates: [P3.id, P1.id] },
+    ]);
+  });
+
+  describe('an unmatched "+" row picked by hand', () => {
+    const SET_ROW = {
+      product_code: 'SRTBF11840',
+      price_type: 'selling',
+      typed_sell_price: 2299,
+      combo_id: null,
+      match: null,
+      product_id: null,
+      product_set_id: null,
+      set_parts: [{ product_id: P2.id, product_code: P2.code }],
+      suggestions: [{ product_id: P1.id, product_code: P1.code, product_name: P1.name }],
+    };
+
+    async function pickHost() {
+      asMock(lookupProductCombos).mockResolvedValue({
+        host_guarded: false,
+        combos: [
+          { combo_id: 'combo-a', name: 'Combo A', parts: [part(P3)] },
+          { combo_id: 'combo-b', name: 'Combo B', parts: [part(P2)] },
+        ],
+      });
+      render(<PriceTagRequestForm />);
+      await screen.findByLabelText('Customer');
+      await act(async () => {
+        captured.onExtracted?.([SET_ROW]);
+      });
+      const view = render(<div>{captured.renderRowStatus?.(SET_ROW, 0)}</div>);
+      const picker = view.getByLabelText('Pick a combo or product...') as HTMLSelectElement;
+      await waitFor(() => expect(picker.options.length).toBeGreaterThan(1));
+      await act(async () => {
+        fireEvent.change(picker, { target: { value: P1.id } });
+      });
+      view.rerender(<div>{captured.renderRowStatus?.(SET_ROW, 0)}</div>);
+      return view;
+    }
+
+    it('resolved to the bare host it carries no typed price and no combo', async () => {
+      await pickHost();
+      await act(async () => {
+        captured.onApply?.({ productLines: [SET_ROW] });
+      });
+      await selectOption('Customer', 'ZZTD01');
+      await screen.findByLabelText('Quantity for line 1');
+      sendToMarketing();
+      const payload = await lastCreatePayload();
+      expect(payload.lines[0].product_id).toBe(P1.id);
+      expect(payload.lines[0].combo_id == null).toBe(true);
+      expect(payload.lines[0].manual_sell_price == null).toBe(true);
+    });
+
+    it('resolved to the host plus a chosen stored combo it carries both', async () => {
+      const view = await pickHost();
+      // The cell lives in its own root: re-render it until the host's combos arrived.
+      let combo: HTMLSelectElement | null = null;
+      await waitFor(() => {
+        view.rerender(<div>{captured.renderRowStatus?.(SET_ROW, 0)}</div>);
+        combo = view.queryByLabelText('Combo') as HTMLSelectElement | null;
+        expect(combo).not.toBeNull();
+      });
+      await act(async () => {
+        fireEvent.change(combo as unknown as HTMLSelectElement, { target: { value: 'combo-b' } });
+      });
+      await act(async () => {
+        captured.onApply?.({ productLines: [SET_ROW] });
+      });
+      await selectOption('Customer', 'ZZTD01');
+      await screen.findByLabelText('Quantity for line 1');
+      sendToMarketing();
+      const payload = await lastCreatePayload();
+      expect(payload.lines[0].combo_id).toBe('combo-b');
+      expect(payload.lines[0].manual_sell_price).toBe(2299);
+    });
   });
 
   it('an unmatched set row is not added, and is named in a toast', async () => {
