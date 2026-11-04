@@ -1,9 +1,10 @@
 # PLAN: price tag LP/SP per item, mixed request, per-item preview, AI extract of pasted lists
 
 **Lane:** PRICETAG-LPSP (PR #2158)
-**Status:** Build (owner answered all 6 on 4 Nov: Q1 a, Q2 "Preferred Default" header toggle, Q3 a,
-Q4 = existing basis rule per line, Q5 b, Q6 = match stored combos only, never create). Track: full LEAD track (size L, migration,
-LLM input surface -> security review).
+**Status:** Review done, hand test next (4 Nov). Owner answered all 6 (Q1 a, Q2 "Preferred Default" with
+unset lines following it, Q3 a, Q4 = existing basis rule per line, Q5 b, Q6 = match stored combos only).
+Reviewer re-check: all findings fixed, last kill-test gap closed; security READY; browser pass 1280/375
+done (evidence-pricetag-lpsp/). Track: full LEAD track (size L, migration, LLM input surface).
 
 Card: `CARD-pricetag-lpsp-04nov.md`. Mock: `pricetag-lpsp-mock.html`. UAC:
 `pricetag-lpsp-acceptance-criteria.md`.

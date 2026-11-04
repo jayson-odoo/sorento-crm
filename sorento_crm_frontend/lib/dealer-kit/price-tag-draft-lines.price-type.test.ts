@@ -42,6 +42,29 @@ describe('lineToDraft price_type (AC-19)', () => {
   });
 });
 
+describe('lineToDraft on reopen follows Preferred Default (owner answer (a), 4 Nov)', () => {
+  const typeOf = (line: DraftLine) => (line as never as Record<string, unknown>).price_type;
+
+  it('a stored type equal to the request mode reopens as following the default', () => {
+    expect(typeOf(lineToDraft(source({ price_type: 'list' }), 'list')) == null).toBe(true);
+    expect(typeOf(lineToDraft(source({ price_type: 'selling' }), 'selling')) == null).toBe(true);
+  });
+
+  it('a stored type different from the request mode is kept as the line\'s own', () => {
+    expect(typeOf(lineToDraft(source({ price_type: 'selling' }), 'list'))).toBe('selling');
+    expect(typeOf(lineToDraft(source({ price_type: 'list' }), 'selling'))).toBe('list');
+  });
+
+  it('reopen a List request, switch the default to Selling: following lines save as SP, the own SP stays', () => {
+    const following = lineToDraft(source({ id: 'a', price_type: 'list' }), 'list');
+    const own = lineToDraft(source({ id: 'b', product_id: 'p2', price_type: 'selling' }), 'list');
+    const sent = draftLinesPayload([following, own], 'selling') as unknown as Record<string, unknown>[];
+    expect(sent.map((l) => l.price_type)).toEqual(['selling', 'selling']);
+    const back = draftLinesPayload([following, own], 'list') as unknown as Record<string, unknown>[];
+    expect(back.map((l) => l.price_type)).toEqual(['list', 'selling']);
+  });
+});
+
 describe('draftLinesPayload price_type (AC-19)', () => {
   const payloadOf = (line: DraftLine) =>
     draftLinesPayload([line])[0] as unknown as Record<string, unknown>;
