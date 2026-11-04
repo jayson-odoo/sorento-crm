@@ -72,13 +72,13 @@ def test_ht1_1_without_companies_the_rows_and_the_rendered_text_are_todays(sessi
 TWO = ["ZZ Granite", "ZZMOCHA"]
 
 
-def _span_run(session_factory, stub_access, monkeypatch, template: str, companies):
+def _span_run(session_factory, stub_access, monkeypatch, template: str, companies, span=None):
     from app.services.chatbot import engine as engine_mod
 
     se.seed_world(session_factory)
     monkeypatch.setattr(engine_mod, "_known_companies", lambda *a, **k: companies)
     return se.run(session_factory, stub_access, monkeypatch, text_body="zzmocha company only",
-                  span=se.spans_json((se.BRAND, "brand")), template=template)
+                  span=span or se.spans_json((se.BRAND, "brand")), template=template)
 
 
 PHRASED = se.BASE + se.SPANS_LINE + "\nKnown companies lists them. Company candidates lists the company rows.\n"
@@ -358,9 +358,10 @@ def test_f3_the_committed_totals_filters_gold_file_loads_whole() -> None:
 
 
 def test_f5_m7_a_company_row_is_never_a_spans_resolved_match_but_the_block_still_renders(session_factory, seeded, stub_access, monkeypatch) -> None:
-    """Depends on engine._span_lookup's `all_rows` filter (`r.list_name != "company"`, engine.py:2075): without it the span
+    """An UNTYPED span (a brand-typed one already prefers the brand list on a tie) ties the brand and the company row exactly.
+    Depends on engine._span_lookup's `all_rows` filter (`r.list_name != "company"`, engine.py:2075): without it the span
     'zzmocha' (typed brand) would also resolve to the Company row ZZMOCHA, so a candidate of list "company" appears."""
-    r = _span_run(session_factory, stub_access, monkeypatch, PHRASED, TWO)
+    r = _span_run(session_factory, stub_access, monkeypatch, PHRASED, TWO, span=se.spans_json((se.BRAND, None)))
     ev = se.trace_events(session_factory, r)[0]
     cands = [c for s in ev["spans"] for c in s["candidates"]]
     assert cands and {c["list"] for c in cands} == {"brand"}, cands
