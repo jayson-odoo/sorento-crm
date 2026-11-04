@@ -1,0 +1,267 @@
+"""Target commission view + commission statement (lane TARGET-COMMISSION-VIEW).
+Plan: documentation/plans/sales/PLAN-target-commission-view-04nov.md (UAC alongside).
+
+The statement is the screen's own computation (`target_service.target_detail`) plus the
+documents behind each period's "Achieved" and the tier table used, so a stakeholder checks the
+same numbers the owner sees. Seeds and fixtures are the S1 file's; today is 20 Oct 2026.
+"""
+from __future__ import annotations
+
+import io
+from datetime import date
+from decimal import Decimal
+
+from openpyxl import load_workbook
+
+from .test_dealer_targets_api import _customer, _dealer_body, _period, _product_id, _sale
+from .test_sales_targets_s1 import (  # noqa: F401  (fixtures)
+    BASE,
+    TODAY,
+    _agent,
+    _client,
+    _do_line,
+    _restore,
+    _so_line,
+    _warehouse,
+    api,
+    world,
+)
+
+STATEMENT = f"{BASE}/commission-statement"
+
+
+def _tgt8(client, db, company_id):
+    """TGT-000008 in miniature: one account, quarterly, own tiers per period, highest tier pays.
+    Q1 6% from 60,000 (8% from 72,000); Q2 5% from 60,000; Q3 not reached; Q4 current."""
+    pid = _product_id(db, company_id)
+    a = _customer(db, company_id, "ZZT A CRAFT IDEA SDN BHD", level=1)
+    so1, _ = _sale(db, company_id, a, "18220.50", date(2026, 1, 8), product_id=pid)
+    so2, _ = _sale(db, company_id, a, "25004.00", date(2026, 2, 14), product_id=pid)
+    so3, _ = _sale(db, company_id, a, "18127.14", date(2026, 3, 21), product_id=pid)
+    _sale(db, company_id, a, "64740.40", date(2026, 5, 2), product_id=pid)
+    _sale(db, company_id, a, "23460.00", date(2026, 8, 9), product_id=pid)
+    _sale(db, company_id, a, "1235.58", date(2026, 10, 2), product_id=pid)
+    # Not counted: cancelled.
+    _sale(db, company_id, a, "99999.00", date(2026, 1, 9), product_id=pid, status="cancelled")
+    tiers = [
+        {"period_start": "2026-01-01", "threshold": 60000, "rate": 6},
+        {"period_start": "2026-01-01", "threshold": 72000, "rate": 8},
+        {"period_start": "2026-04-01", "threshold": 60000, "rate": 5},
+        {"period_start": "2026-07-01", "threshold": 60000, "rate": 5},
+        {"period_start": "2026-10-01", "threshold": 60000, "rate": 5},
+    ]
+    res = client.post(BASE, json=_dealer_body([a], payout_customer_id=a.id, tiers=tiers))
+    assert res.status_code == 201, res.text
+    return res.json(), a, (so1, so2, so3)
+
+
+# --------------------------------------------------------------------------------------- #
+# the screen: tier rate per period, earned to date, current so far
+# --------------------------------------------------------------------------------------- #
+
+
+def test_detail_carries_rate_of_tier_reached_and_earned_to_date(api):
+    client, db, company_id = api
+    body, a, _ = _tgt8(client, db, company_id)
+    q1, q2, q3, q4 = (_period(body, d) for d in ("2026-01-01", "2026-04-01", "2026-07-01", "2026-10-01"))
+    assert q1["achieved_value"] == 61351.64
+    assert q1["tier_reached"] == 1
+    assert q1["tier_rates"] == [{"label": None, "rate": 6.0}]
+    assert q1["commission_earned"] == 3681.10
+    assert q2["tier_rates"] == [{"label": None, "rate": 5.0}]
+    assert q2["commission_earned"] == 3237.02
+    assert q3["tier_reached"] is None and q3["tier_rates"] == []
+    assert q4["is_current"] is True
+    # Earned to date: ended periods only (Q1 + Q2 + Q3 0), the current one apart.
+    assert body["commission_to_date"] == 6918.12
+    assert body["commission_current"] == 0
+    assert body["payout_account"]["code"] == a.customer_code
+
+
+def test_tier_selection_highest_tier_sets_the_rate(api):
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a = _customer(db, company_id, "ZZT HIGH", level=1)
+    _sale(db, company_id, a, "75000", date(2026, 2, 1), product_id=pid)
+    res = client.post(BASE, json=_dealer_body([a], tiers=[
+        {"period_start": "2026-01-01", "threshold": 60000, "rate": 6},
+        {"period_start": "2026-01-01", "threshold": 72000, "rate": 8},
+    ]))
+    q1 = _period(res.json(), "2026-01-01")
+    assert q1["tier_reached"] == 2
+    assert q1["tier_rates"] == [{"label": None, "rate": 8.0}]
+    assert q1["commission_earned"] == 6000.0
+
+
+def test_per_account_rates_are_labelled(api):
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a1 = _customer(db, company_id, "ZZT R1", level=1)
+    a3 = _customer(db, company_id, "ZZT R3", level=3)
+    _sale(db, company_id, a1, "50000", date(2026, 2, 1), product_id=pid)
+    res = client.post(BASE, json=_dealer_body([a1, a3], tiers=[
+        {"period_start": "2026-01-01", "threshold": 40000,
+         "account_rates": [{"customer_id": a1.id, "rate": 2}, {"customer_id": a3.id, "rate": 3}]},
+    ]))
+    q1 = _period(res.json(), "2026-01-01")
+    assert q1["tier_rates"] == [{"label": "A/C I", "rate": 2.0}, {"label": "A/C III", "rate": 3.0}]
+
+
+def test_no_commission_method_has_no_earned_to_date(api):
+    client, db, company_id = api
+    a = _customer(db, company_id, "ZZT NONE", level=1)
+    body = client.post(BASE, json=_dealer_body([a])).json()
+    assert body["commission_to_date"] is None
+    assert body["commission_current"] is None
+
+
+# --------------------------------------------------------------------------------------- #
+# the statement: one computation with the screen
+# --------------------------------------------------------------------------------------- #
+
+
+def test_statement_totals_equal_screen_totals_equal_documents(api):
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    body, a, (so1, so2, so3) = _tgt8(client, db, company_id)
+    target = target_service.get_target_or_404(db, body["id"])
+    [statement] = target_service.commission_statements(db, [target], on=TODAY)
+    screen = client.get(f"{BASE}/{body['id']}").json()
+
+    assert statement["commission_to_date"] == screen["commission_to_date"] == 6918.12
+    for mine, theirs in zip(statement["periods"], screen["periods"]):
+        for key in ("achieved_value", "achieved_pct", "commission_earned", "bonus_earned", "tier_reached", "tier_rates"):
+            assert mine[key] == theirs[key], key
+        # The documents add up to Achieved, to the cent.
+        total = sum((Decimal(str(d["amount"])) for d in mine["documents"]), Decimal("0"))
+        assert total == Decimal(str(mine["achieved_value"])), mine["period_start"]
+
+    q1 = statement["periods"][0]
+    assert [(d["doc_no"], d["doc_date"], d["account_code"], d["amount"]) for d in q1["documents"]] == [
+        (so1.so_number, date(2026, 1, 8), a.customer_code, 18220.50),
+        (so2.so_number, date(2026, 2, 14), a.customer_code, 25004.00),
+        (so3.so_number, date(2026, 3, 21), a.customer_code, 18127.14),
+    ]
+    # The tier table used: the period's own tiers, the reached one marked.
+    assert [(t["tier"], t["threshold_rm"], t["rates"], t["reached"]) for t in q1["tier_table"]] == [
+        (1, 60000.0, [{"label": None, "rate": 6.0}], True),
+        (2, 72000.0, [{"label": None, "rate": 8.0}], False),
+    ]
+
+
+def test_statement_documents_follow_the_delivered_basis_by_do_date(api):
+    """A Delivered target counts the DO-dated part of a line in the DO's period: the documents
+    of each period still add up to that period's Achieved."""
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    wh = _warehouse(db, company_id)
+    a = _customer(db, company_id, "ZZT DELIV", level=1)
+    so, line = _so_line(
+        db, company_id, customer_id=a.id, order_date=date(2026, 3, 20), line_total=Decimal("1000"),
+        product_id=pid, qty_ordered=10, qty_delivered=10,
+    )
+    _do_line(db, company_id, pid, wh.id, line.id, quantity=4, order_date=date(2026, 3, 25))
+    _do_line(db, company_id, pid, wh.id, line.id, quantity=6, order_date=date(2026, 4, 5))
+    res = client.post(BASE, json=_dealer_body([a], basis="delivered", tiers=[
+        {"period_start": "2026-01-01", "threshold": 100, "rate": 1},
+    ]))
+    assert res.status_code == 201, res.text
+    target = target_service.get_target_or_404(db, res.json()["id"])
+    [statement] = target_service.commission_statements(db, [target], on=TODAY)
+    q1, q2 = statement["periods"][0], statement["periods"][1]
+    assert q1["achieved_value"] == 400 and q2["achieved_value"] == 600
+    assert [(d["doc_no"], d["amount"]) for d in q1["documents"]] == [(so.so_number, 400.0)]
+    assert [(d["doc_no"], d["amount"]) for d in q2["documents"]] == [(so.so_number, 600.0)]
+
+
+def test_statement_works_for_an_agent_target(api):
+    from app.services.sales import target_service
+
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    agent = _agent(db, "STMT")
+    so, _ = _so_line(db, company_id, agent_id=agent.id, order_date=date(2026, 2, 3),
+                     line_total=Decimal("500"), product_id=pid)
+    res = client.post(BASE, json={
+        "subject_kind": "agent", "sales_agent_id": agent.id, "name": "ZZT agent stmt",
+        "metric": "amount", "basis": "ordered", "product_scope": "all",
+        "start_date": "2026-01-01", "end_date": "2026-03-31", "target_value": 1000,
+    })
+    assert res.status_code == 201, res.text
+    target = target_service.get_target_or_404(db, res.json()["id"])
+    [statement] = target_service.commission_statements(db, [target], on=TODAY)
+    assert [(d["doc_no"], d["amount"]) for d in statement["periods"][0]["documents"]] == [(so.so_number, 500.0)]
+
+
+# --------------------------------------------------------------------------------------- #
+# the export: xlsx, one or many targets
+# --------------------------------------------------------------------------------------- #
+
+
+def _book(res):
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "attachment" in res.headers["content-disposition"]
+    return load_workbook(io.BytesIO(res.content))
+
+
+def _values(ws):
+    return [[c for c in row] for row in ws.iter_rows(values_only=True)]
+
+
+def test_statement_xlsx_one_target(api):
+    client, db, company_id = api
+    body, a, (so1, _so2, _so3) = _tgt8(client, db, company_id)
+    wb = _book(client.get(STATEMENT, params={"ids": body["id"]}))
+    assert wb.sheetnames[0] == "Summary"
+    summary = _values(wb["Summary"])
+    row = next(r for r in summary if body["target_no"] in r)
+    assert 6918.12 in row
+    ws = wb[body["target_no"]]
+    rows = _values(ws)
+    flat = [v for r in rows for v in r if v is not None]
+    assert so1.so_number in flat
+    assert 61351.64 in flat and 3681.10 in flat
+    assert any(isinstance(v, str) and a.customer_code in v for v in flat)
+    # Dates are real dates shown dd/mm/yyyy; money cells show 2 decimals.
+    date_cells = [c for r in ws.iter_rows() for c in r if c.value is not None and hasattr(c.value, "year")]
+    assert date_cells and all(c.number_format == "dd/mm/yyyy" for c in date_cells)
+    money = next(c for r in ws.iter_rows() for c in r if c.value == 61351.64)
+    assert money.number_format == "#,##0.00"
+
+
+def test_statement_xlsx_many_targets_one_file(api):
+    client, db, company_id = api
+    first, _a, _ = _tgt8(client, db, company_id)
+    other = _customer(db, company_id, "ZZT OTHER DEALER", level=1)
+    second = client.post(BASE, json=_dealer_body([other])).json()
+    wb = _book(client.get(STATEMENT, params={"ids": f"{first['id']},{second['id']}"}))
+    assert wb.sheetnames == ["Summary", first["target_no"], second["target_no"]]
+
+
+def test_statement_refuses_none_and_too_many(api):
+    client, db, company_id = api
+    assert client.get(STATEMENT).status_code == 422
+    ids = ",".join("00000000-0000-4000-8000-%012d" % i for i in range(51))
+    assert client.get(STATEMENT, params={"ids": ids}).status_code == 422
+
+
+def test_statement_unknown_target_is_404(api):
+    client, db, company_id = api
+    res = client.get(STATEMENT, params={"ids": "00000000-0000-4000-8000-000000000001"})
+    assert res.status_code == 404
+
+
+def test_statement_needs_view_permission(world):
+    db, company_id = world
+    client, originals = _client(db, [])
+    try:
+        res = client.get(STATEMENT, params={"ids": "00000000-0000-4000-8000-000000000001"})
+        assert res.status_code == 403
+    finally:
+        _restore(originals)
