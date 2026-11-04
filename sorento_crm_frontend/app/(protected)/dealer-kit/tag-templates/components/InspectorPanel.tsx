@@ -1530,7 +1530,13 @@ function SubjectInspector({
           ...(grouped && part.role ? { group: part.role } : {}),
         })),
       ]
-    : slotOptions(slots, isPriceBadge);
+    : [
+        // A layer saved with a part number keeps showing it, so it stays visible and replaceable.
+        ...(!subjectSlot && subjectPart !== undefined
+          ? [{ value: String(subjectPart), label: `Part ${subjectPart + 1}` }]
+          : []),
+        ...slotOptions(slots, isPriceBadge),
+      ];
   const value = parts
     ? subjectPart === undefined
       ? isPriceBadge

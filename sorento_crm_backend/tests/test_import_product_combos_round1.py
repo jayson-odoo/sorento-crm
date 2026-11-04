@@ -91,3 +91,56 @@ def test_a_title_only_entry_is_still_read(db, catalogue, tmp_path):
     e["title"] = e.pop("combo_name")
     _code, _out, rows = _run(db, tmp_path, [e])
     assert rows["S3"]["status"] == "new"
+
+
+# --------------------------------------------------------------------------- F3: links persist
+
+
+def test_apply_link_templates_commits_the_links(db, catalogue, tmp_path):
+    from app.models.base import company_scope
+    from app.models.dealer_kit import ComboTagTemplate
+    from tests.test_import_product_combos_reseed import _template_with
+
+    fits = _template_with(db, "ZZT main", {"kind": "main"})
+    db.commit()
+    _run(db, tmp_path, [s3_entry()], "--apply", "--link-templates")
+    # What a second connection would see: anything the run left uncommitted is gone.
+    db.rollback()
+    db.expire_all()
+    combo = _combo(db, "ZZT S3", shapes.S3_HOST)
+    with company_scope(db, None):
+        linked = {r.template_id for r in db.query(ComboTagTemplate).filter_by(combo_id=combo.id).all()}
+    assert linked == {fits}
+
+
+# --------------------------------------------------------------------------- F3: unsure is never pruned
+
+
+def test_update_keeps_a_discontinued_part_the_seed_lists_and_does_not_report_it_removed(db, catalogue, tmp_path):
+    host = catalogue[shapes.S1_HOST]
+    seed.combo(
+        db, host, "ZZT S1",
+        parts=[{"product": catalogue[c], "group": "Kitchen tap"} for c in shapes.S1_OPTIONS]
+        + [{"product": catalogue[shapes.S1_UPGRADE], "is_upgrade": True}],
+    )
+    catalogue["SRTKT1892SS"].is_discontinued = True
+    db.commit()
+    _code, _out, dry = _run(db, tmp_path, [s1_entry()])
+    assert dry["S1"]["status"] == "unsure"
+    assert "SRTKT1892SS" in dry["S1"]["discontinued"]
+    assert "removed SRTKT1892SS" not in dry["S1"]["differences"]
+    _run(db, tmp_path, [s1_entry()], "--apply", "--update")
+    assert "SRTKT1892SS" in _parts(db, _combo(db, "ZZT S1", shapes.S1_HOST)), "the existing part stays"
+
+
+def test_update_does_not_prune_an_unsure_combo_even_for_a_part_the_seed_dropped(db, catalogue, tmp_path):
+    host = catalogue[shapes.S3_HOST]
+    seed.combo(
+        db, host, "ZZT S3",
+        parts=[{"product": catalogue[c], "group": "Tap colour"} for c in shapes.S3_OPTIONS]
+        + [{"product": catalogue["SRTWT6203-GM"]}],
+    )
+    db.commit()
+    e = s3_entry(unsure="price smudged")
+    _run(db, tmp_path, [e], "--apply", "--update")
+    assert "SRTWT6203-GM" in _parts(db, _combo(db, "ZZT S3", shapes.S3_HOST))

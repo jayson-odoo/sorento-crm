@@ -34,6 +34,7 @@ import {
   linePriceType,
   lineTemplateState,
   packageWarningFor,
+  comboOfLine,
   partsAtListTitle,
   picksNeeded,
   type DraftLine,
@@ -397,6 +398,8 @@ function LineRow({
   const templateState = lineTemplateState(line);
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
+  // What the chosen template reads from each group, once per part.
+  const picksByPart = new Map(line.parts.map((part) => [part.key, picksNeeded(line, part.role)]));
   // Only when there is a choice to make: one combo is applied on pick, and none
   // leaves nothing to select.
   const showPackage = !isSet && line.combos.length > 1;
@@ -701,7 +704,7 @@ function LineRow({
                       ? `${template.width_mm} x ${template.height_mm} mm`
                       : '';
                   // AC-B4: what the template reads, in this combo's own words.
-                  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+                  const combo = comboOfLine(line);
                   const needs =
                     combo && template.needs ? needsText(template.needs, comboShape(combo.parts)) : '';
                   return {
@@ -749,14 +752,14 @@ function LineRow({
             priceMode={linePriceType(line, priceMode)}
             combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
-            picksK={picksNeeded(line, part.role)}
+            picksK={picksByPart.get(part.key) ?? 0}
             onResolvePart={onResolvePart}
             onResolvePicks={onResolvePicks}
             onRemovePart={onRemovePart}
           />
           {/* AC-C5: how many picks a multi-pick group still lacks. */}
           {(() => {
-            const k = picksNeeded(line, part.role);
+            const k = picksByPart.get(part.key) ?? 0;
             const held = part.product_ids?.length ?? (part.product_id ? 1 : 0);
             return k >= 2 && part.candidates.length > 1 && held < k ? (
               <tr>

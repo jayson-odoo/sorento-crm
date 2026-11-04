@@ -27,6 +27,7 @@ import {
   formatRM,
   MISSING_TAG_TEMPLATE,
   newPartKey,
+  comboOfLine,
   partsFromCombo,
   pickedProductIds,
   trimPicksToTemplate,
@@ -402,7 +403,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       setLines((prev) =>
         prev.map((l) => {
           if (l.key !== key || !l.combo_id) return l;
-          const combo = l.combos.find((c) => c.combo_id === l.combo_id);
+          const combo = comboOfLine(l);
           if (!combo) return l;
           const missing = partsFromCombo(combo).filter((candidate) =>
             candidate.role

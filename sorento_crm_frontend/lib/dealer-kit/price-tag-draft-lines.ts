@@ -89,6 +89,11 @@ export interface DraftLine {
   price_type?: PriceMode | null;
 }
 
+/** The combo the line is asked for as, once the combos lookup has answered. */
+export function comboOfLine(line: Pick<DraftLine, 'combo_id' | 'combos'>): ProductComboOption | undefined {
+  return line.combo_id ? line.combos.find((c) => c.combo_id === line.combo_id) : undefined;
+}
+
 /** The line's effective LP/SP: its own, else the request's mode. */
 export function linePriceType(line: Pick<DraftLine, 'price_type'>, priceMode: PriceMode): PriceMode {
   return line.price_type ?? priceMode;
@@ -206,7 +211,7 @@ export function packageWarningFor(line: DraftLine): string | null {
   if (!line.combo_id) {
     return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
   }
-  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+  const combo = comboOfLine(line);
   if (!combo) return null;
   const missing: string[] = [];
   for (const part of combo.parts) {
@@ -372,7 +377,7 @@ export type LineTemplateState =
   | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null };
 
 function comboShapeOf(line: DraftLine) {
-  const combo = line.combo_id ? line.combos.find((c) => c.combo_id === line.combo_id) : undefined;
+  const combo = comboOfLine(line);
   return combo ? comboShape(combo.parts) : null;
 }
 
@@ -473,7 +478,7 @@ function chosenTemplate(line: DraftLine): ProductTagTemplateOption | null {
 /** How many picks the chosen template reads from this part's group (0 when it reads none). */
 export function picksNeeded(line: DraftLine, role: string | null): number {
   const needs = chosenTemplate(line)?.needs;
-  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+  const combo = comboOfLine(line);
   if (!needs || !combo || !role) return 0;
   const index = groupIndexOf(role, comboShape(combo.parts));
   return index < 0 ? 0 : (needs.groups[index] ?? 0);
@@ -509,7 +514,7 @@ export function linePickProblems(
   const out: string[] = [];
   lines.forEach((line, index) => {
     const n = index + 1;
-    const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+    const combo = comboOfLine(line);
     for (const part of line.parts) {
       const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
       const k = picksNeeded(line, part.role);
