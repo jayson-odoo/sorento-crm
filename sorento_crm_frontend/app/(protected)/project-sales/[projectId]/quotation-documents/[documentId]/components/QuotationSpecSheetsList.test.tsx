@@ -194,6 +194,14 @@ describe('QuotationSpecSheetsList', () => {
     expect(minWidth).toBeLessThanOrEqual(920);
   });
 
+  it('the No. column is wide enough to show "SS1" whole (72 px or more)', async () => {
+    listSpecSheets.mockResolvedValue(list({ items: [row({})] }));
+    renderList();
+    await screen.findByText('SS1');
+    const th = screen.getByRole('columnheader', { name: /No\./ }) as HTMLElement;
+    expect(parseFloat(th.style.width)).toBeGreaterThanOrEqual(72);
+  });
+
   it('opens the sheet when its row is clicked', async () => {
     listSpecSheets.mockResolvedValue(list({ items: [row({})] }));
     renderList();

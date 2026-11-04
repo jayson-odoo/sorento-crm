@@ -34,7 +34,7 @@ export function FormatBar({
       role="group"
       aria-label="Text formatting"
     >
-      <div className="w-36">
+      <div className="w-28">
         <SearchableSelect
           size="sm"
           value={text.fontFamily}

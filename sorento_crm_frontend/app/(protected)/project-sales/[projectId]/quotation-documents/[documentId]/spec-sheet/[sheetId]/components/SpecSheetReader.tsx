@@ -858,7 +858,9 @@ export function SpecSheetReader({
                   />
                 )}
                 <span
-                  className="ms-auto text-xs text-muted-foreground"
+                  // Fixed width, one line: "Saving..." is wider than "Saved", and a toolbar that
+                  // rewraps on every autosave moves every page down and back.
+                  className="ms-auto w-14 shrink-0 whitespace-nowrap text-end text-xs text-muted-foreground"
                   aria-live="polite"
                   data-testid="spec-sheet-save-state"
                 >
@@ -910,7 +912,7 @@ export function SpecSheetReader({
             <div
               ref={scroller}
               onScroll={onScroll}
-              className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto rounded-lg bg-muted"
+              className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-muted"
               data-testid="spec-sheet-stack"
             >
               <div

@@ -103,3 +103,10 @@ Reviewer round on f88747a6 (READY) follow-ups, re-measured after them: AREA sing
 moves 30-34 px, a double-click opens the Area box (2 of 2); Every page + Y box and Every page + drag: no error, one
 apply-all. On a live page the AREA / COMMENT / marker buttons stay in the tab order with `pointer-events-none`, so Tab
 + Enter still opens the field from the keyboard.
+
+## Crew re-pass r7 fixes
+
+- Toolbar at 1280x900 with a text layer selected: 52 px through both `Saving...` and `Saved` (was 52 -> 76 -> 52 on every
+  autosave). The save state has a fixed width and does not wrap; the font picker is 112 px so it fits on the first row.
+- Spec sheets list: `SS1` / `SS2` show whole in the No. column (72 px); the table stays 950 px in its card.
+- Forty wheel steps over the rail at its end: the page behind does not scroll (rail and stack are `overscroll-contain`).

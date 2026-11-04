@@ -198,8 +198,8 @@ export function PageRail({
       data-testid="spec-sheet-rail"
       className={cn(
         strip
-          ? 'flex w-full gap-1.5 overflow-x-auto pb-1'
-          : 'flex max-h-[calc(100dvh-16rem)] min-h-[20rem] w-44 shrink-0 flex-col gap-1.5 overflow-y-auto',
+          ? 'flex w-full gap-1.5 overflow-x-auto overscroll-contain pb-1'
+          : 'flex max-h-[calc(100dvh-16rem)] min-h-[20rem] w-44 shrink-0 flex-col gap-1.5 overflow-y-auto overscroll-contain',
       )}
     >
       {body}

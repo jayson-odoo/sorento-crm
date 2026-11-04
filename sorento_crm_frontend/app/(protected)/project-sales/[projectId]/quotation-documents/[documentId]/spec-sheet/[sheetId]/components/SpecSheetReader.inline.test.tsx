@@ -799,6 +799,22 @@ describe('AREA, COMMENT and marker on a live page', () => {
   });
 });
 
+describe('the save state in the toolbar', () => {
+  it('has a fixed width and never wraps, so "Saving..." vs "Saved" cannot reflow the toolbar', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    const state = await screen.findByTestId('spec-sheet-save-state');
+    expect(state.className).toContain('whitespace-nowrap');
+    expect(state.className).toContain('shrink-0');
+    expect(state.className).toMatch(/\bw-\[|\bw-\d/);
+  });
+});
+
 describe('thumbnail rail', () => {
   it('draws real mini pages and asks for chunks, never for single thumbnails', async () => {
     renderReader();

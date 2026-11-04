@@ -108,8 +108,8 @@ export function QuotationSpecSheetsList() {
             {row.original.label}
           </span>
         ),
-        size: 56,
-        minSize: 56,
+        size: 72,
+        minSize: 72,
         enableSorting: false,
         meta: { headerTitle: 'No.' },
       },
@@ -146,8 +146,8 @@ export function QuotationSpecSheetsList() {
             </span>
           );
         },
-        size: 130,
-        minSize: 130,
+        size: 114,
+        minSize: 100,
         enableSorting: false,
         meta: { headerTitle: 'Templates' },
       },

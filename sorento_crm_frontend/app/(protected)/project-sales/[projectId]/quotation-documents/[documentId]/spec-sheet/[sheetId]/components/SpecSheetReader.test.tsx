@@ -699,4 +699,14 @@ describe('rail clicks move only the page stack (crew browser pass r6, item e)', 
       /^4 of/,
     );
   });
+
+  it('a wheel past the end of the rail or the stack does not scroll the page behind them', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.getByTestId('spec-sheet-stack').className).toContain(
+      'overscroll-contain',
+    );
+    const rail = screen.getByTestId('spec-sheet-rail');
+    expect(rail.className).toContain('overscroll-contain');
+  });
 });
