@@ -3,9 +3,21 @@ date move tells purchasing Was (old told date) and Now (new SO line date).
 
 The real path end to end: a line confirmed as Buy on WAS_1, AutoCount moves the SO line date
 (a pending `delayed` / `advanced` planning change), then oiod_0001's backfill runs (the 4 Nov
-deploy) and moves the told date onto the new line date. The control test pins the defect:
-Confirm then sends no date move. With oiod_0002 run before the Confirm, the handover carries
-Was WAS_1 / Now the new date and the row is stamped as it would have been without the backfill.
+deploy) and moves the told date onto the new line date. With oiod_0002 run before the
+Confirm, the handover carries Was WAS_1 / Now the new date and the row is stamped as it would
+have been without the backfill.
+
+The control (no oiod_0002) runs in PROD's start order, which this module sets up at import
+(release sweep RELEASE-SWEEP-4NOV-PM, #2171): the post-commit dispatch listener is registered
+before any fixture writes, as `app/main.py`'s startup registers it before any request. In
+that order the Confirm STILL emails Was WAS_1 / Now: the Was comes from the pending planning
+change's own old date, not from the row's `previous_delivery_date` (measured: blanking that
+column before the Confirm leaves the email unchanged). The control used to assert "nothing
+reaches purchasing", which held only when the test's own `_register` was the first
+registration in the process: the fixture's earlier handover then stayed undrained on
+`Session.info`, the Confirm read the line as already told in this write and said nothing. Any
+earlier file that ran the app lifespan (`with TestClient(app)`) flipped it, so it failed by
+xdist file placement.
 
 Real database, every write rolled back (`_real_db_session` via the `api` fixture); the two
 migrations run as raw SQL inside that same transaction.
@@ -41,6 +53,14 @@ from ..test_planning_change_apply_on_board import (
 from .test_oi_date_move_settle import _one_row_fixture
 
 __all__ = ["api", "world"]
+
+# Prod's start order: the post-commit dispatch listener exists before any write, as
+# `app/main.py`'s startup registers it (idempotent, process-global). See the module docstring.
+from app.services.project_order_inquiry_service import (  # noqa: E402
+    register_order_inquiry_post_commit_dispatch,
+)
+
+register_order_inquiry_post_commit_dispatch()
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 LATER = date(2026, 9, 30)  # WAS_1 is 25 Aug: LATER is a DELAY, NOW (19 Aug) an ADVANCE
@@ -117,11 +137,14 @@ def _date_moves(calls):
     return out
 
 
-def test_control_without_the_restore_confirm_tells_purchasing_nothing(api, monkeypatch):
-    """The defect this lane repairs: the backfill already moved the told date, so the
-    Confirm sees no move and no Was / Now reaches purchasing."""
-    _world, _line, calls = _pending_move_after_backfill(api, monkeypatch, LATER, restore=False)
-    assert _date_moves(calls) == []
+def test_control_without_the_restore_confirm_still_tells_was_and_now(api, monkeypatch):
+    """Prod start order (see the module docstring): without oiod_0002 the Confirm still
+    emails Was WAS_1 / Now the new date, read off the pending planning change, and stamps
+    the row the same way the restore does."""
+    world, line, calls = _pending_move_after_backfill(api, monkeypatch, LATER, restore=False)
+    assert _date_moves(calls) == [(WAS_1.strftime("%d/%m/%Y"), LATER.strftime("%d/%m/%Y"))]
+    live = [r for r in _rows_of(world, line) if r.state != INQUIRY_CANCELLED]
+    assert [(r.delivery_date, r.previous_delivery_date) for r in live] == [(LATER, WAS_1)]
 
 
 @pytest.mark.parametrize("new_date", [LATER, NOW], ids=["delay", "advance"])
