@@ -1,8 +1,9 @@
 # UAC: chatbot totals vs top-N, one name one filter, clear one filter, combined turn
 
-Status: Q1 (a) and Q3 (a) answered by crew 4 Nov (new path only, no old-path patch; held filters survive every
-follow-up until the user changes them). Q2, Q4, Q5 are with the owner (ask a57420216): rows marked PENDING-Q2 /
-PENDING-Q4 are not built until he answers. Plan: `PLAN-chatbot-totals-filters-4nov.md`.
+Status: answered 4 Nov. Q1 (a) new path only, no old-path patch. Q3 (a) held filters survive every follow-up until the
+user changes them. Q2 (c) a bare name that is both a company and a brand asks ONCE which, and asking for both works.
+Q5 the owner raised the report limit in Settings (no code). Q4 open (crew ask: today neither path lists per-agent
+totals); rows marked PENDING-Q4 wait. Plan: `PLAN-chatbot-totals-filters-4nov.md`.
 
 Scope: the NEW report-ask path (`parser.REPORT_ASK_LINE` marker, `report_ask.from_object`). Production gets these once
 the parser label moves to the lane's prompt text. Staff contact who sees two companies (Sorento, Mocha) unless a row says
@@ -25,9 +26,14 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 |---|---|---|---|
 | ON-1 | Sep, delivered, split by channel | "sorento company only" | Company Sorento only; NO brand filter; split, period, basis kept |
 | ON-2 | Sep, delivered | "Sorento brand only" | Brand SORENTO only; no company filter added |
-| ON-3 PENDING-Q2 | nothing | "Sorento total sale September 2026" | Basis asked; then Company Sorento (Q2), no brand filter, NOT the two-company table |
+| ON-3 | nothing | "Sorento total sale September 2026" (basis given or held) | ONE question: Sorento, company or brand (options company / brand / both); no report runs yet; NOT the two-company table |
 | ON-4 | nothing | same as ON-1/ON-2 with Mocha | Same, for Mocha |
-| ON-5 PENDING-Q2 | nothing | a contact who sees one company, "Sorento total sale September 2026" | Brand SORENTO (no company choice exists) |
+| ON-5 | nothing | a contact who sees one company, "Sorento total sale September 2026" | Brand SORENTO (no company choice exists) |
+| ON-8 | nothing | "sorento company and brand, Sep delivered" | Company Sorento AND Brand SORENTO together, no question |
+| ON-9 | ON-3's open question | "company" | Company only, no brand; basis + period kept; not asked again |
+| ON-10 | ON-3's open question | "brand" | Brand only, no company; rest kept |
+| ON-11 | ON-3's open question | "both" | Company AND brand; rest kept |
+| ON-12 | company Sorento already held (settled earlier) | a follow-up that does not mention Sorento | No question; held company kept (Q3) |
 | ON-6 | nothing | "Cabana sales Sep delivered" | Unchanged #2105 behaviour: "brand or account type?" |
 | ON-7 | overlap detection | any name present in two filter lists | Found from data (the name resolves in both), never from a list of names in code |
 

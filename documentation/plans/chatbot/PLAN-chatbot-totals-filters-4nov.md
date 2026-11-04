@@ -1,8 +1,8 @@
 # PLAN: chatbot totals vs top-N, company vs brand, clearing a held filter, combined turn (4 Nov 2026)
 
-Status: Build (M track, LEAD pattern). Crew answered Q1 (a) new path only, no old-path patch, and Q3 (a) held filters
-survive every follow-up until the user changes them; spend for prompt gates OK up to USD 0.80. Q2 / Q4 / Q5 are with
-the owner (ask a57420216); their rows wait.
+Status: Build (M track, LEAD pattern). Answers 4 Nov: Q1 (a) new path only; Q3 (a) held filters survive until the user
+changes them; Q2 (c) ask once, both must work; Q5 no code (owner raised the limit); Q4 open (neither path lists
+per-agent totals today). Prompt gates OK up to USD 0.80. Candidate prompt md5 1b576855.
 
 ## Journey
 
@@ -88,7 +88,7 @@ Second replay on the new path (copy on sorento_prod_1020, the e4aa6d43 text save
 ## Architecture
 
 Layer: backend chatbot only. Parser report-ask object (`head/parser.py`, marker path), the parser prompt text (a DB row;
-the edits are recorded in `PROMPT-chatbot-totals-filters-<md5>.md`), and `report_ask.from_object`
+the edits are recorded in `PROMPT-chatbot-totals-filters-1b576855.md`), and `report_ask.from_object`
 (`lanes/business/report_ask.py:3273-3407`). No FE, no migration, no old-path code (PR B deletes it).
 
 - M1 ask frame. The report-ask object gets `frame`: `total` | `breakdown` | `ranking` | null. `from_object` acts on it:
@@ -98,10 +98,12 @@ the edits are recorded in `PROMPT-chatbot-totals-filters-<md5>.md`), and `report
   - ranking: today's path; count and measure are asked only when missing.
   - A frame with an axis counts as typed for the held-axis rule (`:3337-3346`), so the object's axis wins over a held one.
   - null or absent: today's inference, byte for byte (texts without the field).
-- M2 one name, one filter. In `from_object`, a name that sits in two of the object's filter slots (`company`, `brands`,
-  `account_types`, `brand_or_account_type`), compared casefold on the parser's own output, is one name. The entity's
-  `kind_said` keeps that slot and drops the name from the other. `kind_said` null leaves today's behaviour (Q2 pending).
-  Same class as #2105's `_account_plan` (parser fields consumed, nothing read from the user's text).
+- M2 one name, one filter (owner Q2 (c)). In `from_object`, a name said in THIS message that is both a brand and a company the
+  contact can see (found from data: the brand catalogue and the contact's companies, no name list) is resolved by its
+  entity's `kind_said`: company -> company only; brand -> brand only; both kinds -> both filters; null -> ONE kind
+  question (the #2105 kind ask, `_kind_ask` `:1721-1727` / `_kind_options` `:410`, with company, brand and both), whose
+  answer fills the slot(s) and keeps the rest. A contact who sees one company gets the brand, no question. A name held
+  from an earlier turn and not said now is untouched (Q3). Parser fields consumed, nothing read from the user's text.
 - M3 clear one filter. No new mechanism: the new path's widen (`turn/decide.py:446-456` `widened_kinds`, `_carry`
   `:3410-3431`). Tests lock every filter kind; a kind that fails gets the same widen handling.
 - M4 basis. Prompt only: the message's own basis field is filled when the message says it. The V1 never-default guard
