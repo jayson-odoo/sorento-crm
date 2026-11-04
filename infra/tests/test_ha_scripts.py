@@ -556,8 +556,10 @@ def _route_env(tmp_path, **extra):
     pgb = tmp_path / "fake-pgb"
     pgb.write_text(
         f'#!/usr/bin/env bash\ncase "$1" in RELOAD) echo reload >> {log};;\n'
-        f'  KILL*) echo "kill ${{1#KILL }}" >> {log}; [ -e {tmp_path}/kill_fail ] && exit 1;;\n'
-        f'  RESUME*) echo "resume ${{1#RESUME }}" >> {log}; [ -e {tmp_path}/resume_fail ] && exit 1;;\nesac\n'
+        f'  KILL*) echo "kill ${{1#KILL }}" >> {log}; [ -e {tmp_path}/kill_fail ] && {{ echo "timeout: connection lost" >&2; exit 124; }};;\n'
+        f'  RESUME*) echo "resume ${{1#RESUME }}" >> {log};\n'
+        f'    [ -e {tmp_path}/resume_not_paused ] && {{ echo "ERROR:  database ${{1#RESUME }} is not paused" >&2; exit 1; }}\n'
+        f'    [ -e {tmp_path}/resume_fail ] && exit 1;;\nesac\n'
         f'[ -e {tmp_path}/reload_fail ] && [ "$1" = RELOAD ] && exit 1\nexit 0\n')
     pgb.chmod(0o755)
     fake = tmp_path / "fake-redis"
@@ -676,14 +678,25 @@ def test_a_failed_resume_after_kill_leaves_the_route_unconfirmed(tmp_path):
     assert route.read_text().startswith("; route=unconfirmed")
 
 
-def test_kill_on_a_database_with_no_pool_yet_is_not_an_error(tmp_path):
+def test_a_failed_kill_still_resumes_and_leaves_the_route_unconfirmed(tmp_path):
+    # Review round 3: a KILL that timed out may still have paused the database: RESUME must run,
+    # and the route must not be confirmed, so R1 retries next tick.
     e, log, route = _route_env(tmp_path)
     (tmp_path / "kill_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "KILL" in r.stderr
+    assert "resume sorento_app" in log.read_text()
+    assert route.read_text().startswith("; route=unconfirmed")
+
+
+def test_resume_saying_not_paused_is_harmless(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "resume_not_paused").write_text("")
     assert _adapter(e, "route", "local").returncode == 0
-    assert "resume sorento_app" not in log.read_text()
     assert route.read_text().startswith("; route=local")
 
 
-def test_pgbouncer_database_names_must_be_plain(tmp_path):
-    e, _, route = _route_env(tmp_path, PGB_DATABASES="app;RESUME")
+@pytest.mark.parametrize("names", ["app;RESUME", "pgbouncer", "app pgbouncer"])
+def test_pgbouncer_database_names_must_be_plain_app_databases(tmp_path, names):
+    e, _, route = _route_env(tmp_path, PGB_DATABASES=names)
     assert _adapter(e, "route", "local").returncode == 2 and not route.exists()

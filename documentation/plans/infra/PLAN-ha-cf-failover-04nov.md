@@ -429,6 +429,14 @@ Redis, accepted risks (review):
   takes away reconfiguration and wiping, not pushing jobs. Accepted residual risk, bounded by the
   DOCKER-USER rules (only the CRM compose network crosses the link).
 
+- **A retried re-point cuts live sessions.** A re-point drops every app connection through
+  pgbouncer (`KILL` + `RESUME`). Normally they point at a dead host or a standby, so nothing of
+  value is cut. In one rare case they point at the primary: a retry of an unconfirmed route whose
+  first `RELOAD` did take effect. Then a session-level advisory lock such as the chatbot's
+  one-turn-per-contact lock (`app/services/chatbot/agent/loop.py:813-834`) is released while its
+  turn carries on, so a second turn for that contact can start and a double reply is possible.
+  This is the same outcome as losing the primary, and as rare.
+
 Constraint the drill found: a newly promoted primary's lease starts at the promotion, so its
 origin must turn Cloudflare-healthy within `FENCE_AFTER`. In prod that is 240 s, against a route
 switch (one tick, 15 s) plus `server_login_retry` (2 s) plus one Cloudflare check (up to 60 s).

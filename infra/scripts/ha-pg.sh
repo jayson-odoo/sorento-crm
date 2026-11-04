@@ -68,7 +68,8 @@ for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
 for v in $PGB_DATABASES; do
-  [[ "$v" =~ ^[A-Za-z0-9_]{1,63}$ ]] || { echo "ha-pg: PGB_DATABASES must be plain database names" >&2; exit 2; }
+  [[ "$v" =~ ^[A-Za-z0-9_]{1,63}$ ]] && [ "$v" != pgbouncer ] \
+    || { echo "ha-pg: PGB_DATABASES must be plain app database names (not pgbouncer)" >&2; exit 2; }
 done
 # Hosts and ports go into a pgbouncer connect string and a REPLICAOF: a space would add keys
 # (review N3), so only a plain host name / address and digits are accepted.
@@ -275,13 +276,25 @@ case "$cmd" in
     # shellcheck disable=SC2086
     timeout 15 $PGB_ADMIN "RELOAD" >/dev/null || { echo "ha-pg: pgbouncer RELOAD failed; route left unconfirmed" >&2; exit 1; }
     for db in $PGB_DATABASES; do
+      # KILL pauses the database until RESUME, so RESUME ALWAYS runs, whatever KILL returned
+      # (a KILL may have taken effect even if psql timed out). With the `*` wildcard, KILL of a
+      # database with no pool yet succeeds (checked on pgbouncer 1.23), so ANY KILL failure
+      # (timeout, exec, auth) leaves the route unconfirmed and R1 retries (review round 3).
+      # The only harmless RESUME failure is "is not paused".
       # shellcheck disable=SC2086
-      if timeout 15 $PGB_ADMIN "KILL $db" >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        timeout 15 $PGB_ADMIN "RESUME $db" >/dev/null \
-          || { echo "ha-pg: pgbouncer RESUME $db FAILED (database paused); route left unconfirmed" >&2; exit 1; }
+      kout=$(timeout 15 $PGB_ADMIN "KILL $db" 2>&1); krc=$?
+      # shellcheck disable=SC2086
+      rout=$(timeout 15 $PGB_ADMIN "RESUME $db" 2>&1); rrc=$?
+      if [ "$rrc" != 0 ]; then
+        case "$rout" in
+          *"is not paused"*) ;;
+          *) echo "ha-pg: pgbouncer RESUME $db FAILED (database may be paused); route left unconfirmed" >&2; exit 1 ;;
+        esac
       fi
-      # KILL fails only for a database with no pool yet: nothing to drop, nothing paused.
+      if [ "$krc" != 0 ]; then
+        echo "ha-pg: pgbouncer KILL $db failed (${kout##*$'\n'}); route left unconfirmed" >&2
+        exit 1
+      fi
     done
     tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1
     sed "1s/^; route=unconfirmed /; route=$target /" "$ROUTE_FILE" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$ROUTE_FILE" \
