@@ -428,6 +428,73 @@ def test_on12_a_name_settled_in_an_earlier_turn_is_not_asked_again_and_the_held_
     assert _frame(rbot).get("company") == DEFAULT_COMPANY_ID, _frame(rbot)
 
 
+# The live model leaves entities[].kind_said null, so a bare overlap name goes in the `company_or_brand` list slot.
+
+
+def _ra3(company_or_brand: list[str], **kw: Any) -> dict[str, Any]:
+    ra = _ra2(None, **kw)
+    ra["company_or_brand"] = company_or_brand
+    return ra
+
+
+def _cob_turn(rbot, ra: dict[str, Any], *entities: dict[str, Any], message: str = "Sorento total sale September 2026", **flat: Any):
+    return rbot.say(_v("sales_report", ra, *entities, basis="delivered", domain_in_message=True, **SEPF, **flat), message)
+
+
+def test_on13_a_company_or_brand_name_asks_one_kind_question_and_runs_nothing(rbot, world) -> None:
+    text, calls = _cob_turn(rbot, _ra3(["Sorento"], basis="delivered", **SEP))
+    assert not _ran(calls), f"ON-13: a report ran for company_or_brand: {_ran(calls)}"
+    slot = _kind_slot(rbot)
+    assert slot.get("asking") == "kind", f"ON-13: the kind question is not open: {slot.get('asking')!r} / {text!r}"
+    assert "company" in text.lower() and "brand" in text.lower(), f"ON-13: options must include company and brand: {text!r}"
+    assert "sorento" in str(slot).lower(), slot
+
+
+def test_on14_the_held_report_line_names_the_open_question_company_or_brand(rbot, world) -> None:
+    from tests.chatbot.test_report_semantic_carry import _held_line
+
+    _cob_turn(rbot, _ra3(["Sorento"], basis="delivered", **SEP))
+    assert _kind_slot(rbot).get("asking") == "kind", "setup: the kind question was not asked"
+    rbot.say(_v("sales_ranking", _ra3(["Sorento"], basis="delivered", **SEP), continuation=True, entity_op="reuse"), "hello")
+    prefix, _held = _held_line(rbot.blocks[-1])
+    assert "company or brand" in prefix, f"ON-14: the Held report prefix is {prefix!r}"
+    assert "brand or account type" not in prefix, prefix
+
+
+def test_on15_company_or_brand_for_a_one_company_contact_is_a_brand_with_no_question(rbot) -> None:
+    text, calls = _cob_turn(rbot, _ra3(["Sorento"], basis="delivered", **SEP))
+    assert _kind_slot(rbot).get("asking") != "kind", f"ON-15: a one-company contact was asked: {text!r}"
+    args = _args(calls)
+    assert args.get("brand_ids") and "company" not in args, f"ON-15: {args}"
+
+
+def test_on16_the_same_name_in_company_and_brands_with_kind_said_null_asks_never_both_silently(rbot, world) -> None:
+    sorento, _m = world
+    ra = _ra2(None, basis="delivered", company=sorento, brands=["SORENTO"], **SEP)
+    text, calls = _cob_turn(rbot, ra, _ent("sorento", "brand", "SORENTO", None), sales_company=sorento)
+    assert not _ran(calls), f"ON-16: both filters were applied silently: {_ran(calls)}"
+    assert _kind_slot(rbot).get("asking") == "kind", f"ON-16: no kind question: {text!r}"
+
+
+@pytest.mark.parametrize("answer", ["company", "brand", "both"], ids=["on9p_company", "on10p_brand", "on11p_both"])
+def test_on9_10_11_parse_the_answer_arrives_as_a_parse_with_the_slots_filled(rbot, world, answer) -> None:
+    sorento, _m = world
+    text, calls = _cob_turn(rbot, _ra3(["Sorento"], basis="delivered", **SEP))
+    assert not _ran(calls) and _kind_slot(rbot).get("asking") == "kind", f"setup: the kind question was not asked: {text!r}"
+    kw: dict[str, Any] = {"basis": "delivered", **SEP}
+    if answer in ("company", "both"):
+        kw["company"] = sorento
+    if answer in ("brand", "both"):
+        kw["brands"] = ["SORENTO"]
+    v = _v("sales_ranking", _ra3([], **kw), basis="delivered", continuation=True, entity_op="reuse", domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v, answer)
+    assert _kind_slot(rbot).get("asking") != "kind", f"the kind question was asked again: {text!r}"
+    args = _args(calls)
+    has = (args.get("company") == DEFAULT_COMPANY_ID, bool(args.get("brand_ids")))
+    assert has == {"company": (True, False), "brand": (False, True), "both": (True, True)}[answer], f"{answer}: {has} {args}"
+    assert args["basis"] == "delivered" and args["date_from"] == "2026-09-01", args
+
+
 # ------------------------------------------------------------------------------------------ CL: clear one filter (R3)
 
 
