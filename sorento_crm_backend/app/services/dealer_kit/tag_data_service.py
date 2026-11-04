@@ -1251,12 +1251,13 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
     combo = combo_for_host(db, combo_id, product.id, {product.id: product})
     if combo is None:
         raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
-    # The price the combo would print with nothing picked (AC-5.3); blank stays the host's.
+    # The price the combo would print with nothing picked (AC-5.3).
     combo_list, combo_sell, sell_decided = combo_prices(combo, set())
     return {
         **data,
-        "list_price": combo_list if combo_list is not None else data.get("list_price"),
-        "offer_price": combo_sell if sell_decided else data.get("offer_price"),
+        # The tag prints the combo's stored price or nothing (K8); the preview shows the same.
+        "list_price": combo_list,
+        "offer_price": combo_sell if sell_decided else None,
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
         "slots": _preview_slots(db, combo, product),

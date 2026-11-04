@@ -148,3 +148,22 @@ def test_re_choosing_the_upgrade_after_the_pin_leaves_exactly_one_chosen(db):
     db.flush()
     second = _reread(db, request, tag)["slots"]["upgrades"]
     assert [u["code"] for u in second if u["chosen"]] == ["SRTKT72SS"]
+
+
+def test_the_preview_prints_what_the_tag_prints_for_a_combo_with_no_price(db):
+    from app.services.dealer_kit import tag_data_service
+
+    s = shapes.s3(db)
+    data = tag_data_service.product_tag_data(db, s["host"], tag_data_service.staff_viewer(), None)
+    assert data["list_price"] is not None, "the host has a list price of its own"
+    out = tag_data_service.with_preview_combo(db, s["host"], data, s["combo"].id)
+    assert out["list_price"] is None and out["offer_price"] is None
+
+
+def test_the_preview_shows_the_combos_stored_prices(db):
+    from app.services.dealer_kit import tag_data_service
+
+    s = shapes.s3(db, list_price=D("900.00"), sell_price=D("800.00"))
+    data = tag_data_service.product_tag_data(db, s["host"], tag_data_service.staff_viewer(), None)
+    out = tag_data_service.with_preview_combo(db, s["host"], data, s["combo"].id)
+    assert (out["list_price"], out["offer_price"]) == (D("900.00"), D("800.00"))
