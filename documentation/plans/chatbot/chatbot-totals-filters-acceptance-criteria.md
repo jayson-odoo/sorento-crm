@@ -19,6 +19,7 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | AF-3 | a top 10 products ranking | "i want total sales, by qty" | One total; top N and axis dropped; filters, period, basis kept |
 | AF-4 | a breakdown by channel | "top 5" | Ranking on channel, top 5; asks qty-or-amount only if no measure is held or said |
 | AF-5 | nothing | "top 10 products September delivered" | Ranking; asks only "By quantity or by amount?" |
+| AF-7 | a channel breakdown held | "top 5" (object frame breakdown, top_n 5) | Top 5 by channel: the object's own count makes it a ranking cut to that count |
 | AF-6 | nothing | "Total sale for all sale agents on September 2026" (basis held) | Breakdown by sales agent, every agent + grand total, no "How many?" (Q4) |
 
 ## One name, one filter (R2)
@@ -41,6 +42,26 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | ON-16 | nothing | the object puts the same name in company AND brands with no kind word for both | One company-or-brand question, never both filters silently (wrong totals are worse than one question) |
 | ON-6 | nothing | "Cabana sales Sep delivered" | Unchanged #2105 behaviour: "brand or account type?" |
 | ON-7 | overlap detection | any name present in two filter lists | Found from data (the name resolves in both), never from a list of names in code |
+
+| ON-17 | nothing | object company "Sorento" AND brands ["SORENTO"], kind_said null, the brand entity has NO canonical code (the parser did not match it as a listed brand) | The company, no question: #2105's C6-1 rule (a word that is the object's own company and no listed brand), kept by lead ruling 4 Nov |
+
+## Known companies line (gate 2: the parser cannot know which brand names are companies)
+
+| # | Case | Expected |
+|---|---|---|
+| KC-1 | prompt text names "Known companies", contact holds 2+ companies | parser user block carries `Known companies: <names sorted>` |
+| KC-2 | prompt text without the phrase | user block byte for byte unchanged |
+| KC-3 | contact holds one company | no line |
+| KC-4 | parser config | flag `known_companies` set only when the text names the phrase |
+
+## Outstanding kind question wording (owner ruling 4 Nov)
+
+| # | Held before | Message | Expected |
+|---|---|---|---|
+| OW-1 | nothing, contact sees both kinds | "waht's my oustsgnidn" | "Sales order or delivery order?", options Sales order / Delivery order; nothing runs |
+| OW-2 | OW-1's question | pick 1 / pick 2 | SO backlog (outstanding) / DO pending (pending_delivery) |
+| OW-3 | OW-1's question | "sales order" / "delivery order" as a parse | same as OW-2 |
+| OW-4 | contact sees one kind | same message | that kind, no question |
 
 ## Clear one filter (R3)
 
