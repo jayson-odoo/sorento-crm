@@ -76,8 +76,9 @@ ORDER BY so_no, so_line_no, oi_no;
 
 -- 3) Already confirmed since the backfill with no email (needs a resend decision, not the
 --    migration): the row still holds the backfilled values and its line's date move to that
---    very date was applied on or after 4 Nov 2026. applied_at is shown so rows applied
---    before 14:30 MYT that day can be told apart by eye.
+--    very date was applied on or after 4 Nov 2026. confirmed_at is shown so rows applied
+--    before 14:30 MYT that day can be told apart by eye. Only right BEFORE oiod_0002 deploys:
+--    after it, a row oiod_0002 restored and whose Confirm then did email reads the same way.
 SELECT oi.inquiry_no                                         AS oi_no,
        COALESCE(cso.so_number, pso.autocount_doc_no, pso.provisional_ref) AS so_no,
        COALESCE(c.line_no, m.line_no)                        AS so_line_no,
@@ -85,8 +86,8 @@ SELECT oi.inquiry_no                                         AS oi_no,
        r.qty                                                 AS oi_qty,
        b.old_delivery_date                                   AS old_told_date,
        r.delivery_date                                       AS confirmed_date,
-       pc.kind                                               AS change_kind,
-       pcb.applied_at                                        AS confirmed_at
+       ap.kinds                                              AS change_kind,
+       ap.confirmed_at                                       AS confirmed_at
 FROM projects.oi_delivery_date_backfill b
 JOIN projects.order_inquiry_rows r ON r.id = b.row_id
 JOIN projects.order_inquiries oi ON oi.id = r.order_inquiry_id
@@ -94,17 +95,23 @@ JOIN projects.sales_order_lines m ON m.id = r.so_line_id
 JOIN projects.sales_orders pso ON pso.id = m.project_sales_order_id
 LEFT JOIN public.sales_orders cso ON cso.id = pso.so_id
 LEFT JOIN public.sales_order_lines c ON c.id = m.core_sales_order_line_id
-JOIN projects.planning_change_rows pc ON pc.project_line_id = r.so_line_id
-JOIN projects.planning_change_batches pcb ON pcb.id = pc.batch_id
+JOIN (
+        SELECT pc.project_line_id,
+               CAST(pc.to_json ->> 'required_date' AS date) AS to_date,
+               string_agg(DISTINCT pc.kind, ', ') AS kinds,
+               MAX(pcb.applied_at) AS confirmed_at
+        FROM projects.planning_change_rows pc
+        JOIN projects.planning_change_batches pcb ON pcb.id = pc.batch_id
+        WHERE pc.applied_state = 'applied'
+          AND pcb.applied_at >= TIMESTAMP '2026-11-04 00:00:00'
+          AND pc.from_json ->> 'required_date' IS NOT NULL
+          AND pc.to_json ->> 'required_date' IS NOT NULL
+          AND pc.from_json ->> 'required_date' <> pc.to_json ->> 'required_date'
+        GROUP BY pc.project_line_id, CAST(pc.to_json ->> 'required_date' AS date)
+     ) ap ON ap.project_line_id = r.so_line_id AND ap.to_date = r.delivery_date
 WHERE r.state <> 'cancelled'
   AND r.verb IN ('ORDER', 'ORDER_BACK')
   AND NOT COALESCE(r.redirected_to_pool, false)
   AND r.delivery_date IS DISTINCT FROM b.old_delivery_date
   AND r.previous_delivery_date IS NOT DISTINCT FROM b.old_delivery_date
-  AND pc.applied_state = 'applied'
-  AND pcb.applied_at >= TIMESTAMP '2026-11-04 00:00:00'
-  AND pc.from_json ->> 'required_date' IS NOT NULL
-  AND pc.to_json ->> 'required_date' IS NOT NULL
-  AND pc.from_json ->> 'required_date' <> pc.to_json ->> 'required_date'
-  AND CAST(pc.to_json ->> 'required_date' AS date) = r.delivery_date
 ORDER BY so_no, so_line_no, oi_no;

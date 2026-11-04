@@ -164,7 +164,29 @@ def seeded():
             # Moved, the pending change is a quantity change that names no date move.
             _c, qty_only = chain.add_line(core_date=NEW, mirror_date=NEW)
             rows["qty_change"] = chain.add_row(qty_only, told=OLD)
-            _change(db, chain, batch, qty_only, PLANNING_CHANGE_KIND_QTY_UP)
+            # `build_batch` writes both dates on every row; a qty-only change has from == to.
+            _change(db, chain, batch, qty_only, PLANNING_CHANGE_KIND_QTY_UP, moves=(NEW, NEW))
+
+            # Pending DELAY, but the buy row was redirected to the pool: Confirm never
+            # stamps it, so leave it.
+            _c, pooled = chain.add_line(core_date=NEW, mirror_date=NEW)
+            rows["redirected"] = chain.add_row(pooled, told=OLD, redirected_to_pool=True)
+            _change(db, chain, batch, pooled, PLANNING_CHANGE_KIND_DELAYED, moves=(OLD, NEW))
+
+            # Statement 3 negatives, both in the applied batch: a SUPERSEDED date move, and
+            # an applied move to a date the row does not carry.
+            _c, superseded = chain.add_line(core_date=NEW, mirror_date=NEW)
+            rows["superseded_in_applied"] = chain.add_row(superseded, told=OLD)
+            _change(
+                db, chain, applied_batch, superseded, PLANNING_CHANGE_KIND_DELAYED,
+                state=PLANNING_CHANGE_STATE_SUPERSEDED, moves=(OLD, NEW),
+            )
+            _c, elsewhere = chain.add_line(core_date=NEW, mirror_date=NEW)
+            rows["applied_elsewhere"] = chain.add_row(elsewhere, told=OLD)
+            _change(
+                db, chain, applied_batch, elsewhere, PLANNING_CHANGE_KIND_DELAYED,
+                state=PLANNING_CHANGE_STATE_APPLIED, moves=(OLD, LATER),
+            )
 
             # Moved, no planning change at all.
             _c, quiet = chain.add_line(core_date=NEW, mirror_date=NEW)
@@ -227,6 +249,9 @@ def test_upgrade_leaves_every_other_row_alone(seeded):
         ("moved_since", (LATER, NEW)),
         ("cancelled_since", (NEW, OLD)),
         ("notice_verb", (NEW, OLD)),
+        ("redirected", (NEW, OLD)),
+        ("superseded_in_applied", (NEW, OLD)),
+        ("applied_elsewhere", (NEW, OLD)),
     ):
         assert _pair(db, ids[key]) == pair, key
 
