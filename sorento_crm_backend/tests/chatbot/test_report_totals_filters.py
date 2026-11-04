@@ -43,6 +43,7 @@ from tests.chatbot.test_report_semantic_carry import (  # noqa: F401 - fixtures 
     rbot,
     world,
 )
+from tests.chatbot.test_report_ask_lane import console_no_grant  # noqa: F401 - fixture
 from tests.chatbot.test_report_unify_routing import bot, console  # noqa: F401 - fixtures
 
 TOP_N_Q = "How many?"
@@ -944,3 +945,108 @@ def test_r7_with_customer_groups_drops_a_non_uuid_id_when_no_group_is_found(rbot
         assert NOT_A_UUID not in (out.get("customer_ids") or []) and real in out["customer_ids"], f"R7 (mixed): {out}"
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------------------------------ OW: the outstanding kind question wording
+# Owner ruling 4 Nov (prod console, "waht's my oustsgnidn"): the question reads "Sales order or delivery order?", its
+# options are "Sales order" (outstanding, the SO backlog) and "Delivery order" (pending_delivery, the DO pending), offered
+# only among the kinds the contact can access. One accessible kind: no question.
+
+OW_QUESTION = "Sales order or delivery order?"
+OW_MSG = "waht's my oustsgnidn"
+
+
+def _ow_bare_new() -> dict[str, Any]:
+    """A bare outstanding ask as the parser gives it on the new path: object kind outstanding, basis null."""
+    return _v("outstanding", _ra2(None, kind="outstanding", basis=None), basis=None, domain_in_message=True)
+
+
+def _ow_bare_old() -> dict[str, Any]:
+    """The same ask on the old path (no report_ask object)."""
+    from tests.chatbot.test_report_unify_routing import NO_DATES, _status
+
+    return _status("outstanding", basis=None, **NO_DATES)
+
+
+def _ow_options(rbot) -> str:
+    return str(_kind_slot(rbot).get("options") or "")
+
+
+def _ow_pick(position: int) -> dict[str, Any]:
+    return _v("sales_ranking", _ra2(None, kind="outstanding", basis=None), basis=None, continuation=True, entity_op="reuse",
+              domain_in_message=False, open_question_answer=_pick_of(position), reference_positions=[position])
+
+
+@pytest.fixture(params=["new", "old"])
+def ow_path(request, bot, monkeypatch):
+    """(bot, bare-ask verdict factory) for the new report-ask path and the old path, a contact that sees both kinds."""
+    if request.param == "new":
+        from tests.chatbot.test_report_semantic_carry import _flag_on, _record_blocks
+
+        _flag_on(bot.console, monkeypatch)
+        _record_blocks(bot, monkeypatch)
+        return bot, _ow_bare_new
+    return bot, _ow_bare_old
+
+
+@pytest.fixture
+def ow_do_only(console_no_grant, monkeypatch):
+    """Office staff with no Outstanding reveal: may see pending delivery only (the #b6e9 contact), new path."""
+    from tests.chatbot._turn_helpers import make_office_access_type
+    from tests.chatbot.test_engine import CONTACT_ID
+    from tests.chatbot.test_report_semantic_carry import _flag_on, _record_blocks
+
+    make_office_access_type(console_no_grant.session_factory, CONTACT_ID)
+    b = Routing(console_no_grant)
+    _flag_on(console_no_grant, monkeypatch)
+    _record_blocks(b, monkeypatch)
+    return b
+
+
+def test_ow1_a_bare_outstanding_ask_asks_sales_order_or_delivery_order_and_runs_nothing(ow_path) -> None:
+    b, bare = ow_path
+    text, calls = b.say(bare(), OW_MSG)
+    assert not _ran(calls) and calls == [], f"OW-1: a report ran: {calls}"
+    assert OW_QUESTION in text, f"OW-1: the question is not {OW_QUESTION!r}: {text!r}"
+    assert "Undelivered orders" not in text and "pending delivery?" not in text, f"OW-1: old wording left: {text!r}"
+    lowered = text.lower()
+    assert "sales order" in lowered and "delivery order" in lowered, text
+    if hasattr(b, "blocks"):
+        opts = _ow_options(b)
+        assert "Sales order" in opts and "Delivery order" in opts, f"OW-1: options {opts!r}"
+
+
+@pytest.mark.parametrize("position, basis", [(1, "outstanding"), (2, "pending_delivery")], ids=["pick1_so", "pick2_do"])
+def test_ow2_picking_an_option_runs_that_kind(rbot, position, basis) -> None:
+    text, calls = rbot.say(_ow_bare_new(), OW_MSG)
+    assert not calls and OW_QUESTION in text, f"OW-2 setup: the question was not asked: {text!r}"
+    text, calls = rbot.say(_ow_pick(position), str(position))
+    args = _args(calls)
+    assert args["basis"] == basis, f"OW-2: option {position} ran basis {args.get('basis')!r}: {args}"
+
+
+@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery"])
+def test_ow3_the_answer_as_the_objects_basis_runs_that_kind(rbot, basis) -> None:
+    text, calls = rbot.say(_ow_bare_new(), OW_MSG)
+    assert not calls and OW_QUESTION in text, f"OW-3 setup: the question was not asked: {text!r}"
+    ra = _ra2(None, kind="outstanding", basis=basis)
+    v = _v("outstanding", ra, basis=basis, continuation=True, entity_op="reuse", domain_in_message=False)
+    text, calls = rbot.say(v, "sales order" if basis == "outstanding" else "delivery order")
+    assert _args(calls)["basis"] == basis, f"OW-3: basis {basis}: {calls}"
+
+
+@pytest.mark.parametrize("status, basis", [("so_outstanding", "outstanding"), ("do_outstanding", "pending_delivery")])
+def test_ow3_the_answer_as_a_parse_order_status_runs_that_kind(rbot, status, basis) -> None:
+    text, calls = rbot.say(_ow_bare_new(), OW_MSG)
+    assert not calls and OW_QUESTION in text, f"OW-3 setup: the question was not asked: {text!r}"
+    v = _v(status, _ra2(None, kind="outstanding", basis=None), basis=None, continuation=True, entity_op="reuse",
+           domain_in_message=False)
+    text, calls = rbot.say(v, "sales order" if basis == "outstanding" else "delivery order")
+    assert _args(calls)["basis"] == basis, f"OW-3: order_status {status}: {calls}"
+
+
+def test_ow4_a_contact_that_sees_one_kind_gets_it_with_no_question(ow_do_only) -> None:
+    text, calls = ow_do_only.say(_ow_bare_new(), OW_MSG)
+    args = _args(calls)
+    assert args["basis"] == "pending_delivery", f"OW-4: {args}"
+    assert OW_QUESTION not in text, f"OW-4: a question was asked of a one-kind contact: {text!r}"
