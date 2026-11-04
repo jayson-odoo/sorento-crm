@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 from app.api.v1.system import (
     api_call_logs,
+    client_errors,
     health,
     import_field_aliases,
     import_logs,
@@ -36,6 +37,7 @@ router = APIRouter(dependencies=[Depends(require_module_enabled_with_api_key("ba
 
 router.include_router(health.router, tags=["health"])
 router.include_router(api_call_logs.router, tags=["api-call-logs"])
+router.include_router(client_errors.router, tags=["client-errors"])
 router.include_router(import_logs.router, tags=["import-logs"])
 router.include_router(jobs.router, tags=["jobs"])
 router.include_router(calendar.router, tags=["calendar"])

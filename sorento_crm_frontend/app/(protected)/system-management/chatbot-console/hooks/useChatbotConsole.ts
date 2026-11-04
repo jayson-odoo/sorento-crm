@@ -35,6 +35,7 @@ import {
   type ConsoleThreadTurn,
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
+import { localStore } from '@/lib/storage';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
 // One run id per contact, so a reload finds the same bot turns; "New conversation" replaces it.
@@ -65,10 +66,10 @@ function runIdFor(contactId: string, fresh = false): string {
   const key = `${RUN_STORAGE_PREFIX}${contactId}`;
   if (typeof window === 'undefined') return newRunId();
   try {
-    const stored = window.localStorage.getItem(key);
+    const stored = localStore.getItem(key);
     if (stored && !fresh) return stored;
     const created = newRunId();
-    window.localStorage.setItem(key, created);
+    localStore.setItem(key, created);
     return created;
   } catch {
     return newRunId(); // Storage is off: the run lasts this visit.
@@ -80,7 +81,7 @@ const SESSION_STORAGE_PREFIX = 'chatbot-console:session:';
 /** The bot's session as this contact's run last left it, so a reload does not forget a pending question. */
 function readSession(contactId: string, runId: string): Record<string, unknown> {
   try {
-    const raw = window.localStorage.getItem(`${SESSION_STORAGE_PREFIX}${contactId}`);
+    const raw = localStore.getItem(`${SESSION_STORAGE_PREFIX}${contactId}`);
     const parsed = raw ? (JSON.parse(raw) as { run?: string; vars?: Record<string, unknown> }) : null;
     if (parsed && parsed.run === runId && parsed.vars && typeof parsed.vars === 'object') return parsed.vars;
   } catch {
@@ -91,7 +92,7 @@ function readSession(contactId: string, runId: string): Record<string, unknown> 
 
 function writeSession(contactId: string, runId: string, vars: Record<string, unknown>): void {
   try {
-    window.localStorage.setItem(`${SESSION_STORAGE_PREFIX}${contactId}`, JSON.stringify({ run: runId, vars }));
+    localStore.setItem(`${SESSION_STORAGE_PREFIX}${contactId}`, JSON.stringify({ run: runId, vars }));
   } catch {
     // Storage can be full or disabled; the session lasts this visit.
   }
@@ -108,7 +109,7 @@ function greetingMessages(): ChatbotConsoleMessage[] {
 function readStoredContact(): StoredContact | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(LAST_CONTACT_STORAGE_KEY);
+    const raw = localStore.getItem(LAST_CONTACT_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredContact>;
     if (typeof parsed.id === 'string' && typeof parsed.label === 'string') {
@@ -123,7 +124,7 @@ function readStoredContact(): StoredContact | null {
 function writeStoredContact(contact: StoredContact): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify(contact));
+    localStore.setItem(LAST_CONTACT_STORAGE_KEY, JSON.stringify(contact));
   } catch {
     // Storage can be full or disabled; the console still works, it just forgets next visit.
   }

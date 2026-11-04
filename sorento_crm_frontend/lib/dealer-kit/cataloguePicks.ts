@@ -1,3 +1,4 @@
+import { localStore } from '@/lib/storage';
 /**
  * Products ticked in a published catalogue, on their way to the room designer.
  *
@@ -27,7 +28,7 @@ interface StoredPicks {
 function read(): StoredPicks | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = localStore.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredPicks;
     if (!Array.isArray(parsed.productIds)) return null;
@@ -48,7 +49,7 @@ export function readPicks(now: number = Date.now()): string[] {
 export function writePicks(productIds: string[], now: number = Date.now()): void {
   if (typeof window === 'undefined') return;
   const unique = Array.from(new Set(productIds)).slice(0, MAX_PICKS);
-  window.localStorage.setItem(
+  localStore.setItem(
     KEY,
     JSON.stringify({ productIds: unique, savedAt: now } satisfies StoredPicks),
   );
@@ -56,7 +57,7 @@ export function writePicks(productIds: string[], now: number = Date.now()): void
 
 export function clearPicks(): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(KEY);
+  localStore.removeItem(KEY);
 }
 
 export function togglePick(productIds: string[], productId: string): string[] {
