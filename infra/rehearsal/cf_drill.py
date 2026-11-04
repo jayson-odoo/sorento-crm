@@ -167,6 +167,9 @@ class Stack:
 
     def up(self):
         self.down(quiet=True)
+        left = sh("docker", "volume", "ls", "-q", "--filter", "name=drill-")
+        if left:
+            raise RuntimeError(f"leftover drill volumes, remove them first: {left}")
         init = self.dir / "init"
         init.mkdir(exist_ok=True)
         (init / "repl.sh").write_text('echo "host replication all all trust" >> "$PGDATA/pg_hba.conf"\n')
@@ -307,6 +310,9 @@ def main():
         print(f"{results[-1][1]} {name}: {results[-1][2]}", flush=True)
 
     print(f"drill workdir {workdir}", flush=True)
+    stray = sh("pgrep", "-f", r"^\S*python\S* \S*infra/scripts/cf_failover\.py$", check=False)
+    if stray:
+        raise SystemExit(f"a controller from an earlier drill is still running (pids {stray.split()}); stop it first")
     st.up()
     watch = Watch()
     st.start_controller("a")
@@ -458,6 +464,9 @@ def main():
     for name, res, note in results:
         print(f"{res:5} {name}: {note}")
     print(f"logs: {workdir}")
+    # Controllers ALWAYS stop: a leftover one would act on the next run's containers.
+    for n in list(st.procs):
+        st.stop_controller(n)
     if not args.keep:
         st.down()
     return 0 if all(r[1] != "FAIL" for r in results) else 1
