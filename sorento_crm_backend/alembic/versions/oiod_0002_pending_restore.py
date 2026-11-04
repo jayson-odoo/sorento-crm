@@ -27,13 +27,13 @@ no audit row, no planning change, no email. The same read-only selection for DBe
 ``documentation/plans/scm/SQL-oi-date-was-fix-count-04nov.sql``.
 
 Revision ID: oiod_0002_pending_restore
-Revises: tinv_0001_target_invoiced_basis
+Revises: cer_0001_client_error_report
 """
 from alembic import op
 
 
 revision = "oiod_0002_pending_restore"
-down_revision = "tinv_0001_target_invoiced_basis"
+down_revision = "cer_0001_client_error_report"
 branch_labels = None
 depends_on = None
 
