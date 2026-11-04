@@ -159,3 +159,7 @@ worklist used rows hidden by default and shown with the filter.
   grid); `SharedColumnVisibility` keeps the others equal (the first table leads, a toggle in any
   table is passed to it).
 - Owner, 4 Nov ~14:55: old snapshots keep their frozen lend / order back; no note.
+- Scope (reviewer READY, two notes accepted): only column VISIBILITY is shared across the OI tables,
+  which is what the owner asked for. Column widths and order are still saved by the first table for
+  itself only, and "Reset columns" appears in the first table's menu only (it still resets
+  visibility in every table, through the sync). Trigger to widen: the owner asks for shared widths.
