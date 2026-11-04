@@ -266,7 +266,57 @@ export function sumDemand(lines: StockDebtDemandLine[]): DemandTotals {
   );
 }
 
+/**
+ * OI-RESERVE-USED-ROW (owner hand test, 4 Nov: "reuse our column visibility controller"): what
+ * the shared `DataGridColumnVisibility` menu needs to list a column - a `meta.headerTitle` to
+ * name it and an accessor (the menu lists accessor columns only). Display-only columns get an
+ * accessor returning a plain value; nothing else about a column changes.
+ */
+export function withColumnMenu<R>(
+  columns: ColumnDef<R>[],
+  titles: Record<string, string>,
+  values: Record<string, (row: R) => unknown> = {},
+): ColumnDef<R>[] {
+  return columns.map((column) => {
+    const id = column.id ?? '';
+    const title = titles[id];
+    const value = values[id];
+    const out = { ...column } as ColumnDef<R> & { accessorFn?: (row: R) => unknown };
+    if (title) out.meta = { ...(column.meta ?? {}), headerTitle: title };
+    if (value && !('accessorKey' in column) && !('accessorFn' in column)) {
+      out.accessorFn = value;
+      // Listed in the menu, never newly sortable (the live drill sorts its grid).
+      out.enableSorting = column.enableSorting ?? false;
+    }
+    return out as ColumnDef<R>;
+  });
+}
+
+/** The drill's demand column names, as their headers print them. */
+export const DEMAND_COLUMN_TITLES: Record<string, string> = {
+  so_number: 'Sales order',
+  customer_name: 'Customer',
+  project_label: 'Project',
+  agent_code: 'Agent',
+  warehouse_code: 'Bin',
+  required_date: 'Due',
+  qty_ordered: 'Ordered',
+  qty_delivered: 'Delivered',
+  open_qty: 'Outstanding',
+  assigned_qty: 'Assigned',
+  covered_by: 'Covered by',
+  status: 'Status',
+};
+
 export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDemandLine>(
+  demandTotals: DemandTotals,
+): ColumnDef<R>[] {
+  return withColumnMenu<R>(buildDemandColumnDefs<R>(demandTotals), DEMAND_COLUMN_TITLES, {
+    covered_by: (row) => (row.assigned_from ?? []).map((entry) => entry.ref).join(' '),
+  });
+}
+
+function buildDemandColumnDefs<R extends StockDebtDemandLine = StockDebtDemandLine>(
   demandTotals: DemandTotals,
 ): ColumnDef<R>[] {
   return [

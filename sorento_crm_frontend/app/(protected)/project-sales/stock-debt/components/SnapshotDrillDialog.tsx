@@ -2,7 +2,8 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ColumnDef } from '@tanstack/react-table';
+import { ColumnDef, Table, VisibilityState } from '@tanstack/react-table';
+import { Columns3 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -24,7 +26,7 @@ import { RequestReserveDialog } from '../../_shared/components/RequestReserveDia
 import { useOrderInquiryHeaderLines } from '../../_shared/hooks/useOrderInquiry';
 import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
 import { SNAPSHOTS_KEY, useSnapshotLinesQuery } from '../hooks/useStockDebtSnapshots';
-import { buildDemandColumns, sumDemand } from '../lib/stockDebtDemandColumns';
+import { buildDemandColumns, sumDemand, withColumnMenu } from '../lib/stockDebtDemandColumns';
 import { signed } from '../lib/stockDebtColumns';
 import type {
   SnapshotLine,
@@ -84,6 +86,16 @@ function NowCell({ line }: { line: GroupLine }) {
 }
 
 function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine>[] {
+  return withColumnMenu<GroupLine>(buildColumnDefs(totals), DRILL_COLUMN_TITLES, {
+    short_qty: (row) => row.short_qty,
+    oi_row: (row) => row.group_oi_rows.map((oi) => oi.qty).join(' '),
+    now: (row) => nowPill(row).text,
+  });
+}
+
+const DRILL_COLUMN_TITLES: Record<string, string> = { short_qty: 'Short', oi_row: 'OI row', now: 'Now' };
+
+function buildColumnDefs(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine>[] {
   return [
     ...buildDemandColumns<GroupLine>(totals),
     {
@@ -170,16 +182,83 @@ function OiRequestDialog({
   );
 }
 
+/** The drill's one per-user column layout (owner hand test, 4 Nov): every OI table in the dialog
+ *  shares it, saved through the grids' own preference store (`useListingColumnPreferences`). */
+const DRILL_LISTING_KEY = 'projects.stock_debt.view::snapshot-drill';
+
+function sameVisibility(a: VisibilityState, b: VisibilityState): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) if ((a[key] ?? true) !== (b[key] ?? true)) return false;
+  return true;
+}
+
+/** The shared layout and which table last changed it. */
+export interface SharedLayout {
+  value: VisibilityState;
+  from: string;
+}
+
+/**
+ * Keeps every OI table's column visibility equal, with ONE leader: the first table, the only one
+ * that reads and saves the layout (`useListingColumnPreferences`). The leader publishes every
+ * change of its own, its saved layout arriving included; the other tables apply what was
+ * published and publish back only a toggle made in them, never their mount defaults. A table
+ * never applies its own publication. That rule is what keeps the saved layout from being
+ * overwritten by the tables' empty defaults (browser pass: Customer reappeared on reopen).
+ */
+function SharedColumnVisibility({
+  id,
+  leader,
+  table,
+  shared,
+  onChange,
+}: {
+  id: string;
+  leader: boolean;
+  table: Table<GroupLine>;
+  shared: SharedLayout | null;
+  onChange: (next: SharedLayout) => void;
+}) {
+  const mine = table.getState().columnVisibility;
+  const mineKey = JSON.stringify(mine);
+  // A follower speaks only after it has been told the layout once.
+  const synced = React.useRef(leader);
+
+  React.useEffect(() => {
+    if (!shared || shared.from === id) return;
+    synced.current = true;
+    if (!sameVisibility(table.getState().columnVisibility, shared.value)) {
+      table.setColumnVisibility(shared.value);
+    }
+  }, [shared, table, id]);
+
+  React.useEffect(() => {
+    if (!synced.current) return;
+    if (shared && sameVisibility(mine, shared.value)) return;
+    onChange({ value: mine, from: id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mineKey]);
+  return null;
+}
+
 function OiGroupGrid({
   group,
   canRequest,
   defaultWarehouseId,
   onRequested,
+  persistColumns,
+  sharedVisibility,
+  onVisibilityChange,
 }: {
   group: OiGroup;
   canRequest: boolean;
   defaultWarehouseId: string | null;
   onRequested: () => void;
+  /** Only the first table reads and saves the layout, so the tables never race each other's
+   *  saves; the rest follow `sharedVisibility`. */
+  persistColumns: boolean;
+  sharedVisibility: SharedLayout | null;
+  onVisibilityChange: (next: SharedLayout) => void;
 }) {
   const [requestOpen, setRequestOpen] = React.useState(false);
   const totals = React.useMemo(() => sumDemand(group.lines), [group.lines]);
@@ -221,16 +300,34 @@ function OiGroupGrid({
             'No OI'
           )
         }
-        toolbar={
-          group.oiId && canRequest && requestable ? (
-            <Button type="button" size="sm" onClick={() => setRequestOpen(true)}>
-              Request CS to reserve
-            </Button>
-          ) : undefined
-        }
+        toolbar={({ table }) => (
+          <div className="flex flex-wrap items-center gap-2 sm:ms-auto">
+            <SharedColumnVisibility
+              id={group.oiId ?? 'no-oi'}
+              leader={persistColumns}
+              table={table}
+              shared={sharedVisibility}
+              onChange={onVisibilityChange}
+            />
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Columns3 className="size-4" aria-hidden />
+                  Columns
+                </Button>
+              }
+            />
+            {group.oiId && canRequest && requestable ? (
+              <Button type="button" size="sm" onClick={() => setRequestOpen(true)}>
+                Request CS to reserve
+              </Button>
+            ) : null}
+          </div>
+        )}
         columns={columns}
         rows={group.lines}
-        listingKey="projects.stock_debt.view::snapshot-drill"
+        listingKey={persistColumns ? DRILL_LISTING_KEY : null}
         emptyTitle="Nothing is due here"
         pageSize={10}
         // The DialogBody above already owns the scroll viewport (overflow-y-auto).
@@ -300,6 +397,7 @@ export function SnapshotDrillDialog({
   const lines = useSnapshotLinesQuery(snapshotId, row.row_id, month);
   const stored = React.useMemo(() => lines.data?.lines ?? [], [lines.data]);
   const groups = React.useMemo(() => groupByOi(stored), [stored]);
+  const [sharedVisibility, setSharedVisibility] = React.useState<SharedLayout | null>(null);
   const shortTotal = React.useMemo(
     () => stored.reduce((sum, line) => sum + line.short_qty, 0),
     [stored],
@@ -352,9 +450,12 @@ export function SnapshotDrillDialog({
               </p>
             </div>
           ) : (
-            groups.map((group) => (
+            groups.map((group, index) => (
               <OiGroupGrid
                 key={group.oiId ?? 'no-oi'}
+                persistColumns={index === 0}
+                sharedVisibility={sharedVisibility}
+                onVisibilityChange={setSharedVisibility}
                 group={group}
                 canRequest={canRequest}
                 defaultWarehouseId={row.decision_warehouse_id}
