@@ -1,6 +1,6 @@
 # PLAN: HA failover with Cloudflare Load Balancing as the witness (HA-CF-FAILOVER)
 
-Status: Build. Card answered 4 Nov (section 8, Q1 pending with the owner, 60 s assumed). Building F1-F4 (repo only).
+Status: Build. Card answered 4 Nov (section 8). Controller + adapter + container drill green (section 10); owner options in section 9; F1/F4 in progress.
 Track: full (prod infra, size L), LEAD pattern. Nothing in this lane touches production: every prod
 step goes to the owner as reviewed commands.
 
@@ -220,9 +220,9 @@ Q1-Q5 below; answers recorded in section 8.
 Standing rulings: AUTOMATIC failover, self-maintaining, never propose manual promotion as the
 default, re-seed the old primary automatically.
 
-- **Q1 pending with the owner** (cost vs failover time). Built for (a) 60 s; the interval and the
-  failure count are config values (`CF_CHECK_INTERVAL`, `CF_CONSECUTIVE_DOWN`), and every window
-  derives from them.
+- **Q1 (a) 60 s checks** (owner, 4 Nov). The interval and the failure count stay config values
+  (`CF_CHECK_INTERVAL`, `CF_CONSECUTIVE_DOWN`) and every window derives from them. The owner expected
+  "instant" failover because the LB routes between the 2 endpoints; section 9 answers that.
 - **Q2 (a)** DNS-only, TTL 30 s, a DNS-01 certificate on each node.
 - **Q3 (a), not the recommendation (b)**: automatic. For 15 minutes autoheal restarts containers;
   if A is still Cloudflare-unhealthy after that, A fences itself and B promotes. 15 minutes is a
@@ -230,3 +230,113 @@ default, re-seed the old primary automatically.
 - **Q4 (a)** automatic re-seed with `pg_basebackup`, old data moved aside and kept 7 days, alert.
 - **Q5 (a)** async now; `remote_write` synchronous once measured RTT < 2 ms; the standby is
   dropped from `synchronous_standby_names` the moment it stops streaming. Rule P4.
+
+## 9. What the owner sees, and two options (owner follow-ups, 4 Nov)
+
+### 9a. Today vs after this plan, per failure case
+
+Today everything (frontend, backend, workers, Postgres, Redis) runs on box A; box B runs n8n.
+After this plan both boxes run the same stack; only the box whose Postgres is primary runs workers
+and the scheduler, and Cloudflare sends every user to that box.
+
+| Case | Today | After this plan (60 s checks, DNS-only) |
+|---|---|---|
+| App crash on A (backend or frontend container, DB fine) | autoheal / Docker restarts it, about 30-60 s of errors; a deploy is already zero-downtime blue/green (`scripts/blue_green_deploy.sh`) | the same restart first. If A is STILL Cloudflare-unhealthy after 15 min (`APP_SICK_AFTER`), A fences itself and B promotes about 7 min later: users are on B about 22-23 min after the fault. Option 9b would make this case cost nothing |
+| Whole box A down (power, kernel, host, network) | the CRM is down until the box is back or someone restores from backup (hours) | down for about 8-11 min: Cloudflare marks A down (1-2 min), B promotes (7 min after that), Cloudflare marks B up (up to 1 min), DNS caches expire (30 s+). Drill: B primary 17 s after A died on the 1 s / 2 s scaled timings. Option 9c serves read-only pages during those minutes |
+| A comes back | n/a | A starts read-only, rewinds onto B (or re-seeds, keeping its old data 7 days) and follows B. Users stay on B. No switchback, no human step |
+| Only the A-B link breaks | n/a | nothing changes for users; alert |
+| Cloudflare API down | n/a | nothing changes; no failover can start while it is down; alert |
+
+### 9b. Option: active-active APP tier, one primary database
+
+Both boxes run the app and Cloudflare sends users to both (steering "random" instead of "off");
+B's app reads and writes the primary database on A over the private link. An app crash or a bad
+container on one box then needs no database move at all.
+
+What it really takes (evidence):
+
+- **Health check**: the monitor moves from `/api/v1/health/role` (503 on B by design,
+  `sorento_crm_backend/app/main.py:737-762`) to `/api/v1/health` (app + its DB connection,
+  `main.py:707-733`), so both boxes can be healthy at once.
+- **DB and Redis must follow the primary on BOTH boxes**: the API enqueues RQ jobs into its own
+  Redis (imports, respond.io sends, catalogue renders; CLAUDE.md "Worker is required"), and
+  workers run only on the primary box. A job enqueued on B's local Redis would never run. So B's
+  app needs A's Redis AND A's Postgres over the link, and the controller must re-point both boxes'
+  pgbouncer and Redis URL at a promotion (a new moving part: today nothing re-points).
+- **Chatbot sweeper**: it runs in every API process (`main.py:416-421`) and orders a contact's
+  turns with a Redis mutex (`chatbot:drain:{contact}`, `app/services/chatbot/inbox_queue.py:382`). With B's API writing to
+  the primary, two sweepers on two Redis instances could send one contact's replies out of order;
+  the sweeper must be gated to the primary box (or share A's Redis).
+- **Sessions/auth**: already fine: staff sessions are Postgres rows (`app/services/user_session_service.py:92-127`),
+  NextAuth cookies need only the same `NEXTAUTH_SECRET`; uploads are in S3/R2. No sticky sessions.
+- **Background jobs**: unchanged, primary only (role watcher, `leader.py`).
+- **Page times on B**: every query from B's app crosses the link. Extra time per page = sequential
+  DB (and Redis) round trips x A-B RTT. The RTT is NOT measured yet (node B still runs n8n); owner
+  command, read-only: `ping -c 100 <B private address>` from A (or the public address until
+  WireGuard exists). For scale: a page doing 30 sequential queries costs +30 ms at 1 ms RTT
+  (same data centre), +150 ms at 5 ms (two Malaysian data centres). Half the users (those Cloudflare
+  sends to B) pay it on every page; writes pay it too.
+- **"Instant" needs proxied mode.** In DNS-only (the owner's 3 Nov choice) Cloudflare only hands
+  out an address; a browser that resolved box A keeps using it until its cache expires. With A's
+  app down, those users get errors until Cloudflare marks A down (2 x 60 s) plus the 30 s TTL:
+  up to about 2.5 min, active-active or not. Only in PROXIED mode does Cloudflare itself connect to
+  the box and, on a connection failure, retry the request on the other endpoint at once (Cloudflare
+  "zero-downtime failover" / adaptive routing; documented for proxied load balancers only,
+  UNVERIFIED from this sandbox: https://developers.cloudflare.com/load-balancing/understand-basics/adaptive-routing/).
+  It does not retry an HTTP 500 from a running but broken app.
+
+**Recommendation: NO for now.** Effort about 3-5 lane-days (re-pointing DB + Redis on promotion,
+sweeper gating, monitor change, a second drill set), plus a permanent latency cost on half the
+traffic, and in DNS-only it still is not instant (about 2.5 min for users pinned to the bad box).
+The app-crash case today is already covered by autoheal (about 1 min) and blue/green deploys.
+Trigger to revisit: the owner switches the record to proxied (then the retry makes app faults
+near-instant), or the measured RTT is under 1 ms and app-level outages show up in the incident log.
+
+### 9c. Option: read-only pages during the promotion gap (whole-box loss)
+
+While A is down and B has not promoted yet (about 7-9 minutes), Cloudflare has no healthy pool
+and answers with the fallback pool, B (Cloudflare's documented behaviour, UNVERIFIED here). B's
+app already runs against its hot-standby replica, so lookups and lists work today; every save
+fails with Postgres' read-only error and the user sees a generic error.
+
+What a clear "saving paused" mode needs:
+
+1. Backend: one exception handler mapping Postgres SQLSTATE 25006 (`read_only_sql_transaction`)
+   to HTTP 503 `{"code": "saving_paused"}` (next to the global handlers in `app/main.py`).
+2. Backend: the session touch commits on a 10-minute throttle (`user_session_service.py:115-127`);
+   on a replica that commit fails and would sign every user out during the gap. Skip the touch
+   (rollback, carry on) on a read-only error. Login itself writes a session row, so NEW sign-ins
+   still fail during the gap (shown as "saving paused").
+3. Frontend: `lib/api-client` turns `saving_paused` into one banner, "Saving is paused, back in a
+   few minutes", instead of per-form errors.
+4. Inbound webhooks (respond.io) get the 503 and retry for about 3 minutes; later messages are
+   backfilled by the chat-history reconcile once B is primary (section 4).
+5. Tests: pytest for the handler + session touch against a read-only transaction; vitest for the
+   banner; one drill step.
+
+**Recommendation: YES.** About 1 lane-day (small fix track: no migration, no auth model change,
+under 300 lines), and it turns 7-9 minutes of "the CRM is broken" into "you can look things up,
+saving is paused". Trigger-free: it helps from the day node B exists. Separate lane after this one.
+
+## 10. Drill results (container drill, 4 Nov)
+
+`python3 infra/rehearsal/cf_drill.py`: two throwaway Postgres 17 containers, a fake Cloudflare API,
+the real controller and adapter on each node, windows scaled to seconds (tick 1 s, check 2 s,
+fence 8 s, promote 14 s, app-sick 20 s). Result on this branch:
+
+| Scenario | Result |
+|---|---|
+| steady state + sync standby | PASS: A primary, B streaming, `synchronous_standby_names` = crm-b |
+| link cut only | PASS: no failover; sync standby dropped within `wal_sender_timeout`, writes kept working |
+| Cloudflare API down | PASS: no failover |
+| node A dies | PASS: B primary 17 s after A died; A came back read-only and follows B |
+| primary isolated | PASS: B fenced itself at 11 s, A promoted at 19 s (fence first), B rewound and follows |
+| app sick + damaged data | PASS: A fenced at 23 s, B primary at 38 s, rewind failed, A re-seeded, old data kept aside |
+| both nodes reboot | PASS: one writer back, the other follows |
+| both reboot, link down | PASS: only the former standby took over; the other rejoined |
+| never two writers | PASS: 0 of about 1000 samples |
+| acknowledged writes | NOTE: 15 of 309 lost, all written to the ISOLATED primary in the drill (its writer reaches the box through Docker, not the network) during the seconds before it fenced; a real isolated box has no users, only its own workers |
+
+Finding for prod: with `SYNC_MODE=remote_write`, a cut link sends no reset, so the primary keeps
+waiting on the dead standby until `wal_sender_timeout` (default 60 s): writes stall that long before
+P4 drops the standby. Prod sets `wal_sender_timeout` and `wal_receiver_timeout` to 10 s.
