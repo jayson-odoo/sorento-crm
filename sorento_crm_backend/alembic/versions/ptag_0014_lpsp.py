@@ -9,6 +9,13 @@ documentation/plans/dealer-kit/PLAN-pricetag-lpsp-04nov.md, slice S1.
 3. ``dealer_kit.combo_tag_template``: the combo's own tag templates, same shape as the product
    links (CASCADE on both FKs, unique (combo_id, template_id), one default per combo).
 
+4. A new version of the ``ai_extract_portal_price_tag_request`` prompt carrying rule (10)
+   (LP/SP price types, typed prices, "+" sets), moved onto the ``production`` label only when
+   that label still holds the pre-LPSP text byte for byte (an owner-edited prompt is left
+   alone; no stored prompt = nothing to do). Same mechanism as ``ptag_0013_r10`` (S2). The
+   texts are literals here, never imported from the application. Not reversed on downgrade:
+   a prompt version is data, and the older one stays on file.
+
 Idempotent (IF NOT EXISTS everywhere): a database built by ``create_all`` already holds all of
 it. Downgrade drops everything added.
 
@@ -25,6 +32,84 @@ revision = "ptag_0014_lpsp"
 down_revision = "oiod_0001_backfill"
 branch_labels = None
 depends_on = None
+
+
+PROMPT_NAME = "ai_extract_portal_price_tag_request"
+
+# Production's text before this lane: `ptag_0013_r10`'s version 2, frozen here.
+_PRE_LPSP_TEXT = (
+    "You are an information-extraction assistant. The user uploads documents "
+    "(delivery orders, photos, message screenshots, PDFs). Read every "
+    "attachment and return a single JSON object whose top-level keys are the "
+    "form field names below. Rules: (1) Omit any field you cannot find or are "
+    "not confident about - do not guess. (2) For fields with a `lookup`, "
+    "return ONLY one of the listed option `value` strings, exactly. (3) For "
+    "`do_number` fields with `multi: true`, return an array of strings. (4) "
+    "For `date` fields, use ISO-8601 (YYYY-MM-DD). (5) For `fk_product`, "
+    "return the closest-matching product_code from the supplied examples; if "
+    "nothing matches, return the raw code as printed in the document. If "
+    "multiple distinct product codes apply, return them as a single "
+    'comma-separated string (e.g. "TPE-9201, TPE-9203") - never as a JSON '
+    "array. (6) For `text`, `textarea`, and `fk_customer` fields, if the "
+    "document shows multiple distinct values for the same field, return them "
+    "as a single comma-separated string. (7) Never invent values. Never "
+    "include explanations or prose. (8) When the form has line items, "
+    "`products` is REQUIRED whenever the document shows any product code: "
+    "every product code line is one entry, even when no quantity, price or "
+    "name is shown. Return an empty `products` array only when no product "
+    "code appears anywhere. (9) `quantity` is how many tags the salesperson "
+    "wants, which the document never says. Omit `quantity` from every entry; "
+    "never copy a quantity, pack size or order quantity from the document."
+)
+
+# Matches `_ai_extract_price_tag_fallback()` as this lane leaves it.
+_LPSP_TEXT = _PRE_LPSP_TEXT + (
+    ' (10) Prices and sets. An entry may carry `price_type` ("list" or '
+    '"selling"), `typed_list_price`, `typed_sell_price` (plain numbers, '
+    "no currency symbol) and `set_codes`. A line under a section header "
+    '"LP" (list price) or "SP" (selling price), or carrying "LP rm.." '
+    'or "SP rm.." itself, takes that `price_type`; a price written on the '
+    "line wins over the header. Put an LP figure in `typed_list_price` and "
+    "an SP figure in `typed_sell_price`. When product codes are joined by "
+    '"+", the first is `product_code` and the others, in the order '
+    "written, are `set_codes` (an array of strings). When one line shows a "
+    "second price of the same kind, keep the first in the typed field and "
+    "put the other in `notes`. Omit `price_type` and any price the "
+    "document does not state; never guess either."
+)
+
+
+def _publish_prompt() -> None:
+    conn = op.get_bind()
+    production_text = conn.execute(
+        sa.text(
+            "SELECT v.template FROM ai_prompt_labels l "
+            "JOIN ai_prompt_versions v ON v.id = l.version_id "
+            "WHERE l.name = :n AND l.label = 'production'"
+        ),
+        {"n": PROMPT_NAME},
+    ).scalar()
+    if production_text is None or production_text != _PRE_LPSP_TEXT:
+        return
+    next_version = conn.execute(
+        sa.text(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM ai_prompt_versions WHERE name = :n"
+        ),
+        {"n": PROMPT_NAME},
+    ).scalar()
+    new_id = conn.execute(
+        sa.text(
+            "INSERT INTO ai_prompt_versions (id, name, version, type, template, variables) "
+            "VALUES (gen_random_uuid(), :n, :v, 'text', :t, '[]'::jsonb) RETURNING id"
+        ),
+        {"n": PROMPT_NAME, "v": next_version, "t": _LPSP_TEXT},
+    ).scalar()
+    conn.execute(
+        sa.text(
+            "UPDATE ai_prompt_labels SET version_id = :v WHERE name = :n AND label = 'production'"
+        ),
+        {"n": PROMPT_NAME, "v": new_id},
+    )
 
 
 def _dk() -> str:
@@ -98,6 +183,7 @@ def upgrade() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_dealer_kit_combo_tag_template_default "
         f"ON {dk}combo_tag_template (combo_id) WHERE is_default"
     )
+    _publish_prompt()
 
 
 def downgrade() -> None:
