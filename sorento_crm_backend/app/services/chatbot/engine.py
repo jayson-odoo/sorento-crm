@@ -1408,21 +1408,39 @@ def _known_account_types(db: Session, parser_config: Any, contact_respond_id: An
     return _guarded(db, read, [])
 
 
-def _known_companies(db: Session, parser_config: Any, contact_respond_id: Any) -> list[str] | None:
+def _contact_companies(db: Session, parser_config: Any, contact_respond_id: Any) -> list[Any]:
+    """CHATBOT-TOTALS-FILTERS: every company the contact holds, as the report lane reads them
+    (`sales_company_ask._companies`: id, name, code), read once per turn for a prompt that names the `Known companies`
+    line or carries the report ask (`report_ask.from_object` reads them for `said_as`). Empty otherwise or on a failure."""
+    if not (getattr(parser_config, "known_companies", False) or getattr(parser_config, "report_ask", False)):
+        return []
+
+    def read() -> list[Any]:
+        from app.services.chatbot.lanes.business import sales_company_ask
+
+        return list(sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db)))
+
+    return _guarded(db, read, [])
+
+
+def _known_companies(db: Session, parser_config: Any, contact_respond_id: Any, held: Any = None) -> list[str] | None:
     """CHATBOT-TOTALS-FILTERS: the display names of the companies the contact holds for the `Known companies:` line, read
     as the report lane reads every company the contact holds (`sales_company_ask._companies`), so the parser can tell a
     brand name that is also a company. None for a prompt that does not name the line; empty for a contact who holds
-    fewer than two (no company to tell apart)."""
+    fewer than two (no company to tell apart). `held`: the turn's own read of them (`_contact_companies`), if any."""
     if not getattr(parser_config, "known_companies", False):
         return None
 
     def read() -> list[str]:
         from app.services.chatbot.lanes.business import sales_company_ask
 
-        held = sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db))
-        if len(held) < 2:
+        if held is None:
+            rows = sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db))
+        else:
+            rows = held
+        if len(rows) < 2:
             return []
-        return [str(c[1]).strip() for c in held if isinstance(c, (list, tuple)) and len(c) >= 2 and str(c[1] or "").strip()]
+        return [str(c[1]).strip() for c in rows if isinstance(c, (list, tuple)) and len(c) >= 2 and str(c[1] or "").strip()]
 
     return _guarded(db, read, [])
 
@@ -5966,7 +5984,8 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         account_types = _known_account_types(db, parser_config, contact_respond_id)
-        known_companies = _known_companies(db, parser_config, contact_respond_id)
+        own_companies = _contact_companies(db, parser_config, contact_respond_id)
+        known_companies = _known_companies(db, parser_config, contact_respond_id, held=own_companies)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
@@ -6343,7 +6362,8 @@ def _run_stages_body(  # noqa: PLR0915
     # is the whole report ask; its slots become the fresh ask's own fields here, before any report seam reads them.
     # Without the marker the key is dropped and the turn is today's.
     verdict = _report_ask_basis.from_object(
-        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending
+        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending,
+        companies=own_companies,
     )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's

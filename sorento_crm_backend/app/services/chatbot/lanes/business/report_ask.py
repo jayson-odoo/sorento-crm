@@ -3362,16 +3362,19 @@ def _open_pick(verdict: dict[str, Any], focus: Any) -> tuple[str, Any, str] | No
 
 
 def _word_kinds(
-    ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked: Any = None, *, company: Any = None
-) -> list[tuple[str, str, dict[str, Any] | None]]:
-    """V4: each brand / account type word of the object as `(word, how, entity)`, how = brand | account_type | company |
-    both | unsure (`unsure`: the tables decide, `_account_plan`, and a word in both is asked), entity: this message's
-    entity of the word, if any. Not the object's list alone (a model may
+    ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked: Any = None, *, company: Any = None,
+    companies: Any = (),
+) -> list[tuple[str, str, dict[str, Any] | None, str | None]]:
+    """V4: each brand / account type word of the object as `(word, how, entity, slot)`, how = brand | account_type |
+    company | both | unsure (`unsure`: the tables decide, `_account_plan`, and a word in both is asked), entity: this
+    message's entity of the word, if any; slot: the `said_as` that decided it (HT1), else None. Not the object's list alone (a model may
     list a word the message left open as a brand), never the message's text: in order, the declared pick of an offered
     option while the brand-or-account-type question is open fills the asked words (the V5 list-pick class): all of them
     unless the object adds a word the open ask did not already hold, else only those it still carries (a dropped one
-    stays dropped, the object being the newer value); a word this message names as an entity whose `said_as` is not null
-    is that slot (HT1: company, brand or both; `from_object` applies it to the company); a word this message names
+    stays dropped, the object being the newer value); a word that is one of the contact's companies (`companies`, its name or
+    code, as `_company_or_brand` reads them), named as an entity whose `said_as` is not null, is that slot (HT1: company,
+    brand or both; `from_object` applies it to the company), and for any other word `said_as` is not read; a word this
+    message names
     as an entity is that entity's kind when `kind_said` says it; with `kind_said` null, a word the object put in its
     brands or account types, whose entity the parser bound to no candidate (`canonical_code` null), that is also the
     object's own `company` (`company`) is the company (C6-1: the model read "company" and wrote the word twice), else
@@ -3383,6 +3386,7 @@ def _word_kinds(
     def fold(value: Any) -> str:
         return " ".join(jsc.js_string(value).split()).casefold()
 
+    own = {fold(c[k] or "") for c in _own_companies(companies) for k in (1, 2)} - {""}
     slot = _dict(getattr(focus, "required_ask", None))
     slot = slot if slot.get("ask") == ASK_NAME else {}
     extras = _dict(slot.get("extras"))
@@ -3414,13 +3418,14 @@ def _word_kinds(
     for word, default in words:
         word = " ".join(jsc.js_string(word).split())
         key = fold(word)
-        if not key or key in {fold(w) for w, _how, _e in out}:
+        if not key or key in {fold(w) for w, _how, _e, _s in out}:
             continue
         entity = named.get(key)
+        said_as = (entity or {}).get("said_as") if {key, fold((entity or {}).get("raw"))} & own else None
         if picked and key in owed:
             how = picked
-        elif entity is not None and entity.get("said_as") in SAID_AS:
-            how = entity["said_as"]  # HT1: a non-null `said_as` is the parser's own slot for the name (`from_object`)
+        elif said_as in SAID_AS:
+            how = said_as  # HT1: a non-null `said_as` on one of the contact's companies is the parser's own slot for it
         elif key in either:
             how = "unsure"  # M2: a `company_or_brand` name is the data's to settle (`_company_or_brand`), asked when both
         elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
@@ -3434,7 +3439,7 @@ def _word_kinds(
             how = "unsure"
         else:
             how = default  # M2: an owed name the object moved to its brands answers the company-or-brand question
-        out.append((word, how, entity))
+        out.append((word, how, entity, how if said_as in SAID_AS and how == said_as else None))
     return out
 
 
@@ -3442,7 +3447,9 @@ def _entity(raw: str, hint: str, code: Any = None, **more: Any) -> dict[str, Any
     return {"raw": raw, "hint": hint, "canonical_code": code, "current_message": True, "confident": True, **more}
 
 
-def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None) -> dict[str, Any]:
+def from_object(
+    verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None, companies: Any = ()
+) -> dict[str, Any]:
     """Engine seam, right after the parse (A3). `on`: the prompt in use carries the report ask marker
     (`ParserConfig.report_ask`); off, the key is dropped and nothing else changes.
 
@@ -3457,7 +3464,8 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     one on an answer to the open question, and over a slot the ask filters to one value. The held names -> ids ride
     along for the lane's customer rule (`_fresh_args`). The object counts only on a report parse (`REPORT_STATUSES`)
     or a reply while this ask's question is open; an object that is not a sales or outstanding ask, or a turn read off
-    the rows on screen (`_rows_on_screen`), keeps today's path: the object is set aside (null)."""
+    the rows on screen (`_rows_on_screen`), keeps today's path: the object is set aside (null). `companies`: the contact's
+    own (`sales_company_ask._companies`, the engine's read of the turn), for `said_as` (`_word_kinds`)."""
     if HELD_IDS_KEY in verdict:
         verdict = {k: v for k, v in verdict.items() if k != HELD_IDS_KEY}  # the engine's own key: no parser value survives
     if not on:
@@ -3591,25 +3599,25 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
-    held_name = _squash((held_ask or {}).get("company") or "") if carrying else ""
-    for word, how, entity in _word_kinds(ask, verdict, focus, picked, company=own_company):
-        said_as = (entity or {}).get("said_as")
-        if said_as in SAID_AS and how == said_as:
-            # HT1, one rule: the parser's own slot for the name. Company or both: the name is the ask's company. Brand: a
-            # same-name company the object put in is not applied (ON-2), unless it is the held one (CP-5).
+    held_company = (held_ask or {}).get("company") if carrying else None
+    for word, how, entity, slot in _word_kinds(ask, verdict, focus, picked, company=own_company, companies=companies):
+        if slot is not None:
+            # HT1, one rule: the parser's own slot for a name that is one of the contact's companies. Company or both: the
+            # name is the ask's company. Brand: a same-name company the object put in is not applied (ON-2); the held
+            # company carries instead, as with no company named (owner Q3), and stays when it is that very one (CP-5).
             same = _squash(ask.get("company") or "") == _squash(word)
-            if said_as != "brand" and not same:
+            if slot != "brand" and not same:
                 ask["company"] = word
-            elif said_as == "brand" and same and _squash(word) != held_name:
-                ask["company"] = None
+            elif slot == "brand" and same and _squash(word) != _squash(held_company or ""):
+                ask["company"] = held_company
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
         elif how == "account_type":
             entities.append(_entity(word, "account_type"))
         elif how != "company":  # a word that is the ask's company is no brand or account type filter (C6-1)
             # Unsure: the brand-or-account-type plan reads it against the tables (`_account_plan`), asked when in both;
-            # a `said_as` null rides along (HT1-5, `_company_or_brand`).
-            more = {"said_as": None} if entity is not None and "said_as" in entity else {}
+            # the entity's `said_as` rides along (HT1-5: a null one, `_company_or_brand`).
+            more = {"said_as": entity.get("said_as")} if entity is not None and "said_as" in entity else {}
             entities.append(_entity(word, "brand", kind_said=None, **more))
     # A held customer is never looked up again (the lane takes its id, `_fresh_args`); any other goes to the resolver.
     entities.extend(_entity(name, "customer") for name in names("customers") if not _held_ids(held, "customer_ids", name))
