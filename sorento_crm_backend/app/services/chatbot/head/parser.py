@@ -128,6 +128,9 @@ class ParserConfig:
     # neither the key in its schema nor the line in its user turn.
     kind_said: bool = False
     account_types: bool = False
+    # CHATBOT-TOTALS-FILTERS: the prompt in use names the `Known companies` line (`KNOWN_COMPANIES_WORD`), so the user
+    # turn prints the companies the contact holds. False for a bare config: the user turn is unchanged.
+    known_companies: bool = False
     # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
     # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
     # that names it; production v63 names none). True keeps the line for a bare config.
@@ -915,6 +918,8 @@ def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
 #: SALES-ACCOUNT-TYPE PR 2: the raw template words that turn the entity key and the user-turn line on.
 KIND_SAID_WORD = "kind_said"
 KNOWN_ACCOUNT_TYPES_WORD = "Known account types"
+#: CHATBOT-TOTALS-FILTERS: the raw template words that turn the `Known companies:` user-turn line on.
+KNOWN_COMPANIES_WORD = "Known companies"
 
 
 def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
@@ -1216,6 +1221,7 @@ def resolve_config(
         by_words=by_words,
         kind_said=kind_said,
         account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
+        known_companies=KNOWN_COMPANIES_WORD in (raw_template or ""),
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),

@@ -1408,6 +1408,25 @@ def _known_account_types(db: Session, parser_config: Any, contact_respond_id: An
     return _guarded(db, read, [])
 
 
+def _known_companies(db: Session, parser_config: Any, contact_respond_id: Any) -> list[str] | None:
+    """CHATBOT-TOTALS-FILTERS: the display names of the companies the contact holds for the `Known companies:` line, read
+    as the report lane reads every company the contact holds (`sales_company_ask._companies`), so the parser can tell a
+    brand name that is also a company. None for a prompt that does not name the line; empty for a contact who holds
+    fewer than two (no company to tell apart)."""
+    if not getattr(parser_config, "known_companies", False):
+        return None
+
+    def read() -> list[str]:
+        from app.services.chatbot.lanes.business import sales_company_ask
+
+        held = sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db))
+        if len(held) < 2:
+            return []
+        return [str(c[1]).strip() for c in held if isinstance(c, (list, tuple)) and len(c) >= 2 and str(c[1] or "").strip()]
+
+    return _guarded(db, read, [])
+
+
 def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
@@ -5934,6 +5953,7 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         account_types = _known_account_types(db, parser_config, contact_respond_id)
+        known_companies = _known_companies(db, parser_config, contact_respond_id)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
@@ -6040,6 +6060,7 @@ def _run_stages_body(  # noqa: PLR0915
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,
         account_types=account_types,
+        companies=known_companies,
         promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
