@@ -6,7 +6,7 @@
  * prev/next, the gear, Set target), then line Tabs in the order Details, Targets, Agents. Edit
  * is an item in the gear dropdown, never a standalone button; editing keeps the same tabs and
  * swaps values for inputs in place. An agent who left this month keeps a muted line with a
- * "Left 14 Oct" pill.
+ * "Left 14/10/2026" pill.
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -290,7 +290,7 @@ describe('SalesTeamDetail', () => {
     const targets = screen.getByRole('region', { name: 'Team targets' });
     expect(within(targets).getByText('TGT-000001')).toBeTruthy();
     expect(within(targets).getByText('North FY26 H2')).toBeTruthy();
-    expect(within(targets).getByText('1 Oct to 31 Dec 2026')).toBeTruthy();
+    expect(within(targets).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(within(targets).getByText('50%')).toBeTruthy();
     expect(within(targets).getByText('1 brand')).toBeTruthy();
   });
@@ -313,7 +313,7 @@ describe('SalesTeamDetail', () => {
     expect(within(targets).queryByRole('button', { name: /set target/i })).toBeNull();
   });
 
-  it('Agents lists the agents with their %, and keeps a muted "Left 14 Oct" line', () => {
+  it('Agents lists the agents with their %, and keeps a muted "Left 14/10/2026" line', () => {
     answerTargets();
     render(<SalesTeamDetail id="north" />);
     openTab('Agents');
@@ -322,7 +322,7 @@ describe('SalesTeamDetail', () => {
     expect(within(ali).getByText('40%')).toBeTruthy();
     expect(within(agents).getByText('MEI - Tan Mei Ling')).toBeTruthy();
     const kim = within(agents).getByText('KIM - Kim Tan');
-    expect(within(agents).getByText('Left 14 Oct')).toBeTruthy();
+    expect(within(agents).getByText('Left 14/10/2026')).toBeTruthy();
     expect(kim.closest('[data-left="true"]')).not.toBeNull();
   });
 

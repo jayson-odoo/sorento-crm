@@ -533,8 +533,8 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     const agents = screen.getByRole('region', { name: 'Agents' });
     // Three agents (one with no figure yet) by three months.
     expect(within(agents).getAllByRole('spinbutton')).toHaveLength(9);
-    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 1 Nov 2026'), { target: { value: '900' } });
-    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 1 Dec 2026'), { target: { value: '50' } });
+    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 01/11/2026'), { target: { value: '900' } });
+    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 01/12/2026'), { target: { value: '50' } });
     const totals = within(agents).getByTestId('team-totals');
     // Oct 1,000; Nov 900 + 400; Dec 1,000 + 50.
     expect(within(totals).getByText('1,000')).toBeTruthy();
@@ -689,7 +689,7 @@ describe('TargetRecord round 3, F3: the agent target record', () => {
     expect(within(team).getByText('Amount (RM)')).toBeTruthy();
     expect(within(team).getByText('Ordered')).toBeTruthy();
     expect(within(team).getByText('All products')).toBeTruthy();
-    expect(within(team).getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(within(team).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(within(team).getByText('Every month')).toBeTruthy();
     expect(within(team).getAllByText('1,000')).toHaveLength(3);
     expect(within(team).getByRole('link', { name: 'Open team target' }).getAttribute('href')).toBe('/sales/targets/team1');

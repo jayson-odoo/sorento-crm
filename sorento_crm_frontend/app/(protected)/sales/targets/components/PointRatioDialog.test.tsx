@@ -34,7 +34,7 @@ describe('PointRatioDialog', () => {
   it('lists the ratios newest first', () => {
     render(<PointRatioDialog open onOpenChange={() => {}} />);
     const rows = within(screen.getByRole('table', { name: 'Point ratios' })).getAllByRole('row').slice(1);
-    expect(rows.map((r) => r.textContent)).toEqual(['1 Oct 20261.3', '1 Jan 20261.2']);
+    expect(rows.map((r) => r.textContent)).toEqual(['01/10/20261.3', '01/01/20261.2']);
   });
 
   it('adds a ratio from a date; zero is refused', async () => {

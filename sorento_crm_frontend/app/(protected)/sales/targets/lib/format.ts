@@ -7,22 +7,9 @@ import type {
   TargetMetric,
   TargetProductScope,
 } from '../types/salesTarget.types';
+import { formatDateInMalaysia, formatDateRange } from '@/lib/helpers';
 
 const NUMBER = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 2 });
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
 
 /** `120000` -> `120,000`; `null` -> `-`. */
 export function formatFigure(value: number | null | undefined): string {
@@ -36,18 +23,15 @@ export function formatPct(value: number | null | undefined): string {
     : `${NUMBER.format(value)}%`;
 }
 
-/** `2026-10-01` -> `1 Oct 2026`. A calendar date, so no timezone conversion applies. */
+/** `2026-10-01` -> `01/10/2026`. A calendar date, so no timezone conversion applies. */
 export function shortDate(day: string | null | undefined): string {
-  if (!day) return '';
-  const [year, month, date] = day.split('-').map(Number);
-  return `${date} ${MONTHS[month - 1]} ${year}`;
+  return day ? formatDateInMalaysia(day.slice(0, 10)) : '';
 }
 
-/** `1 Sep to 30 Nov 2026`, the year once when both ends share it; `''` without both ends. */
+/** `01/09/2026 - 30/11/2026`; `''` without both ends. */
 export function dateRange(start: string | null | undefined, end: string | null | undefined): string {
   if (!start || !end) return '';
-  if (start.slice(0, 4) !== end.slice(0, 4)) return `${shortDate(start)} to ${shortDate(end)}`;
-  return `${shortDate(start).slice(0, -5)} to ${shortDate(end)}`;
+  return formatDateRange(start.slice(0, 10), end.slice(0, 10));
 }
 
 export const METRIC_LABEL: Record<TargetMetric, string> = {
