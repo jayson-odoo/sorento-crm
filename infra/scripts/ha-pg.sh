@@ -108,12 +108,17 @@ case "$cmd" in
       # Postgres may still be up and taking writes over TCP while `exec psql` fails (wedged
       # dockerd, cgroup pressure). Never call that "down": the controller counts the tick as
       # failed and its failure path fences or lets the watchdog reboot (review round 2).
-      # Only a postmaster that itself refuses every connection (starting up, crash recovery,
-      # shutting down) is "down": it takes no writes, and fencing it would loop a long recovery.
+      # Only a postmaster that refuses every new connection BECAUSE it is recovering or starting
+      # is "down": nothing can write then, and fencing it would loop a long recovery. Not "no
+      # response" (an overloaded but writable server times out pg_isready) and not a smart
+      # shutdown (rejects new connections while old sessions keep committing): both "unknown"
+      # (review round 3). pg_controldata opens no connection.
       # shellcheck disable=SC2086
       ready=$(timeout 10 $PG_EXEC pg_isready -d postgres 2>/dev/null || true)
-      case "$ready" in
-        *"rejecting connections"*|*"no response"*)
+      # shellcheck disable=SC2086
+      state=$(timeout 10 $PG_EXEC pg_controldata -D "$PGDATA" 2>/dev/null | sed -n 's/^Database cluster state: *//p' || true)
+      case "$ready|$state" in
+        *"rejecting connections"*"|in crash recovery"|*"rejecting connections"*"|in archive recovery"|*"rejecting connections"*"|starting up")
           echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="; echo "peer_slot=t" ;;
         *) echo "self_pg=unknown" ;;
       esac

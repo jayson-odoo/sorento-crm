@@ -369,3 +369,10 @@ fence after `FENCE_AFTER`, else the watchdog). Also: the runbook's manual promot
 controller first (a controller fences a node it did not promote), a warning never to stop the
 controller on the primary alone, a test for the fence retry, and the two-node release checks the
 public URL from the runner. Reviewer kill tests on the B1 lease rule all went red.
+
+Review round 3 (the observe change after round 2): "no response" from `pg_isready` now reads
+`unknown` (an overloaded but writable primary times out pg_isready; reading it as down brought
+the round-2 blocker back); "rejecting connections" reads `down` only when `pg_controldata` says
+the cluster is in crash or archive recovery or starting up (a smart shutdown also rejects new
+connections while old sessions keep committing: `unknown`); a D2 rejoin clears `fenced_at`, so a
+slow standby start that reads down is not rejoined again as a full re-seed.

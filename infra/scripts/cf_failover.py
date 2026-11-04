@@ -313,6 +313,10 @@ def decide(state: dict, o: Obs, now: float, c: Config):
     if o.peer_pg == "primary":  # D2
         if s["last_rejoin_at"] is None or now - s["last_rejoin_at"] >= c.rejoin_after:
             rejoin()
+            # The rejoin leaves a standby (or, if it failed, a stopped data directory that D1
+            # starts read-only). Either way the node is no longer "fenced": a slow standby start
+            # that still reads down must not be rejoined again as a re-seed (review round 3).
+            s["fenced_at"] = None
         return s, acts
     if now - s["fenced_at"] >= c.fence_hold:
         if o.peer_pg == "standby" or (

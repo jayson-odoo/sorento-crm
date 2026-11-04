@@ -506,17 +506,28 @@ def test_checks_no_prune_below_threshold(env):
 ADAPTER = SCRIPTS / "ha-pg.sh"
 
 
-@pytest.mark.parametrize("pg_exec, running, want", [
-    ("false", "true", "self_pg=unknown"),          # exec broken, container up: maybe still writable
-    ("{fake}", "true", "self_pg=down"),            # postmaster rejecting connections (recovery)
-    ("false", "false", "self_pg=down"),            # container stopped
+@pytest.mark.parametrize("pg_exec, running, ready, state, want", [
+    ("false", "true", "", "", "self_pg=unknown"),                                    # exec broken, container up
+    ("{fake}", "true", "rejecting connections", "in crash recovery", "self_pg=down"),
+    ("{fake}", "true", "rejecting connections", "in archive recovery", "self_pg=down"),
+    ("{fake}", "true", "rejecting connections", "starting up", "self_pg=down"),
+    ("{fake}", "true", "rejecting connections", "in production", "self_pg=unknown"),  # smart shutdown
+    ("{fake}", "true", "no response", "in production", "self_pg=unknown"),            # overloaded, writable
+    ("{fake}", "true", "no response", "in crash recovery", "self_pg=unknown"),
+    ("{fake}", "true", "accepting connections", "in production", "self_pg=unknown"),
+    ("false", "false", "", "", "self_pg=down"),                                       # container stopped
 ])
-def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, pg_exec, running, want):
-    # `exec psql` fails (wedged dockerd) while the container still runs: Postgres may still be
-    # taking writes, so the controller must see "unknown" (a failed tick), never "down" (D1).
-    # A postmaster that refuses every connection (starting, crash recovery) is safely "down".
+def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, pg_exec, running, ready, state, want):
+    # `exec psql` fails while the container runs: Postgres may still take writes, so the
+    # controller must see "unknown" (a failed tick), never "down" (D1), unless the postmaster
+    # refuses every connection because it is recovering or starting (nothing can write then).
     fake = tmp_path / "fake-exec"
-    fake.write_text('#!/usr/bin/env bash\ncase "$1" in pg_isready) echo "/var/run/postgresql:5432 - rejecting connections"; exit 1 ;; *) exit 2 ;; esac\n')
+    fake.write_text(
+        "#!/usr/bin/env bash\n"
+        f'case "$1" in pg_isready) echo "/var/run/postgresql:5432 - {ready}"; exit 1 ;;\n'
+        f'  pg_controldata) echo "Database cluster state:               {state}"; exit 0 ;;\n'
+        '  *) exit 2 ;; esac\n'
+    )
     fake.chmod(0o755)
     e = {
         "PATH": os.environ["PATH"], "NODE_NAME": "crm-a", "PEER_NAME": "crm-b", "PEER_HOST": "peer",

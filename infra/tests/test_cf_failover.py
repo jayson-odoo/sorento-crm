@@ -411,6 +411,18 @@ def test_fenced_node_rejoins_a_primary_peer_at_once():
     assert "rejoin" in kinds(a)
 
 
+def test_a_slow_standby_start_after_a_rejoin_is_not_reseeded():
+    c = cfg()
+    state, _ = run(c, prim(), c.fence_after)  # fenced
+    state, a = decide(state, obs(self_pg="down", peer_pg="primary", peer_lsn=9000, cf_peer="healthy"), c.fence_after + TICK, c)
+    assert a == [("rejoin",)]
+    # The rejoined standby replays WAL for 10 minutes and reads down meanwhile.
+    _, out = run(c, obs(self_pg="down", peer_pg="primary", peer_lsn=9000, cf_peer="healthy"), 600,
+                 start=c.fence_after + 2 * TICK, state=state)
+    assert first(out, "rejoin") is None
+    assert all(kinds(acts) == ["start_standby"] for _, acts in out)  # a no-op on a running container
+
+
 def test_fenced_node_waits_the_hold_before_starting_beside_a_standby_peer():
     c = cfg()
     state, out = run(c, prim(), c.fence_after)
