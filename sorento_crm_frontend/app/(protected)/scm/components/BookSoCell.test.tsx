@@ -41,7 +41,8 @@ describe('BookSoCell - link history popover', () => {
     });
 
     expect(screen.getByText('Linked by AutoCount sync')).toBeInTheDocument();
-    expect(screen.getByText(/04\/09\/2026/)).toBeInTheDocument();
+    // Malaysia time, not the stored UTC and not the browser's own zone.
+    expect(screen.getByText('04/09/2026, 2:05 pm')).toBeInTheDocument();
     expect(screen.getByText('SO411111')).toBeInTheDocument();
   });
 
@@ -77,14 +78,16 @@ describe('BookSoCell - link history popover', () => {
     open({
       book_so_number: 'SO422492',
       book_so_link: {
-        changed_at: '2026-09-02T01:30:00',
+        // 17:30 UTC on 1 Sep is already 2 Sep in Malaysia.
+        changed_at: '2026-09-01T17:30:00',
         estimated: true,
         previous_linked: null,
         previous_so_number: null,
       },
     });
 
-    expect(screen.getByText(/Linked on or before 02\/09\/2026/)).toBeInTheDocument();
+    // A date, not a minute: the bound is not that precise.
+    expect(screen.getByText('Linked on or before 02/09/2026')).toBeInTheDocument();
     expect(screen.getByText('Earlier history not recorded')).toBeInTheDocument();
     expect(screen.queryByText('Linked by AutoCount sync')).toBeNull();
   });

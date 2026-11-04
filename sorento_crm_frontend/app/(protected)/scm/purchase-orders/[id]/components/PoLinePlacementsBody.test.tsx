@@ -226,7 +226,7 @@ describe('PoLinePlacementsBody', () => {
 
     expect(screen.getByRole('columnheader', { name: 'Linked' })).toBeInTheDocument();
     const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
-    expect(within(row).getByText(/^Aisyah 04\/09\/2026/)).toBeInTheDocument();
+    expect(within(row).getByText('Aisyah 04/09/2026, 2:05 pm')).toBeInTheDocument();
     // The SPO row and the dedication carry no link of this kind.
     const spoRow = screen.getByText('CRM-SPO-2026/08-0007').closest('tr') as HTMLElement;
     expect(within(spoRow).queryByText(/04\/09\/2026/)).toBeNull();
@@ -246,6 +246,6 @@ describe('PoLinePlacementsBody', () => {
     );
 
     const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
-    expect(within(row).getByText(/^Auto 04\/09\/2026/)).toBeInTheDocument();
+    expect(within(row).getByText('Auto 04/09/2026, 2:05 pm')).toBeInTheDocument();
   });
 });

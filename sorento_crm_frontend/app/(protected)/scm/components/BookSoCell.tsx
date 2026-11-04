@@ -5,7 +5,7 @@ import { History } from 'lucide-react';
 
 import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { BookSoLinkEvent } from '../types/scm.types';
 
 /** The value behind the S/O column, exactly as the backend serves it on both surfaces
@@ -131,7 +131,8 @@ function BookSoLinkPopover({ event, linked }: { event: BookSoLinkEvent; linked: 
           <div className="border-b px-3 py-2 text-xs font-semibold">S/O link</div>
           {event.estimated ? (
             <div className="space-y-1 px-3 py-2 text-xs">
-              <p>{`Linked on or before ${when}`}</p>
+              {/* A date only: the bound is an upper limit, not a moment to the minute. */}
+              <p>{`Linked on or before ${formatDateInMalaysia(event.changed_at)}`}</p>
               <p className="text-muted-foreground">Earlier history not recorded</p>
             </div>
           ) : (

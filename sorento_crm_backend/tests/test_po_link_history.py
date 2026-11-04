@@ -173,6 +173,57 @@ class TestIngestWritesTheEvent:
         assert ev.new_values == {"from_so_line_ref": "ZZT_NOT_HELD:1:2", "so_number": None}
         assert "ZZT_NOT_HELD" not in ev.description
 
+    def test_an_adopted_import_line_records_its_link_move(self, env):
+        """The third write site: a ref-less line an earlier extract import wrote is ADOPTED
+        by the first AutoCount push of its order (`_adopt_lines`), and the push's S/O ref
+        overwrites whatever the import left there."""
+        from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+        key_old = _held_so(env, "ZZTPLH-SO-IMP")
+        key_new = _held_so(env, "ZZTPLH-SO-ADP")
+        number = f"ZZTDOC-PO-{uuid.uuid4().hex[:8]}"
+        header = PurchaseOrder(
+            id=str(uuid.uuid4()), po_number=number, status="draft", company_id=env.company_a
+        )
+        env.db.add(header)
+        env.db.flush()
+        pushed = _po_line(env, qty_ordered=4, from_so_line_ref=f"{key_new}:1")
+        product_id = env.refs.resolve(entity_type="products", source_ref=pushed["product_ref"])
+        legacy = PurchaseOrderLine(
+            id=str(uuid.uuid4()), purchase_order_id=header.id, product_id=str(product_id),
+            qty_ordered=4, qty_received=0, line_status="open", company_id=env.company_a,
+            from_so_line_ref=f"{key_old}:1",
+        )
+        env.db.add(legacy)
+        env.db.commit()
+
+        _push(env, _po_record(env, number=number, lines=[pushed]))
+
+        events = _events(env, str(legacy.id))
+        assert len(events) == 1, "the adopted line keeps its id and records the move"
+        assert events[0].old_values["so_number"] == "ZZTPLH-SO-IMP"
+        assert events[0].new_values["so_number"] == "ZZTPLH-SO-ADP"
+
+    def test_a_record_that_fails_after_its_lines_leaves_no_event(self, env, monkeypatch):
+        """The events live inside the record's savepoint: a record that fails after its
+        lines were written rolls them back with everything else."""
+        from app.services.document_ingest_service import DocumentIngestService
+
+        def _boom(self, header, payload):
+            raise RuntimeError("ZZT forced failure after the lines")
+
+        monkeypatch.setattr(DocumentIngestService, "_write_order_link_claims", _boom)
+        key = _held_so(env, "ZZTPLH-SO-F")
+        record = _po_record(env, lines=[_po_line(env, from_so_line_ref=f"{key}:1")])
+        before = env.db.query(AuditLog).filter(AuditLog.event == CHANGE).count()
+
+        res = env.post(INGEST_PO, [record])
+
+        assert res.status_code == 200, res.text
+        assert res.json()["records"][0]["outcome"] == "failed", res.text
+        env.db.expire_all()
+        assert env.db.query(AuditLog).filter(AuditLog.event == CHANGE).count() == before
+
     def test_a_dry_run_writes_no_event(self, env):
         key = _held_so(env, "ZZTPLH-SO-D")
         record = _po_record(env, lines=[_po_line(env, from_so_line_ref=f"{key}:1")])
@@ -348,10 +399,12 @@ MIGRATION = (
 )
 
 
-def _run_backfill(db) -> None:
+def _run_backfill(db, batch: int | None = None) -> None:
     spec = importlib.util.spec_from_file_location("polh_0001", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if batch is not None:
+        module._BATCH = batch  # walk the keyset loop over several batches
     ctx = MigrationContext.configure(db.connection())
     with Operations.context(ctx):
         module.upgrade()
@@ -387,7 +440,7 @@ class TestBackfill:
         ))
         env.db.flush()
 
-        _run_backfill(env.db)
+        _run_backfill(env.db, batch=1)
 
         env.db.expire_all()
         seen_linked = _events(env, ids[linked["source_ref"]], SEEN)

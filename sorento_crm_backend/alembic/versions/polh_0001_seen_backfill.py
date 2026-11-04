@@ -148,28 +148,26 @@ def upgrade() -> None:
     bind = op.get_bind()
     after = None
     while True:
-        # The batch's own last id, read first, so the INSERT and the cursor agree.
-        ids = [
+        # One statement per batch; RETURNING hands back the line ids it seeded, and the
+        # largest is the next batch's keyset cursor (UUID text sorts as Postgres sorts uuid).
+        seeded = [
             row[0]
             for row in bind.execute(
-                sa.select(sa.cast(_batch_select(after).subquery().c[2], sa.String))
+                _audit.insert()
+                .from_select(
+                    [
+                        "id", "entity_type", "entity_id", "action", "event", "actor_type",
+                        "changed_at", "new_values", "description", "company_id",
+                        "root_entity_type", "root_entity_id",
+                    ],
+                    _batch_select(after),
+                )
+                .returning(_audit.c.entity_id)
             )
         ]
-        if not ids:
+        if len(seeded) < _BATCH:
             break
-        bind.execute(
-            _audit.insert().from_select(
-                [
-                    "id", "entity_type", "entity_id", "action", "event", "actor_type",
-                    "changed_at", "new_values", "description", "company_id",
-                    "root_entity_type", "root_entity_id",
-                ],
-                _batch_select(after),
-            )
-        )
-        after = max(ids)
-        if len(ids) < _BATCH:
-            break
+        after = max(seeded)
 
 
 def downgrade() -> None:

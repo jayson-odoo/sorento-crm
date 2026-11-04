@@ -1,7 +1,8 @@
 # PLAN: PO line S/O link history (lane PO-LINK-HISTORY)
 
-Status: Build (behaviour card posted, ask out; proceeding on recommendations). Track: standard (M):
-touches audit read permission (RBAC), so security-reviewer joins. Additive data migration (backfill only, no DDL).
+Status: Review (crew answered all five card questions (a), 4 Nov; reviewer + security-reviewer fix round
+landed). Track: standard (M): touches audit read permission (RBAC), so security-reviewer joined. Additive
+data migration (backfill only, no DDL).
 
 Owner, 4 Nov 2026 (PO 202609-S0111 > Lines, 3 BRW-NTC lines showing S/O SO422492): "can i see the
 audit trails of when is this linked in the UI?"
@@ -50,10 +51,22 @@ audit trails of when is this linked in the UI?"
 ## Tests (red first)
 
 - sync: changed ref -> 1 event with old/new; same ref -> 0; new line with ref -> 1 (old none); new line
-  without ref -> 0; failed record -> 0.
-- backfill: seeds one per linked line, second run seeds 0, a line with an event is skipped.
+  without ref -> 0; adopted import line -> 1 (old = the import's ref); failed record -> 0; dry run -> 0.
+- backfill: seeds one per linked line (run with a batch of 1, so the keyset loop is walked), second run
+  seeds 0, a line with an event is skipped.
 - PO detail serializer: `book_so_link` carries at / estimated / previous.
 - audit read: `scm.dashboard.view` user reads the `purchase_orders` trail (no IP); no permission or
   the ESB slug alone gets 403; another company's viewer gets nothing.
 - placements: `linked_at`, `linked_by_name`, `auto` served.
 - vitest: BookSoCell popover text (event, estimated, none); Placed "Linked" column; History tab renders.
+
+## Browser evidence (sandbox stack, 4 Nov)
+
+Cloud sandbox: backend + `next dev -H 127.0.0.1` with dev auto-login, an empty bootstrapped DB seeded with a
+PO shaped like 202609-S0111 (four BRW-NTC lines: born linked, moved SO411111 -> SO422492, linked before
+history (backfill ran through `alembic upgrade`), unlinked). Navigated Procurement > Supply Chain > Purchase
+Orders > 202609-S0111 by sidebar clicks (after enabling the tenant's modules on the empty DB).
+Screenshots in `evidence/po-link-history/`: the three popover states and the History tab at 1280, popover and
+History tab at 375 (page scrollWidth 360, no horizontal scroll). History rows read "by System" there because
+the seed wrote them outside an ingest request; a real push carries the integration actor. The Placed popup's
+Linked column was not exercised in the browser (no order inquiry seeded); vitest + pytest cover it.
