@@ -101,6 +101,7 @@ For a lane that goes to a Claude Code cloud environment instead of a local workt
 - **Dev auto-login (crew test copies only):** `DEV_AUTO_LOGIN` signs a local copy in without a password. It is mutually exclusive with remote testing: the FE answers only when `next dev -H 127.0.0.1`, and both sides need the same `DEV_AUTO_LOGIN_SECRET`. Setup and every guard: `documentation/plans/identity/PLAN-dev-login-bypass-03oct.md`. Never set it in any committed or deployed env file (a test fails).
 - FE edits hot-reload - no action needed, and no rebuild (see "Frontend dev loop" for the build rule).
 - Backend changes need no action beyond confirming uvicorn's reload log line - **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
+- **Tests run in the lane's sandbox, not on GitHub** (CI-CLOUD-GATE, 4 Nov 2026): the `ci` PR gate is fast checks only (alembic head, PII, gitleaks, imports + `pytest --collect-only`, `tsc`, ESLint on changed files). Before `crew-done` a lane runs `scripts/crew-tests.sh` on its exact head and posts the `crew-tests:` line; a release first passes a full-suite cloud sweep. Contract: `documentation/agents/cloud-lanes.md`.
 - **Pre-push hook mirrors CI's fast gates (alembic heads, py3.12 compile, touched vitest, dash guard) locally.** Install once per clone: `git config core.hooksPath scripts/git-hooks` (see `scripts/git-hooks/README.md`; bypass with `SKIP_PREPUSH=1 git push`).
 
 ## Architecture
