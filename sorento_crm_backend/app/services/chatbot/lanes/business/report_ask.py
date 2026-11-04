@@ -3588,15 +3588,20 @@ def from_object(
         ask["measure"] = held_measure if held_measure in METRICS else "amount"
     if carrying:
         held_company = held_ask.get("company")
+        echo = _squash(ask.get("company") or "")
         if (
-            held_company and ask.get("company") and _squash(ask["company"]) != _squash(held_company)
-            and not _current_kinds(verdict) and pick is None
-            and _squash(verdict.get("sales_company") or "") != _squash(ask["company"])
+            held_company and echo and echo != _squash(held_company)
+            and _squash(verdict.get("sales_company") or "") == _squash(held_company)
+            and not any(
+                isinstance(e, dict) and e.get("current_message") is not False
+                and echo in {_squash(e.get("raw") or ""), _squash(e.get("canonical_code") or "")}
+                for e in jsc.array(verdict.get("entities"))
+            )
         ):
-            # HT1-18: a message that names nothing (no entity of its own, no pick of an offered option, and the parse's own
-            # `sales_company` does not name the object's company) does not change the held company: the object's other
-            # company is an echo, not an ask. One that names something keeps today's path (a switch, or the forbidden
-            # line). Parser fields only, as `_customer_stays`.
+            # HT1-18: the parse's own `sales_company` is the held company and no entity of this message is the object's
+            # other company, so that company is an echo, not an ask: the held one stays. A message whose entity is that
+            # company keeps today's path (a switch, or the forbidden line, HT1-19 / HT1-20); a null `sales_company` never
+            # fires (HT1-18b). Parser fields only, never the message text.
             ask["company"] = held_company
         # CP-1: while a clarification is open, every held filter the parse leaves out stays (the channel too).
         _carry(ask, held_ask, verdict, slot_of_axis, answering=bool(_dict(getattr(focus, "required_ask", None)).get("asking")))
