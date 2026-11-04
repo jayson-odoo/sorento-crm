@@ -1,6 +1,6 @@
 # PLAN: OI-RESERVE-USED-ROW (reserve request on a used OI row; snapshot drill "Now" too long)
 
-Status: Review (built; reviewer + browser pass running). Track: standard (no migration, no auth
+Status: Review (built; reviewer READY, fixes in; browser pass 1280/375 done on a sandbox fixture; hand test `laneboard/scripts/2160.md`). Track: standard (no migration, no auth
 change; shared row-visibility rule across two tabs, a repair script, stock debt view change).
 
 Lane: OI-RESERVE-USED-ROW. Prod case: OI-2609-0257 / SO396347 / SRTSA830-PJ. The request to reserve 33
