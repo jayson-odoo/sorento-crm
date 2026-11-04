@@ -2203,8 +2203,37 @@ jobs:
               "$IMAGE_REPO:${svc}-${GITHUB_SHA}"
           done
 
-      - name: Sync deploy script to server
+      # HA-CF-FAILOVER (documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 2 row 1):
+      # with a second host configured (secret SSH_HOST_B), one release deploys BOTH nodes, the
+      # Postgres primary first (scripts/ha_release.sh); without it, the single-host steps below
+      # run exactly as before.
+      - name: Detect the HA second host
+        id: ha
         if: steps.targets.outputs.should_deploy == 'true'
+        env:
+          HOST_B: ${{ secrets.SSH_HOST_B }}
+        run: |
+          if [ -n "$HOST_B" ]; then echo "two_nodes=true" >> "$GITHUB_OUTPUT"; else echo "two_nodes=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Deploy both HA nodes (primary first)
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes == 'true'
+        timeout-minutes: 210
+        env:
+          HOST_A: ${{ secrets.SSH_HOST }}
+          HOST_B: ${{ secrets.SSH_HOST_B }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$SSH_KEY" > "$key"
+          chmod 600 "$key"
+          HA_HOSTS="$HOST_A $HOST_B" SSH_KEY_FILE="$key" ./scripts/ha_release.sh
+
+      - name: Sync deploy script to server
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -2222,7 +2251,7 @@ jobs:
           strip_components: 0
 
       - name: Deploy to Server (blue/green)
-        if: steps.targets.outputs.should_deploy == 'true'
+        if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
