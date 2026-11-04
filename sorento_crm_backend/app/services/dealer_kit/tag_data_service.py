@@ -803,6 +803,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
         # D1/S9: the promotion is a LINE fact now, not the request's.
         promotion_id = line.promotion_id
+        # PRICETAG-LPSP: LP or SP is the line's own fact; none stored = the header's mode.
+        line_mode = line.price_type or request.price_mode
 
         if line.id not in line_data:
             line_data[line.id] = _line_product_data(db, line, viewer, promotion_id)
@@ -825,7 +827,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         part_rows = [
             _part_row(
                 db, product, viewer, promotion_id, parts_cache,
-                price_mode=request.price_mode,
+                price_mode=line_mode,
             )
             for product in part_products
         ]
@@ -835,7 +837,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # `set_members` below still reads.
         combo_rows = _combo_products(
             db, line, tag, viewer, promotion_id, parts_cache,
-            price_mode=request.price_mode,
+            price_mode=line_mode,
         )
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
@@ -932,7 +934,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # ONE covered candidate would otherwise read the answer for a
         # sibling that resolved the uncovered one, and a promotion that
         # expires between save and read would keep printing SP forever.
-        show_promo_price = request.price_mode == "selling" and sell_price_basis != "list"
+        show_promo_price = line_mode == "selling" and sell_price_basis != "list"
 
         # The override is a SELLING price and wins over the engine's sum. It
         # never rewrites what the package LISTS at - the tag still shows what the

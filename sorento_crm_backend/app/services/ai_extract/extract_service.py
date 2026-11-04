@@ -43,7 +43,11 @@ from app.services.ai_extract.form_schema_registry import (
     ExtractFieldSpec,
     get_form_schema,
 )
-from app.services.entity_resolver import TokenResolution, resolve_references
+from app.services.entity_resolver import (
+    TokenResolution,
+    _strip_all_ws,
+    resolve_references,
+)
 from app.services.error_handler import AppException
 from app.services.llm_provider import (
     ChatResult,
@@ -284,6 +288,14 @@ class ExtractedProductSuggestion(BaseModel):
     product_name: str | None = None
 
 
+class ExtractedSetPart(BaseModel):
+    """One code joined to a line's host by "+" (PRICETAG-LPSP). `product_code` is the
+    canonical code on a hit and the raw text on a miss (`product_id` None)."""
+
+    product_code: str
+    product_id: str | None = None
+
+
 class ExtractedProductLine(BaseModel):
     product_code: str | None = None
     product_name: str | None = None
@@ -303,6 +315,16 @@ class ExtractedProductLine(BaseModel):
     # neighbours for the misread code, active products only, best first. A
     # suggestion never sets `match` / `product_id`; the user confirms one.
     suggestions: list[ExtractedProductSuggestion] = []
+    # PRICETAG-LPSP (price tag form only): the model's reading of the line's price type and
+    # typed figures, and of a "+" set. A typed LP is returned only so the dialog can flag a
+    # mismatch; it is never applied. `combo_id` / `combo_name` are a STORED combo on the host
+    # whose fixed parts equal `set_parts` exactly; a set line with none is left unmatched.
+    price_type: Literal["list", "selling"] | None = None
+    typed_list_price: float | None = None
+    typed_sell_price: float | None = None
+    set_parts: list[ExtractedSetPart] = []
+    combo_id: str | None = None
+    combo_name: str | None = None
 
 
 class TokenUsage(BaseModel):
@@ -996,9 +1018,10 @@ class AIExtractService:
             # regresses AC-S2-2's "not present anywhere" assertion.
             line_items_clause = (
                 " Include a top-level `products` array of "
-                "{product_code, product_name, notes} "
-                "when the document lists line items (see rule 8). Do not state "
-                "how many of each are wanted or their prices - see rule 9."
+                "{product_code, product_name, notes, price_type, "
+                "typed_list_price, typed_sell_price, set_codes} "
+                "when the document lists line items (see rule 8; rule 10 for prices and sets). Do "
+                "not state how many of each are wanted - see rule 9."
             )
         elif has_line_items:
             line_items_clause = (
@@ -1338,7 +1361,23 @@ class AIExtractService:
                     [tr for tr in result.resolutions if tr.token not in out],
                     suggestions_out,
                 )
+        # Fix round 2 (bug 18): the resolver folds spellings that normalise
+        # alike ("X 1-BL", "x1bl") into ONE token, so only that token carries
+        # the answer. Every spelling the caller sent gets the answer of its
+        # normalised form, using the resolver's own normaliser.
+        self._spread_to_spellings(cleaned, out)
+        if suggestions_out is not None:
+            self._spread_to_spellings(cleaned, suggestions_out)
         return out
+
+    @staticmethod
+    def _spread_to_spellings(codes: list[str], answers: dict) -> None:
+        by_norm = {_strip_all_ws(token.lower()): value for token, value in answers.items()}
+        for code in codes:
+            if code not in answers:
+                hit = by_norm.get(_strip_all_ws(code.lower()))
+                if hit is not None:
+                    answers[code] = hit
 
     def _collect_suggestions(
         self,
@@ -1361,16 +1400,105 @@ class AIExtractService:
             if picked:
                 suggestions_out[tr.token] = picked
 
+    _MAX_SET_CODES = 10
+    _MAX_SET_CODE_LEN = 64
+    _MAX_TYPED_PRICE = 1e7
+
+    @staticmethod
+    def _coerce_price_type(raw: Any) -> Literal["list", "selling"] | None:
+        if not isinstance(raw, str):
+            return None
+        word = raw.strip().lower()
+        if word in ("selling", "sp"):
+            return "selling"
+        if word in ("list", "lp"):
+            return "list"
+        return None
+
+    @classmethod
+    def _coerce_typed_price(cls, raw: Any) -> float | None:
+        """A typed figure from pasted text: 0 < x < 1e7, else None."""
+        if raw is None or raw == "" or isinstance(raw, bool):
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if 0 < value < cls._MAX_TYPED_PRICE else None
+
+    @classmethod
+    def _clean_set_codes(cls, raw: Any) -> list[str]:
+        """Up to 10 non-empty strings of at most 64 chars; anything else is dropped."""
+        if not isinstance(raw, list):
+            return []
+        codes = [
+            c.strip()
+            for c in raw
+            if isinstance(c, str) and c.strip() and len(c.strip()) <= cls._MAX_SET_CODE_LEN
+        ]
+        return codes[: cls._MAX_SET_CODES]
+
+    def _stored_combo_for(self, host_id: str, part_ids: list[str]):
+        """The host's stored combo whose FIXED parts (no choice group) are exactly
+        `part_ids`, in any order; None when there is none."""
+        from app.models.product_combo import ProductCombo, ProductComboPart
+
+        wanted = sorted(part_ids)
+        combos = (
+            self.db.query(ProductCombo)
+            .filter(ProductCombo.host_product_id == host_id)
+            .order_by(ProductCombo.sort_order, ProductCombo.name)
+            .all()
+        )
+        if not combos:
+            return None
+        # One query for every part of every combo on the host, grouped here.
+        fixed_by_combo: dict[str, list[str]] = {}
+        for combo_id, part_id in (
+            self.db.query(ProductComboPart.combo_id, ProductComboPart.part_product_id)
+            .filter(
+                ProductComboPart.combo_id.in_([c.id for c in combos]),
+                ProductComboPart.choice_group.is_(None),
+            )
+            .all()
+        ):
+            fixed_by_combo.setdefault(str(combo_id), []).append(str(part_id))
+        for combo in combos:
+            if sorted(fixed_by_combo.get(str(combo.id), [])) == wanted:
+                return combo
+        return None
+
     def _extract_products(self, parsed: dict[str, Any]) -> list[ExtractedProductLine]:
         raw = parsed.get("products")
         if not isinstance(raw, list):
             return []
         items = [item for item in raw if isinstance(item, dict)]
         raw_codes = [str(item.get("product_code") or "").strip() for item in items]
+        set_codes = [self._clean_set_codes(item.get("set_codes")) for item in items]
         suggestions: dict[str, list[ExtractedProductSuggestion]] = {}
-        resolved = self._resolve_product_codes(
-            [c for c in raw_codes if c], suggestions_out=suggestions
-        )
+        # Host codes and set codes go through the SAME batch resolver.
+        everything = list(dict.fromkeys([c for c in raw_codes if c] + [c for cs in set_codes for c in cs]))
+        resolved = self._resolve_product_codes(everything, suggestions_out=suggestions)
+
+        # Crew re-pass on 61006bce: the model sometimes splits "Srtsh2626 GY" into the code
+        # "SRTSH2626" and a description "GY". A code with no match of its own is retried as
+        # code + description (name, else notes) through the SAME resolver, exact on the
+        # normalised form; a joined code that matches nothing changes nothing.
+        joined_for: dict[int, str] = {}
+        for idx, (item, raw_code) in enumerate(zip(items, raw_codes)):
+            if not raw_code or raw_code in resolved:
+                continue
+            for field in ("product_name", "notes"):
+                extra = str(item.get(field) or "").strip()
+                if extra and len(extra) <= 64:
+                    joined_for[idx] = f"{raw_code} {extra}"
+                    break
+        if joined_for:
+            joined = self._resolve_product_codes(list(dict.fromkeys(joined_for.values())))
+            for idx, candidate in joined_for.items():
+                if candidate in joined:
+                    raw_codes[idx] = candidate
+                    resolved[candidate] = joined[candidate]
 
         def _coerce_float(raw: Any) -> float | None:
             if raw is None or raw == "":
@@ -1381,7 +1509,7 @@ class AIExtractService:
                 return None
 
         out: list[ExtractedProductLine] = []
-        for item, raw_code in zip(items, raw_codes):
+        for item, raw_code, codes in zip(items, raw_codes, set_codes):
             code: str | None = raw_code or None
             match: Literal["product", "product_set"] | None = None
             product_id: str | None = None
@@ -1398,6 +1526,36 @@ class AIExtractService:
                 code, match, product_id, product_set_id, display_name = resolved[raw_code]
                 if display_name:
                     product_name = display_name
+            line_suggestions = [] if match else suggestions.get(raw_code, [])
+
+            set_parts: list[ExtractedSetPart] = []
+            for part_code in codes:
+                hit = resolved.get(part_code)
+                if hit is not None and hit[1] == "product" and hit[2]:
+                    set_parts.append(ExtractedSetPart(product_code=hit[0], product_id=hit[2]))
+                else:
+                    set_parts.append(ExtractedSetPart(product_code=part_code))
+            combo_id: str | None = None
+            combo_name: str | None = None
+            if set_parts:
+                # A "+" line is a STORED combo or it is an unmatched row (owner ruling 4 Nov):
+                # nothing is created, and the host alone is never silently taken for the set.
+                combo = None
+                if match == "product" and product_id and all(p.product_id for p in set_parts):
+                    combo = self._stored_combo_for(product_id, [p.product_id for p in set_parts])
+                if combo is not None:
+                    combo_id, combo_name = str(combo.id), combo.name
+                else:
+                    if match == "product" and product_id:
+                        line_suggestions = [
+                            ExtractedProductSuggestion(
+                                product_id=product_id,
+                                product_code=code or raw_code,
+                                product_name=product_name,
+                            )
+                        ]
+                    match, product_id, product_set_id = None, None, None
+
             out.append(
                 ExtractedProductLine(
                     product_code=code,
@@ -1409,7 +1567,13 @@ class AIExtractService:
                     match=match,
                     product_id=product_id,
                     product_set_id=product_set_id,
-                    suggestions=[] if match else suggestions.get(raw_code, []),
+                    suggestions=line_suggestions,
+                    price_type=self._coerce_price_type(item.get("price_type")),
+                    typed_list_price=self._coerce_typed_price(item.get("typed_list_price")),
+                    typed_sell_price=self._coerce_typed_price(item.get("typed_sell_price")),
+                    set_parts=set_parts,
+                    combo_id=combo_id,
+                    combo_name=combo_name,
                 )
             )
         return out

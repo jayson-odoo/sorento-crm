@@ -26,6 +26,8 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => permission.canEdit,
 }));
 
+vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+
 vi.mock('./AddComboModal', () => ({
   AddComboModal: () => null,
 }));

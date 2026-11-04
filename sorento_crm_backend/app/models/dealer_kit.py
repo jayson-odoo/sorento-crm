@@ -815,6 +815,13 @@ class ProductTagTemplate(Base):
             "product_id", "template_id", name="uq_dealer_kit_product_tag_template"
         ),
         Index("ix_dealer_kit_product_tag_template_template_id", "template_id"),
+        # PRICETAG-LPSP: at most one default link per product.
+        Index(
+            "uq_dealer_kit_product_tag_template_default",
+            "product_id",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -829,7 +836,43 @@ class ProductTagTemplate(Base):
         ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # PRICETAG-LPSP: the link preselected on a line. A lone link is implicitly the default.
+    is_default = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     # String, not UUID - same reason as ``TagTemplateVersion.created_by``.
+    created_by = Column(String, nullable=True)
+    created_at = _created_at()
+
+
+class ComboTagTemplate(Base):
+    """A tag template a combo may print with (PRICETAG-LPSP), same shape as
+    ``ProductTagTemplate``. Not company-scoped: reachable through its combo (scoped via
+    the combo's host product) and its template. CASCADE on both ends."""
+
+    __tablename__ = "combo_tag_template"
+    __table_args__ = (
+        UniqueConstraint("combo_id", "template_id", name="uq_dealer_kit_combo_tag_template"),
+        Index("ix_dealer_kit_combo_tag_template_template_id", "template_id"),
+        Index(
+            "uq_dealer_kit_combo_tag_template_default",
+            "combo_id",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    combo_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_combos.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    is_default = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_by = Column(String, nullable=True)
     created_at = _created_at()
 
