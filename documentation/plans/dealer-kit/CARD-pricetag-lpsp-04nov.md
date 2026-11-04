@@ -52,19 +52,24 @@ R2. **Price type per line, default from the request.** New column
     `show_promo_price` is derived from the LINE's type (plus basis, as today) instead of the
     header. Existing lines are backfilled from their request's `price_mode`. Changing the
     default does not rewrite lines already set (Q2).
-    A product of a no-selling-price brand (Cabana) is forced to LP: the SP toggle is disabled with
-    a hint "No selling price for this brand.", and an SP sent by the API is stored as LP.
-R3. **Per-item preview.** The Preview section shows one thumbnail per line (same
-    `buildRequestSheet` + `DesignViewer`, one tag per page), labelled with the code and LP/SP;
-    a click opens the existing lightbox at full size. The whole-sheet PDF stays where it is. A line
-    with no template keeps the existing "No tag template yet for <code>." message in its tile.
+    A product of a no-selling-price brand (Cabana) MAY be switched to SP (owner mock note, 4 Nov,
+    loosening the 2 Nov "Cabana has no selling price" rule for tags): no system SP is offered
+    (#2104's guard stays), so the line needs a typed selling price; Submit refuses an SP line
+    with none ("No system selling price for this brand. Enter the selling price.").
+R3. **Per-item preview** (owner mock note: eye icon in the row). Each line row has an eye icon
+    button ("Preview tag") that opens that line's tag in the existing `DesignViewer` lightbox
+    (same `buildRequestSheet` + renderer as the PDF). The whole-sheet preview and PDF stay where
+    they are. A line with no template has the icon disabled and its row says "No tag template
+    yet".
 R4. **Paste list.** The AI extract on the price tag form returns, per entry: `product_code`, the
     colour/finish suffix kept as part of the code, `price_type` (from a section header such as "LP"
     / "SP" or an inline "SP Rm599"; absent = request default), `typed_list_price`,
     `typed_sell_price`, and `set_codes` (the other codes joined with "+"). The model reads the
     structure; no regex or word list on our side (28 Oct). Rule (9)'s "no prices" is narrowed to
-    "no quantities". Codes go through the existing resolver; a miss shows its did-you-mean list
-    in the dialog for the user to pick or drop, never a silent fuzzy match.
+    "no quantities". Codes go through the existing resolver; a miss shows a product picker in
+    the row (owner mock note: "the user can match by manually selecting the product here"),
+    did-you-mean options first, any product searchable; never a silent fuzzy match. A "+"
+    line is shown as a Combo (owner mock note), see Q6.
 R5. **Typed prices.** A typed SP on an SP line becomes the line's `manual_sell_price` (prints),
     with "System SP RM x" shown when it differs. A typed LP never prints (LP is master data); a
     difference shows "Typed LP RM x, system LP RM y" on the line. A stray second price on one
@@ -105,12 +110,33 @@ What a combo tag prints today, tied to the SRTBF host:
   share one template list: a combo layout is offered for the bare BF, and the bare layout for
   the combo.
 
-Real examples (the 4 "+" lines of the owner's paste; whether each is a stored combo is a dev
-data question, see the data request below):
-- C1 `SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL`, LP 2155 / SP 1729.
-- C2 `SRTBF11839 + SRTWT5904 + SRTMCB8081-WH`, LP 2679 / SP 2149.
-- C3 `SRTBF11840 + SRTWT8301-GMB + SRTMCB8083-BL`, LP 2911 / SP 2299 (plus a stray LP 2149).
-- C4 `SRTBF11851 + SRTWT6201 + SRTMCB8081-WH`, LP 1864 / SP 1499.
+Real examples: the 4 "+" lines of the owner's paste, checked against dev data (crew-data 4 Nov,
+masked; raw rows not committed):
+- C1 `SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL`, typed LP 2155 / SP 1729.
+- C2 `SRTBF11839 + SRTWT5904 + SRTMCB8081-WH`, typed LP 2679 / SP 2149.
+- C3 `SRTBF11840 + SRTWT8301-GMB + SRTMCB8083-BL`, typed LP 2911 / SP 2299 (plus a stray LP 2149).
+  SRTBF11840 and SRTWT8301-GMB are discontinued.
+- C4 `SRTBF11851 + SRTWT6201 + SRTMCB8081-WH`, typed LP 1864 / SP 1499.
+
+What the data says:
+- **None of the 4 exists as a stored combo** (0 combos on those four hosts). So under any option
+  these four print TODAY as a host line with ad-hoc parts, and the typed SP is the only SP there
+  is: it is stored nowhere (no combo row, no promotion row with those figures).
+- **Every typed LP is the exact sum of the catalogue list prices** (C1 1150 + 610 + 395 = 2155,
+  C2 2679, C3 2911, C4 1864). The summed LP the line already computes (`pricing.py` list sum)
+  prints the right figure with no combo price stored; a typed LP equal to it raises no flag.
+- Combos are real and growing (169 in dev, 90 on SRTBF hosts, 79 on SRTKS, named "HOST + PART"),
+  but only 1 carries a list price and 1 a selling price; that one list price (3090) differs from
+  its parts' sum (3282). So a stored combo price is the exception, a typed SP the norm.
+- The space-before-colour form (`SRTMCB8083 BL`) does not exist as a code; the catalogue uses a
+  hyphen. The existing resolver already folds both dashes and spaces
+  (`app/services/entity_resolver.py:741-760`), so these resolve exactly, no fuzzy step.
+
+Effect on Q3: (a) still stands, and the data narrows it. The combo template link is for stored
+combos (the 90 SRTBF ones); the pasted sets above match none, so they become host lines with
+parts, the typed SP as the line's manual price, the template from the host, and the dialog says
+"No combo with these parts on SRTBF11850." A set line with parts and no combo uses the host's
+templates in all options.
 
 Under (a): the extract matches a "+" line to the host's stored combo whose fixed parts are
 exactly the listed codes -> a combo line (combo template, combo text, combo LP/SP; a typed SP
@@ -122,22 +148,34 @@ already edited. Template pick order for a combo line: combo links, else host pro
 
 ## Examples
 
-Dev data is not reachable from this cloud sandbox (crew rule: no shared DB). E1 is the owner's
-message; E2 and E3 are earlier real requests named in this repo's plans; crew, please attach 2
-masked real requests from dev data (crew-data-request) so the gold set reaches 8.
+Dev data via crew-data (4 Nov, masked, not committed). Raw pasted text is NOT stored on any
+request (`po_extraction_result` NULL on all 46, `notes` on 5), so the extraction gold set is the
+owner's paste (split by section and sets: 4 messages) plus real requests re-typed as the list a
+salesperson would paste (E2-E4): 8 messages, 1 more than the minimum per message kind.
 
 E1. The owner's 4 Nov paste (outlet name replaced): 30 lines under "LP" (`Srtsh2626 GY`,
     `SRTSS3240`, `Srtw1200 BL`...) -> 30 LP lines; then "SP": 4 sets
     (`Srtbf11850 +srtmcb8083 BL + srtwt6204 MBL  LP rm2155 SP RM1729`) -> 4 SP lines, each one tag
-    with host `SRTBF11850` and two parts, typed SP 1729 as manual price, typed LP 2155 checked
-    against the system; 8 SP singles (`Srtwc8518 SH SP Rm499`) with typed SP;
-    `Srtwc8152 (6,8,10,P) SP Rm729` -> one line per variant only if each resolves, else one
-    unresolved row with the variants listed; final "LP" section -> 5 LP lines.
-E2. PT-202609-0004 (15 Sep, `PLAN-price-tag-ai-extract-resolver.md`): a 13-line sales order
-    photo; no price type written -> all 13 take the request default.
-E3. The 16 Sep paste of 21 bare product codes (`ai_prompt_registry.py:1178`): no header -> all
-    default; proves rule (8) still forces `products`.
-E4. A Cabana product under an "SP" header -> LP line, hint shown, no error.
+    with host `SRTBF11850` and two parts, typed SP 1729 as manual price, typed LP 2155 equal to
+    the summed catalogue LP (no flag); 8 SP singles (`Srtwc8518 SH SP Rm499`) with typed SP;
+    `Srtwc8152 (6,8,10,P) SP Rm729`: no `SRTWC8152-6/-8/-10/-P` exists (the family is
+    `-SH`, `-SH-150/200/300`, `-SH-UF...`, `-RL-P`...), so one unresolved row offering the
+    family's codes to pick; we never infer "6 = 150 mm"; final "LP" section -> 5 LP lines.
+    `Srtsh2626 GY` / `GRY` / `RG` / `GM` are five different real products (GY = golden yellow,
+    GRY = chrome, LP 108-230); each resolves exactly.
+E2. PT-202609-0003 (Sep, list): `SRTWC286-SH`, `SRTWT7445`, no header -> both take the request
+    default (LP).
+E3. PT-202609-0004 (Sep, selling): `SRTWT8203`, `SRTSH6641` style 2-line request under a
+    promotion that has no row for either product -> SP requested, no SP exists: the line shows
+    "No selling price for this item." and prints LP (today it silently prints LP).
+E3b. PT-202609-0016 (Sep, selling, 39 lines, 40 tags): mixed promotions, a combo line
+    (`SRTBF31414`, "5 in 1 combo"), a line with parts (`SRTBF11831` + `SRTMR502-BL` +
+    `SRTWT6202-RG`), a lower-case code (`srtwc7614`) and 430-800 typed into QUANTITY on 12 lines,
+    which look like prices typed where no price box existed: evidence for Q4 (a).
+    Also two promotion SPs ABOVE the list price (`SRTBF11709` LP 830 / SP 839, `SRTBF31512` LP
+    899 / SP 1099): edge case below.
+E4. A Cabana product under an "SP" header with no typed price -> SP line, no system SP, the
+    price box asks for one; with "SP Rm..." typed, that figure prints.
 E5. `Srtwc8066 S UF SP Rm599` where the system SP is RM 649 -> SP line printing RM 599 (typed),
     "System SP RM 649" shown; if RM 599 is below the floor, the minimum price pill shows too.
 
@@ -145,8 +183,16 @@ E5. `Srtwc8066 S UF SP Rm599` where the system SP is RM 649 -> SP line printing 
 
 - Set with its own price: one tag, typed SP is the set's manual price (R5).
 - Code not found: row stays in the extract dialog as unresolved with suggestions; not added.
-- Colour variant not in the catalogue (`Srtsh2626 GRY` when only `GY` exists): a resolver miss
-  with `SRTSH2626-GY` offered as a suggestion; never auto-picked.
+- Colour or size variant not in the catalogue (`SRTWC8152` "6,8,10,P"; a bare `SRTSH2626`,
+  which does not exist): a resolver miss, the family's codes offered as suggestions, never
+  auto-picked.
+- Discontinued product (C3: `SRTBF11840`, `SRTWT8301-GMB`): resolves, shows a "Discontinued"
+  hint on the line, not blocked (the dealer still has it on the floor).
+- List price 0 (`SRTWC8152-RL-UF`): LP line shows "No list price for this item." and the
+  line preview says so instead of printing RM 0.
+- Promotion SP above the list price (E3b): the line shows "Selling price is above the list
+  price." as a hint; prints what the salesperson chose (not changed by this lane).
+- SP line with no SP available (E3): hint "No selling price for this item.", prints LP.
 - Duplicate lines (`Srtss5726` and `Srtss5726 GM` are different codes; a true duplicate is the
   same resolved product twice): merged into one line, since `uq_ptag_line_request_product`
   allows one line per product per request; if the two ask for different price types, the
@@ -157,7 +203,7 @@ E5. `Srtwc8066 S UF SP Rm599` where the system SP is RM 649 -> SP line printing 
 - LLM input: the paste is untrusted text; it only fills the extract schema, is length-capped
   (existing upload cap), and never reaches a tool or a prompt other than the extract one.
 
-## Questions (at most 5)
+## Questions (Q1-Q5 from the first card; Q6 added after the owner's mock notes)
 
 Q1. Templates hard-wired to LP or SP today: (a) keep them as they are, add the `price` and
     `price_label` slots, marketing converts the small price tag template (and the new DIY one)
@@ -166,9 +212,9 @@ Q1. Templates hard-wired to LP or SP today: (a) keep them as they are, add the `
     designer meant "always LP" would silently start printing SP.
 Q2. The default price type: (a) per request ("Default price" toggle, today's header toggle,
     each line overridable); (b) per brand (set on the brand); (c) per user (last used).
-    Recommendation: (a), plus the no-selling-price brand rule forcing LP, which already exists.
-    A per-brand setting is new configuration with only Cabana as evidence, and Cabana is
-    already covered.
+    Recommendation: (a). A per-brand setting is new configuration with only Cabana as evidence,
+    and the owner's note now lets Cabana lines go SP with a typed price, so a forced brand
+    default would be wrong anyway.
 Q3. Combos (owner follow-up, 4 Nov: "should we be able to tag the combo with the template?").
     See "Combos" below for the evidence. (a) the combo is its own price tag item: templates link
     to the COMBO (1..n, same rule as products: one = automatic, many = pick), the combo prints
@@ -188,3 +234,14 @@ Q4. Which price prints when the typed one differs from the system: (a) typed SP 
 Q5. Minimum price on price tags: (a) live, non-blocking pill "Below the minimum price RM x"
     from the same floor rules quotations use (`resolve_floor`); (b) out of this lane.
     Recommendation: (a): one read of an existing service, and it matches the 1 Nov ruling.
+Q6. A "+" line with NO stored combo (all 4 in the owner's paste; owner mock note "this should be
+    combo"): (a) a combo for this request only: the line is shown and printed as a combo (host +
+    parts, typed SP as the line's manual price, LP = summed parts), and a "Save as combo" button
+    on the line, for staff with `master_data.products.edit` (the combo routes' own permission,
+    `app/api/v1/master_data/product_combos.py:36-37`), opens the EXISTING `AddComboModal`
+    prefilled (host, fixed parts, name "HOST + PART", SP prefilled and editable, LP blank =
+    sum); portal salespeople do not see the button; (b) auto-create a stored combo from every
+    pasted "+" line; (c) refuse the line until marketing creates the combo. Recommendation: (a):
+    the tag prints today with no catalogue change; (b) would turn one dealer's negotiated SP into
+    a catalogue price for everyone (the 4 typed SPs are stored nowhere today), and (c) blocks a
+    request on a marketing task. Saving stays an explicit, permissioned act.
