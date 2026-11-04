@@ -5,7 +5,7 @@ through the Shared Service). Seeded here and in `app/rbac/permission_registry.py
 roles get it (grant sweep), and an admin grants it to purchasing.
 
 Revision ID: pol_0001_stock_debt_link_po
-Revises: ptag_0014_lpsp
+Revises: oiod_0002_pending_restore
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "pol_0001_stock_debt_link_po"
-down_revision = "ptag_0014_lpsp"
+down_revision = "oiod_0002_pending_restore"
 branch_labels = None
 depends_on = None
 
