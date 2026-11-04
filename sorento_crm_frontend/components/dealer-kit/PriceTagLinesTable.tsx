@@ -21,7 +21,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { numberFieldError } from '@/lib/number-field';
-import { promotionOptionName, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
@@ -423,7 +423,7 @@ function LineRow({
   const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
     (option) => ({
       value: option.id,
-      label: `${promotionOptionName(option)} - ${formatRM(option.sell_price)}`,
+      label: promotionOptionLabel(option),
     }),
   );
   // The last open (unresolved) part row - AC-S2-3's copy sits under it,

@@ -119,7 +119,7 @@ import {
   AUTO_UPDATE_STATUSES,
   type TagDataChangeSet,
 } from '@/lib/dealer-kit/product-data-changes';
-import { promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
+import { promotionOptionLabel, promotionOptionName } from '@/lib/dealer-kit/line-pricing-types';
 import RequestDesignSection from './RequestDesignSection';
 import {
   openComments,
@@ -1106,7 +1106,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 options={(linePricing[line.id]?.promotion_options ?? []).map(
                                   (option) => ({
                                     value: option.id,
-                                    label: `${promotionOptionName(option)} - RM ${option.sell_price.toLocaleString('en-MY')}`,
+                                    label: promotionOptionLabel(option),
                                   }),
                                 )}
                                 placeholder="No covering promotion"

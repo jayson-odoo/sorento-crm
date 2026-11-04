@@ -45,7 +45,7 @@ export interface ProductComboRow {
   /** The catalogue's own wording, e.g. "3 in 1". Unique per host product. */
   name: string;
   sort_order: number;
-  /** PRICETAG-COMBO: printed on the tag; a blank price means the summed price. */
+  /** PRICETAG-COMBO: printed on the tag; a blank price prints no price (never a sum of the parts). */
   description?: string | null;
   free_items?: string | null;
   list_price?: number | string | null;
