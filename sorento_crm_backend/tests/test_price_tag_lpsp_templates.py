@@ -596,3 +596,115 @@ class TestDeferredComboUnlink:
             with pytest.raises(AppException) as exc:
                 _assert_entity_visible(db, "combo.unlink_tag_templates", combo.id, MANAGER_ID)
         assert exc.value.status_code == 404
+
+
+class TestDefaultSurvivesOneToTwo:
+    """Crew pass on bb5954ce: unlink a combo down to one template (countdown completed), add a
+    second one back, and the saved default was gone (both is_default false). A 1 -> 2 link change
+    must never drop the default: the lone remaining link becomes the default on unlink, and a
+    lone link stays the default when another is added. Clearing the default on purpose, with 2+
+    links, still works."""
+
+    @staticmethod
+    def _combo_defaults(db, combo_id):
+        from app.models.dealer_kit import ComboTagTemplate
+
+        return {
+            r.template_id
+            for r in db.query(ComboTagTemplate).filter_by(combo_id=combo_id, is_default=True)
+        }
+
+    @staticmethod
+    def _product_defaults(db, product_id):
+        from app.models.dealer_kit import ProductTagTemplate
+
+        return {
+            r.template_id
+            for r in db.query(ProductTagTemplate).filter_by(product_id=product_id, is_default=True)
+        }
+
+    def test_combo_unlink_to_one_then_add_a_second_keeps_a_default(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        combo = _combo(db, _product(db, _reference(db)))
+        a, b, c = _template(db, "A"), _template(db, "B"), _template(db, "C")
+        _combo_link(db, combo.id, a, b, default=a)
+        set_company_scope(db, frozenset({SORENTO}))
+
+        svc.unlink_combo_templates(db, combo.id, [a])
+        assert self._combo_defaults(db, combo.id) == {b}
+
+        # The form sends no default when it showed a single link (the crew repro).
+        svc.set_combo_templates(db, combo.id, [b, c], user_id=None, default_template_id=None)
+        assert self._combo_defaults(db, combo.id) == {b}
+
+    def test_combo_unlinking_the_non_default_keeps_the_default(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        combo = _combo(db, _product(db, _reference(db)))
+        a, b, c = _template(db, "A"), _template(db, "B"), _template(db, "C")
+        _combo_link(db, combo.id, a, b, default=a)
+        set_company_scope(db, frozenset({SORENTO}))
+
+        svc.unlink_combo_templates(db, combo.id, [b])
+        svc.set_combo_templates(db, combo.id, [a, c], user_id=None, default_template_id=None)
+        assert self._combo_defaults(db, combo.id) == {a}
+
+    def test_product_lone_link_without_a_stored_default_becomes_it_when_a_second_is_added(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        product = _product(db, _reference(db))
+        a, b = _template(db, "A"), _template(db, "B")
+        _link(db, product, a)  # a link saved before defaults existed: is_default false
+        set_company_scope(db, frozenset({SORENTO}))
+
+        svc.set_product_templates(db, product, [a, b], user_id=None, default_template_id=None)
+        assert self._product_defaults(db, product) == {a}
+
+    def test_product_unlink_to_one_makes_the_remaining_link_the_default(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        product = _product(db, _reference(db))
+        a, b = _template(db, "A"), _template(db, "B")
+        _link_default(db, product, a, b)
+        set_company_scope(db, frozenset({SORENTO}))
+
+        svc.unlink_product_templates(db, product, [a])
+        assert self._product_defaults(db, product) == {b}
+
+    def test_bulk_add_to_a_product_with_one_link_keeps_that_link_the_default(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        ref = _reference(db)
+        product = _product(db, ref, family_code=unique_code("FAM"))
+        a, b = _template(db, "A"), _template(db, "B")
+        _link(db, product, a)  # legacy lone link, is_default false
+        set_company_scope(db, frozenset({SORENTO}))
+        from app.models.product import Product
+
+        family = db.get(Product, product).family_code
+        svc.bulk_assign(db, b, {"family_codes": [family]}, "add", user_id=None)
+        assert self._product_defaults(db, product) == {a}
+
+    def test_clearing_the_default_with_two_links_still_clears_it(self, env):
+        from app.models.base import set_company_scope
+        from app.services.dealer_kit import product_tag_template_service as svc
+
+        db, _c, _ = env
+        product = _product(db, _reference(db))
+        a, b = _template(db, "A"), _template(db, "B")
+        _link_default(db, product, a, b)
+        set_company_scope(db, frozenset({SORENTO}))
+
+        svc.set_product_templates(db, product, [a, b], user_id=None, default_template_id=None)
+        assert self._product_defaults(db, product) == set()

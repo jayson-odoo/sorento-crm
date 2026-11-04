@@ -32,7 +32,7 @@ from __future__ import annotations
 import uuid
 from typing import Iterable, Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Query, Session
 
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
@@ -277,6 +277,15 @@ def _replace_links(
         link.template_id: link
         for link in db.query(link_model).filter(owner_col == owner_id).all()
     }
+    # Crew pass on bb5954ce: a 1 -> 2 link change must never drop the default. A lone link IS
+    # the default, stored or not, so it stays the default when others are added; and a single
+    # wanted link is the default. Clearing on purpose (None with 2+ links before and after)
+    # still clears.
+    if default_id is None:
+        if len(existing) == 1 and next(iter(existing)) in wanted:
+            default_id = next(iter(existing))
+        elif len(wanted) == 1:
+            default_id = wanted[0]
     for template_id, link in existing.items():
         if template_id not in wanted:
             db.delete(link)
@@ -362,6 +371,30 @@ def product_exists(db: Session, product_id: str) -> bool:
     return bool(pid) and _scoped(db, Product).filter(Product.id == pid).first() is not None
 
 
+def _lone_link_is_default(db: Session, link_model, owner_attr: str, owner_ids) -> None:
+    """Every owner left with exactly one link and no default gets that link as its default
+    (crew pass on bb5954ce: an unlink down to one must not leave a default-less owner, or the
+    next add would start with none)."""
+    owner_col = getattr(link_model, owner_attr)
+    ids = [oid for oid in owner_ids if oid]
+    if not ids:
+        return
+    lone = (
+        db.query(owner_col)
+        .filter(owner_col.in_(ids))
+        .group_by(owner_col)
+        .having(func.count(link_model.id) == 1)
+        .having(func.bool_or(link_model.is_default).is_(False))
+        .all()
+    )
+    lone_ids = [row[0] for row in lone]
+    if lone_ids:
+        db.query(link_model).filter(owner_col.in_(lone_ids)).update(
+            {link_model.is_default: True}, synchronize_session=False
+        )
+        db.flush()
+
+
 def unlink_product_templates(db: Session, product_id: str, template_ids: list[str]) -> dict:
     """The product page's Remove, committed after its countdown (an unlink, so
     it parks: ``product.unlink_tag_templates``). Only links of a product in
@@ -380,6 +413,7 @@ def unlink_product_templates(db: Session, product_id: str, template_ids: list[st
         .delete(synchronize_session=False)
     )
     db.flush()
+    _lone_link_is_default(db, ProductTagTemplate, "product_id", [_uuid_or_none(product_id)])
     return {"changed": changed}
 
 
@@ -401,6 +435,7 @@ def unlink_combo_templates(db: Session, combo_id: str, template_ids: list[str]) 
         .delete(synchronize_session=False)
     )
     db.flush()
+    _lone_link_is_default(db, ComboTagTemplate, "combo_id", [_uuid_or_none(combo_id)])
     return {"changed": changed}
 
 
@@ -516,13 +551,18 @@ def bulk_assign(
             .delete(synchronize_session=False)
         )
         db.flush()
+        _lone_link_is_default(db, ProductTagTemplate, "product_id", list(linked))
         return {"changed": changed}
     missing = [pid for pid in product_ids if pid not in linked]
+    # A product going from one link to two keeps that one as its default.
+    _lone_link_is_default(db, ProductTagTemplate, "product_id", missing)
     db.add_all(
         ProductTagTemplate(product_id=pid, template_id=template.id, created_by=user_id)
         for pid in missing
     )
     db.flush()
+    # ...and a product whose first link this was has it as its default.
+    _lone_link_is_default(db, ProductTagTemplate, "product_id", missing)
     return {"changed": len(missing)}
 
 
