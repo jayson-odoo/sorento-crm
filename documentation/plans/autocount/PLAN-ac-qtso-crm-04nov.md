@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Plan (behaviour card being drafted; no code before the owner answers).
+Lane: AC-QTSO-CRM. Status: Plan (behaviour card posted, SS contract pinned 4 Nov; waiting on owner answers, no code before them).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -58,11 +58,59 @@ the intent (order id + amendment id / revision no), so a double press replays SS
 - Partially delivered SO cancel: see Q4.
 - Order with an unacknowledged hard finding: Create disabled with the existing `so_export_blocked` message.
 
-### Assumed SS contract (not verified: this sandbox cannot read foundryx-shared-service)
+## SS contract (pinned by crew from SS main f71e6ecf, `57-autocount-write-qtso-contract.md`, `routers/write_v1.py`)
 
-`/write-capabilities` entries for kinds `quotations` and `sales-orders`, ops `create_doc`, `edit_doc`, `add_line`, `cancel_doc`
-(+ partial line cancel), and POST routes for each with `{outcome, errorCode, docKey, docNo, document}` answers. Crew please pin
-these against SS #191 `57-autocount-write-qtso-contract.md`; any missing op becomes the SS ask.
+- Capabilities: `GET /api/v1/autocount/write-capabilities?companyCode=` -> `{capabilities:[{op, kind, enabled, reasonCode}]}`.
+  For `quotations` and `sales-orders`: `create_doc`, `edit_doc`, `add_line` enabled; `delete_line` and `cancel_doc` OFF
+  (VENDOR_UNSUPPORTED). No balance-cancel op. The CRM reads the feed when the menu opens and never hard-codes it, so today
+  **Cancel in AutoCount** and a removed / cancelled line are greyed "Waiting for AutoCount".
+- Create: `POST /documents/{quotations|sales-orders}` (wv1:273). Edit: `PATCH /documents/{kind}/{docKey}` (:295).
+  Add line: `POST /documents/{kind}/{docKey}/lines` (:319). Delete line (:342) and cancel (:364) answer 409 VENDOR_UNSUPPORTED.
+- `Idempotency-Key` header required (1-128 ASCII): same key + body replays; different body 409 IDEMPOTENCY_CONFLICT; running 409
+  OPERATION_IN_PROGRESS. The CRM builds it from the intent (kind, CRM document id, amendment id or revision no, op).
+- Answer `{operationId: null, actionId, outcome, errorCode, message, warnings[], docKey, docNo, replacedLines, document}`:
+  200 done / 202 pending_verification / 422 / 403 WRITE_DISABLED, WRITE_NOT_ALLOWED / 409 / 502 mismatch, FIELD_IGNORED.
+  QT / SO have no resume and no GET-operation path: 202 shows "Sent; AutoCount has not confirmed yet. It will show after the next sync."
+- db3 only (SS guard) plus WRITE_COMPANY_NOT_TEST.
+
+### Field map, corrected to the pinned contract
+
+Create header (`header{}`):
+| AutoCount | CRM source |
+| --- | --- |
+| debtorCode (required) | customer `customer_code` (SO: the PO issuer's customer, `_customer_for`; QT: the recipient party's customer). Missing -> refused in the CRM before any call: "No debtor code on <customer>". |
+| docDate | today (MYT), dd/mm/yyyy on screen |
+| currencyCode, currencyRate (required by the CRM) | `MYR`, `1`. Project SOs and quotations carry no currency today (no column in `project_so.py` / `projects.py`). |
+| displayTerm | `Net N days` from the PO's `term_days` (SO); quotation `payment_terms` text is free text, so QT sends none |
+| yourPONo | customer PO number (SO); quotation `your_ref` (QT) |
+| ref | project title (today's "Our Ref No.") |
+| refDocNo (create only) | not sent |
+| salesAgent | customer's sales agent code |
+| remark1 | CRM ref: SO `provisional_ref` (PSO-...), QT `document_no (Rn)`, so the next pull can adopt the document |
+| docNo | not sent; AutoCount numbers it |
+
+Create lines (`lines[]`): itemCode = product code; uom; qty (> 0); unitPrice (>= 0); location (required) = SO line
+`stock_location`, else `derived_stock_location` (`project_so_draft_service.py:3323`), else refused in the CRM "No location on line N";
+description; deliveryDate (SO); discount blank. SO line made from a quotation line that is already in AutoCount: send
+`fromQuotation{docNo, dtlKey}`; AutoCount then copies price and location from it (warning QT_ROW_VALUES_INHERITED, shown amber).
+Quotation lines: rate-only lines and product sets (`is_rate_only`, `product_set_id`) cannot be one AutoCount row; refused in the CRM
+by name until the owner says how (see question 6).
+
+Edit (`PATCH`): header ref, description, remark1-4, displayTerm, salesAgent, yourPONo; lines qty, unitPrice, discount, location,
+description, deliveryDate. Anything else answers 422 FIELD_NOT_EDITABLE. Always sends `docDate` (DOC_DATE_REQUIRED) and
+`expectedLastModified` from the last read-back; a change in AutoCount answers DOC_STALE -> "Changed in AutoCount since dd/mm/yyyy,
+open Compare first". Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
+Amendment verbs: QTY_CHANGE and ADVANCE / DELAY = edit; ADD_LINE = add line (no dtlKey back: the CRM diffs `document.Details`
+against the lines it knew); REMOVE_LINE / CANCEL_BALANCE / REPOINT_SO / MODEL_CHANGE = greyed "Waiting for AutoCount" (need
+delete_line / cancel). An amendment mixing both: the editable rows go, the rest stay listed as waiting.
+
+### SS gaps (crew opens an SS lane)
+
+1. Cancel: `cancel_doc` for QT / SO (AutoCount ignores header Cancelled). Needed for Cancel in AutoCount.
+2. Balance cancel / line cancel for a partially delivered SO (a Cancel SO document for the outstanding qty, or `delete_line`).
+3. A header quotation reference on SO create (today only per-line `fromQuotation`), for SOs whose lines were not copied from an AutoCount QT.
+4. Resume or `GET` by actionId for QT / SO writes, so a 202 can be confirmed without waiting for the next sync.
+5. `dtlKey` of the new row in the add-line answer (today the CRM diffs `document.Details`).
 
 ## Questions for the owner (open)
 
@@ -71,3 +119,6 @@ these against SS #191 `57-autocount-write-qtso-contract.md`; any missing op beco
 3. Update source. Published orders are locked today (`so_not_editable`). (a) only a published amendment's change list; (b) also direct line edits. Recommendation: (a), the amendment already carries approval and the reason trail.
 4. Partially delivered SO cancel. (a) cancel the undelivered balance only, delivered lines stay; (b) refuse. Recommendation: (a), matches AutoCount Cancel SO and how the CRM derives cancelled qty (AC-CANCEL-CRM).
 5. Quotation timing. (a) Create on issue, Update on each new issued revision; (b) only once the customer accepted / signed. Recommendation: (b), AutoCount does not fill with quotations never accepted; a later revision of an accepted one goes as Update.
+6. Quotation lines AutoCount cannot hold as one row (rate-only lines, product sets). (a) refuse the whole quotation by name; (b) send a set as its parts and skip rate-only lines with a note. Recommendation: (a) for now, because sending something different from the issued quotation breaks "AutoCount = what the customer accepted".
+
+Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount is greyed "Waiting for AutoCount" either way; the answer decides what we build once SS adds it.
