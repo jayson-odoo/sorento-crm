@@ -3641,12 +3641,37 @@ export function TagCanvasEditor({
   // this open - otherwise a selection change with nothing typed would flush
   // whatever was left over from a PREVIOUS edit session against the newly
   // opened layer.
+  const editingSeedRef = useRef('');
   useEffect(() => {
-    if (editingLayerId) editingTextRef.current = editingContent;
+    if (editingLayerId) {
+      editingTextRef.current = editingContent;
+      editingSeedRef.current = editingContent;
+    }
     // Only re-seed when a NEW edit session opens, not on every keystroke -
     // `editingTextRef` itself is the up-to-date value once one is in progress.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingLayerId]);
+
+  // The canvas unmounting with typing still open (the spec sheet reader unloads a page scrolled far
+  // away): no blur or click outside will come, so hand the host the typed text now, the same way a
+  // commit writes it, or it is lost without a word.
+  const unloadRef = useRef({ editingLayerId, layers, onLayersChange });
+  unloadRef.current = { editingLayerId, layers, onLayersChange };
+  useEffect(
+    () => () => {
+      const { editingLayerId: id, layers: now, onLayersChange: report } = unloadRef.current;
+      const text = editingTextRef.current;
+      if (!id || !report || text === editingSeedRef.current) return;
+      report(
+        now.map((layer) => {
+          if (layer.id !== id) return layer;
+          if (layer.slot_binding) return { ...layer, text_override: text };
+          return layer.props.kind === 'text' ? { ...layer, props: { ...layer.props, text } } : layer;
+        }),
+      );
+    },
+    [],
+  );
 
   /**
    * The inline editor's own commit (S2, D5): Esc, Cmd/Ctrl+Enter or blur
