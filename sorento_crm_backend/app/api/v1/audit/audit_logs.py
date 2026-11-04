@@ -35,6 +35,8 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "inbound_shipments": "procurement.packing_lists.view",
     # Product Specifications record page, History tab.
     "product_spec_registry": "master_data.spec_registry.view",
+    # SCM purchase-order detail, History tab: the order's S/O link events (PO-LINK-HISTORY).
+    "purchase_orders": "scm.purchase_orders.view",
 }
 
 

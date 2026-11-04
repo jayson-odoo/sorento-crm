@@ -420,12 +420,15 @@ def test_placed_inquiry_rows_carry_who_linked_and_when(env):
     _push(env, record)
     w = PoWorld(env, record, line_a, line_b)
     _oi_row_on(env, w)
-    env.db.execute(
-        text("UPDATE projects.order_inquiry_links SET linked_by = :u, auto = false, "
-             "linked_at = :at WHERE po_line_id = :l"),
-        {"u": "5b8b9c10-1111-4222-8333-4444555566d1", "at": datetime(2026, 9, 4, 14, 5),
-         "l": w.line_a},
-    )
+    from app.models.project_so import OrderInquiryLink
+
+    # ORM, not a schema-qualified UPDATE: the blank session's scratch schema holds the rows.
+    links = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.po_line_id == w.line_a).all()
+    assert links
+    for link in links:
+        link.linked_by = "5b8b9c10-1111-4222-8333-4444555566d1"
+        link.auto = False
+        link.linked_at = datetime(2026, 9, 4, 14, 5)
     env.db.commit()
     env.db.expire_all()
 
