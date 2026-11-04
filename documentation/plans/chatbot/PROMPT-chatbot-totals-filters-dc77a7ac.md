@@ -55,4 +55,7 @@ Gate 3's 7 misses, read against the engine:
 - tf-09/10 "sorento company only": both slots filled, kind_said null. The engine asks "company or brand?" once and never gives wrong totals.
 - tf-13 bare "Sorento": brands only, so it is answered as the brand with no question. The question path is built, but this model does not use `company_or_brand` for a bare name yet.
 
-TRAIN no-op control, parser-gold TRAIN slices 1+2: BASE e4aa6d43 against this text. Result in the PR crew-note.
+TRAIN no-op control (parser-gold TRAIN slices 1+2, same code, BASE e4aa6d43 vs this text): 93 vs 90 whole-parse passes on
+the 112 common rows, 5 wins / 2 losses (G042, G047: intent), p=0.45: not worse. USD 0.73 for both arms.
+
+Saved unlabelled on sorento_prod_1020 as v199, id 6ef0ec26-d7ba-4dc3-b46e-9d631e5c054e (4 Nov).
