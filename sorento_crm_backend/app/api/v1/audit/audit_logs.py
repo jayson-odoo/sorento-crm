@@ -36,7 +36,9 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     # Product Specifications record page, History tab.
     "product_spec_registry": "master_data.spec_registry.view",
     # SCM purchase-order detail, History tab: the order's S/O link events (PO-LINK-HISTORY).
-    "purchase_orders": "scm.purchase_orders.view",
+    # The page's own gate (`app/api/v1/scm/purchase_orders.py` `_READ`), NOT
+    # `scm.purchase_orders.view`, which is the AutoCount ESB's push/read slug.
+    "purchase_orders": "scm.dashboard.view",
 }
 
 
@@ -65,10 +67,11 @@ def require_audit_admin(
 
 def _authorize_log_read(
     db: Session, current_user: dict, entity_type: Optional[str], entity_id: Optional[str]
-) -> None:
+) -> bool:
+    """Raise unless the caller may read; True for an audit admin, False on the per-record path."""
     user_id = str(current_user["id"])
     if _is_audit_admin(db, user_id):
-        return
+        return True
     slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
     if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
         raise _forbidden()
@@ -84,6 +87,7 @@ def _authorize_log_read(
             message="An active company is required to read this record's history.",
             code="audit_company_required",
         )
+    return False
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
@@ -277,7 +281,9 @@ def get_audit_logs(
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
     entity_types = multi_values(entity_type)
     user_ids = multi_uuids(user_id, "User")
-    _authorize_log_read(db, current_user, entity_types[0] if entity_types and len(entity_types) == 1 else None, entity_id)
+    is_audit_admin = _authorize_log_read(
+        db, current_user, entity_types[0] if entity_types and len(entity_types) == 1 else None, entity_id
+    )
     items, total = list_audit_logs(
         db,
         entity_type=entity_types,
@@ -331,6 +337,10 @@ def get_audit_logs(
         )
         payload["description"] = _derive_description(it, status_labels)
         payload["entity_label"] = record_labels.get(str(it.id))
+        if not is_audit_admin:
+            # The actor's IP is one reason the log is admin-only (header above); a detail
+            # page's history panel never shows it (PO-LINK-HISTORY security review S1).
+            payload["ip_address"] = None
         data.append(AuditLogResponse(**payload))
     return {
         "data": data,

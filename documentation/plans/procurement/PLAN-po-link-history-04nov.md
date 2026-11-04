@@ -40,8 +40,11 @@ audit trails of when is this linked in the UI?"
 3. PO detail, Lines tab, S/O cell: the value opens a popover: "Linked by AutoCount sync on <date time>",
    "Was <previous SO | not linked>"; a backfilled one reads "Linked on or before <date>" and "Earlier history
    not recorded". A line whose latest event is an unlink shows the dash with the same popover.
-4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`), readable with
-   `scm.purchase_orders.view`.
+4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`), readable by anyone who
+   can open the PO page: `scm.dashboard.view`, the SCM purchase-order routes' own `_READ`
+   (`app/api/v1/scm/purchase_orders.py:36`). Security review B1: `scm.purchase_orders.view` is the
+   AutoCount ESB's push/read slug, held by no staff role. Non-admin per-record reads get
+   `ip_address` blanked (security review S1).
 5. Placed popup: a "Linked" column on order-inquiry rows: "<user name> <date>" or "Auto <date>".
 
 ## Tests (red first)
@@ -50,6 +53,7 @@ audit trails of when is this linked in the UI?"
   without ref -> 0; failed record -> 0.
 - backfill: seeds one per linked line, second run seeds 0, a line with an event is skipped.
 - PO detail serializer: `book_so_link` carries at / estimated / previous.
-- audit read: PO-view user reads `purchase_orders` trail; user without it gets 403.
+- audit read: `scm.dashboard.view` user reads the `purchase_orders` trail (no IP); no permission or
+  the ESB slug alone gets 403; another company's viewer gets nothing.
 - placements: `linked_at`, `linked_by_name`, `auto` served.
 - vitest: BookSoCell popover text (event, estimated, none); Placed "Linked" column; History tab renders.

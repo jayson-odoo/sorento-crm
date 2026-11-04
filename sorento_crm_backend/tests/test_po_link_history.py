@@ -272,7 +272,10 @@ class TestDetailServesTheLatestEvent:
 
 
 # ============================================================== 3. History tab permission
-def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
+def test_po_history_is_readable_with_the_po_pages_permission_and_not_without():
+    """Gated on the PO page's own permission (`scm.dashboard.view`, the SCM purchase-order
+    routes' `_READ`). `scm.purchase_orders.view` is the AutoCount ESB's slug and opens
+    nothing here. Company-scoped like every per-record read, and no IP address."""
     from fastapi.testclient import TestClient
 
     import app.database as app_database
@@ -285,25 +288,25 @@ def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
     from tests.test_audit_read_gate import _role, _user
 
     with blank_session() as db:
-        buyer = _user(db, "buyer", _role(db, "zz_po_viewer", ["scm.purchase_orders.view"]))
+        buyer = _user(db, "buyer", _role(db, "zz_po_viewer", ["scm.dashboard.view"]))
+        esb = _user(db, "esb", _role(db, "zz_esb_slug_only", ["scm.purchase_orders.view"]))
         plain = _user(db, "plain", _role(db, "zz_nothing", []))
         po_id = str(uuid.uuid4())
         db.add(AuditLog(
             id=str(uuid.uuid4()), entity_type="purchase_order_lines", entity_id=str(uuid.uuid4()),
             action="EVENT", event=CHANGE, description="ZZT: S/O none → ZZT-SO",
             root_entity_type="purchase_orders", root_entity_id=po_id,
-            company_id=DEFAULT_COMPANY_ID,
+            company_id=DEFAULT_COMPANY_ID, ip_address="10.9.8.7",
         ))
         db.commit()
-        caller = {"id": None}
-        scope = frozenset({DEFAULT_COMPANY_ID})
+        caller = {"id": None, "scope": frozenset({DEFAULT_COMPANY_ID})}
 
         def _override_db():
             yield db
 
         async def _override_scope():
-            set_company_scope(db, scope)
-            return scope
+            set_company_scope(db, caller["scope"])
+            return caller["scope"]
 
         app.dependency_overrides[app_database.get_db] = _override_db
         app.dependency_overrides[apply_company_scope] = _override_scope
@@ -316,13 +319,22 @@ def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
             caller["id"] = buyer
             r = TestClient(app).get(url)
             assert r.status_code == 200, r.text
-            assert [row["event"] for row in r.json()["data"]] == [CHANGE]
+            rows = r.json()["data"]
+            assert [row["event"] for row in rows] == [CHANGE]
+            assert rows[0]["ip_address"] is None
             caller["id"] = plain
+            assert TestClient(app).get(url).status_code == 403
+            caller["id"] = esb
             assert TestClient(app).get(url).status_code == 403
             # The view permission opens that PO's history, not the line table's listing.
             caller["id"] = buyer
             r = TestClient(app).get("/api/v1/audit/logs/?entity_type=purchase_order_lines")
             assert r.status_code == 403
+            # Another company's viewer sees nothing of this company's PO.
+            caller["scope"] = frozenset({str(uuid.uuid4())})
+            r = TestClient(app).get(url)
+            assert r.status_code == 200, r.text
+            assert r.json()["data"] == []
         finally:
             app.dependency_overrides.clear()
 
