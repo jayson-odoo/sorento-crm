@@ -531,7 +531,7 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quot
         db.flush()
         dated = spec.build_print_payload(db, sheet)["resolvedData"]["cover"]
         # The quotation's own date wins, as on its PDF and cover page.
-        assert dated["doc"]["date"] == "15 JAN 2020"
+        assert dated["doc"]["date"] == "15/01/2020"
 
 
 def test_ref_falls_back_to_the_quotation_number_when_your_ref_is_blank():

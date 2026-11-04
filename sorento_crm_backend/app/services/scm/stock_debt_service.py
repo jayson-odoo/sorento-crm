@@ -131,6 +131,7 @@ EXPORT_CONTENT_TYPE = (
 )
 
 _MONTH_NAMES = (
+    # date-format-ok: month column label (Sep 26), no day to show
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 

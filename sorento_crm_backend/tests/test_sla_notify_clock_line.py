@@ -8,8 +8,8 @@ the assignee either panics or ignores it, both wrong.
 AC-G2 makes the clock explicit, in Malaysia time, with the DAY and the ZONE
 spelled out (staff read this at night and the deadline is another day):
 
-- out of hours: "Clock starts Mon 17 Aug 09:00 MYT · respond by Mon 17 Aug 10:00 MYT"
-- in hours:     "Respond by Fri 14 Aug 15:00 MYT"   (UNCONDITIONAL, never absent)
+- out of hours: "Clock starts 17/08/2026, 9:00 am · respond by 17/08/2026, 10:00 am"
+- in hours:     "Respond by 14/08/2026, 3:00 pm"   (UNCONDITIONAL, never absent)
 
 The in-hours variant is deliberately never omitted: a missing line reads as
 "there is no clock", which is the failure this AC exists to remove.
@@ -45,8 +45,8 @@ SAT_REQUEST_UTC = datetime(2026, 8, 15, 1, 25)
 MON_CLOCK_START_UTC = datetime(2026, 8, 17, 1, 0)
 MON_DUE_UTC = datetime(2026, 8, 17, 2, 0)
 
-OUT_OF_HOURS_LINE = "Clock starts Mon 17 Aug 09:00 MYT · respond by Mon 17 Aug 10:00 MYT"
-IN_HOURS_LINE = "Respond by Fri 14 Aug 15:00 MYT"
+OUT_OF_HOURS_LINE = "Clock starts 17/08/2026, 9:00 am · respond by 17/08/2026, 10:00 am"
+IN_HOURS_LINE = "Respond by 14/08/2026, 3:00 pm"
 
 
 class _Tracking:
@@ -116,7 +116,7 @@ def test_after_the_first_response_the_line_names_the_running_clock():
             is_responded=True,
         )
     )
-    assert line == "Resolve by Mon 17 Aug 10:00 MYT"
+    assert line == "Resolve by 17/08/2026, 10:00 am"
 
 
 def test_no_deadline_at_all_produces_no_line():

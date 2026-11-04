@@ -108,6 +108,20 @@ def _offenders() -> list[str]:
     return out
 
 
+_MONTH_TABLE = re.compile(r"""['"]Jan(uary)?['"],\s*['"]Feb(ruary)?['"]""")
+
+
+def test_no_hand_rolled_month_name_table_outside_the_helper():
+    """`f"{d.day} {_MONTHS[d.month - 1]} {d.year}"` is the same private style without strftime.
+    A table that labels a MONTH bucket (or feeds the LLM prompt) carries `date-format-ok:`."""
+    offenders = [
+        str(path.relative_to(APP.parent))
+        for path in sorted(APP.rglob("*.py"))
+        if _MONTH_TABLE.search(text := path.read_text(encoding="utf-8")) and "date-format-ok:" not in text
+    ]
+    assert offenders == []
+
+
 def test_no_month_name_or_12_hour_date_style_outside_the_helper():
     """Mark a genuine exception (month bucket, LLM prompt) with `# date-format-ok: <reason>`."""
     assert _offenders() == []

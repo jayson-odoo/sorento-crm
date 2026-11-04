@@ -32,6 +32,7 @@ The request TYPE (purchase request vs sponsorship form) is always read from the
 live header, never from a snapshot: a form does not change type, and the type
 decides the document's whole shape.
 """
+from app.utils.date_format import fmt_date
 import logging
 from datetime import date, datetime
 from decimal import Decimal
@@ -100,8 +101,6 @@ _LETTERHEAD = (
     "Tel: +603-3082 9778, Fax: +603-30829278.",
 )
 
-_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
-           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 def _blank(value) -> str:
     """Empty renders as empty, not as a dash.
@@ -143,11 +142,11 @@ def _date_cell(value) -> str:
 
 
 def _date_long(value) -> str:
-    """``6-Aug-2026`` - the Sponsorship Form date format."""
+    """``06/08/2026`` - the one date shape (DATE-FORMAT-UNIFY, owner 4 Nov 2026)."""
     value = in_malaysia(snapshot_date(value))
     if not isinstance(value, (date, datetime)):
         return _blank(value)
-    return f"{value.day}-{_MONTHS[value.month - 1]}-{value.year}"
+    return fmt_date(value, naive_is_utc=False)
 
 
 def _snapshot_lines(snapshot: dict) -> list:

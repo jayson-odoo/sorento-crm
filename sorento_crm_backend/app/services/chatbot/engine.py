@@ -11923,6 +11923,7 @@ _WEEKDAYS = (
     "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
 )
 _MONTHS = (
+    # date-format-ok: LLM prompt current-date directive, read by the model
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
 )

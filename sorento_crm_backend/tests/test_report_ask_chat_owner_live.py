@@ -203,7 +203,7 @@ def test_with_history_loaded_the_empty_message_names_the_earliest_day(db):
     seed_world(db)
     _history_fact(db, day(8, 20))
     body = _run_august(db, date_from=date(2026, 8, 21), date_to=date(2026, 8, 25))
-    assert body["rows"] == [] and body["message"] == "No asks in that period. Chat data starts 20 Aug 2026.", body
+    assert body["rows"] == [] and body["message"] == "No asks in that period. Chat data starts 20/08/2026.", body
 
 
 def test_with_no_history_an_august_report_is_unchanged(db):

@@ -17,7 +17,7 @@ read off `sales_order_lines.qty_ordered` / `qty_delivered` instead.
 """
 from __future__ import annotations
 
-from app.utils.date_format import fmt_date
+from app.utils.date_format import fmt_date, fmt_date_range
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
@@ -355,7 +355,7 @@ def list_text(db: Session, names_by_id: dict[str, str], start: Any, end: Any, li
     elif end is None:
         window = f"from {_day(start)}"
     else:
-        window = f"{_day(start)} to {_day(end)}"
+        window = fmt_date_range(start, end)
     query = db.query(SalesOrder).filter(SalesOrder.customer_id.in_(list(names_by_id)))
     if start is not None:
         query = query.filter(SalesOrder.order_date >= start)

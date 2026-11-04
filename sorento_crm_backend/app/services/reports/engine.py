@@ -53,6 +53,7 @@ DETAIL_ROW_CAP = 5000
 PIVOT_CELL_CAP = 5000
 
 _MONTH_ABBR = (
+    # date-format-ok: month period labels (Sep'26), no day to show
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 

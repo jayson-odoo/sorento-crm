@@ -311,7 +311,7 @@ def test_an_spo_arriving_exactly_on_the_required_date_counts_as_timely_coverage(
     assert len(line) == 1
     assert line[0].kind == "timely_spo"
     assert line[0].qty == Decimal("15")
-    assert line[0].reason == "SPO 202703-S0099 arrives on 1 Mar 2027, by the required date"
+    assert line[0].reason == "SPO 202703-S0099 arrives on 01/03/2027, by the required date"
 
 
 def test_an_spo_arriving_the_day_after_the_required_date_contributes_zero_coverage():
