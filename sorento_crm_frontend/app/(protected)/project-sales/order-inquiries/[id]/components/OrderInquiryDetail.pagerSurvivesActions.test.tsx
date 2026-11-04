@@ -183,8 +183,9 @@ describe('the OI page pager survives every action that refreshes the header list
         <Driver />
       </QueryClientProvider>,
     );
-    const previous = await screen.findByRole('button', { name: /previous order inquiry/i });
-    expect(previous).toBeInTheDocument();
+    // Wait for the first list answer to land (the counter), not just the loading pager.
+    await screen.findByText('2 / 3');
+    expect(screen.getByRole('button', { name: /previous order inquiry/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /next order inquiry/i })).toBeInTheDocument();
 
     await act(async () => {
@@ -203,7 +204,7 @@ describe('the OI page pager survives every action that refreshes the header list
         <OrderInquiryDetail id="oi-1" />
       </QueryClientProvider>,
     );
-    await screen.findByRole('button', { name: /previous order inquiry/i });
+    await screen.findByText('2 / 3');
     await act(async () => {
       await client.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
     });
