@@ -187,6 +187,8 @@ def test_the_marker_keeps_the_handler_as_it_is():
 WRAPPED = {
     "app.api.v1.sales.targets.dealer_targets_template",
     "app.api.v1.sales.targets.import_dealer_targets",
+    # TARGET-COMMISSION-VIEW: the commission statement workbook, up to 50 targets.
+    "app.api.v1.sales.targets.commission_statement",
     "app.api.v1.projects.sample_requests.print_request",
     "app.api.v1.projects.order_inquiries.export_order_inquiry_worklist",
     "app.api.v1.projects.order_inquiries.export_order_inquiry",
