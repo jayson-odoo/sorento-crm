@@ -804,8 +804,13 @@ def main():
             ("aa: app down on B only (no DB failover)", aa_app_down("b")),
             ("aa: link cut only", aa_link_cut),
             ("aa: primary box dies", aa_kill_primary),
+            # Right after the box loss, so B is the primary when both reboot: A (routed at B)
+            # wins the both-standby tie by name and promotes, while B stays a RUNNING standby
+            # that follows A without a restart. A's app sessions pinned to B must be moved off
+            # it (KILL + RESUME); a re-point that waits for the app to release them would leave
+            # A writing into a read-only standby (review round 2 blocker 1).
+            ("aa: both nodes reboot while B is primary", aa_both_reboot),
             ("aa: primary isolated (fence before promote)", aa_isolate_primary),
-            ("aa: both nodes reboot", aa_both_reboot),
         ]
     else:
         plan = [

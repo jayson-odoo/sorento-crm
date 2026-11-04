@@ -511,12 +511,12 @@ and adapter run on each node, with scaled timings.
 | app down on A only | PASS: A out of the pool and back; no fence, no promotion; B kept serving writes |
 | app down on B only | PASS: same, mirrored |
 | link cut only | PASS: B left the pool (no route to the primary), no failover; back after the link returned |
-| primary box dies | PASS: B primary 19 s after A died, serving at 22 s; B routes local and its Redis is master; B's long-lived session writes into B; A came back read-only and serves again through B |
+| primary box dies | PASS: B primary 20 s after A died, serving at 22 s; B routes local and its Redis is master; B's long-lived session writes into B; A came back read-only and serves again through B |
+| both nodes reboot while B is primary | PASS: one writer. Both Redis restarted as masters and R1 repaired the standby's from its real role. A, routed at B, wins the both-standby tie and promotes while B stays a running standby: A's long-lived session, pinned to B, is moved off it and writes into A (the round-2 case). KILL TEST: the same drill with the re-point limited to RELOAD (no KILL + RESUME) FAILS this scenario, so the drill guards the fix |
 | primary isolated | PASS: the isolated primary fenced (11 s) before the other promoted (20 s); both serving again, both long-lived sessions writing |
-| both nodes reboot | PASS: one writer. Both Redis restarted as masters and R1 repaired the standby's from its real role. The long-lived session of the node that was routed at a standby peer writes into the new primary (the round-2 case: KILL + RESUME, not RECONNECT) |
 | never two writers | PASS: 0 two-Postgres samples ("never two writers" is the Postgres check) |
-| Redis two masters | NOTE: 14 samples (0.3 s each, about 4 s in all), all right after a Redis restart, each repaired within a tick (12b) |
-| acknowledged writes | NOTE: 2 of 355 lost, written through the ISOLATED primary's own app path in the seconds before it fenced (the drill reaches it through Docker; a real isolated box has no users) |
+| Redis two masters | NOTE: 15 samples (0.3 s each, about 4 s in all), all right after a Redis restart, each repaired within a tick (12b) |
+| acknowledged writes | NOTE: 2 of 357 lost, written through the ISOLATED primary's own app path in the seconds before it fenced (the drill reaches it through Docker; a real isolated box has no users) |
 
 Drill findings fixed in the build:
 - Round 1: pgbouncer re-point after `RELOAD` (`RECONNECT`); `server_login_retry = 2`; Redis role
