@@ -15,6 +15,7 @@ import type {
   ProductComboOption,
   ProductTagTemplateOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import { comboShape, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 
 /**
@@ -33,6 +34,8 @@ export interface DraftPart {
   /** The choice group this row answers. Null on a fixed or hand-added part. */
   role: string | null;
   candidates: LinePartCandidate[];
+  /** Ordered picks for a group the chosen template needs 2 or more from (K5). */
+  product_ids?: string[];
 }
 
 export interface DraftLine {
@@ -287,6 +290,20 @@ export function itemValue(line: DraftLine): string {
   return line.product_id ? `product:${line.product_id}` : '';
 }
 
+/** Two or more resolved parts sharing a role are one multi-pick row, where the first sat. */
+function foldPicks(parts: DraftPart[]): DraftPart[] {
+  const out: DraftPart[] = [];
+  for (const part of parts) {
+    const same = part.role && part.product_id ? out.find((p) => p.role === part.role && p.product_id !== null) : undefined;
+    if (!same) {
+      out.push(part);
+      continue;
+    }
+    same.product_ids = [...(same.product_ids ?? [same.product_id as string]), part.product_id as string];
+  }
+  return out;
+}
+
 export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
@@ -309,14 +326,16 @@ export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): Dra
     combos: [],
     combos_loaded: false,
     host_guarded: false,
-    parts: (line.parts ?? []).map((part) => ({
-      key: part.id,
-      product_id: part.product_id,
-      code: part.code ?? '',
-      name: part.name ?? '',
-      role: part.role,
-      candidates: part.candidates ?? [],
-    })),
+    parts: foldPicks(
+      (line.parts ?? []).map((part) => ({
+        key: part.id,
+        product_id: part.product_id,
+        code: part.code ?? '',
+        name: part.name ?? '',
+        role: part.role,
+        candidates: part.candidates ?? [],
+      })),
+    ),
     // D1 (Phase 2, not wired yet): a server that already carries these wins;
     // a pre-migration server (Phase 1) leaves them null and the line waits
     // for `lookupLinePricing`'s auto pick like a brand new line does.
@@ -389,13 +408,19 @@ export function draftLinesPayload(
     included_accessories: l.included_accessories || null,
     remarks: l.remarks || null,
     product_class: null,
-    parts: l.parts.map((part) => ({
-      product_id: part.product_id,
-      role: part.role,
-      candidates: part.product_id
-        ? []
-        : part.candidates.map((candidate) => candidate.product_id),
-    })),
+    parts: l.parts.flatMap((part) =>
+      part.product_ids && part.product_ids.length > 0
+        ? part.product_ids.map((product_id) => ({ product_id, role: part.role, candidates: [] }))
+        : [
+            {
+              product_id: part.product_id,
+              role: part.role,
+              candidates: part.product_id
+                ? []
+                : part.candidates.map((candidate) => candidate.product_id),
+            },
+          ],
+    ),
     // D1/D2 (S6): the line's own price basis - built here for create,
     // update AND revise, the one function all three send through, so the
     // server never sees a line missing what `choosePromotion`/
@@ -409,4 +434,69 @@ export function draftLinesPayload(
       (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
   }));
+}
+
+/** The template the line prints with: its pick, or the lone link. Null when not decided. */
+function chosenTemplate(line: DraftLine): ProductTagTemplateOption | null {
+  const state = lineTemplateState(line);
+  if (state.kind === 'single') return state.template;
+  return state.kind === 'many' ? state.picked : null;
+}
+
+/** How many picks the chosen template reads from this part's group (0 when it reads none). */
+export function picksNeeded(line: DraftLine, role: string | null): number {
+  const needs = chosenTemplate(line)?.needs;
+  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+  if (!needs || !combo || !role) return 0;
+  const index = groupIndexOf(role, comboShape(combo.parts));
+  return index < 0 ? 0 : (needs.groups[index] ?? 0);
+}
+
+/** AC-C4: a template that needs fewer keeps the first picks; one pick goes back to a plain row. */
+export function trimPicksToTemplate(line: DraftLine): DraftLine {
+  return {
+    ...line,
+    parts: line.parts.map((part) => {
+      if (!part.product_ids || part.product_ids.length === 0) return part;
+      const keep = Math.max(picksNeeded(line, part.role), 1);
+      if (part.product_ids.length <= keep && keep >= 2) return part;
+      const ids = part.product_ids.slice(0, keep);
+      if (ids.length >= 2) return { ...part, product_ids: ids };
+      const { product_ids: _dropped, ...rest } = part;
+      const chosen = part.candidates.find((c) => c.product_id === ids[0]);
+      return { ...rest, product_id: ids[0], code: chosen?.code ?? part.code, name: chosen?.name ?? part.name };
+    }),
+  };
+}
+
+/**
+ * Why Approve is blocked on the picks and the combo price (AC-C5, AC-C6, AC-D2), in line
+ * order. `priceMode` is the request's mode, used when a line has no price type of its own.
+ */
+export function linePickProblems(
+  lines: DraftLine[],
+  pricingByKey: Record<string, Pick<LinePricingResult, 'list_price'> | null | undefined>,
+  priceMode: PriceMode = 'list',
+): string[] {
+  const out: string[] = [];
+  lines.forEach((line, index) => {
+    const n = index + 1;
+    const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+    for (const part of line.parts) {
+      const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
+      const k = picksNeeded(line, part.role);
+      if (k >= 2 && picked.length < k) out.push(`Line ${n}: ${part.role}: pick ${k - picked.length} more.`);
+      for (const id of picked) {
+        const option = combo?.parts.find((p) => p.product_id === id);
+        if (option?.is_discontinued) {
+          out.push(`${option.code} is discontinued. Pick another or escalate it to marketing.`);
+        }
+      }
+    }
+    const pricing = pricingByKey[line.key];
+    if (line.combo_id && pricing && pricing.list_price == null && linePriceType(line, priceMode) === 'list') {
+      out.push(`No combo list price for line ${n}. Escalate it to marketing.`);
+    }
+  });
+  return out;
 }

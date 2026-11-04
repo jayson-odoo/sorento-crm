@@ -65,7 +65,8 @@ export interface LinePricingCandidate {
 
 export interface LinePricingResult {
   key: string;
-  list_price: number;
+  /** Null on a combo line whose combo stores no list price (never a part sum). */
+  list_price: number | null;
   promotion_options: LinePricingPromotionOption[];
   auto_promotion_id: string | null;
   sell_price: number | null;
