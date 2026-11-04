@@ -28,7 +28,7 @@
        (lib/dealer-kit/request-tags.ts) for that one line; data from the same POST /lookups/tag-preview
   E. Template: new slots "Price (LP or SP)" and "Price label"
        lib/dealer-kit/merge-fields.ts (slot list :88-105), lib/dealer-kit/product-block.ts resolveSlotText (:366)
-  F. "Save as combo" (card Q6 a): opens the existing AddComboModal prefilled; plus its new "Price tag templates" field (Q3 a)
+  F. Combo templates (Q3 a) on the existing combo modal; no combo creation from the request form (Q6)
        app/(protected)/master-data-management/products/[id]/components/AddComboModal.tsx (beside the combo's own
        LP/SP, description) + components/common/SearchableMultiSelect (clearable), same control as the product's
        ProductTagTemplatesSection; BE link table dealer_kit.combo_tag_template mirrors product_tag_template
@@ -74,12 +74,12 @@
 </head>
 <body>
 <h1>Price tag request (changed parts only)</h1>
-<div class="muted">Real case: the owner's 4 Nov paste. Sections A to F map to components in the comment at the top of this file.</div>
+<div class="muted">Real case: the owner's 4 Nov paste. Sections A to F map (v3: owner notes on v2 applied) to components in the comment at the top of this file.</div>
 
 <h2>A. Default price</h2>
 <div class="card">
   <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
-    <strong>Default price</strong>
+    <strong>Preferred Default</strong>
     <span class="seg"><span class="on">List price</span><span class="off">Selling price</span></span>
   </div>
   <div class="muted" style="margin-top:6px">Fills new lines. Each line keeps its own choice.</div>
@@ -109,24 +109,23 @@ Cabana item under SP (example E4)</textarea>
           <td><span class="pill err">Not found</span>
             <div class="select">Pick a product... <span class="sub">(search any code)</span></div>
             <div class="sub">Did you mean: SRTWC8152-SH-150, SRTWC8152-SH-200, SRTWC8152-SH, SRTWC8152-RL-P</div></td>
-          <td>SP</td><td class="hide-sm">SP 729</td><td><span class="sub">Added once a product is picked</span></td></tr>
+          <td>SP</td><td class="hide-sm">SP 729</td><td><span class="sub">Added once picked</span></td></tr>
       <tr><td>SRTSS3240</td><td class="code">SRTSS3240</td><td>LP</td><td class="hide-sm">-</td><td></td></tr>
       <tr><td>Srtw1200 BL</td><td class="code">SRTW1200-BL</td><td>LP</td><td class="hide-sm">-</td><td></td></tr>
       <tr><td>Srtbf11850 + srtmcb8083 BL + srtwt6204 MBL</td>
-          <td><span class="pill info">Combo</span> <span class="code">SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL</span>
-            <div class="sub">No saved combo with these parts. Combo for this request only.</div></td>
-          <td>SP</td><td class="hide-sm">LP 2,155 / SP 1,729</td><td></td></tr>
+          <td><span class="pill err">Not found</span>
+            <div class="select">Pick a combo or product... <span class="sub">(search)</span></div></td>
+          <td>SP</td><td class="hide-sm">SP 1,729</td><td><span class="sub">Added once picked</span></td></tr>
       <tr><td>Srtbf11840 + srtwt8301 GMB + srtmcb8083 BL</td>
-          <td><span class="pill info">Combo</span> <span class="code">SRTBF11840 + SRTWT8301-GMB + SRTMCB8083-BL</span>
-            <div class="sub">No saved combo with these parts. Combo for this request only.</div>
-            <span class="pill warn">Discontinued: SRTBF11840, SRTWT8301-GMB</span></td>
-          <td>SP</td><td class="hide-sm">LP 2,911 / SP 2,299</td><td><span class="sub">Second LP 2,149 not used, kept in remarks</span></td></tr>
+          <td><span class="pill info">Combo</span> <span class="code">SRTBF11833 + SRTMCB8083-BL</span>
+            <div class="sub">(illustration: a pasted set that matches a saved combo)</div></td>
+          <td>SP</td><td class="hide-sm">SP 2,299</td><td></td></tr>
       <tr><td>Srtwc8066 S UF SP Rm599</td><td class="code">SRTWC8066-S-UF</td><td>SP</td><td class="hide-sm">SP 599</td><td></td></tr>
-      <tr><td>Cabana item</td><td class="code">(Cabana code)</td><td>SP</td><td class="hide-sm">-</td><td><span class="sub">No system selling price. Enter one on the line.</span></td></tr>
+      <tr><td>Cabana item</td><td class="code">(Cabana code)</td><td>SP</td><td class="hide-sm">-</td><td></td></tr>
     </tbody>
   </table>
   </div>
-  <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end"><button class="btn">Cancel</button><button class="btn primary">Add 8 lines</button></div>
+  <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end"><button class="btn">Cancel</button><button class="btn primary">Add 7 lines</button></div>
 </div>
 
 <h2>C. Lines: LP/SP per line, eye icon opens the tag preview</h2>
@@ -137,51 +136,44 @@ Cabana item under SP (example E4)</textarea>
       <tr><td><div class="code">SRTSH2626-GY</div><div class="sub">Rain shower head, golden yellow</div></td>
           <td><span class="seg"><span class="on">LP</span><span class="off">SP</span></span></td><td>RM 230</td><td class="hide-sm">Small tag</td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
-      <tr><td><span class="pill info">Combo</span><div class="code">SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL</div>
-            <div class="sub">Combo for this request only.</div>
-            <button class="btn" style="margin-top:4px">Save as combo</button> <span class="sub">(staff with product edit only)</span></td>
+      <tr><td><span class="pill info">Combo</span><div class="code">SRTBF11833 + SRTMCB8083-BL</div></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
-          <td>RM 1,729<div class="sub">Typed. No system SP for this combo.</div><div class="sub">LP RM 2,155 (1,150 + 610 + 395)</div></td><td class="hide-sm"><div class="select">Furniture set A5 <span class="sub">(default)</span></div></td>
+          <td>RM 2,299<div class="sub">Typed (no promotion on this line)</div></td><td class="hide-sm"><div class="select">Furniture set A5 <span class="sub">(default)</span></div></td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
       <tr><td><div class="code">SRTWC8066-S-UF</div><div class="sub">Wall-hung WC</div></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
-          <td>RM 599<div class="sub">Typed. System SP RM 649</div></td><td class="hide-sm">Small tag</td>
+          <td>RM 649<div class="sub">Promotion price</div></td><td class="hide-sm">Small tag</td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
       <tr><td><div class="code">(Cabana code)</div><div class="sub">Cabana basin</div></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
-          <td><div class="select err">RM ____</div><div class="errtext">No system selling price for this brand. Enter the selling price.</div></td><td class="hide-sm">Small tag</td>
+          <td><div class="select">RM 790</div></td><td class="hide-sm">Small tag</td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
       <tr><td><div class="code">SRTW1200-BL</div><div class="sub">Wall-hung WC</div></td>
           <td><span class="seg"><span class="on">LP</span><span class="off">SP</span></span></td><td>RM 1,000</td><td class="hide-sm"><span class="sub">No tag template yet</span></td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag" disabled>&#128065;</button></td></tr>
     </tbody>
   </table>
-  <div class="muted" style="margin-top:6px">SRTSH2626-GY and SRTBF11850 prices are dev catalogue values; SRTWC8066's system SP and SRTW1200-BL's LP are placeholders; the build reads them live. The whole-sheet preview and PDF stay where they are.</div>
+  <div class="muted" style="margin-top:6px">SRTSH2626-GY is a dev catalogue value; the other prices are placeholders; the build reads them live. The whole-sheet preview and PDF stay where they are.</div>
 </div>
 
 <h2>D. Eye icon: the line's tag in a lightbox</h2>
 <div class="card">
   <div class="lightbox">
-    <div class="lbhead"><strong>SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL</strong><span class="muted">SP &middot; Furniture set A5</span><button class="icon" aria-label="Close">&times;</button></div>
-    <div class="tag big"><div class="c">SRTBF11850 + SRTMCB8083-BL + SRTWT6204-MBL</div><div class="l">Basin cabinet, mirror cabinet, wall tap</div><div><span class="l">SP</span> <span class="p">1,729</span></div></div>
+    <div class="lbhead"><strong>SRTBF11833 + SRTMCB8083-BL</strong><span class="muted">SP &middot; Furniture set A5</span><button class="icon" aria-label="Close">&times;</button></div>
+    <div class="tag big"><div class="c">SRTBF11833 + SRTMCB8083-BL</div><div class="l">Basin cabinet with mirror cabinet</div><div><span class="l">SP</span> <span class="p">2,299</span></div></div>
   </div>
   <div class="muted" style="margin-top:8px">Same renderer as the PDF. Same template ("Small tag") draws LP or SP from the line.</div>
 </div>
 
-<h2>F. "Save as combo": the existing combo modal, prefilled</h2>
-<div class="muted">Opens AddComboModal on host SRTBF11850. None of the 4 pasted sets exists as a combo in dev data today.</div>
+<h2>F. Combo (marketing, product page): templates on a saved combo</h2>
 <div class="card">
   <table>
     <thead><tr><th>Field</th><th>Value</th></tr></thead>
     <tbody>
-      <tr><td>Name</td><td>SRTBF11850 + SRTMCB8083-BL <span class="sub">(the "HOST + PART" naming the 169 existing combos use)</span></td></tr>
-      <tr><td>Parts</td><td>SRTMCB8083-BL, SRTWT6204-MBL (fixed)</td></tr>
-      <tr><td>List price / Selling price</td><td>blank (= sum 2,155) / 1,729 <span class="sub">prefilled from the request, editable</span></td></tr>
-      <tr><td>Description</td><td>blank, to fill</td></tr>
-      <tr><td>Price tag templates <span class="sub">new</span></td><td><span class="seg"><span class="on">Furniture set A5 &#9733; default</span></span> <span class="seg"><span class="off">Furniture set A4</span></span> <span class="sub">Empty = the host product's templates. With 2+, the default is preselected on the line.</span></td></tr>
+      <tr><td>Combo</td><td>SRTBF11833 + SRTMCB8083-BL</td></tr>
+      <tr><td>Price tag templates <span class="sub">new</span></td><td><span class="seg"><span class="on">Furniture set A5 &#9733; default</span></span> <span class="seg"><span class="off">Furniture set A4</span></span> <span class="sub">Empty = the host product's templates.</span></td></tr>
     </tbody>
   </table>
-  <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end"><button class="btn">Cancel</button><button class="btn primary">Save combo</button></div>
 </div>
 
 <h2>E. Template editor: two new slots</h2>
@@ -189,10 +181,10 @@ Cabana item under SP (example E4)</textarea>
   <table>
     <thead><tr><th>Slot</th><th>LP line prints</th><th>SP line prints</th></tr></thead>
     <tbody>
-      <tr><td>Price (LP or SP) <span class="sub">new</span></td><td>230</td><td>1,729</td></tr>
+      <tr><td>Price (LP or SP) <span class="sub">new</span></td><td>230</td><td>2,299</td></tr>
       <tr><td>Price label <span class="sub">new</span></td><td>LP</td><td>SP</td></tr>
-      <tr><td>List price <span class="sub">unchanged</span></td><td>230</td><td>2,155</td></tr>
-      <tr><td>Sell price <span class="sub">unchanged</span></td><td>(blank)</td><td>1,729</td></tr>
+      <tr><td>List price <span class="sub">unchanged</span></td><td>230</td><td>(combo LP)</td></tr>
+      <tr><td>Sell price <span class="sub">unchanged</span></td><td>(blank)</td><td>2,299</td></tr>
     </tbody>
   </table>
 </div>

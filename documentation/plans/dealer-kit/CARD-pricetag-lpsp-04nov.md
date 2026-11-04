@@ -255,3 +255,11 @@ Q5 (b): no minimum price on tags, R6 and the pill dropped. Q6 (a). New: a DEFAUL
 product and per combo, preselected on the line. New: remove the hint "Add an item to see its tag
 before approving.". An SP line with no selling price available shows a hint and prints LP (not
 blocked). Plan: `PLAN-pricetag-lpsp-04nov.md`; UAC: `pricetag-lpsp-acceptance-criteria.md`.
+
+## Answers, round 2 (owner mock v2 notes via crew, 4 Nov)
+
+Q6 replaced: a "+" line must match an EXISTING saved combo; no match = unmatched row, the user
+picks an existing combo or products; nothing creates combos from the form, no "Save as combo",
+no request-only combo. No extra hint texts (discontinued and the like), only what blocks Submit.
+Q2: the header toggle is labelled "Preferred Default" and is the starting value for new lines;
+each line overridable. All 6 questions answered.
