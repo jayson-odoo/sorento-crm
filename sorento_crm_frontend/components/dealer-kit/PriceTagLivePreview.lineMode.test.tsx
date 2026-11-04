@@ -145,7 +145,11 @@ describe('lightbox heading says what the tag prints', () => {
 
 describe('PriceTagLivePreview one line (AC-20)', () => {
   it('asks for that line only and draws it', async () => {
-    const lookup = vi.fn(async () => response(['b']));
+    const lookup = vi.fn(async () => {
+      const r = response(['b']);
+      Object.assign(r.lines[0], { show_promo_price: true, sell_price: 599 });
+      return r;
+    });
     render(
       <PriceTagLivePreview
         lines={[
