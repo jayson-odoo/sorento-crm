@@ -12,4 +12,7 @@ AllowedIPs = <PEER_WG_IP>/32
 PersistentKeepalive = 25
 
 # Host firewall: 51820/udp from the peer only. Over wg0: Postgres 5432 (replication, rewind,
-# the controller's role reads) and SSH 22 (deploy, config hash check).
+# the controller's role reads, and in active-active the peer's pgbouncer), Redis 6379
+# (active-active: replication and the peer's HAProxy) and SSH 22 (deploy, config hash check).
+# 5432 and 6379 are Docker-published: guard them in DOCKER-USER (templates/host/docker-user-wg.sh),
+# not only in UFW.

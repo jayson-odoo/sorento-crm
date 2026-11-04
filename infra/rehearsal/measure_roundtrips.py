@@ -25,7 +25,7 @@ import os
 import statistics
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ENDPOINTS = [
     # Picked from the app's own GET routes (no path parameters): the screens staff open most.
@@ -47,14 +47,22 @@ ENDPOINTS = [
 ]
 
 
+def _throwaway(url: str) -> bool:
+    """A local database named *_smoke or *_ci, with no ?host= / ?hostaddr= that libpq would
+    use instead of the URL's host."""
+    u = urlparse(url)
+    if "host" in parse_qs(u.query) or "hostaddr" in parse_qs(u.query):
+        return False
+    name = u.path.lstrip("/")
+    return u.hostname in ("localhost", "127.0.0.1") and (name.endswith("_smoke") or name.endswith("_ci"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", required=True, help="the JSON scripts.seed_never_stuck_smoke wrote")
     ap.add_argument("--rtt", type=float, nargs="*", default=[0.5, 1.0, 2.0, 5.0], help="RTTs (ms) to tabulate")
     args = ap.parse_args()
-    db = os.environ.get("DATABASE_URL", "")
-    name = urlparse(db).path.lstrip("/")
-    if urlparse(db).hostname not in ("localhost", "127.0.0.1") or not (name.endswith("_smoke") or name.endswith("_ci")):
+    if not _throwaway(os.environ.get("DATABASE_URL", "")):
         print("refused: DATABASE_URL must be a LOCAL *_smoke or *_ci database")
         return 2
 
@@ -64,9 +72,15 @@ def main() -> int:
 
     counts = {"sql": 0, "redis": 0}
 
+    # Every one of these is a round trip to Postgres (through pgbouncer, over the link from B):
+    # statements, psycopg2's implicit BEGIN before the first one, COMMIT / ROLLBACK when the
+    # session ends, and the pool's pre-ping on checkout (review should-fix 7).
     @event.listens_for(Engine, "before_cursor_execute")
     def _sql(*_a, **_k):  # noqa: ANN001
         counts["sql"] += 1
+
+    for name in ("begin", "commit", "rollback"):
+        event.listen(Engine, name, lambda *_a, **_k: counts.__setitem__("sql", counts["sql"] + 1))
 
     orig_exec = redis.client.Redis.execute_command
     orig_pipe = redis.client.Pipeline.execute
@@ -84,6 +98,25 @@ def main() -> int:
 
     from fastapi.testclient import TestClient
     from app.main import app
+    from app import database
+    from sqlalchemy.pool import Pool
+
+    @event.listens_for(Pool, "checkout")
+    def _ping(*_a, **_k):  # noqa: ANN001
+        if getattr(database.engine.pool, "_pre_ping", False):
+            counts["sql"] += 1
+
+    # Importing the app loads SORENTO_ENV_FILE (or .env) OVER the environment (security review
+    # B1), so the check that matters is on what the app will really use, after the import.
+
+    if not (_throwaway(os.environ.get("DATABASE_URL", "")) and _throwaway(database.engine.url.render_as_string(hide_password=True))):
+        print(f"refused: after loading its env file the app would use {database.engine.url.render_as_string(hide_password=True)}; "
+              "point SORENTO_ENV_FILE at a file naming a LOCAL *_smoke or *_ci database")
+        return 2
+    redis_host = urlparse(os.environ.get("REDIS_URL", "redis://localhost")).hostname
+    if redis_host not in ("localhost", "127.0.0.1"):
+        print("refused: REDIS_URL must be local")
+        return 2
 
     seed = json.load(open(args.seed))
     admin = seed["personas"]["admin"]
@@ -109,6 +142,12 @@ def main() -> int:
             local_ms = statistics.median(s[2] for s in samples)
             rows.append((path, samples[-1][3], int(sql), int(red), local_ms))
 
+    import redis as _redis
+    try:
+        _redis.Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0")).ping()
+        print("Redis reachable during the run (a 0 in the Redis column is a real 0).")
+    except Exception as e:  # noqa: BLE001
+        print(f"WARNING: Redis NOT reachable ({type(e).__name__}): the Redis column is not meaningful.")
     hdr = "| Request | HTTP | SQL | Redis | local ms | " + " | ".join(f"+ms at {r:g} ms RTT" for r in args.rtt) + " |"
     print(hdr)
     print("|" + "---|" * (5 + len(args.rtt)))

@@ -34,7 +34,7 @@ IMAGE = os.environ.get("DRILL_IMAGE", "postgres:17")
 REDIS_IMAGE = "redis:7.4"
 HAPROXY_IMAGE = "haproxy:2.9"
 PGB_IMAGE = "edoburu/pgbouncer:v1.23.1-p3"
-REDIS_PW = "drill"
+REDIS_USERS = {"admin": "drill-admin", "app": "drill-app", "repl": "drill-repl", "hacheck": "drill-check"}
 NET = "drill-link"          # the private link between the two nodes (cut = disconnect from it)
 
 
@@ -88,7 +88,7 @@ def app_writable(n):
     try:
         r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"drill-pgb-{n}", "-p", "6432",
                             "-U", "postgres", "-d", "postgres", "-c", "select pg_is_in_recovery()"],
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, timeout=3)
     except subprocess.TimeoutExpired:
         return False
     return r.returncode == 0 and r.stdout.strip() == "f"
@@ -107,16 +107,16 @@ def app_sql(n, sql, timeout=8):
 def app_redis(n, *cmd):
     """A Redis command through node n's app path (its HAProxy, which picks the master)."""
     try:
-        r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_PW}", f"drill-redis-{n}", "redis-cli",
-                            "-h", f"drill-rproxy-{n}", "-p", "6380", *cmd], capture_output=True, text=True, timeout=5)
+        r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_USERS['app']}", f"drill-redis-{n}", "redis-cli",
+                            "--user", "app", "-h", f"drill-rproxy-{n}", "-p", "6380", *cmd], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
+    return (r.stdout or r.stderr).strip()  # an error reply (NOPERM) is the answer too
 
 
 def redis_role(n):
     try:
-        r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_PW}", f"drill-redis-{n}", "redis-cli", "role"],
+        r = subprocess.run(["docker", "exec", f"drill-redis-{n}", "redis-cli", "--user", "admin", "role"],
                            capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         return ""
@@ -174,18 +174,27 @@ class FakeCF:
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         threading.Thread(target=self.monitor, daemon=True).start()
 
+    def check(self, n):
+        with self.lock:
+            reach = self.net[n] and self.app_ok[n]
+        # The monitor (`/api/v1/health/role`): 200 only when the node's APP reaches a writable
+        # database. Active-passive: its own; active-active: through its pgbouncer.
+        ok = reach and (app_writable(n) if self.aa else role(n) == "primary")
+        with self.lock:
+            self.fails[n] = 0 if ok else self.fails[n] + 1
+            self.healthy[n] = ok or (self.healthy[n] and self.fails[n] < 2)
+
     def monitor(self):
+        # Each origin is checked on its own, like Cloudflare: a hanging check of a dead node
+        # never delays the check of the live one.
         while not self.stop:
-            for n in ("a", "b"):
-                with self.lock:
-                    reach = self.net[n] and self.app_ok[n]
-                # The monitor (`/api/v1/health/role`): 200 only when the node's APP reaches a
-                # writable database. Active-passive: its own; active-active: through its pgbouncer.
-                ok = reach and (app_writable(n) if self.aa else role(n) == "primary")
-                with self.lock:
-                    self.fails[n] = 0 if ok else self.fails[n] + 1
-                    self.healthy[n] = ok or (self.healthy[n] and self.fails[n] < 2)
-            time.sleep(CF_INTERVAL)
+            started = time.time()
+            threads = [threading.Thread(target=self.check, args=(n,)) for n in ("a", "b")]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            time.sleep(max(0.0, CF_INTERVAL - (time.time() - started)))
 
     def set(self, **kw):
         with self.lock:
@@ -227,7 +236,7 @@ class Stack:
                 # RELOAD alone keeps idle server connections to the OLD primary, which hang on a
                 # dead host; RECONNECT closes them so the next query opens one to the new target.
                 "PGB_RELOAD": f"docker exec drill-pgb-{n} psql -h 127.0.0.1 -p 6432 -U postgres pgbouncer -c RELOAD -c RECONNECT",
-                "REDIS_CLI": f"docker exec -e REDISCLI_AUTH={REDIS_PW} drill-redis-{n} redis-cli",
+                "REDIS_CLI": f"docker exec drill-redis-{n} redis-cli --user admin",
                 "PEER_REDIS_HOST": f"drill-redis-{p}",
             } if self.aa else {}),
         }
@@ -293,25 +302,44 @@ class Stack:
                "-v", f"{self.dir}/userlist-{n}.txt:/etc/pgbouncer/userlist.txt:ro",
                "-v", f"{rdir}:/etc/pgbouncer/route:ro", PGB_IMAGE)
             sh("docker", "network", "connect", NET, f"drill-pgb-{n}")
-            args = ["redis-server", "--requirepass", REDIS_PW, "--masterauth", REDIS_PW, "--appendonly", "no"]
-            if n == "b":
-                args += ["--replicaof", "drill-redis-a", "6379"]
-            sh("docker", "run", "-d", "--name", f"drill-redis-{n}", "--network", NET, REDIS_IMAGE, *args)
+            # The same config + ACL layout as templates/active-active/redis.conf + users.acl.
+            (self.dir / f"redis-{n}.conf").write_text(
+                f"aclfile /etc/redis/users.acl\nappendonly no\nreplica-read-only yes\nmasteruser repl\n"
+                f"masterauth {REDIS_USERS['repl']}\nport 6379\nbind 0.0.0.0\nprotected-mode yes\n"
+                )  # no replicaof: as in the template, `ha-pg.sh route peer` makes it a replica
+            (self.dir / f"users-{n}.acl").write_text(
+                "user default off\n"
+                f"user admin on >{REDIS_USERS['admin']} ~* &* +@all\n"
+                f"user app on >{REDIS_USERS['app']} ~* &* +@all -@admin -flushall -flushdb\n"
+                f"user repl on >{REDIS_USERS['repl']} +psync +replconf +ping\n"
+                f"user hacheck on >{REDIS_USERS['hacheck']} +info +ping +quit\n")
+            for f in (f"redis-{n}.conf", f"users-{n}.acl"):
+                os.chmod(self.dir / f, 0o644)
+            sh("docker", "run", "-d", "--name", f"drill-redis-{n}", "--network", NET,
+               "-e", f"REDISCLI_AUTH={REDIS_USERS['admin']}",
+               "-v", f"{self.dir}/redis-{n}.conf:/usr/local/etc/redis/redis.conf:ro",
+               "-v", f"{self.dir}/users-{n}.acl:/etc/redis/users.acl:ro",
+               REDIS_IMAGE, "redis-server", "/usr/local/etc/redis/redis.conf")
             sh("docker", "network", "connect", local_net(n), f"drill-redis-{n}")
             (self.dir / f"haproxy-{n}.cfg").write_text(
                 "global\n    maxconn 512\ndefaults\n    mode tcp\n    timeout connect 2s\n    timeout client 1h\n"
                 "    timeout server 1h\n    timeout check 2s\nresolvers docker\n    nameserver dns 127.0.0.11:53\n"
                 "    hold valid 1s\nfrontend redis_in\n    bind 0.0.0.0:6380\n    default_backend redis_master\n"
                 "backend redis_master\n    option tcp-check\n    tcp-check connect\n"
-                f"    tcp-check send AUTH\\ {REDIS_PW}\\r\\n\n    tcp-check expect string +OK\n"
+                f"    tcp-check send AUTH\\ hacheck\\ {REDIS_USERS['hacheck']}\\r\\n\n    tcp-check expect string +OK\n"
                 "    tcp-check send INFO\\ replication\\r\\n\n    tcp-check expect string role:master\n"
                 "    tcp-check send QUIT\\r\\n\n    tcp-check expect string +OK\n"
-                f"    server local drill-redis-{n}:6379 check inter 1s fall 2 rise 2 resolvers docker init-addr none on-marked-down shutdown-sessions\n"
+                f"    server local drill-redis-{n}:6379 check inter 1s fall 2 rise 2 resolvers docker init-addr none on-marked-down shutdown-sessions on-marked-up shutdown-backup-sessions\n"
                 f"    server peer drill-redis-{p}:6379 check inter 1s fall 2 rise 2 backup resolvers docker init-addr none on-marked-down shutdown-sessions\n")
             os.chmod(self.dir / f"haproxy-{n}.cfg", 0o644)
             sh("docker", "run", "-d", "--name", f"drill-rproxy-{n}", "--network", NET,
                "-v", f"{self.dir}/haproxy-{n}.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro", HAPROXY_IMAGE)
             sh("docker", "network", "connect", local_net(n), f"drill-rproxy-{n}")
+        # Node B joins the way the runbook says: `ha-pg.sh route peer` (Redis replica, pgbouncer).
+        env = {**os.environ, **self.adapter_env("b")}
+        r = subprocess.run([str(ADAPTER), "route", "peer"], env=env, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(f"route peer on b failed: {r.stderr.strip()[-300:]}")
         end = time.time() + 60
         while time.time() < end and not (app_writable("a") and app_writable("b") and app_redis("b", "ping") == "PONG"):
             time.sleep(1)
@@ -400,6 +428,7 @@ class Watch:
     def __init__(self, active_active=False):
         self.aa = active_active
         self.served = {"a": 0, "b": 0}
+        self.redis_two_masters = 0
         self.violations = []
         self.acked = []
         self.stop = False
@@ -411,6 +440,8 @@ class Watch:
             ra, rb = role("a"), role("b")
             if ra == "primary" and rb == "primary":
                 self.violations.append(time.strftime("%H:%M:%S"))
+            if self.aa and redis_role("a") == "master" and redis_role("b") == "master":
+                self.redis_two_masters += 1
             time.sleep(0.3)
 
     def writer(self):
@@ -618,6 +649,10 @@ def main():
         routes_follow("a")
         assert app_redis("a", "set", "drill-key", "from-a") == "OK"
         assert app_redis("b", "get", "drill-key") == "from-a", "Redis must be shared through the master"
+        # The app's Redis user cannot reconfigure, re-point or wipe Redis (security review S1).
+        for cmd in (("replicaof", "no", "one"), ("flushall",), ("config", "set", "maxmemory", "1"), ("shutdown",)):
+            out = app_redis("a", *cmd)
+            assert "NOPERM" in out, (cmd, out)
         rc, out = psql("a", "select count(*) from drill where node = 'via-b'")
         assert rc == 0 and int(out) > 0, "writes through node B's app must land in A's database"
         return "both origins healthy; B's writes land on A; one Redis shared"
@@ -709,6 +744,9 @@ def main():
             st.stop_controller(n)
         for n in ("a", "b"):
             sh("docker", "stop", "-t", "5", cname(n))
+            # Redis restarts with the box and comes back a MASTER on both (no replicaof in its
+            # config): R1 must repair the role from what Redis says, not from the route file.
+            sh("docker", "restart", "-t", "1", f"drill-redis-{n}")
         st.start_controller("a")
         st.start_controller("b")
         wait_until(lambda: "primary" in (role("a"), role("b")), 90, "a primary")
@@ -752,6 +790,11 @@ def main():
     lost = sorted(set(watch.acked) - present)
     results.append(("never two writers", "PASS" if not watch.violations else "FAIL",
                     f"{len(watch.violations)} bad samples {watch.violations[:5]}"))
+    if aa:
+        # Postgres is the "never two writers" check above. Redis: two masters for a moment is
+        # expected when a box returns or restarts (its Redis boots a master until R1 fixes the
+        # role, one tick); reported, not failed. Plan 12b.
+        results.append(("two Redis masters (samples, 0.3 s each)", "NOTE", str(watch.redis_two_masters)))
     results.append(("acknowledged writes kept", "PASS" if not lost else "NOTE",
                     f"{len(watch.acked)} acked, {len(lost)} lost {lost[:10]}"))
     cf.stop = True

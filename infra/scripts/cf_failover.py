@@ -92,7 +92,10 @@ class Config:
         promote_after = num("PROMOTE_AFTER", fence_after + max(margin, 3 * interval))
         fence_hold = num("FENCE_HOLD", promote_after + 180)
         sync_mode = env.get("SYNC_MODE", "off") or "off"
-        active_active = env.get("ACTIVE_ACTIVE", "0") in ("1", "true", "yes")
+        raw_aa = (env.get("ACTIVE_ACTIVE", "") or "0").strip()
+        if raw_aa not in ("0", "1"):
+            raise ConfigError("ACTIVE_ACTIVE must be 0 or 1")  # "True" / "on" must not silently mean off
+        active_active = raw_aa == "1"
         # Active-active (owner 4 Nov): an unhealthy app drops out of the Cloudflare pool and the
         # other node serves through the same primary; the database never moves for an app fault.
         if active_active and env.get("APP_SICK_AFTER") not in (None, "", "0"):
@@ -140,6 +143,7 @@ class Obs:
     sync_names: str = ""         # synchronous_standby_names on this node, quotes stripped
     peer_slot_ok: bool = True    # primary only: the peer's replication slot exists and is usable
     route: str = ""              # active-active: where this node's pgbouncer + Redis point (local | peer | "")
+    redis_role: str = ""         # active-active: this node's Redis as it really is (master | slave | "")
 
 
 # Windows: seconds a condition has held without a break. Reset when the controller was not
@@ -266,7 +270,9 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             acts.append(("set_sync", desired))
         if not o.peer_slot_ok:  # P5: the standby can only stream into its slot
             acts.append(("ensure_slot",))
-        if c.active_active and o.route != "local":  # R1: this node's endpoints use its own database
+        # R1: this node's endpoints use its own database and its Redis is the master. The ROLE is
+        # checked too: a restarted Redis comes back as a master whatever the file says (review S2).
+        if c.active_active and (o.route != "local" or o.redis_role not in ("", "master")):
             acts.append(("route", "local"))
         return s, acts
 
@@ -275,7 +281,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
     s["two_primaries_alerted"] = False
     # R1: a node that is not primary sends its app to the peer, but only to a peer that answers
     # as primary right now; never to a guess (a standby or an unreachable peer leaves it as is).
-    if c.active_active and o.peer_pg == "primary" and o.route != "peer":
+    if c.active_active and o.peer_pg == "primary" and (o.route != "peer" or o.redis_role not in ("", "slave")):
         acts.append(("route", "peer"))
 
     def rejoin():
@@ -501,6 +507,14 @@ def main() -> int:
     if c.active_active and not (origin_self and origin_peer):
         log("config refused: ACTIVE_ACTIVE needs CF_ORIGIN_SELF and CF_ORIGIN_PEER (one pool, both origins)")
         return 2
+    if c.active_active:
+        # Both origins live in ONE pool. A leftover per-node CF_POOL_PEER (the active-passive
+        # layout, deleted in runbook phase AA) would read "unknown" for ever: no promotion ever
+        # (review blocker 2). The peer is always read from the shared pool.
+        if pool_peer and pool_peer != pool_self:
+            log("config refused: in active-active CF_POOL_PEER must be unset or equal CF_POOL_SELF (one shared pool)")
+            return 2
+        pool_peer = pool_self
     token_file = env.get("CF_API_TOKEN_FILE", "")
     max_ticks = int(env.get("MAX_TICKS", "0") or 0)
     if not (cf_base.startswith("https://") or cf_base.startswith("http://127.0.0.1")):
@@ -553,8 +567,9 @@ def main() -> int:
             peer_lsn=lsn("peer_lsn"),
             peer_slot_ok=d.get("peer_slot", "t") != "f",
             route=d.get("route", "") if d.get("route") in ("local", "peer") else "",
+            redis_role=d.get("redis_role", "") if d.get("redis_role") in ("master", "slave") else "",
             cf_self=cf_pool_health(cf_base, cf_account, pool_self, token, origin=origin_self),
-            cf_peer=cf_pool_health(cf_base, cf_account, pool_peer or pool_self, token, origin=origin_peer),
+            cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token, origin=origin_peer),
             sync_names=d.get("sync_names", ""),
         )
         state, actions = decide(state, o, started, c)

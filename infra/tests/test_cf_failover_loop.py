@@ -182,3 +182,23 @@ def test_active_active_without_origins_is_refused(box):
     _, env = box
     r = run(env, ticks=1, ACTIVE_ACTIVE="1", CF_API_BASE="http://127.0.0.1:1")
     assert r.returncode == 2 and "CF_ORIGIN_SELF" in r.stdout
+
+
+def test_active_active_refuses_a_separate_peer_pool(box):
+    _, env = box
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", CF_ORIGIN_SELF="o-a", CF_ORIGIN_PEER="o-b",
+            CF_POOL_SELF="shared", CF_POOL_PEER="old-node-b-pool", CF_API_BASE="http://127.0.0.1:1")
+    assert r.returncode == 2 and "one shared pool" in r.stdout
+
+
+def test_active_active_reads_the_peer_from_the_shared_pool(box, cf):
+    tmp, env = box
+    state, base = cf
+    state["body"] = _origins(True, False)
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", APP_SICK_AFTER="0", CF_ORIGIN_SELF="10.0.0.1",
+            CF_ORIGIN_PEER="10.0.0.2", CF_POOL_SELF="shared", CF_POOL_PEER="", CF_API_BASE=base)
+    assert r.returncode == 0, r.stdout
+    # The fake observe reports no route, so R1 acts and logs what it saw: the peer's origin
+    # (unhealthy in the shared pool's answer) and this node's (healthy).
+    assert "cf_self='healthy'" in r.stdout and "cf_peer='unhealthy'" in r.stdout, r.stdout
+    assert "route" in pg_calls(tmp)

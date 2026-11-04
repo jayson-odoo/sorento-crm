@@ -65,6 +65,14 @@ for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"
   case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) echo "ha-pg: quotes, \$, backslashes and line breaks are not allowed in the HA env" >&2; exit 2 ;; esac
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
+# Hosts and ports go into a pgbouncer connect string and a REPLICAOF: a space would add keys
+# (review N3), so only a plain host name / address and digits are accepted.
+for v in "$PEER_HOST" "$PGB_LOCAL_HOST" "$PEER_REDIS_HOST"; do
+  [[ "$v" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "ha-pg: host values must be a plain name or address" >&2; exit 2; }
+done
+for v in "$PEER_PORT" "$PEER_REDIS_PORT"; do
+  [[ "$v" =~ ^[0-9]{1,5}$ ]] || { echo "ha-pg: ports must be digits" >&2; exit 2; }
+done
 
 SELF_SLOT=${NODE_NAME//-/_}
 PEER_SLOT=${PEER_NAME//-/_}
@@ -152,6 +160,13 @@ case "$cmd" in
       route=$(sed -n '1s/^; route=\(local\|peer\)\b.*/\1/p' "$ROUTE_FILE")
     fi
     echo "route=$route"
+    redis_role=""
+    if [ -n "$REDIS_CLI" ]; then
+      # shellcheck disable=SC2086
+      redis_role=$(timeout 5 $REDIS_CLI ROLE 2>/dev/null | head -1 | tr -d '\r')
+      case "$redis_role" in master|slave) ;; *) redis_role="" ;; esac
+    fi
+    echo "redis_role=$redis_role"
     ;;
   role)
     self_role
@@ -218,21 +233,30 @@ case "$cmd" in
     # Redis FIRST: a node coming back starts its Redis as a (stale) master; it must be a replica
     # of the peer before pgbouncer makes this node's app healthy again, or its app would write to
     # the stale Redis for a moment (drill finding, active-active round 1).
+    redis_failed=0
     if [ -n "$REDIS_CLI" ]; then
       if [ "$target" = local ]; then
         # shellcheck disable=SC2086
-        timeout 10 $REDIS_CLI REPLICAOF NO ONE >/dev/null || { echo "ha-pg: redis REPLICAOF NO ONE failed" >&2; exit 1; }
+        timeout 10 $REDIS_CLI REPLICAOF NO ONE >/dev/null || redis_failed=1
+        # A new primary's database matters more than its Redis: re-point pgbouncer anyway (its
+        # lease needs a healthy origin) and report the failure; R1 retries Redis by its role.
+        [ "$redis_failed" = 0 ] || echo "ha-pg: redis REPLICAOF NO ONE failed; re-pointing pgbouncer anyway" >&2
       else
         # shellcheck disable=SC2086
-        timeout 10 $REDIS_CLI REPLICAOF "$PEER_REDIS_HOST" "$PEER_REDIS_PORT" >/dev/null || { echo "ha-pg: redis REPLICAOF peer failed" >&2; exit 1; }
+        timeout 10 $REDIS_CLI REPLICAOF "$PEER_REDIS_HOST" "$PEER_REDIS_PORT" >/dev/null \
+          || { echo "ha-pg: redis REPLICAOF peer failed; pgbouncer left as it is" >&2; exit 1; }
       fi
     fi
-    tmp="$ROUTE_FILE.tmp.$$"
-    # Written whole, then renamed: pgbouncer never reads half a file. The directory is mounted,
-    # not the file, so the rename is visible inside the container.
-    printf '; route=%s (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
-      "$target" "$host" "$port" > "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
-    sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed" >&2; exit 1; }
+    # The file says "unconfirmed" until pgbouncer has taken it (review blocker 1b): if the reload
+    # fails, observe reports no route and R1 retries next tick instead of trusting the file.
+    tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1
+    printf '; route=unconfirmed (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
+      "$host" "$port" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
+    timeout 15 sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed; route left unconfirmed" >&2; exit 1; }
+    tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1
+    sed "1s/^; route=unconfirmed /; route=$target /" "$ROUTE_FILE" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$ROUTE_FILE" \
+      || { rm -f "$tmp"; exit 1; }
+    [ "$redis_failed" = 0 ] || exit 1
     ;;
   prune)
     days="${2:-7}"

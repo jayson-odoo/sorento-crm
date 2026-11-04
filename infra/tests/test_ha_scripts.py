@@ -596,9 +596,42 @@ def test_route_refuses_anything_but_local_or_peer(tmp_path, bad):
     assert not route.exists()
 
 
+def test_a_failed_reload_leaves_the_route_unconfirmed_so_it_is_retried(tmp_path):
+    e, log, route = _route_env(tmp_path, PGB_RELOAD="exit 1")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "unconfirmed" in r.stderr
+    assert route.read_text().startswith("; route=unconfirmed")
+    assert "route=" in _adapter(e, "observe").stdout.splitlines()  # empty: R1 tries again
+
+
+def test_a_new_primary_whose_redis_cannot_switch_still_gets_its_database_route(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "redis_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "anyway" in r.stderr
+    assert route.read_text().startswith("; route=local") and "reload" in log.read_text()
+
+
 def test_route_fails_loudly_when_redis_cannot_be_switched_and_leaves_pgbouncer_alone(tmp_path):
     e, log, route = _route_env(tmp_path)
     (tmp_path / "redis_fail").write_text("")
     r = _adapter(e, "route", "peer")
     assert r.returncode == 1 and "redis" in r.stderr
     assert not route.exists() and "reload" not in log.read_text()  # the app path is not switched
+
+
+def test_observe_reports_the_real_redis_role(tmp_path):
+    e, _, _ = _route_env(tmp_path)
+    fake = tmp_path / "fake-redis"
+    fake.write_text('#!/usr/bin/env bash\n[ "$1" = ROLE ] && printf "master\\r\\n0\\r\\n"; exit 0\n')
+    assert "redis_role=master" in _adapter(e, "observe").stdout.splitlines()
+
+
+@pytest.mark.parametrize("key, value", [
+    ("PEER_HOST", "10.0.0.2 user=postgres"), ("PGB_LOCAL_HOST", "db password=x"),
+    ("PEER_REDIS_HOST", "a b"), ("PEER_PORT", "5432 x"), ("PEER_REDIS_PORT", "63a9"),
+])
+def test_route_refuses_a_host_or_port_that_could_add_connect_keys(tmp_path, key, value):
+    e, _, route = _route_env(tmp_path, **{key: value})
+    r = _adapter(e, "route", "peer")
+    assert r.returncode == 2 and not route.exists()

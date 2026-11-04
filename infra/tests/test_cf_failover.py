@@ -456,7 +456,9 @@ class World:
             "a": cfg(SYNC_MODE=sync, **extra),
             "b": cfg(NODE_NAME="crm-b", PEER_NAME="crm-a", SYNC_MODE=sync, **extra),
         }
+        self.active_active = active_active
         self.route = {"a": "local", "b": "peer"} if active_active else {"a": "", "b": ""}
+        self.route_fails = {"a": 0, "b": 0}
         self.pg = {"a": "primary", "b": "standby"}
         self.tl = {"a": 1, "b": 1}
         self.lsn = {"a": 1000, "b": 1000}
@@ -479,9 +481,19 @@ class World:
         pair = {self.pg[n], self.pg[p]}
         return self.link and pair == {"primary", "standby"} and self.tl[n] == self.tl[p]
 
+    def app_reaches_writer(self, n):
+        """Active-active: the node's app reaches a writable database through its pgbouncer."""
+        if self.route[n] == "local":
+            return self.pg[n] == "primary"
+        if self.route[n] == "peer":
+            return self.link and self.pg[self.peer(n)] == "primary"
+        return False
+
     def cf_truth(self, n):
-        # The monitor: 200 only from a primary reachable from the internet; 2 failures to go down.
-        ok = self.net[n] and self.app_ok[n] and self.pg[n] == "primary"
+        # The monitor: 200 only from a node whose app reaches a writable database (active-passive:
+        # its own primary); reachable from the internet; 2 failures to go down.
+        writable = self.app_reaches_writer(n) if self.active_active else self.pg[n] == "primary"
+        ok = self.net[n] and self.app_ok[n] and writable
         self.cf_down_ticks[n] = 0 if ok else self.cf_down_ticks[n] + 1
         return "healthy" if ok or self.cf_down_ticks[n] < 2 * 4 else "unhealthy"  # 2 x 60 s at 15 s ticks
 
@@ -544,7 +556,11 @@ class World:
         elif a[0] == "set_sync":
             self.sync[n] = a[1]
         elif a[0] == "route":
-            self.route[n] = a[1]
+            if self.route_fails[n] > 0:   # the reload failed: the route stays unconfirmed
+                self.route_fails[n] -= 1
+                self.route[n] = ""
+            else:
+                self.route[n] = a[1]
 
     def run(self, until, start=0, rng=None):
         t = start
@@ -698,8 +714,9 @@ def test_r1_standby_routes_to_the_peer_only_while_the_peer_is_primary():
     _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy", route="local"), 0, c)
     assert ("route", "peer") in a
     for peer in ("standby", "unreachable"):
-        _, a = decide(initial_state(), obs(peer_pg=peer, peer_lsn=1, route="peer"), 0, c)
-        assert not any(x[0] == "route" for x in a), peer  # never re-points at a guess
+        for route in ("local", "peer", ""):  # whatever it points at now (review blocker 3)
+            _, a = decide(initial_state(), obs(peer_pg=peer, peer_lsn=1, route=route), 0, c)
+            assert not any(x[0] == "route" for x in a), (peer, route)  # never re-points at a guess
 
 
 def test_r1_a_fenced_node_serves_again_through_the_new_primary():
@@ -748,3 +765,44 @@ def test_world_active_active_app_down_moves_no_database():
     w.run(3900, start=315)
     assert w.pg == {"a": "primary", "b": "standby"}
     assert w.route == {"a": "local", "b": "peer"}
+
+
+def test_r1_repairs_a_redis_whose_role_drifted_from_the_route():
+    # Security review S2: a restarted Redis comes back as a master while the route file still
+    # says peer; R1 must notice the ROLE, not only the file, or each node runs its own Redis.
+    c = aa()
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy",
+                                       route="peer", redis_role="master"), 0, c)
+    assert ("route", "peer") in a
+    _, a = decide(initial_state(), prim(cf_self="healthy", self_streaming=True, peer_pg="standby",
+                                        route="local", redis_role="slave"), 0, c)
+    assert ("route", "local") in a
+    _, a = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy",
+                                       route="peer", redis_role="slave"), 0, c)
+    assert not any(x[0] == "route" for x in a)
+
+
+@pytest.mark.parametrize("value", ["True", "on", "2", "yes please"])
+def test_active_active_refuses_an_unrecognised_switch_value(value):
+    with pytest.raises(ConfigError):
+        cfg(ACTIVE_ACTIVE=value)
+
+
+def test_r1_keeps_retrying_while_the_route_is_unconfirmed():
+    # Review blocker 1b: a reload that failed leaves the route unconfirmed (""); every tick
+    # re-issues it until pgbouncer took it, so a new primary cannot stay pointed at the dead one.
+    c = aa()
+    s = initial_state()
+    for t in range(0, 60, TICK):
+        s, a = decide(s, prim(cf_self="healthy", self_streaming=True, peer_pg="standby", route=""), t, c)
+        assert ("route", "local") in a
+
+
+def test_world_active_active_a_failing_route_never_leaves_two_writers_and_heals():
+    w = World(active_active=True)
+    w.run(300)
+    w.route_fails["b"] = 3          # B's first three re-points fail after its promotion
+    w.net["a"] = False
+    w.link = False
+    w.run(2400, start=315)
+    assert w.pg["b"] == "primary" and w.route["b"] == "local"

@@ -20,31 +20,35 @@ services:
       - ./ha/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro    # templates/active-active/pgbouncer.ini
       - ./ha/route:/etc/pgbouncer/route:ro                    # the DIRECTORY: renames stay visible
       - /etc/sorento-ha/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      # libpq ignores a pgpass looser than 0600, and `exec` runs as the image's user: 0600 owned
+      # by the pgbouncer container uid (70 in edoburu/pgbouncer), or RELOAD fails (review S4).
       - /etc/sorento-ha/pgbouncer-admin.pgpass:/etc/pgbouncer/admin.pgpass:ro   # for RELOAD + RECONNECT
+      - /etc/sorento-ha/pgbouncer-hba.conf:/etc/pgbouncer/pg_hba.conf:ro        # templates/active-active/pgbouncer-hba.conf
 
   redis:
+    # Users (security review S1): `app` (the app: no CONFIG, REPLICAOF, SHUTDOWN, DEBUG, ACL,
+    # FLUSHALL, FLUSHDB), `repl` (replication only), `hacheck` (the HAProxy check only), `admin`
+    # (the controller's REPLICAOF and ROLE only). `default` is off.
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     environment:
-      REDISCLI_AUTH: ${REDIS_PASSWORD}   # so `exec redis redis-cli` authenticates without the password in argv
-    command:
-      - redis-server
-      - --requirepass
-      - ${REDIS_PASSWORD:?set REDIS_PASSWORD (same on both nodes)}
-      - --masterauth
-      - ${REDIS_PASSWORD}
-      - --appendonly
-      - "yes"
-      - --replica-read-only
-      - "yes"
+      # The controller's `redis-cli --user admin` reads it; visible in `docker inspect`, i.e. to
+      # root and the docker group only, who own the box anyway (accepted, review N6).
+      REDISCLI_AUTH: ${REDIS_ADMIN_PASSWORD:?set REDIS_ADMIN_PASSWORD}
+    volumes:
+      - /etc/sorento-ha/redis.conf:/usr/local/etc/redis/redis.conf:ro   # templates/active-active/redis.conf, 0640 root:999
+      - /etc/sorento-ha/users.acl:/etc/redis/users.acl:ro               # templates/active-active/users.acl, 0640 root:999
     ports:
       - "127.0.0.1:6379:6379"
-      - "<THIS_WG_IP>:6379:6379"     # the peer's proxy and replica reach it over the private link only
+      - "<THIS_WG_IP>:6379:6379"     # the peer's proxy and replica only: DOCKER-USER rules, templates/host/docker-user-wg.sh
 
   redis_proxy:
     image: <HAPROXY_IMAGE>@sha256:<DIGEST>
     volumes:
-      - ./ha/haproxy-redis.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro   # templates/active-active/haproxy-redis.cfg
+      # Holds the `hacheck` password: 0640 root:<HAPROXY_UID> (99 in the official image), never in
+      # the deploy-writable project folder (security review S4).
+      - /etc/sorento-ha/haproxy-redis.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     restart: unless-stopped
-    # The app's REDIS_URL becomes redis://:<REDIS_PASSWORD>@redis_proxy:6380/<db> on both nodes.
+    # The app's REDIS_URL becomes redis://app:<APP_PASSWORD>@redis_proxy:6380/<db> on both nodes.
 
   backend_blue:
     depends_on: [pgbouncer, redis_proxy]

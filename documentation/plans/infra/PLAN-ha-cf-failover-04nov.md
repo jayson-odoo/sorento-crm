@@ -413,48 +413,67 @@ nothing for an app fault.
 | Link A-B cut | nothing | the standby node's origin leaves the pool (its app cannot reach the primary); no failover |
 | Old primary returns | rejoins as standby | rejoins as standby, R1 routes it at the new primary, and it serves again |
 
+Redis, accepted risks (review):
+- **Async replication.** Redis replication is asynchronous: a primary-box loss drops the
+  jobs, idempotency keys and rate-limit counters written in its last moments. A POST retried
+  after a failover may run twice. Job rows that were queued or processing are failed by the
+  orphan reconcile for a retry (section 2 row 6).
+- **Two masters for up to one tick.** A Redis that restarts (host reboot, container recreate)
+  comes back a MASTER, because no `replicaof` is persisted. Until the controller's next tick
+  repairs it from Redis's real ROLE (R1 checks the role, not only the route file), the HAProxy on
+  that node prefers it: up to one tick (15 s) of split Redis on the standby node. The same holds
+  for a fenced old primary's Redis until its next tick.
+- **Job pickles.** RQ jobs are pickled (`app/services/queue_service.py:52-57`), so anyone who can
+  push to the master's queues runs code on the primary's workers. Before active-active only node
+  A's own containers could reach A's Redis; now node B's containers can too. The ACL (`users.acl`)
+  takes away reconfiguration and wiping, not pushing jobs. Accepted residual risk, bounded by the
+  DOCKER-USER rules (only the CRM compose network crosses the link).
+
 Constraint the drill found: a newly promoted primary's lease starts at the promotion, so its
 origin must turn Cloudflare-healthy within `FENCE_AFTER`. In prod that is 240 s, against a route
 switch (one tick, 15 s) plus `server_login_retry` (2 s) plus one Cloudflare check (up to 60 s).
 
 ### 12c. Measured: added latency for requests served from node B
 
-`infra/rehearsal/measure_roundtrips.py` signs in for real and counts every SQL statement and Redis
-command per request: each one is one A-B round trip when node B serves. The run was on a throwaway
+`infra/rehearsal/measure_roundtrips.py` signs in for real and counts every round trip to Postgres
+(statements, psycopg2's implicit BEGIN, COMMIT/ROLLBACK, the pool's pre-ping on checkout) and to
+Redis, per request: each one crosses the link when node B serves. The run was on a throwaway
 database built by `scripts.bootstrap_env` + `scripts.seed_never_stuck_smoke`, 4 Nov, warm second
-calls, admin persona. An empty database gives a LOWER bound: list endpoints that run per-row queries
-cost more on real data, so re-run it on a staging copy for prod-shaped numbers.
+calls, admin persona, Redis reachable. It is a LOWER bound:
+- list endpoints that run per-row queries cost more on real data;
+- a NEW server connection over the link (after `RECONNECT` or `server_lifetime`) adds TCP plus
+  SCRAM round trips once.
+Re-run it on a staging copy for prod-shaped numbers. (The first table, before review, missed
+BEGIN/COMMIT/pre-ping and read about 3 too low per request.)
 
 | Request | HTTP | SQL | Redis | local ms | +ms at 0.5 ms RTT | +ms at 1 ms RTT | +ms at 2 ms RTT | +ms at 5 ms RTT |
 |---|---|---|---|---|---|---|---|---|
-| `/api/v1/health/role` | 200 | 1 | 0 | 9 | 0 | 1 | 2 | 5 |
-| `/api/v1/my-requests/me` | 403 | 7 | 0 | 24 | 4 | 7 | 14 | 35 |
-| `/api/v1/notifications/coverage/for-me` | 200 | 9 | 0 | 28 | 4 | 9 | 18 | 45 |
-| `/api/v1/order-management/customers/?page=1&limit=20` | 200 | 13 | 0 | 36 | 6 | 13 | 26 | 65 |
-| `/api/v1/order-management/customers/select` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
-| `/api/v1/order-management/orders/?page=1&limit=20` | 200 | 9 | 0 | 29 | 4 | 9 | 18 | 45 |
-| `/api/v1/order-management/orders/analytics` | 422 | 7 | 0 | 17 | 4 | 7 | 14 | 35 |
-| `/api/v1/master-data/products?page=1&limit=20` | 200 | 9 | 0 | 36 | 4 | 9 | 18 | 45 |
-| `/api/v1/complaints-management/complaints/?page=1&limit=20` | 200 | 9 | 0 | 30 | 4 | 9 | 18 | 45 |
-| `/api/v1/forms-management/forms/?page=1&limit=20` | 200 | 9 | 0 | 32 | 4 | 9 | 18 | 45 |
-| `/api/v1/inventory/stock-position?page=1&limit=20` | 200 | 14 | 0 | 42 | 7 | 14 | 28 | 70 |
-| `/api/v1/inventory/stock/dashboard` | 200 | 12 | 0 | 30 | 6 | 12 | 24 | 60 |
-| `/api/v1/procurement/purchase-requests?page=1&limit=20` | 200 | 9 | 0 | 30 | 4 | 9 | 18 | 45 |
-| `/api/v1/procurement/grn/?page=1&limit=20` | 200 | 9 | 0 | 29 | 4 | 9 | 18 | 45 |
-| `/api/v1/incoming-stock/list?page=1&limit=20` | 200 | 7 | 0 | 17 | 4 | 7 | 14 | 35 |
-
-200-answers: 13 of 15; round trips per request median 9, max 14
+| `/api/v1/health/role` | 200 | 4 | 0 | 8 | 2 | 4 | 8 | 20 |
+| `/api/v1/my-requests/me` | 403 | 10 | 0 | 19 | 5 | 10 | 20 | 50 |
+| `/api/v1/notifications/coverage/for-me` | 200 | 12 | 0 | 23 | 6 | 12 | 24 | 60 |
+| `/api/v1/order-management/customers/?page=1&limit=20` | 200 | 16 | 0 | 41 | 8 | 16 | 32 | 80 |
+| `/api/v1/order-management/customers/select` | 200 | 15 | 0 | 34 | 8 | 15 | 30 | 75 |
+| `/api/v1/order-management/orders/?page=1&limit=20` | 200 | 12 | 0 | 37 | 6 | 12 | 24 | 60 |
+| `/api/v1/order-management/orders/analytics` | 422 | 10 | 0 | 19 | 5 | 10 | 20 | 50 |
+| `/api/v1/master-data/products?page=1&limit=20` | 200 | 12 | 0 | 32 | 6 | 12 | 24 | 60 |
+| `/api/v1/complaints-management/complaints/?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/forms-management/forms/?page=1&limit=20` | 200 | 12 | 0 | 32 | 6 | 12 | 24 | 60 |
+| `/api/v1/inventory/stock-position?page=1&limit=20` | 200 | 17 | 0 | 41 | 8 | 17 | 34 | 85 |
+| `/api/v1/inventory/stock/dashboard` | 200 | 15 | 0 | 42 | 8 | 15 | 30 | 75 |
+| `/api/v1/procurement/purchase-requests?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/procurement/grn/?page=1&limit=20` | 200 | 12 | 0 | 29 | 6 | 12 | 24 | 60 |
+| `/api/v1/incoming-stock/list?page=1&limit=20` | 200 | 10 | 0 | 22 | 5 | 10 | 20 | 50 |
 
 Reading it:
-- A typical authenticated GET makes 7-14 SEQUENTIAL database round trips (median 9). About 7 are
-  per-request overhead: session, permissions, company scope and module guard. GETs make no Redis
-  round trips.
-- Added latency per request served from B: about 9 ms at 1 ms RTT, 18 ms at 2 ms, 45 ms at 5 ms;
-  the slowest list here (14) adds 14 / 28 / 70 ms.
+- A typical authenticated GET makes 10-17 SEQUENTIAL database round trips (median 12). About 10
+  are per-request overhead: transaction, session, permissions, company scope, module guard.
+  GETs make no Redis round trips.
+- Added latency per request served from B: about 12 ms at 1 ms RTT, 24 ms at 2 ms, 60 ms at 5 ms;
+  the slowest here (17) adds 17 / 34 / 85 ms.
 - A page that fires its API calls in parallel pays roughly its slowest call.
 - Requests Cloudflare sends to the primary node pay nothing.
 - The A-B RTT itself is still unmeasured: runbook phase 1 step 1b, read-only. Under 2 ms (same
-  data centre): +10-30 ms on half the requests, below what a user notices. Above 5 ms: consider
+  data centre): +12-35 ms on half the requests, below what a user notices. Above 5 ms: consider
   sending a larger share to the primary node.
 - Writes add their idempotency Redis calls (`app/middleware/idempotency_middleware.py`).
 
@@ -486,7 +505,7 @@ scaled timings.
 | primary box dies | PASS: B primary 24 s after A died, serving at 26 s; B routes local and its Redis is master; A came back read-only and serves again through B |
 | primary isolated | PASS: the isolated primary fenced (10 s) before the other promoted (27 s); both serving again |
 | both nodes reboot | PASS: one writer, both serving |
-| never two writers / acknowledged writes | PASS: 0 bad samples; 0 of 284 acknowledged writes lost |
+| never two writers / acknowledged writes | PASS: 0 bad Postgres samples; 0 of 284 acknowledged writes lost. "Never two writers" is the Postgres check; Redis two-master samples are reported separately (expected for up to one tick after a restart, 12b) |
 
 Drill findings fixed in the build:
 - pgbouncer `RECONNECT` after `RELOAD`.
