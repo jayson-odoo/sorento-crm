@@ -469,7 +469,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     expect([...sent].sort()).toEqual(['row-live', 'row-used']);
   });
 
-  it('shape b: a line with only a used row - it ticks, and Confirm (1) sends that row', async () => {
+  it('shape b re-pinned (OI-RESERVE-USED-ROW, owner 4 Nov): a line with only a used row is not rendered, so nothing ticks', async () => {
     vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
       lineRow({
         id: 'row-used',
@@ -480,41 +480,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     ]);
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
-
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
-
-    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
-    expect((acknowledgeRowsSpy.mock.calls[0] as unknown[])[0]).toEqual([
-      'row-used',
-    ]);
-    expect(acknowledgeFilterSpy).not.toHaveBeenCalled();
-  });
-
-  it('shape b: a ticked used-only line never widens Auto link to the whole OI', async () => {
-    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
-      lineRow({
-        id: 'row-used',
-        state: 'placed',
-        redirected_to_pool: true,
-        ack_state: 'changed',
-      }),
-    ]);
-    renderDetail('oi-1');
-    await screen.findByRole('button', { name: 'Confirm' });
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    await screen.findByRole('button', { name: 'Confirm (1)' });
-
-    fireEvent.pointerDown(
-      screen.getByRole('button', { name: 'Order inquiry options' }),
-      {
-        button: 0,
-      },
-    );
-    fireEvent.click(
-      await screen.findByRole('menuitem', { name: /auto link/i }),
-    );
-    expect(autoPlaceSpy).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Select ZZT-USED')).not.toBeInTheDocument();
   });
 });
 

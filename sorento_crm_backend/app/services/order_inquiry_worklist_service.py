@@ -89,6 +89,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.services.oi_row_visibility import live_row_clause
 from app.services.scm.so_party import so_parties, with_party
 from app.services import order_inquiry_export
 from app.utils.multi_value import multi_text, multi_values
@@ -1505,11 +1506,15 @@ class OrderInquiryWorklistService:
         states = multi_values(state)
         if states:
             base = base.filter(OrderInquiryRow.state.in_(states))
+            if not include_cancelled:
+                # OI-RESERVE-USED-ROW: a used row is never listed, whatever the State filter.
+                base = base.filter(OrderInquiryRow.redirected_to_pool.isnot(True))
         elif not include_cancelled:
-            # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
-            # off - not owed, and not a row purchasing needs to see unless the State
-            # filter specifically asks for it.
-            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            # S5/AC-OH-50..51 (R2) + OI-RESERVE-USED-ROW (owner, 4 Nov): only LIVE rows, the
+            # one rule the Documents tab counts by (`oi_row_visibility`). A cancelled row is
+            # listed only when the State filter asks for it; a used row never is.
+            # `include_cancelled` (the OI page's `include_history` fetch) reads both as History.
+            base = base.filter(live_row_clause())
         project_ids = multi_values(project_id)
         if project_ids:
             base = base.filter(ProjectSalesOrder.project_id.in_(project_ids))
@@ -3226,7 +3231,11 @@ class OrderInquiryWorklistService:
         # it regardless - a second grouped count, `total_rows`/`total_qty` untouched.
         cancelled_count = (
             self._base(**filters, include_cancelled=True)
-            .filter(OrderInquiryRow.state == INQUIRY_CANCELLED)
+            .filter(
+                OrderInquiryRow.state == INQUIRY_CANCELLED,
+                # OI-RESERVE-USED-ROW: the State=cancelled list never shows a used row.
+                OrderInquiryRow.redirected_to_pool.isnot(True),
+            )
             .with_entities(func.count(OrderInquiryRow.id))
             .scalar()
             or 0
