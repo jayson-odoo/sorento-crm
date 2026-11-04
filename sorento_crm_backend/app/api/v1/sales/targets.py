@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
@@ -206,6 +206,51 @@ def import_dealer_targets(
             )
         db.commit()
         return result
+    except Exception as exc:
+        _reraise(db, exc)
+
+
+#: Targets per commission statement file (TARGET-COMMISSION-VIEW): each target is one
+#: achievement read, so the list's multi-select is capped rather than left unbounded.
+MAX_STATEMENT_TARGETS = 50
+
+
+@router.get("/commission-statement")
+@heavy
+def commission_statement(
+    ids: Optional[str] = Query(None, description="Comma-separated target ids"),
+    on: Optional[date] = Query(None),
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The commission statement (xlsx) of one or more targets: the target page's figures, the
+    tier table used and the documents behind each period's Achieved (TARGET-COMMISSION-VIEW)."""
+    from zoneinfo import ZoneInfo
+
+    from app.services.sales import commission_statement_xlsx
+
+    try:
+        picked = list(dict.fromkeys(multi_uuids(ids, "Targets") or []))
+        if not picked:
+            raise AppException(status_code=422, message="Pick at least one target.", code="NO_TARGETS")
+        if len(picked) > MAX_STATEMENT_TARGETS:
+            raise AppException(
+                status_code=422,
+                message=f"Pick at most {MAX_STATEMENT_TARGETS} targets per statement.",
+                code="TOO_MANY_TARGETS",
+            )
+        targets = [target_service.get_target_or_404(db, target_id) for target_id in picked]
+        statements = target_service.commission_statements(db, targets, on=on)
+        now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).replace(tzinfo=None)
+        content = commission_statement_xlsx.build(statements, generated=now)
+        name = targets[0].target_no if len(targets) == 1 else f"{len(targets)}-targets"
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="commission-statement-{name}-{now:%Y%m%d}.xlsx"'
+            },
+        )
     except Exception as exc:
         _reraise(db, exc)
 

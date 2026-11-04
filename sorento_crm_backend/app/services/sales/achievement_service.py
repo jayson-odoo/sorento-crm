@@ -253,10 +253,21 @@ def achieved_by_period_and_account(
     return _achieved(db, specs, company_id, split=True)
 
 
+def achieved_by_period_and_line(
+    db: Session, specs: List[PeriodSpec], company_id: str
+) -> Dict[str, Dict[Tuple[Optional[str], str], Decimal]]:
+    """`{period_id: {(customer_id, sales_order_line_id): achieved}}`: what each sales order
+    line added to each period, on the very statement `achieved_by_period` sums, so the lines of
+    a period add up to its achievement to the cent (the commission statement's documents,
+    lane TARGET-COMMISSION-VIEW). Only the statement export reads it."""
+    return _achieved(db, specs, company_id, split=True, by_line=True)
+
+
 def _achieved(
-    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool
+    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool, by_line: bool = False
 ) -> Dict[str, Dict[Optional[str], Decimal]]:
-    """`{period_id: {customer_id or None: achieved}}`, split by customer only when `split`.
+    """`{period_id: {customer_id or None: achieved}}`, split by customer only when `split`;
+    keyed `(customer_id, sales_order_line_id)` when `by_line`.
 
     Steps (review round 2, B1; #1319), each reading a small VALUES, one earlier step once, or an
     index: `period_days` (every day of every period), `agent_lines` (the credited agents' live
@@ -590,9 +601,8 @@ def _achieved(
         else_=0,
     )
 
-    stmt = select(pairs.c.period_id, pairs.c.customer_id, func.sum(value)).group_by(
-        pairs.c.period_id, pairs.c.customer_id
-    )
+    group = [pairs.c.period_id, pairs.c.customer_id] + ([pairs.c.sol_id] if by_line else [])
+    stmt = select(*group, func.sum(value)).group_by(*group)
     scoped = sorted({s.target_id for s in specs if s.product_scope != "all"})
     if scoped:
         # An all-products target reads no scope at all.
@@ -604,8 +614,13 @@ def _achieved(
                 ),
             )
         )
-    for period_id, customer_id, total in db.execute(stmt).all():
+    for row in db.execute(stmt).all():
+        period_id, customer_id, total = row[0], row[1], row[-1]
         key = None if customer_id is None else str(customer_id)
+        if by_line:
+            if not total:
+                continue
+            key = (key, str(row[2]))
         out[str(period_id)][key] = Decimal(total or 0)
     return out
 
