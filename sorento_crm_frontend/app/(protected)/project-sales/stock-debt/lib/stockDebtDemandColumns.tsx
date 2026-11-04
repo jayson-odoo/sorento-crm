@@ -329,7 +329,7 @@ export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDema
     // supply beside it are even the same pile (the ownership group is the code's suffix).
     id: 'warehouse_code',
     accessorKey: 'warehouse_code',
-    header: ({ column }) => <DataGridColumnHeader title="Bin" column={column} />,
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
     size: 110,
     cell: ({ row }) => (
       <span className="truncate" title={row.original.warehouse_code ?? ''}>
@@ -340,7 +340,7 @@ export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDema
   {
     id: 'required_date',
     accessorKey: 'required_date',
-    header: ({ column }) => <DataGridColumnHeader title="Due" column={column} />,
+    header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
     size: 120,
     cell: ({ row }) => <span>{dateOrDash(row.original.required_date)}</span>,
   },

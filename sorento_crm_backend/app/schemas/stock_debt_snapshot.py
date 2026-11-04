@@ -140,9 +140,19 @@ class SnapshotOiRow(BaseModel):
     after_snapshot: bool = False
 
 
+class SnapshotLinePoLink(BaseModel):
+    """AC-LINK-CRM-UI: a PO line linked to this SO line now (live)."""
+    po_line_id: str
+    po_number: str
+    po_line_no: Optional[int] = None
+    qty: float
+    location_code: Optional[str] = None
+
+
 class SnapshotLineNow(BaseModel):
     so_status: Optional[str] = None
     open_qty: float = 0.0
+    po_links: List[SnapshotLinePoLink] = []
 
 
 class SnapshotLine(StockDebtDemandLine):
@@ -154,3 +164,87 @@ class SnapshotLine(StockDebtDemandLine):
 
 class SnapshotLineList(BaseModel):
     data: List[SnapshotLine]
+
+
+# --------------------------------------------------------------- PO link (AC-LINK-CRM-UI)
+
+
+class PoLinkCapability(BaseModel):
+    enabled: bool
+    reason: Optional[str] = None
+
+
+class PoLinkCapabilities(BaseModel):
+    split_link: PoLinkCapability
+    link_row: PoLinkCapability
+    unlink_row: PoLinkCapability
+    relink_row: PoLinkCapability
+
+
+class PoLinkOption(BaseModel):
+    po_line_id: str
+    po_number: str
+    po_line_no: Optional[int] = None
+    location_code: Optional[str] = None
+    delivery_date: Optional[DateType] = None
+    po_qty: float
+    free_qty: float
+    supplier_name: Optional[str] = None
+
+
+class PoLinkOptions(BaseModel):
+    capabilities: PoLinkCapabilities
+    po_lines: List[PoLinkOption]
+
+
+class PoLinkLineIn(BaseModel):
+    sales_order_line_id: str
+    po_line_id: str
+    qty: float
+
+
+class PoLinkIn(BaseModel):
+    lines: List[PoLinkLineIn] = Field(min_length=1, max_length=50)
+
+
+class PoUnlinkIn(BaseModel):
+    sales_order_line_ids: List[str] = Field(min_length=1, max_length=50)
+
+
+class PoRelinkMoveIn(BaseModel):
+    po_line_id: str
+    to_sales_order_line_id: str
+
+
+class PoRelinkIn(BaseModel):
+    moves: List[PoRelinkMoveIn] = Field(min_length=1, max_length=50)
+
+
+class PoRelocateIn(BaseModel):
+    company_code: str = Field(min_length=1, max_length=50)
+    po_doc_key: int = Field(ge=1)
+    po_dtl_key: int = Field(ge=1)
+
+
+class PoResumeIn(BaseModel):
+    company_code: str = Field(min_length=1, max_length=50)
+
+
+class PoLinkResult(BaseModel):
+    sales_order_line_id: Optional[str] = None
+    so_number: Optional[str] = None
+    so_line_no: Optional[int] = None
+    po_number: Optional[str] = None
+    qty: Optional[float] = None
+    outcome: Optional[str] = None
+    error_code: Optional[str] = None
+    warnings: List[str] = []
+    message: str = ""
+    operation_id: Optional[str] = None
+    company_code: Optional[str] = None
+    po_doc_key: Optional[int] = None
+    po_dtl_key: Optional[int] = None
+
+
+class PoLinkResults(BaseModel):
+    results: List[PoLinkResult]

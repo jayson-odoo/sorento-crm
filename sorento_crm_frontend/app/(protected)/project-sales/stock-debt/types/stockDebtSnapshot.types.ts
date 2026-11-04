@@ -101,11 +101,20 @@ export interface SnapshotOiRow {
   after_snapshot?: boolean;
 }
 
+/** AC-LINK-CRM-UI: a PO line linked to the SO line now (live). */
+export interface SnapshotPoLink {
+  po_line_id: string;
+  po_number: string;
+  po_line_no: number | null;
+  qty: number;
+  location_code: string | null;
+}
+
 export interface SnapshotLine extends StockDebtDemandLine {
   bucket: string;
   sales_order_line_id: string;
   oi_rows: SnapshotOiRow[];
-  now: { so_status: string | null; open_qty: number };
+  now: { so_status: string | null; open_qty: number; po_links?: SnapshotPoLink[] };
 }
 
 export interface SnapshotLinesResponse {
@@ -116,4 +125,53 @@ export interface SnapshotDecisionInput {
   decision: SnapshotDecision | null;
   warehouse_id: string | null;
   note: string | null;
+}
+
+/* ------------------------------------------------------------ PO link (AC-LINK-CRM-UI) */
+
+export type PoLinkAction = 'split_link' | 'link_row' | 'unlink_row' | 'relink_row';
+
+/** What AutoCount can do now, read from the Shared Service when the menu opens. */
+export type PoLinkCapabilities = Record<PoLinkAction, { enabled: boolean; reason: string | null }>;
+
+export interface PoLinkOption {
+  po_line_id: string;
+  po_number: string;
+  po_line_no: number | null;
+  location_code: string | null;
+  delivery_date: string | null;
+  po_qty: number;
+  free_qty: number;
+  supplier_name: string | null;
+}
+
+export interface PoLinkOptions {
+  capabilities: PoLinkCapabilities;
+  po_lines: PoLinkOption[];
+}
+
+export type PoLinkOutcome =
+  | 'done'
+  | 'refused'
+  | 'mismatch'
+  | 'pending_verification'
+  | 'vendor_error'
+  | 'recovered'
+  | 'needs_attention';
+
+/** One line's answer, as AutoCount (through the Shared Service) gave it. */
+export interface PoLinkResult {
+  sales_order_line_id: string | null;
+  so_number: string | null;
+  so_line_no: number | null;
+  po_number: string | null;
+  qty: number | null;
+  outcome: PoLinkOutcome | null;
+  error_code: string | null;
+  warnings: string[];
+  message: string;
+  operation_id: string | null;
+  company_code: string | null;
+  po_doc_key: number | null;
+  po_dtl_key: number | null;
 }

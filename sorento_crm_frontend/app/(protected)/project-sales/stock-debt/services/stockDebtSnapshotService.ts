@@ -20,6 +20,8 @@ import type {
   SnapshotListResponse,
   SnapshotRow,
   SnapshotRowsResponse,
+  PoLinkOptions,
+  PoLinkResult,
 } from '../types/stockDebtSnapshot.types';
 
 const BASE = '/api/v1/project-sales/stock-debt/snapshots';
@@ -125,4 +127,74 @@ export async function exportSnapshot(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start the snapshot export'));
   return (await res.json()) as MyDownload;
+}
+
+/* ------------------------------------------------------------ PO link (AC-LINK-CRM-UI) */
+// All need `projects.stock_debt.link_po`; every write goes to AutoCount through the Shared
+// Service and answers per line what AutoCount said.
+
+const PO_LINK_BASE = '/api/v1/project-sales/stock-debt/po-link';
+
+function poLinkUrl(id: string, rowId: string, tail = ''): string {
+  return `${BASE}/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}/po-link${tail}`;
+}
+
+async function postJson<T>(url: string, body: unknown, fallback: string): Promise<T> {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, fallback));
+  return (await res.json()) as T;
+}
+
+export async function getPoLinkOptions(id: string, rowId: string): Promise<PoLinkOptions> {
+  const res = await apiFetch(poLinkUrl(id, rowId));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the PO lines'));
+  return (await res.json()) as PoLinkOptions;
+}
+
+export async function linkPoLines(
+  id: string,
+  rowId: string,
+  lines: Array<{ sales_order_line_id: string; po_line_id: string; qty: number }>,
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(poLinkUrl(id, rowId, '/link'), { lines }, 'Failed to link to PO');
+}
+
+export async function unlinkPoLines(
+  id: string,
+  rowId: string,
+  salesOrderLineIds: string[],
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(
+    poLinkUrl(id, rowId, '/unlink'),
+    { sales_order_line_ids: salesOrderLineIds },
+    'Failed to unlink from PO',
+  );
+}
+
+export async function relinkPoLines(
+  id: string,
+  rowId: string,
+  moves: Array<{ po_line_id: string; to_sales_order_line_id: string }>,
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(poLinkUrl(id, rowId, '/relink'), { moves }, 'Failed to move the PO');
+}
+
+export async function relocatePoLine(input: {
+  company_code: string;
+  po_doc_key: number;
+  po_dtl_key: number;
+}): Promise<PoLinkResult> {
+  return postJson(`${PO_LINK_BASE}/relocate`, input, 'Failed to move the PO line');
+}
+
+export async function resumePoLink(operationId: string, companyCode: string): Promise<PoLinkResult> {
+  return postJson(
+    `${PO_LINK_BASE}/operations/${encodeURIComponent(operationId)}/resume`,
+    { company_code: companyCode },
+    'Failed to resume',
+  );
 }
