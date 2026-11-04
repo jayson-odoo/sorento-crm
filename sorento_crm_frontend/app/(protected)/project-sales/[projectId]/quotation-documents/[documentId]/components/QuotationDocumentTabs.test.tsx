@@ -30,6 +30,33 @@ if (!window.matchMedia) {
 
 const BASE = '/project-sales/p1/quotation-documents/d1';
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
+const previewOk = (intro = '<p>Dear Kelly</p>') =>
+  new Response(
+    JSON.stringify({
+      cover_title: 'QUOTATION',
+      cover_show_letterhead: true,
+      cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+      cover_intro_html: intro,
+      cover_closing_html: '',
+      sender_name: 'Sorento Sdn Bhd',
+      sender_logo_url: null,
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const getProject = vi.fn();
@@ -198,6 +225,7 @@ beforeEach(() => {
   listQuotations.mockResolvedValue([]);
   listQuotationIssues.mockResolvedValue([]);
   getQuotationDocument.mockResolvedValue(quotationDocument());
+  coverPreview.mockImplementation(async () => previewOk());
   getQuotationFeedback.mockResolvedValue({ open_count: 0, requests: [] });
   setQuotationFeedbackHandled.mockResolvedValue(undefined);
 });
@@ -298,15 +326,34 @@ describe('what each quotation document tab renders', () => {
     await expectIdentityOnScreen();
   });
 
-  it('renders the cover letter tab, and the identity above it', async () => {
+  it('renders the cover letter tab as the preview card with the intro, and the identity above it', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>Dear Kelly</p>' }),
     );
     renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
 
     expect(await screen.findByText('Dear Kelly')).toBeInTheDocument();
-    expect(panelTitle('Cover letter')).toBeInTheDocument();
+    expect(screen.getByText('SRT/Q/2026/0141-R1 Menara Test')).toBeInTheDocument();
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
     await expectIdentityOnScreen();
+  });
+
+  it('M1: a proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'proposal' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
+  it('M1: a quotation prints QUOTATION FROM on the cover letter tab', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'quotation' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Quotation from')).toBeInTheDocument();
+    expect(screen.queryByText('Proposal from')).toBeNull();
   });
 
   it('renders the terms tab, and the identity above it', async () => {
@@ -332,13 +379,28 @@ describe('what each quotation document tab renders', () => {
     await expectIdentityOnScreen();
   });
 
-  it('still renders an empty cover letter and an empty terms tab, with their empty states', async () => {
+  it('an empty intro still renders the preview card, and the terms tab keeps its empty state', async () => {
+    coverPreview.mockImplementation(async () => previewOk(''));
     renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
-    // Exact: no explanation of when the template is applied, and no "issued" wording (AC-QF057).
-    expect(await screen.findByText('No cover letter on this quotation yet.')).toBeInTheDocument();
+    expect(await screen.findByText('Reference No.')).toBeInTheDocument();
+    expect(screen.queryByText('No cover letter on this quotation yet.')).toBeNull();
 
     renderTab(`${BASE}/terms`, <QuotationTermsTab />);
     expect(await screen.findByText('No terms on this quotation yet.')).toBeInTheDocument();
+  });
+
+  it('when the preview call fails the cover letter tab shows an error line, not the old panel', async () => {
+    coverPreview.mockImplementation(
+      async () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
+    );
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>Dear Kelly</p>' }),
+    );
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText(/could not|couldn.t|failed|unable|error/i)).toBeInTheDocument();
+    expect(screen.queryByText('Dear Kelly')).toBeNull();
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
   });
 });
 

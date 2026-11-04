@@ -197,7 +197,10 @@ def _echo(
 
 #: REPORT-SMART-1021: keys a sales body carries only when counted or compared, so a body
 #: that is neither stays what every caller already reads.
-_OPTIONAL_KEYS = ("count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary", "documents")
+_OPTIONAL_KEYS = (
+    "count", "prev", "change_pct", "compare_to", "compare_from", "compare_until", "code", "sales_agent_fill_rate", "summary",
+    "documents", "companies",
+)
 
 
 def _drop_unset(part: dict, compared: bool) -> dict:
@@ -213,7 +216,7 @@ def _response(data: dict) -> JSONResponse:
     compared = content.get("compare_to") is not None
     _drop_unset(content, compared)
     _drop_unset(content["total"], compared)
-    for row in content["rows"]:
+    for row in [*content["rows"], *(content.get("companies") or [])]:
         _drop_unset(row, compared)
     for group in (content.get("summary") or {}).get("groups", []):
         for row in group["rows"]:
@@ -686,6 +689,25 @@ def report_ask(
         capped_by_policy=not staff_read,  # a staff read has no contact, so no location policy to be capped by
     )
     data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
+    if company_name is None and len(grants) > 1 and compare_norm is None and data.get("status") == "ok":
+        # Owner O-R2 (3 Nov): an ask naming no company runs over every company the contact holds (above), and the reply
+        # shows each company's total before the combined one: the same filters, no breakdown, one company at a time, in
+        # the contact's company order (the default first). A company with no figure is left out; under two, no split.
+        from app.services.company_scope import DEFAULT_COMPANY_ID
+
+        per_company = []
+        for cid, cname in sorted(
+            ((str(i), str(n or "")) for i, n in db.query(Company.id, Company.name).filter(Company.id.in_(sorted(grants))).all()),
+            key=lambda row: (row[0] != DEFAULT_COMPANY_ID, row[1]),
+        ):
+            one = ask.run_ask(
+                db, date_from=date_from, date_to=date_to, top_n=None, **{**run, "group_by": None, "company_grants": {cid}}
+            )
+            total = one.get("total") or {}
+            if one.get("status") == "ok" and (total.get("qty") or total.get("amount") or total.get("count")):
+                per_company.append({"name": cname, **{k: total[k] for k in ("qty", "amount", "count") if k in total}})
+        if len(per_company) > 1:
+            data = {**data, "companies": per_company}
     product_subject = bool(code or named_products)
     customer_subject = bool(named_customers) or scoped is not None
     if (

@@ -17,6 +17,7 @@
  * number that only exists because the buyer is looking at the ledger live.
  */
 import { trendAdvice, type TrajectoryEntry } from './trajectory';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /**
  * Floor at MOQ, then round UP to the nearest order multiple - mirrors
@@ -277,6 +278,7 @@ export function ledgerDemandRows(
         so_id?: string | null;
         so_number: string;
         customer_label: string;
+        project_title?: string | null;
         required_date: string | null;
         qty: number;
         linked_qty?: number | null;
@@ -294,7 +296,8 @@ export function ledgerDemandRows(
       key: `${l.so_number}-${l.required_date ?? 'undated'}-${i}`,
       soId: l.so_id ?? null,
       soNumber: l.so_number,
-      customer: l.customer_label,
+      // OI-UX-FILTER-SNAPSHOT: CUSTOMER / project, the shared format.
+      customer: soCustomerProjectLabel(l.customer_label, l.project_title) ?? l.customer_label,
       deliveryDate: l.required_date,
       qty: l.qty,
       linked: l.linked_qty ?? null,

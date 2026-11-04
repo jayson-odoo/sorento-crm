@@ -39,7 +39,9 @@ ALL_SLUGS = [VIEW, EDIT, "projects.projects.delete", "projects.projects.manage",
 
 LIST_PRICE = "300.00"
 BELOW_FLOOR = "120.00"  # against a 50%-of-list floor of 150.00
-ABOVE_FLOOR = "200.00"
+# PS-QUOTE-RULES: any discount needs approval, so a quotation that needs none is priced at its
+# default price (the list price here), not merely above the floor.
+CLEAN_PRICE = LIST_PRICE
 
 
 def _uid() -> str:
@@ -153,6 +155,58 @@ def _without_permission(slug: str):
         UserPermissionService.get_user_permission_slugs = original_slugs
 
 
+def _route_to_a_default_approver_the_actor_sits_above(db, actor_id: str) -> None:
+    """PS-QUOTE-RULES: every request is routed to ONE approver, and only they, someone above
+    them, or an admin decides. This suite drives the whole flow as one actor, so it configures a
+    default approver who REPORTS TO the actor: Send for approval routes there, and the actor's
+    own decisions stay allowed as "someone above them". No admin role, so the suite's
+    permission-denied checks still mean what they say."""
+    from app.models.user import SystemSetting, User, UserStatus
+
+    approver = _uid()
+    db.add(
+        User(
+            id=approver,
+            email=f"{approver}@zzt.test",
+            name=f"{MARKER} Default Approver",
+            status=UserStatus.ACTIVE.value,
+            superior_id=actor_id,
+        )
+    )
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=_uid())
+        db.add(row)
+    db.flush()
+    from app.models.company import UserCompany
+
+    db.add(UserCompany(id=_uid(), user_id=approver, company_id=_sorento(db)))
+    row.default_quotation_approver_user_id = approver
+    db.flush()
+
+
+@contextmanager
+def _as_approver(db):
+    """Decide as the routed default approver: nobody decides their own request (security
+    review), and the suite's single actor is the one who sent it."""
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.models.user import SystemSetting
+
+    approver = db.query(SystemSetting).first().default_quotation_approver_user_id
+    saved = {
+        key: app.dependency_overrides.get(key)
+        for key in (get_current_user, get_current_user_or_api_key)
+    }
+    actor = {"id": approver, "email": f"{approver}@zzt.test", "role": "superadmin"}
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.update(saved)
+
+
 @pytest.fixture()
 def api():
     from app.models.base import company_scope
@@ -179,6 +233,7 @@ def api():
             developer_party_id=None,
             title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
         )
+        _route_to_a_default_approver_the_actor_sits_above(db, user_id)
         db.commit()
         client, originals = _client(db, user_id)
         try:
@@ -272,7 +327,7 @@ def test_a_clean_quotation_still_issues_in_one_press(api):
     them to decide whether to show the block at all."""
     client, _, _, _, project, product = api
 
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     assert document["requires_approval"] is False
     assert document["below_floor_line_count"] == 0
     assert document["approval_status_key"] is None
@@ -316,7 +371,8 @@ def test_the_full_approval_round_trip_over_http(api):
     assert asked.status_code == 200, asked.text
     assert asked.json()["approval_status_key"] == "pending_approval"
 
-    approved = client.post(f"{root}/approve")
+    with _as_approver(db):
+        approved = client.post(f"{root}/approve")
     assert approved.status_code == 200, approved.text
     assert approved.json()["approval_status_key"] == "approved"
 
@@ -337,13 +393,12 @@ def test_reject_requires_a_reason_and_hands_it_back_on_the_document(api):
         json={"to_status_id": _status_id(db, "pending_approval")},
     )
 
-    blank = client.post(f"{root}/reject", json={"reason": "   "})
+    with _as_approver(db):
+        blank = client.post(f"{root}/reject", json={"reason": "   "})
+        missing = client.post(f"{root}/reject", json={})
+        rejected = client.post(f"{root}/reject", json={"reason": "Bring it back to RM 240."})
     assert blank.status_code == 422, blank.text
-
-    missing = client.post(f"{root}/reject", json={})
     assert missing.status_code == 422, missing.text
-
-    rejected = client.post(f"{root}/reject", json={"reason": "Bring it back to RM 240."})
     assert rejected.status_code == 200, rejected.text
     body = rejected.json()
     assert body["approval_status_key"] == "rejected"
@@ -380,7 +435,7 @@ def test_approve_and_reject_are_gated_on_the_new_slug(api):
         json={"to_status_id": _status_id(db, "pending_approval")},
     )
 
-    with _without_permission(APPROVE):
+    with _without_permission(APPROVE), _as_approver(db):
         assert client.post(f"{root}/approve").status_code == 403
         assert (
             client.post(f"{root}/reject", json={"reason": "No."}).status_code == 403
@@ -498,14 +553,16 @@ def _in_state(client, db, project, product, state: str) -> tuple[dict, str]:
     if state in ("pending_approval", "approved", "issued"):
         _to_pending(client, db, root)
     if state in ("approved", "issued"):
-        approved = client.post(f"{root}/approve")
+        with _as_approver(db):
+            approved = client.post(f"{root}/approve")
         assert approved.status_code == 200, approved.text
     if state == "issued":
         issued = client.post(f"{root}/issue")
         assert issued.status_code == 201, issued.text
     if state == "rejected":
         _to_pending(client, db, root)
-        rejected = client.post(f"{root}/reject", json={"reason": "Too low."})
+        with _as_approver(db):
+            rejected = client.post(f"{root}/reject", json={"reason": "Too low."})
         assert rejected.status_code == 200, rejected.text
     return document, root
 
@@ -680,7 +737,7 @@ def test_d4_revise_needs_a_reason(api, reason):
 def test_d4_revise_is_refused_off_the_pending_and_approved_rungs(api, state):
     client, db, _, _, project, product = api
     if state is None:
-        document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+        document = _quotation(client, project.id, product.id, CLEAN_PRICE)
         root = _root(project, document)
     else:
         _, root = _in_state(client, db, project, product, state)
@@ -757,7 +814,7 @@ def _document_exists(db, document_id: str) -> bool:
 
 def test_f6_an_editor_with_the_delete_grant_parks_the_delete_and_nothing_is_removed_yet(api):
     client, _, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
 
     parked = _park_delete(client, document["id"])
 
@@ -767,7 +824,7 @@ def test_f6_an_editor_with_the_delete_grant_parks_the_delete_and_nothing_is_remo
 
 def test_f6_without_the_delete_slug_it_is_refused(api):
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
 
     with _without_permission(DELETE_SLUG):
         refused = _park_delete(client, document["id"])
@@ -783,7 +840,7 @@ def test_f6_the_delete_slug_without_edit_rights_on_that_project_is_refused(api):
     from app.services.user_service import UserPermissionService
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     stranger = _active_user(db, f"{MARKER} Stranger")
     db.commit()
     actor = {"id": stranger, "email": f"{stranger}@zzt.test", "role": "user"}
@@ -820,7 +877,7 @@ def test_f6_when_the_window_lapses_the_server_hard_deletes_the_document(api):
     from app.models.sla import SlaFormAction
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     parked = _park_delete(client, document["id"])
     assert parked.status_code == 202, parked.text
     assert _document_exists(db, document["id"]), "nothing applies until the window lapses"

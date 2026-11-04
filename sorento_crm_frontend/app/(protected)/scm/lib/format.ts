@@ -6,7 +6,7 @@
  * Phase 1 hard-codes "RM"; Phase 2 will thread the system currency format
  * (`useCurrencyFormat`) through instead.
  */
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 // A plain hyphen, deliberately. Em-dashes are banned in this codebase's writing and the
 // user does not want to see them in the UI either.
@@ -179,71 +179,36 @@ export function fmtPct(ratio: number | null | undefined, dp = 0): string {
   })}%`;
 }
 
-/** Absolute short date (e.g. incoming PO ETA). null → em dash. */
-/**
- * The one date shape this product uses: `dd/mm/yyyy`.
- *
- * Exported so every other SCM formatter (the coverage timeline's day label, the plan
- * header's run stamp) builds on the SAME parts rather than restating them. Three copies of
- * "a date" is how one screen came to read `07 Jan 2020` while the rest of the app read
- * `07/01/2020`, and a reader cannot tell a deliberate difference from an accidental one.
- *
- * `en-GB` because it orders day before month, which is what Malaysia writes; `2-digit` on
- * both because `7/1/2020` is ambiguous to anybody who reads month-first.
- */
-export const DATE_PARTS = {
-  day: '2-digit',
-  month: '2-digit',
-  year: 'numeric',
-} as const;
-
-export const DATE_LOCALE = 'en-GB';
-
+/** Absolute short date (e.g. incoming PO ETA), `dd/mm/yyyy` in Malaysia. null → em dash. */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return EM_DASH;
-  return d.toLocaleDateString(DATE_LOCALE, DATE_PARTS);
+  return formatDateInMalaysia(iso) || EM_DASH;
 }
-
-/** 24-hour, both parts padded: `21:05`, and `09:28` rather than `9:28`. No am/pm to
- *  misread, and the same 2-digit reasoning as `DATE_PARTS`. */
-export const TIME_PARTS = {
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-} as const;
 
 /**
  * A date WITH its time, for the stamps where the hour matters (when a simulation last ran,
- * when a baseline was blessed). Two runs on the same day are otherwise indistinguishable.
- *
- * The date half is `fmtDate`'s, part for part: this product writes a date one way, and a
- * stamp reading `15 Aug 2026` beside a column of `15/08/2026` looks like a deliberate
- * distinction that nobody made.
+ * when a baseline was blessed): `dd/mm/yyyy, h:mm am/pm`. Two runs on the same day are
+ * otherwise indistinguishable.
  */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return EM_DASH;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return EM_DASH;
-  return `${d.toLocaleDateString(DATE_LOCALE, DATE_PARTS)}, ${d.toLocaleTimeString(DATE_LOCALE, TIME_PARTS)}`;
+  return formatDateTimeInMalaysia(iso) || EM_DASH;
 }
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
  * A Malaysia WALL-TIME stamp with no zone (`2026-09-26T07:40:12`, or a bare `2026-09-26`) as
- * `26 Sep 2026 07:40` / `26 Sep 2026`: the low stock report's "Daily plan, ..." subtitle, as
- * its approved mockup reads (PLAN-excel-preview-26sep, review N3 of #1270). Read off the
- * string's own digits rather than through `Date`, which would shift a zoneless stamp by the
- * browser's offset.
+ * `26/09/2026, 7:40 am` / `26/09/2026`: the low stock report's "Daily plan, ..." subtitle
+ * (PLAN-excel-preview-26sep, review N3 of #1270). Read off the string's own digits rather
+ * than through `Date`, which would shift a zoneless stamp by the browser's offset.
  */
 export function fmtWallStamp(stamp: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(stamp ?? '');
   if (!m) return EM_DASH;
   const [, year, month, day, hour, minute] = m;
-  const date = `${Number(day)} ${MONTHS[Number(month) - 1]} ${year}`;
-  return hour ? `${date} ${hour}:${minute}` : date;
+  const date = `${day}/${month}/${year}`;
+  if (!hour) return date;
+  const h = Number(hour);
+  return `${date}, ${h % 12 || 12}:${minute} ${h < 12 ? 'am' : 'pm'}`;
 }
 
 /**

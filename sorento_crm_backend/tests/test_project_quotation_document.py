@@ -38,6 +38,11 @@ from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-qdoc"
 
 # Off the real workbook (Cabana Elmina - nadi cergas R2): one priced line and one rate-only
@@ -222,7 +227,7 @@ def test_a_rate_only_line_is_quoted_but_adds_nothing_to_any_total():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -297,7 +302,7 @@ def test_issuing_freezes_the_version_the_customer_now_holds():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -367,7 +372,7 @@ def test_reissuing_records_the_version_each_scope_actually_contributed():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -571,7 +576,7 @@ def test_a_line_carries_the_columns_the_real_quotation_actually_prints():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)

@@ -10,6 +10,7 @@ product standard that a delete named "delete" deletes.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from typing import Optional
 
@@ -455,7 +456,7 @@ def _email_intake_link(db: Session, request: OnboardingRequest) -> None:
     from app.services import email_outbox_service
     from app.services.email_template_service import EmailTemplateService
 
-    expires = request.expires_at.strftime("%d %b %Y")
+    expires = fmt_date(request.expires_at)
     rendered = EmailTemplateService(db).render_code(
         "onboarding_intake_link",
         {

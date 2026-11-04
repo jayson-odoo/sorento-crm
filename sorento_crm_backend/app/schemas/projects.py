@@ -278,6 +278,8 @@ class ProjectUpdateRequest(BaseModel):
     is_critical: Optional[bool] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    # PS-QUOTE-RULES R4.2: route this project's discounts to one person. Null clears it.
+    discount_approver_user_id: Optional[str] = None
 
 
 class ProjectApproveRequest(BaseModel):
@@ -382,6 +384,8 @@ class ProjectResponse(BaseModel):
     critical_at: Optional[datetime] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    discount_approver_user_id: Optional[str] = None
+    discount_approver_name: Optional[str] = None
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -1562,6 +1566,8 @@ class ProjectQuotationLineResponse(BaseModel):
     floor_value_applied: Optional[Decimal] = None
     floor_level_applied: Optional[str] = None
     is_below_floor: bool = False
+    # Below its default price when priced (PS-QUOTE-RULES R1): any discount needs approval.
+    is_discounted: bool = False
 
     sort_order: int = 0
     notes: Optional[str] = None
@@ -1966,6 +1972,7 @@ class ProjectQuotationDocumentBase(BaseModel):
     attn_name: Optional[str] = None
     subject_title: Optional[str] = None
     cover_letter_html: Optional[str] = None
+    cover_closing_html: Optional[str] = None
     terms_html: Optional[str] = None
     signatory_name: Optional[str] = None
     signatory_phone: Optional[str] = None
@@ -2037,6 +2044,10 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
 class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
@@ -2054,6 +2065,10 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
 
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeUpdate]] = Field(
         default=None,
@@ -2178,6 +2193,13 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approval_rejected_reason: Optional[str] = None
     requires_approval: bool = False
     below_floor_line_count: int = 0
+    # PS-QUOTE-RULES: any discount and any off-series line need approval, routed to one person.
+    discounted_line_count: int = 0
+    off_series_line_count: int = 0
+    approval_reasons: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_name: Optional[str] = None
+    viewer_may_decide: Optional[bool] = None
     # PS-PROPOSAL-QUOTATION: quotation lines priced below the proposal revision it came from.
     below_proposal_count: int = 0
 
@@ -2234,13 +2256,19 @@ class QuotationReviseRequest(BaseModel):
 
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
-    body_html: str = Field(min_length=1)
+    # Empty only for a cover_page design (the service refuses it for the other kinds).
+    # The length cap lives on the input schemas only: a template stored before the cap existed
+    # must still list and load.
+    body_html: str = ""
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
-    kind: str = Field(description="cover_letter | terms")
+    body_html: str = Field(default="", max_length=50000)
+    kind: str = Field(description="cover_letter | terms | cover_page")
+    # kind cover_page only; validated by the service.
+    design: Optional[Dict[str, Any]] = None
     # Optional because the FIRST template of a kind is active on arrival whatever the caller
     # says: a company holding a template with nothing active renders an empty letter.
     is_active: Optional[bool] = None
@@ -2255,7 +2283,8 @@ class QuotationTemplateUpdate(BaseModel):
     """
 
     name: Optional[str] = Field(default=None, max_length=150)
-    body_html: Optional[str] = None
+    body_html: Optional[str] = Field(default=None, max_length=50000)
+    design: Optional[Dict[str, Any]] = None
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
 
@@ -2265,6 +2294,7 @@ class QuotationTemplateResponse(QuotationTemplateBase):
 
     id: str
     kind: str
+    design: Optional[Dict[str, Any]] = None
     is_active: bool = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -2487,6 +2517,42 @@ class QuotationCoverRow(BaseModel):
     html: Optional[str] = None
 
 
+class QuotationCoverPreviewRequest(BaseModel):
+    """The quotation form's staged header and text fields (nothing is saved). ``document_id`` names
+    the saved quotation being edited; absent for one not saved yet."""
+
+    document_id: Optional[str] = None
+    doc_date: Optional[date] = None
+    attn_name: Optional[str] = Field(default=None, max_length=2000)
+    recipient_name_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_address_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_phone_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+
+
+class QuotationDesignPreviewRequest(BaseModel):
+    """An unsaved cover page design and its intro, previewed against fixed sample values."""
+
+    design: Dict[str, Any]
+    body_html: str = Field(default="", max_length=50000)
+
+
+class QuotationCoverPreviewResponse(BaseModel):
+    cover_rows: List[QuotationCoverRow] = Field(default_factory=list)
+    cover_title: str = ""
+    cover_show_letterhead: bool = True
+    cover_intro_html: str = ""
+    cover_closing_html: str = ""
+    sender_name: Optional[str] = None
+    sender_logo_url: Optional[str] = None
+
+
 class QuotationSignPageResponse(BaseModel):
     """The quotation a customer sees on the counter-sign link.
 
@@ -2499,6 +2565,11 @@ class QuotationSignPageResponse(BaseModel):
     document_kind: str = "proposal"
     # The cover page rows (layout 2); null for an issue from before the cover page.
     cover_rows: Optional[List[QuotationCoverRow]] = None
+    # Layout 3 (QUOTE-COVER-DESIGN): the design copied at send; null for layouts 1 and 2.
+    cover_title: Optional[str] = None
+    cover_show_letterhead: Optional[bool] = None
+    cover_intro_html: Optional[str] = None
+    cover_closing_html: Optional[str] = None
     issue_no: int
     doc_date: Optional[date] = None
     subject_title: Optional[str] = None

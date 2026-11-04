@@ -89,8 +89,8 @@ def _sheet_cells(data: bytes) -> list:
     """The attachment's rows, as {heading: cell} (row 1 the title, row 2 the headings)."""
     sheet = openpyxl.load_workbook(io.BytesIO(data)).worksheets[0]
     rows = list(sheet.iter_rows(values_only=True))
-    heads = list(rows[1])
-    return [dict(zip(heads, row)) for row in rows[2:]]
+    heads = list(rows[0])
+    return [dict(zip(heads, row)) for row in rows[1:]]
 
 
 def test_email_and_attachment_print_the_fixture_line_with_item_code_and_new_item_code():

@@ -261,3 +261,20 @@ describe('OrderSplitsDialog - the whole order is the read-only split sheet (E3, 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+describe('OI-UX-FILTER-SNAPSHOT: split popups name the order customer / project', () => {
+  const PARTY = 'GLOBAL INGRESS SDN BHD (PROJECT) / 405U + 397U PANGSAPURI';
+
+  it('the line popup subtitle carries CUSTOMER / project after the SO number', () => {
+    info(VIEW_480, { payload: ownerSavedCase() });
+    fireEvent.click(screen.getByRole('button', { name: 'Show the splits of line 480' }));
+    expect(screen.getByRole('dialog').textContent).toContain(`SO417636 · ${PARTY}`);
+  });
+
+  it('the whole-order dialog subtitle carries it too', () => {
+    render(
+      <OrderSplitsDialog title="SO417636: splits" payload={ownerSavedCase() as never} open onOpenChange={() => {}} />,
+    );
+    expect(screen.getByRole('dialog').textContent).toContain(PARTY);
+  });
+});

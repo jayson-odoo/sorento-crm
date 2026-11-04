@@ -25,6 +25,8 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
+vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+
 vi.mock('./AddComboModal', () => ({
   AddComboModal: ({ open }: { open: boolean }) =>
     open ? <div data-testid="add-combo-modal" /> : null,

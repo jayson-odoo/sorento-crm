@@ -2,6 +2,7 @@
 'use client';
 
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import {
   defaultDropAnimation,
@@ -547,6 +548,8 @@ function Sortable<T>({
   onDragEnd
 }: SortableRootProps<T>) {
   const [activeId, setActiveId] = React.useState<UniqueIdentifier | null>(null);
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -614,21 +617,25 @@ function Sortable<T>({
         </div>
       </SortableContext>
 
-      <DragOverlay>
-        {activeId ? (
-          <div className="z-50">
-            {React.Children.map(children, (child) => {
-              if (React.isValidElement(child) && (child.props as any).value === activeId) {
-                return React.cloneElement(child as React.ReactElement<any>, {
-                  ...(child.props as any),
-                  className: cn((child.props as any).className, 'z-50 shadow-lg'),
-                });
-              }
-              return null;
-            })}
-          </div>
-        ) : null}
-      </DragOverlay>
+      {mounted &&
+        createPortal(
+          <DragOverlay>
+            {activeId ? (
+              <div className="z-50">
+                {React.Children.map(children, (child) => {
+                  if (React.isValidElement(child) && (child.props as any).value === activeId) {
+                    return React.cloneElement(child as React.ReactElement<any>, {
+                      ...(child.props as any),
+                      className: cn((child.props as any).className, 'z-50 shadow-lg'),
+                    });
+                  }
+                  return null;
+                })}
+              </div>
+            ) : null}
+          </DragOverlay>,
+          document.body,
+        )}
     </DndContext>
   );
 }

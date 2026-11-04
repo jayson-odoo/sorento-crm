@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { formatDateTimeInMalaysia, formatCurrency } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatCurrency, formatDateInMalaysia } from '@/lib/helpers';
 import { AlertCircle, CheckCircle, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,7 +80,7 @@ function formatDateStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
+    return Number.isNaN(d.getTime()) ? value : formatDateInMalaysia(d);
   } catch {
     return value;
   }
@@ -328,7 +328,7 @@ function ApprovalContent() {
             <div className="py-2.5 border-b border-border/60">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
               <p className="text-sm font-medium">
-                {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                {summary?.expires_at ? formatDateTimeInMalaysia(summary.expires_at) : '-'}
               </p>
             </div>
             {summary?.lines && summary.lines.length > 0 && (
@@ -404,7 +404,7 @@ function ApprovalContent() {
               <div className="py-2.5 border-b border-border/60 last:border-0">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
                 <p className="text-sm font-medium">
-                  {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '-'}
+                  {summary?.expires_at ? formatDateTimeInMalaysia(summary.expires_at) : '-'}
                 </p>
               </div>
               {summary?.lines && summary.lines.length > 0 && (

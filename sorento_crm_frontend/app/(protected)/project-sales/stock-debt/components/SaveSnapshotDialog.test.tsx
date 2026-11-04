@@ -88,7 +88,7 @@ describe('AC-F1 read-only filters line (mock v1 section 1)', () => {
     renderDialog({ filters: { ...FILTERS, locations: [] } as never, locationCodes: [] });
     await screen.findByLabelText(/^name$/i);
     expect(screen.getByRole('dialog')).toHaveTextContent(
-      '550 products · Book Project · All locations · Delivery 01/01/2023 to 31/05/2027 · Only in debt · Stock and PO columns',
+      '550 products · Book Project · All locations · Delivery 01/01/2023 - 31/05/2027 · Only in debt · Stock and PO columns',
     );
   });
 

@@ -318,6 +318,24 @@ class AutomationService:
                 )
         return {"trigger_type": trigger_type, "fired": len(results), "results": results}
 
+    def passing_rows(
+        self,
+        trigger_type: str,
+        context: dict[str, Any],
+        automations: list[Automation],
+    ) -> list[Automation]:
+        """The rows among ``automations`` whose conditions pass for this context, by the
+        same rule ``dispatch_event`` fires them (an empty tree passes; a trigger with no
+        context facts lets every row through). OI-ROUTE-BY-RAISER: the handover email
+        groups its lines by this, and "Send to purchasing" picks its rows by it."""
+        match = automation_triggers.TriggerMatch(
+            context=dict(context or {}),
+            source_kind=trigger_type,
+            source_id="",
+            fact_sources=automation_triggers.context_fact_sources(trigger_type, context),
+        )
+        return [a for a in automations if self._filter_matches_by_conditions(a, [match])]
+
     def send_match(
         self, automation: Automation, match: "automation_triggers.TriggerMatch"
     ) -> dict[str, Any]:

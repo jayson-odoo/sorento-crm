@@ -108,10 +108,10 @@ def _assert_fulfilled(cell, seed):
     so_number = f"{seed['marker']}-SO419208"
     supply = {row["po_line_id"]: row for row in cell["supply"] if row["kind"] == "po"}
     assert supply[str(seed["line_2"].id)]["assigned_to"] == [
-        {"so_number": so_number, "qty": 4, "line_no": 1}
+        {"so_number": so_number, "qty": 4, "line_no": 1, "customer_name": None, "project_label": None}
     ]
     assert supply[str(seed["line_3"].id)]["assigned_to"] == [
-        {"so_number": so_number, "qty": 1305, "line_no": 2}
+        {"so_number": so_number, "qty": 1305, "line_no": 2, "customer_name": None, "project_label": None}
     ]
     assert len([row for row in cell["supply"] if row["kind"] == "po"]) == len(supply), (
         "each PO line is listed once"

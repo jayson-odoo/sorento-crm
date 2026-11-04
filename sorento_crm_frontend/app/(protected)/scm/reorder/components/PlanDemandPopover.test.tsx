@@ -134,6 +134,13 @@ describe('PlanDemandPopover', () => {
     expect(screen.getByText('RM 94.50')).toBeInTheDocument();
   });
 
+  it('OI-UX-FILTER-SNAPSHOT: names the project after the customer (CUSTOMER / project)', async () => {
+    stub(demand({ lines: [{ ...demand().lines[0], project_title: 'TAMAN JAYA' }] }));
+    render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+    await open();
+    expect(screen.getByText(/Vivo Homes Sdn Bhd \/ TAMAN JAYA/)).toBeInTheDocument();
+  });
+
   it('keeps the honest fallbacks the backend sends, and shows no price when there is none', async () => {
     // "Unnamed customer" is retired: a debtor code IS an attribution, and an order that
     // names nobody is a fact about the order rather than a missing value.
@@ -453,7 +460,7 @@ describe('PlanDemandPopover', () => {
         'href', '/scm/sales-orders/so-uuid-hist-1',
       );
       expect(screen.getByText('Delivered')).toBeInTheDocument();
-      expect(screen.getByText('2026-06-01')).toBeInTheDocument();
+      expect(screen.getByText('01/06/2026')).toBeInTheDocument();
       expect(screen.getByText(/Vivo Homes Sdn Bhd/)).toBeInTheDocument();
       expect(screen.getByText(/Jeremy/)).toBeInTheDocument();
       expect(screen.getByText('RM 45.00')).toBeInTheDocument();

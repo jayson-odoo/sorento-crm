@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { CoverPageData } from '@/lib/quotation-cover';
 import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
 import type { MatrixHeader } from '../lib/quotationMatrix';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
@@ -40,8 +41,11 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   GET    /projects/{projectId}/quotation-documents/{id}/feedback         -> QuotationFeedback
  *   PATCH  /projects/{projectId}/quotation-documents/{id}/feedback/{rowId} -> 200 (body {handled})
  *
- * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
- * carries a line priced below its floor and is not `approved`.
+ * `/issue` refuses with 422 `quotation_below_floor_pending_approval` (a line below its minimum
+ * price), `quotation_discount_pending_approval` (below its default price) or
+ * `quotation_off_series_pending_approval` (outside the series) while the document is not
+ * `approved`. Send for approval refuses with 422 `quotation_approver_not_configured` when nobody
+ * is set up to approve it.
  *
  * The two exports are QUEUED, not rendered in the response: a 50-page quotation held the
  * browser long enough to read as a broken button. The route answers with a `user_downloads`
@@ -108,6 +112,8 @@ export type QuotationDocument = {
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  /** The cover page's closing text (the letter above is its intro). */
+  cover_closing_html?: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -151,6 +157,17 @@ export type QuotationDocument = {
   requires_approval?: boolean;
   /** How many such lines, so the block can say how much there is to look at. */
   below_floor_line_count?: number;
+  /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
+  discounted_line_count?: number;
+  /** Lines outside the project's series. */
+  off_series_line_count?: number;
+  /** The server's sentence naming every reason, e.g. "One line is outside the project's series". */
+  approval_reasons?: string | null;
+  /** Who the current request was routed to, frozen when it was sent. */
+  approver_user_id?: string | null;
+  approver_name?: string | null;
+  /** Whether the signed-in viewer may approve or reject the current request. */
+  viewer_may_decide?: boolean | null;
   /** Quotation lines priced below the proposal revision it was made from (a further discount). */
   below_proposal_count?: number;
 
@@ -234,6 +251,7 @@ export type QuotationDocumentBody = Partial<{
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  cover_closing_html: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -269,6 +287,7 @@ export type QuotationDocumentBody = Partial<{
 /** The company's letter and terms as written, for the create form's own tabs (#1341). */
 export type QuotationLetterTemplates = {
   cover_letter_html: string | null;
+  cover_closing_html?: string | null;
   terms_html: string | null;
   /** Defaults of the active terms template. */
   payment_terms?: string | null;
@@ -699,3 +718,36 @@ export async function setQuotationFeedbackHandled(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to save that'));
 }
+
+/**
+ * The cover page as it would print from the form's unsaved values. Stores nothing. With
+ * `document_id` the saved quotation supplies every field the body leaves out.
+ */
+export async function previewQuotationCover(
+  projectId: string,
+  body: QuotationCoverPreviewBody,
+): Promise<CoverPageData> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/cover-preview`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to preview the cover page'));
+  return response.json();
+}
+
+export type QuotationCoverPreviewBody = Partial<{
+  document_id: string;
+  doc_date: string | null;
+  attn_name: string | null;
+  recipient_name_snapshot: string | null;
+  recipient_address_snapshot: string | null;
+  recipient_phone_snapshot: string | null;
+  recipient_email_snapshot: string | null;
+  quotation_purpose: string | null;
+  payment_terms: string | null;
+  validity: string | null;
+  terms_html: string | null;
+  cover_letter_html: string | null;
+  cover_closing_html: string | null;
+}>;

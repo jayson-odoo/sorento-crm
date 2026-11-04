@@ -248,6 +248,40 @@ export default function OrderLinesCard({
         meta: { headerTitle: 'SO' },
       },
       {
+        id: 'so_customer',
+        accessorFn: (row) => row.sales_order?.customer_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) => {
+          const customer = row.original.sales_order?.customer_name;
+          return customer ? (
+            <span className="block truncate" title={customer}>
+              {customer}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 170,
+        meta: { headerTitle: 'Customer' },
+      },
+      {
+        id: 'so_project',
+        accessorFn: (row) => row.sales_order?.project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => {
+          const project = row.original.sales_order?.project_label;
+          return project ? (
+            <span className="block truncate" title={project}>
+              {project}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          );
+        },
+        size: 170,
+        meta: { headerTitle: 'Project' },
+      },
+      {
         id: 'unit_price',
         accessorFn: (row) => row.unit_price ?? '',
         header: ({ column }) => (

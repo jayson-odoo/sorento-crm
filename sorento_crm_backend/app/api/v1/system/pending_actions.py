@@ -154,6 +154,7 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
     # The ss comment route is addressed by idea AND comment, and the row only holds the comment.
     "idea_comment.delete": ("idea_id",),
+    "quotation_spec_sheet.reset_page": ("page_key",),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,
@@ -195,6 +196,8 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
 )
 
@@ -217,6 +220,7 @@ def _assert_entity_visible(
     entity_id: str,
     actor_id: Optional[str] = None,
     entity_type: Optional[str] = None,
+    payload: Optional[dict] = None,
 ) -> None:
     """Park-time existence check for every record action on a company-owned record.
 
@@ -255,6 +259,22 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key in ("tag_template.delete", "tag_template.bulk_delete"):
+        # Refused now, not ten seconds later: a template a spec sheet draws from stays.
+        from app.services.dealer_kit import tag_template_service
+
+        tag_template_service.assert_unused(
+            db,
+            [entity_id] if action_key == "tag_template.delete" else list((payload or {}).get("template_ids") or []),
+        )
+    elif action_key == "quotation_spec_sheet.delete":
+        from app.services.record_actions import assert_spec_sheet_editable
+
+        assert_spec_sheet_editable(db, entity_id, actor_id)
+    elif action_key == "quotation_spec_sheet.reset_page":
+        from app.services.record_actions import assert_spec_sheet_page_resettable
+
+        assert_spec_sheet_page_resettable(db, entity_id, (payload or {}).get("page_key"), actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -289,6 +309,13 @@ def _assert_entity_visible(
 
         if get_customer_in_scope(db, entity_id) is None:
             raise handle_not_found("Customer", entity_id)
+    elif action_key == "combo.unlink_tag_templates":
+        # A combo has no company column: it is scoped through its host product.
+        from app.services.dealer_kit import product_tag_template_service
+
+        validate_uuid_path(entity_id, resource="Combo")
+        if not product_tag_template_service.combo_exists(db, entity_id):
+            raise handle_not_found("Combo", entity_id)
     elif action_key == "price_tag_request_tag.delete":
         from app.services.record_actions import price_tag_request_tag_in_scope
 
@@ -367,6 +394,7 @@ _PARK_SCOPED_MODELS: dict = {
 # Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "combo.unlink_tag_templates",
     "contact_customer_link.unlink",
     "customer.remove_from_group",
     "customer.unassign_sales_agent",
@@ -381,6 +409,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "sample_request.delete",
     "stock_debt_snapshot.delete",
     # `entity_id` is not a company-owned row's id: a click token (the templates ride in
@@ -754,7 +784,9 @@ def create_pending_action(
         else nullcontext()
     )
     with scope:
-        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id, body.entity_type)
+        _assert_entity_visible(
+            db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
+        )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
         try:

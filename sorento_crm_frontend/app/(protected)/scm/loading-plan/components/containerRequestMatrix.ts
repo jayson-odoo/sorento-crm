@@ -11,6 +11,7 @@
  */
 import { format, parseISO, startOfMonth, startOfWeek } from 'date-fns';
 import type { ContainerRequestSoLine } from '../../services/fulfilmentService';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 export type ContainerRequestMatrixAxis = 'product' | 'order';
 export type ContainerRequestMatrixGranularity = 'day' | 'week' | 'month';
@@ -58,18 +59,18 @@ function bucketFor(
     return {
       key: line.required_date,
       kind: 'dated',
-      label: format(date, 'd MMM yyyy'),
+      label: formatDateInMalaysia(line.required_date),
       start: line.required_date,
     };
   }
   if (granularity === 'week') {
     const start = startOfWeek(date, { weekStartsOn: 1 });
     const key = format(start, 'yyyy-MM-dd');
-    return { key, kind: 'dated', label: format(start, 'd MMM yyyy'), start: key };
+    return { key, kind: 'dated', label: formatDateInMalaysia(key), start: key };
   }
   const start = startOfMonth(date);
   const key = format(start, 'yyyy-MM');
-  return { key, kind: 'dated', label: format(start, 'MMM yyyy'), start: format(start, 'yyyy-MM-dd') };
+  return { key, kind: 'dated', label: format(start, 'MMM yyyy'), start: format(start, 'yyyy-MM-dd') }; // date-format-ok: month bucket column (Dec 2026), not a calendar date
 }
 
 function axisKeyOf(

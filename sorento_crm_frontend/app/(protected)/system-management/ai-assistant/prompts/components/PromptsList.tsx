@@ -12,13 +12,14 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { usePromptKeys } from '../../hooks/useAIAssistantPrompts';
 import { usePromptBlocksStatus } from '../../hooks/usePromptBlocksStatus';
 import type { PromptKeySummary } from '../../services/aiPromptsService';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const VIEW_PERMISSION = 'system.ai_assistant_settings.view';
 
 function formatDate(d: string | null): string {
   if (!d) return '-';
   try {
-    return new Date(d).toLocaleString();
+    return formatDateTimeInMalaysia(d);
   } catch {
     return d;
   }

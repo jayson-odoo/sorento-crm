@@ -12,6 +12,7 @@ publishes, which is the only moment the instruction is true.
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response
@@ -179,6 +180,10 @@ def _validate_worklist_filter_uuids(filters: dict) -> None:
     inquiry_id = filters.get("inquiry_id")
     if inquiry_id:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+    # OI-RESERVE-ROUND (AC-5): a bad request id is a 422, not the 404 `validate_uuid_path` gives.
+    for value in multi_values(filters.get("reserve_request"), capped=False) or []:
+        if not re.match(UUID_PATTERN, value.strip()):
+            raise handle_unprocessable("reserve_request: value is not a valid id")
 
 
 def _location_values(raw) -> Optional[list[str]]:
@@ -225,6 +230,8 @@ def _worklist_filters(
     dead_document: Optional[str] = None,
     # RESERVE-EMAIL-FULL-TABLE: exact OI nos, the reserve emails' button.
     inquiry_no: Optional[str | list[str]] = None,
+    # OI-RESERVE-ROUND: the reserve request ids a batch email names.
+    reserve_request: Optional[str | list[str]] = None,
 ) -> dict:
     # FILTER-MULTISELECT PR6: the dropdown filters take several values, OR-ed within the filter. Ids and
     # codes ride comma-joined (or repeated); `project` is free text and is read whole, never split.
@@ -253,6 +260,7 @@ def _worklist_filters(
         "dead_document": dead_document,
         # No 200-value cap: a batch email can name many OIs.
         "inquiry_no": multi_values(inquiry_no, capped=False),
+        "reserve_request": multi_values(reserve_request, capped=False),
     }
     _validate_worklist_filter_uuids(filters)
     # `axis_key` is NOT validated here: it is compared against a UUID column on every
@@ -433,6 +441,10 @@ def list_order_inquiry_worklist(
         None,
         description="By OI no, exact (never a prefix); comma-separated or repeated, several are OR-ed.",
     ),
+    reserve_request: Optional[list[str]] = Query(
+        None,
+        description="By reserve request id, comma-separated or repeated; every answer of the request counts.",
+    ),
     include_history: bool = Query(
         False,
         description=(
@@ -486,6 +498,7 @@ def list_order_inquiry_worklist(
                 reserve=reserve,
                 dead_document=dead_document,
                 inquiry_no=inquiry_no,
+                reserve_request=reserve_request,
             ),
         )
     except Exception as exc:
@@ -530,6 +543,7 @@ def order_inquiry_worklist_summary(
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
+    reserve_request: Optional[list[str]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -558,6 +572,7 @@ def order_inquiry_worklist_summary(
                 reserve=reserve,
                 dead_document=dead_document,
                 inquiry_no=inquiry_no,
+                reserve_request=reserve_request,
             ),
         )
     except Exception as exc:
@@ -595,6 +610,7 @@ def export_order_inquiry_worklist(
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
+    reserve_request: Optional[list[str]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -629,6 +645,7 @@ def export_order_inquiry_worklist(
                 reserve=reserve,
                 dead_document=dead_document,
                 inquiry_no=inquiry_no,
+                reserve_request=reserve_request,
             )
         )
         return Response(
@@ -841,6 +858,7 @@ def order_inquiry_worklist_matrix(
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
+    reserve_request: Optional[list[str]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -878,6 +896,7 @@ def order_inquiry_worklist_matrix(
                 reserve=reserve,
                 dead_document=dead_document,
                 inquiry_no=inquiry_no,
+                reserve_request=reserve_request,
             ),
         )
         return {"data": cells}

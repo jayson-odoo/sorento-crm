@@ -2483,6 +2483,23 @@ describe('boardAxis: pivoting the rows', () => {
     ]);
   });
 
+  it('OI-UX-FILTER-SNAPSHOT: a sales-order row names its CUSTOMER / project under the number', () => {
+    const named = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        // The board's own project (note fallback, #813) is NOT what the label prints: the
+        // label is the SO list's own Customer and Project (crew browser pass, 4 Nov).
+        customer_name: 'BOARD CUSTOMER',
+        project_label: 'OWN COLLECT',
+        so_customer_name: 'ACME SDN BHD',
+        so_project_label: entry.sales_order_id === 'so-a' ? 'TAMAN JAYA' : null,
+      })),
+    }));
+    const { rows } = boardAxis('sales_order', named);
+    expect(rows.map((row) => row.party)).toEqual(['ACME SDN BHD / TAMAN JAYA', 'ACME SDN BHD / -']);
+  });
+
   it('groups a sales-order row by ORDER, across every product it owes', () => {
     const { rows, cells } = boardAxis('sales_order', contributionsOf());
 
@@ -3198,5 +3215,31 @@ describe('pressPostsContribution: Saved is exactly what Confirm posts', () => {
     const contribution = { ...base, ...covered } as BoardContribution;
     const decision = { verdict: 'rejected' as const, reason: 'No.' };
     expect(pressPostsContribution(contribution, decision, { batchBlocked: true })).toBe(false);
+  });
+});
+
+describe('orderPartyLabels (OI-UX-FILTER-SNAPSHOT)', () => {
+  it('names each board order by the SO list\'s Customer and Project, never the board\'s note fallback', async () => {
+    const { orderPartyLabels } = await import('./fulfilmentBoard');
+    const labels = orderPartyLabels(
+      [
+        { sales_order_id: 'so-a', customer_name: 'BOARD CUSTOMER' },
+        { sales_order_id: 'so-b', customer_name: null },
+        { sales_order_id: 'so-c', customer_name: null },
+      ],
+      [
+        {
+          sales_order_id: 'so-a', customer_name: 'IGNORED', project_label: 'NOTE TEXT',
+          so_customer_name: 'ACME SDN BHD', so_project_label: 'TAMAN JAYA',
+        },
+        {
+          sales_order_id: 'so-b', customer_name: 'BETA', project_label: 'OWN COLLECT',
+          so_customer_name: 'BETA', so_project_label: null,
+        },
+      ],
+    );
+    expect(labels.get('so-a')).toBe('ACME SDN BHD / TAMAN JAYA');
+    expect(labels.get('so-b')).toBe('BETA / -');
+    expect(labels.has('so-c')).toBe(false);
   });
 });

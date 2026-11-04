@@ -203,6 +203,36 @@ export function StockClaimsClient() {
         meta: { headerTitle: 'Sales order', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        id: 'customer_name',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) => {
+          const text = row.original.customer_name || '-';
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 190,
+        minSize: 130,
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        id: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => {
+          const text = row.original.project_label || '-';
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 190,
+        minSize: 130,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         id: 'state',
         header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
         cell: ({ row }) => (

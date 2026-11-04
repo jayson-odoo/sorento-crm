@@ -7,7 +7,6 @@ import { AlertCircle, ExternalLink, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
   InquiryFormTableRow,
@@ -17,6 +16,7 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { fetchViewAttachmentBytes, toViewPreviewItem } from '../lib/attachmentDownload';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 interface StockInquiryViewAttachment {
   id?: string;
@@ -72,7 +72,7 @@ function formatDateTimeStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    return Number.isNaN(d.getTime()) ? value : formatDateTimeInMalaysia(d);
   } catch {
     return value;
   }
@@ -257,7 +257,7 @@ function ViewStockInquiryContent() {
         <InquiryFormTableRow label="Date">
           <InquiryReadValue empty="-">
             {summary?.created_at
-              ? format(new Date(summary.created_at), 'dd/MM/yy')
+              ? formatDateInMalaysia(summary.created_at)
               : ''}
           </InquiryReadValue>
         </InquiryFormTableRow>

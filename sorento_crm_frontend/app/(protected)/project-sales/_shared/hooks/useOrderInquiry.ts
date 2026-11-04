@@ -955,7 +955,7 @@ export function useHandoverResendPreview(ids: string[] | null, rowIds?: string[]
   });
 }
 
-/** Send to purchasing: one email per order inquiry; toast what went and what did not. */
+/** Send to purchasing: one email per order inquiry and matching row; toast what went and what did not. */
 export function useSendHandoverResend() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -974,6 +974,14 @@ export function useSendHandoverResend() {
         );
       } else if (result.emails_sent === 0) {
         toast.error('Nothing was sent: no open lines or no purchasing recipient.');
+      }
+      // OI-ROUTE-BY-RAISER: one OI goes through several rows; some went, some did not. Not
+      // retried here (that would email the rows that have it again), so say which.
+      const partly = result.skipped.filter((skip) => skip.reason === 'partly_failed');
+      if (partly.length > 0) {
+        toast.error(
+          `Sent to some recipients only: ${partly.map((skip) => skip.inquiry_no ?? 'order inquiry').join(', ')}. Check the automation run history.`,
+        );
       }
       queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HANDOVER_RESEND_PREVIEW_KEY] });
     },

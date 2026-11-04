@@ -56,6 +56,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.services.scm import last_po_supplier as last_po_rule
+from app.services.scm.so_party import so_parties, with_party
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -87,6 +88,7 @@ from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.planning_predicate import fulfilment_planning_predicate
 from app.services.scm.stock_debt_projection import ProjectedMonth, project_months
 from app.services.scm.workbook_split import split_rows, unique_sheet_title
+from app.services.scm.borrow_mode import borrow_from_order_enabled
 from app.services.scm.supply_assignment import (
     BUCKET_TBA,
     BUCKET_UNDATED,
@@ -130,6 +132,7 @@ EXPORT_CONTENT_TYPE = (
 )
 
 _MONTH_NAMES = (
+    # date-format-ok: month column label (Sep 26), no day to show
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
@@ -330,6 +333,42 @@ logger = logging.getLogger(__name__)
 def _text(column, name):
     # The driver builds a uuid.UUID per uuid cell; as text it is the str the code reads.
     return cast(column, String).label(name)
+
+
+def annotate_so_parties(
+    db: Session, demand: Sequence[Dict[str, Any]], supply: Sequence[Dict[str, Any]] = ()
+) -> None:
+    """OI-UX-FILTER-SNAPSHOT (owner, 3 Nov 2026): every order a drill names carries its
+    `customer_name` and `project_label`, in place: each demand line (its own order), each of
+    its `assigned_from` entries that names one (a "Lent to" receiver, or the lender an on-hand
+    take came from; a free take or a document entry is left as it is), and each supply row's
+    `assigned_to` receiver.
+    One read for the whole drill. The live drill and the snapshot drill both call this."""
+    ids: List[Optional[str]] = []
+    numbers: List[Optional[str]] = []
+    for row in demand:
+        ids.append(row.get("sales_order_id"))
+        for entry in row.get("assigned_from") or []:
+            if entry.get("kind") == "lent":
+                ids.append(entry.get("sales_order_id"))
+                numbers.append(entry.get("so_number"))
+            elif entry.get("kind") == "on_hand":
+                numbers.append(entry.get("lent_from_so_number"))
+    for row in supply:
+        numbers.extend(entry.get("so_number") for entry in row.get("assigned_to") or [])
+    parties = so_parties(db, ids=ids, numbers=numbers)
+
+    for row in demand:
+        with_party(row, parties, row.get("sales_order_id"))
+        for entry in row.get("assigned_from") or []:
+            if entry.get("kind") == "lent":
+                key = entry.get("sales_order_id") or entry.get("so_number")
+                with_party(entry, parties, key)
+            elif entry.get("kind") == "on_hand" and entry.get("lent_from_so_number"):
+                with_party(entry, parties, entry.get("lent_from_so_number"))
+    for row in supply:
+        for entry in row.get("assigned_to") or []:
+            with_party(entry, parties, entry.get("so_number"))
 
 
 class StockDebtService:
@@ -910,6 +949,9 @@ class StockDebtService:
         # each row's own Qty column actually offers - Outstanding for an SPO, the on-hand
         # figure otherwise - so the two tab labels state what a reader would get by adding
         # the column up themselves.
+        # OI-UX-FILTER-SNAPSHOT: every order the drill names carries its customer and project.
+        annotate_so_parties(self.db, demand, supply)
+
         demand_total_qty = sum(row["open_qty"] for row in demand)
         supply_total_qty = sum(
             row["outstanding_qty"] if row["outstanding_qty"] is not None else row["qty"]
@@ -1260,8 +1302,11 @@ class StockDebtService:
         # (`assignments_for`) never lend; their Borrow step is where the same window turns
         # into a decision. This page stays read-only (owner, 30 Sep 2026: "this is a
         # dashboard view only") and points the planner at that board.
+        # OI-RESERVE-USED-ROW (owner, 4 Nov 2026, answer (a)): and only while "Borrow from
+        # another order" is on (`borrow_mode`). Off, the default, the board cannot borrow from
+        # an order, so the view shows no lend either: no "Lent to", no `order_back` from one.
         lendable_lines: Optional[Set[str]] = None
-        if view:
+        if view and borrow_from_order_enabled(self.db):
             lendable_lines = set()
             for product_id, lines in demand_rows.items():
                 lead = leads.get(product_id)

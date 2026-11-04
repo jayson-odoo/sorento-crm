@@ -95,6 +95,6 @@ describe('bucketKeyFor', () => {
   it('labels the week by its Monday, never the prior Sunday', () => {
     const matrix = buildSpoScheduleMatrix([entry({ date: '2026-09-03' })]);
 
-    expect(matrix.buckets[0].label).toBe('31 Aug 2026');
+    expect(matrix.buckets[0].label).toBe('31/08/2026');
   });
 });

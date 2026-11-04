@@ -1,4 +1,5 @@
 """SLA service for business logic."""
+from app.utils.date_format import fmt_datetime
 import logging
 import re
 from sqlalchemy.orm import Session
@@ -429,7 +430,7 @@ def format_myt(dt: Optional[datetime]) -> Optional[str]:
         return None
     local = aware.astimezone(MALAYSIA_TZ)
     # `local.day` rather than %-d: the no-pad strftime flag is platform-specific.
-    return f"{local:%a} {local.day} {local:%b} {local:%H:%M} MYT"
+    return fmt_datetime(local)
 
 
 # A clock recomputed from `now` a few microseconds after `initiated_at` is the
@@ -1542,6 +1543,98 @@ class ConversationSLATrackingService:
         member_ids.discard(str(user_id))
         return self._picker_rows(member_ids)
 
+    def _viewer_routing_tags(self, user_id: str) -> tuple[set[str], set[str]]:
+        """``(segment codes, brand codes)`` across ALL the viewer's team memberships.
+
+        The union, so a project CS tagged in one team is still filtered when another
+        membership of theirs is untagged; both sets empty = serves everything.
+        """
+        from app.models.access import (
+            TeamMember,
+            team_member_brands,
+            team_member_market_segments,
+        )
+        from app.services.user_service import normalise_brand_code
+
+        member_ids = [
+            str(mid)
+            for (mid,) in self.db.query(TeamMember.id)
+            .filter(TeamMember.user_id == str(user_id))
+            .all()
+        ]
+        if not member_ids:
+            return set(), set()
+        segments = {
+            str(code)
+            for (code,) in self.db.query(team_member_market_segments.c.segment_code)
+            .filter(team_member_market_segments.c.team_member_id.in_(member_ids))
+            .all()
+        }
+        brands = {
+            normalise_brand_code(code)
+            for (code,) in self.db.query(team_member_brands.c.brand_code)
+            .filter(team_member_brands.c.team_member_id.in_(member_ids))
+            .all()
+        }
+        brands.discard(None)
+        return segments, brands
+
+    def _narrow_to_served_tasks(self, base, user_id: str):
+        """My Team (MYTEAM-BY-SEGMENT): keep only tasks whose contact segments and brand
+        the viewer serves, by the SAME rules the round-robin draws its pool with
+        (``member_serves_segments`` / ``member_serves_brand``).
+
+        An untagged viewer returns ``base`` untouched (no extra query). Otherwise the open
+        candidate rows are read as (id, contact, brand) only, matched in Python against
+        the shared predicates, and ``base`` is narrowed to the survivors by id so DB
+        pagination and ``count()`` stay exact.
+
+        Exception (crew ruling 3 Nov): a colleague the viewer actively covers shows in
+        full, so the coverage deep link into My Team never lands on an empty list.
+        """
+        from app.models.access import respond_contact_market_segments
+        from app.services.coverage_subscription_service import (
+            CoverageSubscriptionService,
+        )
+        from app.services.market_segment_service import member_serves_segments
+        from app.services.user_service import member_serves_brand
+
+        my_segments, my_brands = self._viewer_routing_tags(user_id)
+        if not my_segments and not my_brands:
+            return base
+        covered = CoverageSubscriptionService(self.db).active_targets_for(user_id)
+        candidates = base.with_entities(
+            ConversationSLATracking.id,
+            ConversationSLATracking.assigned_to_id,
+            ConversationSLATracking.respond_contact_id,
+            ConversationSLATracking.brand_code,
+        ).all()
+        contact_ids = {str(c) for (_id, _a, c, _b) in candidates if c}
+        segments_by_contact: dict[str, set[str]] = {}
+        if my_segments and contact_ids:
+            for cid, code in (
+                self.db.query(
+                    respond_contact_market_segments.c.contact_id,
+                    respond_contact_market_segments.c.segment_code,
+                )
+                .filter(respond_contact_market_segments.c.contact_id.in_(contact_ids))
+                .all()
+            ):
+                segments_by_contact.setdefault(str(cid), set()).add(str(code))
+        visible = [
+            str(tid)
+            for (tid, assignee, contact_id, brand) in candidates
+            if str(assignee) in covered
+            or (
+                member_serves_segments(
+                    my_segments,
+                    segments_by_contact.get(str(contact_id)) if contact_id else None,
+                )
+                and member_serves_brand(my_brands, brand)
+            )
+        ]
+        return base.filter(ConversationSLATracking.id.in_(visible))
+
     def list_team_pending(
         self,
         user_id: str,
@@ -1611,6 +1704,7 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.assigned_to_id != str(user_id),
             )
         )
+        base = self._narrow_to_served_tasks(base, user_id)
         q = (query or "").strip().lower()
         if q:
             # Resolve a capped candidate set, then filter on the resolved fields.

@@ -32,6 +32,23 @@ checked against the quotation, not against the proposals.
 
 To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.
 
+## Scopes on the Lines tab
+
+A proposal is split into scopes (for example *Townhouse*, *Guard house*), one tab each across the
+top of the **Lines** tab. New proposal and Edit proposal work the same way.
+
+* **Add a scope:** click **+** at the end of the tabs and name it.
+* **See a scope's value:** click the **$** on its tab.
+* **Rename or remove a scope:** right-click its tab and choose **Rename** or **Remove scope**. On a
+  phone or tablet, tap the **...** on the open tab instead. **Rename** also sets the scope's series
+  and notes.
+* **Remove scope** takes the scope off straight away, with no question asked. Nothing is deleted
+  until you click **Save proposal**, so **Cancel** brings it back. It is greyed out for a scope
+  that was already sent to the customer, and for a saved scope when you do not have the right to
+  delete one.
+* A saved scope's outcome (**Open**, **Won**, **Lost**, **Dormant**) shows at the right of the
+  tabs.
+
 ## Make the quotation (project Won)
 
 1. Mark the project Won (the customer signing a proposal does this, or set the scope's outcome).
@@ -66,10 +83,23 @@ Once a project has a quotation, a new PO cannot be checked against a proposal.
 ## Fill the cover page
 
 Every quotation sent from now on starts with a cover page: page 1 of the PDF (portrait) and the
-first card on the customer's sign link. It replaces the separate Excel cover sheet. It shows, in
-this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
+first card on the customer's sign link. It replaces the separate Excel cover sheet. The company's
+cover page design (set by an admin in **Quotation Templates > Cover page**) decides the title, the
+letterhead, which rows show and in what order, and their printed names. Without a design it shows,
+in this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
 **Proposal Purpose** (**Quotation Purpose** on the quotation), **Terms & Conditions**, **Payment
-Terms**, **Validity**, **Prepared By**.
+Terms**, **Validity**, **Prepared By**. Where a design keeps the standard title and Purpose name,
+they follow the document too: PROPOSAL on a proposal, QUOTATION on a quotation.
+
+### See it before you send: the Cover letter tab
+
+* The **Cover letter** tab shows page 1 as it will print, with this document's values. Before the
+  first save the reference reads `NEW-R1`; after that it shows the next revision.
+* In edit mode, type the **Intro text** (above the rows) and **Closing text** (below the rows) for
+  this customer. A new document starts with the design's wording, with fields such as the
+  project name already filled in. Changes here affect this document only.
+* The preview follows your unsaved changes on every tab.
+* An old free-text cover letter is now the intro text.
 
 * **Reference No.** is the proposal or quotation number with its revision and the project name
   (for example `PRJQ-2026-0042-B SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
@@ -85,9 +115,10 @@ Terms**, **Validity**, **Prepared By**.
   pages as before.
 
 The terms print the way you wrote them: a heading stays a heading, a blank line keeps its gap,
-bullets and indented bullets print as bullets, and nothing is numbered for you. They print once,
-on the cover page. Quotations sent before this change keep their old layout when downloaded
-again.
+bullets and indented bullets print as bullets, and nothing is numbered for you. They print once:
+on the cover page, or after the price table when the design hides the Terms row. Each revision
+keeps the design it was sent with, so changing the design later never changes a sent quotation,
+and quotations sent before the cover page existed keep their old layout.
 
 ## Every line must be a catalogue product or set
 
@@ -98,16 +129,49 @@ free-text description as a line.
   the quotation does not save until you pick one.
 * On the quotation form the refusal reads *One line still needs a catalogue product or set.*
 * A **Non-standard** flag on a line means the product is real but outside the series this scope
-  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed.
+  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
+  the quotation then needs approval before it can be sent (see below).
 
 ### Minimum price, while you type
 
 * Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
   lowest price allowed for that item. It shows on a new quotation too, before the first save.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
-* A quotation with a line below the minimum price says *One line is priced below minimum price*
-  (or *N lines are priced below minimum price*) and needs a manager's approval before it can be
-  sent.
+* A quotation with a line below the minimum price says *One line is priced below the minimum
+  price* (or *N lines are ...*) and needs approval before it can be sent.
+
+### Which quotations need approval, and who approves
+
+A quotation needs approval before it can be sent when any line:
+
+* is priced below its **default price**, even by RM 1. The default price is the price a new line
+  opens at: the series price where the scope's series names one, else the list price. The
+  banner reads *One line is priced below the default price*.
+* is **outside the project's series** (*One line is outside the project's series*).
+
+Press **Send for approval**. The request goes to ONE person, worked out in this order:
+
+1. a line outside the series: the company's **off-series approver** (set in Settings);
+2. the project's own **Discount approver** (on the project's Critical / final negotiation card,
+   set by a sales manager);
+3. your **superior** (your regional sales manager; set on your user in Settings > Users);
+4. the company's **default quotation approver** (Settings).
+
+The banner names who it is with (*... is with Aminah for approval*). Only that person, someone
+they report to, or an admin can approve or reject it. If nobody is set up, Send for approval
+says *Nobody is set up to approve this quotation* and names what an admin should set.
+
+Approval covers the revision you send: issuing spends it, and the next revision that still has a
+discount or an off-series line asks again.
+
+### A discount puts the project in Final Negotiation
+
+Sending a quotation with a discount for approval raises the project's **Critical / final
+negotiation** flag and moves the project to the **Final Negotiation** stage, if it is at an
+earlier stage. A project already at Final Negotiation or later (Sponsorship Form, PO Received,
+Lost, Dormant) keeps its stage. An approval asked only for an off-series line does not move it.
+If the approver rejects the discount, or you take it back to change it, the project stays in
+Final Negotiation; a sales manager moves it back by hand if the deal cooled.
 
 ### The customer wants something we do not sell yet (bespoke item)
 

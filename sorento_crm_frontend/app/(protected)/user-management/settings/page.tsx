@@ -205,6 +205,32 @@ export default function Page() {
     ],
   );
 
+  const approversForOffSeries = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.offSeriesApproverUserId,
+        settings?.offSeriesApproverName,
+        undefined,
+      ),
+    [approverUserOptions, settings?.offSeriesApproverUserId, settings?.offSeriesApproverName],
+  );
+
+  const approversForQuotation = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.defaultQuotationApproverUserId,
+        settings?.defaultQuotationApproverName,
+        undefined,
+      ),
+    [
+      approverUserOptions,
+      settings?.defaultQuotationApproverUserId,
+      settings?.defaultQuotationApproverName,
+    ],
+  );
+
   // While `savedSupplierFallbackFetching`, the saved supplier is deliberately left OUT
   // of the list rather than filled with a placeholder row (M5-02 review S7): a synthetic
   // `{ supplier_name: 'Loading supplier…' }` was a SELECTABLE option, not a loading
@@ -297,6 +323,9 @@ export default function Page() {
       settings.sponsorshipFormDefaultApproverUserId.length > 0
         ? settings.sponsorshipFormDefaultApproverUserId
         : NO_DEFAULT_APPROVER_VALUE,
+    offSeriesApproverUserId: settings?.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
+    defaultQuotationApproverUserId:
+      settings?.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
   };
 
   useEffect(() => {
@@ -368,6 +397,9 @@ export default function Page() {
         settings.sponsorshipFormDefaultApproverUserId.length > 0
           ? settings.sponsorshipFormDefaultApproverUserId
           : NO_DEFAULT_APPROVER_VALUE,
+      offSeriesApproverUserId: settings.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
+      defaultQuotationApproverUserId:
+        settings.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
     });
   }, [settings, form]);
 
@@ -421,6 +453,14 @@ export default function Page() {
           NO_DEFAULT_APPROVER_VALUE
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
+        off_series_approver_user_id:
+          values.offSeriesApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.offSeriesApproverUserId,
+        default_quotation_approver_user_id:
+          values.defaultQuotationApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.defaultQuotationApproverUserId,
       };
 
       const response = await apiFetch('/api/user-management/settings/general', {
@@ -1297,6 +1337,48 @@ export default function Page() {
                   </FormItem>
                 )}
               />
+
+              {(
+                [
+                  [
+                    'offSeriesApproverUserId',
+                    'Approver (project quotation lines outside the series)',
+                    approversForOffSeries,
+                  ],
+                  [
+                    'defaultQuotationApproverUserId',
+                    'Default approver (project quotation discounts)',
+                    approversForQuotation,
+                  ],
+                ] as const
+              ).map(([name, label, options]) => (
+                <FormField
+                  key={name}
+                  control={form.control}
+                  name={name}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{label}</FormLabel>
+                      <FormControl>
+                        <SearchableSelect
+                          key={`${name}-${field.value}-${options.length}`}
+                          onChange={field.onChange}
+                          value={field.value}
+                          placeholder="None"
+                          options={[
+                            { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                            ...options.map((u) => ({
+                              value: u.id,
+                              label: (u.name?.trim() || u.email) + ` (${u.email})`,
+                            })),
+                          ]}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ))}
 
               {/* Timezone */}
               <FormField

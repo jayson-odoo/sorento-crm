@@ -140,6 +140,8 @@ describe('AutomationForm - combine into one email toggle', () => {
     const payload = createMutateAsync.mock.calls[0][0];
     expect(payload.trigger_type).toBe('days_before_promotion_end');
     expect(payload.group_matches).toBe(true);
+    // DEALER-OI-ROUTE Q2 (b): a new row's To and Cc mean exactly what the boxes say.
+    expect(payload.recipient_config.explicit_to_cc).toBe(true);
   });
 
   it('sends group_matches=false when the toggle is switched off', async () => {

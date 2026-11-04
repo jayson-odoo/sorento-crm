@@ -26,6 +26,7 @@ import type {
   RecDecision,
 } from '../reorder/types/decisions.types';
 import type { ReorderRecommendation } from '../reorder/types/reorder.types';
+import { sessionStore } from '@/lib/storage';
 
 /** Phase-1 flag - mirrors `USE_M4_MOCKS` (Slice A). Both flip to false in Phase 2. */
 export const USE_SLICE_B_MOCKS = false;
@@ -118,7 +119,7 @@ function freshState(): StoreState {
 function load(): StoreState {
   if (typeof window === 'undefined') return freshState();
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    const raw = sessionStore.getItem(STORAGE_KEY);
     // Merge over defaults so any field absent from an older persisted shape is backfilled
     // (JSON serializes NaN as null, so also coerce a null/undefined poSeq back to the default).
     if (raw) {
@@ -138,7 +139,7 @@ let state: StoreState = load();
 function persist() {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    sessionStore.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
     /* sessionStorage unavailable - in-memory state still works for the session */
   }

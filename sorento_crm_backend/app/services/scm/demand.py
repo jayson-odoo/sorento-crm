@@ -31,6 +31,10 @@ from sqlalchemy import func, literal, select, text
 
 from app.models.order import SalesOrder, SalesOrderLine
 from app.services.company_scope_sql import company_sql_predicate
+from app.services.oi_delivery_date import line_date_raw
+
+#: OI-ONE-DELIVERY-DATE: an OI row's date in these legs is its SO line's.
+OIR_DATE = line_date_raw("oir")
 
 #: CS has ruled this line out of purchasing. It stays on the sales order (the customer is
 #: still owed it) and stops being something to buy.
@@ -763,11 +767,11 @@ def horizon_committed_select_sql(
       AND {_OWED_SQL} > 0
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
-      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date <= CAST(:horizon AS date))
+      AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} <= CAST(:horizon AS date))
       -- Planning window START (S4): same rule, other side.
-      AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date >= CAST(:horizon_start AS date))"""
+      AND (CAST(:horizon_start AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} >= CAST(:horizon_start AS date))"""
 
     form_leg = f"""
     -- The FORM leg: an instruction the CS Order Inquiry Form raised that no supply decision
@@ -847,11 +851,11 @@ def horizon_committed_select_sql(
       AND {_OWED_FORM_SQL} > 0
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no
       -- date at all, so it is always in - unscheduled demand is still demand.
-      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date <= CAST(:horizon AS date))
+      AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} <= CAST(:horizon AS date))
       -- Planning window START (S4): same rule, other side.
-      AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date >= CAST(:horizon_start AS date))"""
+      AND (CAST(:horizon_start AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} >= CAST(:horizon_start AS date))"""
 
     if demand_class == "project":
         legs = [confirmed_leg, form_leg]
@@ -905,7 +909,7 @@ def horizon_project_need_dates_sql() -> str:
     return f"""
 WITH legs AS (
     SELECT sol.product_id,
-           COALESCE(oir.delivery_date, sol.required_date) AS needed
+           COALESCE({OIR_DATE}, sol.required_date) AS needed
     FROM projects.order_inquiry_rows oir
     JOIN projects.so_supply_decisions d
       ON d.id = oir.supply_decision_id
@@ -924,11 +928,11 @@ WITH legs AS (
       -- Ruling 6: a fully bundled row is not owed, so it names no date either. R1: no
       -- other cap either.
       AND {_OWED_SQL} > 0
-      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date <= CAST(:horizon AS date))
+      AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} <= CAST(:horizon AS date))
     UNION ALL
     SELECT fp.id AS product_id,
-           oir.delivery_date AS needed
+           {OIR_DATE} AS needed
     FROM projects.order_inquiry_rows oir
     JOIN products fp
       ON fp.product_code = oir.item_code
@@ -956,8 +960,8 @@ WITH legs AS (
       {NOT_REDIRECTED_SQL}
       AND oir.qty > 0
       AND {_OWED_FORM_SQL} > 0
-      AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-           OR oir.delivery_date <= CAST(:horizon AS date))
+      AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+           OR {OIR_DATE} <= CAST(:horizon AS date))
 )
 SELECT product_id, MIN(needed) AS needed
 FROM legs
@@ -1055,7 +1059,7 @@ def run_scope_oi_rows(
     rows = db.execute(text(f"""
         SELECT oir.id::text AS row_id, sol.product_id::text AS product_id,
                so.so_number AS so_number, ({_OWED_SQL}) AS qty,
-               oir.delivery_date AS delivery_date,
+               {OIR_DATE} AS delivery_date,
                c.customer_name AS customer_name, pj.title AS project_title,
                so.project_label AS project_label, pso.is_pre_order AS is_pre_order
         FROM projects.order_inquiry_rows oir
@@ -1077,10 +1081,10 @@ def run_scope_oi_rows(
           AND oir.qty > 0
           AND ({_OWED_SQL}) > 0
           AND (CAST(:pids AS text[]) IS NULL OR sol.product_id::text = ANY(:pids))
-          {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-               OR oir.delivery_date >= CAST(:horizon_start AS date))
-          AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-               OR oir.delivery_date <= CAST(:horizon AS date))
+          {so_clause}AND (CAST(:horizon_start AS date) IS NULL OR {OIR_DATE} IS NULL
+               OR {OIR_DATE} >= CAST(:horizon_start AS date))
+          AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+               OR {OIR_DATE} <= CAST(:horizon AS date))
           {("AND " + co) if co else ""}
     """), {
         "pids": [str(p) for p in product_ids] if product_ids is not None else None,

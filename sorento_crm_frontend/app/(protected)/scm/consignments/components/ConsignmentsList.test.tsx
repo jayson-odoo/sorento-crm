@@ -94,6 +94,7 @@ const ROWS: Row[] = [
     so_number: 'ZZT-CG-0001',
     doc_type: 'consignment',
     customer_name: 'ZZT CONSIGN CUSTOMER A',
+    project_label: 'ZZT SHOWROOM PROJECT',
     status: 'open',
     order_date: '2026-06-10',
     lines: [
@@ -157,6 +158,16 @@ describe('UAC-20: ConsignmentsList', () => {
     expect(within(row).queryByText('Outstanding')).toBeNull();
     const second = screen.getByRole('link', { name: 'ZZT-CG-0002' }).closest('tr') as HTMLElement;
     expect(within(second).getByText('At customer')).toBeInTheDocument();
+  });
+
+  it('OI-UX-FILTER-SNAPSHOT: a Project column (the SO list one) sits after Customer, sorted by the server', async () => {
+    renderList();
+    const row = (await screen.findByText('ZZT-CG-0001')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('ZZT SHOWROOM PROJECT')).toBeInTheDocument();
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers.indexOf('Project')).toBe(headers.indexOf('Customer') + 1);
+    const second = screen.getByText('ZZT-CG-0002').closest('tr') as HTMLElement;
+    expect(within(second).getAllByText('-').length).toBeGreaterThan(0);
   });
 
   it('status reads Fully returned when every unit came back, and Cancelled stays Cancelled', async () => {

@@ -10,6 +10,8 @@ Reuses the certificate route fixture (a superadmin acting, a grantless user for 
 """
 import uuid
 
+import pytest
+
 from app.models.audit import AuditLog
 from app.models.certificate import CertificateProduct
 from app.models.product import ProductAttachment
@@ -27,13 +29,33 @@ LINKS = "/api/v1/master-data/product-attachments"
 _EDIT = "master_data.product_attachments.edit"
 
 
-def _trail_rows(env, product_id, action=None):
+# HOTFIX-ATTACH-AUDIT (3 Nov): the verb is LINK / UNLINK, but prod's audit_logs_action_check
+# admits only CREATE / READ / UPDATE / DELETE / IMPORT / EVENT, so the row STORES CREATE / DELETE
+# and names the verb in `event`.
+_STORED = {"LINK": ("CREATE", "file_linked"), "UNLINK": ("DELETE", "file_unlinked")}
+
+
+@pytest.fixture(autouse=True)
+def _prod_audit_action_check(env):
+    """Prod's `audit_logs_action_check`, read from the migration: the scratch schema is built
+    from the models and has no such constraint, which is how 'LINK' shipped (a 500 on every
+    staff link and unlink in prod, 3 Nov)."""
+    from tests.support.cost_price_env import install_audit_action_check
+
+    install_audit_action_check(env.db)
+
+
+def _trail_rows(env, product_id, verb=None):
+    verbs = [verb] if verb else list(_STORED)
     q = env.db.query(AuditLog).filter(
         AuditLog.root_entity_type == "product",
         AuditLog.root_entity_id == str(product_id),
-        AuditLog.action.in_([action] if action else ["LINK", "UNLINK"]),
+        AuditLog.event.in_([_STORED[v][1] for v in verbs]),
     )
-    return q.all()
+    rows = q.all()
+    for row in rows:
+        assert (row.action, row.event) in _STORED.values(), (row.action, row.event)
+    return rows
 
 
 def _drawing_link(env, name="drawing"):
@@ -118,7 +140,7 @@ def test_unlink_writes_one_row_on_the_products_trail_naming_file_and_type(env):
     rows = _trail_rows(env, product.id)
     assert len(rows) == 1
     row = rows[0]
-    assert row.action == "UNLINK"
+    assert (row.action, row.event) == ("DELETE", "file_unlinked")
     assert row.entity_type == "product_attachments"
     assert str(row.entity_id) == str(link.id)
     assert str(row.user_id) == user_id
@@ -141,6 +163,7 @@ def test_link_writes_one_link_row(env):
     assert response.status_code == 201, response.text
     rows = _trail_rows(env, product.id, "LINK")
     assert len(rows) == 1
+    assert (rows[0].action, rows[0].event) == ("CREATE", "file_linked")
     assert rows[0].new_values["attachment_id"] == str(second.id)
     assert rows[0].description == (
         f"File linked: {second.original_filename} ({drawing_type.type_name})"
@@ -169,7 +192,8 @@ def test_the_product_audit_trail_endpoint_shows_the_unlink_in_words(env):
     )
 
     assert response.status_code == 200, response.text
-    rows = [r for r in response.json()["data"] if r["action"] == "UNLINK"]
+    rows = [r for r in response.json()["data"] if r.get("event") == "file_unlinked"]
+    assert [r["action"] for r in rows] == ["DELETE"]
     assert [r["description"] for r in rows] == [
         f"File unlinked: {attachment.original_filename} ({drawing_type.type_name})"
     ]
@@ -280,3 +304,44 @@ def test_the_activity_timeline_reads_an_unlink_as_removed_without_id_chips(env):
     assert items[0]["summary"] == (
         f"File unlinked: {attachment.original_filename} ({drawing_type.type_name})"
     )
+
+
+# ------------------------------------------------- HOTFIX-ATTACH-AUDIT (3 Nov, prod 500)
+def test_link_and_its_audit_row_commit_together(env, monkeypatch):
+    """A failed audit write must not leave a committed link behind a 500 (the prod half state:
+    the service committed the link, then the audit insert hit the CHECK)."""
+    from app.services import product_link_audit
+
+    product, _attachment, drawing_type, _link = _drawing_link(env)
+    second = env.attachment(drawing_type, "halfstate")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("audit write failed")
+
+    monkeypatch.setattr(product_link_audit, "log_product_file_link", _boom)
+    response = env.client.post(
+        f"{LINKS}/", json={"product_id": str(product.id), "attachment_id": str(second.id)}
+    )
+
+    assert response.status_code == 500
+    env.db.rollback()
+    assert (
+        env.db.query(ProductAttachment)
+        .filter(
+            ProductAttachment.product_id == product.id,
+            ProductAttachment.attachment_id == second.id,
+        )
+        .count()
+        == 0
+    )
+
+
+def test_every_stored_link_action_is_one_prod_admits():
+    """Guard: the actions this helper stores, against the migration's constraint list."""
+    import re
+
+    from app.services import product_link_audit
+    from tests.support.cost_price_env import admitted_audit_actions
+
+    allowed = set(re.findall(r"'([A-Z_]+)'", admitted_audit_actions()))
+    assert set(product_link_audit.STORED_ACTION.values()) <= allowed

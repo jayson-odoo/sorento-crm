@@ -36,7 +36,7 @@ def _hydrate(row, db: Session) -> AutomationResponse:
         from app.rule_engine.registry import fact_map
 
         facts = fact_map(automation_triggers.fact_sources_for(str(row.trigger_type)))
-        out = out.model_copy(update={"conditions_text": tree_text(row.conditions_json, facts)})
+        out = out.model_copy(update={"conditions_text": tree_text(row.conditions_json, facts, db)})
     return out
 
 

@@ -84,7 +84,9 @@ before anything is confirmed), **SO Qty** (the sales order line's own quantity),
 **Location**, **Instruction**, **State**. A **Raised via** column is there too, hidden by
 default. A checkbox column lets you tick lines; a search box narrows by product; a **State**
 filter beside it narrows by status, including **Request to reserve**, **Reserved** and **Not
-reserved**; **Columns** lets you show or hide columns, the four quantity columns included; the
+reserved**; when the order inquiry has a reserve request, a **Request** filter (**Request #1**,
+**Request #2**, ...) narrows to the lines that request asked about, whatever their state;
+**Columns** lets you show or hide columns, the four quantity columns included; the
 footer totals **SO Qty**, **Requested**, **Taken** and **Remaining**, cancelled lines left out.
 **PO** and **SPO** name the line's first document with a **+N** chip listing the rest; clicking
 a number opens the same **Backing documents** lightbox as the worklist.
@@ -208,7 +210,10 @@ and you hold the **Reserve Stock for Order Inquiries** permission.
 
 1. Open the order inquiry from the request email's **Open in Order Inquiries** link (you'll need
    to be logged in), or open it from the list yourself. The link lands on the **Lines** tab
-   filtered to **Request to reserve**, so you see only the lines that still need you.
+   with the **Request** filter set to that request, so you see exactly the lines purchasing
+   asked about. Lines you have already answered stay in view with their **Reserved** or
+   **Not reserved** pill; pick **Request to reserve** in the **State** filter to see only the
+   lines that still need you.
 2. On a line reading **Request to reserve \<qty\>**, two icons sit at the end of the **State**
    cell, after the line's **History** icon and paperclip:
    * The tick, **Reserve**, stages the full requested quantity at the pool the request named,
@@ -284,6 +289,28 @@ again.
 The pager beside the header walks the same filtered list you opened the order inquiry from - for
 example, if you opened it from **Outstanding**, previous and next step through the other
 Outstanding order inquiries in that same order.
+
+The **Lines** tab keeps its own view as you step: the **Search product...** text, the **State**
+filter and the column you sorted by stay in the address bar, so previous and next open the next
+order inquiry's lines searched, filtered and sorted the same way, and a reload keeps them too.
+Clear the search or untick the **State** values to see every line again. **Back** to the list
+leaves this view behind: the list opens with its own filters only.
+
+## Customer and project beside every sales order
+
+Wherever a sales order number is shown (the **Stock Debt** drills and snapshots, **Request CS to
+reserve**, the Fulfilment Planning board, the reorder plan's drills, Stock Transfers, the loading
+plan, and the other screens that name an order), its customer and project are named with it:
+
+* In a table, as two columns, **Customer** and **Project**, right after the sales order, the same
+  as on the **Sales Orders** list. On a list that pages (for example **Stock Transfers**), both
+  columns sort the whole list.
+* In a dialog title, a chip or a short list, as one line under the order number: `CUSTOMER /
+  project`.
+
+The customer is the debtor name the order was issued under (it often already ends with the
+project in brackets), else the customer's own name; the project is the order's project. A half
+the order does not have prints a dash, for example `ACME SDN BHD / -`.
 
 ## Emails and the sales order page
 

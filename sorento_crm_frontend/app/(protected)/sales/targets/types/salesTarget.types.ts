@@ -4,7 +4,7 @@
  */
 export type TargetSubjectKind = 'agent' | 'team' | 'dealer';
 export type TargetMetric = 'amount' | 'quantity';
-export type TargetBasis = 'ordered' | 'delivered';
+export type TargetBasis = 'invoiced' | 'ordered' | 'delivered';
 export type TargetProductScope = 'all' | 'categories' | 'products' | 'brands';
 export type TargetScopeKind = 'category' | 'product' | 'brand';
 export type TargetSplitUnit = 'day' | 'week' | 'month';
@@ -111,6 +111,12 @@ export interface SalesTargetListParams {
   query?: string;
 }
 
+export interface TierRateEntry {
+  /** "A/C I" on a per-account rate, else null. */
+  label: string | null;
+  rate: number | null;
+}
+
 export interface SalesTargetPeriod {
   id: string;
   period_start: string;
@@ -124,6 +130,8 @@ export interface SalesTargetPeriod {
   bonus_earned?: number | null;
   commission_lines?: { kind: 'main' | 'additional'; threshold_rm: number | null; amount: number }[];
   tier_reached?: number | null;
+  /** The reached main tier's rate(s): one label-less entry, or one per account. */
+  tier_rates?: TierRateEntry[];
   /** Points targets: RM per point in force on the period's last day. */
   point_ratio?: number | null;
   ratio_missing?: boolean;
@@ -159,11 +167,15 @@ export interface SalesTargetDetail {
   end_date: string;
   split_every: number | null;
   split_unit: TargetSplitUnit | null;
-  /** "Ordered", "Delivered", or "Delivered (by DO date)". */
+  /** "Invoiced", "Ordered", "Delivered", or "Delivered (by DO date)". */
   counts_label: string;
   /** The categories, products or brands counted: their id, kind and "CODE - Name" label. */
   scope: { id: string; kind: TargetScopeKind; label: string }[];
   periods: SalesTargetPeriod[];
+  /** Commission + bonus of the periods that have ended; null with no commission. */
+  commission_to_date?: number | null;
+  /** Commission + bonus of the current period so far (not final). */
+  commission_current?: number | null;
   children: SalesTargetChild[];
   members_without_figure: TargetMemberRef[];
   child_count: number;

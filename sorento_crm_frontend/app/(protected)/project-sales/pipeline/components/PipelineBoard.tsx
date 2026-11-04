@@ -11,6 +11,7 @@ import type { Status } from '@/app/(protected)/system-management/status-graphs/t
 import type { Project } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { isAwaitingDecision } from '../../_shared/components/ApprovalStatePill';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * Portal registrations waiting for a decision (PROJECT-REG-PORTAL R6). They have no stage by
@@ -369,7 +370,7 @@ function describeNextAction(project: Project): { label: string; title: string } 
 function formatNextActionDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }
 
 /** Heading and hint only: the page's one CTA lives in its header (PR #1336). */

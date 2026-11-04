@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useImpersonation } from '@/hooks/useImpersonation';
 import { clearImpersonationToken, isImpersonationToken } from '@/app/(auth)/portal/lib/portal-client';
 import { stopContactImpersonation } from '@/services/contactImpersonationService';
+import { localStore } from '@/lib/storage';
 
 const BANNER_HEIGHT = 40;
 const COLLAPSE_KEY = 'sorento.impersonationBannerCollapsed';
@@ -16,12 +17,12 @@ export function ImpersonationBanner() {
   const { session, stop, stopping } = useImpersonation();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(COLLAPSE_KEY) === '1';
+    return localStore.getItem(COLLAPSE_KEY) === '1';
   });
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+    localStore.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
   }, [collapsed]);
 
   useEffect(() => {

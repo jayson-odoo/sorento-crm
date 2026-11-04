@@ -42,6 +42,9 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # both of 354's directions leave them exactly where their own migration put them.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # SPEC-SHEET-V2 (migration ssv2_0001_spec_sheets): the saved spec sheets of a quotation,
+    # born straight into `projects`.
+    "quotation_spec_sheets",
     # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
     # SO line, born straight into `projects` beside `sales_order_lines`.
     "so_line_splits",

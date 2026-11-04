@@ -9,6 +9,7 @@
 
 import type {
   LinePartCandidate,
+  PriceMode,
   PriceTagLineType,
   PriceTagRequestLineInput,
   ProductComboOption,
@@ -79,6 +80,15 @@ export interface DraftLine {
   tag_templates?: ProductTagTemplateOption[];
   /** Which product `tag_templates` was answered for; anything else = not asked yet. */
   tag_templates_for?: string | null;
+  /** PRICETAG-LPSP: which combo `tag_templates` was answered for (null = none). */
+  tag_templates_combo?: string | null;
+  /** PRICETAG-LPSP: this line's own LP or SP. Absent = the header's mode. */
+  price_type?: PriceMode | null;
+}
+
+/** The line's effective LP/SP: its own, else the request's mode. */
+export function linePriceType(line: Pick<DraftLine, 'price_type'>, priceMode: PriceMode): PriceMode {
+  return line.price_type ?? priceMode;
 }
 
 /**
@@ -107,6 +117,7 @@ export interface DraftLineSource {
   promotion_id?: string | null;
   manual_sell_price?: number | null;
   tag_template_id?: string | null;
+  price_type?: PriceMode | null;
 }
 
 let partKeySeq = 0;
@@ -276,7 +287,7 @@ export function itemValue(line: DraftLine): string {
   return line.product_id ? `product:${line.product_id}` : '';
 }
 
-export function lineToDraft(line: DraftLineSource): DraftLine {
+export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
     line_type: line.line_type,
@@ -317,6 +328,10 @@ export function lineToDraft(line: DraftLineSource): DraftLine {
     tag_template_id: line.tag_template_id ?? null,
     tag_templates: [],
     tag_templates_for: null,
+    // The server stores an explicit type on every line, so a line whose type equals the
+    // request's mode is read as FOLLOWING Preferred Default (price_type null); only a line that
+    // differs keeps its own.
+    price_type: line.price_type && line.price_type !== requestMode ? line.price_type : null,
   };
 }
 
@@ -334,7 +349,12 @@ export type LineTemplateState =
 
 export function lineTemplateState(line: DraftLine): LineTemplateState {
   if (line.line_type !== 'product' || !line.product_id) return { kind: 'none' };
-  if (line.tag_templates_for !== line.product_id) return { kind: 'loading' };
+  if (
+    line.tag_templates_for !== line.product_id ||
+    (line.tag_templates_combo ?? null) !== (line.combo_id ?? null)
+  ) {
+    return { kind: 'loading' };
+  }
   const options = line.tag_templates ?? [];
   if (options.length === 0) return { kind: 'none' };
   if (options.length === 1) return { kind: 'single', template: options[0] };
@@ -356,7 +376,10 @@ export function lineNeedsTemplate(line: DraftLine): boolean {
 /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
  *  place, in display order. A resolved part sends its product, an open one
  *  sends the candidate ids it is still choosing between. */
-export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[] {
+export function draftLinesPayload(
+  lines: DraftLine[],
+  priceMode?: PriceMode,
+): PriceTagRequestLineInput[] {
   return lines.map((l) => ({
     line_type: l.line_type,
     product_id: l.product_id,
@@ -378,7 +401,12 @@ export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[
     // server never sees a line missing what `choosePromotion`/
     // `setManualSellPrice` already set on it.
     promotion_id: l.promotion_id,
-    manual_sell_price: l.manual_sell_price,
+    // PRICETAG-LPSP: a typed price only means something on an SP line with no promotion; the
+    // server refuses it anywhere else.
+    // An untyped line follows Preferred Default: it is saved with the header's value now.
+    price_type: l.price_type ?? priceMode ?? null,
+    manual_sell_price:
+      (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
   }));
 }

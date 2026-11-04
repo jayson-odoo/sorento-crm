@@ -60,42 +60,6 @@ def test_a_short_reply_the_parser_did_not_declare_an_answer_is_not_taken_as_the_
     assert not [a for n, a in calls if a.get("basis") == basis and a.get("group_by") == "year"], (calls, text)
 
 
-# ---------------------------------------------------------------- the company pick
-
-
-def _company_question(bot) -> tuple[str, str]:
-    sorento, mocha = _two_companies(bot)
-    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    return sorento, mocha
-
-
-def test_a_company_pick_answered_by_the_parsers_position_runs_that_company(bot) -> None:
-    sorento, mocha = _company_question(bot)
-    text, calls = bot.say(_answer(2), "the second company please")
-    assert _only_report_ask(calls)["company"] == MOCHA_ID, calls
-
-
-@pytest.mark.parametrize("typed", ["Mocha", "2", "mocha"])
-def test_a_typed_company_label_or_digit_with_no_parser_answer_is_never_the_pick(bot, typed) -> None:
-    _company_question(bot)
-    text, calls = bot.say(_undeclared(), typed)
-    assert not [a for n, a in calls if a.get("company")], (calls, text)
-
-
-@pytest.mark.parametrize("typed", ["2", "Mocha"])
-@pytest.mark.parametrize("mode", ["pick", "fill"])
-def test_a_declared_company_answer_that_picks_nothing_never_sends_a_company(bot, mode, typed) -> None:
-    """The parser declared an answer but picked no offered option: the typed digit or label is never the fallback."""
-    _company_question(bot)
-    declared = _reply(
-        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
-        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
-    )
-    text, calls = bot.say(declared, typed)
-    assert not [a for n, a in calls if a.get("company")], (calls, text)
-
-
 # ---------------------------------------------------------------- the engine: a parse is not overridden by a reply's shape
 
 
@@ -181,17 +145,15 @@ def test_total_sales_with_no_axis_asks_the_four_option_basis_then_a_picked_deliv
     assert not args.get("group_by"), args
 
 
-def test_total_sales_for_a_two_company_contact_asks_the_basis_then_the_company(bot) -> None:
-    """#1931 (T6, kept as merged): the company sales total asks the one basis question first; the report ask then asks
-    the company before it runs, and both ride the run."""
+def test_total_sales_for_a_two_company_contact_asks_the_basis_then_runs_over_every_company(bot) -> None:
+    """O-R2 (was: then asks the company): the one basis question first; the pick runs with no company arg."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_analysis", group_by=None, sales_basis=None, basis=None), "total sales 2026")
     assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
     text, calls = bot.say(_answer(2), "the middle one")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_answer(2), "the second company")
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
     args = _only_report_ask(calls)
-    assert args["company"] == MOCHA_ID and args["basis"] == "delivered", args
+    assert "company" not in args and args["basis"] == "delivered", f"O-R2: {args}"
 
 
 # ---------------------------------------------------------------- the Yearly comparison is the report ask (crew, 28 Oct)
@@ -291,35 +253,12 @@ def test_the_kind_question_is_answered_by_a_parser_basis_among_the_offered_kinds
     assert _only_report_ask(calls)["basis"] == kind, (calls, text)
 
 
-def test_the_live_v63_company_reply_is_the_pick(bot) -> None:
-    """"Sorento" under the company question, as the live parser read it: `sales_company` and `reference_positions`,
-    NO declared answer, a stray `group_by: "date"`. Parser output only: it is the pick of the offered company."""
-    sorento, mocha = _two_companies(bot)
-    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    live = _reply(
-        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
-        sales_company=sorento, reference_positions=[1], group_by="date",
-    )
-    text, calls = bot.say(live, sorento)
-    args = _only_report_ask(calls)
-    assert args["company"] != MOCHA_ID and args["company"], args
-    assert not args.get("group_by"), args
-
-
 # ---------------------------------------------------------------- reviewer ec60a404: the company pick skip is narrow
 
 
-def _under_the_company_question(bot):
-    sorento, mocha = _two_companies(bot)
-    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    return sorento, mocha
-
-
-def test_a_fresh_ranking_naming_a_company_under_the_company_question_is_a_new_ask(bot) -> None:
-    """`sales_company` alone is not the pick: a ranking with a typed axis and a count is its own ask."""
-    sorento, _mocha = _under_the_company_question(bot)
+def test_a_fresh_ranking_naming_a_company_is_its_own_ask_and_asks_the_measure(bot) -> None:
+    """O-R2: there is no company question to be under; `sales_company` on a typed ranking is a named company."""
+    sorento, _mocha = _two_companies(bot)
     fresh = _reply(
         message_type="business_query", domain_hint="order", intent_hint="check_order", order_status="sales_ranking",
         ranking_refine=False, group_by="customer", by_words="dealers", top_n=5, sales_company=sorento,
@@ -329,35 +268,12 @@ def test_a_fresh_ranking_naming_a_company_under_the_company_question_is_a_new_as
     assert calls == [] and "By quantity or by amount?" in text, (text, calls)
 
 
-@pytest.mark.parametrize(
-    "shape",
-    [
-        # `by_words` is ABSENT (a prompt version without it) or null: the `group_by` is a guess, never a typed axis.
-        dict(order_status="sales_ranking", ranking_refine=False, group_by="customer"),
-        dict(order_status="sales_report", group_by="date"),
-        dict(order_status="sales_report", group_by="customer", by_words=None),
-    ],
-    ids=["ranking-no-typed-axis", "report-stray-axis", "report-null-by-words"],
-)
-def test_the_two_shapes_the_company_pick_skip_exists_for_are_the_pick(bot, shape) -> None:
-    """The live parser reads a bare "Sorento" as one of these: no typed axis (`by_words` null) and no count, so the
-    `group_by` is a guess; the matched company is the answer and the held total runs for it."""
-    sorento, _mocha = _under_the_company_question(bot)
-    reply = _reply(
-        message_type="business_query", domain_hint="order", intent_hint="check_order", entities=[],
-        sales_company=sorento, domain_in_message=False, **shape,
-    )
-    text, calls = bot.say(reply, sorento)
-    args = _only_report_ask(calls)
-    assert args["company"] and args["company"] != MOCHA_ID and not args.get("group_by"), args
-
-
 # ---------------------------------------------------------------- hand test 2 (c858f429)
 
 
-def test_a_breakdown_asks_the_basis_then_the_company_never_the_measure_and_runs_every_row(bot) -> None:
-    """(a) "Total sale for all sale agents on September 2026": the required field first (the basis only: a breakdown
-    shows both measures), the company last, then it runs by amount over every row."""
+def test_a_breakdown_asks_the_basis_never_the_company_or_the_measure_and_runs_every_row(bot) -> None:
+    """(a) "Total sale for all sale agents on September 2026": the basis only (a breakdown shows both measures), no
+    company question (O-R2), then it runs by amount over every row."""
     from app.services.company_scope import DEFAULT_COMPANY_ID
 
     sorento, mocha = _two_companies(bot)
@@ -369,11 +285,10 @@ def test_a_breakdown_asks_the_basis_then_the_company_never_the_measure_and_runs_
     text, calls = bot.say(breakdown, "Total sale for all sale agents on September 2026")
     assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
     text, calls = bot.say(_answer(2), "the middle one")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_answer(1), "the first company")
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
     args = _only_report_ask(calls)
     assert args["group_by"] == "sales_agent" and args["basis"] == "delivered", args
-    assert args["company"] == DEFAULT_COMPANY_ID and args["top_n"] == 100 and not args.get("measure"), args
+    assert "company" not in args and args["top_n"] == 100 and not args.get("measure"), args
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
 
 

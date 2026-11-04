@@ -146,7 +146,7 @@ def _malaysia_wall_clock(dt: Optional[datetime]) -> str:
     if not isinstance(dt, datetime):
         return "never"
     aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-    return aware.astimezone(_MALAYSIA_TZ).strftime("%d/%m/%Y %H:%M") + " MYT"
+    return aware.astimezone(_MALAYSIA_TZ).strftime("%d/%m/%Y %H:%M") + " MYT"  # date-format-ok: ops alert email, 24h stamp for engineers
 
 
 def _task_run_log_url(task: ScheduledTask) -> str:

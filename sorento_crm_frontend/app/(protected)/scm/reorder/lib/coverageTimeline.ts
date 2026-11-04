@@ -9,7 +9,8 @@
  * Survives Phase 2. Only `coverageMockStore.ts` is deleted.
  */
 import type { CoverageRow, CoverageShortfall } from '../types/coverage.types';
-import { DATE_LOCALE, DATE_PARTS, fmtInt, fmtTrimmedDecimal } from '../../lib/format';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { fmtInt, fmtTrimmedDecimal, fmtWallStamp } from '../../lib/format';
 
 /** One month heading plus the rows underneath it. `key` is null for the opening row. */
 export interface CoverageMonthGroup {
@@ -20,12 +21,7 @@ export interface CoverageMonthGroup {
   rows: CoverageRow[];
 }
 
-const MONTH_FMT = new Intl.DateTimeFormat('en-MY', { month: 'short', year: 'numeric' });
-
-const DAY_FMT = new Intl.DateTimeFormat(DATE_LOCALE, {
-  ...DATE_PARTS,
-  timeZone: 'UTC',
-});
+const MONTH_FMT = new Intl.DateTimeFormat('en-MY', { month: 'short', year: 'numeric' }); // date-format-ok: month heading (Jul 2026), not a calendar date
 
 /** `2026-07-01` -> `Jul 2026`. Parsed as a plain date, so no timezone shift. */
 export function monthLabel(isoDate: string): string {
@@ -46,11 +42,11 @@ export function dayLabel(isoDate: string | null): string {
   if (!isoDate) return '';
   const [y, m, d] = isoDate.slice(0, 10).split('-').map(Number);
   if (!y || !m || !d) return isoDate;
-  return DAY_FMT.format(new Date(Date.UTC(y, m - 1, d)));
+  return formatDateInMalaysia(isoDate.slice(0, 10)) || isoDate;
 }
 
 /**
- * `2026-08-03T09:12:00` -> `03/08/2026, 09:12`.
+ * `2026-08-03T09:12:00` -> `03/08/2026, 9:12 am`.
  *
  * Rendered as written, with NO conversion: `computed_at` is already naive Malaysia
  * wall-clock (see `coverage.types.ts`). Passing it to `formatDateTimeInMalaysia`,
@@ -59,10 +55,7 @@ export function dayLabel(isoDate: string | null): string {
  */
 export function computedAtLabel(iso: string | null): string {
   if (!iso) return '';
-  const [datePart, timePart] = iso.split('T');
-  const day = dayLabel(datePart);
-  const time = (timePart ?? '').slice(0, 5);
-  return time ? `${day}, ${time}` : day;
+  return fmtWallStamp(iso);
 }
 
 /**

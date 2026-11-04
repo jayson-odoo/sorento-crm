@@ -16,6 +16,7 @@ import {
 
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { revisionEntryToPurchaseRequest } from './revisionEntryToPurchaseRequest';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 let XLSX: typeof import('xlsx') | null = null;
 
@@ -51,10 +52,7 @@ function formatDateShort(value: string | null | undefined): string {
 
 function formatDateForSponsorship(value: string | null | undefined): string {
   if (value == null || value === '') return '';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${d.getDate()}-${months[d.getMonth()]}-${d.getFullYear()}`;
+  return formatDateInMalaysia(value) || String(value);
 }
 
 function str(value: unknown): string {

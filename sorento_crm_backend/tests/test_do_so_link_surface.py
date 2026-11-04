@@ -45,7 +45,10 @@ def test_stored_link_names_the_so_and_its_line_no(db):
     line = _line(_read(db, d), 1)
 
     assert line["from_doc_no"] == so.so_number
-    assert line["sales_order"] == {"id": str(so.id), "so_number": so.so_number, "line_no": 3}
+    assert line["sales_order"] == {
+        "id": str(so.id), "so_number": so.so_number, "line_no": 3,
+        "customer_name": None, "project_label": None,
+    }
 
 
 def test_no_stored_line_resolves_the_so_by_its_fromdocno_with_no_line(db):
@@ -60,7 +63,10 @@ def test_no_stored_line_resolves_the_so_by_its_fromdocno_with_no_line(db):
 
     line = _line(_read(db, d), 1)
 
-    assert line["sales_order"] == {"id": str(so.id), "so_number": so.so_number, "line_no": None}
+    assert line["sales_order"] == {
+        "id": str(so.id), "so_number": so.so_number, "line_no": None,
+        "customer_name": None, "project_label": None,
+    }
 
 
 def test_so_not_in_the_crm_keeps_the_autocount_number_and_no_link(db):
@@ -136,3 +142,24 @@ def test_one_do_over_two_sos_names_each_on_its_own_line(db):
 
     assert _line(out, 1)["sales_order"]["so_number"] == so1.so_number
     assert _line(out, 2)["sales_order"]["so_number"] == so2.so_number
+
+
+def test_linked_so_carries_its_customer_and_project(db):
+    """OI-UX-FILTER-SNAPSHOT: the SO ref names the debtor and the project, by line and by number."""
+    so = seed_so(db, DEFAULT_COMPANY_ID)
+    so.debtor_name = "  ZZT Debtor Sdn Bhd "
+    so.project_label = "ZZT Tower"
+    p = seed_product(db, DEFAULT_COMPANY_ID)
+    wh = seed_wh(db, DEFAULT_COMPANY_ID)
+    sol = seed_so_line(db, so, p)
+    db.flush()
+    d = seed_do(db, DEFAULT_COMPANY_ID)
+    seed_do_line(db, d, p, wh, so_line=sol, from_doc_no=so.so_number, seq=1)
+    seed_do_line(db, d, p, wh, from_doc_no=so.so_number, seq=2)
+
+    out = _read(db, d)
+
+    for seq in (1, 2):
+        ref = _line(out, seq)["sales_order"]
+        assert ref["customer_name"] == "ZZT Debtor Sdn Bhd"
+        assert ref["project_label"] == "ZZT Tower"

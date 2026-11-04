@@ -99,6 +99,20 @@ function renderSheet(over: Partial<PlanException> = {}, onDecide = vi.fn()) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('PlanExceptionReviewSheet', () => {
+  it('names the candidate order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderSheet({
+      actions: [
+        action('relink_so', 1, {
+          candidate_so_number: 'SO26-0931',
+          customer_name: 'Maju Debtor',
+          project_label: 'Tuju Residences',
+        }),
+        action('accept', 2),
+      ],
+    });
+    expect(screen.getByText('Maju Debtor / Tuju Residences')).toBeInTheDocument();
+  });
+
   it('renders both timelines, not only the new position', () => {
     renderSheet();
     expect(screen.getByText('Before')).toBeInTheDocument();

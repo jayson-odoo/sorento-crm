@@ -166,6 +166,9 @@ export interface AllocationClaimRow {
   so_line_id?: string | null;
   sales_order_id?: string | null;
   sales_order_ref?: string | null;
+  /** The order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   line_no?: number | null;
   delivery_date?: string | null;
   requested_by_name?: string | null;

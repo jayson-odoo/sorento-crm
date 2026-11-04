@@ -1,7 +1,7 @@
 'use client';
 
 import { useUrlTab, withTab } from '@/hooks/useUrlTab';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useEffect,
   useLayoutEffect,
@@ -461,10 +461,7 @@ const REASON_MAX_LEN = 2000;
 
 function formatDraftSavedAt(iso: string): string {
   try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    });
+    return formatDateTimeInMalaysia(iso);
   } catch {
     return iso;
   }
@@ -2731,10 +2728,8 @@ function StockInquiryFormSection({
   }, [fieldDefs]);
 
   const dateValue = detail?.created_at
-    ? new Date(detail.created_at).toLocaleDateString(undefined, {
-        dateStyle: 'short',
-      })
-    : new Date().toLocaleDateString(undefined, { dateStyle: 'short' });
+    ? formatDateInMalaysia(detail.created_at)
+    : formatDateInMalaysia(new Date());
   const inquiryNumber =
     (detail?.document_number as string | undefined) ||
     (detail?.inquiry_number as string | undefined) ||

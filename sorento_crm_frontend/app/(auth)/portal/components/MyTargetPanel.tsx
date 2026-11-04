@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { getMyTargets, type MyTarget, type MyTargets } from '../lib/my-target-service';
 import { portalDetailPath } from '../lib/portal-paths';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 function num(value: string | number | null | undefined): number {
   const n = typeof value === 'number' ? value : Number(value ?? 0);
@@ -32,15 +33,9 @@ export function formatTargetValue(value: string | number, metric: string): strin
   return metric === 'amount' ? `RM ${text}` : text;
 }
 
-/** "31 Oct 2026", read as a calendar date (no timezone shift). */
+/** "31/10/2026", read as a calendar date (no timezone shift). */
 export function formatTargetDate(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+  return formatDateInMalaysia(iso.slice(0, 10));
 }
 
 function dayNumber(iso: string): number {

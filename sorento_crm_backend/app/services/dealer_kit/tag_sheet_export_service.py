@@ -11,6 +11,7 @@ refusing to print. AC-H.2 says to return 409 with a reason.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from typing import Optional
 
@@ -104,7 +105,7 @@ def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
                 status_code=409,
                 message=(
                     f"Line {index}'s promotion '{promo.description or promo.id}' "
-                    f"expired on {promo.end_date.isoformat()}. Extend the "
+                    f"expired on {fmt_date(promo.end_date)}. Extend the "
                     "promotion or remove it from the line before exporting."
                 ),
                 code="PROMOTION_EXPIRED",

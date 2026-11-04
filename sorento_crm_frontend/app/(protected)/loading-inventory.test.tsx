@@ -308,7 +308,9 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 167.
     // DOC-ACCESS-SIMPLE: `resource-management/document-access` is a new DataGrid list segment with
     // its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 168.
-    expect(requiredSegmentNames.length).toBe(168);
+    // CLIENT-ERROR-REPORT (#2165): `system-management/client-errors` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 169.
+    expect(requiredSegmentNames.length).toBe(169);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

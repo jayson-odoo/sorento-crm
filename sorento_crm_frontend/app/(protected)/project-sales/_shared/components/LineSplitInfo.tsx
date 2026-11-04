@@ -26,6 +26,7 @@ import {
 } from '../../fulfilment-planning/lib/lineSplitModel';
 import type { LineSplitView } from '../types/orderInquiry.types';
 import type { LineSplitsPayload } from '../types/lineSplit.types';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /**
  * OI-SPLIT-VIEW (UAC B1, B8, D1, E): the one split chip + (i) popup the Sales Order and
@@ -245,7 +246,12 @@ export function LineSplitInfo({
   if (!view) return null;
   const count = splitCount(view);
   // OI-SPLIT-GUIDE (UAC F29): no line number on the popup (its (i) button's label keeps it).
-  const sub = [soNumber, oiNumber || null]
+  // OI-UX-FILTER-SNAPSHOT: the order's CUSTOMER / project after its number.
+  const sub = [
+    soNumber,
+    payload ? soCustomerProjectLabel(payload.customer, payload.project) : null,
+    oiNumber || null,
+  ]
     .filter(Boolean)
     .join(' · ');
   return (
@@ -355,6 +361,8 @@ export function OrderSplitsDialog({
   }, [payload]);
   const sub = [
     subtitle,
+    // OI-UX-FILTER-SNAPSHOT: the order's CUSTOMER / project.
+    payload ? soCustomerProjectLabel(payload.customer, payload.project) : null,
     sheet && sheet.splitCount > 0
       ? `${sheet.splitCount} ${sheet.splitCount === 1 ? 'split line' : 'split lines'}`
       : null,

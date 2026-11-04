@@ -16,13 +16,14 @@ on:
   # re-run against a new head). One label runs anything; every root job below
   # gates on it, so labeling with anything else is a no-op:
   #
-  #   `ci`      the PR gate (CI-LEAN, 10 Oct 2026; CI-COST round 2): two
-  #             jobs, `Changed areas` and `PR gate` (`lean-gate`), which
-  #             runs the alembic head, PII and gitleaks gates first, then the import
-  #             checks, the import-selected changed backend tests on Postgres
-  #             (tests/scm included), the MCP suite when MCP changed, and
-  #             tsc plus the related vitest files when the frontend changed.
-  #             No shard ever runs on a PR.
+  #   `ci`      the PR gate (CI-LEAN, 10 Oct 2026; CI-COST round 2;
+  #             CI-CLOUD-GATE, 4 Nov 2026): two jobs, `Changed areas` and
+  #             `PR gate` (`lean-gate`), fast checks only: the alembic head,
+  #             PII, Outline-guide and gitleaks gates, then the backend
+  #             import chains and `pytest --collect-only`, the MCP import
+  #             check, and tsc plus ESLint over the changed frontend files.
+  #             No test executes on a PR: the lane's cloud sandbox ran them
+  #             (scripts/crew-tests.sh) and posted `crew-tests:` on the PR.
   #   `ci-full` REFUSED (owner, 9 Oct 2026: no full suite per PR; CI-LEAN):
   #             it runs one job, `refuse-ci-full`, which removes the label and
   #             fails with the reason. The full suite runs on a release only.
@@ -55,15 +56,23 @@ on:
   # documentation/plans/ci/PLAN-ci-lean-10oct.md). The release below is the
   # run that tests main's head as a whole.
   # THE RELEASE. Run on main by the orchestrator after the owner has merged a
-  # batch:
+  # batch AND a full-suite cloud sweep passed on that exact head
+  # (CI-CLOUD-GATE; documentation/agents/cloud-lanes.md "Release sweep"):
   #   gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main
-  #   ... -f full_suite=true   the full sharded suite instead (~470 billed)
-  #   ... -f skip_tests=true   build + deploy only
+  #                            build + deploy only (the default: skip_tests=true)
+  #   ... -f skip_tests=false  the LEAN release tests on GitHub first (below)
+  #   ... -f full_suite=true   EMERGENCY: the full sharded suite on GitHub
+  #                            (~470 billed); wins over skip_tests
+  #   ... -f allow_unswept=true  EMERGENCY: skip_tests on a sha with no
+  #                            successful `release-sweep` commit status (the
+  #                            run summary says UNSWEPT RELEASE); without it
+  #                            `Changed areas` refuses such a release
   #   ... -f rebuild_all=true  build every image even if its tree is in the registry
-  # The LEAN release (CI-LEAN, 10 Oct 2026, the default): `changes` diffs main's
+  # The LEAN release (CI-LEAN, 10 Oct 2026; since CI-CLOUD-GATE only with
+  # skip_tests=false): `changes` diffs main's
   # head against the last successful release and one job, `Release tests`
   # (`lean-gate`), runs the core tier (sorento_crm_backend/tests/release_core.txt)
-  # plus every backend test file the batch reaches (the PR gate's import
+  # plus every backend test file the batch reaches (the import
   # selection), the MCP suite and tsc + the related vitest files when those
   # changed. A selection over the budget or a changed tests/conftest.py stays
   # in that one job with the core tier plus the batch's changed test files
@@ -76,17 +85,24 @@ on:
   # then build-and-deploy, which carries `environment: production` and
   # therefore PAUSES until the owner approves the deployment in GitHub
   # (environment "production", required reviewer jayson-odoo, deployment
-  # branches: main only). On any other ref a dispatch runs the tests only:
-  # build-images and build-and-deploy also require main.
+  # branches: main only). On any other ref a dispatch never ships:
+  # build-images and build-and-deploy also require main. There it tests only
+  # with skip_tests=false or full_suite=true (the default skip_tests needs a
+  # release-sweep status and then runs nothing).
   workflow_dispatch:
     inputs:
       skip_tests:
-        description: "Skip the test suite and go straight to build + deploy (main's head was already validated, e.g. a re-dispatch of a commit whose release tests passed)"
+        description: "Skip the test suite and go straight to build + deploy (the default: the release candidate passed its full-suite cloud sweep). false = the lean release tests on GitHub first"
+        required: false
+        default: true
+        type: boolean
+      full_suite:
+        description: "EMERGENCY full suite on GitHub: the full sharded suite, whatever skip_tests says; about 470 billed minutes (release 38099410256). Off by default: the cloud sweep runs the full suite"
         required: false
         default: false
         type: boolean
-      full_suite:
-        description: "Run the full sharded suite instead of the lean release tests (core tier + what the batch since the last release reaches); about 470 billed minutes (release 38099410256)"
+      allow_unswept:
+        description: "EMERGENCY: release with skip_tests although this sha has no successful release-sweep commit status (no full-suite cloud sweep passed on it). Off by default; the run summary names it"
         required: false
         default: false
         type: boolean
@@ -95,12 +111,6 @@ on:
         required: false
         default: false
         type: boolean
-      runner:
-        description: "Where this run's test and fast-gate jobs run: github = GitHub-hosted (the default, and where every PR run goes); auto = the test jobs go to the Mac mini runner when it is online and idle, else GitHub-hosted (fast-gate jobs stay GitHub-hosted); mac = the Mac mini runner (sorento-mac). Images and the deploy always run GitHub-hosted (amd64)."
-        required: false
-        default: github
-        type: choice
-        options: [github, auto, mac]
 
 # Cancels a PR's own superseded `ci` runs without touching anything else,
 # which is why the group key and cancel-in-progress both differ by event and
@@ -142,36 +152,33 @@ concurrency:
 env:
   IMAGE_REPO: jayson1004/sorento-crm
   RELEASE_TAG: 1.0.1
-  # Every job runs in UTC, as GitHub-hosted runners always did. Prod is expected to be UTC too: no
+  # Every job runs in UTC, as GitHub-hosted runners always do. Prod is expected to be UTC too: no
   # tracked Dockerfile, compose or deploy script sets TZ (python-slim / node-alpine default), though
-  # the server's own compose and .env are not in the repo. The self-hosted sorento-mac VM
-  # (colima-ci) is Asia/Kuala_Lumpur, which moved naive-time tests 8 h on release run 40680704839
-  # (RELEASE5-FIX).
+  # the server's own compose and .env are not in the repo. A runner VM in Asia/Kuala_Lumpur
+  # once moved naive-time tests 8 h (release run 40680704839, RELEASE5-FIX).
   TZ: UTC
 
-# Where the jobs run. GitHub-hosted (`ubuntu-latest`) for every job unless a
-# release dispatch asks otherwise (CI-HOSTED-RUNNERS, owner 29 Oct 2026: the
-# repo is public again, so GitHub-hosted minutes are free and jobs run in
-# parallel, where the one Mac runner queued 6-8 PR runs for hours; run
-# 40810095336 waited 109 min for 9 min of work). The repo variables
-# RUNNER_TESTS / RUNNER_FAST no longer route anything, and a PR run has no
-# inputs, so a PR gate never lands on a self-hosted runner (a self-hosted
-# runner on a public repo is what scripts/ci-runner/up.sh refuses).
-#   - workflow_dispatch input `runner`: github (default) | auto | mac.
-#     `mac` sends the test and fast-gate jobs to the self-hosted Linux arm64
-#     runner on the Mac mini (label `sorento-mac`). `auto` sends the test jobs
-#     there when a sorento-mac runner is online and idle, else GitHub-hosted;
-#     it is decided by the first step of `Changed areas` (no extra billed job)
-#     from the runners API with the RUNNERS_READ_TOKEN secret (fine-grained
-#     PAT, this repo only, Administration: read-only); no secret or a failed
-#     call = GitHub-hosted. Fast-gate jobs follow `mac` only.
-#   - Every job that can land on the Mac declares its token: contents read,
+# Where the jobs run, and what they run (CI-CLOUD-GATE, owner 4 Nov 2026: "yes
+# cloud CI"; documentation/plans/ci/PLAN-ci-cloud-gate-04nov.md). The repo is
+# private, so GitHub-hosted minutes bill against 3,000 a month.
+#   - Every job is GitHub-hosted (`ubuntu-latest`). No job runs on the Mac
+#     mini runner any more: it ran the release suite in 5-6 h
+#     (2 Nov, 28 jobs one at a time) and stays free. The `runner` dispatch
+#     input and its runners-API token read are gone.
+#   - A `ci` PR runs fast checks only (`PR gate`): no pytest execution (the
+#     whole-suite `--collect-only` is an import check), no vitest, no Postgres
+#     or Redis container. Tests run in the lane's cloud sandbox instead
+#     (scripts/crew-tests.sh, documentation/agents/cloud-lanes.md), which posts
+#     a `crew-tests:` comment on the PR for the exact head.
+#   - A release dispatch builds and deploys without tests by default
+#     (`skip_tests` defaults to true): the release candidate passed a
+#     full-suite cloud sweep first. `full_suite=true` is the emergency full
+#     suite on GitHub (off by default, about 470 billed minutes).
+#   - Every job that runs tests or gates declares its token: contents read,
 #     plus the label removal the PR gate and the ci-full refusal need. The
-#     repo default is write-all, and the Mac runner keeps state between jobs.
-#   - build-images, build-and-deploy, validate-backend and validate-mcp stay
-#     GitHub-hosted: prod images are amd64, the Mac runners are arm64.
-# Any other value lands on GitHub-hosted. Pinned by
-# sorento_crm_backend/tests/test_ci_runner_routing.py.
+#     repo default is write-all.
+# Pinned by sorento_crm_backend/tests/test_ci_cloud_gate.py and
+# test_ci_runner_routing.py.
 jobs:
   # Fast pre-check: fail in under a minute when the alembic migration graph
   # has more than one head, instead of consuming a 21-35 minute full-CI cycle
@@ -184,7 +191,7 @@ jobs:
   # revision/down_revision graph, and fails unless exactly one head remains.
   check-migration-heads:
     name: Single alembic head (fast gate)
-    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 20
@@ -224,7 +231,7 @@ jobs:
   # only commits that passed it there.
   pii-guard:
     name: PII guard (fast gate)
-    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 20
@@ -291,12 +298,12 @@ jobs:
   #    area, or a change to it could never be exercised by the PR that makes
   #    it.
   #
-  # 3. `skip_tests` (release input): the orchestrator dispatching a release
-  #    can declare main's head already validated (a green merge-queue run on
-  #    that very commit, say). Every area flag is then false, the 16 test
-  #    jobs skip, and the run is build-images + build-and-deploy +
-  #    notify-owner (about 15 job-minutes instead of ~190). It is the
-  #    dispatcher's call, made per release; nothing here infers it.
+  # 3. `skip_tests` (release input, default true since CI-CLOUD-GATE): main's
+  #    head was validated by the full-suite cloud sweep on that very commit.
+  #    Every area flag is then false, the test jobs skip, and the run is
+  #    build-images + build-and-deploy (about 15 job-minutes instead of
+  #    ~190). `full_suite=true` wins over it (the emergency full suite on
+  #    GitHub). Nothing here infers either: the dispatcher sets them.
   #
   # 4. `backend_tests`: the backend test FILES a PULL REQUEST changes
   #    (`BACKEND_TESTS_RE`: `sorento_crm_backend/tests/**/test_*.py`, tests/scm
@@ -355,7 +362,7 @@ jobs:
   # the signal to extend NOT_DOCS_RE below.
   changes:
     name: Changed areas
-    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     # Same gate as check-migration-heads above, and for the same reason: this
     # is the other root job (no `needs`), so skipping it here skips every job
@@ -377,6 +384,8 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      # The release-sweep commit status (step "Release sweep passed on this sha").
+      statuses: read
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -402,38 +411,46 @@ jobs:
       base_sha: ${{ steps.filter.outputs.base_sha }}
       # A PR whose merge tree already passed a PR gate (CI-COST round 2).
       validated: ${{ steps.filter.outputs.validated }}
-      # Where the test jobs run (see the routing note above `jobs:`).
-      tests_runner: ${{ steps.runner.outputs.runner }}
     steps:
-      # First, so every early exit of the area filter below still routes the
-      # test jobs. Only ever emits sorento-mac or ubuntu-latest.
-      - name: Pick the test runner
-        id: runner
+      # A release that runs no tests on GitHub (skip_tests, the default) ships
+      # only a sha the full-suite cloud sweep passed on (owner, 4 Nov 2026,
+      # CI-CLOUD-GATE answer b). Crew sets the `release-sweep` commit status to
+      # success on the swept sha after reading the sweep's green `crew-tests:`
+      # comment (documentation/agents/cloud-lanes.md "Release sweep"). Without
+      # it this step fails `Changed areas`, so nothing builds or deploys.
+      # `allow_unswept` is the visible emergency override; `full_suite` and
+      # skip_tests=false test on GitHub instead and need no sweep. A failed
+      # lookup fails too.
+      - name: Release sweep passed on this sha
+        if: github.event_name == 'workflow_dispatch'
         env:
-          OVERRIDE: ${{ inputs.runner }}
-          # This step only: lists the repo's self-hosted runners for `auto`.
-          GH_TOKEN: ${{ secrets.RUNNERS_READ_TOKEN }}
-          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          SKIP_TESTS: ${{ inputs.skip_tests }}
+          FULL_SUITE: ${{ inputs.full_suite }}
+          ALLOW_UNSWEPT: ${{ inputs.allow_unswept }}
         run: |
-          mac=sorento-mac
-          mode="$OVERRIDE"
-          runner=ubuntu-latest
-          case "$mode" in
-            mac|sorento-mac) runner=$mac; why="set to mac" ;;
-            ""|github|ubuntu-latest) why="github (a PR run, or no override)" ;;
-            auto)
-              if [ -z "${GH_TOKEN:-}" ]; then
-                why="auto: no RUNNERS_READ_TOKEN secret"
-              elif idle=$(gh api "repos/$REPO/actions/runners?per_page=100" \
-                  --jq "[.runners[] | select(.status == \"online\" and (.busy | not) and any(.labels[]; .name == \"$mac\"))] | length"); then
-                if [ "${idle:-0}" -ge 1 ]; then runner=$mac; why="auto: $idle idle Mac runner(s)"; else why="auto: no idle Mac runner online"; fi
-              else
-                why="auto: runners API call failed"
-              fi ;;
-            *) why="unknown value '$mode'" ;;
-          esac
-          echo "::notice title=Test runner::$runner ($why)"
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if [ "$FULL_SUITE" = "true" ] || [ "$SKIP_TESTS" != "true" ]; then
+            echo "this release runs its tests on GitHub (full_suite=$FULL_SUITE, skip_tests=$SKIP_TESTS): no sweep needed"
+            exit 0
+          fi
+          state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/status" \
+                    --jq '[.statuses[] | select(.context == "release-sweep")][0].state // "missing"') \
+            || state="lookup failed"
+          if [ "$state" = "success" ]; then
+            echo "::notice title=Release sweep::release-sweep is success on $SHA"
+            echo "Release sweep: success on \`$SHA\`." >> "$summary"
+            exit 0
+          fi
+          if [ "$ALLOW_UNSWEPT" = "true" ]; then
+            echo "::warning title=UNSWEPT RELEASE::allow_unswept=true: $SHA ships without a passed cloud sweep (release-sweep: $state)"
+            echo "## UNSWEPT RELEASE: allow_unswept=true, release-sweep on \`$SHA\` is $state. No test suite ran on this sha." >> "$summary"
+            exit 0
+          fi
+          echo "::error title=No release sweep::release-sweep on $SHA is $state. Run the full-suite cloud sweep on this sha (crew then sets the status), or dispatch with -f full_suite=true, or with -f allow_unswept=true as a visible emergency"
+          echo "Release refused: release-sweep on \`$SHA\` is $state." >> "$summary"
+          exit 1
 
       - name: Detect changed areas
         id: filter
@@ -612,10 +629,10 @@ jobs:
             echo "docs-only change: no service area counts as changed"
             exit 0
           fi
-          # A release dispatched with skip_tests: no test job runs, only the
-          # build and the deploy, which gate on the event rather than on the
-          # areas.
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$SKIP_TESTS" = "true" ]; then
+          # A release dispatched with skip_tests (the default): no test job
+          # runs, only the build and the deploy, which gate on the event
+          # rather than on the areas. full_suite wins over it.
+          if [ "$EVENT" = "workflow_dispatch" ] && [ "$SKIP_TESTS" = "true" ] && [ "$FULL_SUITE" != "true" ]; then
             for area in backend frontend mcp scm; do echo "$area=false"; done | tee -a "$GITHUB_OUTPUT"
             printf '%s\n' "backend_tests=" "backend_code=" >> "$GITHUB_OUTPUT"
             echo "release with skip_tests=true: no test job runs"
@@ -690,47 +707,24 @@ jobs:
             printf '%s\n' "lean=true" "base_sha=$base_sha" | tee -a "$GITHUB_OUTPUT"
           fi
 
-      # Only on a PR that changes backend code: the selection reads the
-      # backend sources, and nothing else in this job needs a checkout.
-      # Sparse: app/, scripts/ and tests/ are all the script parses. On a
-      # PR the PR head with its history (sparse means blob:none, so commits
-      # and trees only), merged with main's head in the next step: the
-      # selection reads the tree the PR gate tests, not GitHub's merge
-      # commit (CI-STALE-MERGE-REF). The `ref` is empty off a PR, so a
-      # release checks out as before.
+      # Only on a lean release (CI-CLOUD-GATE: a PR runs no test, so its
+      # selection happens in the lane's sandbox, scripts/crew-tests.sh). The
+      # selection reads the backend sources; nothing else in this job needs a
+      # checkout. Sparse: app/, scripts/ and tests/ are all the script parses.
       - name: Checkout backend sources for test selection
-        if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
+        if: steps.filter.outputs.lean == 'true'
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           sparse-checkout: |
             sorento_crm_backend/app
             sorento_crm_backend/scripts
             sorento_crm_backend/tests
 
-      # The same shell as the PR gate's step of this name (a test holds the
-      # two equal).
-      - name: Merge main's current head into the PR head
-        if: github.event_name == 'pull_request' && (steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')
-        run: |
-          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
-          main=$(git rev-parse refs/remotes/origin/main)
-          head=$(git rev-parse HEAD)
-          # The runner has no git identity; the merge commit is local, never pushed.
-          if ! git -c user.name=sorento-ci -c user.email=ci@example.invalid merge --no-edit origin/main; then
-            echo "::error title=PR head does not merge into main::$head conflicts with main $main: merge origin/main into the branch, resolve, push, then re-label"
-            git diff --name-only --diff-filter=U | sed 's/^/  conflict: /'
-            exit 1
-          fi
-          echo "testing PR head $head merged into main $main: tree $(git rev-parse 'HEAD^{tree}')"
-          echo "main=$main" >> "$GITHUB_OUTPUT"
-
       # Point 5 of the job comment. Stdlib-only script on the runner's own
       # python3; it prints the selection, so the job log shows what runs.
       - name: Select backend tests by import
         id: select
-        if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
+        if: steps.filter.outputs.lean == 'true'
         env:
           BACKEND_CODE: ${{ steps.filter.outputs.backend_code }}
           BACKEND_TESTS: ${{ steps.filter.outputs.backend_tests }}
@@ -751,6 +745,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.backend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -841,6 +837,8 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.mcp == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -952,7 +950,7 @@ jobs:
     name: Backend test suite - SCM (Postgres, xdist)
     needs: [changes]
     if: needs.changes.outputs.scm == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 90
@@ -1072,7 +1070,7 @@ jobs:
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
         env:
-          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
+          XDIST_WORKERS: auto
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests; shard ${{ matrix.shard }} of 3"
@@ -1110,7 +1108,7 @@ jobs:
             -m serial_ddl $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist (`-n auto`,
-  # 2 workers on the Mac runner: see XDIST_WORKERS on the xdist step).
+  # see XDIST_WORKERS on the xdist step).
   #
   # It replaced a serial job of the same name because that job was the whole
   # workflow's critical path: the same suite took about 21.5 minutes serially and
@@ -1194,7 +1192,7 @@ jobs:
       needs.changes.outputs.backend == 'true'
       && github.event_name != 'pull_request'
       && needs.changes.outputs.lean != 'true'
-    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 90
@@ -1202,7 +1200,7 @@ jobs:
     # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
     # database is tuned. Ten runners in parallel (six until 11 Oct 2026, when
     # six shards ran 29-59 min each on the private-repo runners), each still
-    # xdist across its own cores (2 workers on the Mac). pytest-split assigns
+    # xdist across its own cores. pytest-split assigns
     # every collected test to exactly one group, so the ten groups together
     # are the full suite and no test runs twice or is dropped.
     #
@@ -1325,11 +1323,10 @@ jobs:
       # documentation/reference/PR-CHECKLIST.md ("Test cost") to justify a new
       # slow test rather than discovering it three weeks later as wall clock.
       #
-      # XDIST_WORKERS: two workers on the Mac runner, `auto` elsewhere
-      # (CI-MAC-CAP, 18 Oct 2026). The Mac's VM is 4 CPU, 6 GiB, no swap
-      # (scripts/ci-runner/up.sh), so `auto` is 4 workers at about 1.4 GB each
-      # beside Postgres and Redis: release run 39126899668 lost four workers of
-      # shard 5 to the OOM killer and shard 7 hung to the 90 min cap.
+      # XDIST_WORKERS: `auto` (every job is GitHub-hosted since CI-CLOUD-GATE;
+      # the Mac's 2-worker cap, CI-MAC-CAP, went with the Mac routing). Release
+      # run 39126899668 lost four workers of shard 5 to the OOM killer on a
+      # 6 GiB VM and shard 7 hung to the 90 min cap, so
       # `--max-worker-restart 0` ends the session on the first crashed worker
       # instead of xdist's default 4 x workers respawns into the same
       # pressure, and `-p tests._xdist_crash_guard` makes that exit non-zero even
@@ -1340,7 +1337,7 @@ jobs:
         if: matrix.shard != 'serial'
         working-directory: sorento_crm_backend
         env:
-          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
+          XDIST_WORKERS: auto
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
           echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 10"
@@ -1426,46 +1423,42 @@ jobs:
             -m serial_ddl --ignore-glob='tests/test_migration_*.py' \
             $IGNORES --ignore=tests/scm tests/
 
-  # THE PR GATE (CI-LEAN, 10 Oct 2026): one job, check name `PR gate`, which
-  # the `protect-main-branch` ruleset requires (owner Q3). Before it, a `ci`
-  # PR ran up to 15 jobs (validate backend and MCP images, the SCM shards,
-  # four vitest shards, the type-check, the changed tests, a label job and a
-  # gate job), each billed rounded up and each paying its own setup. Now
-  # `Changed areas` runs first and everything else runs here, in sequence, on
-  # one runner, the alembic head, PII and gitleaks gates first (CI-COST
-  # round 2):
+  # THE PR GATE (CI-LEAN, 10 Oct 2026; CI-CLOUD-GATE, 4 Nov 2026): one job,
+  # check name `PR gate`, which the `protect-main-branch` ruleset requires
+  # (owner Q3). On a pull request it runs FAST CHECKS ONLY, in sequence:
   #
   # - the `ci` label is removed first (one-shot trigger: adding it again
   #   re-runs on the PR's current head; a push alone never does);
-  # - backend changed: the app and worker import chains, `pytest
-  #   --collect-only` over every test file on a release only (on a PR the
-  #   selected files' own run collects them), the in-image regression guards;
-  # - the backend tests `changes` selected (`backend_tests`: the changed test
-  #   files plus every test file that imports a changed module, tests/scm
-  #   included, up to 3600 estimated CPU-s; above that the PR's own changed
-  #   test files, and the whole selection runs in the release), on Postgres +
-  #   Redis, in the shards' two-pass split (see the run step);
-  # - MCP changed: its import chain and its test suite;
-  # - frontend changed: `tsc --noEmit` and `vitest run --changed <base>`, the
-  #   vitest files related to what the PR changed (vitest's own module
-  #   graph), instead of the sharded whole suite.
+  # - main's head merged in, then the alembic head, PII, Outline-guide and
+  #   gitleaks gates;
+  # - backend changed: the app and worker import chains and `pytest
+  #   --collect-only` over every test file (imports, executes nothing);
+  # - MCP changed: its import chain;
+  # - frontend changed: `tsc --noEmit` and ESLint over the changed files.
   #
-  # The image builds the old validate jobs did are not repeated per PR: the
-  # release builds every changed image (build-images) before it deploys.
+  # No test executes on a PR (CI-CLOUD-GATE: the repo is private, and a PR
+  # gate that ran the selected tests, the forms chains and vitest billed up
+  # to 60+ minutes). The lane ran them in its cloud sandbox with
+  # scripts/crew-tests.sh on the exact head and posted `crew-tests:` on the
+  # PR (documentation/agents/cloud-lanes.md). The Postgres and Redis service
+  # containers do not start on a PR (an empty `image` skips a service).
+  #
+  # As `Release tests` (a lean release, skip_tests=false) it runs the import
+  # checks plus the core tier and the batch's import selection on Postgres +
+  # Redis in the shards' two-pass split, the regression guards, the MCP
+  # suite, and tsc + vitest --changed + the source-scanning guards.
   #
   # `always()` plus the first step: a red fast gate must turn this check red,
   # never "skipped" (a ruleset accepts a skipped required check).
   #
-  # The list is trimmed first: a deleted or renamed-away path is in the PR's
-  # file list but not in the checkout, and a ci_excluded.txt entry asserts
-  # against business data an empty database does not hold (that file says
-  # why); either would fail pytest on collection, not on the test. An empty
-  # list after trimming is a pass with nothing run, printed as such.
+  # The release list is trimmed first: a deleted or renamed-away path is in
+  # the batch's file list but not in the checkout, and a ci_excluded.txt
+  # entry asserts against business data an empty database does not hold
+  # (that file says why); either would fail pytest on collection, not on the
+  # test. An empty list after trimming is a pass with nothing run.
   #
-  # timeout-minutes 90: 3600 CPU-s under xdist on 4 vCPUs is about 15 min
-  # (more on the slower private runners, about 30 at the Mac's 2 workers)
-  # plus setup and the frontend checks; the cap is for a hung runner, sized
-  # like the shards' (see test-backend).
+  # timeout-minutes 90: sized for the release's 3600 CPU-s selection under
+  # xdist plus setup; the cap is for a hung runner.
   lean-gate:
     name: ${{ github.event_name == 'pull_request' && 'PR gate' || 'Release tests' }}
     needs: [changes, check-migration-heads]
@@ -1473,7 +1466,7 @@ jobs:
       always()
       && ((github.event_name == 'pull_request' && github.event.label.name == 'ci')
       || (github.event_name == 'workflow_dispatch' && needs.changes.outputs.lean == 'true'))
-    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
@@ -1481,7 +1474,7 @@ jobs:
       actions: read
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: ${{ github.event_name != 'pull_request' && 'pgvector/pgvector:pg16' || '' }}
         env:
           POSTGRES_USER: sorento
           POSTGRES_PASSWORD: sorento
@@ -1493,7 +1486,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: ${{ github.event_name != 'pull_request' && 'redis:7-alpine' || '' }}
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
@@ -1549,11 +1542,16 @@ jobs:
       # is built when the head is pushed and not rebuilt when main moves; the
       # next step merges main's head now (CI-STALE-MERGE-REF). The `ref` is
       # empty off a PR, so a release checks out as before.
+      # persist-credentials false (CI-CLOUD-GATE security review): the job
+      # token can edit PRs (the label removal above), and every later step runs
+      # PR-controlled code (npm install scripts, the PR's eslint config and
+      # conftest). Only the main fetch below gets the token, for that command.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: ${{ (github.event_name == 'pull_request' || needs.changes.outputs.frontend == 'true') && '0' || '1' }}
+          persist-credentials: false
 
       # Before every gate, so the alembic head check, the tests, tsc, vitest
       # and the validated-tree marker all see what would land now: run
@@ -1566,8 +1564,13 @@ jobs:
       - name: Merge main's current head into the PR head
         id: merge
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          # The checkout keeps no credentials: the token goes to this one fetch.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
           main=$(git rev-parse refs/remotes/origin/main)
           head=$(git rev-parse HEAD)
           # The runner has no git identity; the merge commit is local, never pushed.
@@ -1616,6 +1619,7 @@ jobs:
 
       - name: Select the changed test files to run
         id: select
+        if: github.event_name != 'pull_request'
         run: |
           # Repo-relative paths in, sorento_crm_backend-relative paths out:
           # pytest runs from that directory, like the shards.
@@ -1640,32 +1644,6 @@ jobs:
             echo "no changed test file left to run"
           fi
           echo "files=$run" >> "$GITHUB_OUTPUT"
-
-      # FORMS-REGRESSION (owner, 30 Oct 2026: three forms regressions reached main
-      # through PRs that ran only their own changed tests). A PR that touches the
-      # forms lifecycle code (the form services, routes and models, the SLA,
-      # form-action, handling-lock, revision, outbox and Respond send paths, or the
-      # chains themselves) runs every forms chain below, whatever the import
-      # selection picked. The diff is main's head against the merged tree, the
-      # change this gate tests. A step of the PR gate, not a job: the PR runs one
-      # job (CI-COST round 2). Release runs get the chains from release_core.txt.
-      - name: Detect a forms lifecycle change
-        id: forms
-        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
-        env:
-          MAIN: ${{ steps.merge.outputs.main }}
-        run: |
-          FORMS_RE='^(sorento_crm_backend/(app/(api/v1/(procurement|complaints|sla|public|projects|dealer_kit)/|services/(procurement_service|complaints?_[a-z_]+|portal_[a-z_]+|form_[a-z_]+|handling_lock_service|sla_[a-z_]+|submission_status|revision_fence|response_gate|price_tag_[a-z_]+|sample_request_service|project_registration_service|respond_messaging_service|respond_identifier|integration_service|notification_service|queue_service|user_service|coverage_subscription_service|crm_chat_outbound_webhook)\.py$|services/dealer_kit/|schemas/(procurement|complaints|sla|portal|price_tag|sample_request|projects)[a-z_]*\.py$|models/(procurement|complaints|sla|portal|price_tag|sample_request|projects|access|integration|user)\.py$|tasks/respond_io_tasks\.py$)|tests/(test_forms_chain_[a-z_]+|_forms_chain_support|_project_registration_support|_sample_request_seed|_portal_grant|_pg_fixture|conftest|test_form_handling_lock_routes|test_sla_due_escalations|test_complaint_status_guard)\.py$)|\.github/workflows/deploy\.yml$)'
-          files=$(git diff --name-only --no-renames "$MAIN" HEAD)
-          # Here-string, not a pipe: see flag() in job `changes`.
-          hits=$(grep -E "$FORMS_RE" <<< "$files" || true)
-          if [ -n "$hits" ]; then
-            echo "forms lifecycle paths changed, the forms chains run:"; printf '%s\n' "$hits" | sed 's/^/  /'
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "no forms lifecycle path changed"
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Set up Python
         if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true'
@@ -1692,22 +1670,24 @@ jobs:
           python -c "from app.main import app; print('import ok')"
           python -c "import worker; from app.scheduler.task_scheduler import start_scheduler; print('worker import chain ok')"
 
-      # Release only (CI-COST round 2): on a PR the selected files' own run
-      # collects them, and the whole-suite collect billed ~1.8 min of every
-      # PR gate (38074897990). On a release it is the import check for every
-      # test file, selected or not.
+      # The import check for every test file, selected or not. On a PR too
+      # since CI-CLOUD-GATE: no selected test runs there any more, so this is
+      # what still catches a test file that no longer imports (~1.8 min,
+      # 38074897990). Collects, never executes.
       - name: Pytest collect-only (catches import errors in tests)
-        if: needs.changes.outputs.backend == 'true' && github.event_name != 'pull_request'
+        if: needs.changes.outputs.backend == 'true'
         working-directory: sorento_crm_backend
         run: python -m pytest --collect-only -q -p no:cacheprovider
 
+      # Release only (CI-CLOUD-GATE): on a PR the lane's crew-tests.sh runs
+      # them in its sandbox.
       - name: Pytest regression guards (executing gate)
-        if: needs.changes.outputs.backend == 'true'
+        if: github.event_name != 'pull_request' && needs.changes.outputs.backend == 'true'
         working-directory: sorento_crm_backend
         run: python -m pytest -q -p no:cacheprovider tests/test_lessons_learnt_regressions.py
 
       - name: Relax Postgres durability for the test run
-        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
+        if: github.event_name != 'pull_request' && steps.select.outputs.files != ''
         run: |
           PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
           $PSQL -c "ALTER SYSTEM SET fsync = off" \
@@ -1724,16 +1704,16 @@ jobs:
                 -c "SHOW max_locks_per_transaction"
 
       - name: Bootstrap the database
-        if: steps.select.outputs.files != '' || steps.forms.outputs.run == 'true'
+        if: github.event_name != 'pull_request' && steps.select.outputs.files != ''
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
 
       - name: Run the changed test files (executing gate)
-        if: steps.select.outputs.files != ''
+        if: github.event_name != 'pull_request' && steps.select.outputs.files != ''
         working-directory: sorento_crm_backend
         env:
           FILES: ${{ steps.select.outputs.files }}
-          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
+          XDIST_WORKERS: auto
         run: |
           # The shards' split. tests/scm and the rest run as separate pytest
           # sessions, as on the shards: several main-tree files import
@@ -1764,26 +1744,9 @@ jobs:
           [ -z "$migrations" ] || run -p no:xdist --durations=10 $migrations
           exit "$rc"
 
-      # The forms chains (see "Detect a forms lifecycle change"), minus any file
-      # the step above already ran. About 90 tests, under 3 minutes under xdist.
-      - name: Run the forms lifecycle chains (executing gate)
-        if: steps.forms.outputs.run == 'true'
-        working-directory: sorento_crm_backend
-        env:
-          FILES: ${{ steps.select.outputs.files }}
-          XDIST_WORKERS: ${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}
-        run: |
-          chains=""
-          for f in tests/test_forms_chain_*.py tests/test_form_handling_lock_routes.py \
-                   tests/test_sla_due_escalations.py tests/test_complaint_status_guard.py; do
-            case " $FILES " in *" $f "*) echo "already ran: $f" ;; *) chains="$chains $f" ;; esac
-          done
-          [ -n "$chains" ] || { echo "every forms chain already ran above"; exit 0; }
-          python -m pytest -q -p no:cacheprovider -n "$XDIST_WORKERS" --dist load --max-worker-restart 0 -p tests._xdist_crash_guard --durations=10 $chains
-
-      # validate-mcp's checks without the image: the package in this Python,
-      # its real entrypoint's imports, then its test suite.
-      - name: MCP imports and test suite (executing gate)
+      # validate-mcp's checks without the image: the package in this Python
+      # and its real entrypoint's imports; the test suite on a release only.
+      - name: MCP imports
         if: needs.changes.outputs.mcp == 'true'
         env:
           CRM_BASE_URL: http://localhost:8000
@@ -1791,7 +1754,13 @@ jobs:
         run: |
           pip install -e "sorento_crm_mcp[dev]"
           python -c "from importlib.metadata import version; from sorento_crm_mcp.server import create_mcp_app; print('mcp', version('mcp'), 'entrypoint imports ok')"
-          python -m pytest sorento_crm_mcp/tests -q -p no:cacheprovider
+
+      - name: MCP test suite (executing gate)
+        if: github.event_name != 'pull_request' && needs.changes.outputs.mcp == 'true'
+        env:
+          CRM_BASE_URL: http://localhost:8000
+          EXTERNAL_API_KEY: ci-dummy
+        run: python -m pytest sorento_crm_mcp/tests -q -p no:cacheprovider
 
       - name: Set up Node
         if: needs.changes.outputs.frontend == 'true'
@@ -1818,8 +1787,23 @@ jobs:
           npx next typegen
           npm run typecheck
 
+      # ESLint over the frontend files this PR changes (added, copied,
+      # modified or renamed; a deleted file has nothing to lint), against the
+      # main it merged. Changed files only: the whole tree is not lint-clean
+      # yet, and a PR answers for what it touches.
+      - name: Lint the changed frontend files
+        if: github.event_name == 'pull_request' && needs.changes.outputs.frontend == 'true'
+        working-directory: sorento_crm_frontend
+        env:
+          MAIN: ${{ steps.merge.outputs.main }}
+        run: |
+          set -o pipefail
+          git diff -z --name-only --relative --diff-filter=ACMR "$MAIN" HEAD -- \
+              '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' \
+            | xargs -0 -r npx eslint --no-warn-ignored --
+
       - name: Run the vitest files related to the change (executing gate)
-        if: needs.changes.outputs.frontend == 'true'
+        if: github.event_name != 'pull_request' && needs.changes.outputs.frontend == 'true'
         working-directory: sorento_crm_frontend
         env:
           # On a PR the main it merged: the PR's own change, not main's moves
@@ -1835,7 +1819,7 @@ jobs:
       # pipefail + `xargs -r`: a failed or empty selection must never fall
       # through to a bare `vitest run`, which is the whole suite.
       - name: Run the source-scanning guard tests (always)
-        if: needs.changes.outputs.frontend == 'true'
+        if: github.event_name != 'pull_request' && needs.changes.outputs.frontend == 'true'
         working-directory: sorento_crm_frontend
         run: |
           set -o pipefail
@@ -1844,7 +1828,8 @@ jobs:
       # A release whose tests passed leaves a marker for its tree, so a
       # re-dispatch of the same tree (a rejected approval, a deploy hiccup)
       # skips the tests (`changes`, the workflow_dispatch case). A PR gate
-      # that passed does the same for its merge tree under its own prefix,
+      # whose fast checks passed (no tests since CI-CLOUD-GATE) does the same
+      # for its merge tree under its own prefix,
       # `pr-validated-tree-` (CI-COST round 2), so a re-label on that tree
       # is a no-op and a release never reads it. `success()`: every step
       # above passed. One byte, kept 30 days.
@@ -1868,7 +1853,7 @@ jobs:
     name: Validate frontend (vitest)
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     # A shard measured about 8.5 min over 29 Sep-5 Oct, then grew to 17.7-18.9
@@ -1933,7 +1918,7 @@ jobs:
     name: Type-check frontend
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true' && github.event_name != 'pull_request' && needs.changes.outputs.lean != 'true'
-    runs-on: ${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 20
@@ -2003,8 +1988,8 @@ jobs:
     needs: [changes]
     # Same condition as build-and-deploy: only build for real on a release
     # (workflow_dispatch on main). A push to main builds nothing (see the
-    # `push` trigger comment), a dispatch on any other ref runs the suite
-    # only, and a PR run still needs the images to exist for its own
+    # `push` trigger comment), a dispatch on any other ref runs at most the
+    # tests (skip_tests=false or full_suite=true), and a PR run still needs the images to exist for its own
     # validate-backend/validate-mcp legs, which build separately (load:
     # true, no push) and are unaffected by this job's `if`.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
@@ -2071,6 +2056,7 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
           tags: |
             ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
             ${{ env.IMAGE_REPO }}:frontend-tree-${{ steps.decide.outputs.frontend_tree }}
@@ -2355,7 +2341,7 @@ jobs:
   # run on the same PR. The full suite runs on a release only.
   refuse-ci-full:
     name: ci-full refused (release-only)
-    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.event_name == 'pull_request' && github.event.label.name == 'ci-full'
     permissions:
@@ -2400,7 +2386,7 @@ jobs:
   # sorento_crm_backend/tests/test_ci_docs_only_filter.py.
   ci-gate:
     name: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'ci' && 'CI gate') || 'CI gate (full)' }}
-    runs-on: ${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     timeout-minutes: 20

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query, Session
 
@@ -89,13 +89,56 @@ def _audit_deletion(
         )
 
 
+def assert_unused(db: Session, template_ids: list[str]) -> None:
+    """409 while a spec sheet still draws from one of these templates (cover, page or single
+    template, or any of its versions). Counted among the template's own company's sheets. A
+    deleted template would leave the sheet unable to show or export itself."""
+    from app.models.projects import ProjectQuotationSpecSheet as Sheet
+
+    ids = [str(i) for i in template_ids if i]
+    if not ids:
+        return
+    rows = db.query(TagTemplate).filter(TagTemplate.id.in_(ids)).all()
+    for row in rows:
+        version_ids = [
+            v.id for v in db.query(TagTemplateVersion.id).filter(TagTemplateVersion.template_id == row.id)
+        ]
+        uses = or_(
+            Sheet.cover_template_id == row.id,
+            Sheet.page_template_id == row.id,
+            Sheet.single_page_template_id == row.id,
+            *(
+                [
+                    Sheet.cover_version_id.in_(version_ids),
+                    Sheet.page_version_id.in_(version_ids),
+                    Sheet.single_version_id.in_(version_ids),
+                ]
+                if version_ids
+                else []
+            ),
+        )
+        count = db.query(func.count(Sheet.id)).filter(uses, Sheet.company_id == row.company_id).scalar() or 0
+        if count:
+            who = "This template" if len(rows) == 1 else f'"{row.name}"'
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{who} is used by {count} spec sheet{'s' if count != 1 else ''}. "
+                    "Change their templates first."
+                ),
+                code="tag_template_in_use",
+            )
+
+
 def delete_template(
     db: Session, template_id: str, *, requested_by_id: Optional[str] = None
 ) -> dict:
-    """Delete one template, or 404 if this company cannot see it."""
+    """Delete one template, or 404 if this company cannot see it, or 409 while a spec sheet uses
+    it."""
     row = _scoped(db).filter(TagTemplate.id == str(template_id)).first()
     if row is None:
         raise _not_found()
+    assert_unused(db, [row.id])
     _audit_deletion(db, [row], requested_by_id=requested_by_id, batch_size=1)
     db.delete(row)
     db.commit()
@@ -118,6 +161,7 @@ def bulk_delete(
         # Refused before anything is touched - a partial batch delete would be
         # a data-loss surprise nobody selected on purpose.
         raise _not_found()
+    assert_unused(db, [row.id for row in rows])
     _audit_deletion(db, rows, requested_by_id=requested_by_id, batch_size=len(rows))
     for row in rows:
         db.delete(row)

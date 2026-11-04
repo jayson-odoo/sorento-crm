@@ -636,6 +636,26 @@ export function FulfilmentBoardListView({
         enableSorting: true,
       },
       {
+        // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): the SO list's own Project column, right
+        // after Customer, so every sales order on the board names its project.
+        id: 'project',
+        meta: { headerTitle: 'Project' },
+        // The SO list's Project (`so_project_label`), never the board's own note fallback.
+        accessorFn: (row) => row.so_project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) =>
+          row.original.so_project_label ? (
+            <span className="block truncate" title={row.original.so_project_label}>
+              {row.original.so_project_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 180,
+        minSize: 130,
+        enableSorting: true,
+      },
+      {
         id: 'product',
         meta: { headerTitle: 'Product' },
         accessorFn: (row) => row.item_code,

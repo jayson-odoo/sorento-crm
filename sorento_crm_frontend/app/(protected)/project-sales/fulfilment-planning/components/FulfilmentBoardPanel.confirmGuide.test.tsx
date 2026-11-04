@@ -2255,7 +2255,9 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     expect(pressDryRuns()).toHaveLength(0);
   });
 
-  it('after a save the sheet stays up with the last words; only Next waits for the new ones', async () => {
+  // CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026): Next no longer waits for the words; only the
+  // Confirm step does (see that lane's own block below).
+  it('after a save the sheet stays up with the last words while the new ones are read', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     dryRunAnswers({ 'pso-so-1': { email: [{ so_line_id: 'pl-1-3', remark: 'DELAY' }] } });
     await mountWith(boardWithRemark('ORDER', { verdict: 'approved' }, '2026-11-02T01:00:00Z'), ['SO000001']);
@@ -2278,10 +2280,13 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
     fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(1));
-    // Still the sheet, never the loading skeleton, and Next waits.
+    // Still the sheet, never the loading skeleton, and the page says the words are being read.
     expect(screen.getByTestId('split-line-3')).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
     answer({ results: [{ pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'URGENT' }] }] });
+    await waitFor(() =>
+      expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 
@@ -2299,10 +2304,15 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     );
     await mountWith(board, ['SO000001', 'SO000002']);
     await openConfirmGuide();
-    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
-    const [body] = emailDryRuns()[0] as [{ quiet: boolean; orders: { pso_id: string }[] }];
-    expect(body.quiet).toBe(true);
-    expect(body.orders.every((order) => Boolean(order.pso_id))).toBe(true);
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // CONFIRM-DIALOG-SPEED: one quiet run per page, each carrying its one order, never an
+    // order with no planning record.
+    for (const [body] of emailDryRuns() as [{ quiet: boolean; orders: { pso_id: string }[] }][]) {
+      expect(body.quiet).toBe(true);
+      expect(body.orders).toHaveLength(1);
+      expect(body.orders.every((order) => Boolean(order.pso_id))).toBe(true);
+    }
   });
 });
 
@@ -2357,20 +2367,18 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     expect(emailDryRuns()).toHaveLength(2);
   });
 
-  it('the email dry run carries only the order on screen; the next page runs its own once', async () => {
+  // CONFIRM-DIALOG-SPEED (crew ruling S2, 3 Nov 2026): every page's run starts as the guide
+  // opens, one at a time in page order; paging never runs one again nor cancels one.
+  it('every page runs its own email dry run from the open, in page order, once', async () => {
     serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
     await mountWith(coveredBoard());
     await openConfirmGuide();
     await screen.findByTestId('confirm-guide-split-page');
-    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1']]));
-    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
     await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
-    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
-    // Back to a page already read for this board read: no new dry run.
-    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
     click('confirm-guide-back');
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
@@ -2379,33 +2387,55 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]);
   });
 
-  it('Back while a page\'s dry run is out cancels it quietly: no "could not be read", Next works', async () => {
+  it('runs one at a time: page 2 waits for page 1, and paging on cancels neither', async () => {
     serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
-    await mountWith(coveredBoard());
-    await openConfirmGuide();
-    await screen.findByTestId('confirm-guide-split-page');
-    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
-    // Page 2's dry run is held open and rejects on abort, as `fetch` does.
-    previewConfirmMany.mockImplementationOnce(
-      (_body: unknown, signal?: AbortSignal) =>
-        new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () =>
-            reject(new DOMException('The operation was aborted.', 'AbortError')),
+    const answers: (() => void)[] = [];
+    previewConfirmMany.mockImplementation(
+      (body: { orders: { pso_id: string }[] }) =>
+        new Promise((resolve) => {
+          answers.push(() =>
+            resolve({
+              results: body.orders.map((order) => ({
+                pso_id: order.pso_id,
+                ok: true,
+                preview: true,
+                email_lines: [],
+              })),
+            }),
           );
         }),
     );
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1']]));
+    const firstSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    // Page 1's words are not in: Next still works, and paging on cancels nothing.
     await clickNext();
-    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
-    click('confirm-guide-back');
     await waitFor(() =>
-      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(firstSignal?.aborted).toBe(false);
+    expect(emailOrders()).toEqual([['pso-so-1']]);
+    // Page 2 shows no board words while its own words are not in.
+    expect(
+      within(screen.getByTestId('confirm-guide-split-page')).getAllByTestId('remark-words-pending')
+        .length,
+    ).toBeGreaterThan(0);
+    await act(async () => answers[0]());
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
+    // Confirm waits for every page's run.
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-words-loading')).toHaveTextContent(
+      'Preparing email preview...',
+    );
+    await act(async () => answers[1]());
+    await waitFor(() => expect(confirm).toBeEnabled());
   });
 
-  it('a superseded email dry run is cancelled: at most one in flight', async () => {
+  it('a superseded email dry run is cancelled: at most one in flight; the same body is not re-run', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(savedBoard(), ['SO000001']);
     await openConfirmGuide();
@@ -2426,7 +2456,30 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     const heldSignal = held?.[1] as AbortSignal | undefined;
     expect(heldSignal).toBeDefined();
     expect(heldSignal?.aborted).toBe(false);
-    // Another board read lands while it is still out (the board re-read after another save).
+    // CONFIRM-DIALOG-SPEED: another board read carrying the SAME body leaves the run out
+    // standing (no second 40 s dry run for nothing).
+    await act(async () => {
+      await lastClient?.refetchQueries({ type: 'active' });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(emailDryRuns()).toHaveLength(2);
+    expect(heldSignal?.aborted).toBe(false);
+    // A read whose decision moved (a newer save elsewhere) cancels it and runs again.
+    getPlanningBoard.mockResolvedValue(
+      mapContributions(boardOf([SO1_L3]), (entry) =>
+        entry.project_line_id === 'pl-1-3'
+          ? {
+              ...entry,
+              saved_remark: 'ORDER',
+              draft: {
+                decision: { verdict: 'approved', remark: 'ELSEWHERE' },
+                saved_by: 'Another Planner',
+                saved_at: '2026-11-02T05:00:00Z',
+              },
+            }
+          : entry,
+      ),
+    );
     await act(async () => {
       await lastClient?.refetchQueries({ type: 'active' });
     });
@@ -2517,5 +2570,705 @@ describe('NO-AC-MOVED-WARNING: a saved decision is never second-guessed by the c
     expect(posted).toContain('"buy_qty":"0"');
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
+  });
+});
+
+/*
+ * CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026, prod SO423361: "Review split" sat on its skeleton):
+ * the Review split waits for the order's own fresh data only (the board re-read and its split
+ * read), never for the email dry run, which runs behind it. The Confirm step waits for it.
+ */
+describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry run', () => {
+  const emailOrders = () =>
+    emailDryRuns().map(([body]) =>
+      (body as { orders: { pso_id: string }[] }).orders.map((order) => order.pso_id),
+    );
+  function savedBoard() {
+    return mapContributions(boardOf([SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'ORDER',
+            draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+  }
+
+  it('step 1 renders and is interactive while the email dry run is still pending', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await mountWith(savedBoard(), ['SO000001']);
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    // The dry run is still out: the sheet is up, its Remark box editable, Next on.
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    // Crew ruling S2: its REMARK reads "Preparing email preview...", never the board's words.
+    expect(within(block).getByTestId('remark-words-pending')).toHaveTextContent(
+      'Preparing email preview...',
+    );
+    expect(block).not.toHaveTextContent('ORDER');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    // The Confirm step shows its own wait while the email's words are still being read.
+    click('confirm-guide-next');
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    // The Confirm step started no dry run of its own and did not cancel the one out.
+    expect(emailDryRuns()).toHaveLength(1);
+    const heldSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    expect(heldSignal?.aborted).toBe(false);
+    await act(async () => {
+      answer({
+        results: [
+          { pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'ORDER' }] },
+        ],
+      });
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+    expect(pressDryRuns()).toHaveLength(0);
+    // Back on the page, the email's own words are in and the Remark box takes typing.
+    click('confirm-guide-back');
+    expect(await screen.findByLabelText('Remark, line 3')).toBeEnabled();
+  });
+
+  it('the email dry run starts as the guide opens, beside the board re-read, and stands when that read changes nothing', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    const board = savedBoard();
+    let release: () => void = () => {};
+    getPlanningBoard.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(board);
+        }),
+    );
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await openConfirmGuide();
+    // The board re-read is still out, and the dry run is already running.
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const heldSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    // The sheet still waits for the re-read.
+    expect(screen.queryByTestId('split-line-3')).not.toBeInTheDocument();
+    await act(async () => release());
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Same body after the read: the run out stands, no second one.
+    expect(emailDryRuns()).toHaveLength(1);
+    expect(heldSignal?.aborted).toBe(false);
+    expect(screen.getByTestId('confirm-guide-words-loading')).toHaveTextContent(
+      'Preparing email preview...',
+    );
+    await act(async () => {
+      answer({
+        results: [
+          { pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'DELAY' }] },
+        ],
+      });
+    });
+    await waitFor(() => expect(within(page).getByTestId('split-line-3')).toHaveTextContent('DELAY'));
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+  });
+
+  it('review B1: a split Save on the page runs the email preview again (the body carries no split rows); Confirm waits for it', async () => {
+    const page = await openEditablePage();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument());
+    await editLine3();
+    serveSplits({ 'pso-so-1': LINE3_SPLIT_READ() });
+    saveLineSplits.mockImplementation(() => Promise.resolve(LINE3_SPLIT_READ()));
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saveLineSplits).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    await act(async () => {
+      answer({ results: [{ pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [] }] });
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(emailDryRuns()).toHaveLength(2);
+  });
+
+  it('review B2: a failed email preview keeps the sheet and its unsaved edit; only Confirm waits, behind its own Retry', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    let fail: (reason: unknown) => void = () => {};
+    previewConfirmMany.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await editLine3();
+    await act(async () => fail(new Error('Gateway timeout')));
+    await screen.findByTestId('confirm-guide-words-failed');
+    // The editor is still there with the edit; no "board could not be read" in its place.
+    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
+    expect(screen.getByText('Save or undo your split changes first')).toBeInTheDocument();
+    expect((screen.getByLabelText('Date, line 3 split 2') as HTMLInputElement).value).toBe('20/10/2026');
+    // Retry runs the preview again, nothing else.
+    const reads = getPlanningBoard.mock.calls.length;
+    fireEvent.click(within(screen.getByTestId('confirm-guide-words-failed')).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide-words-failed')).not.toBeInTheDocument());
+    expect(getPlanningBoard.mock.calls.length).toBe(reads);
+  });
+
+  it('review S1: words read for a body from before the re-read are never shown once the re-read changed the body', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    // The re-read is held; the dry run on the tab's decisions answers first with OLD words.
+    const moved = mapContributions(boardOf([SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'FRESH',
+            draft: {
+              decision: { verdict: 'approved', suspected_system_issue: true },
+              saved_by: 'Another Planner',
+              saved_at: '2026-11-02T05:00:00Z',
+            },
+          }
+        : entry,
+    );
+    let release: () => void = () => {};
+    getPlanningBoard.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(moved);
+        }),
+    );
+    previewConfirmMany.mockImplementationOnce(() =>
+      Promise.resolve({
+        results: [{ pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'OLD WORDS' }] }],
+      }),
+    );
+    previewConfirmMany.mockImplementationOnce(() => new Promise(() => {}));
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await act(async () => release());
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+    expect(block).not.toHaveTextContent('OLD WORDS');
+    expect(within(block).getByTestId('remark-words-pending')).toHaveTextContent(
+      'Preparing email preview...',
+    );
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+  });
+
+  it('review B3: a read-only row prints "Preparing email preview..." while its page waits, never the board words', async () => {
+    // Line 2 has a saved decision but the split read lists only line 3: line 2 is a
+    // read-only row of the page.
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    const board = mapContributions(boardOf([SO1_L2, SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-2' || entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'BOARDWORDS',
+            draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(within(page).getAllByTestId('remark-words-pending').length).toBeGreaterThanOrEqual(2));
+    expect(page).not.toHaveTextContent('BOARDWORDS');
+  });
+
+  it('review S4: a dry run stopped by a failed re-read runs again after Retry, and Confirm comes back', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    // The guide-open dry run is held; the re-read fails, which stops it.
+    previewConfirmMany.mockImplementationOnce(
+      (_body: unknown, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          );
+        }),
+    );
+    getPlanningBoard.mockRejectedValue(new Error('Gateway timeout'));
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const failed = await screen.findByTestId('confirm-guide-refresh-failed');
+    const heldSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    await waitFor(() => expect(heldSignal?.aborted).toBe(true));
+    getPlanningBoard.mockResolvedValue(savedBoard());
+    fireEvent.click(within(failed).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await waitFor(() => expect(confirm).toBeEnabled());
+  });
+
+  it('review N8: Confirm waits for every page, not only the one on screen', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
+    await waitFor(() => expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument());
+    await clickNext();
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    // Page 1's decision moved on the server: page 1 alone runs again, held open.
+    previewConfirmMany.mockImplementationOnce(() => new Promise(() => {}));
+    getPlanningBoard.mockResolvedValue(
+      mapContributions(coveredBoard(), (entry) =>
+        entry.project_line_id === 'pl-1-3'
+          ? {
+              ...entry,
+              draft: {
+                decision: { verdict: 'approved', suspected_system_issue: true },
+                saved_by: 'Another Planner',
+                saved_at: '2026-11-02T05:00:00Z',
+              },
+            }
+          : entry,
+      ),
+    );
+    await act(async () => {
+      await lastClient?.refetchQueries({ type: 'active' });
+    });
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2'], ['pso-so-1']]));
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(confirm).toBeDisabled();
+  });
+
+  it('review N10: a split row\'s own remark stays editable while the page waits for its words', async () => {
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    await openEditablePage();
+    await editLine3();
+    // The page's words are still out, yet the split row's own remark takes typing.
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    expect(screen.getByLabelText('Remark, line 3 split 2')).toBeEnabled();
+  });
+
+  it('opening Confirm while the board is already reading joins that read, never a second one', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    const board = savedBoard();
+    let release: () => void = () => {};
+    getPlanningBoard.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(board);
+        }),
+    );
+    const reads = getPlanningBoard.mock.calls.length;
+    // A read is already out (the board re-reading after a save elsewhere on the screen).
+    act(() => {
+      void lastClient?.refetchQueries({ type: 'active' });
+    });
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBe(reads + 1));
+    await openConfirmGuide();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getPlanningBoard.mock.calls.length).toBe(reads + 1);
+    await act(async () => release());
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P6): a refused dry run is shown, never settled as ready
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 refused dry run', () => {
+  const REFUSAL =
+    'Line 3 cannot be confirmed: BRW now has 1 free for this line, and 30 was asked for';
+  const BOARD_WORDS = 'USE BRW 522 & ORDER 294';
+
+  function refuseEveryRun() {
+    previewConfirmMany.mockImplementation(
+      (body: { orders: { pso_id: string }[] }) =>
+        Promise.resolve({
+          results: body.orders.map((order) => ({
+            pso_id: order.pso_id,
+            ok: false,
+            preview: true,
+            error: REFUSAL,
+            email_lines: [],
+            lines_confirmed: [],
+            lines_carried: 0,
+            lines_held_back: [],
+            lines_fulfilled_skipped: 0,
+            inquiry_rows: [],
+            transfers: [],
+          })),
+        }),
+    );
+  }
+
+  async function openRefusedPage() {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    refuseEveryRun();
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    const guide = await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    return { guide, page };
+  }
+
+  it('P6 RED: the dry run\'s own error is shown in a role=alert line with a Retry beside it', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!;
+    expect(within(holder as HTMLElement).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('P6 RED: the page prints no words in its REMARK cells: not the board\'s, not "Preparing email preview..."', async () => {
+    const { page } = await openRefusedPage();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(page).not.toHaveTextContent(BOARD_WORDS);
+    expect(page).not.toHaveTextContent('Preparing email preview...');
+    expect(within(page).queryByTestId('remark-words-pending')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+  });
+
+  it('P6 RED: with one of two orders refused, the refused page shows its error and no words, Confirm stays enabled, and the press posts only the ok order and reports the refusal', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) =>
+          order.pso_id === 'pso-so-2'
+            ? {
+                pso_id: order.pso_id,
+                ok: false,
+                preview: true,
+                error: REFUSAL,
+                email_lines: [],
+                lines_confirmed: [],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+              }
+            : {
+                pso_id: order.pso_id,
+                ok: true,
+                preview: true,
+                decision_revision: 4,
+                lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+                email_lines: [],
+              },
+        ),
+      }),
+    );
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await clickNext();
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    // (1) the refused page: the error with Retry, and no words in its REMARK cells.
+    const refusedPage = screen.getByTestId('confirm-guide-split-page');
+    const alert = await within(screen.getByTestId('confirm-guide')).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(refusedPage).not.toHaveTextContent('ORDER BACK');
+    expect(refusedPage).not.toHaveTextContent('Preparing email preview...');
+    // (2) Confirm stays enabled.
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(confirm).toBeEnabled();
+    // (3) it posts only the ok order.
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const posted = (confirmMany.mock.calls[0][0] as { orders: { pso_id: string }[] }).orders.map(
+      (order) => order.pso_id,
+    );
+    expect(posted).toEqual(['pso-so-1']);
+    // (4) the result card carries the refusal.
+    const card = await screen.findByTestId('board-confirm-results');
+    expect(card).toHaveTextContent(REFUSAL);
+  });
+
+  it('P6 RED: pressing Retry sends the dry run again', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    fireEvent.click(within(holder).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+  });
+
+  describe('review round: each page shows its own refusal', () => {
+    const refusalFor = (psoId: string) => ({
+      pso_id: psoId,
+      ok: false,
+      preview: true,
+      error: REFUSAL,
+      email_lines: [],
+      lines_confirmed: [],
+      lines_carried: 0,
+      lines_held_back: [],
+      lines_fulfilled_skipped: 0,
+      inquiry_rows: [],
+      transfers: [],
+    });
+
+    function pageOneRefusedPageTwo(page2: () => Promise<unknown>) {
+      previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) => {
+        const psoId = body.orders[0].pso_id;
+        return psoId === 'pso-so-1'
+          ? Promise.resolve({ results: [refusalFor('pso-so-1')] })
+          : page2();
+      });
+    }
+
+    it('P6 RED (a): page 1 shows its refusal with Retry while page 2 is still preparing', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => new Promise(() => {}));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      const alert = await within(guide).findByRole('alert');
+      expect(alert).toHaveTextContent(REFUSAL);
+      const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+      expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+
+    it('P6 RED (b): page 2 failing does not replace page 1\'s own refusal; page 2 shows the generic sentence with Retry', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => Promise.reject(new Error('Gateway timeout')));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      expect(await within(guide).findByRole('alert')).toHaveTextContent(REFUSAL);
+      await clickNext();
+      await waitFor(() =>
+        expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+      );
+      const failed = await screen.findByTestId('confirm-guide-words-failed');
+      expect(within(failed).getByRole('alert')).toHaveTextContent('The email preview could not be prepared.');
+      expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P7): every line the email carries is on Review split
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
+  // Line 3 is this press's confirmed line; line 2 (CKSW015) is CARRIED: on the board with a
+  // decision, no draft, so the press does not confirm it, yet the email prints it.
+  const CARRIED = demand({
+    project_line_id: 'pl-1-2',
+    line_no: 2,
+    item_code: 'CKSW015',
+    qty: '8',
+  });
+  const REMARK = 'ORDER BACK MWH-BB';
+
+  const bothLinesRead = () => ({
+    ...splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C' }]),
+    lines: [
+      wireLine(2, 'CKSW015', 8, '2026-09-20', {
+        line_id: 'pl-1-2',
+        now_qty: 8,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+      wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+        line_id: 'pl-1-3',
+        now_qty: 10,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+    ],
+  });
+
+  const board = () =>
+    withDraft(boardOf([CARRIED, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+  function emailAnswers(emailLines: Row[]) {
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) => ({
+          pso_id: order.pso_id,
+          ok: true,
+          preview: true,
+          decision_revision: 4,
+          lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+          lines_carried: 1,
+          lines_held_back: [],
+          lines_fulfilled_skipped: 0,
+          inquiry_rows: [],
+          transfers: [],
+          email_lines: emailLines,
+        })),
+      }),
+    );
+  }
+
+  async function openPage() {
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    return page;
+  }
+
+  it('P7 RED: a carried covered line the email prints shows as a read-only row with the email\'s words', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'CHANGED: ORDER 72 -> USE BRW 72' },
+      { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '8', remark: REMARK },
+    ]);
+    const page = await openPage();
+    const block = await within(page).findByTestId('split-line-2');
+    expect(block).toHaveTextContent('CKSW015');
+    expect(block).toHaveTextContent('8');
+    expect(block).toHaveTextContent(REMARK);
+    expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+    // The page's own confirmed row stays as it was.
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('CHANGED: ORDER 72 -> USE BRW 72');
+  });
+
+  it('P7 GUARD: the carried line does not show before its page\'s email words land', async () => {
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
+  });
+
+  it('P7 RED: an email line on no board row at all still shows a read-only row from the email\'s own entry', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+      { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER 5 FOR ORPHAN' },
+    ]);
+    const page = await openPage();
+    const words = await within(page).findByText(/ORDER 5 FOR ORPHAN/);
+    const row = words.closest('tr') as HTMLElement;
+    expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
+    expect(row).toHaveTextContent('5');
+    expect(row.querySelectorAll('input, textarea')).toHaveLength(0);
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW');
+  });
+
+  describe('review round: one email line told twice', () => {
+    /** The text of a row's Qty cell, located by the header of its own table. */
+    const qtyCell = (row: HTMLElement) => {
+      const table = row.closest('table') as HTMLElement;
+      const headers = Array.from(table.querySelectorAll('th')).map((th) => th.textContent?.trim());
+      const at = headers.indexOf('Qty');
+      expect(at, `no Qty header in ${headers.join('|')}`).toBeGreaterThanOrEqual(0);
+      return (row.closest('tr') ?? row).querySelectorAll('td')[at]?.textContent?.trim();
+    };
+    const TWICE = demand({ project_line_id: 'pl-1-2', line_no: 2, item_code: 'CKSW015', qty: '9' });
+    const readOf = () => ({
+      ...bothLinesRead(),
+      lines: [
+        wireLine(2, 'CKSW015', 9, '2026-09-20', {
+          line_id: 'pl-1-2',
+          now_qty: 9,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+          splits: [],
+        }),
+        bothLinesRead().lines[1],
+      ],
+    });
+    const twiceBoard = () =>
+      withDraft(boardOf([TWICE, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+    it('P7 RED: one row for the line, both words joined with " / " in email order, the board\'s qty, no duplicate key', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      serveSplits({ 'pso-so-1': readOf() });
+      await mountWith(twiceBoard(), ['SO000001']);
+      await openConfirmGuide();
+      const page = await screen.findByTestId('confirm-guide-split-page');
+      await within(page).findByTestId('split-line-3');
+      const block = await within(page).findByTestId('split-line-2');
+      expect(within(page).getAllByTestId('split-line-2')).toHaveLength(1);
+      expect(block).toHaveTextContent('ORDER BACK MWH-BB / ORDER BACK BRW-BB');
+      expect(qtyCell(block.querySelector('tr') as HTMLElement)).toBe('9');
+      expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
+
+    it('P7 RED: an orphan line told twice is one row, qty summed (5 + 3 = 8), both words shown', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      const page = await openPage();
+      const words = await within(page).findByText(/ORDER BACK MWH-BB/);
+      const row = words.closest('tr') as HTMLElement;
+      expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
+      expect(qtyCell(row)).toBe('8');
+      expect(row).toHaveTextContent('ORDER BACK BRW-BB');
+      const orphanRows = Array.from(page.querySelectorAll('tr')).filter((tr) =>
+        tr.textContent?.includes('ZZT-ORPHAN-Q'),
+      );
+      expect(orphanRows).toHaveLength(1);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
   });
 });

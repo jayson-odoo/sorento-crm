@@ -2,9 +2,9 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { FileText, ListOrdered, Mail, Pencil, Plus, ScrollText, Trash2 } from 'lucide-react';
+import { FileText, ListOrdered, Mail, Plus, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -18,15 +18,18 @@ import {
 } from '../../../_shared/hooks/useProjects';
 import {
   useQuotationDocument,
+  useQuotationCoverPreview,
   useQuotationDocumentMutations,
   useQuotationFeedback,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
-import type {
-  QuotationDocument,
-  QuotationDocumentBody,
-  QuotationFormScopeBody,
-  QuotationScope,
+import {
+  documentNoun,
+  type QuotationCoverPreviewBody,
+  type QuotationDocument,
+  type QuotationDocumentBody,
+  type QuotationFormScopeBody,
+  type QuotationScope,
 } from '../../../_shared/services/quotationDocumentService';
 import type {
   Project,
@@ -335,6 +338,7 @@ export function QuotationFormClient({
     if (isEdit || letterSeeded || !letterTemplates.isFetched) return;
     setLetter({
       cover_letter_html: letterTemplates.data?.cover_letter_html ?? '',
+      cover_closing_html: letterTemplates.data?.cover_closing_html ?? '',
       terms_html: letterTemplates.data?.terms_html ?? '',
     });
     setLetterSeeded(true);
@@ -398,6 +402,32 @@ export function QuotationFormClient({
     kind: saved.data?.kind,
   });
   const letterReady = isEdit || letterSeeded;
+
+  // What the Cover letter tab previews: the header and text as typed, saved or not. A saved
+  // quotation also names itself, so the server fills in what is not typed (its number).
+  const coverPreviewBody = React.useMemo<QuotationCoverPreviewBody>(() => {
+    const h = header ?? {};
+    return {
+      ...(documentId ? { document_id: documentId } : {}),
+      doc_date: h.doc_date || null,
+      attn_name: h.attn_name ?? null,
+      recipient_name_snapshot: h.recipient_name_snapshot ?? null,
+      recipient_address_snapshot: h.recipient_address_snapshot ?? null,
+      recipient_phone_snapshot: h.recipient_phone_snapshot ?? null,
+      recipient_email_snapshot: h.recipient_email_snapshot ?? null,
+      quotation_purpose: h.quotation_purpose ?? null,
+      payment_terms: h.payment_terms ?? null,
+      validity: h.validity ?? null,
+      terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,
+      cover_letter_html: letter.cover_letter_html ?? saved.data?.cover_letter_html ?? null,
+      cover_closing_html: letter.cover_closing_html ?? saved.data?.cover_closing_html ?? null,
+    };
+  }, [documentId, header, letter, saved.data]);
+  const coverPreview = useQuotationCoverPreview(
+    projectId,
+    coverPreviewBody,
+    tab === 'cover-letter' && letterReady && header !== null,
+  );
 
   /** The scopes Save sends: an untouched new scope is not one (header-only save). */
   function scopesToSave(): FormScope[] {
@@ -468,6 +498,7 @@ export function QuotationFormClient({
   function createLetterBody(): QuotationDocumentBody {
     const body: QuotationDocumentBody = {};
     if ((letter.cover_letter_html ?? '').trim()) body.cover_letter_html = letter.cover_letter_html;
+    if ((letter.cover_closing_html ?? '').trim()) body.cover_closing_html = letter.cover_closing_html;
     if ((letter.terms_html ?? '').trim()) body.terms_html = letter.terms_html;
     return body;
   }
@@ -684,10 +715,19 @@ export function QuotationFormClient({
           <FormPanel open={tab === 'cover-letter'} label="Cover letter">
             {letterReady ? (
               <QuotationCoverLetterPanel
+                cover={coverPreview.data}
+                isLoading={coverPreview.isLoading}
+                noun={documentNoun(saved.data)}
+                error={coverPreview.error?.message}
                 html={letter.cover_letter_html ?? saved.data?.cover_letter_html ?? ''}
+                closingHtml={letter.cover_closing_html ?? saved.data?.cover_closing_html ?? ''}
                 onChange={(html) => {
                   setDirty(true);
                   setLetter((previous) => ({ ...previous, cover_letter_html: html }));
+                }}
+                onClosingChange={(html) => {
+                  setDirty(true);
+                  setLetter((previous) => ({ ...previous, cover_closing_html: html }));
                 }}
               />
             ) : (
@@ -756,6 +796,7 @@ function placeholderDocument(projectId: string): QuotationDocument {
     attn_name: null,
     subject_title: null,
     cover_letter_html: null,
+    cover_closing_html: null,
     terms_html: null,
     signatory_name: null,
     signatory_phone: null,
@@ -771,8 +812,8 @@ function placeholderDocument(projectId: string): QuotationDocument {
 
 /**
  * The Lines tab of the form: the quotation page's Lines tab from origin/main, moved here (#1341,
- * round 3). The same scope strip (`QuotationScopeTabs`, with Add a scope at its end), the same
- * scope card (name with its Edit scope pen, outcome), and under it the same `QuotationVersionEditor`
+ * round 3). The same scope strip (`QuotationScopeTabs`, with Add a scope at its end; its tabs carry
+ * Rename and Remove scope, there is no scope card), and under it the same `QuotationVersionEditor`
  * in its staged edit mode, bound to the same `useQuotationEditSession` handlers the quotation
  * page's Edit used. Only one scope's editor is mounted at a time, exactly as there; the staged
  * lines live in the session, so switching scope or tab loses nothing.
@@ -880,89 +921,65 @@ function FormLines({
   });
 
   return (
-    <div className="space-y-5">
-      <QuotationScopeTabs
-        scopes={strip}
-        activeScopeId={active.key}
-        onSelect={onSelect}
-        canEdit={project.can_edit}
-        onAddScope={onAddScope}
-        onRename={onEditScope}
-        onRemove={(key) => {
-          const scope = scopes.find((row) => row.key === key);
-          if (scope) onRemove(scope);
-        }}
-        // The button's own rule for the open scope; another tab becomes the open one on the
-        // right-click, so a saved scope is only offered once its versions are known.
-        canRemove={(key) =>
-          key === active.key ? canRemove : !scopes.find((row) => row.key === key)?.id
-        }
-      />
+    <div className="space-y-3">
+      {/* The strip, with the open saved scope's outcome at its right: the one piece of the old
+          scope header that is not already on the tab. */}
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <QuotationScopeTabs
+          scopes={strip}
+          activeScopeId={active.key}
+          onSelect={onSelect}
+          canEdit={project.can_edit}
+          onAddScope={onAddScope}
+          onRename={onEditScope}
+          onRemove={(key) => {
+            const scope = scopes.find((row) => row.key === key);
+            if (scope) onRemove(scope);
+          }}
+          // The open scope's own rule; another tab becomes the open one on the right-click, so
+          // a saved scope is only offered once its versions are known.
+          canRemove={(key) =>
+            key === active.key ? canRemove : !scopes.find((row) => row.key === key)?.id
+          }
+        />
+        {savedRow && (
+          <span className="shrink-0">
+            <OutcomePill outcome={savedRow.outcome} />
+          </span>
+        )}
+      </div>
 
-      <section aria-label={scopeTitle(active, scopes.indexOf(active))}>
-        <Card>
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-            {/* Owner, 13 Oct: the pen beside the name opens the Edit scope popup (name and
-                series); the series itself is not shown out here. */}
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <CardTitle className="min-w-0 break-words text-sm">
-                {scopeTitle(active, scopes.indexOf(active))}
-              </CardTitle>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                mode="icon"
-                aria-label="Edit scope"
-                title="Edit scope"
-                onClick={() => onEditScope(active.key)}
-              >
-                <Pencil className="size-4" aria-hidden />
-              </Button>
-              {savedRow && <OutcomePill outcome={savedRow.outcome} />}
-            </div>
-            {canRemove && (
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                onClick={() => onRemove(active)}
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Remove scope
-              </Button>
-            )}
-          </CardHeader>
-          {/* min-w-0 is load-bearing: CardContent is a flex item, and without it the line table
-              stretches the Card and the whole PAGE scrolls sideways at phone width. */}
-          <CardContent className="min-w-0 py-5">
-            {active.id && !savedRow ? (
-              <Skeleton className="h-64 w-full" />
-            ) : (
-              <QuotationVersionEditor
-                key={active.key}
-                project={project}
-                quotation={savedRow}
-                seriesId={active.series_id || null}
-                edit={scopeEditing}
-                feedback={feedback}
-                // Copy columns from: the document's other saved scopes, as their versions hold them...
-                siblingScopes={scopes
-                  .filter((scope) => scope.id && scope.id !== active.id)
-                  .map((scope) => quotations.find((row) => row.id === scope.id))
-                  .filter((row): row is ProjectQuotation => Boolean(row))}
-                // ...and its sections not saved yet (New proposal): their headers as the form
-                // holds them. Copying takes headers and columns with fresh keys, never quantities.
-                formCopySources={scopes
-                  .filter((scope) => !scope.id && scope.key !== active.key)
-                  .map((scope) => ({
-                    label: scopeTitle(scope, scopes.indexOf(scope)),
-                    columns: scope.matrix_columns ?? [],
-                  }))}
-              />
-            )}
-          </CardContent>
-        </Card>
+      {/* No card and no header (QUOTE-SCOPE-COMPACT, owner 4 Nov: "why do I need a section for
+          the scope where my scope is already at the top?"). The tab strip IS the scope header:
+          its right-click and the open tab's ⋯ carry Rename and Remove scope, and the editor's
+          own bordered box is the one container. min-w-0 is load-bearing: without it the line
+          table stretches the region and the whole PAGE scrolls sideways at phone width. */}
+      <section aria-label={scopeTitle(active, scopes.indexOf(active))} className="min-w-0">
+        {active.id && !savedRow ? (
+          <Skeleton className="h-64 w-full" />
+        ) : (
+          <QuotationVersionEditor
+            key={active.key}
+            project={project}
+            quotation={savedRow}
+            seriesId={active.series_id || null}
+            edit={scopeEditing}
+            feedback={feedback}
+            // Copy columns from: the document's other saved scopes, as their versions hold them...
+            siblingScopes={scopes
+              .filter((scope) => scope.id && scope.id !== active.id)
+              .map((scope) => quotations.find((row) => row.id === scope.id))
+              .filter((row): row is ProjectQuotation => Boolean(row))}
+            // ...and its sections not saved yet (New proposal): their headers as the form
+            // holds them. Copying takes headers and columns with fresh keys, never quantities.
+            formCopySources={scopes
+              .filter((scope) => !scope.id && scope.key !== active.key)
+              .map((scope) => ({
+                label: scopeTitle(scope, scopes.indexOf(scope)),
+                columns: scope.matrix_columns ?? [],
+              }))}
+          />
+        )}
       </section>
     </div>
   );

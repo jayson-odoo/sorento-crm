@@ -1,5 +1,4 @@
 'use client';
-'use client';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, {
@@ -12,6 +11,7 @@ import React, {
 } from 'react';
 import { APP_SETTINGS } from '@/config/settings.config';
 import { Settings } from '@/config/types';
+import { localStore } from '@/lib/storage';
 
 type Path = string;
 
@@ -28,7 +28,6 @@ const SettingsContext = createContext<SettingsContextType | undefined>(
 
 const LOCAL_STORAGE_PREFIX = 'app_settings_';
 
-// Utility to safely access localStorage
 const isBrowser = () => typeof window !== 'undefined';
 
 function getFromPath(obj: any, path: string): any {
@@ -43,50 +42,54 @@ function setToPath(obj: any, path: string, value: any): Settings {
   return { ...obj };
 }
 
+// Storage goes through lib/storage, which never throws (Safari with storage blocked).
 function storeLeaf(path: string, value: unknown) {
-  if (!isBrowser()) return;
-  try {
-    localStorage.setItem(
-      `${LOCAL_STORAGE_PREFIX}${path}`,
-      JSON.stringify(value),
-    );
-  } catch (err) {
-    console.error('LocalStorage write error:', err);
-  }
+  localStore.setItem(`${LOCAL_STORAGE_PREFIX}${path}`, JSON.stringify(value));
 }
 
 function getLeafFromStorage(path: string): any {
-  if (!isBrowser()) return undefined;
+  const item = localStore.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
+  if (!item) return undefined;
   try {
-    const item = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
-    return item ? JSON.parse(item) : undefined;
-  } catch (err) {
-    console.error('LocalStorage read error:', err);
+    return JSON.parse(item);
+  } catch {
     return undefined;
   }
+}
+
+/**
+ * A fresh copy of the defaults. Not `structuredClone`: Safari before 15.4 has none,
+ * and a ReferenceError here took down every page, sign-in included, with "The app
+ * could not start" (CLIENT-ERROR-REPORT). APP_SETTINGS is plain JSON data.
+ */
+function defaultSettings(): Settings {
+  return JSON.parse(JSON.stringify(APP_SETTINGS)) as Settings;
+}
+
+/** Stored setting paths; none when storage is blocked (settings then live in memory). */
+function storedPaths(): string[] {
+  return localStore
+    .keys()
+    .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
+    .map((key) => key.slice(LOCAL_STORAGE_PREFIX.length));
 }
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [settings, setSettings] = useState<Settings>(
-    structuredClone(APP_SETTINGS),
-  );
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
 
   // Load settings from localStorage after mount
   useEffect(() => {
     if (!isBrowser()) return;
 
-    const init = structuredClone(APP_SETTINGS);
-    Object.keys(localStorage)
-      .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
-      .forEach((key) => {
-        const path = key.replace(LOCAL_STORAGE_PREFIX, '');
-        const value = getLeafFromStorage(path);
-        if (value !== undefined) {
-          setToPath(init, path, value);
-        }
-      });
+    const init = defaultSettings();
+    storedPaths().forEach((path) => {
+      const value = getLeafFromStorage(path);
+      if (value !== undefined) {
+        setToPath(init, path, value);
+      }
+    });
     setSettings(init);
   }, []); // Empty dependency array to run once on mount
 

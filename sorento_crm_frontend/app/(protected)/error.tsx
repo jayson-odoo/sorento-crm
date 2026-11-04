@@ -1,6 +1,8 @@
 'use client';
 
+import { useEffect } from 'react';
 import RouteErrorScreen from '@/components/common/RouteErrorScreen';
+import { reportClientError } from '@/lib/client-error-report';
 
 /**
  * The route-level error boundary for everything under `app/(protected)`
@@ -22,6 +24,11 @@ export default function ProtectedError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // One report per error to System Management > Client Errors (CLIENT-ERROR-REPORT).
+  useEffect(() => {
+    void reportClientError(error, 'protected');
+  }, [error]);
+
   // Fixed copy, never `error.message` (M5-04 review B2): in production a
   // server-component throw yields Next's own developer boilerplate, a client
   // throw yields something like "Cannot read properties of undefined", and a

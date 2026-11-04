@@ -1027,3 +1027,13 @@ describe('changedFieldsOf: the product swap (PRODUCT-CHANGE-TALLY)', () => {
     expect(changedFieldsOf({ ...base, productChangedFrom: 'NEWCODE-CR' })).toEqual([]);
   });
 });
+
+describe('OI-UX-FILTER-SNAPSHOT: a change names its order customer / project', () => {
+  it('annotationsByLine carries the batch order CUSTOMER / project', () => {
+    const batch = batchOf([row({})]);
+    (batch.orders[0] as { customer_name?: string; project_label?: string }).customer_name = 'ACME SDN BHD';
+    (batch.orders[0] as { customer_name?: string; project_label?: string }).project_label = 'TAMAN JAYA';
+    const [annotation] = [...annotationsByLine(batch).values()][0];
+    expect(annotation.party).toBe('ACME SDN BHD / TAMAN JAYA');
+  });
+});

@@ -7,6 +7,7 @@ task). See PLAN-team-coverage-and-reassignment.md section G and UAC section 7.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from datetime import datetime
 from typing import Optional
@@ -62,7 +63,7 @@ def coverage_role_view(
     else:
         parts.append("Self-subscribed.")
     if expires_at is not None:
-        parts.append(f"Active until {expires_at.strftime('%d %b %Y')} ({mode}).")
+        parts.append(f"Active until {fmt_date(expires_at)} ({mode}).")
     else:
         parts.append(f"No end date ({mode}).")
     return {
@@ -404,7 +405,7 @@ class CoverageSubscriptionService:
                 (current.name or current.email) if current else "another colleague"
             ) or "another colleague"
             until = (
-                conflicting.expires_at.date().isoformat()
+                fmt_date(conflicting.expires_at)
                 if getattr(conflicting, "expires_at", None)
                 else "further notice"
             )
@@ -454,7 +455,7 @@ class CoverageSubscriptionService:
 
             covered_name = (target.name or target.email or "a colleague").strip()
             until = (
-                f" until {expires_at.date().isoformat()}"
+                f" until {fmt_date(expires_at)}"
                 if expires_at is not None
                 else ""
             )
@@ -634,6 +635,27 @@ class CoverageSubscriptionService:
             .all()
         )
         return [str(r[0]) for r in rows]
+
+    def active_targets_for(self, subscriber_id: str) -> set[str]:
+        """Active, non-expired target ids ``subscriber_id`` covers (the mirror of
+        ``active_subscribers_for``). My Team shows these colleagues' tasks unfiltered
+        by segment / brand (MYTEAM-BY-SEGMENT), so a coverage never opens empty."""
+        now = _now_naive()
+        from sqlalchemy import or_
+
+        rows = (
+            self.db.query(NotificationSubscription.target_user_id)
+            .filter(
+                NotificationSubscription.subscriber_id == str(subscriber_id),
+                NotificationSubscription.is_active.is_(True),
+                or_(
+                    NotificationSubscription.expires_at.is_(None),
+                    NotificationSubscription.expires_at > now,
+                ),
+            )
+            .all()
+        )
+        return {str(r[0]) for r in rows}
 
     def active_coverer_for(self, target_user_id: str) -> Optional[str]:
         """Return the single active, non-expired REDIRECT coverer's user id for
