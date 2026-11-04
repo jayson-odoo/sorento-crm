@@ -6,6 +6,7 @@ import { type ColumnDef } from '@tanstack/react-table';
 
 import { Badge } from '@/components/ui/badge';
 import { DrillTable, RIGHT } from '../../../components/PlanRowDialog';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { EM_DASH, fmtDate, fmtInt } from '../../../lib/format';
 import type { PurchaseOrderLineAllocation } from '../../../types/scm.types';
 
@@ -48,6 +49,20 @@ interface PlacementRow {
   landsAt: string | null;
   locationDiffers: boolean;
   eta: string | null;
+  /** PO-LINK-HISTORY: "<who> <when>" / "Auto <when>" on an order-inquiry row, else null. */
+  linked: string | null;
+}
+
+/** Who made an order-inquiry link and when: the person's name, or Auto for the cascade. */
+function linkedLabel(p: {
+  linked_at?: string | null;
+  linked_by_name?: string | null;
+  auto?: boolean | null;
+}): string | null {
+  if (!p.linked_at) return null;
+  const who = p.auto ? 'Auto' : p.linked_by_name || null;
+  const when = formatDateTimeInMalaysia(p.linked_at);
+  return who ? `${who} ${when}` : when;
 }
 
 function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
@@ -67,6 +82,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
           null,
         locationDiffers: Boolean(p.location_differs),
         eta: p.arrival_date ? fmtDate(p.arrival_date) : null,
+        linked: null,
       };
     }
     return {
@@ -83,6 +99,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       landsAt: p.needed_at,
       locationDiffers: Boolean(p.location_differs),
       eta: null,
+      linked: linkedLabel(p),
     };
   });
   const fromDedications = (allocation.dedicated_to ?? []).map(
@@ -98,6 +115,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       landsAt: null,
       locationDiffers: false,
       eta: null,
+      linked: null,
     }),
   );
   return [...fromPlacements, ...fromDedications];
@@ -205,6 +223,17 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
         cell: ({ row }) => textCell(row.original.eta),
         size: 110,
         meta: RIGHT,
+      },
+      {
+        // PO-LINK-HISTORY (card 5): who linked an order-inquiry row and when.
+        id: 'linked',
+        header: 'Linked',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.linked ?? undefined}>
+            {textCell(row.original.linked)}
+          </span>
+        ),
+        size: 190,
       },
     ],
     [],

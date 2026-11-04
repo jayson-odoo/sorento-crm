@@ -18,6 +18,7 @@ import {
   ListOrdered,
   LoaderCircleIcon,
   PackageCheck,
+  History,
   SquarePen,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +39,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import AuditTrail from '@/components/audit/AuditTrail';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
@@ -1169,6 +1171,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             <PackageCheck />
             <span>Goods receipt</span>
           </TabsTrigger>
+          <TabsTrigger value="history">
+            <History />
+            <span>History</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1387,6 +1393,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               )}
             </div>
           </Card>
+        </TabsContent>
+
+        {/* PO-LINK-HISTORY: the order's audit trail. Its lines are audit-skipped, so what
+            reads here is mostly the AutoCount sync's S/O link events for each line. */}
+        <TabsContent value="history" className="mt-0 focus-visible:outline-none">
+          <AuditTrail entityType="purchase_orders" entityId={po.id} title="History" />
         </TabsContent>
       </Tabs>
 
