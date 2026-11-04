@@ -90,7 +90,7 @@ tr.ticked td { background: var(--blue-bg); }
 
 <div class="wrap">
   <header class="stack">
-    <span class="eyebrow">Mock v3 · lane AC-LINK-CRM-UI · not wired · SO, PO and product codes from the repo test fixtures; quantities, parties and suppliers are examples</span>
+    <span class="eyebrow">Mock v4 (approved) · lane AC-LINK-CRM-UI · not wired · SO, PO and product codes from the repo test fixtures; quantities, parties and suppliers are examples</span>
     <h1>Stock Debt snapshot: Decide on ticked lines, then Link to PO</h1>
     <p class="muted" style="max-width:72ch">Project sales &gt; Stock Debt &gt; Snapshots &gt; a snapshot &gt; press a month cell. Tick the sales order lines first, then press <b>Decide (N)</b> and choose <b>Request CS to reserve</b> or <b>Link to PO</b>. This is the same order Fulfilment Planning and the Order Inquiry Reserve already use.</p>
   </header>
@@ -119,17 +119,17 @@ tr.ticked td { background: var(--blue-bg); }
         </div>
         <div class="scroll">
           <table>
-            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:80px"><col style="width:100px"><col style="width:80px"><col style="width:180px"><col style="width:70px"><col style="width:130px"></colgroup>
+            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:80px"><col style="width:100px"><col style="width:180px"><col style="width:70px"><col style="width:130px"></colgroup>
             <thead><tr>
-              <th><input class="cb" type="checkbox" id="all" aria-label="Select all lines"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Ordered<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th class="num">PO qty<span class="sort">⇅</span></th><th>Covered by<span class="sort">⇅</span></th><th class="num">Short<span class="sort">⇅</span></th><th>Now<span class="sort">⇅</span></th>
+              <th><input class="cb" type="checkbox" id="all" aria-label="Select all lines"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Ordered<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>Covered by<span class="sort">⇅</span></th><th class="num">Short<span class="sort">⇅</span></th><th>Now<span class="sort">⇅</span></th>
             </tr></thead>
             <tbody>
-              <tr class="ticked"><td><input class="cb" type="checkbox" id="r1" checked aria-label="SO425045 line 140"></td><td><a href="#">SO425045</a></td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td class="num">120</td><td class="num muted">-</td><td class="muted">-</td><td class="num">120</td><td><span class="pill p-neutral">Open 120</span></td></tr>
-              <tr class="ticked"><td><input class="cb" type="checkbox" id="r2" checked aria-label="SO419208 line 2"></td><td><a href="#">SO419208</a></td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td class="num">80</td><td class="num muted">-</td><td class="muted">-</td><td class="num">80</td><td><span class="pill p-neutral">Open 80</span></td></tr>
-              <tr><td><input class="cb" type="checkbox" id="r3" aria-label="SO407114 line 1"></td><td><a href="#">SO407114</a></td><td class="num">1</td><td>BRW-BB</td><td class="tab">25/11/2026</td><td class="num">60</td><td class="num">60</td><td class="num">60</td><td><a href="#">PO 202609-S0029</a> (60)</td><td class="num">0</td><td><span class="pill p-neutral">Open 60</span></td></tr>
-              <tr><td><input class="cb" type="checkbox" id="r4" disabled aria-label="SO396071 line 4, reserved"></td><td><a href="#">SO396071</a></td><td class="num">4</td><td>BRW-BB</td><td class="tab">30/11/2026</td><td class="num">40</td><td class="num">40</td><td class="num muted">-</td><td><a href="#">On hand BRW-BB</a> (40)</td><td class="num">0</td><td><span class="pill p-green">Reserved 40</span></td></tr>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r1" checked aria-label="SO425045 line 140"></td><td><a href="#">SO425045</a></td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td class="num">120</td><td class="muted">-</td><td class="num">120</td><td><span class="pill p-neutral">Open 120</span></td></tr>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r2" checked aria-label="SO419208 line 2"></td><td><a href="#">SO419208</a></td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td class="num">80</td><td class="muted">-</td><td class="num">80</td><td><span class="pill p-neutral">Open 80</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r3" aria-label="SO407114 line 1"></td><td><a href="#">SO407114</a></td><td class="num">1</td><td>BRW-BB</td><td class="tab">25/11/2026</td><td class="num">60</td><td class="num">60</td><td><a href="#">PO 202609-S0029</a> (60)</td><td class="num">0</td><td><span class="pill p-neutral">Open 60</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r4" disabled aria-label="SO396071 line 4, reserved"></td><td><a href="#">SO396071</a></td><td class="num">4</td><td>BRW-BB</td><td class="tab">30/11/2026</td><td class="num">40</td><td class="num">40</td><td><a href="#">On hand BRW-BB</a> (40)</td><td class="num">0</td><td><span class="pill p-green">Reserved 40</span></td></tr>
             </tbody>
-            <tfoot><tr><td></td><td>4 lines</td><td></td><td></td><td></td><td class="num">300</td><td class="num">300</td><td class="num">60</td><td></td><td class="num">200</td><td></td></tr></tfoot>
+            <tfoot><tr><td></td><td>4 lines</td><td></td><td></td><td></td><td class="num">300</td><td class="num">300</td><td></td><td class="num">200</td><td></td></tr></tfoot>
           </table>
         </div>
       </div>
