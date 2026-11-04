@@ -169,3 +169,18 @@ def test_it_extends_a_group_from_the_hosts_existing_combo(db, catalogue, as_dev)
     db.commit()
     _run(db, "--apply")
     assert "SRTKT1880SS" in _parts(db, _combo(db, "Sink + taps with top-up"))
+
+
+def test_a_discontinued_option_of_the_existing_combo_is_not_carried_into_the_new_one(db, catalogue, as_dev):
+    from tests import _ptag_combo_seed as seed
+
+    old = shapes.prod(db, "SRTKT1892SS")
+    old.is_discontinued = True
+    seed.combo(
+        db, catalogue["SRTKS7061"], "Existing sink pack",
+        parts=[{"product": catalogue["SRTKT1862SS"], "group": "Kitchen tap"}, {"product": old, "group": "Kitchen tap"}],
+    )
+    db.commit()
+    _code, out = _run(db, "--apply")
+    assert "SRTKT1892SS" not in _parts(db, _combo(db, "Sink + taps with top-up"))
+    assert "sink-taps-topup: new" in out, "not reported unsure for another combo's discontinued option"

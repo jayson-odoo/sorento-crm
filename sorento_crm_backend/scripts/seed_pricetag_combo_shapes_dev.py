@@ -94,7 +94,7 @@ def _extended(db, company_id: str, shape: dict) -> dict:
                 for combo in db.query(ProductCombo).filter(ProductCombo.host_product_id == host.id).all():
                     for part in combo.parts:
                         code = part.part_product.product_code if part.part_product else None
-                        if code and not part.is_upgrade and (part.choice_group or "").lower() == group["role"].lower() \
+                        if code and not part.part_product.is_discontinued and not part.is_upgrade and (part.choice_group or "").lower() == group["role"].lower() \
                                 and code.upper() not in {c.upper() for c in codes}:
                             codes.append(code)
         groups.append({"role": group["role"], "options": [{"code": c} for c in codes]})
