@@ -346,15 +346,36 @@ describe('OI-RESERVE-ROUND: the walk survives an action that drops the record fr
     expect(result.current.total).toBe(3);
   });
 
-  it('a neighbour that is in the walked page but not the refetched one still shows the pager', async () => {
+  it('a neighbour present only in the walked snapshot (dropped from the fresh page) still shows the pager', async () => {
+    seed(0);
+    const first = renderPager('a2');
+    expect(first.result.current.visible).toBe(true);
+    fetchPage.mockImplementation(async () => ({ data: [{ id: 'a1' }], pagination: { total: 1 } }));
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['test-list'] });
+    });
+    first.unmount();
+
+    const { result } = renderPager('a3');
+    expect(result.current.visible).toBe(true);
+    expect(result.current.index).toBe(3);
+    expect(result.current.total).toBe(3);
+  });
+
+  it('a snapshot taken under one list is never shown under another list', async () => {
     seed(0);
     const first = renderPager('a2');
     expect(first.result.current.visible).toBe(true);
     await dropRecordFromList();
     first.unmount();
 
-    const { result } = renderPager('a3');
-    expect(result.current.visible).toBe(true);
+    // The same record opened from a different list (other filter): that list's fresh page
+    // lacks it and nothing was ever walked there.
+    search = 'page=1&limit=3&state=other';
+    const { result } = renderPager('a2');
+    await waitFor(() => expect(fetchPage).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.visible).toBe(false);
   });
 
   it('a deep link to a record never on the page stays hidden', async () => {

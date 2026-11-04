@@ -193,6 +193,10 @@ describe('the OI page pager survives every action that refreshes the header list
     });
     // The success invalidation has refetched the list, and the OI is gone from the page.
     await waitFor(() => expect(listCalls.n).toBeGreaterThanOrEqual(2));
+    // Let every follow-up update land: a pager that vanishes one render later must fail.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
 
     expect(screen.getByRole('button', { name: /previous order inquiry/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /next order inquiry/i })).toBeInTheDocument();
@@ -209,6 +213,10 @@ describe('the OI page pager survives every action that refreshes the header list
       await client.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
     });
     await waitFor(() => expect(listCalls.n).toBeGreaterThanOrEqual(2));
+    // Let every follow-up update land: a pager that vanishes one render later must fail.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
     expect(screen.getByRole('button', { name: /previous order inquiry/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /next order inquiry/i })).toBeInTheDocument();
   });
