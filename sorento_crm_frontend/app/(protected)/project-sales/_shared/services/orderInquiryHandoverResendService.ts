@@ -37,7 +37,13 @@ export interface HandoverResendEmail extends ParkedEmailPreview {
   lines: HandoverResendLine[];
 }
 
-export type HandoverResendSkipReason = 'nothing_open' | 'no_recipient' | 'failed';
+export type HandoverResendSkipReason =
+  | 'nothing_open'
+  | 'no_recipient'
+  | 'failed'
+  // Some of the OI's emails went (it goes through more than one row): never retried, so a
+  // row that already has it is not emailed twice.
+  | 'partly_failed';
 
 export interface HandoverResendSkip {
   inquiry_id: string;

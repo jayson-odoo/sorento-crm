@@ -118,7 +118,7 @@ def _pso_line(db, company_id: str, pso: ProjectSalesOrder, product: Product) -> 
         id=_uid(), company_id=company_id, project_sales_order_id=pso.id, line_no=1,
         product_id=product.id, description=f"{MARKER} line", qty=Decimal("999"),
         uom="UNIT", unit_price=Decimal("10.00"), amount=Decimal("0"),
-        delivery_date=date(2026, 1, 1),
+        delivery_date=None,
     )
     db.add(row)
     db.flush()

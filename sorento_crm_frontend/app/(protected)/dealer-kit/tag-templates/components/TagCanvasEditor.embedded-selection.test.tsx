@@ -283,4 +283,45 @@ describe('TagCanvasEditor embedded selection', () => {
     });
     expect(screen.queryByTestId('inline-text-editor')).toBeNull();
   });
+
+  it('text typed in place is kept when the page unloads before the click outside', async () => {
+    const onLayersChange = vi.fn();
+    const view = render(
+      <TagCanvasEditor
+        doc={doc}
+        onChange={vi.fn()}
+        onLayersChange={onLayersChange}
+        embedded={{ ...embedded(null, vi.fn()), onEditField: () => false }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.doubleClick(screen.getByTestId('layer-title'));
+    });
+    const box = await screen.findByTestId('inline-text-editor');
+    fireEvent.change(box, { target: { value: 'Custom note' } });
+    onLayersChange.mockClear();
+    // The reader scrolls far away and unloads the page: no blur, no click outside.
+    view.unmount();
+    const last = onLayersChange.mock.calls.at(-1)?.[0] as TagLayer[] | undefined;
+    expect(last?.find((l) => l.id === 'title')?.props).toMatchObject({ text: 'Custom note' });
+  });
+
+  it('an in-place edit opened and left unchanged reports nothing on unload', async () => {
+    const onLayersChange = vi.fn();
+    const view = render(
+      <TagCanvasEditor
+        doc={doc}
+        onChange={vi.fn()}
+        onLayersChange={onLayersChange}
+        embedded={{ ...embedded(null, vi.fn()), onEditField: () => false }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.doubleClick(screen.getByTestId('layer-title'));
+    });
+    await screen.findByTestId('inline-text-editor');
+    onLayersChange.mockClear();
+    view.unmount();
+    expect(onLayersChange).not.toHaveBeenCalled();
+  });
 });

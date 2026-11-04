@@ -119,6 +119,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
@@ -12370,6 +12371,7 @@ class ProjectSupplyService:
             for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
             if before_rows.get(str(row.id)) != _preview_row_facts(row)
         ]
+        needed_by = resolve_oi_date(self.db, changed_rows)
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
@@ -12378,7 +12380,7 @@ class ProjectSupplyService:
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
                 "qty": row.qty,
-                "delivery_date": row.delivery_date,
+                "delivery_date": needed_by[str(row.id)].date,
                 "stock_location": row.stock_location,
                 "note": row.note,
                 "state": row.state,

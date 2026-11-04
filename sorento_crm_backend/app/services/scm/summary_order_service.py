@@ -67,6 +67,7 @@ from app.services.scm.so_party import so_parties, with_party
 from app.services.scm import last_po_supplier as last_po_rule
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
+    OIR_DATE,
     ACTIVE_DECISION_STATE,
     BUY_VERB,
     UNPLACED_INQUIRY_STATE,
@@ -789,9 +790,9 @@ def _earliest_project_need_dates(db: Session, product_ids: list[str]) -> dict[st
     """
     if not product_ids:
         return {}
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT sol.product_id::text AS pid,
-               MIN(COALESCE(oir.delivery_date, sol.required_date)) AS needed
+               MIN(COALESCE({OIR_DATE}, sol.required_date)) AS needed
         FROM projects.order_inquiry_rows oir
         JOIN projects.so_supply_decisions d
           ON d.id = oir.supply_decision_id AND d.state = :active

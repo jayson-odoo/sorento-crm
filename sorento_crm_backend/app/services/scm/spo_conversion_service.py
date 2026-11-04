@@ -238,6 +238,7 @@ from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, Shi
 from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import line_date_sql as oi_line_date_sql, resolve as resolve_oi_date
 from app.services.numbering_defaults import (
     CRM_SPO_DOC_TYPE,
     seed_crm_spo_rule,
@@ -1207,7 +1208,7 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             OrderInquiryRow.state != INQUIRY_CANCELLED,
         )
         .order_by(
-            OrderInquiryRow.delivery_date.asc().nulls_last(),
+            oi_line_date_sql(OrderInquiryRow).asc().nulls_last(),
             OrderInquiryRow.id.asc(),
         )
         .all()
@@ -1269,6 +1270,7 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     }
 
     codes = _warehouse_ids_by_code(db)
+    needed_by = resolve_oi_date(db, [r for r, *_rest in rows])
     out: list[dict] = []
     for row, doc_no, provisional, project_title in rows:
         taken_qty = linked.get(str(row.id), 0.0)
@@ -1283,7 +1285,9 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             # The inquiry's own project until its sales order is read below; an order not
             # synced from AutoCount yet (or named by its provisional ref) keeps it.
             "project_label": project_title,
-            "required_date": row.delivery_date.isoformat() if row.delivery_date else None,
+            "required_date": (
+                needed_by[str(row.id)].date.isoformat() if needed_by[str(row.id)].date else None
+            ),
             "qty": need,
             "taken_qty": taken_qty,
             "taken_by": taken_by.get(str(row.id), []),

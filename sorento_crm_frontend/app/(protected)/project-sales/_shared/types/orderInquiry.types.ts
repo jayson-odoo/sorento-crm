@@ -446,6 +446,8 @@ export interface OrderInquiryLineSplit {
   sits_on_line_id: string | null;
   /** What the screen prints for the line it sits on; the id is addressing only. */
   sits_on_line_no: number | null;
+  /** The SO line date of the line it sits on (ISO); null when none or undated. */
+  sits_on_line_date?: string | null;
   remark: string;
 }
 

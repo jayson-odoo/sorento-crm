@@ -335,7 +335,9 @@ def test_sheet_row_beside_replaces_row_is_raised_used():
         used = next(r for r in rows if str(r.id) != str(fresh.id))
         assert used.redirected_to_pool is True
         assert Decimal(str(used.qty)) == Decimal("182")
-        assert used.delivery_date == old_date
+        # OI-ONE-DELIVERY-DATE: the used row carries the SO line's date, the sheet's is its Was.
+        assert used.delivery_date == date(2027, 3, 1)
+        assert used.previous_delivery_date == old_date
         assert (used.note or "").startswith(f"{importer._MIGRATION_STAMP} journey.xlsx")
 
 
@@ -374,7 +376,7 @@ def test_two_same_qty_deliveries_pair_by_date(order_in_file):
         assert len(rows) == 4, [(str(r.qty), r.delivery_date, r.redirected_to_pool) for r in rows]
         used_rows = [r for r in rows if r.redirected_to_pool]
         assert len(used_rows) == 2, [(str(r.qty), r.delivery_date) for r in used_rows]
-        by_date = {r.delivery_date: r for r in used_rows}
+        by_date = {r.previous_delivery_date: r for r in used_rows}  # the sheet's own date, kept as the Was
         assert date_a in by_date and date_b in by_date, by_date
         assert Decimal(str(by_date[date_a].qty)) == Decimal("182")
         assert Decimal(str(by_date[date_b].qty)) == Decimal("182")
@@ -1688,12 +1690,14 @@ def test_snapshot_without_required_date_proposes_no_date_change(shape):
         row = w.one_row()
         if shape == "qty_equal":
             assert Decimal(str(row.qty)) == Decimal("182")
-            assert row.delivery_date == sheet_date
+            assert row.delivery_date == date(2027, 3, 1), "the SO line's date"
+            assert row.previous_delivery_date == sheet_date, "the sheet's date is the Was"
             assert row.previous_qty is None, _row_snapshot(row)
             assert row.changed_at is None, _row_snapshot(row)
         else:
             assert Decimal(str(row.qty)) == Decimal("280")
-            assert row.delivery_date == sheet_date
+            assert row.delivery_date == date(2027, 3, 1), "the SO line's date"
+            assert row.previous_delivery_date == sheet_date
             assert Decimal(str(row.previous_qty)) == Decimal("182")
 
 

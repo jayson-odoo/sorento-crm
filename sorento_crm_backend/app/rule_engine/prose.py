@@ -32,34 +32,39 @@ _PHRASES = {
 }
 
 
-def condition_text(node: Dict[str, Any], facts: Dict[str, FactDef]) -> str:
+def condition_text(node: Dict[str, Any], facts: Dict[str, FactDef], db: Any = None) -> str:
     fact = facts.get(node.get("fact"))
     label = fact.label if fact else str(node.get("fact"))
     phrase = _PHRASES.get(node.get("operator"), str(node.get("operator")))
-    value = _value_text(node, facts)
+    value = _value_text(node, facts, db)
     return f"{label} {phrase} {value}".strip() if value else f"{label} {phrase}"
 
 
-def tree_text(tree: Optional[Dict[str, Any]], facts: Dict[str, FactDef]) -> str:
-    """"A AND (B OR C)" - nested groups parenthesized."""
+def tree_text(
+    tree: Optional[Dict[str, Any]], facts: Dict[str, FactDef], db: Any = None
+) -> str:
+    """"A AND (B OR C)" - nested groups parenthesized. With `db`, a fact whose options are
+    looked up (a person picker, OI-ROUTE-BY-RAISER) reads its values by label, not id."""
     if not tree or not tree.get("rules"):
         return "Always allowed"
-    return _group_text(tree, facts, top=True)
+    return _group_text(tree, facts, top=True, db=db)
 
 
-def _group_text(node: Dict[str, Any], facts: Dict[str, FactDef], *, top: bool) -> str:
+def _group_text(
+    node: Dict[str, Any], facts: Dict[str, FactDef], *, top: bool, db: Any = None
+) -> str:
     joiner = " OR " if node.get("combinator") == "or" else " AND "
     parts = [
-        _group_text(rule, facts, top=False)
+        _group_text(rule, facts, top=False, db=db)
         if rule.get("kind") == "group"
-        else condition_text(rule, facts)
+        else condition_text(rule, facts, db)
         for rule in node.get("rules", [])
     ]
     text = joiner.join(parts)
     return text if top or len(parts) <= 1 else f"({text})"
 
 
-def _value_text(node: Dict[str, Any], facts: Dict[str, FactDef]) -> str:
+def _value_text(node: Dict[str, Any], facts: Dict[str, FactDef], db: Any = None) -> str:
     operator = node.get("operator")
     if operator in ("is_true", "is_false"):
         return ""
@@ -71,6 +76,8 @@ def _value_text(node: Dict[str, Any], facts: Dict[str, FactDef]) -> str:
         return f"{value[0]} and {value[1]}"
     fact = facts.get(node.get("fact"))
     options = fact.options if fact is not None and isinstance(fact.options, list) else []
+    if fact is not None and callable(fact.options) and db is not None:
+        options = fact.options(db, None)
     labels = {str(o.get("value")): str(o.get("label")) for o in options}
     if isinstance(value, list):
         return ", ".join(labels.get(str(item), str(item)) for item in value)

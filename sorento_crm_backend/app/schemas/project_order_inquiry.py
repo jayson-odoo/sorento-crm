@@ -248,6 +248,8 @@ class OrderInquiryLineSplitOut(BaseModel):
     change: str = ""
     sits_on_line_id: Optional[str] = None
     sits_on_line_no: Optional[int] = None
+    #: The SO line date of the line the part sits on (core first, mirror fallback).
+    sits_on_line_date: Optional[date] = None
     remark: str = ""
 
 
@@ -1809,7 +1811,7 @@ class HandoverResendEmailOut(ParkedEmailOut):
 class HandoverResendSkipOut(BaseModel):
     inquiry_id: str
     inquiry_no: Optional[str] = None
-    reason: Literal["nothing_open", "no_recipient", "failed"]
+    reason: Literal["nothing_open", "no_recipient", "failed", "partly_failed"]
 
 
 class HandoverResendPreviewOut(BaseModel):
