@@ -40,7 +40,8 @@ const KIND_OPTIONS = [
 
 export default function ClientErrorsPage() {
   const [dateFrom, setDateFrom] = useState(() => localInput(24 * 7));
-  const [dateTo, setDateTo] = useState(() => localInput(0));
+  // Open-ended by default, so a refetch picks up reports that arrive after the page opened.
+  const [dateTo, setDateTo] = useState('');
   const [kind, setKind] = useState('');
   const {
     value: searchInput,
@@ -58,7 +59,7 @@ export default function ClientErrorsPage() {
       return;
     }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  }, [searchQuery, dateFrom, dateTo, kind]);
 
   const filters = useMemo(
     () => ({

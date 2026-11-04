@@ -1,36 +1,49 @@
-# PLAN: client error report + stale-chunk self-heal (CLIENT-ERROR-REPORT)
+# PLAN: client error report + stale-chunk self-heal + Safari start crash (CLIENT-ERROR-REPORT)
 
-Status: in progress (small fix track: one new table, no auth/RBAC change beyond one new view slug)
+Status: built, in review (full track: migration, new permission slug, new authenticated ingest
+surface; security review ran). UAC: `client-error-report-acceptance-criteria.md`.
 
 ## Why
 
-4 Nov, prod, a "Stock Inquiries" tab showed the root crash screen ("Something went wrong / The app
-could not start"). That screen is `components/common/GlobalErrorView.tsx`, mounted only by
-`app/global-error.tsx`. It logs `console.error` and nothing else, so nobody can see why it happened.
-The commonest cause is a stale chunk (a deploy replaced the build the tab runs), which a single
-reload fixes, but the root boundary did not use `isChunkLoadError` and never reloaded by itself.
+4 Nov, prod, a "Stock Inquiries" tab on a MacBook in Safari showed the root crash screen
+("Something went wrong / The app could not start"); Chrome worked. That screen is
+`components/common/GlobalErrorView.tsx`, mounted only by `app/global-error.tsx`. It logged
+`console.error` and nothing else, so nobody could see why. The root boundary also never used
+`isChunkLoadError`, so a stale build (the commonest cause in Chrome) never healed itself.
 
-## Build
+Crew reproduced the Safari case with Playwright WebKit: `providers/settings-provider.tsx` threw on
+mount, on every page including sign-in, for two reasons: `structuredClone` is missing before Safari
+15.4, and `Object.keys(localStorage)` throws SecurityError when Safari blocks website storage.
 
-1. `client_error_report` table (additive migration): user id (nullable), error name, message, stack
-   (truncated), digest, URL path (no query string), build sha, user agent, `is_chunk_error`,
-   boundary (`global` | `protected`), client timestamp, created_at.
-2. `POST /api/v1/client-errors` (authenticated staff session or API key principal): validates and
-   truncates every field server-side, strips query string and fragment from the path, rate-limited
-   per user (Redis fixed window, fails open when Redis is down), stores one row. 204.
-   Unauthenticated pages do not report (the boundary skips when there is no token).
-3. `GET /api/v1/system/client-errors` gated by new permission `system_management.client_error.view`.
-4. Retention: rows deleted after 30 days by the existing daily `api_call_log_prune` task (no new
-   scheduled task row).
-5. FE: `lib/client-error-report.ts` (dependency-free: fetch + token lookup), called once per error
-   by `app/global-error.tsx` and `app/(protected)/error.tsx`.
-6. FE: `global-error.tsx` reloads once on a chunk load error, guarded in sessionStorage by build sha
-   so it can never loop; if the reloaded page fails again the screen shows. Reload button stays.
-7. FE: System Management > Client Errors list, modelled on the API call log page.
+## Built
 
-## Tests (red first)
+1. `client_error_report` table (migration `cer_0001_client_error_report`, additive): user id
+   (nullable), boundary (`global` | `protected`), error name, message, stack, digest, path (no query
+   string), build sha, user agent (from the request header), `is_chunk_error`, client timestamp,
+   created_at. Permission `system_management.client_error.view` (not granted to any role; admins pass).
+2. `POST /api/v1/system/client-errors` (any signed-in principal): body streamed and refused above
+   16 KB, every field capped server-side, link tokens redacted in path, message and stack, NUL
+   stripped, bad client timestamp ignored. Rate limit 20 rows per user per rolling hour, counted from
+   the table itself (no Redis). 204 / 413 / 422 / 429.
+3. `GET /api/v1/system/client-errors` behind the view slug; user ids resolved to names.
+4. Retention: rows deleted after 30 days by the existing daily `api_call_log_prune` task (its own
+   try block, so an api_call_log failure cannot skip it). No new scheduled task row.
+5. FE reporter `lib/client-error-report.ts`: plain fetch (no shared chunks), one report per error
+   object, skips signed-out pages, `keepalive` with a retry without it for older Safari.
+6. `app/global-error.tsx`: chunk load error reloads once (sessionStorage key per build sha, so it can
+   never loop; no storage means no auto reload), screen and report only if that did not fix it.
+   Reload button kept. `app/(protected)/error.tsx` reports too.
+7. Build sha: `NEXT_PUBLIC_BUILD_SHA` from the deploy workflow build-arg into the frontend Dockerfile.
+8. System Management > Operations > Client Errors list + detail drawer.
+9. Safari: `SettingsProvider` copies defaults with JSON instead of `structuredClone` and keeps every
+   storage access in try (in-memory fallback). Guard test over the root providers and shell files.
 
-- vitest: chunk error -> one reload, no screen; second chunk error same build -> screen, no reload;
-  real error -> report posted once, no reload; no token -> nothing posted.
-- pytest: post stores row with query stripped and fields truncated; oversize body rejected; rate
-  limit returns 429 after N; list requires permission; prune deletes rows past 30 days.
+Choice made on purpose: a stale chunk the automatic reload fixes is not reported (the request would
+race the reload); only crashes the reader actually saw are recorded.
+
+## Tests
+
+- vitest: `app/global-error.selfheal.test.tsx`, `lib/client-error-report.test.ts`,
+  `app/(protected)/error.test.tsx`, `providers/settings-provider.safari.test.tsx`,
+  `components/rootProviders.safariGuard.test.ts`.
+- pytest: `tests/test_client_error_report.py`.

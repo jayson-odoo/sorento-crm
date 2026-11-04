@@ -5,10 +5,10 @@ import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { isChunkLoadError } from '@/lib/chunk-load-error';
 
 // Lives in a dependency-free module so the root boundary can use it too.
-export { isChunkLoadError } from '@/lib/chunk-load-error';
-import { isChunkLoadError } from '@/lib/chunk-load-error';
+export { isChunkLoadError };
 
 export function reloadPage(): void {
   window.location.reload();

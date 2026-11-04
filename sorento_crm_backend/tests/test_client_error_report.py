@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from app.models.api_call_log import ApiCallLog  # noqa: F401  (the prune handler also touches it)
 from app.models.client_error_report import ClientErrorReport
 from app.services import client_error_report_service as svc
 from tests._ai_usage_client import api_client
@@ -110,7 +111,7 @@ def test_list_requires_view_permission(db):
         assert client.get(URL).status_code == 403
 
 
-def test_list_returns_newest_first(db):
+def test_list_returns_rows_and_filters_chunk_errors(db):
     with api_client(db, [VIEW]) as client:
         client.post(URL, json=_report(message="first"))
         client.post(URL, json=_report(message="second", is_chunk_error=True))
@@ -166,3 +167,24 @@ def test_nul_and_extreme_timestamp_do_not_lose_the_report(db):
     row = db.query(ClientErrorReport).one()
     assert row.message == "ab"
     assert row.client_ts is None
+
+
+def test_bad_timestamp_keeps_the_report(db):
+    with api_client(db, []) as client:
+        assert client.post(URL, json=_report(timestamp="not a date")).status_code == 204
+    assert db.query(ClientErrorReport).one().client_ts is None
+
+
+def test_daily_prune_task_deletes_old_client_errors(db):
+    """The 30-day retention rides the api_call_log_prune handler; guard the hook itself."""
+    from app.scheduler.task_scheduler import _handler_api_call_log_prune
+
+    db.add(ClientErrorReport(boundary="global", message="old",
+                             created_at=datetime.utcnow() - timedelta(days=31)))
+    db.add(ClientErrorReport(boundary="global", message="new",
+                             created_at=datetime.utcnow() - timedelta(days=29)))
+    db.commit()
+    result = _handler_api_call_log_prune(db, None)
+    assert result["client_error_reports_deleted"] == 1
+    assert "rows_deleted" in result and "payloads_cleared" in result
+    assert [r.message for r in db.query(ClientErrorReport).all()] == ["new"]

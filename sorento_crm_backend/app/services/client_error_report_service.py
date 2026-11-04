@@ -61,6 +61,15 @@ def clean_path(raw: Optional[str]) -> Optional[str]:
     return _cut(redact_url(path), MAX_PATH)
 
 
+def parse_client_ts(raw: Optional[str]) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw)[:40].replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def is_rate_limited(db: Session, user_id: Optional[str], *, now: Optional[datetime] = None) -> bool:
     if not user_id:
         return False

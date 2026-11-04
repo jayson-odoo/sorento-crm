@@ -18,6 +18,11 @@ import { reportClientError } from '@/lib/client-error-report';
  * that reload did not fix it. Whenever the screen shows, one report goes to the
  * backend so the cause is visible under System Management > Client Errors.
  */
+// Set once the reload is issued. StrictMode runs the effect twice in dev; without
+// this the second run would find the reload already claimed and show the screen
+// (and file a report) while the page is in the middle of reloading.
+let reloadIssued = false;
+
 export default function GlobalError({
   error,
 }: {
@@ -30,7 +35,9 @@ export default function GlobalError({
 
   useEffect(() => {
     console.error(error);
+    if (reloadIssued) return;
     if (isChunkLoadError(error) && claimStaleChunkReload()) {
+      reloadIssued = true;
       window.location.reload();
       return;
     }

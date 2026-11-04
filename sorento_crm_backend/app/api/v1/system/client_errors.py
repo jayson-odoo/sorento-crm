@@ -12,13 +12,13 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user, require_permission
 from app.services import client_error_report_service as svc
+from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,8 @@ class ClientErrorIn(BaseModel):
     path: Optional[str] = None
     build_sha: Optional[str] = None
     is_chunk_error: bool = False
-    timestamp: Optional[datetime] = None
+    # A string, parsed leniently: a bad browser clock must not cost the report.
+    timestamp: Optional[str] = None
 
 
 class ClientErrorRow(BaseModel):
@@ -65,11 +66,8 @@ class ClientErrorListResponse(BaseModel):
     limit: int
 
 
-def _error(status_code: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"message": message, "detail": None, "code": code},
-    )
+def _error(status_code: int, code: str, message: str) -> AppException:
+    return AppException(status_code=status_code, message=message, code=code)
 
 
 @router.post("/client-errors", status_code=status.HTTP_204_NO_CONTENT)
@@ -80,23 +78,25 @@ async def report_client_error(
 ):
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > svc.MAX_BODY_BYTES:
-        return _error(413, "payload_too_large", "Report too large")
+        raise _error(413, "payload_too_large", "Report too large")
     # Read in chunks and stop at the cap: a chunked request has no content-length,
     # and request.body() would buffer whatever the client cares to send.
     received = bytearray()
     async for chunk in request.stream():
         received.extend(chunk)
         if len(received) > svc.MAX_BODY_BYTES:
-            return _error(413, "payload_too_large", "Report too large")
+            raise _error(413, "payload_too_large", "Report too large")
     body = bytes(received)
     try:
         payload = ClientErrorIn.model_validate_json(body or b"{}")
     except ValidationError:
-        return _error(422, "invalid_report", "Invalid report")
+        raise _error(422, "invalid_report", "Invalid report")
 
+    # During impersonation this is the real admin, not the impersonated user: the
+    # browser that crashed is the admin's, and impersonating cannot reset their allowance.
     user_id = get_actor_user_id(request, current_user)
     if svc.is_rate_limited(db, user_id):
-        return _error(429, "rate_limited", "Too many reports")
+        raise _error(429, "rate_limited", "Too many reports")
 
     svc.record_report(
         db,
@@ -111,7 +111,7 @@ async def report_client_error(
         # From the header, not the body: the one field the browser cannot be asked to supply honestly.
         user_agent=request.headers.get("user-agent"),
         is_chunk_error=payload.is_chunk_error,
-        client_ts=payload.timestamp,
+        client_ts=svc.parse_client_ts(payload.timestamp),
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
