@@ -23,6 +23,21 @@ const root = path.resolve(__dirname, '..');
 export const ALLOWED: Record<string, string> = {
   'lib/helpers.ts': 'the shared date helpers themselves',
   'i18n/timezones.ts': 'formats a timezone NAME for the timezone select, not a date',
+  'app/(protected)/account/home/settings-plain/components/basic-settings.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/account/home/settings-sidebar/components/basic-settings.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/components/demo1/dark-sidebar/demo1-dark-sidebar-page.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/components/demo1/light-sidebar/components/earnings-chart.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/components/demo1/light-sidebar/demo1-light-sidebar-page.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/components/demo2/components/my-balance.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/public-profile/profiles/default/components/media-uploads.tsx': 'Metronic demo page, not a CRM screen',
+  'app/(protected)/store-admin/dashboard/components/orders.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo10/layout.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo2/layout.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo3/components/navbar-links.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo5/layout.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo6/layout.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo7/layout.tsx': 'Metronic demo page, not a CRM screen',
+  'app/components/layouts/demo9/layout.tsx': 'Metronic demo page, not a CRM screen',
 };
 
 /** Patterns that render a date outside the helper. Each regex runs per source line. */

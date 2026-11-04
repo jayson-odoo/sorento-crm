@@ -58,6 +58,7 @@ import type {
   InternalNote,
   PanelTab,
 } from './types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const PERSIST_KEY = 'sorento:activities-panel:tab';
 
@@ -73,7 +74,7 @@ function relativeTime(iso: string): string {
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return d.toLocaleString();
+  return formatDateTimeInMalaysia(d);
 }
 
 function formatSystemEvent(
