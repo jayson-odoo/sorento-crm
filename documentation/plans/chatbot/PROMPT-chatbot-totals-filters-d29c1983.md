@@ -1,8 +1,9 @@
 # Parser prompt: the ONE combined candidate for the next production label (CHATBOT-TOTALS-FILTERS + #2120)
 
-Result md5 `9ad88b43128b9135244f15395f8d0fc4` (112,150 chars), 5 Nov, after the owner's hand test 1 failed on v199
-(md5 `dc77a7ac8cb96f046b43f91878615ccb`, 111,597 chars, the 4 Nov candidate: everything below up to edit 8). Not published.
-Only the owner moves the production label. Production today is v70, md5 57d7d412.
+Result md5 `d29c19830b22aa47403a88ddcb8e817d` (112,531 chars), 5 Nov, after crew's re-pass on v200 (md5
+`9ad88b43128b9135244f15395f8d0fc4`) found a bare "Sorento" given said_as "company" with no kind word (2 runs of 3).
+Saved unlabelled as v202 (id 05f55303) on sorento_prod_1020. Not published; only the owner moves the production label.
+Production today is v70, md5 57d7d412. Earlier candidates: v199 dc77a7ac (4 Nov, edits 1-8), v200 9ad88b43 (edits 9-11).
 
 The text is built from three parts:
 - Base: #2105's candidate, md5 `e4aa6d43fedd996579b8c1caa2c54556`.
@@ -15,6 +16,8 @@ Code that keys on these words:
 - `parser.COMPANY_CANDIDATES_WORD` (9ad88b43): a data-built `Company candidates` block (the contact's companies the message
   spells, 2+ companies) only when the text names it.
 - `parser.SAID_AS_WORD` (9ad88b43): the entity key `said_as` (company | brand | both | null) only when the text defines it.
+- `parser.SAID_AS_TEXT_WORD` (d29c1983): the entity key `said_as_text` (the message's own kind word, or null), ordered before
+  said_as through Gemini `propertyOrdering`; with it defined, a said_as counts only when said_as_text is filled.
 
 So #2105's text alone (e4aa6d43) sees none of this lane's changes, and dc77a7ac sees none of the 5 Nov ones.
 
@@ -50,6 +53,12 @@ Owner rule kept: no gold-message examples and no word lists. Every edit is a slo
     what this message calls it, and report_ask puts the name where said_as says.
 11. (5 Nov, one-name bullet of edit 5) "A name on that line, or in the Company candidates block, ... goes where this
     message's own kind word (its entity's said_as) puts it".
+
+12. (5 Nov, entity line, d29c1983) `"said_as_text"` before `"said_as"`: the word(s) of THIS message that call the name a
+    company or a brand, as typed, else null; said_as follows that word and is null whenever said_as_text is null.
+13. (5 Nov, BRAND CANDIDATES, d29c1983) the example list names said_as_text with said_as, and adds: a message that types
+    neither word for the name ("Sorento total sale September 2026") -> said_as_text null and said_as null, even when the
+    name is a known company.
 
 ## Gates (gemini-3.5-flash-lite, x1, sorento_prod_1020 read-only, text swapped in-process; ledger lines 4 Nov)
 
@@ -88,3 +97,18 @@ code is 5156c84ae1 only, all gated off for a text without the new words): 82 vs 
 7 losses, p=0.77, not worse; vs dc77a7ac 82 vs 87, 2 / 7, p=0.18. Every loss is a non-report row (stock vs product intent,
 picked option, find kind, period: G004, G014, G035, G042, G056, G085, G126), none touches a brand, company or said_as.
 USD 0.366. Score: crew/state/eval/chatbot-totals-filters/runs/control_score_CAND5.md.
+
+## Gates on d29c1983 (5 Nov, inside crew's USD 0.40 OK; ledger lines 5 Nov)
+
+| Gate | Text md5 | Code | Gold | USD |
+|---|---|---|---|---|
+| 5 | d29c1983 (said_as_text) | b29b302cca + #2120 (gate head bb03ce6972) | 24 of 34 | 0.121 |
+
+- Bare-name rows tf-31/32/33 pass (said_as_text and said_as null); tf-34 ("company" reply) passes. Every typed-word row has
+  said_as_text right (tf-09/10/27/28 "company", tf-29 "brand", tf-30 "company and brand").
+- tf-01 (top-level sales_basis) and tf-22 (a held customer) flipped from gate 4; neither touches the edited lines.
+
+TRAIN no-op control, slice 1 only (crew ruling 5 Nov): 42 vs BASE e4aa6d43 44 on 52 common rows, 3 wins / 5 losses,
+p=0.73; vs v200 41 vs 39. No loss carries a report_ask. Known pre-existing loss: G056, an outstanding-kind row
+(report_ask null) losing picked_option; it also lost vs BASE on v200 and dc77a7ac. USD 0.182. Score:
+crew/state/eval/chatbot-totals-filters/runs/control_score_CAND6.md.
