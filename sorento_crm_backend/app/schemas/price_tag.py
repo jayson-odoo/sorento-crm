@@ -48,6 +48,8 @@ class PriceTagRequestLineCreate(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
+    # PRICETAG-LPSP: this line's own LP/SP choice. None = the request's price_mode.
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int = Field(default=1, ge=1)
     # The catalogue package this line is asked for as, and the parts under it, in
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
@@ -104,6 +106,7 @@ class PriceTagReviseLineIn(BaseModel):
     promotion_id: Optional[str] = None
     tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -192,6 +195,7 @@ class PriceTagRequestLineResponse(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int
     combo_id: Optional[str] = None
     # What the package guard found at submit, for marketing to read (D2). NULL =
@@ -1633,10 +1637,14 @@ class ProductTagTemplateItem(BaseModel):
     published: bool
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
+    #: PRICETAG-LPSP: the link preselected on a line (a lone link counts).
+    is_default: bool = False
 
 
 class ProductTagTemplatesUpdate(BaseModel):
     template_ids: list[str] = Field(default_factory=list, max_length=100)
+    #: Must be one of ``template_ids`` (422 otherwise); None = no default.
+    default_template_id: Optional[str] = None
 
 
 class TemplateAssignFilter(BaseModel):
@@ -1673,6 +1681,7 @@ class TagPreviewLineIn(BaseModel):
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
     tag_template_id: Optional[str] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class TagPreviewIn(BaseModel):

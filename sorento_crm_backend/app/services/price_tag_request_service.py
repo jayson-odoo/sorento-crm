@@ -355,7 +355,6 @@ class PriceTagRequestService:
 
         viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        selling = request.price_mode == "selling"
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
@@ -404,8 +403,12 @@ class PriceTagRequestService:
 
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
+            # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
+            # stored explicitly so a later header change never rewrites the line.
+            price_type = line_data.get("price_type") or request.price_mode
+            selling = price_type == "selling"
             PriceTagRequestService._validate_line_price_basis(
-                promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
+                promotion_id, manual_sell_price, price_type, detail=f"line:{idx}"
             )
             # D1/D3/AC-S7-5: a line's price basis, resolved through the SAME
             # engine the portal's and the CRM's own line-pricing routes call
@@ -523,6 +526,7 @@ class PriceTagRequestService:
                     product_id=product_id,
                     product_set_id=product_set_id,
                     show_promo_price=selling and basis != "list",
+                    price_type=price_type,
                     quantity=line_data.get("quantity", 1),
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
@@ -538,6 +542,7 @@ class PriceTagRequestService:
                         line_type=line_data["line_type"],
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
+                        combo_id=combo_id,
                     ),
                 )
             )
@@ -1067,8 +1072,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         if "manual_sell_price" in data and data["manual_sell_price"] is not None:
             promotion_id = None
 
+        price_type = line.price_type or request.price_mode
         PriceTagRequestService._validate_line_price_basis(
-            promotion_id, manual_sell_price, request.price_mode
+            promotion_id, manual_sell_price, price_type
         )
 
         basis = "list"
@@ -1147,7 +1153,7 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         line.promotion_id = promotion_id
         line.manual_sell_price = manual_sell_price
-        line.show_promo_price = request.price_mode == "selling" and basis != "list"
+        line.show_promo_price = price_type == "selling" and basis != "list"
 
         for tag in line.tags:
             tag.pinned_tag_data = None
