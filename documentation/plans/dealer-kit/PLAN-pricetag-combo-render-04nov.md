@@ -1,6 +1,6 @@
 # PLAN: price tags render every product and combo correctly (PRICETAG-COMBO-RENDER, 4 Nov)
 
-Status: Plan (step 1 render-coverage table in progress). Track: full (expected migration + data import).
+Status: Plan (step 1 coverage table drafted, waiting on dev data; step 2 card next). Track: full (expected migration + data import).
 
 Owner goal (4 Nov): display the price tag correctly and accurately for all products and combos.
 Per-component combo template (sink + 1..5 taps, basin + tap + FOC, top-up upgrades) and combos
