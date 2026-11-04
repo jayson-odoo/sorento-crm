@@ -30,7 +30,8 @@ outstanding, broken down month by month with the orders behind the numbers on re
   dealer and project", "show dealer and project", "by month" or "for all sales agents" lists every
   row, with no "How many?" question. "Top 10 products" ranks; the bot asks how many, or by quantity
   or by amount, only when you did not say. Asking for a total after a list or a ranking gives one
-  figure again, on the same filters.
+  figure again, on the same filters. Changing only a filter on a list ("sorento company only" after
+  the sales agents list) runs the same list again with that filter, every row.
 * **Remove one filter.** "all brands", "any brand" or "clear the brand filter" drops only the
   brand; the company, period, sales basis and breakdown stay as they were. The same works for a
   customer, product, category, sales agent, account type, channel or company. "start over" clears
