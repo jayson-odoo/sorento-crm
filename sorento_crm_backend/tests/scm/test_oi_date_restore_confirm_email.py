@@ -7,7 +7,7 @@ deploy) and moves the told date onto the new line date. With oiod_0002 run befor
 Confirm, the handover carries Was WAS_1 / Now the new date and the row is stamped as it would
 have been without the backfill.
 
-The control (no oiod_0002) runs in PROD's start order, which this module sets up at import
+The control (no oiod_0002) runs in PROD's start order, which `_prod_start_order` below sets up
 (release sweep RELEASE-SWEEP-4NOV-PM, #2171): the post-commit dispatch listener is registered
 before any fixture writes, as `app/main.py`'s startup registers it before any request. In
 that order the Confirm STILL emails Was WAS_1 / Now: the Was comes from the pending planning
@@ -54,13 +54,20 @@ from .test_oi_date_move_settle import _one_row_fixture
 
 __all__ = ["api", "world"]
 
-# Prod's start order: the post-commit dispatch listener exists before any write, as
-# `app/main.py`'s startup registers it (idempotent, process-global). See the module docstring.
-from app.services.project_order_inquiry_service import (  # noqa: E402
-    register_order_inquiry_post_commit_dispatch,
-)
 
-register_order_inquiry_post_commit_dispatch()
+
+@pytest.fixture(autouse=True, scope="module")
+def _prod_start_order():
+    """Prod's start order: the post-commit dispatch listener exists before any write, as
+    `app/main.py`'s startup registers it (idempotent, process-global). A module fixture, set
+    up before the function-scoped `world`, rather than an import-time call: collection
+    imports this file in EVERY xdist worker, and registering there changed other files'
+    runs (tests/scm/test_container_request_product_index.py's plans, measured on #2171)."""
+    from app.services.project_order_inquiry_service import (
+        register_order_inquiry_post_commit_dispatch,
+    )
+
+    register_order_inquiry_post_commit_dispatch()
 
 VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 LATER = date(2026, 9, 30)  # WAS_1 is 25 Aug: LATER is a DELAY, NOW (19 Aug) an ADVANCE
