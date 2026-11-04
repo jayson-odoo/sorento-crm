@@ -5,34 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Combo price tags</title>
 <!--
-  PRICETAG-COMBO-RENDER mock v2 (CARD-pricetag-combo-render-04nov.md, on the recommended answers Q1 a, Q2 a,
-  Q3 a, Q4 a, Q5 a). Static, no data fetch. Codes from the reference PDF; pictures are placeholders; the
-  descriptions are placeholders until the dev data request returns the real price_tag_description text.
+  PRICETAG-COMBO-RENDER mock v3 (CARD-pricetag-combo-render-04nov.md v2, after the owner's 4 Nov answers:
+  one template per tap count; salesperson picks combo, template, then exactly N taps; no-SP combo = typed SP;
+  free items / logos are template assets; flyer differs = update the combo). Static, no data fetch. Codes from
+  the reference PDF; tap codes after SRTKT1862SS, pictures and descriptions are placeholders.
 
   Element -> component map (reuse first; NEW only where named):
-  A. Tag previews (105 x 148)
-       drawn by the existing renderers: canvas app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer.tsx,
-       PDF app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx, preview
-       components/dealer-kit/PriceTagLivePreview.tsx (DesignViewer). NEW layer kind `component_list` in
-       lib/dealer-kit/tag-template-types.ts; NEW pure layout lib/dealer-kit/component-list.ts (cells + text lines,
-       reusing textLayerLines from lib/dealer-kit/text-layout.ts) called by all three surfaces (R2).
-       Block contents reuse: picture = slotImageAttachmentId / primaryImageOf (product-block.ts:485-520),
-       code / description = resolveSlotText on a per-item subject (product-block.ts:351), price = formatTagPrice.
-  B. Inspector for a Component list layer
-       app/(protected)/dealer-kit/tag-templates/components/InspectorPanel.tsx (same section pattern as the
-       subject picker, InspectorPanel.subject.test.tsx); checkboxes = components/ui/checkbox; direction =
-       components/ui/toggle-group (as PriceModeToggle.tsx). Add via CanvasToolbar.tsx "Add" menu.
-  C. Combo modal: kind per part (Part / Option / FOC / Upgrade) + prices
-       app/(protected)/master-data-management/products/[id]/components/AddComboModal.tsx (parts table) ;
-       product pick = components/common/SearchableSelect (clearable) over the existing product lookup.
-       BE: new column product_combo_parts.is_free; sell_price / topup_amount / is_upgrade exist
-       (app/models/product_combo.py:131-133).
-  D. Request line with no combo price (R5 refusal)
-       components/dealer-kit/PriceTagLinesTable.tsx row pill (Badge, as the LPSP "No system selling price")
-       + Approve disabled with the reason (create screen buttons: Save draft / Escalate / Approve, #2101).
-  E. Re-seed review report
-       script output CSV (scripts/import_product_combos.py gains a flyer-read front end); shown here as the
-       table the owner approves. Not an app screen.
+  A. N-tap tag (1..5 taps), 105 x 148
+       Ordinary layers (image / text / price) drawn by the existing renderers: canvas
+       app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer.tsx, PDF
+       app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx, preview
+       components/dealer-kit/PriceTagLivePreview.tsx (DesignViewer). Each tap tile's layers carry the NEW subject
+       "Picked option k", resolved in subjectOf (lib/dealer-kit/product-block.ts:200-227) beside subjectPart, so
+       all three surfaces read it the same way. "Combo codes" = NEW slot in resolveSlotText (product-block.ts:351).
+       Templates = seeds in sorento_crm_backend/scripts/tag_template_seed_docs.py (the 3-tap one replaces
+       build_sink_combo :491-617).
+  B. Request line: combo -> template (tap count) -> pick exactly N taps
+       components/dealer-kit/PriceTagLinesTable.tsx row; combo + template pickers = components/common/SearchableSelect
+       (clearable), as today; tap picker = components/common/SearchableMultiSelect with a max of N (NEW prop
+       `max`), order = pick order; count pill = components/ui/badge. Typed SP = the existing typed selling price
+       input (#2158). Approve disabled with reason = the existing create-screen buttons (#2101).
+       Storage: resolved price_tag_request_line_parts rows sharing the group role (app/models/price_tag.py:299).
+  C. Template editor: Subject picker gains "Picked option 1..5" and "Upgrade 1"
+       app/(protected)/dealer-kit/tag-templates/components/InspectorPanel.tsx (existing subject section,
+       InspectorPanel.subject.test.tsx).
+  D. Basin combo with the free item as a placed picture asset
+       existing image layer with an asset source (AssetPickerDialog.tsx); nothing new.
+  E. Re-seed review report: script output (scripts/import_product_combos.py gains a flyer-read front end).
 -->
 <style>
   :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --dangerbg:#fef2f2; --warn:#b45309; --warnbg:#fffbeb; --ok:#047857; --okbg:#ecfdf5; --sel:#eef4ff; }
@@ -45,9 +44,6 @@
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1000px; }
   .muted { color:var(--muted); font-size:12px; }
   .row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
-  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  .seg button { border:0; background:transparent; color:var(--muted); padding:4px 10px; font-size:12px; cursor:pointer; }
-  .seg button.on { background:var(--primary); color:#fff; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
@@ -57,227 +53,197 @@
   .pill.ok { background:var(--okbg); color:var(--ok); } .pill.info { background:var(--sel); color:var(--primary); }
   .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; }
   .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
-  label.chk { display:flex; gap:6px; align-items:center; font-size:13px; padding:2px 0; }
-  input, select { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+  .btn[disabled] { opacity:.5; }
+  input, select { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 6px; max-width:100%; }
+  .field { display:flex; flex-direction:column; gap:4px; min-width:160px; }
+  .picker { border:1px solid var(--line); border-radius:8px; padding:6px; max-width:360px; }
+  .opt { display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:6px; cursor:pointer; font-size:13px; }
+  .opt:hover { background:var(--sel); }
+  .opt .ord { width:18px; height:18px; border-radius:50%; border:1px solid var(--line); font-size:11px; display:flex; align-items:center; justify-content:center; flex:none; }
+  .opt.on .ord { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .opt.off { opacity:.45; cursor:not-allowed; }
 
-  /* The printed tag: always white paper, 105 x 148 mm at 2.4 px/mm. */
-  .tag { width:252px; height:355px; background:#fff; color:#111; border:1px solid #d1d5db; border-radius:2px; padding:10px; display:flex; flex-direction:column; gap:6px; font-family: "DM Sans", system-ui, sans-serif; flex:none; }
+  /* The printed tag: white paper, 105 x 148 mm at 2.4 px/mm. */
+  .tag { width:252px; height:355px; background:#fff; color:#111; border:1px solid #d1d5db; border-radius:2px; padding:10px; display:flex; flex-direction:column; gap:6px; font-family:"DM Sans", system-ui, sans-serif; flex:none; }
   .tag .brand { height:14px; background:#231f20; color:#fff; font-size:8px; letter-spacing:.2em; display:flex; align-items:center; padding:0 6px; }
   .tag .title { font-size:11px; font-weight:700; }
   .tag .codes { font-size:7px; color:#444; word-break:break-all; }
-  .clist { display:flex; flex-wrap:wrap; gap:4px 3px; align-items:flex-start; align-content:flex-start; flex:1; min-height:0; outline:1px dashed #93c5fd; outline-offset:2px; }
-  .clist.col { flex-direction:column; }
-  .cell { flex:1 0 26%; min-width:0; max-width:34%; display:flex; flex-direction:column; gap:2px; position:relative; }
-  .cell .pic { aspect-ratio:1; background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:6px; color:#6b7280; }
-  .cell .pic.none { background:#fff; border:1px dashed #cbd5e1; }
-  .cell .cc { font-weight:700; word-break:break-all; }
-  .cell .cd { color:#555; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
-  .cell .cp { font-weight:700; }
-  .conn { flex:none; align-self:flex-start; margin-top:18px; font-size:8px; font-weight:800; color:#8c7355; }
-  .cell .lab { font-size:6px; font-weight:800; color:#fff; background:#8c7355; align-self:flex-start; padding:0 3px; border-radius:2px; }
+  .host { display:flex; gap:6px; }
+  .host .pic { width:84px; height:60px; flex:none; }
+  .pic { background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:6px; color:#6b7280; }
+  .taps { display:grid; gap:4px; flex:1; min-height:0; align-content:start; }
+  .tile { min-width:0; display:flex; flex-direction:column; gap:1px; border:1px solid #eee; padding:2px; border-radius:2px; }
+  .tile .pic { height:38px; }
+  .tile .cc { font-weight:700; font-size:7px; word-break:break-all; }
+  .tile .cd { font-size:6px; color:#555; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+  .tile .cp { font-size:7px; font-weight:700; color:#8c7355; }
+  .tile.empty { border:1px dashed #93a3b8; }
   .price { display:flex; justify-content:space-between; align-items:flex-end; border-top:1px solid #e5e7eb; padding-top:4px; }
-  .price .lp { font-size:8px; color:#555; text-decoration:line-through; }
+  .price .lp { font-size:8px; color:#555; }
   .price .sp { font-size:22px; font-weight:800; color:#8c7355; line-height:1; }
   .price .sp small { font-size:9px; font-weight:700; }
   .topup { font-size:8px; font-weight:700; background:#fef3c7; padding:2px 4px; }
-  .foc { display:flex; gap:3px; height:52px; }
-  .foc .cell { max-width:none; }
-  .note { font-size:12px; color:var(--muted); max-width:300px; }
+  .asset { font-size:6px; color:#fff; background:#16a34a; padding:2px 4px; border-radius:2px; }
+  .note { font-size:12px; color:var(--muted); max-width:420px; }
 </style>
 </head>
 <body>
-<h1>Combo price tags: per-component template</h1>
-<p class="muted">Mock v2, 04/11/2026. Static. Recommended answers Q1 a to Q5 a. The dashed blue outline is the Component list layer; everything inside it is drawn per item.</p>
+<h1>Combo price tags: one template per tap count</h1>
+<p class="muted">Mock v3, 04/11/2026. Static. Built on the owner's 4 Nov answers. Try section B: change the template, pick taps, type a price; the tag in section A follows.</p>
 
-<h2>A. Tags (Big 105 x 148)</h2>
+<h2>A. The tag (Big 105 x 148), SRTKS7061 sink combo</h2>
 <div class="card">
-  <div class="row" style="align-items:center; margin-bottom:12px">
-    <span class="muted">Taps in the SRTKS7061 group:</span>
-    <div class="seg" id="tapCount">
-      <button>1</button><button>2</button><button class="on">3</button><button>4</button><button>5</button>
-    </div>
-    <span class="muted">Same template, the list re-flows: at most 3 items per row, then a second row; type shrinks to a 6 pt floor; a code is never cut.</span>
-  </div>
   <div class="row">
-    <div>
-      <div class="tag" aria-label="Sink combo tag">
-        <div class="brand">SORENTO</div>
-        <div class="title">Kitchen sink combo</div>
-        <div class="codes" id="sinkCodes"></div>
-        <div class="clist" id="sinkList"></div>
-        <div class="foc" id="sinkFoc"></div>
-        <div class="price"><span class="lp" id="sinkLp">RM 1,288</span><span class="sp">RM 849 <small>NETT</small></span></div>
-      </div>
-      <p class="note">E1: SRTKS7061 + one of the taps. Each tap has its own picture, full code and its own tag description. Price is the combo SP, never the sum.</p>
+    <div class="tag" aria-label="Sink combo tag">
+      <div class="brand">SORENTO</div>
+      <div class="title">Kitchen sink combo</div>
+      <div class="codes" id="codes"></div>
+      <div class="host"><div class="pic">sink</div><div><div style="font-weight:700; font-size:9px">SRTKS7061</div><div style="font-size:7px; color:#555">Undermount sink, 700 x 450</div></div></div>
+      <div class="taps" id="taps"></div>
+      <div class="topup">TOP UP RM 150, UPGRADE TO SRTKT71SS</div>
+      <div class="price"><span class="lp">LP RM 1,288</span><span class="sp" id="sp">RM 849 <small>NETT</small></span></div>
     </div>
-    <div>
-      <div class="tag" aria-label="Basin combo tag">
-        <div class="brand">SORENTO</div>
-        <div class="title">Wash basin combo</div>
-        <div class="codes">SRTWB1419-BL+(SRTWT7449-BL / SRTWT7449-RG)</div>
-        <div class="clist">
-          <div class="cell"><div class="pic">basin</div><div class="cc" style="font-size:7px">SRTWB1419-BL</div><div class="cd" style="font-size:6px">Art basin, matt black, 410 x 410</div></div>
-          <span class="conn">+</span>
-          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:7px">SRTWT7449-BL</div><div class="cd" style="font-size:6px">Basin mixer, matt black</div></div>
-          <span class="conn">OR</span>
-          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:7px">SRTWT7449-RG</div><div class="cd" style="font-size:6px">Basin mixer, rose gold</div></div>
-        </div>
-        <div class="foc">
-          <div class="cell" style="flex-direction:row; gap:4px"><div class="pic" style="width:46px">waste</div><div><span class="lab">FOC</span><div class="cc" style="font-size:7px">SRTW5102-BL</div><div class="cd" style="font-size:6px">Pop-up waste, black</div></div></div>
-        </div>
-        <div class="price"><span class="lp">RM 1,069</span><span class="sp">RM 699 <small>NETT</small></span></div>
-      </div>
-      <p class="note">E2: basin + tap (two finishes) + FOC. The FOC is a catalogue product with its own picture, drawn by a second Component list set to "FOC only". Prices here are placeholders.</p>
-    </div>
-    <div>
-      <div class="tag" aria-label="Top-up tag">
-        <div class="brand">SORENTO</div>
-        <div class="title">Kitchen sink combo</div>
-        <div class="codes">SRTKS7061+SRTKT1862SS</div>
-        <div class="clist">
-          <div class="cell"><div class="pic">sink</div><div class="cc" style="font-size:8px">SRTKS7061</div><div class="cd" style="font-size:6.5px">Undermount sink, 700 x 450</div></div>
-          <span class="conn">+</span>
-          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:8px">SRTKT1862SS</div><div class="cd" style="font-size:6.5px">Pull-out kitchen tap</div></div>
-          <span class="conn">TOP UP</span>
-          <div class="cell"><span class="lab">RM 150</span><div class="pic">tap</div><div class="cc" style="font-size:8px">SRTKT71SS</div><div class="cd" style="font-size:6.5px">Sensor kitchen tap</div></div>
-        </div>
-        <div class="topup">TOP UP RM 150, UPGRADE TO SRTKT71SS</div>
-        <div class="price"><span class="lp">RM 1,288</span><span class="sp">RM 849 <small>NETT</small></span></div>
-      </div>
-      <p class="note">E4: a top-up is its own block with the upgrade's picture, plus the reference PDF's wording as a line.</p>
-    </div>
-    <div>
-      <div class="tag" aria-label="Bathroom furniture tag">
-        <div class="brand">SORENTO</div>
-        <div class="title">Bathroom furniture set</div>
-        <div class="codes">SRTBF11829+SRTMCB8083-BL+SRTWT6203-GM</div>
-        <div class="pic" style="flex:1; background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); display:flex; align-items:center; justify-content:center; font-size:8px; color:#6b7280">combo picture (as today)</div>
-        <div style="font-size:7px; color:#444">Combo description (as today, combo level).</div>
-        <div class="price"><span class="lp">RM 3,120</span><span class="sp">RM 2,099 <small>NETT</small></span></div>
-      </div>
-      <p class="note">E5: bathroom furniture keeps the combo-level picture and description. Only the price changes: combo SP, never the sum.</p>
+    <div class="note">
+      <p style="margin-top:0">Each tap tile is ordinary picture, code, description and price layers whose subject is "Picked option 1", "2", and so on. The template decides how many tiles (its tap count); the salesperson decides which taps fill them.</p>
+      <p>A tile not yet filled shows dashed on the preview and Approve stays off until every tile is filled. A tile never falls back to the sink.</p>
+      <p>Price under each tap: the package price with that tap (the option's SP) when the combo stores one (Q-B). Headline SP: the combo's SP, or the SP the salesperson typed when the combo has none.</p>
     </div>
   </div>
 </div>
 
-<h2>B. Template editor: Component list layer</h2>
+<h2>B. Request line: combo, template, then exactly N taps</h2>
+<div class="card">
+  <div class="row">
+    <div class="field"><span class="muted">Item</span><div><b>SRTKS7061</b> Undermount sink</div></div>
+    <div class="field"><span class="muted">Combo</span><select><option>Kitchen sink combo</option></select></div>
+    <div class="field"><span class="muted">Template</span>
+      <select id="tpl">
+        <option value="1">Sink combo, 1 tap</option>
+        <option value="2">Sink combo, 2 taps</option>
+        <option value="3" selected>Sink combo, 3 taps</option>
+        <option value="4">Sink combo, 4 taps</option>
+        <option value="5">Sink combo, 5 taps</option>
+      </select>
+    </div>
+    <div class="field"><span class="muted">Price</span>
+      <div><span class="pill info">SP</span> <input id="typed" inputmode="decimal" placeholder="Selling price" style="width:110px"></div>
+      <span class="muted">Combo selling price RM 849. Type to replace it.</span>
+    </div>
+  </div>
+  <div style="margin-top:12px">
+    <div class="muted" style="margin-bottom:4px">Kitchen tap: pick <b id="nNeed">3</b>, in print order. <span class="pill warn" id="count">Pick 3 taps (0 picked)</span></div>
+    <div class="picker" id="picker"></div>
+  </div>
+  <div class="row" style="margin-top:12px; align-items:center; gap:8px">
+    <button class="btn">Save draft</button><button class="btn">Escalate to marketing</button>
+    <button class="btn primary" id="approve" disabled>Approve</button>
+    <span class="muted" id="why"></span>
+  </div>
+</div>
+
+<h2>C. Template editor: what a tile shows</h2>
 <div class="card" style="max-width:420px">
-  <div style="font-weight:600; margin-bottom:6px">Component list</div>
-  <div class="muted" style="margin-bottom:4px">Show</div>
-  <label class="chk"><input type="checkbox" checked> Host</label>
-  <label class="chk"><input type="checkbox" checked> Parts</label>
-  <label class="chk"><input type="checkbox" checked> Options</label>
-  <label class="chk"><input type="checkbox"> Free items (FOC)</label>
-  <label class="chk"><input type="checkbox" checked> Upgrades</label>
-  <div class="muted" style="margin:10px 0 4px">Each item prints</div>
-  <label class="chk"><input type="checkbox" checked> Picture</label>
-  <label class="chk"><input type="checkbox" checked> Code</label>
-  <label class="chk"><input type="checkbox" checked> Tag description</label>
-  <label class="chk"><input type="checkbox"> List price</label>
-  <label class="chk"><input type="checkbox" checked> Option price</label>
-  <label class="chk"><input type="checkbox" checked> Connector (+, OR, FOC, TOP UP)</label>
-  <div class="muted" style="margin:10px 0 4px">Direction</div>
-  <div class="seg"><button class="on">Row</button><button>Column</button></div>
-  <div class="muted" style="margin:10px 0 4px">Smallest type</div>
-  <input type="number" value="6" style="width:70px"> pt
+  <div style="font-weight:600; margin-bottom:6px">Tap tile 2: picture</div>
+  <div class="muted" style="margin-bottom:4px">Shows</div>
+  <select style="width:100%">
+    <option>Whole tag</option>
+    <option>Sink (host)</option>
+    <option>Picked option 1</option>
+    <option selected>Picked option 2</option>
+    <option>Picked option 3</option>
+    <option>Upgrade 1</option>
+  </select>
+  <p class="muted">This template has 3 tap tiles, so it is offered as "3 taps" on any combo whose tap group has at least 3 taps.</p>
 </div>
 
-<h2>C. Combo (product page, Combos card): part kinds and prices</h2>
+<h2>D. Basin combo, 2 taps, free item as a placed picture</h2>
 <div class="card">
-  <div class="row" style="gap:24px; margin-bottom:10px">
-    <div><div class="muted">Combo</div><div>Kitchen sink combo</div></div>
-    <div><div class="muted">List price</div><input value="1,288" style="width:90px"></div>
-    <div><div class="muted">Selling price (NETT)</div><input value="849" style="width:90px"></div>
+  <div class="row">
+    <div class="tag" aria-label="Basin combo tag">
+      <div class="brand">SORENTO</div>
+      <div class="title">Wash basin combo</div>
+      <div class="codes">SRTWB1419-BL+SRTWT7449-BL+SRTWT7449-RG</div>
+      <div class="host"><div class="pic">basin</div><div><div style="font-weight:700; font-size:9px">SRTWB1419-BL</div><div style="font-size:7px; color:#555">Art basin, matt black, 410 x 410</div></div></div>
+      <div class="taps" style="grid-template-columns:1fr 1fr">
+        <div class="tile"><div class="pic">tap</div><div class="cc">SRTWT7449-BL</div><div class="cd">Basin mixer, matt black</div></div>
+        <div class="tile"><div class="pic">tap</div><div class="cc">SRTWT7449-RG</div><div class="cd">Basin mixer, rose gold</div></div>
+      </div>
+      <div class="row" style="gap:6px; align-items:center"><div class="pic" style="width:46px; height:40px">waste</div><span class="asset">FREE pop-up waste</span><div class="pic" style="width:40px; height:24px">logo</div></div>
+      <div class="price"><span class="lp">LP RM 1,069</span><span class="sp">RM 699 <small>NETT</small></span></div>
+    </div>
+    <p class="note">The free item picture, its "FREE" label and any certificate or logo are picture assets the designer placed on this template; they print the same on every tag that uses it. Prices are placeholders.</p>
   </div>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Product</th><th>Kind</th><th>Choice group</th><th>Option price</th><th>Top up</th></tr></thead>
-    <tbody>
-      <tr><td>SRTKT1862SS</td><td><select><option selected>Option</option><option>Part</option><option>FOC</option><option>Upgrade</option></select></td><td>Kitchen tap</td><td><input style="width:80px" placeholder="blank"></td><td class="muted">-</td></tr>
-      <tr><td>SRTKT1863SS</td><td><select><option selected>Option</option></select></td><td>Kitchen tap</td><td><input style="width:80px" value="899"></td><td class="muted">-</td></tr>
-      <tr><td>SRTKT71SS</td><td><select><option selected>Upgrade</option></select></td><td class="muted">-</td><td class="muted">-</td><td><input style="width:80px" value="150"></td></tr>
-      <tr><td>SRTW5102-BL</td><td><select><option selected>FOC</option></select></td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td></tr>
-    </tbody>
-  </table></div>
-  <p class="muted">Old free text (not linked): <span class="pill warn">FOC (text, not linked): "Free sink accessories set"</span> stays readable until a FOC product replaces it.</p>
-</div>
-
-<h2>D. Request line: combo with no price</h2>
-<div class="card">
-  <div class="tablewrap"><table>
-    <thead><tr><th>Item</th><th>Template</th><th>Price</th><th></th></tr></thead>
-    <tbody><tr>
-      <td><b>SRTKS2432</b> Kitchen sink combo<br><span class="muted">+ SRTKT1862SS</span></td>
-      <td>Big sink combo 105 x 148</td>
-      <td><span class="pill info">SP</span> <span class="pill err">No combo selling price. Type the selling price, or escalate to marketing to set it on the combo.</span><br><input placeholder="Selling price" style="width:120px; margin-top:4px"></td>
-      <td><span class="pill warn">No tag description: SRTKT1862SS</span></td>
-    </tr></tbody>
-  </table></div>
-  <div class="row" style="margin-top:8px"><button class="btn">Save draft</button><button class="btn">Escalate to marketing</button><button class="btn primary" disabled style="opacity:.5">Approve</button><span class="muted" style="align-self:center">Approve is off: 1 combo line has no selling price.</span></div>
-  <p class="muted">An LP line prints the combo LP (or the sum of component LPs, Q2). Ala carte lines are unchanged.</p>
 </div>
 
 <h2>E. Re-seed review report (from the current flyers)</h2>
 <div class="card">
   <div class="tablewrap"><table>
-    <thead><tr><th>Flyer, page</th><th>Combo read</th><th>Status</th><th>What differs / why unsure</th></tr></thead>
+    <thead><tr><th>Flyer, page</th><th>Combo read</th><th>Status</th><th>On approval</th></tr></thead>
     <tbody>
-      <tr><td>Kitchen flyer, p 4</td><td>SRTKS7061+SRTKT1862SS, FOC as listed, RM 849 NETT, TOP UP RM 150 SRTKT71SS</td><td><span class="pill warn">differs</span></td><td>SP 849 not stored; SRTKT71SS stored as an option, flyer says top-up</td></tr>
-      <tr><td>Kitchen flyer, p 5</td><td>SRTKS2432+SRTKT1862SS, RM 949 NETT</td><td><span class="pill warn">differs</span></td><td>Stored tap group has other taps</td></tr>
-      <tr><td>Bathroom flyer, p 2</td><td>SRTWB1419-BL+(SRTWT7449-BL / -RG), FOC SRTW5102-BL</td><td><span class="pill info">new</span></td><td>No combo on this host yet</td></tr>
-      <tr><td>Cabana flyer, p 3</td><td>CKS7306+CB1520SS-DIY</td><td><span class="pill info">new</span></td><td>Cabana host, first import; flyer price not loaded (Cabana has no selling price)</td></tr>
-      <tr><td>Bathroom flyer, p 7</td><td>SRTBF11829+SRTMCB8083-BL+SRTWT6203-GM, RM 2,099 NETT</td><td><span class="pill ok">matches</span></td><td>Parts match; SP will be set</td></tr>
-      <tr><td>Kitchen flyer, p 9</td><td>KS6645-NL+CB1530SS-BL</td><td><span class="pill err">unsure</span></td><td>Price block shared by two sinks on the page</td></tr>
+      <tr><td>Kitchen flyer, p 4</td><td>SRTKS7061 + taps (5), RM 849 NETT, TOP UP RM 150 SRTKT71SS</td><td><span class="pill warn">differs</span></td><td>Set SP 849; SRTKT71SS changed from option to top-up RM 150; link the 1 to 5 tap templates</td></tr>
+      <tr><td>Kitchen flyer, p 5</td><td>SRTKS2432 + taps, RM 949 NETT</td><td><span class="pill warn">differs</span></td><td>Tap group replaced by the flyer's taps; set SP 949</td></tr>
+      <tr><td>Bathroom flyer, p 2</td><td>SRTWB1419-BL + SRTWT7449-BL / -RG</td><td><span class="pill info">new</span></td><td>Create combo; link the 1 and 2 tap basin templates</td></tr>
+      <tr><td>Cabana flyer, p 3</td><td>CKS7306 + CB1520SS-DIY</td><td><span class="pill info">new</span></td><td>Create combo; flyer price not loaded (Cabana has no selling price)</td></tr>
+      <tr><td>Bathroom flyer, p 7</td><td>SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM, RM 2,099 NETT</td><td><span class="pill ok">matches</span></td><td>Set SP 2,099</td></tr>
+      <tr><td>Kitchen flyer, p 9</td><td>KS6645-NL + CB1530SS-BL</td><td><span class="pill err">unsure</span></td><td>Not loaded: one price block shared by two sinks; you decide</td></tr>
     </tbody>
   </table></div>
-  <p class="muted">Nothing is written until you approve this report. Rows here are illustrative; the real report comes from the flyer read.</p>
+  <p class="muted">Nothing is written until you approve this report. Rows are illustrative; the real report comes from the flyer read.</p>
 </div>
 
 <script>
   var taps = [
-    ['SRTKT1862SS', 'Pull-out kitchen tap, stainless'],
-    ['SRTKT1863SS', 'Kitchen tap with side spray'],
-    ['SRTKT1871SS', 'Gooseneck kitchen tap, brushed'],
-    ['SRTKT1880SS', 'Dual-function kitchen tap'],
-    ['SRTKT1892SS', 'Filter kitchen tap, 3-way']
+    ['SRTKT1862SS', 'Pull-out kitchen tap, stainless', 849],
+    ['SRTKT1863SS', 'Kitchen tap with side spray', 899],
+    ['SRTKT1871SS', 'Gooseneck kitchen tap, brushed', 899],
+    ['SRTKT1880SS', 'Dual-function kitchen tap', 949],
+    ['SRTKT1892SS', 'Filter kitchen tap, 3-way', 999]
   ];
-  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
-  function cell(code, desc, pic, size, picH) {
-    var c = el('div', 'cell');
-    var p = el('div', 'pic', pic);
-    if (picH) { p.style.aspectRatio = 'auto'; p.style.height = picH + 'px'; }
-    c.appendChild(p);
-    var cc = el('div', 'cc', code); cc.style.fontSize = size + 'px'; c.appendChild(cc);
-    var cd = el('div', 'cd', desc); cd.style.fontSize = Math.max(6, size - 1.5) + 'px'; c.appendChild(cd);
-    return c;
-  }
-  function render(n) {
-    var list = document.getElementById('sinkList'); list.innerHTML = '';
-    var size = n <= 2 ? 8 : 7;
-    // Rows of at most 3; the picture gives way so every row fits the box (R1).
-    var picH = (n + 1) > 3 ? 40 : null;
-    list.appendChild(cell('SRTKS7061', 'Undermount sink, 700 x 450', 'sink', size, picH));
-    list.appendChild(el('span', 'conn', '+'));
-    for (var i = 0; i < n; i++) {
-      if (i > 0) list.appendChild(el('span', 'conn', 'OR'));
-      list.appendChild(cell(taps[i][0], taps[i][1], 'tap', size, picH));
+  var picks = [];
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function draw() {
+    var N = +document.getElementById('tpl').value;
+    if (picks.length > N) picks = picks.slice(0, N);
+    var box = document.getElementById('taps'); box.innerHTML = '';
+    box.style.gridTemplateColumns = 'repeat(' + Math.min(N, 3) + ', minmax(0, 1fr))';
+    for (var k = 0; k < N; k++) {
+      var t = picks[k];
+      var tile = el('div', 'tile' + (t == null ? ' empty' : ''));
+      tile.appendChild(el('div', 'pic', t == null ? 'Tap ' + (k + 1) : 'tap'));
+      tile.appendChild(el('div', 'cc', t == null ? '' : taps[t][0]));
+      tile.appendChild(el('div', 'cd', t == null ? '' : taps[t][1]));
+      tile.appendChild(el('div', 'cp', t == null ? '' : 'with this tap RM ' + taps[t][2]));
+      box.appendChild(tile);
     }
-    var codes = taps.slice(0, n).map(function (t) { return t[0]; });
-    document.getElementById('sinkCodes').textContent = 'SRTKS7061+' + (n === 1 ? codes[0] : '(' + codes.join(' / ') + ')');
-    var foc = document.getElementById('sinkFoc'); foc.innerHTML = '';
-    var f = el('div', 'cell'); f.style.flexDirection = 'row'; f.style.gap = '4px';
-    var p = el('div', 'pic', 'basket'); p.style.width = '46px'; f.appendChild(p);
-    var t = el('div'); t.appendChild(el('span', 'lab', 'FOC'));
-    var fc = el('div', 'cc', 'SRTKA101SS'); fc.style.fontSize = '7px'; t.appendChild(fc);
-    var fd = el('div', 'cd', 'Basket strainer'); fd.style.fontSize = '6px'; t.appendChild(fd);
-    f.appendChild(t); foc.appendChild(f);
+    document.getElementById('codes').textContent = ['SRTKS7061'].concat(picks.map(function (i) { return taps[i][0]; })).join('+');
+    var pk = document.getElementById('picker'); pk.innerHTML = '';
+    taps.forEach(function (tp, i) {
+      var pos = picks.indexOf(i);
+      var full = picks.length >= N && pos < 0;
+      var o = el('div', 'opt' + (pos >= 0 ? ' on' : '') + (full ? ' off' : ''));
+      o.setAttribute('role', 'checkbox'); o.setAttribute('aria-checked', pos >= 0 ? 'true' : 'false');
+      o.appendChild(el('span', 'ord', pos >= 0 ? String(pos + 1) : ''));
+      o.appendChild(el('span', null, tp[0] + '  ' + tp[1]));
+      o.title = full ? 'This template has ' + N + ' tap tiles. Remove a pick first.' : '';
+      o.addEventListener('click', function () {
+        if (pos >= 0) picks.splice(pos, 1); else if (!full) picks.push(i);
+        draw();
+      });
+      pk.appendChild(o);
+    });
+    document.getElementById('nNeed').textContent = N;
+    var done = picks.length === N, left = N - picks.length;
+    var c = document.getElementById('count');
+    c.textContent = done ? N + ' of ' + N + ' picked' : 'Pick ' + N + ' tap' + (N > 1 ? 's' : '') + ' (' + picks.length + ' picked)';
+    c.className = 'pill ' + (done ? 'ok' : 'warn');
+    document.getElementById('approve').disabled = !done;
+    document.getElementById('why').textContent = done ? '' : 'Approve is off: pick ' + left + ' more tap' + (left > 1 ? 's' : '') + ' for this template.';
+    var typed = document.getElementById('typed').value.trim();
+    document.getElementById('sp').innerHTML = 'RM ' + (typed.replace(/[<>&]/g, '') || '849') + ' <small>NETT</small>';
   }
-  var seg = document.getElementById('tapCount');
-  seg.addEventListener('click', function (e) {
-    if (e.target.tagName !== 'BUTTON') return;
-    Array.prototype.forEach.call(seg.children, function (b) { b.classList.toggle('on', b === e.target); });
-    render(+e.target.textContent);
-  });
-  render(3);
+  document.getElementById('tpl').addEventListener('change', draw);
+  document.getElementById('typed').addEventListener('input', draw);
+  draw();
 </script>
 </body>
 </html>
