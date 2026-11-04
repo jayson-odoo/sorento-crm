@@ -3,13 +3,13 @@
 Plan: `PLAN-ha-cf-failover-04nov.md` (rules P1-P4, S1-S3, D1-D2 in section 3). Owner answers in
 its section 8. Every criterion names how it is proven: unit (`infra/tests/test_cf_failover.py`,
 pure decisions), shell (`infra/tests/test_ha_scripts.py`, fake binaries), drill
-(`infra/rehearsal/cf-drill.sh`, two throwaway Postgres 17 containers + a fake Cloudflare API).
+(`infra/rehearsal/cf_drill.py`, two throwaway Postgres 17 containers + a fake Cloudflare API).
 
 ## Never two writers
 1. A standby promotes only when, continuously for `PROMOTE_AFTER`, Cloudflare reports the peer UNHEALTHY, it is not streaming, and the peer's Postgres is unreachable. Any one missing: no promotion. (unit, drill: kill A)
 2. An UNKNOWN Cloudflare answer (API down, error) never counts toward promotion. (unit, drill: CF API down)
 3. A standby further than `MAX_LAG` behind the peer's last seen position never promotes, and alerts. (unit)
-4. A primary fences itself (workers stopped, then Postgres stopped) when for `FENCE_AFTER` Cloudflare has not reported it healthy AND the peer has not streamed from it. (unit, drill: isolate A)
+4. A primary fences itself (Postgres stopped first, `standby.signal` written, then the workers; at most 60 s) when for `FENCE_AFTER` Cloudflare has not reported it healthy AND the peer has not streamed from it. (unit, drill: isolate A). A fence that does not take is retried every tick and the watchdog is no longer petted; neither a failed fence nor a `down` reading renews the lease. (unit, loop test)
 5. The controller refuses to start when `PROMOTE_AFTER < FENCE_AFTER + FENCE_MARGIN`. (unit)
 6. A Postgres that is down and not fenced (boot, crash, watchdog reboot) is started as a standby, never writable. (unit, drill)
 7. Link cut alone (Cloudflare sees A healthy): A keeps writing, B never promotes. (unit, drill)

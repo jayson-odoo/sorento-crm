@@ -21,6 +21,7 @@ CONTROLLER = Path(__file__).resolve().parents[1] / "scripts" / "cf_failover.py"
 FAKE_PG = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE_DIR/pg.log"
 case "$1" in
+  fence) [ -e "$FAKE_DIR/fence_fail" ] && exit 1 ;;
   observe)
     [ -e "$FAKE_DIR/observe_fail" ] && exit 1
     printf 'self_pg=primary\nself_streaming=t\nself_lsn=100\nsync_names=\npeer_pg=standby\npeer_lsn=100\n' ;;
@@ -130,3 +131,22 @@ def test_an_unwritable_state_file_is_a_failed_tick(box, cf):
     r = run(env, ticks=4, CF_API_BASE=base, STATE_FILE=str(tmp / "missing-dir" / "state.json"))
     assert r.returncode == 0
     assert "tick failed" in r.stdout and "fence" in pg_calls(tmp)
+
+
+def test_a_failed_fence_stops_petting_the_watchdog(box, cf):
+    # Review B1/B2: Cloudflare cannot see this primary and no standby streams, so its lease
+    # expires (2 s) and it fences; the fence fails and Postgres still reads primary. From then
+    # on the watchdog is never petted, so the box reboots and comes back read-only (D1).
+    tmp, env = box
+    state, base = cf
+    state["body"] = {"success": True, "result": {"pop_health": {"SG": {"healthy": False}}}}
+    (tmp / "fence_fail").write_text("")
+    obs_not_streaming = FAKE_PG.replace("self_streaming=t", "self_streaming=f").replace("peer_pg=standby", "peer_pg=unreachable")
+    (tmp / "ha-pg.sh").write_text(obs_not_streaming)
+    r = run(env, ticks=8, CF_API_BASE=base)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = pg_calls(tmp)
+    assert calls.count("fence") >= 3, calls       # retried every tick
+    pets = (tmp / "watchdog").read_bytes().rstrip(b"V").count(b"\0")
+    assert pets <= 2, pets                        # only the ticks before the lease ran out
+    assert "watchdog not petted" in r.stdout

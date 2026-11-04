@@ -1,6 +1,6 @@
 # PLAN: HA failover with Cloudflare Load Balancing as the witness (HA-CF-FAILOVER)
 
-Status: Build. Card answered 4 Nov (section 8). Controller + adapter + container drill green (section 10); owner options in section 9; F1/F4 in progress.
+Status: Review. Card answered 4 Nov (section 8). F1-F4 built (controller, adapter, drill, templates, two-node release); security + correctness review round 1 fixed (section 11); owner options in section 9. F5-F8 are owner phases (runbook).
 Track: full (prod infra, size L), LEAD pattern. Nothing in this lane touches production: every prod
 step goes to the owner as reviewed commands.
 
@@ -27,7 +27,7 @@ to use Cloudflare as its quorum. So:
 
 - **Drop Patroni and etcd** for this 2-node setup. Use plain Postgres streaming replication
   (A -> B), WAL-G archiving to R2, and a small failover controller of our own on each node
-  (`infra/scripts/cf-failover.sh`, section 3) that uses the Cloudflare LB health API as the
+  (`infra/scripts/cf_failover.py`, section 3) that uses the Cloudflare LB health API as the
   third vote. Prod was never adopted into Patroni (H4 is still an owner window that has not run,
   `PLAN-n8n-decom-ha-01nov.md:184`), so nothing on prod has to be undone.
 - Kept from the earlier work: `GET /api/v1/health/role` (`sorento_crm_backend/app/main.py:737-762`),
@@ -93,15 +93,23 @@ from the Cloudflare check so a faster plan needs one change:
 **Rules.** Primary (P), standby (S), Postgres down (D):
 
 - **P1 lease**: writable while Cloudflare reported it healthy within `FENCE_AFTER` OR the peer is
-  streaming from it now. Both false for `FENCE_AFTER`: **fence** = stop the workers, then stop
-  Postgres; `/api/v1/health/role` turns 503, nothing can write.
+  streaming from it now. Both false for `FENCE_AFTER`: **fence** = stop Postgres FIRST (workers
+  cannot write without it), write `standby.signal` (any later start, even a manual one, is
+  read-only), then stop the workers with a 5 s grace; bounded at 60 s, well inside the 180 s
+  margin. The lease is renewed ONLY by a Cloudflare-healthy report, a streaming peer, this
+  controller's own promotion, or the first tick it ever runs; never by a fence or a `down`
+  reading. A primary that still reads primary after a fence re-fences every tick and stops
+  petting the watchdog, so a fence that does not take ends in a reboot (review B1, B2).
 - **P2 app sick (Q3)**: Cloudflare positively reports it UNHEALTHY for `APP_SICK_AFTER` while the
   peer streams from it (a standby is there to take over) and it has not app-sick-fenced in
   `APP_SICK_COOLDOWN`: fence, alert. During those 15 minutes autoheal restarts unhealthy containers
   (`templates/compose.ha.yml:13`).
-- **P3 two primaries** (never expected): alert; fence itself unless Cloudflare reports it healthy.
+- **P3 two primaries** (never expected): alert; fence itself unless Cloudflare reports it healthy;
+  if Cloudflare reports BOTH healthy, the node with the higher name fences.
 - **P4 sync standby (Q5)**: with `SYNC_MODE` on, `synchronous_standby_names` = the peer while it
   streams, empty the moment it stops; with it off, always empty. Set only on change.
+- **P5 slot**: the primary recreates the peer's replication slot whenever it is missing or lost
+  (`max_slot_wal_keep_size`), so the standby can always stream into it.
 - **S1 promote**: all of these held continuously for `PROMOTE_AFTER`: Cloudflare positively reports
   the peer UNHEALTHY (UNKNOWN never counts, so a Cloudflare API outage never promotes); this node
   is not streaming; the peer's Postgres is unreachable. And this node's WAL position is within
@@ -109,7 +117,8 @@ from the Cloudflare check so a faster plan needs one change:
   create the peer's replication slot, alert.
 - **S2 rejoin**: the peer is primary and this node has not streamed from it for `REJOIN_AFTER`:
   `pg_rewind` onto the peer; if that fails, move the data directory aside and `pg_basebackup`
-  (Q4), alert.
+  (Q4), alert. A second rejoin with no streaming in between goes straight to the re-seed. A failed
+  copy deletes the partial directory and puts the old one back.
 - **S3 both standby**: both reachable and in recovery for `BOTH_STANDBY_AFTER` (after a double
   reboot or a crash): the node with the higher WAL position promotes; on a tie the lower node name.
   The rule is deterministic, so exactly one wins.
@@ -182,7 +191,7 @@ Disk: a re-seed holds two copies of the database for up to 7 days (about 54 GB e
 | # | Step | Who | Blocked on n8n leaving B? | Size |
 |---|---|---|---|---|
 | F1 | This plan + UAC; delete the Patroni/etcd/witness templates and rehearsal; amend the 1 Nov plan section 5 and `documentation/runbooks/ha-failover.md` | lane | no | S |
-| F2 | `infra/scripts/cf-failover.sh` (+ watchdog pet) and tests with fake curl/psql/pg_ctl (pattern of `infra/tests/test_ha_scripts.py`); role watcher reads the local Postgres role instead of Patroni's `/primary`; `compose.ha.yml` back to the stock Postgres image with replication settings | lane | no | M |
+| F2 | `infra/scripts/cf_failover.py` + `ha-pg.sh` (+ watchdog pet) and tests with fake curl/psql/pg_ctl (pattern of `infra/tests/test_ha_scripts.py`); role watcher reads the local Postgres role instead of Patroni's `/primary`; `compose.ha.yml` back to the stock Postgres image with replication settings | lane | no | M |
 | F3 | Drill on two throwaway containers in CI-less local docker (`infra/rehearsal/`): fake Cloudflare API (a tiny HTTP stub the drill flips), primary + standby Postgres 17, synthetic data. Drills: kill A, cut link only, CF API down, A returns (rewind), app-down-DB-up, controller hung (fence by watchdog simulated) | lane | no | M |
 | F4 | Deploy to two hosts: `deploy.yml` second host, role-aware order, standby with `SKIP_MIGRATIONS=1`; `blue_green_deploy.sh` standby mode (no snapshot, no workers); env-hash check in `ha-checks.sh` | lane | no (node B secret added later) | M |
 | F5 | Node A prep in an owner window: `wal_log_hints=on`, `archive_mode=on` + WAL-G to R2, replication user + slot, pg_hba for B's link address, softdog. One Postgres restart (about 1 minute) | owner commands | no | 0.5 d |
@@ -340,3 +349,15 @@ fence 8 s, promote 14 s, app-sick 20 s). Result on this branch:
 Finding for prod: with `SYNC_MODE=remote_write`, a cut link sends no reset, so the primary keeps
 waiting on the dead standby until `wal_sender_timeout` (default 60 s): writes stall that long before
 P4 drops the standby. Prod sets `wal_sender_timeout` and `wal_receiver_timeout` to 10 s.
+
+## 11. Review round 1 (4 Nov)
+
+Security review: B1 the pg_hba catch-all (superuser reachable over the link) replaced by a full
+`templates/postgres/pg_hba.conf` mounted outside PGDATA (S1: a rewind no longer copies the peer's);
+S2 watchdog armed only by completed ticks and a failing controller fences its own node; S3 the
+two-node release pins SSH host keys (secret `SSH_KNOWN_HOSTS`); nits N1, N3, N4.
+Correctness review: B1 a failed fence or a `down` reading no longer renews the lease; B2 the fence
+stops Postgres first, is bounded at 60 s, kills its whole process group and never pets the
+watchdog; should-fix: `standby.signal` on fence, clock steps back keep elapsed time, peer query
+timeouts, P5 slot, rejoin escalation and failed re-seed cleanup, P3 tie-break. Tests for each, in
+`infra/tests/` (the two-node world model now also fails fences at random and models the watchdog).

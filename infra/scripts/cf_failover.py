@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 ROLES = ("primary", "standby", "down")
+FENCE_TIMEOUT = 60  # seconds; FENCE_MARGIN is 180
 PEER_ROLES = ("primary", "standby", "unreachable")
 CF_STATES = ("healthy", "unhealthy", "unknown")
 SYNC_MODES = ("off", "remote_write", "on_commit")
@@ -129,14 +130,18 @@ class Obs:
     cf_self: str                 # healthy | unhealthy | unknown (Cloudflare's view of this node)
     cf_peer: str                 # same for the peer
     sync_names: str = ""         # synchronous_standby_names on this node, quotes stripped
+    peer_slot_ok: bool = True    # primary only: the peer's replication slot exists and is usable
 
 
 # Windows: seconds a condition has held without a break. Reset when the controller was not
-# observing (a gap longer than max_obs_gap): an unobserved stretch never counts as "held".
+# observing (a gap longer than max_obs_gap, or the clock stepped back): an unobserved stretch
+# never counts as "held".
 WINDOWS = (
     "cf_self_unhealthy_since", "cf_peer_unhealthy_since", "peer_unreachable_since",
     "not_streaming_since", "both_standby_since",
 )
+# Event timestamps: shifted, not reset, when the clock steps back, so elapsed times survive.
+EVENTS = ("lease_from", "fenced_at", "last_app_sick_fence", "last_rejoin_at")
 
 
 def initial_state() -> dict:
@@ -144,8 +149,10 @@ def initial_state() -> dict:
         "last_tick": None,
         "lease_from": None,
         "fenced_at": None,
+        "fencing": False,
         "last_app_sick_fence": None,
         "last_rejoin_at": None,
+        "rejoins_since_stream": 0,
         "last_peer_lsn": None,
         "peer_last_role": None,
         "lag_alerted": False,
@@ -156,15 +163,25 @@ def initial_state() -> dict:
 
 def decide(state: dict, o: Obs, now: float, c: Config):
     """One tick. Returns (new_state, actions). Actions are tuples:
-    ("fence", reason) ("promote",) ("start_standby",) ("rejoin",) ("set_sync", names) ("alert", text)
+    ("fence", reason) ("promote",) ("start_standby",) ("rejoin",) ("rejoin", "reseed")
+    ("set_sync", names) ("ensure_slot",) ("alert", text)
     """
     s = {**initial_state(), **state}
     acts = []
 
-    if s["last_tick"] is not None and now - s["last_tick"] > c.max_obs_gap:
+    fresh = s["last_tick"] is None  # no state file: first tick this controller ever ran
+    if not fresh and now < s["last_tick"]:
+        # Clock stepped back: keep every elapsed time, drop the windows.
+        shift = s["last_tick"] - now
+        for k in EVENTS:
+            if s[k] is not None:
+                s[k] -= shift
         for k in WINDOWS:
             s[k] = None
-        # lease_from is kept: an older lease only makes a primary fence sooner.
+    elif not fresh and now - s["last_tick"] > c.max_obs_gap:
+        for k in WINDOWS:
+            s[k] = None
+        # The lease is kept: an older lease only makes a primary fence sooner.
     s["last_tick"] = now
 
     def held(key, cond):
@@ -176,11 +193,22 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         return now - s[key]
 
     def fence(reason):
+        # Repeated every tick while this node still reads primary (a fence that failed); the
+        # lease is never renewed by a fence, only by Cloudflare, a streaming peer or a promotion.
         acts.append(("fence", reason))
-        acts.append(("alert", f"{c.node_name}: fenced itself ({reason})"))
-        s["fenced_at"] = now
-        s["lease_from"] = None
+        if not s["fencing"]:
+            acts.append(("alert", f"{c.node_name}: fencing itself ({reason})"))
+        s["fencing"] = True
+        if s["fenced_at"] is None:
+            s["fenced_at"] = now
         s["cf_self_unhealthy_since"] = None
+
+    def promote(why):
+        acts.append(("promote",))
+        acts.append(("alert", f"{c.node_name}: promoted ({why})"))
+        s["lease_from"] = now
+        s["fenced_at"] = None
+        s["fencing"] = False
 
     cf_peer_down = held("cf_peer_unhealthy_since", o.cf_peer == "unhealthy")
     peer_gone = held("peer_unreachable_since", o.peer_pg == "unreachable")
@@ -193,9 +221,13 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         for k in ("not_streaming_since", "both_standby_since"):
             s[k] = None
         s["lag_alerted"] = False
-        if s["lease_from"] is None or o.cf_self == "healthy" or o.self_streaming:
+        if o.cf_self == "healthy" or o.self_streaming or (fresh and s["lease_from"] is None):
             s["lease_from"] = now
         sick = held("cf_self_unhealthy_since", o.cf_self == "unhealthy")
+
+        if s["fencing"]:  # a fence did not take: keep trying (the I/O loop stops the watchdog too)
+            fence("still writable after a fence")
+            return s, acts
 
         if o.peer_pg == "primary":  # P3
             if not s["two_primaries_alerted"]:
@@ -204,10 +236,13 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             if o.cf_self != "healthy":
                 fence("two primaries and Cloudflare does not see this node")
                 return s, acts
+            if o.cf_peer == "healthy" and c.node_name > c.peer_name:
+                fence("two primaries both seen by Cloudflare; the higher name yields")
+                return s, acts
         else:
             s["two_primaries_alerted"] = False
 
-        if now - s["lease_from"] >= c.fence_after:  # P1
+        if s["lease_from"] is None or now - s["lease_from"] >= c.fence_after:  # P1
             fence(f"lease expired: no Cloudflare-healthy report and no streaming peer for {c.fence_after}s")
             return s, acts
         last_sick = s["last_app_sick_fence"]
@@ -220,11 +255,19 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         desired = c.peer_name if (c.sync_mode != "off" and o.self_streaming) else ""  # P4
         if o.sync_names != desired:
             acts.append(("set_sync", desired))
+        if not o.peer_slot_ok:  # P5: the standby can only stream into its slot
+            acts.append(("ensure_slot",))
         return s, acts
 
-    s["lease_from"] = None
+    s["fencing"] = False
     s["cf_self_unhealthy_since"] = None
     s["two_primaries_alerted"] = False
+
+    def rejoin():
+        s["last_rejoin_at"] = now
+        s["rejoins_since_stream"] += 1
+        # A rewind that "worked" but did not bring streaming back: re-seed next time.
+        acts.append(("rejoin", "reseed") if s["rejoins_since_stream"] > 1 else ("rejoin",))
 
     if o.self_pg == "standby":
         s["fenced_at"] = None
@@ -232,6 +275,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         both = held("both_standby_since", o.peer_pg == "standby")
         if o.self_streaming:
             s["lag_alerted"] = False
+            s["rejoins_since_stream"] = 0
 
         # S1
         if (cf_peer_down is not None and not_streaming is not None and peer_gone is not None
@@ -245,23 +289,19 @@ def decide(state: dict, o: Obs, now: float, c: Config):
                                           f"({behind} bytes > {c.max_lag}); NOT promoting"))
                     s["lag_alerted"] = True
                 return s, acts
-            acts.append(("promote",))
-            acts.append(("alert", f"{c.node_name}: promoted (peer Cloudflare-unhealthy and unreachable "
-                                  f"for {c.promote_after}s)"))
+            promote(f"peer Cloudflare-unhealthy and unreachable for {c.promote_after}s")
             return s, acts
 
         # S2
         if (o.peer_pg == "primary" and not_streaming is not None and not_streaming >= c.rejoin_after
                 and (s["last_rejoin_at"] is None or now - s["last_rejoin_at"] >= c.rejoin_after)):
-            s["last_rejoin_at"] = now
-            acts.append(("rejoin",))
+            rejoin()
             return s, acts
 
         # S3
         if both is not None and both >= c.both_standby_after and o.peer_lsn is not None and o.self_lsn is not None:
             if o.self_lsn > o.peer_lsn or (o.self_lsn == o.peer_lsn and c.node_name < c.peer_name):
-                acts.append(("promote",))
-                acts.append(("alert", f"{c.node_name}: promoted (both nodes were standby; this one is ahead)"))
+                promote("both nodes were standby; this one is ahead")
         return s, acts
 
     # Postgres down.
@@ -272,8 +312,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         return s, acts
     if o.peer_pg == "primary":  # D2
         if s["last_rejoin_at"] is None or now - s["last_rejoin_at"] >= c.rejoin_after:
-            s["last_rejoin_at"] = now
-            acts.append(("rejoin",))
+            rejoin()
         return s, acts
     if now - s["fenced_at"] >= c.fence_hold:
         if o.peer_pg == "standby" or (
@@ -321,18 +360,26 @@ class Watchdog:
             self.fd = None
 
 
-def run_cmd(argv, watchdog: Watchdog, timeout: Optional[int], tick: int):
-    """Runs argv, petting the watchdog while it waits (a re-seed can take an hour)."""
-    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+def run_cmd(argv, watchdog: Watchdog, timeout: Optional[int], tick: int, keepalive: bool = True):
+    """Runs argv in its own process group. Pets the watchdog while it waits only when
+    `keepalive` (a re-seed can take an hour); a fence never does, so a fence that hangs ends in
+    a reboot. On timeout the WHOLE group is killed: killing only the shell would leave its
+    `docker compose stop` running (review B2)."""
+    p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         start_new_session=True)
     start = time.monotonic()
     while True:
         try:
             out, _ = p.communicate(timeout=max(1, tick // 2))
             return p.returncode, out or ""
         except subprocess.TimeoutExpired:
-            watchdog.keepalive()
+            if keepalive:
+                watchdog.keepalive()
             if timeout is not None and time.monotonic() - start > timeout:
-                p.kill()
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 out, _ = p.communicate()
                 return 124, out or ""
 
@@ -463,6 +510,7 @@ def main() -> int:
             self_lsn=lsn("self_lsn"),
             peer_pg=d.get("peer_pg") if d.get("peer_pg") in PEER_ROLES else "unreachable",
             peer_lsn=lsn("peer_lsn"),
+            peer_slot_ok=d.get("peer_slot", "t") != "f",
             cf_self=cf_pool_health(cf_base, cf_account, pool_self, token),
             cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token),
             sync_names=d.get("sync_names", ""),
@@ -475,7 +523,11 @@ def main() -> int:
                 continue
             log(f"action {a[0]} {' '.join(a[1:])} (obs {o})")
             argv = [pg_cmd, a[0].replace("_", "-")] + list(a[1:])
-            rc, out = run_cmd(argv, watchdog, None if a[0] == "rejoin" else 300, c.tick)
+            if a[0] == "fence":
+                # Bounded well inside FENCE_MARGIN, never keeping the box alive while it runs.
+                rc, out = run_cmd(argv, watchdog, FENCE_TIMEOUT, c.tick, keepalive=False)
+            else:
+                rc, out = run_cmd(argv, watchdog, None if a[0] == "rejoin" else 300, c.tick)
             tail = out.strip().splitlines()[-3:]
             if a[0] == "rejoin":
                 if rc == 0:
@@ -502,7 +554,12 @@ def main() -> int:
             state = tick(state, started)
             last_ok = time.time()
             self_fenced_on_failure = False
-            watchdog.pet()
+            if state.get("fencing"):
+                # This node still read primary when it decided to fence (or a fence already
+                # failed): stop petting, so if the fence does not take, the reboot does (D1).
+                log("fence pending: watchdog not petted this tick")
+            else:
+                watchdog.pet()
         except Exception as e:  # noqa: BLE001 - the loop itself must never die silently
             failing = time.time() - last_ok
             log(f"tick failed ({type(e).__name__}: {str(e)[:200]}); failing for {int(failing)}s")
@@ -513,7 +570,7 @@ def main() -> int:
                 # would. If even the fence fails, the watchdog (no longer petted) reboots the box.
                 self_fenced_on_failure = True
                 alert(f"{c.node_name}: controller failing for {int(failing)}s; fencing this node")
-                run_cmd([pg_cmd, "fence"], watchdog, 300, c.tick)
+                run_cmd([pg_cmd, "fence"], watchdog, FENCE_TIMEOUT, c.tick, keepalive=False)
         if started - last_prune > 3600:
             last_prune = started
             try:

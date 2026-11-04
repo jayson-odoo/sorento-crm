@@ -272,8 +272,9 @@ def test_app_sick_needs_a_positive_unhealthy_report():
 
 def test_app_sick_fence_at_most_once_per_cooldown():
     c = cfg()
-    state, out = run(c, prim(self_streaming=True, peer_pg="standby"), 1000)
+    state, out = run(c, prim(self_streaming=True, peer_pg="standby"), 900)
     assert first(out, "fence") is not None
+    state, _ = decide(state, obs(self_pg="down", peer_pg="primary", peer_lsn=1), 915, c)  # the fence took
     # Later the node leads again (it rejoined, then won a both-standby) and is sick again.
     state, out = run(c, prim(self_streaming=True, peer_pg="standby"), 3600, start=5000, state=state)
     assert first(out, "fence") is None
@@ -308,6 +309,83 @@ def test_sync_mode_off_keeps_the_names_empty():
     assert not any(x[0] == "set_sync" for x in a)
 
 
+# ---------------------------------------------------------------- review round 1 (B1, B2, should-fix)
+
+
+def test_a_fence_that_did_not_take_is_retried_every_tick_and_never_renews_the_lease():
+    c = cfg()
+    _, out = run(c, prim(), 600)  # Postgres still reads primary after every fence
+    fences = [t for t, a in out if "fence" in kinds(a)]
+    assert fences[0] == c.fence_after
+    assert fences == list(range(c.fence_after, 601, TICK)), fences
+    alerts = [a for _, acts in out for a in acts if a[0] == "alert"]
+    assert len(alerts) == 1, alerts  # one alert, not one per retry
+
+
+def test_brief_down_readings_never_renew_an_isolated_primary_lease():
+    c = cfg()
+
+    def o(t):
+        return obs(self_pg="down") if t % 210 == 0 and t > 0 else prim()
+
+    _, out = run(c, o, 600)
+    t = first(out, "fence")
+    assert t is not None and t <= c.fence_after + TICK
+
+
+def test_a_node_that_became_primary_outside_the_controller_gets_no_free_lease():
+    c = cfg()
+    s, _ = decide(initial_state(), obs(peer_pg="primary", peer_lsn=1, self_streaming=True, cf_peer="healthy"), 0, c)
+    _, a = decide(s, prim(), TICK, c)  # promoted by hand: no Cloudflare report, no peer
+    assert "fence" in kinds(a)
+
+
+def test_the_first_tick_ever_on_a_primary_gets_a_lease():
+    _, a = decide(initial_state(), prim(), 0, cfg())
+    assert "fence" not in kinds(a)
+
+
+def test_a_clock_stepping_back_never_extends_the_lease():
+    c = cfg()
+    state, _ = run(c, prim(), 200)                     # lease from 0, not renewed since
+    _, out = run(c, prim(), 120, start=100, state=state)  # clock stepped back 100 s
+    t = first(out, "fence")
+    assert t is not None and t <= 100 + (c.fence_after - 200) + TICK
+
+
+def test_two_primaries_both_seen_by_cloudflare_the_higher_name_yields():
+    a = cfg()
+    b = cfg(NODE_NAME="crm-b", PEER_NAME="crm-a")
+    both = prim(peer_pg="primary", cf_self="healthy", cf_peer="healthy")
+    _, acts_a = decide(initial_state(), both, 0, a)
+    _, acts_b = decide(initial_state(), both, 0, b)
+    assert "fence" not in kinds(acts_a)
+    assert "fence" in kinds(acts_b)
+
+
+def test_primary_recreates_a_missing_or_lost_peer_slot():
+    _, a = decide(initial_state(), prim(cf_self="healthy", peer_slot_ok=False), 0, cfg())
+    assert ("ensure_slot",) in a
+    _, a = decide(initial_state(), prim(cf_self="healthy"), 0, cfg())
+    assert ("ensure_slot",) not in a
+
+
+def test_a_rewind_that_did_not_restore_streaming_escalates_to_a_reseed():
+    c = cfg()
+    _, out = run(c, obs(peer_pg="primary", peer_lsn=5000, cf_peer="healthy"), 400)
+    rejoins = [a for _, acts in out for a in acts if a[0] == "rejoin"]
+    assert rejoins[0] == ("rejoin",)
+    assert rejoins[1] == ("rejoin", "reseed")
+
+
+def test_streaming_resets_the_rejoin_escalation():
+    c = cfg()
+    s, _ = run(c, obs(peer_pg="primary", peer_lsn=5000, cf_peer="healthy"), 130)  # one rejoin
+    s, _ = decide(s, obs(self_streaming=True, peer_pg="primary", peer_lsn=5000, cf_peer="healthy"), 135, c)
+    _, out = run(c, obs(peer_pg="primary", peer_lsn=5000, cf_peer="healthy"), 300, start=150, state=s)
+    assert [a for _, acts in out for a in acts if a[0] == "rejoin"][0] == ("rejoin",)
+
+
 # ---------------------------------------------------------------- D1, D2
 
 
@@ -325,7 +403,7 @@ def test_fenced_node_rejoins_a_primary_peer_at_once():
 
 def test_fenced_node_waits_the_hold_before_starting_beside_a_standby_peer():
     c = cfg()
-    state, out = run(c, prim(), 300)
+    state, out = run(c, prim(), c.fence_after)
     fenced = first(out, "fence")
     _, out = run(c, obs(self_pg="down", peer_pg="standby", peer_lsn=1000, cf_peer="unhealthy"), 1200, start=fenced + TICK, state=state)
     t = first(out, "start_standby")
@@ -334,7 +412,7 @@ def test_fenced_node_waits_the_hold_before_starting_beside_a_standby_peer():
 
 def test_fenced_node_with_an_unreachable_peer_needs_cloudflare_to_say_it_is_down():
     c = cfg()
-    state, out = run(c, prim(), 300)
+    state, out = run(c, prim(), c.fence_after)
     fenced = first(out, "fence")
     _, out = run(c, obs(self_pg="down", cf_peer="unknown"), 7200, start=fenced + TICK, state=state)
     assert first(out, "start_standby") is None
@@ -365,6 +443,8 @@ class World:
         self.cf_api = True
         self.cf_down_ticks = {"a": 0, "b": 0}
         self.sync = {"a": "", "b": ""}
+        self.fence_fails = {"a": False, "b": False}
+        self.reboot_at = {"a": None, "b": None}
         self.log = []
 
     def peer(self, n):
@@ -382,6 +462,12 @@ class World:
         return "healthy" if ok or self.cf_down_ticks[n] < 2 * 4 else "unhealthy"  # 2 x 60 s at 15 s ticks
 
     def tick(self, t, rng=None):
+        for n in ("a", "b"):
+            # The watchdog: a node whose fence failed stops being petted and reboots within 60 s;
+            # D1 brings it back as a standby (modelled as down here, the controller restarts it).
+            if self.reboot_at[n] is not None and t >= self.reboot_at[n]:
+                self.pg[n] = "down"
+                self.reboot_at[n] = None
         truth = {n: self.cf_truth(n) for n in ("a", "b")}
         for n in ("a", "b"):
             if self.pg[n] == "primary":
@@ -414,7 +500,11 @@ class World:
         self.log.append((t, n, a))
         p = self.peer(n)
         if a[0] == "fence":
-            self.pg[n] = "down"
+            if self.fence_fails[n]:
+                if self.reboot_at[n] is None:
+                    self.reboot_at[n] = t + 60
+            else:
+                self.pg[n] = "down"
         elif a[0] == "promote":
             assert self.pg[n] == "standby"
             self.pg[n] = "primary"
@@ -508,6 +598,16 @@ def test_world_both_reboot_with_the_link_down_only_the_follower_takes_over():
     assert w.pg == {"a": "standby", "b": "primary"} and w.tl["a"] == w.tl["b"]
 
 
+def test_world_a_failed_fence_is_ended_by_the_watchdog_before_b_promotes():
+    w = World()
+    w.run(60)
+    w.fence_fails["a"] = True
+    w.net["a"] = False
+    w.link = False
+    w.run(1500, start=75)
+    assert w.pg["b"] == "primary" and w.pg["a"] != "primary"
+
+
 def test_world_sync_names_track_the_stream():
     w = World(sync="remote_write")
     w.run(60)
@@ -527,6 +627,7 @@ def test_world_random_faults_never_two_writers(seed):
         w.net = {"a": rng.random() < 0.8, "b": rng.random() < 0.8}
         w.app_ok = {"a": rng.random() < 0.8, "b": rng.random() < 0.8}
         w.cf_api = rng.random() < 0.85
+        w.fence_fails = {"a": rng.random() < 0.2, "b": rng.random() < 0.2}
         if rng.random() < 0.1:
             n = rng.choice("ab")
             w.pg[n] = "down"  # crash or reboot (the controller state survives on disk)

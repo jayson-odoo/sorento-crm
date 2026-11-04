@@ -4,13 +4,17 @@
 # Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 3.
 #
 # Commands:
-#   observe            key=value lines: self_pg self_streaming self_lsn sync_names peer_pg peer_lsn
+#   observe            key=value lines: self_pg self_streaming self_lsn sync_names peer_slot peer_pg peer_lsn
 #   role               primary | standby | down (local only; the role watcher reads this)
-#   fence              stop the workers, then stop Postgres (nothing on this node can write)
+#   fence              stop Postgres FIRST (workers cannot write without it), mark it a standby
+#                      (standby.signal: any later start, even a manual one, comes up read-only),
+#                      then stop the workers fast
 #   promote            pg_promote(), then (re)create the peer's replication slot
 #   start-standby      start a stopped Postgres AS A STANDBY (standby.signal first); no-op if running
-#   rejoin             pg_rewind onto the peer; if that fails, move PGDATA aside and pg_basebackup.
+#   rejoin [reseed]    pg_rewind onto the peer; if that fails (or `reseed`), move PGDATA aside and
+#                      pg_basebackup; a failed copy puts the old directory back.
 #                      exit 0 = rewound, 3 = re-seeded, other = failed
+#   ensure-slot        on the primary: (re)create the peer's replication slot if missing or lost
 #   set-sync NAMES     synchronous_standby_names (empty = async), synchronous_commit from SYNC_MODE
 #   prune DAYS         delete moved-aside data directories older than DAYS
 #
@@ -53,7 +57,7 @@ PEER_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER dbname=postgres c
 STANDBY_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER application_name=$NODE_NAME $PEER_CONNINFO_EXTRA"
 
 # shellcheck disable=SC2086
-local_sql() { $PG_EXEC psql -XAtq -F'|' -d postgres -v ON_ERROR_STOP=1 -c "$1"; }
+local_sql() { timeout 20 $PG_EXEC psql -XAtq -F'|' -d postgres -v ON_ERROR_STOP=1 -c "$1"; }
 # shellcheck disable=SC2086
 offline() { $PG_OFFLINE_SH "$1"; }
 # Whole commands (they may hold a pipe) run through sh -c; PG_EXEC / PG_OFFLINE_SH are prefixes.
@@ -68,7 +72,9 @@ SELF_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END
   (CASE WHEN pg_is_in_recovery()
         THEN EXISTS (SELECT 1 FROM pg_stat_wal_receiver WHERE status = 'streaming')
         ELSE EXISTS (SELECT 1 FROM pg_stat_replication WHERE application_name = '$PEER_NAME' AND state = 'streaming') END),
-  replace(current_setting('synchronous_standby_names'), '\"', '')"
+  replace(current_setting('synchronous_standby_names'), '\"', ''),
+  (CASE WHEN pg_is_in_recovery() THEN true
+        ELSE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT' AND coalesce(wal_status, '') <> 'lost') END)"
 PEER_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END,
   (CASE WHEN pg_is_in_recovery()
         THEN pg_wal_lsn_diff(coalesce(greatest(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()), '0/0'), '0/0')
@@ -87,20 +93,22 @@ self_role() {
 # postgresql.auto.conf, whose primary_conninfo / slot point the wrong way. Appended lines win.
 standby_conf_script() {
   local conf="$PGDATA/postgresql.auto.conf"
-  echo "echo \"primary_conninfo = '$STANDBY_CONNINFO'\" >> '$conf' && echo \"primary_slot_name = '$SELF_SLOT'\" >> '$conf' && touch '$PGDATA/standby.signal'"
+  echo "echo \"primary_conninfo = '$STANDBY_CONNINFO'\" >> '$conf' && echo \"primary_slot_name = '$SELF_SLOT'\" >> '$conf' && echo \"synchronous_standby_names = ''\" >> '$conf' && touch '$PGDATA/standby.signal'"
 }
 
 cmd="${1:-}"
 case "$cmd" in
   observe)
     if out=$(local_sql "$SELF_SQL" 2>/dev/null) && [ -n "$out" ]; then
-      IFS='|' read -r role lsn streaming sync <<<"$out"
+      IFS='|' read -r role lsn streaming sync slot <<<"$out"
       echo "self_pg=$role"; echo "self_lsn=$lsn"; echo "self_streaming=$streaming"; echo "sync_names=$sync"
+      echo "peer_slot=$slot"
     else
-      echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="
+      echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="; echo "peer_slot=t"
     fi
+    # A peer that accepts the connection and then stalls must not hang the tick (review S3).
     # shellcheck disable=SC2086
-    if out=$($PEER_PSQL -XAtq -F'|' "$PEER_CONNINFO" -c "$PEER_SQL" 2>/dev/null) && [ -n "$out" ]; then
+    if out=$(timeout 8 $PEER_PSQL -XAtq -F'|' "$PEER_CONNINFO options=-cstatement_timeout=5000" -c "$PEER_SQL" 2>/dev/null) && [ -n "$out" ]; then
       IFS='|' read -r prole plsn <<<"$out"
       echo "peer_pg=$prole"; echo "peer_lsn=$plsn"
     else
@@ -111,8 +119,9 @@ case "$cmd" in
     self_role
     ;;
   fence)
-    sh -c "$WORKERS_STOP" || echo "ha-pg: stopping the workers failed; stopping Postgres anyway" >&2
-    pg_stop
+    pg_stop || { echo "ha-pg: stopping Postgres FAILED" >&2; exit 1; }
+    offline "touch '$PGDATA/standby.signal'" || echo "ha-pg: could not write standby.signal" >&2
+    sh -c "$WORKERS_STOP" || echo "ha-pg: stopping the workers failed (they cannot write: Postgres is stopped)" >&2
     ;;
   promote)
     [ "$(self_role)" = standby ] || { echo "ha-pg: not a standby, refusing to promote" >&2; exit 1; }
@@ -121,6 +130,11 @@ case "$cmd" in
     local_sql "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name IN ('$PEER_SLOT', '$SELF_SLOT') AND NOT active" >/dev/null
     local_sql "SELECT pg_create_physical_replication_slot('$PEER_SLOT', true)" >/dev/null
     ;;
+  ensure-slot)
+    [ "$(self_role)" = primary ] || exit 0
+    local_sql "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT' AND wal_status = 'lost' AND NOT active" >/dev/null
+    local_sql "SELECT pg_create_physical_replication_slot('$PEER_SLOT', true) WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT')" >/dev/null
+    ;;
   start-standby)
     if running; then exit 0; fi
     offline "touch '$PGDATA/standby.signal'" || exit 1
@@ -128,14 +142,17 @@ case "$cmd" in
     ;;
   rejoin)
     running && { pg_stop || exit 1; }
-    if offline "pg_rewind -D '$PGDATA' --source-server='$PEER_CONNINFO' --write-recovery-conf"; then
+    if [ "${2:-}" != reseed ] && offline "pg_rewind -D '$PGDATA' --source-server='$PEER_CONNINFO' --write-recovery-conf"; then
       offline "$(standby_conf_script)" || exit 1
       pg_start || exit 1
       exit 0
     fi
-    echo "ha-pg: pg_rewind failed; re-seeding from the peer (old data kept aside)" >&2
+    echo "ha-pg: re-seeding from the peer (old data kept aside)" >&2
     ts=$(date -u +%Y%m%dT%H%M%SZ)
-    offline "mv '$PGDATA' '$PGDATA.old-$ts' && pg_basebackup -D '$PGDATA' -d '$PEER_CONNINFO' -X stream -c fast" || exit 1
+    old="$PGDATA.old-$ts"
+    # A failed copy removes the partial directory and puts the old one back, so a flaky link
+    # never piles up copies (review S5).
+    offline "mv '$PGDATA' '$old' && { pg_basebackup -D '$PGDATA' -d '$PEER_CONNINFO' -X stream -c fast || { rm -rf '$PGDATA'; mv '$old' '$PGDATA'; exit 1; }; }" || exit 1
     offline "$(standby_conf_script)" || exit 1
     pg_start || exit 1
     exit 3
@@ -161,7 +178,7 @@ case "$cmd" in
     $PG_EXEC find "$parent" -maxdepth 1 -type d -name "$base.old-*" -mtime +"$days" -exec rm -rf {} +
     ;;
   *)
-    echo "usage: ha-pg.sh observe|role|fence|promote|start-standby|rejoin|set-sync NAMES|prune DAYS" >&2
+    echo "usage: ha-pg.sh observe|role|fence|promote|ensure-slot|start-standby|rejoin [reseed]|set-sync NAMES|prune DAYS" >&2
     exit 2
     ;;
 esac
