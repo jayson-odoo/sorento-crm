@@ -119,19 +119,19 @@ describe('the note sentence (D2-D5)', () => {
 
   it('on the board, beside decisions and on its own', () => {
     expect(autocountChangeSentence(note, 'board', true)).toBe(
-      'Also applies the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) are retired',
+      'Also applies the AutoCount change from 24/09/2026: 10 old lines (SRTWCX8840-S-RL) are retired',
     );
     expect(autocountChangeSentence(note, 'board', false)).toBe(
-      'Applies the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) are retired',
+      'Applies the AutoCount change from 24/09/2026: 10 old lines (SRTWCX8840-S-RL) are retired',
     );
   });
 
   it('in Simulate and after Confirm', () => {
     expect(autocountChangeSentence(note, 'simulated', true)).toBe(
-      'Would also apply the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) would be retired',
+      'Would also apply the AutoCount change from 24/09/2026: 10 old lines (SRTWCX8840-S-RL) would be retired',
     );
     expect(autocountChangeSentence(note, 'confirmed', true)).toBe(
-      'Also applied the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) were retired',
+      'Also applied the AutoCount change from 24/09/2026: 10 old lines (SRTWCX8840-S-RL) were retired',
     );
   });
 
@@ -156,7 +156,7 @@ describe('the note sentence (D2-D5)', () => {
         false,
       ),
     ).toBe(
-      'Applied the AutoCount change from 2 Oct: 5 old lines (A, B, C and 2 more) were retired',
+      'Applied the AutoCount change from 02/10/2026: 5 old lines (A, B, C and 2 more) were retired',
     );
   });
 });
@@ -189,7 +189,7 @@ describe('the note sentence, reviewer round 1', () => {
         false,
       ),
     ).toBe(
-      'Applies the AutoCount change from 24 Sep: 1 old line (CB110) is retired',
+      'Applies the AutoCount change from 24/09/2026: 1 old line (CB110) is retired',
     );
   });
 
@@ -210,7 +210,7 @@ describe('the note sentence, reviewer round 1', () => {
         'confirmed',
         false,
       ),
-    ).toBe('Applied the AutoCount change from 24 Sep');
+    ).toBe('Applied the AutoCount change from 24/09/2026');
   });
 });
 
@@ -230,15 +230,15 @@ describe('the board note lines for one order and for several (D2, crew ruling b)
 
   it('one order: the one sentence', () => {
     expect(autocountBoardNote([one], true)).toEqual([
-      'Also applies the AutoCount change from 24 Sep: 10 old lines (SRTWCX8840-S-RL) are retired',
+      'Also applies the AutoCount change from 24/09/2026: 10 old lines (SRTWCX8840-S-RL) are retired',
     ]);
   });
 
   it('several orders: a count, then one line per order', () => {
     expect(autocountBoardNote([one, two], false)).toEqual([
       'Applies the AutoCount change on 2 orders',
-      'SO394881: from 24 Sep, 10 old lines (SRTWCX8840-S-RL) are retired',
-      'SO415685: from 24 Sep, 1 old line (CB110) is retired',
+      'SO394881: from 24/09/2026, 10 old lines (SRTWCX8840-S-RL) are retired',
+      'SO415685: from 24/09/2026, 1 old line (CB110) is retired',
     ]);
   });
 });
