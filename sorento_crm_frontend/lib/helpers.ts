@@ -462,6 +462,23 @@ export function formatDateTimeInMalaysia(input: Date | string | number): string 
   }).format(date);
 }
 
+/**
+ * `01/01/2026 - 31/03/2026`: the one range shape, the same text the range picker shows
+ * (`components/ui/date-range-picker.tsx`). One end alone shows that end; neither shows `fallback`.
+ */
+export function formatDateRange(
+  start: Date | string | number | null | undefined,
+  end: Date | string | number | null | undefined,
+  fallback = '',
+): string {
+  const from = start == null || start === '' ? '' : formatDateInMalaysia(start);
+  const to = end == null || end === '' ? '' : formatDateInMalaysia(end);
+  if (from && to) return `${from} - ${to}`;
+  return from || to || fallback;
+}
+
+/** `30/09/2026, 12:23 pm`. Reads a naive string as wall clock (no zone shift); for an API
+ *  timestamp in UTC use {@link formatDateTimeInMalaysia}. */
 export function formatDateTime(input: Date | string | number): string {
   // Always use parseNaiveDateTimeAsLocal to handle naive and UTC dates correctly
   const date = typeof input === 'string'
@@ -474,7 +491,7 @@ export function formatDateTime(input: Date | string | number): string {
   const year = date.getFullYear();
   const hours = date.getHours();
   const minutes = date.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const ampm = hours >= 12 ? 'pm' : 'am';
   const hour12 = hours % 12 || 12;
   const time = `${hour12}:${padTwo(minutes)} ${ampm}`;
   return `${day}/${month}/${year}, ${time}`;

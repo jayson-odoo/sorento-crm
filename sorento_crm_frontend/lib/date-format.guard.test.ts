@@ -8,8 +8,10 @@
  * date-fns display pattern anywhere else renders in the browser's locale or in a private style,
  * which is how one screen came to read `1 Jan 2026` beside a header reading `25/10/2026`.
  *
- * A file that formats something that is not a calendar date (a month bucket, a chat day pill, a
- * timezone name) goes on ALLOWED with its reason. Anything else is a new straggler: use the helper.
+ * Something that is not a calendar date (a month bucket like `Dec 2026`, a chat day pill, a
+ * timezone name) is allowed in place: put `date-format-ok: <reason>` in a comment on the SAME line
+ * (or, for a month-name table, anywhere in the file), or list the whole file on ALLOWED with its
+ * reason. Anything else is a new straggler: use the helper.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -94,8 +96,12 @@ export function findOffenders(files: string[]): string[] {
     if (ALLOWED[file]) continue;
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     // A hand-rolled month-name table is a private date style (`1 Jan 2026`), on one line or many.
-    if (/\[\s*['"]Jan['"],\s*['"]Feb['"]/.test(src)) offenders.push(`${file} month-name table`);
+    if (/\[\s*['"]Jan['"],\s*['"]Feb['"]/.test(src) && !/date-format-ok: \S/.test(src)) {
+      offenders.push(`${file} month-name table`);
+    }
+    const raw = src.split('\n');
     for (const { line, text } of codeLines(src)) {
+      if (/date-format-ok: \S/.test(raw[line - 1])) continue;
       for (const { name, re } of FORBIDDEN) {
         if (re.test(text)) offenders.push(`${file}:${line} ${name}`);
       }
