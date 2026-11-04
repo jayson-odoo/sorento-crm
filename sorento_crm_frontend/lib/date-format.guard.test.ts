@@ -48,6 +48,7 @@ const FORBIDDEN: { name: string; re: RegExp }[] = [
   // A Date's toLocaleString: a `new Date(...)` receiver, or date/time options in the call.
   { name: 'Date#toLocaleString', re: /Date\([^)]*\)\)?\.toLocaleString\(/ },
   { name: 'Date#toLocaleString', re: /\b(d|date|dt|when|ts|cursor)\.toLocaleString\(/ },
+  { name: 'Date#toLocaleString', re: /(_at|At|_date|Date)\)?\.toLocaleString\(/ },
   {
     name: 'toLocaleString with date options',
     re: /\.toLocaleString\([^)]*(dateStyle|timeStyle|month:|weekday:|day:)/,
@@ -110,9 +111,13 @@ export function findOffenders(files: string[]): string[] {
   for (const file of files) {
     if (ALLOWED[file]) continue;
     const src = fs.readFileSync(path.join(root, file), 'utf8');
-    // A hand-rolled month-name table is a private date style (`1 Jan 2026`), on one line or many.
-    if (/\[\s*['"]Jan['"],\s*['"]Feb['"]/.test(src) && !/date-format-ok: \S/.test(src)) {
-      offenders.push(`${file} month-name table`);
+    // A hand-rolled month-name table is a private date style (`1 Jan 2026`), on one line or
+    // many. Its `date-format-ok:` reason sits on the table's own line or the two above it, so a
+    // marker elsewhere in the file cannot silence a second table.
+    for (const m of src.matchAll(/\[\s*['"]Jan['"],\s*['"]Feb['"]/g)) {
+      const startLine = src.slice(0, m.index).split('\n').length;
+      const near = src.split('\n').slice(Math.max(0, startLine - 3), startLine + 1).join('\n');
+      if (!/date-format-ok: \S/.test(near)) offenders.push(`${file}:${startLine} month-name table`);
     }
     const raw = src.split('\n');
     for (const { line, text } of codeLines(src)) {

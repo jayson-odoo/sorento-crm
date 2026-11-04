@@ -114,11 +114,16 @@ _MONTH_TABLE = re.compile(r"""['"]Jan(uary)?['"],\s*['"]Feb(ruary)?['"]""")
 def test_no_hand_rolled_month_name_table_outside_the_helper():
     """`f"{d.day} {_MONTHS[d.month - 1]} {d.year}"` is the same private style without strftime.
     A table that labels a MONTH bucket (or feeds the LLM prompt) carries `date-format-ok:`."""
-    offenders = [
-        str(path.relative_to(APP.parent))
-        for path in sorted(APP.rglob("*.py"))
-        if _MONTH_TABLE.search(text := path.read_text(encoding="utf-8")) and "date-format-ok:" not in text
-    ]
+    offenders = []
+    for path in sorted(APP.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for m in _MONTH_TABLE.finditer(text):
+            n = text.count("\n", 0, m.start())  # 0-based line of the table's first entry
+            # The reason sits on that line or the two above it: a marker elsewhere in the file
+            # must not silence a second table.
+            if not any("date-format-ok:" in line for line in lines[max(0, n - 2): n + 1]):
+                offenders.append(f"{path.relative_to(APP.parent)}:{n + 1}")
     assert offenders == []
 
 

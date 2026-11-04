@@ -15,6 +15,7 @@ RQ job (`app/tasks/stock_ask_tasks.py`) runs the send. Nothing here imports
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_datetime
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -68,10 +69,10 @@ def outcome_phrase(
 
 
 def asked_at_label(moment: datetime) -> str:
-    """dd/mm/yyyy HH:MM on the Malaysia wall clock."""
+    """dd/mm/yyyy, h:mm am on the Malaysia wall clock."""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    return moment.astimezone(_MALAYSIA).strftime("%d/%m/%Y %H:%M")
+    return fmt_datetime(moment)
 
 
 def default_text(ctx: dict[str, Any]) -> str:

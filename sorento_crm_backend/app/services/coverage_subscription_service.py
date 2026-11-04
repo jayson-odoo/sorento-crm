@@ -405,7 +405,7 @@ class CoverageSubscriptionService:
                 (current.name or current.email) if current else "another colleague"
             ) or "another colleague"
             until = (
-                conflicting.expires_at.date().isoformat()
+                fmt_date(conflicting.expires_at)
                 if getattr(conflicting, "expires_at", None)
                 else "further notice"
             )

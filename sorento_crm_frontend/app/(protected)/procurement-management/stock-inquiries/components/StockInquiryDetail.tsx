@@ -1153,7 +1153,7 @@ function StaffStockInquiryDetail({
           <InquiryReadValue>{inquiry.quantity != null ? String(inquiry.quantity) : ''}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Delivery date">
-          <InquiryReadValue>{inquiry.delivery_date}</InquiryReadValue>
+          <InquiryReadValue>{(inquiry.delivery_date && formatDateInMalaysia(inquiry.delivery_date)) || inquiry.delivery_date}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
           <InquiryReadValue>{inquiry.remark}</InquiryReadValue>

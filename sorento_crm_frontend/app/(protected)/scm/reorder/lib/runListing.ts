@@ -5,7 +5,7 @@
  * finished; whether the buyer has finished with it is a fact about the decisions on it, and
  * the two are different questions the same word used to answer.
  */
-import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateRange, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { EM_DASH, fmtDate } from '../../lib/format';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 
@@ -65,7 +65,7 @@ export function describeWindow(
 ): string {
   const hasStart = Boolean(start);
   const hasEnd = Boolean(end);
-  if (hasStart && hasEnd) return `${fmtDate(start)} to ${fmtDate(end)}`;
+  if (hasStart && hasEnd) return formatDateRange(start, end);
   if (hasEnd) return `up to ${fmtDate(end)}`;
   if (hasStart) return `from ${fmtDate(start)}`;
   return 'every open order';

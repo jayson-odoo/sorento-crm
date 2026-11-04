@@ -21,6 +21,7 @@ state; the tail (S2) is what fills it.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import copy
 import hashlib
 import json
@@ -5486,7 +5487,7 @@ def _carried_line(
 ) -> str | None:
     """AC-MEM083: a business answer whose subject the parser carried from memory (every
     entity `current_message: false`, none in the live conversation) opens with one line
-    naming what was carried - from a closed conversation ("Carrying on from Tue 23 Sep:
+    naming what was carried - from a closed conversation ("Carrying on from 23/09/2026:
     outstanding DO for CC001 Chin Chun Trading."), else from the usual products ("Your
     usual: SRTWB1455, M486-75-BL."). None when nothing came from memory.
 
@@ -5546,7 +5547,7 @@ def _carried_line(
         noun = episode_digest_mod.domain_noun(frame.domain)
         listed = episode_digest_mod.join_words([episode_digest_mod.display_code(c) for c in codes])
         subject = f"{noun} for {listed}" if noun else listed
-        day = episode_digest_mod.day_label(frame.last_activity_at) if frame.last_activity_at else None
+        day = fmt_date(frame.last_activity_at) if frame.last_activity_at else None
         return canned.render_in("carried_episode", language, day=day or "earlier", subject=subject)
 
     return None

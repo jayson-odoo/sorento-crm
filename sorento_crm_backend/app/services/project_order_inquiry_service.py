@@ -39,7 +39,7 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
-from app.utils.date_format import fmt_date
+from app.utils.date_format import fmt_date, fmt_datetime
 import logging
 import re
 import uuid
@@ -9911,9 +9911,7 @@ class ProjectOrderInquiryService:
                             "customer": facts.get("customer"),
                             "project": facts.get("project"),
                             "reason": reason,
-                            "rejected_at": rejected_at.replace(tzinfo=timezone.utc)
-                            .astimezone(_MY_TZ)
-                            .strftime("%d/%m/%Y %H:%M"),
+                            "rejected_at": fmt_datetime(rejected_at),
                             "lines": lines,
                             "line_count": len(lines),
                             "link": build_order_inquiry_link(inquiry_id),
