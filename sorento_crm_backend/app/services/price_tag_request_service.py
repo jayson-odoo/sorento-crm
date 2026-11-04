@@ -277,10 +277,11 @@ class PriceTagRequestService:
         detail: str | None = None,
     ) -> None:
         """AC-S6-4: a manual price and a promotion are mutually exclusive on
-        a line, and a manual figure only means anything in Selling mode -
-        List mode prints the list price regardless of what was typed, so a
-        stray manual figure there is a mistake worth naming rather than a
-        value silently thrown away.
+        a line, and a manual figure only means anything on a selling price
+        line (``price_mode`` here is the LINE's effective type, its own
+        ``price_type`` else the request's) - an LP line prints the list price
+        regardless of what was typed, so a stray manual figure there is a
+        mistake worth naming rather than a value silently thrown away.
 
         The ONE seam every arm that can set a line's price basis passes
         through - create, update and revise (`_add_lines`), and the CRM line
@@ -307,7 +308,7 @@ class PriceTagRequestService:
         if price_mode != "selling":
             raise AppException(
                 status_code=422,
-                message="A manual price only applies in Selling mode.",
+                message="A manual price only applies on a selling price line.",
                 detail=detail,
                 code="INVALID_LINE_PRICE",
             )
@@ -324,7 +325,8 @@ class PriceTagRequestService:
         """Append lines in the order given, which is the order the form shows.
 
         ``show_promo_price`` is DERIVED per line (D1/D3/AC-S7-5) from the
-        request's header ``price_mode`` AND the line's own
+        line's effective price type (its own ``price_type``, else the
+        request's header ``price_mode``) AND the line's own
         ``sell_price_basis`` (through ``line_pricing`` - S7): a line in
         Selling mode with no covering promotion and no manual figure is
         still LP, same as a line whose promotion offer does not beat list.

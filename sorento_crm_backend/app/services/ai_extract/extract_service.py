@@ -1424,22 +1424,27 @@ class AIExtractService:
         from app.models.product_combo import ProductCombo, ProductComboPart
 
         wanted = sorted(part_ids)
-        for combo in (
+        combos = (
             self.db.query(ProductCombo)
             .filter(ProductCombo.host_product_id == host_id)
             .order_by(ProductCombo.sort_order, ProductCombo.name)
             .all()
+        )
+        if not combos:
+            return None
+        # One query for every part of every combo on the host, grouped here.
+        fixed_by_combo: dict[str, list[str]] = {}
+        for combo_id, part_id in (
+            self.db.query(ProductComboPart.combo_id, ProductComboPart.part_product_id)
+            .filter(
+                ProductComboPart.combo_id.in_([c.id for c in combos]),
+                ProductComboPart.choice_group.is_(None),
+            )
+            .all()
         ):
-            fixed = [
-                str(row.part_product_id)
-                for row in self.db.query(ProductComboPart)
-                .filter(
-                    ProductComboPart.combo_id == combo.id,
-                    ProductComboPart.choice_group.is_(None),
-                )
-                .all()
-            ]
-            if sorted(fixed) == wanted:
+            fixed_by_combo.setdefault(str(combo_id), []).append(str(part_id))
+        for combo in combos:
+            if sorted(fixed_by_combo.get(str(combo.id), [])) == wanted:
                 return combo
         return None
 

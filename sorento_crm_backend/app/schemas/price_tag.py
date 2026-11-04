@@ -563,6 +563,9 @@ SLOT_BINDINGS = (
     "included_accessories",
     "list_price",
     "sell_price",
+    # PRICETAG-LPSP: the figure the line shows (SP else LP) and its label.
+    "price",
+    "price_label",
     "badges",
     "alternatives",
     "accessories",
