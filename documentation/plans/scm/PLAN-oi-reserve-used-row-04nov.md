@@ -1,6 +1,7 @@
 # PLAN: OI-RESERVE-USED-ROW (reserve request on a used OI row; snapshot drill "Now" too long)
 
-Status: Merged as #2160 (squash d60eea12, 4 Nov). Follow-up in review: snapshot drill column visibility per user (owner hand test). change; shared row-visibility rule across two tabs, a repair script, stock debt view change).
+Status: Merged as #2160 (squash d60eea12, 4 Nov). Follow-up in review: snapshot drill column visibility per
+user (owner hand test), PR on `crew/oi-snapshot-drill-columns`. Track: small fix (FE only, no migration).
 
 Lane: OI-RESERVE-USED-ROW. Prod case: OI-2609-0257 / SO396347 / SRTSA830-PJ. The request to reserve 33
 was stored on the used 55 row (31/12/2026) instead of the live 33 row (04/05/2027) on the same SO line.
