@@ -444,6 +444,23 @@ function groupOf(dialog: HTMLElement, inquiryNo: string): HTMLElement {
 
 /** The FIRST row carrying `text`: a group can hold several lines of one SO (OI-2609-0417
  * holds two SO383872 lines), and the first is the one these tests read. */
+/** AC-LINK-CRM-UI (owner, 4 Nov): tick the group's lines, then Decide > Request CS to reserve. */
+async function requestThroughDecide(group: HTMLElement) {
+  fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
+  const decide = within(group).getByTestId('snapshot-decide-button');
+  await waitFor(() => expect(decide).not.toBeDisabled());
+  fireEvent.keyDown(decide, { key: 'Enter' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: /request cs to reserve/i }));
+}
+
+/** The Decide menu of a group, opened (without ticking). */
+async function decideItems(group: HTMLElement) {
+  fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
+  const decide = within(group).getByTestId('snapshot-decide-button');
+  fireEvent.keyDown(decide, { key: 'Enter' });
+  return screen.findAllByRole('menuitem');
+}
+
 function rowWith(scope: HTMLElement, text: string): HTMLElement {
   return within(scope).getAllByText(text)[0].closest('tr') as HTMLElement;
 }
@@ -522,7 +539,7 @@ describe('AC-F5 grouping by OI', () => {
     await within(dialog).findAllByText('SO383872');
     const group = groupOf(dialog, 'OI-2609-0417');
     for (const name of [
-      'Sales order', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered', 'Outstanding',
+      'Sales order', 'Line', 'Agent', 'Location', 'Delivery date', 'Ordered', 'Delivered', 'Outstanding',
       'Assigned', 'Covered by', 'Status', 'Short', 'OI row', 'Now',
     ]) {
       expect(within(group).getByRole('columnheader', { name })).toBeInTheDocument();
@@ -663,20 +680,20 @@ describe('AC-F5 Now, one pill per line', () => {
   });
 });
 
-describe('AC-F6 Request CS to reserve button', () => {
-  it('shows on the group with a requestable row for an acknowledge holder, and only there', async () => {
+describe('AC-F6 Request CS to reserve, through Decide (AC-LINK-CRM-UI: tick, then Decide)', () => {
+  it('Decide shows on the group with a requestable row for an acknowledge holder, and only there', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(
-      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
-    ).toBeInTheDocument();
+    const decide = within(groupOf(dialog, 'OI-2609-0417')).getByTestId('snapshot-decide-button');
+    expect(decide).toHaveTextContent('Decide (0)');
+    expect(decide).toBeDisabled();
     for (const no of ['OI-2609-0271', 'OI-2609-0733', 'OI-2609-0501', 'OI-2609-0637']) {
-      expect(
-        within(groupOf(dialog, no)).queryByRole('button', { name: /request cs to reserve/i }),
-      ).not.toBeInTheDocument();
+      expect(within(groupOf(dialog, no)).queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
     }
-    expect(screen.getAllByRole('button', { name: /request cs to reserve/i })).toHaveLength(1);
+    expect(screen.getAllByTestId('snapshot-decide-button')).toHaveLength(1);
+    const items = await decideItems(groupOf(dialog, 'OI-2609-0417'));
+    expect(items.map((item) => item.textContent)).toEqual(['Request CS to reserve…']);
   });
 
   it('is absent without the acknowledge permission, even with a requestable row', async () => {
@@ -684,7 +701,8 @@ describe('AC-F6 Request CS to reserve button', () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(screen.queryByRole('button', { name: /request cs to reserve/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
   });
 });
 
@@ -693,9 +711,7 @@ describe('AC-F6 the shared RequestReserveDialog opened from a group', () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    fireEvent.click(
-      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
-    );
+    await requestThroughDecide(groupOf(dialog, 'OI-2609-0417'));
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -782,9 +798,7 @@ describe('RESERVE-REQ-PICK AC-RP-6: a frozen line already covered (Short 0) open
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    fireEvent.click(
-      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
-    );
+    await requestThroughDecide(groupOf(dialog, 'OI-2609-0417'));
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -892,9 +906,7 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    fireEvent.click(
-      within(groupOf(dialog, inquiryNo)).getByRole('button', { name: /request cs to reserve/i }),
-    );
+    await requestThroughDecide(groupOf(dialog, inquiryNo));
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -903,9 +915,7 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(
-      within(groupOf(dialog, 'OI-2610-0901')).getByRole('button', { name: /request cs to reserve/i }),
-    ).toBeInTheDocument();
+    expect(within(groupOf(dialog, 'OI-2610-0901')).getByTestId('snapshot-decide-button')).toBeInTheDocument();
   });
 
   it('lists the late row ticked ("1 of 1 lines") and sends it', async () => {

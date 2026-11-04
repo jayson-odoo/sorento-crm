@@ -222,7 +222,7 @@ export function PoLinkDialog({
     if (mode === 'relink') return target[row.id] ? undefined : 'Pick the sales order line';
     if (mode !== 'link') return undefined;
     const po = poById.get(picked[row.id] ?? '');
-    if (!po) return 'Pick a PO line';
+    if (!po) return 'No PO line picked';
     const typed = qty[row.id] ?? String(qtyCap(row.line, po));
     const max = qtyCap(row.line, po);
     const error = numberFieldError(typed, { min: 1, max, integer: true });

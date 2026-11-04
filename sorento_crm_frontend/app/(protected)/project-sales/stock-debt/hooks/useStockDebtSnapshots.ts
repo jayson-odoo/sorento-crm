@@ -156,7 +156,7 @@ export function usePoLinkMutations(id: string, rowId: string) {
       onError,
     }),
     relocate: useMutation({
-      mutationFn: relocatePoLine,
+      mutationFn: (input: Parameters<typeof relocatePoLine>[0]) => relocatePoLine(input),
       onSuccess: refresh,
       onError,
     }),

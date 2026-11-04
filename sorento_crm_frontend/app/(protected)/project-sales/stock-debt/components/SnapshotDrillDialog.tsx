@@ -94,16 +94,16 @@ function NowCell({ line }: { line: GroupLine }) {
   const pill = nowPill(line);
   const links = poLinksText(line);
   return (
-    <span className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
+    <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
       <span className={cn(STATUS_PILL_BASE, 'normal-case whitespace-nowrap', pill.tone)} title={pill.text}>
         {pill.text}
       </span>
       {links ? (
-        <span className="truncate text-xs text-muted-foreground" title={links}>
+        <p className="truncate text-xs text-muted-foreground" title={links} data-testid="now-po-links">
           {links}
-        </span>
+        </p>
       ) : null}
-    </span>
+    </div>
   );
 }
 
