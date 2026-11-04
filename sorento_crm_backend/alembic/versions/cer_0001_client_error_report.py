@@ -5,7 +5,7 @@ Retention (30 days) rides the existing daily `api_call_log_prune` task, so no ne
 scheduled task row.
 
 Revision ID: cer_0001_client_error_report
-Revises: polh_0001_seen_backfill
+Revises: tinv_0001_target_invoiced_basis
 """
 import uuid
 from datetime import datetime
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "cer_0001_client_error_report"
-down_revision = "polh_0001_seen_backfill"
+down_revision = "tinv_0001_target_invoiced_basis"
 branch_labels = None
 depends_on = None
 
