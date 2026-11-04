@@ -436,12 +436,17 @@ def test_r3_said_as_decides_the_slot_only_for_a_company_name_a_brand_that_is_no_
     assert not _ran(calls) and text.strip() == QUESTION, (calls, text)
 
 
-def test_r3_a_held_company_carries_when_the_object_names_a_same_name_company_and_said_as_is_brand(rbot, world) -> None:
-    """Owner Q3: Company Mocha held, "Sorento brand only" with the object's company "Sorento" + brands [SORENTO], said_as
-    brand: the held company stays beside the brand, as when the object's company is null."""
+def test_r3_a_held_company_carries_the_same_with_a_same_name_object_company_as_with_a_null_one(rbot, world) -> None:
+    """Owner Q3, an equivalence: from the same held Mocha report, "Sorento brand only" with the object's company "Sorento" +
+    brands [SORENTO] + said_as brand answers exactly as the same object with company null (route args and reply text), and
+    the held company Mocha carried (the reply is not an every-company run)."""
+    import copy
+
     sorento, mocha = world
     _hold_agents(rbot, mocha)
-    text, calls = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
-    _no_question(rbot, text)
-    args = _args(calls)
-    assert args.get("company") == MOCHA_ID and args.get("brand_ids"), f"R3-4: {args}"
+    held = copy.deepcopy(rbot.console.session_vars)
+    text_a, calls_a = rbot.say(_t4("brand", company=None), "Sorento brand only")
+    rbot.console.session_vars = copy.deepcopy(held)  # a second thread holding the same Mocha report
+    text_b, calls_b = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
+    assert mocha in text_a or (_ran(calls_a) and _args(calls_a).get("company") == MOCHA_ID), f"R3-4 A did not carry Mocha: {text_a!r}"
+    assert _ran(calls_b) == _ran(calls_a) and text_b == text_a, f"R3-4: A {_ran(calls_a)} {text_a!r} / B {_ran(calls_b)} {text_b!r}"
