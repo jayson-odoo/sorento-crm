@@ -11,6 +11,7 @@ import React, {
 } from 'react';
 import { APP_SETTINGS } from '@/config/settings.config';
 import { Settings } from '@/config/types';
+import { localStore } from '@/lib/storage';
 
 type Path = string;
 
@@ -27,7 +28,6 @@ const SettingsContext = createContext<SettingsContextType | undefined>(
 
 const LOCAL_STORAGE_PREFIX = 'app_settings_';
 
-// Utility to safely access localStorage
 const isBrowser = () => typeof window !== 'undefined';
 
 function getFromPath(obj: any, path: string): any {
@@ -42,25 +42,17 @@ function setToPath(obj: any, path: string, value: any): Settings {
   return { ...obj };
 }
 
+// Storage goes through lib/storage, which never throws (Safari with storage blocked).
 function storeLeaf(path: string, value: unknown) {
-  if (!isBrowser()) return;
-  try {
-    window.localStorage.setItem(
-      `${LOCAL_STORAGE_PREFIX}${path}`,
-      JSON.stringify(value),
-    );
-  } catch (err) {
-    console.error('LocalStorage write error:', err);
-  }
+  localStore.setItem(`${LOCAL_STORAGE_PREFIX}${path}`, JSON.stringify(value));
 }
 
 function getLeafFromStorage(path: string): any {
-  if (!isBrowser()) return undefined;
+  const item = localStore.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
+  if (!item) return undefined;
   try {
-    const item = window.localStorage.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
-    return item ? JSON.parse(item) : undefined;
-  } catch (err) {
-    console.error('LocalStorage read error:', err);
+    return JSON.parse(item);
+  } catch {
     return undefined;
   }
 }
@@ -74,20 +66,12 @@ function defaultSettings(): Settings {
   return JSON.parse(JSON.stringify(APP_SETTINGS)) as Settings;
 }
 
-/**
- * Stored setting paths, or none when storage is blocked. Safari with "Block all
- * cookies" (and some private modes) throws SecurityError on any localStorage access,
- * the bare `localStorage` reference included; settings then live in memory only.
- */
+/** Stored setting paths; none when storage is blocked (settings then live in memory). */
 function storedPaths(): string[] {
-  if (!isBrowser()) return [];
-  try {
-    return Object.keys(window.localStorage)
-      .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
-      .map((key) => key.slice(LOCAL_STORAGE_PREFIX.length));
-  } catch {
-    return [];
-  }
+  return localStore
+    .keys()
+    .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
+    .map((key) => key.slice(LOCAL_STORAGE_PREFIX.length));
 }
 
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({

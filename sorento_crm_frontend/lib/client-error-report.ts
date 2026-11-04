@@ -17,15 +17,27 @@ const MAX_STACK = 8000;
 // (React StrictMode runs it twice in dev; a re-render must not re-send).
 const reported = new WeakSet<object>();
 
+/**
+ * The JS stack plus React's component stack when a boundary attached one
+ * (components/common/ComponentStackBoundary). Safari's DOMException has no JS stack
+ * at all, so the component stack is often the only pointer to what threw.
+ */
+function stackOf(error: Error & { componentStack?: string }): string | null {
+  const parts: string[] = [];
+  if (error?.stack) parts.push(String(error.stack));
+  if (error?.componentStack) parts.push(`Component stack:${String(error.componentStack)}`);
+  return parts.length ? parts.join('\n\n').slice(0, MAX_STACK) : null;
+}
+
 export function buildClientErrorReport(
-  error: Error & { digest?: string },
+  error: Error & { digest?: string; componentStack?: string },
   boundary: ErrorBoundaryKind,
 ) {
   return {
     boundary,
     name: String(error?.name ?? 'Error').slice(0, 128),
     message: String(error?.message ?? '').slice(0, MAX_MESSAGE),
-    stack: error?.stack ? String(error.stack).slice(0, MAX_STACK) : null,
+    stack: stackOf(error),
     digest: error?.digest ?? null,
     // Path only: a query string can hold search terms, filters or link tokens.
     path: typeof window !== 'undefined' ? window.location.pathname : null,

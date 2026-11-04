@@ -1,3 +1,4 @@
+import { localStore } from '@/lib/storage';
 /**
  * Layout state for `TagCanvasEditor`'s side panels (S1, D7): the Lines +
  * Layers column on the left, the Inspector on the right, and the split
@@ -77,7 +78,7 @@ function isPanelLayout(value: unknown): value is PanelLayout {
 export function readPanelLayout(): PanelLayout {
   if (typeof window === 'undefined') return DEFAULT_PANEL_LAYOUT;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = localStore.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_PANEL_LAYOUT;
     const parsed: unknown = JSON.parse(raw);
     if (!isPanelLayout(parsed)) return DEFAULT_PANEL_LAYOUT;
@@ -96,7 +97,7 @@ export function readPanelLayout(): PanelLayout {
 export function writePanelLayout(layout: PanelLayout): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+    localStore.setItem(STORAGE_KEY, JSON.stringify(layout));
   } catch {
     // ignore - non-persistent fallback is acceptable
   }

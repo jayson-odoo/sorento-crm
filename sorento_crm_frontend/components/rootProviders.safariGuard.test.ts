@@ -1,10 +1,13 @@
 /**
  * Guard (CLIENT-ERROR-REPORT): code that runs before any page can render must not
  * use APIs that throw in Safari. A throw there is "The app could not start" on every
- * page, sign-in included. Two rules for the files below:
- * - no `structuredClone` (absent before Safari 15.4);
- * - every `localStorage` / `sessionStorage` access sits inside a `try` block
- *   (Safari with storage blocked throws SecurityError on the bare reference).
+ * page, sign-in included.
+ * - Root providers and shell: no `structuredClone` (absent before Safari 15.4), and
+ *   any storage access inside a `try` block.
+ * - Whole app: no `localStorage` / `sessionStorage` reference outside `lib/storage.ts`
+ *   (Safari with storage blocked throws SecurityError on the bare reference, and the
+ *   crew pass found one in the protected shell that the root-file rule did not reach).
+ *   `lib/chunk-load-error.ts` is the one exception: its reload guard needs real storage.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -73,5 +76,32 @@ describe('root providers are safe in old and locked-down Safari', () => {
   it.each(rootFiles())('%s', (file) => {
     const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
     expect(violations(file, src)).toEqual([]);
+  });
+});
+
+const STORAGE_OWNERS = new Set(['lib/storage.ts', 'lib/chunk-load-error.ts']);
+
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const name of fs.readdirSync(path.join(ROOT, dir))) {
+    const rel = path.join(dir, name);
+    if (name === 'node_modules' || name.startsWith('.')) continue;
+    if (fs.statSync(path.join(ROOT, rel)).isDirectory()) sourceFiles(rel, out);
+    else if (/\.tsx?$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !/\.d\.ts$/.test(name)) out.push(rel);
+  }
+  return out;
+}
+
+describe('all Web Storage access goes through lib/storage', () => {
+  it('no localStorage / sessionStorage reference anywhere else in app code', () => {
+    const offenders: string[] = [];
+    for (const dir of ['app', 'components', 'hooks', 'lib', 'providers', 'config', 'services']) {
+      if (!fs.existsSync(path.join(ROOT, dir))) continue;
+      for (const file of sourceFiles(dir)) {
+        if (STORAGE_OWNERS.has(file)) continue;
+        const code = codeOnly(fs.readFileSync(path.join(ROOT, file), 'utf8'));
+        if (/\b(localStorage|sessionStorage)\b/.test(code)) offenders.push(file);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

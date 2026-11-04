@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { localStore } from '@/lib/storage';
 
 export type DriveViewMode = 'list' | 'grid';
 
@@ -10,7 +11,7 @@ const DEFAULT_MODE: DriveViewMode = 'list';
 function readStored(): DriveViewMode {
   if (typeof window === 'undefined') return DEFAULT_MODE;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = localStore.getItem(STORAGE_KEY);
     return raw === 'grid' || raw === 'list' ? raw : DEFAULT_MODE;
   } catch {
     return DEFAULT_MODE;
@@ -33,7 +34,7 @@ export function useDriveViewMode(): [DriveViewMode, (mode: DriveViewMode) => voi
   const persist = useCallback((next: DriveViewMode) => {
     setMode(next);
     try {
-      window.localStorage.setItem(STORAGE_KEY, next);
+      localStore.setItem(STORAGE_KEY, next);
     } catch {
       // ignore - non-persistent fallback is acceptable
     }
