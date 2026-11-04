@@ -3051,6 +3051,8 @@ OBJECT_KEY = "report_ask"
 HELD_IDS_KEY = "report_ask_ids"
 #: The route's axis name the parser's `group_by` spells otherwise.
 _PARSER_AXIS = {"location": "warehouse"}
+#: The sales total's basis question (`sales_basis_ask.ASK_NAME`): its `carry` is a held ask too (`_held_object`).
+SALES_BASIS_ASK = "sales_basis"
 #: An open field of this ask -> the words the `Held report (open question: ...)` line names it with.
 OPEN_QUESTION_WORDS = {
     "basis": "basis", "period": "period", "top_n": "count", "metric": "measure",
@@ -3269,6 +3271,17 @@ def _held_object(focus: Any) -> tuple[dict[str, Any] | None, str | None]:
         if asking == "kind" and extras.get("kind_both"):
             return ask, COMPANY_OR_BRAND_WORDS
         return ask, OPEN_QUESTION_WORDS.get(asking, asking.replace("_", " ")) or None
+    if slot.get("ask") == SALES_BASIS_ASK and slot.get("asking"):
+        # CP-1: the sales total's basis question (`sales_basis_ask`) holds its first message's own fields in `carry`
+        # (flat: the company by name, the channel, the axis, the period); they are the ask so far.
+        carry = _dict(_dict(slot.get("extras")).get("carry"))
+        raw_axis = jsc.js_string(carry.get("group_by") or "").strip().lower()
+        ask = _object_of({
+            "group_by": GROUP_BY.get(raw_axis), "channel": carry.get("sales_channel"),
+            "date_from": carry.get("date_filter_start"), "date_to": carry.get("date_filter_end"),
+        }, {})
+        ask["company"] = " ".join(jsc.js_string(carry.get("sales_company") or "").split()) or None
+        return ask, OPEN_QUESTION_WORDS["basis"]
     frame = _dict(getattr(focus, "sales_ranking_frame", None))
     return (_object_of(frame, _dict(frame.get("names"))), None) if frame else (None, None)
 
@@ -3493,11 +3506,13 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         and isinstance(own_count, int) and not isinstance(own_count, bool) and own_count > 0
     )
     if counted:
-        # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row). It ranks by the
-        # measure the object names, else the held one (AF-4: asked only when neither says one).
+        # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row). CP-2 (crew ruling,
+        # ask less): it ranks by the measure the object names, else the held one, else amount (the breakdown's own
+        # order); never "By quantity or by amount?".
         frame = "ranking"
-        if ask.get("measure") not in METRICS and carrying and (held_ask or {}).get("measure") in METRICS:
-            ask["measure"] = held_ask["measure"]
+        if ask.get("measure") not in METRICS:
+            held_measure = (held_ask or {}).get("measure") if carrying else None
+            ask["measure"] = held_measure if held_measure in METRICS else "amount"
     # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
     typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
@@ -3525,7 +3540,8 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         axis = held_axis
         slot_of_axis = _AXIS_SLOTS.get(axis or "")
     if carrying:
-        _carry(ask, held_ask, verdict, slot_of_axis)
+        # CP-1: while a clarification is open, every held filter the parse leaves out stays (the channel too).
+        _carry(ask, held_ask, verdict, slot_of_axis, answering=bool(_dict(getattr(focus, "required_ask", None)).get("asking")))
     breakdown = frame == "breakdown" and axis is not None
     if outstanding:
         status = status if status in OUTSTANDING_STATUSES else "outstanding"
@@ -3588,13 +3604,16 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     return out
 
 
-def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None) -> None:
+def _carry(
+    ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None, *, answering: bool = False
+) -> None:
     """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
     name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
     word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
     widens is not carried (`turn.decide.widened_kinds`, the reader the open which-one customer pick shares: `broaden_axis`
     with `broaden_to` "all" naming one of the kind's hints, and for the customer a global drill or "my ..."). The axis's
-    own slot is not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
+    own slot is not carried: a breakdown ranks across it (`_AXIS_FILTERS`). `answering` (a clarification is open, crew
+    console pass CP-1, owner 3 Nov): the held channel is carried too, unless the parse widens it or splits by it."""
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(verdict.get("entities"))
@@ -3610,6 +3629,8 @@ def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any
         for key in keys:
             if key not in ("brand_or_account_type", axis_slot) and held_ask.get(key):
                 ask[key] = held_ask[key]
+    if answering and not ask.get("channel") and "channel" not in widened and axis_slot != "channel" and held_ask.get("channel"):
+        ask["channel"] = held_ask["channel"]
 
 
 _COMPANY_ROWS = {"sales_agent": "SalesAgent", "brand": "Brand", "category": "ProductCategory", "customer": "Customer"}
