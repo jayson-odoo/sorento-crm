@@ -965,12 +965,16 @@ REPORT_ASK_LINE = "== REPORT_ASK: the whole sales or outstanding report after th
 REPORT_ASK_KEYS = (
     "kind", "frame", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company",
     "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "company_or_brand",
 )
 #: CHATBOT-TOTALS-FILTERS M1: what the report gives back (`report_ask.from_object` acts on it): one figure, one row per
 #: value of the axis, or the axis's rows in order cut to a count.
 REPORT_ASK_FRAMES = ("total", "breakdown", "ranking")
 #: The keys that hold a list of names.
-REPORT_ASK_LISTS = ("sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type")
+REPORT_ASK_LISTS = (
+    "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "company_or_brand",
+)
 
 
 def with_report_ask(schema: dict[str, Any]) -> dict[str, Any]:

@@ -48,7 +48,7 @@ LINE = getattr(parser_mod, "REPORT_ASK_LINE", "== ZZT REPORT ASK LINE PLACEHOLDE
 TOOL = "crm_report_ask"
 KEYS = [
     "kind", "frame", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
-    "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "account_types", "brands", "categories", "customers", "products", "brand_or_account_type", "company_or_brand",
 ]
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 CLOSED = "Rules {{current_date}}.\n" + closed_lists_prompt.MARKER + "\nlisted items.\n"
@@ -205,7 +205,7 @@ def _ra(**over: Any) -> dict[str, Any]:
         brand_or_account_type=[],
     )
     base.update(over)
-    assert list(base) == [k for k in KEYS if k != "frame"], "test bug: report_ask keys out of order"
+    assert list(base) == [k for k in KEYS if k not in ("frame", "company_or_brand")], "test bug: report_ask keys out of order"
     return base
 
 

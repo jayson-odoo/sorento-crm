@@ -3053,6 +3053,9 @@ OPEN_QUESTION_WORDS = {
     "basis": "basis", "period": "period", "top_n": "count", "metric": "measure",
     "kind": "brand or account type", "sales_agent": "sales agent", "scope": "scope",
 }
+#: M2: the words the Held report line names the company-or-brand question with (`kind_both`); the brand or account type
+#: question keeps its own.
+COMPANY_OR_BRAND_WORDS = "company or brand"
 #: Crew C6-2 (round 6): the kinds a held filter carries by, each as (the object lists that hold it, the entity hints that
 #: name it this message). Brand and account type are ONE kind (the model moves a word between the two lists).
 _CARRY_KINDS = (
@@ -3223,6 +3226,7 @@ def _object_of(args: dict[str, Any], names: dict[str, Any], *, words: Any = (), 
         "customers": named("customer_ids"),
         "products": [code] if code else named("product_ids"),
         "brand_or_account_type": [str(w) for w in jsc.array(words) if str(w).strip()],
+        "company_or_brand": [],  # M2: only an open company-or-brand question holds a name here (`_held_object`)
     }
     return {key: ask[key] for key in REPORT_ASK_KEYS}
 
@@ -3238,7 +3242,8 @@ def held_report(focus: Any) -> str | None:
 
 def _held_object(focus: Any) -> tuple[dict[str, Any] | None, str | None]:
     """The held report in the `report_ask` shape and the open question it asks (its words), or `(None, None)`: the open
-    question's ask so far (its asked words in `brand_or_account_type`), else the report that last ran."""
+    question's ask so far (its asked words in `brand_or_account_type`, or a company-or-brand question's name in
+    `company_or_brand`, named "company or brand"), else the report that last ran."""
     slot = _dict(getattr(focus, "required_ask", None))
     if slot.get("ask") == ASK_NAME:
         extras = _dict(slot.get("extras"))
@@ -3250,10 +3255,13 @@ def _held_object(focus: Any) -> tuple[dict[str, Any] | None, str | None]:
         words = extras.get("kind_words") if "kind" not in values and not both else ()
         ask = _object_of(so_far, _dict(extras.get("names")), words=words, outstanding=bool(extras.get("kind_ask")))
         if both:
-            # M2: while the company-or-brand question is open, the name is held as a brand (the answer fills the slots).
+            # M2: while the company-or-brand question is open its name is held in `company_or_brand` (the answer moves it
+            # to the company and / or brands).
             held = [str(h.get("word")) for h in jsc.array(extras.get("kind_held")) if isinstance(h, dict) and h.get("word")]
-            ask["brands"] = [*ask["brands"], *[w for w in held if w not in ask["brands"]]]
+            ask["company_or_brand"] = list(dict.fromkeys(held))
         asking = jsc.js_string(slot.get("asking") or "").strip()
+        if asking == "kind" and extras.get("kind_both"):
+            return ask, COMPANY_OR_BRAND_WORDS
         return ask, OPEN_QUESTION_WORDS.get(asking, asking.replace("_", " ")) or None
     frame = _dict(getattr(focus, "sales_ranking_frame", None))
     return (_object_of(frame, _dict(frame.get("names"))), None) if frame else (None, None)
@@ -3327,8 +3335,10 @@ def _word_kinds(
     as an entity is that entity's kind when `kind_said` says it; with `kind_said` null, a word the object put in its
     brands or account types, whose entity the parser bound to no candidate (`canonical_code` null), that is also the
     object's own `company` (`company`) is the company (C6-1: the model read "company" and wrote the word twice), else
-    unsure; a word the open question still owes is unsure (asked again); a word left in
-    `brand_or_account_type` is unsure; any other word, carried from the held report, keeps its list and is never asked."""
+    unsure; a word the open question still owes is unsure (asked again), except that the object's brands answer the
+    company-or-brand question (M2, `kind_both`); a word left in `brand_or_account_type` or `company_or_brand` is unsure
+    (`company_or_brand` read first: a name still there is still asked); a `kind_said` naming company and brand is
+    `both`; any other word, carried from the held report, keeps its list and is never asked."""
     def fold(value: Any) -> str:
         return " ".join(jsc.js_string(value).split()).casefold()
 
@@ -3337,6 +3347,7 @@ def _word_kinds(
     extras = _dict(slot.get("extras"))
     owed_words = [w for w in jsc.array(extras.get("kind_words")) if fold(w)] if "kind" not in _dict(slot.get("values")) else []
     owed = {fold(w) for w in (*owed_words, *(jsc.array(extras.get("kind_match")) if owed_words else ()))}
+    both_open = bool(owed_words) and bool(extras.get("kind_both"))  # M2: the company-or-brand question is open
     named: dict[str, dict[str, Any]] = {}
     for e in jsc.array(verdict.get("entities")):
         if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type"):
@@ -3344,7 +3355,11 @@ def _word_kinds(
                 if fold(e.get(key)):
                     named.setdefault(fold(e.get(key)), e)
     out: list[tuple[str, str]] = []
-    lists = [(key, default) for key, default in (("brands", "brand"), ("account_types", "account_type"), ("brand_or_account_type", None))]
+    lists = [
+        (key, default) for key, default in (
+            ("company_or_brand", None), ("brands", "brand"), ("account_types", "account_type"), ("brand_or_account_type", None),
+        )
+    ]
     words = [(w, default) for key, default in lists for w in jsc.array(ask.get(key))]
     if picked:
         # One rule: the asked words are what the pick answers, and carry, unless the object adds a brand or account type
@@ -3364,17 +3379,23 @@ def _word_kinds(
             how = picked
         elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
             # M2 (owner Q2 c): a word the message said as a company and as no other kind is that company, no brand.
+            # Both kinds named: the brand AND the company (`from_object`).
             said = _kinds_said(entity.get("kind_said"))
-            how = "company" if said == {"company"} else jsc.js_string(entity.get("hint")).strip().lower()
+            if said == {"company"}:
+                how = "company"
+            elif {"company", "brand"} <= said:
+                how = BOTH_KIND_OPTION[0]
+            else:
+                how = jsc.js_string(entity.get("hint")).strip().lower()
         elif entity is not None and "kind_said" in entity:
             # The model committed the word to neither reading (left out of `brand_or_account_type`, bound to no candidate):
             # equal to its own company, it is that company.
             loose = default is not None and not jsc.js_string(entity.get("canonical_code") or "").strip()
             how = "company" if loose and key == fold(company or "") else "unsure"
-        elif default is None or key in owed:
+        elif default is None or (key in owed and not (both_open and default == "brand")):
             how = "unsure"
         else:
-            how = default
+            how = default  # M2: an owed name the object moved to its brands answers the company-or-brand question
         out.append((word, how))
     return out
 
@@ -3498,7 +3519,12 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
+    either = {_squash(w) for w in names("company_or_brand")}
     for word, how in _word_kinds(ask, verdict, focus, picked, company=own_company):
+        if how in ("company", BOTH_KIND_OPTION[0]) and not own_company and _squash(word) in either:
+            # M2: a `company_or_brand` name the message's `kind_said` settles as the company (and the brand, for both) is
+            # this ask's company when the object named none of its own.
+            ask["company"] = own_company = word
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
         elif how == "account_type":
