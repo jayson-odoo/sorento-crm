@@ -42,17 +42,16 @@ OPEN_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)
 MAX_INQUIRIES = 50
 
 
-def handover_automation(
-    db: Session, sales_order_class: Optional[str] = None
-) -> Optional[Automation]:
-    """The handover automation for an OI of this sales order class (DEALER-OI-ROUTE): the
-    oldest ENABLED row whose conditions pass for the class (a row with none passes for
-    every class). When no row is enabled at all, the oldest switched-off row whose
-    conditions pass (an explicit send a switched-off automation must not swallow). Never
-    another class's row: `None` skips the OI rather than send it to the wrong people."""
-    from app.rule_engine.evaluator import evaluate
-    from app.rule_engine.registry import resolve_facts
-    from app.services.automation_triggers import context_fact_sources
+def handover_automations(
+    db: Session, sales_order_class: Optional[str] = None, raised_by: Optional[str] = None
+) -> List[Automation]:
+    """The handover rows an OI of this class, raised by this person, goes through
+    (OI-ROUTE-BY-RAISER): every ENABLED row whose conditions pass, oldest first, the same
+    rows the automatic email fires (`AutomationService.passing_rows`). When no row is enabled
+    at all, the oldest switched-off row that passes (an explicit send a switched-off
+    automation must not swallow). Never a row whose conditions fail: an empty list skips
+    the OI rather than send it to the wrong people (DEALER-OI-ROUTE)."""
+    from app.services.automation_service import AutomationService
 
     rows = (
         db.query(Automation)
@@ -60,19 +59,24 @@ def handover_automation(
         .order_by(Automation.created_at.asc())
         .all()
     )
-    sources = context_fact_sources(TRIGGER_TYPE, {"sales_order_class": sales_order_class})
-
-    def passes(automation: Automation) -> bool:
-        tree = automation.conditions_json
-        if not tree or sales_order_class is None or not sources:
-            return True
-        return bool(evaluate(tree, resolve_facts(db, sources)))
-
     enabled = [row for row in rows if row.enabled]
-    for automation in enabled if enabled else rows:
-        if passes(automation):
-            return automation
-    return None
+    if sales_order_class is None:
+        # No OI to read facts off (the preview's "is the automation on" answer).
+        return enabled or rows[:1]
+    passing = AutomationService(db).passing_rows(
+        TRIGGER_TYPE,
+        {"sales_order_class": sales_order_class, "raised_by": raised_by},
+        enabled if enabled else rows,
+    )
+    return passing if enabled else passing[:1]
+
+
+def handover_automation(
+    db: Session, sales_order_class: Optional[str] = None, raised_by: Optional[str] = None
+) -> Optional[Automation]:
+    """The oldest of `handover_automations`, or `None`."""
+    rows = handover_automations(db, sales_order_class, raised_by)
+    return rows[0] if rows else None
 
 
 class OrderInquiryHandoverResend:
@@ -263,7 +267,8 @@ class OrderInquiryHandoverResend:
         picks which open rows go; `None` is every open row."""
         if not inquiry_ids:
             raise AppException(422, "Choose at least one order inquiry.")
-        if len(inquiry_ids) > MAX_INQUIRIES:
+        # Counted once per OI: the dialog names an OI once per row it goes through.
+        if len(set(map(str, inquiry_ids))) > MAX_INQUIRIES:
             raise AppException(422, f"Send at most {MAX_INQUIRIES} order inquiries at once.")
         if row_ids is not None and len(set(map(str, inquiry_ids))) != 1:
             raise AppException(422, "Lines can be chosen for one order inquiry at a time.")
@@ -286,18 +291,27 @@ class OrderInquiryHandoverResend:
                 skipped.append(_skip(inquiry, "nothing_open"))
                 continue
             context, line_count = self._context(rows, actor_user_id)
-            # DEALER-OI-ROUTE: the row for this OI's own sales order class.
-            automation = handover_automation(self.db, context.get("sales_order_class"))
-            recipients = (
-                park_send.resolve_ordered(self.db, automation, context) if automation else []
-            )
-            if not recipients:
-                skipped.append(_skip(inquiry, "no_recipient"))
-                continue
+            if not context.get("raised_by") and inquiry.raised_by:
+                # The rows are picked on the header's raiser; the email says the same.
+                context["raised_by"] = str(inquiry.raised_by)
+            # DEALER-OI-ROUTE + OI-ROUTE-BY-RAISER: every row this OI's class and raiser
+            # match, as the automatic email; one email per row.
             picked = None if row_ids is None else [str(row.id) for row in rows]
-            sendable.append(
-                (inquiry, context, line_count, recipients, open_rows, picked, automation)
-            )
+            any_sent = False
+            for automation in handover_automations(
+                self.db,
+                context.get("sales_order_class"),
+                context.get("raised_by"),
+            ):
+                recipients = park_send.resolve_ordered(self.db, automation, context)
+                if not recipients:
+                    continue
+                any_sent = True
+                sendable.append(
+                    (inquiry, context, line_count, recipients, open_rows, picked, automation)
+                )
+            if not any_sent:
+                skipped.append(_skip(inquiry, "no_recipient"))
         return sendable, skipped
 
     def preview(
@@ -310,7 +324,9 @@ class OrderInquiryHandoverResend:
         sendable, skipped = self._plan(inquiry_ids, actor_user_id, row_ids)
         notes = self._handover_notes([str(entry[0].id) for entry in sendable])
         last_sent = self._last_sent(notes)
-        single = len(sendable) == 1 and len(set(map(str, inquiry_ids))) == 1
+        # One OI asked for, however many rows it goes through (OI-ROUTE-BY-RAISER): each of
+        # its emails carries the same line ticks.
+        single = len(set(map(str, inquiry_ids))) == 1
         emails = []
         for inquiry, context, line_count, recipients, open_rows, picked, automation in sendable:
             email = park_send.render_preview(
@@ -335,7 +351,8 @@ class OrderInquiryHandoverResend:
             emails.append(email)
         return {
             "emails": emails,
-            "inquiry_total": len(emails),
+            # One OI can go through more than one row (one email each); count the OIs.
+            "inquiry_total": len({email["inquiry_id"] for email in emails}),
             "unresolved": [],
             "skipped": skipped,
             "automation_enabled": (
@@ -352,28 +369,45 @@ class OrderInquiryHandoverResend:
         actor_user_id: str,
         row_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
-        """One email per OI. Each is its own committed automation run, so one failure is
-        reported and the rest still go."""
+        """One email per (OI, matching row). Each is its own committed automation run, so one
+        failure is reported and the rest still go. An OI whose every email failed is
+        `failed` (the dialog sends it again); one where some went is `partly_failed`, never
+        retried by the dialog, so a row that already has it is not emailed twice."""
         from app.services import automation_triggers
         from app.services.automation_service import AutomationService
         from app.services.project_order_inquiry_service import store_handover_excel
 
         sendable, skipped = self._plan(inquiry_ids, actor_user_id, row_ids)
         sent = 0
+        stored: set = set()
+        went: set = set()
+        failed: Dict[str, OrderInquiry] = {}
         for inquiry, context, _line_count, _recipients, _open_rows, _picked, automation in sendable:
             try:
-                # Stored only now, for an OI that has someone to send to (review S2). The
-                # workbook is this email's own lines (OI-EMAIL-PURCHASING-FOCUS, 26 Oct 2026),
-                # ticked or all, the same rule as the Confirm's.
-                store_handover_excel(self.db, context, [str(inquiry.id)])
+                # Stored only now, for an OI that has someone to send to (review S2), and
+                # once per OI however many rows it goes through. The workbook is this
+                # email's own lines (OI-EMAIL-PURCHASING-FOCUS, 26 Oct 2026), ticked or all,
+                # the same rule as the Confirm's.
+                if str(inquiry.id) not in stored:
+                    store_handover_excel(self.db, context, [str(inquiry.id)])
+                    stored.add(str(inquiry.id))
                 match = automation_triggers.TriggerMatch(
                     context=context, source_kind=SOURCE_KIND, source_id=str(inquiry.id)
                 )
                 AutomationService(self.db).send_match(automation, match)
                 sent += 1
+                went.add(str(inquiry.id))
             except Exception:  # noqa: BLE001 - reported per OI, never a stuck screen
-                logger.exception("handover resend failed for order inquiry %s", inquiry.id)
-                skipped.append(_skip(inquiry, "failed"))
+                logger.exception(
+                    "handover resend failed for order inquiry %s via automation %s",
+                    inquiry.id,
+                    automation.id,
+                )
+                failed[str(inquiry.id)] = inquiry
+        for inquiry_id, inquiry in failed.items():
+            skipped.append(
+                _skip(inquiry, "partly_failed" if inquiry_id in went else "failed")
+            )
         return {"emails_sent": sent, "items_sent": sent, "skipped": skipped}
 
 

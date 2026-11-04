@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_any_permission
 from app.rule_engine.registry import get_facts
-from app.rule_engine.schemas import OPERATORS_BY_TYPE
+from app.rule_engine.schemas import operators_for
 from app.schemas.rule_facts import RuleFactItem
 
 router = APIRouter()
@@ -56,7 +56,7 @@ def list_rule_facts(
                 key=fact.key,
                 label=fact.label,
                 type=fact.type,
-                operators=OPERATORS_BY_TYPE.get(fact.type, []),
+                operators=operators_for(fact),
                 source=source_name,
                 sourceLabel=source_label,
                 options=options,
