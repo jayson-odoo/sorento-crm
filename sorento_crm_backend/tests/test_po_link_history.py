@@ -323,34 +323,54 @@ class TestDetailServesTheLatestEvent:
 
 
 # ============================================================== 3. History tab permission
-def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
-    """Gated on `scm.purchase_orders.view` (crew ruling, 4 Nov). The PO page's own
-    `scm.dashboard.view` alone does not open it. Company-scoped like every per-record read,
-    and no IP address."""
+@pytest.fixture
+def history_env():
+    """A PO in company A and one in company B, each with a link event; callers by role.
+
+    Crew ruling (4 Nov, second): the PO history is gated on EXACTLY the permission that opens
+    the PO detail page, `scm.dashboard.view` (`app/api/v1/scm/purchase_orders.py:36`, the
+    `GET /purchase-orders/{po_id}` route's `_READ`); always inside the PO's company; never
+    for an X-API-Key principal."""
     from fastapi.testclient import TestClient
 
     import app.database as app_database
     from app.dependencies import get_current_user_or_api_key
     from app.main import app
     from app.models.base import set_company_scope
+    from app.models.company import Company
+    from app.models.procurement import PurchaseOrder
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.company_scope_resolver import apply_company_scope
     from tests._pg_fixture import blank_session
     from tests.test_audit_read_gate import _role, _user
 
     with blank_session() as db:
-        buyer = _user(db, "buyer", _role(db, "zz_po_viewer", ["scm.purchase_orders.view"]))
-        page_only = _user(db, "page_only", _role(db, "zz_page_only", ["scm.dashboard.view"]))
-        plain = _user(db, "plain", _role(db, "zz_nothing", []))
-        po_id = str(uuid.uuid4())
-        db.add(AuditLog(
-            id=str(uuid.uuid4()), entity_type="purchase_order_lines", entity_id=str(uuid.uuid4()),
-            action="EVENT", event=CHANGE, description="ZZT: S/O none → ZZT-SO",
-            root_entity_type="purchase_orders", root_entity_id=po_id,
-            company_id=DEFAULT_COMPANY_ID, ip_address="10.9.8.7",
-        ))
+        other_company = str(uuid.uuid4())
+        db.add(Company(id=other_company, name="ZZT PLH B", code=f"ZP{uuid.uuid4().hex[:6]}"))
+        db.flush()
+        ids = {
+            "buyer": _user(db, "buyer", _role(db, "zz_po_page", ["scm.dashboard.view"])),
+            "esb_slug": _user(db, "esb", _role(db, "zz_esb_slug", ["scm.purchase_orders.view"])),
+            "plain": _user(db, "plain", _role(db, "zz_nothing", [])),
+            "admin": _user(db, "admin", _role(db, "admin")),
+        }
+        pos = {}
+        for key, company in (("a", DEFAULT_COMPANY_ID), ("b", other_company)):
+            po = PurchaseOrder(
+                id=str(uuid.uuid4()), po_number=f"ZZT-PLH-{key}-{uuid.uuid4().hex[:6]}",
+                status="active", company_id=company,
+            )
+            db.add(po)
+            db.flush()
+            db.add(AuditLog(
+                id=str(uuid.uuid4()), entity_type="purchase_order_lines",
+                entity_id=str(uuid.uuid4()), action="EVENT", event=CHANGE,
+                description="ZZT: S/O none → ZZT-SO", root_entity_type="purchase_orders",
+                root_entity_id=str(po.id), company_id=company, ip_address="10.9.8.7",
+            ))
+            pos[key] = str(po.id)
         db.commit()
-        caller = {"id": None, "scope": frozenset({DEFAULT_COMPANY_ID})}
+        caller = {"user": None, "scope": frozenset({DEFAULT_COMPANY_ID})}
 
         def _override_db():
             yield db
@@ -361,37 +381,53 @@ def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
 
         app.dependency_overrides[app_database.get_db] = _override_db
         app.dependency_overrides[apply_company_scope] = _override_scope
-        app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": caller["id"]}
-        try:
-            url = (
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: caller["user"]
+
+        def get(who, po_key="a", *, api_key=False, scope=None):
+            user = {"id": ids[who]}
+            if api_key:
+                # What `resolve_integration_principal` returns for an X-API-Key call.
+                user.update(integration_id=str(uuid.uuid4()), integration_name="ZZT ESB",
+                            auth_method="integration_api_key")
+            caller["user"] = user
+            caller["scope"] = scope if scope is not None else frozenset({DEFAULT_COMPANY_ID})
+            return TestClient(app).get(
                 "/api/v1/audit/logs/?entity_type=purchase_orders"
-                f"&entity_id={po_id}&include_children=true"
+                f"&entity_id={pos[po_key]}&include_children=true"
             )
-            caller["id"] = buyer
-            r = TestClient(app).get(url)
-            assert r.status_code == 200, r.text
-            rows = r.json()["data"]
-            assert [row["event"] for row in rows] == [CHANGE]
-            assert rows[0]["ip_address"] is None
-            caller["id"] = plain
-            assert TestClient(app).get(url).status_code == 403
-            caller["id"] = page_only
-            assert TestClient(app).get(url).status_code == 403
-            # Scoped to that PO: the permission opens no other record type's history.
-            other = f"/api/v1/audit/logs/?entity_type=users&entity_id={uuid.uuid4()}"
-            caller["id"] = buyer
-            assert TestClient(app).get(other).status_code == 403
-            # The view permission opens that PO's history, not the line table's listing.
-            caller["id"] = buyer
-            r = TestClient(app).get("/api/v1/audit/logs/?entity_type=purchase_order_lines")
-            assert r.status_code == 403
-            # Another company's viewer sees nothing of this company's PO.
-            caller["scope"] = frozenset({str(uuid.uuid4())})
-            r = TestClient(app).get(url)
-            assert r.status_code == 200, r.text
-            assert r.json()["data"] == []
+
+        try:
+            yield get
         finally:
             app.dependency_overrides.clear()
+
+
+class TestPoHistoryRead:
+    def test_a_buyer_who_can_open_the_po_reads_its_history_without_ip(self, history_env):
+        r = history_env("buyer")
+        assert r.status_code == 200, r.text
+        rows = r.json()["data"]
+        # The line's link event, beside the PO's own creation row the seed wrote.
+        assert CHANGE in [row["event"] for row in rows]
+        assert all(row["ip_address"] is None for row in rows)
+
+    @pytest.mark.parametrize("who", ["plain", "esb_slug"])
+    def test_a_user_without_po_page_access_gets_403(self, history_env, who):
+        # `scm.purchase_orders.view` is the ESB's slug; it does not open the PO page.
+        assert history_env(who).status_code == 403
+
+    @pytest.mark.parametrize("who", ["buyer", "admin"])
+    def test_an_api_key_principal_gets_403(self, history_env, who):
+        # Never the open all-companies scope an X-API-Key call otherwise runs with.
+        assert history_env(who, api_key=True, scope=frozenset()).status_code == 403
+        assert history_env(who, api_key=True).status_code == 403
+
+    @pytest.mark.parametrize("who", ["buyer", "admin"])
+    def test_another_companys_po_gets_403(self, history_env, who):
+        assert history_env(who, "b").status_code == 403
+
+    def test_an_admin_reads_their_own_companys_po(self, history_env):
+        assert history_env("admin").status_code == 200
 
 
 # ============================================================== 4. the backfill migration

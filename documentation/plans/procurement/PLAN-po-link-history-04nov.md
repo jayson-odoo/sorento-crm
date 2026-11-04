@@ -42,10 +42,12 @@ audit trails of when is this linked in the UI?"
 3. PO detail, Lines tab, S/O cell: the value opens a popover: "Linked by AutoCount sync on <date time>",
    "Was <previous SO | not linked>"; a backfilled one reads "Linked on or before <date>" and "Earlier history
    not recorded". A line whose latest event is an unlink shows the dash with the same popover.
-4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`), readable with
-   `scm.purchase_orders.view` scoped to that PO (crew ruling, re-pass on 2339d063; it reversed the
-   security review's move to `scm.dashboard.view`). The tab is hidden, and `?tab=history` opens General,
-   for a user without it. Non-admin per-record reads get `ip_address` blanked (security review S1).
+4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`). Crew ruling (4 Nov, second):
+   gated on EXACTLY the permission that opens the PO detail page, `scm.dashboard.view`
+   (`app/api/v1/scm/purchase_orders.py:36`, `GET /purchase-orders/{po_id}` at :188; FE
+   `scm/layout.tsx` `RequireAccess`); `_authorize_po_history` (`audit_logs.py`) also refuses every
+   X-API-Key principal (admin act-as included) and any PO outside the caller's active company, admins
+   included. Non-admin per-record reads get `ip_address` blanked (security review S1).
 5. Placed popup: a "Linked" column on order-inquiry rows: the user's name (or "Auto") with the date and time
    beneath it; column widths sum to 1150px so the grid fits the dialog at 1280 with no inner scroll.
 
@@ -56,8 +58,9 @@ audit trails of when is this linked in the UI?"
 - backfill: seeds one per linked line (run with a batch of 1, so the keyset loop is walked), second run
   seeds 0, a line with an event is skipped.
 - PO detail serializer: `book_so_link` carries at / estimated / previous.
-- audit read: `scm.purchase_orders.view` user reads the `purchase_orders` trail (no IP); no permission or
-  `scm.dashboard.view` alone gets 403; another record type 403s; another company's viewer gets nothing.
+- audit read (`TestPoHistoryRead`): a `scm.dashboard.view` buyer reads the PO's trail (no IP); no
+  permission or the ESB slug alone 403; an API key (buyer or admin act-as) 403; another company's PO 403
+  (buyer and admin); an admin reads their own company's PO.
 - placements: `linked_at`, `linked_by_name`, `auto` served.
 - vitest: BookSoCell popover text (event, estimated, none); Placed "Linked" column; History tab renders.
 

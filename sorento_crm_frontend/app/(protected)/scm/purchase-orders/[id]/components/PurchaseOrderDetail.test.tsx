@@ -129,9 +129,9 @@ vi.mock('../../../services/salesOrderService', () => ({
     ]),
 }));
 
-// PO-LINK-HISTORY: the History tab is shown only with `scm.purchase_orders.view` (crew ruling,
-// 4 Nov), the permission the audit read checks. Granted by default; one test takes it away.
-let grantedPermissions = new Set(['scm.purchase_orders.view']);
+// PO-LINK-HISTORY: the History tab is shown only with `scm.dashboard.view`, the permission that
+// opens the PO page and the one the audit read checks (crew ruling, 4 Nov). Granted by default; one test takes it away.
+let grantedPermissions = new Set(['scm.dashboard.view']);
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => grantedPermissions.has(slug),
 }));
@@ -226,7 +226,7 @@ beforeEach(() => {
   usePurchaseOrder.mockReset();
   updatePurchaseOrderMutateAsync.mockReset().mockResolvedValue({});
   searchParams = new URLSearchParams();
-  grantedPermissions = new Set(['scm.purchase_orders.view']);
+  grantedPermissions = new Set(['scm.dashboard.view']);
 });
 
 describe('PurchaseOrderDetail - states', () => {
@@ -1084,7 +1084,7 @@ describe('PurchaseOrderDetail - History tab (PO-LINK-HISTORY)', () => {
     expect(trail).toHaveAttribute('data-entity-id', 'po-1');
   });
 
-  it('hides the History tab from a user without Purchase Orders view', () => {
+  it('hides the History tab from a user without the PO page permission', () => {
     grantedPermissions = new Set();
     // Even a link that names the tab lands on General rather than an empty panel.
     searchParams = new URLSearchParams('tab=history');

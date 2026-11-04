@@ -33,9 +33,8 @@ did it and when.
 ## The History tab
 
 The **History** tab lists every S/O change on the order's lines, newest first, one row per change,
-for example `BRW-NTC: S/O none → SO422492`. Staff edits to the order itself show here too. The tab
-shows only for users whose role has Purchase Orders view (`scm.purchase_orders.view`); ask an admin
-if you do not see it.
+for example `BRW-NTC: S/O none → SO422492`. Staff edits to the order itself show here too. Anyone who
+can open the purchase order sees its History tab.
 
 ## Who placed an order inquiry on a line
 

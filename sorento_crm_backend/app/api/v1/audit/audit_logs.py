@@ -35,10 +35,10 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "inbound_shipments": "procurement.packing_lists.view",
     # Product Specifications record page, History tab.
     "product_spec_registry": "master_data.spec_registry.view",
-    # SCM purchase-order detail, History tab: the order's S/O link events (PO-LINK-HISTORY).
-    # Crew ruling (4 Nov, re-pass on 2339d063): `scm.purchase_orders.view`, scoped to that PO,
-    # not the page's own `scm.dashboard.view`. The tab is hidden for anyone without it.
-    "purchase_orders": "scm.purchase_orders.view",
+    # SCM purchase-order detail, History tab (PO-LINK-HISTORY). Crew ruling, 4 Nov: EXACTLY
+    # the permission that opens the PO detail page (`app/api/v1/scm/purchase_orders.py:36`,
+    # the `GET /purchase-orders/{po_id}` route's `_READ`); plus `_authorize_po_history`.
+    "purchase_orders": "scm.dashboard.view",
 }
 
 
@@ -88,6 +88,34 @@ def _authorize_log_read(
             code="audit_company_required",
         )
     return False
+
+
+def _is_api_key_principal(current_user: dict) -> bool:
+    """An X-API-Key call: `resolve_integration_principal` stamps these, and
+    `_apply_staff_identity` keeps them when the key names a staff member."""
+    return bool(current_user.get("integration_id")) or current_user.get("auth_method") == (
+        "integration_api_key"
+    )
+
+
+def _authorize_po_history(db: Session, current_user: dict, po_id: Optional[str]) -> None:
+    """PO-LINK-HISTORY (crew ruling, 4 Nov): a purchase order's history, on top of
+    `_authorize_log_read`. Never for an X-API-Key principal, admin act-as included (an API
+    key otherwise runs with the open all-companies scope), and always inside the PO's own
+    company, admins included: the PO must belong to the caller's active company."""
+    from sqlalchemy import text
+
+    if _is_api_key_principal(current_user):
+        raise _forbidden()
+    scope = get_company_scope(db)
+    if not (po_id and _is_uuid(po_id) and isinstance(scope, frozenset) and scope):
+        raise _forbidden()
+    # Raw SQL, so the ORM's company filter cannot turn "another company's PO" into "no PO".
+    company_id = db.execute(
+        text("SELECT company_id FROM purchase_orders WHERE id = CAST(:id AS uuid)"), {"id": po_id}
+    ).scalar()
+    if company_id is None or str(company_id) not in {str(c) for c in scope}:
+        raise _forbidden()
 
 
 def _user_display_names(db: Session, user_ids: list[str]) -> dict[str, str]:
@@ -281,9 +309,10 @@ def get_audit_logs(
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
     entity_types = multi_values(entity_type)
     user_ids = multi_uuids(user_id, "User")
-    is_audit_admin = _authorize_log_read(
-        db, current_user, entity_types[0] if entity_types and len(entity_types) == 1 else None, entity_id
-    )
+    single_type = entity_types[0] if entity_types and len(entity_types) == 1 else None
+    is_audit_admin = _authorize_log_read(db, current_user, single_type, entity_id)
+    if single_type == "purchase_orders":
+        _authorize_po_history(db, current_user, entity_id)
     items, total = list_audit_logs(
         db,
         entity_type=entity_types,

@@ -88,8 +88,9 @@ import { codeWithName, distinctName } from '@/lib/product-display';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { useStableColumns } from '@/hooks/useStableColumns';
 
-/** The audit read's gate for a purchase order's history (`audit_logs.py`). */
-const HISTORY_PERMISSION = 'scm.purchase_orders.view';
+/** The audit read's gate for a purchase order's history (`audit_logs.py`): the same
+ *  permission that opens this page (crew ruling, 4 Nov). */
+const HISTORY_PERMISSION = 'scm.dashboard.view';
 
 /**
  * The purchase-order detail, built section for section as the twin of `SalesOrderDetail`.
@@ -371,9 +372,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   } = useDebouncedSearch();
   // Kept in the URL, not component state (mirrors `SalesOrderDetail`'s own `tab` param), so a
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
-  // PO-LINK-HISTORY: the History tab reads the audit log, which answers only with Purchase
-  // Orders view (crew ruling, 4 Nov); without it the tab is not offered, and a link naming it
-  // opens General.
+  // PO-LINK-HISTORY: the History tab reads the audit log, which answers with the permission
+  // that opens this page (crew ruling, 4 Nov); without it the tab is not offered, and a link
+  // naming it opens General.
   const canSeeHistory = useHasPermission(HISTORY_PERMISSION);
   const requestedTab = searchParams.get('tab') || 'general';
   const tab = requestedTab === 'history' && !canSeeHistory ? 'general' : requestedTab;
