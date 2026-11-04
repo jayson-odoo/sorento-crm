@@ -6366,7 +6366,7 @@ def _run_stages_body(  # noqa: PLR0915
     # Without the marker the key is dropped and the turn is today's.
     verdict = _report_ask_basis.from_object(
         verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending,
-        companies=own_companies,
+        companies=own_companies, said_as_text=bool(getattr(parser_config, "said_as_text", False)),
     )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's

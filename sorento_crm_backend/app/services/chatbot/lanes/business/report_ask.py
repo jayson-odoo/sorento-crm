@@ -3364,7 +3364,7 @@ def _open_pick(verdict: dict[str, Any], focus: Any) -> tuple[str, Any, str] | No
 
 def _word_kinds(
     ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked: Any = None, *, company: Any = None,
-    companies: Any = (),
+    companies: Any = (), said_as_text: bool = False,
 ) -> list[tuple[str, str, dict[str, Any] | None, str | None]]:
     """V4: each brand / account type word of the object as `(word, how, entity, slot)`, how = brand | account_type |
     company | both | unsure (`unsure`: the tables decide, `_account_plan`, and a word in both is asked), entity: this
@@ -3374,7 +3374,9 @@ def _word_kinds(
     unless the object adds a word the open ask did not already hold, else only those it still carries (a dropped one
     stays dropped, the object being the newer value); a word that is one of the contact's companies (`companies`, its name or
     code, as `_company_or_brand` reads them), named as an entity whose `said_as` is not null, is that slot (HT1: company,
-    brand or both; `from_object` applies it to the company), and for any other word `said_as` is not read; a word this
+    brand or both; `from_object` applies it to the company), and for any other word `said_as` is not read (with
+    `said_as_text`, a prompt text that defines that key, a `said_as` counts only beside a non-empty `said_as_text`, the
+    word the message typed for it: said or not, never compared with the message, HT1-13); a word this
     message names
     as an entity is that entity's kind when `kind_said` says it; with `kind_said` null, a word the object put in its
     brands or account types, whose entity the parser bound to no candidate (`canonical_code` null), that is also the
@@ -3423,6 +3425,9 @@ def _word_kinds(
             continue
         entity = named.get(key)
         said_as = (entity or {}).get("said_as") if {key, fold((entity or {}).get("raw"))} & own else None
+        typed = jsc.js_string((entity or {}).get("said_as_text") or "").strip()
+        if said_as_text and not typed:
+            said_as = None  # HT1-13: no word of the message says it, so it is not said (the HT1-5 / ON-16 rules ask)
         if picked and key in owed:
             how = picked
         elif said_as in SAID_AS:
@@ -3449,7 +3454,8 @@ def _entity(raw: str, hint: str, code: Any = None, **more: Any) -> dict[str, Any
 
 
 def from_object(
-    verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None, companies: Any = ()
+    verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None, companies: Any = (),
+    said_as_text: bool = False,
 ) -> dict[str, Any]:
     """Engine seam, right after the parse (A3). `on`: the prompt in use carries the report ask marker
     (`ParserConfig.report_ask`); off, the key is dropped and nothing else changes.
@@ -3466,7 +3472,8 @@ def from_object(
     along for the lane's customer rule (`_fresh_args`). The object counts only on a report parse (`REPORT_STATUSES`)
     or a reply while this ask's question is open; an object that is not a sales or outstanding ask, or a turn read off
     the rows on screen (`_rows_on_screen`), keeps today's path: the object is set aside (null). `companies`: the contact's
-    own (`sales_company_ask._companies`, the engine's read of the turn), for `said_as` (`_word_kinds`)."""
+    own (`sales_company_ask._companies`, the engine's read of the turn), for `said_as` (`_word_kinds`); `said_as_text`:
+    the prompt text defines that key (`ParserConfig.said_as_text`)."""
     if HELD_IDS_KEY in verdict:
         verdict = {k: v for k, v in verdict.items() if k != HELD_IDS_KEY}  # the engine's own key: no parser value survives
     if not on:
@@ -3601,7 +3608,9 @@ def from_object(
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
     held_company = (held_ask or {}).get("company") if carrying else None
-    for word, how, entity, slot in _word_kinds(ask, verdict, focus, picked, company=own_company, companies=companies):
+    for word, how, entity, slot in _word_kinds(
+        ask, verdict, focus, picked, company=own_company, companies=companies, said_as_text=said_as_text
+    ):
         if slot is not None:
             # HT1, one rule: the parser's own slot for a name that is one of the contact's companies. Company or both: the
             # name is the ask's company. Brand: a same-name company the object put in is not applied (ON-2); the held
