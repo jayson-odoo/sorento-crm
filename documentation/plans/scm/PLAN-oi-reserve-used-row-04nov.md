@@ -1,7 +1,7 @@
 # PLAN: OI-RESERVE-USED-ROW (reserve request on a used OI row; snapshot drill "Now" too long)
 
-Status: Review (built; reviewer READY, fixes in; browser pass 1280/375 done on a sandbox fixture; hand test `laneboard/scripts/2160.md`). Track: standard (no migration, no auth
-change; shared row-visibility rule across two tabs, a repair script, stock debt view change).
+Status: Merged as #2160 (squash d60eea12, 4 Nov). Follow-up in review: snapshot drill column visibility per
+user (owner hand test), PR on `crew/oi-snapshot-drill-columns`. Track: small fix (FE only, no migration).
 
 Lane: OI-RESERVE-USED-ROW. Prod case: OI-2609-0257 / SO396347 / SRTSA830-PJ. The request to reserve 33
 was stored on the used 55 row (31/12/2026) instead of the live 33 row (04/05/2027) on the same SO line.
@@ -145,3 +145,21 @@ worklist used rows hidden by default and shown with the filter.
 - Lending (owner (a)): the Stock Debt view lends only while "Borrow from another order"
   (`system_settings.borrow_from_order_enabled`) is on; off (today) there is no "Lent to" and no
   order back from a lend. A snapshot saved earlier keeps what it froze.
+
+## 10. Follow-up: drill column visibility (owner hand test, 4 Nov ~14:45)
+
+"Need to reuse our column visibility controller ... and can remember per user". Built on
+`crew/oi-snapshot-drill-columns` (new PR, same lane):
+- Each OI table in the drill gets the grids' own `DataGridColumnVisibility` Columns menu
+  (`components/ui/data-grid-column-visibility.tsx`, as `PODeliveriesPanel.tsx` mounts it through
+  `PanelDataGrid`'s toolbar function). The columns carry a `meta.headerTitle` and an accessor so
+  the menu names and lists every one (`withColumnMenu`, `stockDebtDemandColumns.tsx`).
+- One layout for every OI table: only the first table reads and saves it through
+  `useListingColumnPreferences` (key `projects.stock_debt.view::snapshot-drill`, per user, as every
+  grid); `SharedColumnVisibility` keeps the others equal (the first table leads, a toggle in any
+  table is passed to it).
+- Owner, 4 Nov ~14:55: old snapshots keep their frozen lend / order back; no note.
+- Scope (reviewer READY, two notes accepted): only column VISIBILITY is shared across the OI tables,
+  which is what the owner asked for. Column widths and order are still saved by the first table for
+  itself only, and "Reset columns" appears in the first table's menu only (it still resets
+  visibility in every table, through the sync). Trigger to widen: the owner asks for shared widths.
