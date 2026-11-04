@@ -352,7 +352,7 @@ export function InspectorPanel({
         <div className="flex flex-col gap-4 p-3">
           {/* -- Position & size -- */}
           <section>
-            <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               Transform
             </h4>
             <div className="grid grid-cols-2 gap-2">
@@ -444,7 +444,7 @@ export function InspectorPanel({
 
           {/* -- Slot binding -- */}
           <section>
-            <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               Slot Binding
             </h4>
             <SearchableSelect
@@ -602,7 +602,7 @@ function TextInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Text
       </h4>
       <div className="flex flex-col gap-2">
@@ -615,7 +615,7 @@ function TextInspector({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-1.5 text-[10px]"
+                  className="h-6 px-1.5 text-2xs"
                   onClick={() => onUpdate({ text_override: null })}
                 >
                   <Link2 className="mr-1 size-3" />
@@ -627,7 +627,7 @@ function TextInspector({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-1.5 text-[10px]"
+                  className="h-6 px-1.5 text-2xs"
                   onClick={onInsertField}
                 >
                   <Braces className="mr-1 size-3" />
@@ -642,13 +642,13 @@ function TextInspector({
             onChange={(e) => handleContent(e.target.value)}
           />
           {overridden && !dynamic && (
-            <span className="flex items-center gap-1 text-[10px] text-amber-600">
+            <span className="flex items-center gap-1 text-2xs text-amber-600">
               <Link2Off className="size-3" />
               Unlinked from product data
             </span>
           )}
           {dynamic && (
-            <span className="flex items-center gap-1 text-[10px] text-sky-600">
+            <span className="flex items-center gap-1 text-2xs text-sky-600">
               <Braces className="size-3" />
               Draws from product data
             </span>
@@ -665,7 +665,7 @@ function TextInspector({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-6 shrink-0 px-1.5 text-[10px]"
+                className="h-6 shrink-0 px-1.5 text-2xs"
                 onClick={() => {
                   void navigator.clipboard.writeText(resolvedText);
                   toast.success('Copied');
@@ -828,7 +828,7 @@ function TypographyControls({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-[10px]"
+              className="h-6 px-1.5 text-2xs"
               onClick={onUploadFont}
             >
               Manage fonts
@@ -996,7 +996,7 @@ function ShapeInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Shape
       </h4>
       <div className="flex flex-col gap-2">
@@ -1067,12 +1067,12 @@ function ImageInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Image
       </h4>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground">{sourceLabel}</span>
+          <span className="text-2xs text-muted-foreground">{sourceLabel}</span>
           <Button
             type="button"
             variant="outline"
@@ -1168,7 +1168,7 @@ function PriceBadgeInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Price Badge
       </h4>
       <div className="flex flex-col gap-2">
@@ -1288,14 +1288,14 @@ function PreviewBlockInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Preview
       </h4>
       {label ? (
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className="min-w-0 flex-1 truncate text-left text-[11px] font-medium hover:underline"
+            className="min-w-0 flex-1 truncate text-left text-2xs font-medium hover:underline"
             onClick={() => onPreview(groupId)}
             title={label}
           >
@@ -1349,12 +1349,12 @@ function GroupBindingInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Bound To
       </h4>
       {binding ? (
         <div className="flex flex-col gap-2">
-          <p className="text-[11px] font-medium">
+          <p className="text-2xs font-medium">
             {bindingLabel ?? (isSet ? 'Product set' : 'Product')}
           </p>
           <div className="flex gap-2">
@@ -1382,7 +1382,7 @@ function GroupBindingInspector({
           </div>
         </div>
       ) : (
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           This group is not bound to a product or set.
         </p>
       )}
@@ -1559,7 +1559,7 @@ function ProductSlotInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Product Slot
       </h4>
       <div className="flex flex-col gap-1">
@@ -1589,11 +1589,11 @@ function BadgeInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Badge
       </h4>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           {props.assetId ? 'Chosen' : 'None chosen'}
         </span>
         <Button
@@ -1644,7 +1644,7 @@ function BarcodeInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Barcode
       </h4>
       <div className="flex flex-col gap-2">
