@@ -162,7 +162,7 @@ describe('staff detail, read-only Promotion cell', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
     await waitFor(() => expect(mockLookupLinePricing).toHaveBeenCalled());
-    expect(await screen.findByText('ZZT Promo (expired 5 Jan 2026)')).toBeInTheDocument();
+    expect(await screen.findByText('ZZT Promo (expired 05/01/2026)')).toBeInTheDocument();
   });
 
   it('control: a saved promotion that the live options contain shows its name as today', async () => {

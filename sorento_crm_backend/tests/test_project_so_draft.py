@@ -1296,7 +1296,7 @@ def test_the_credit_warning_reads_outstanding_plus_this_order_against_the_limit(
     assert len(exposure) == 1
     # 30,000 owed plus 39,285 ordered against a 50,000 limit.
     assert exposure[0].detail_json["exposure"] == "69285.00"
-    assert "01 Aug 2026" in exposure[0].detail
+    assert "01/08/2026" in exposure[0].detail
     # A warning, so it does not stop the publish (contract section 5).
     service.publish(service.get_order(order_id), actor_user_id=owner)
 

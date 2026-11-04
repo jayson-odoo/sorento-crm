@@ -15,6 +15,7 @@ re-upload is a CORRECTION (AC-B5) - it never appends.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -465,7 +466,7 @@ def resolve_attach(
     supplier = db.query(Supplier).filter(Supplier.id == str(supplier_id)).first()
     supplier_name = supplier.supplier_name if supplier else "this supplier"
     dated = (
-        f"dated {block.invoice_date.isoformat()}"
+        f"dated {fmt_date(block.invoice_date)}"
         if block.invoice_date
         else "with no date on it"
     )

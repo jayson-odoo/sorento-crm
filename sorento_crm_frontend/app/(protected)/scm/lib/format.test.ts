@@ -118,14 +118,14 @@ describe('fmtDateTime', () => {
   it('writes the date half exactly the way fmtDate writes it', () => {
     // One date shape in this product, `dd/mm/yyyy`. A stamp that reads "15 Aug 2026"
     // beside a column of "15/08/2026" looks like a deliberate distinction and is not one.
-    // (Both halves parse and format in local time, so this is stable wherever it runs.)
+    // (A zoneless stamp is naive UTC, shown in Malaysia time: 09:28 UTC reads 5:28 pm.)
     const iso = '2026-08-15T09:28:00';
     expect(fmtDateTime(iso).startsWith(fmtDate(iso))).toBe(true);
-    expect(fmtDateTime(iso)).toBe('15/08/2026, 09:28');
+    expect(fmtDateTime(iso)).toBe('15/08/2026, 5:28 pm');
   });
 
   it('keeps the hour, because two runs on one day are otherwise the same stamp', () => {
-    expect(fmtDateTime('2026-08-15T21:05:00')).toBe('15/08/2026, 21:05');
+    expect(fmtDateTime('2026-08-15T21:05:00')).toBe('16/08/2026, 5:05 am');
   });
 
   it('shows an em dash for an absent or unreadable stamp', () => {
@@ -137,13 +137,13 @@ describe('fmtDateTime', () => {
 
 
 describe('fmtWallStamp', () => {
-  it('writes a zoneless wall-time stamp as day, short month, year and HH:MM, unshifted', () => {
-    expect(fmtWallStamp('2026-09-26T07:40:12.345678')).toBe('26 Sep 2026 07:40');
-    expect(fmtWallStamp('2026-01-05T23:59:59')).toBe('5 Jan 2026 23:59');
+  it('writes a zoneless wall-time stamp as dd/mm/yyyy and h:mm am/pm, unshifted', () => {
+    expect(fmtWallStamp('2026-09-26T07:40:12.345678')).toBe('26/09/2026, 7:40 am');
+    expect(fmtWallStamp('2026-01-05T23:59:59')).toBe('05/01/2026, 11:59 pm');
   });
 
   it('a bare date has no time, and nothing is a dash', () => {
-    expect(fmtWallStamp('2026-12-09')).toBe('9 Dec 2026');
+    expect(fmtWallStamp('2026-12-09')).toBe('09/12/2026');
     expect(fmtWallStamp(null)).toBe(EM_DASH);
     expect(fmtWallStamp('not a date')).toBe(EM_DASH);
   });

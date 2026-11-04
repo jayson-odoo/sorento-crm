@@ -182,9 +182,9 @@ class TestLookupPoRefs:
         assert reply == "\n\n".join(
             [
                 f"PO ref: {REF}\nSales orders: 3",
-                _card("SO430011", "Open", "not delivered yet", date="20 Sep 2026"),
-                _card("SO430012", "Open", "not delivered yet", date="1 Sep 2026"),
-                _card("SO430010", "Open", "not delivered yet", date="1 Aug 2026"),
+                _card("SO430011", "Open", "not delivered yet", date="20/09/2026"),
+                _card("SO430012", "Open", "not delivered yet", date="01/09/2026"),
+                _card("SO430010", "Open", "not delivered yet", date="01/08/2026"),
             ]
         ), reply
 

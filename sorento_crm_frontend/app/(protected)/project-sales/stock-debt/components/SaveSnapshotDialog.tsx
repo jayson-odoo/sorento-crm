@@ -50,7 +50,7 @@ function describeFilters(
   if (filters.dateFrom || filters.dateTo) {
     parts.push(
       filters.dateFrom && filters.dateTo
-        ? `Delivery ${dmy(filters.dateFrom)} to ${dmy(filters.dateTo)}`
+        ? `Delivery ${dmy(filters.dateFrom)} - ${dmy(filters.dateTo)}`
         : filters.dateFrom
           ? `Delivery from ${dmy(filters.dateFrom)}`
           : `Delivery to ${dmy(filters.dateTo)}`,

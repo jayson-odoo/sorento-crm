@@ -5470,7 +5470,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
     await waitFor(() =>
       expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+        'Applies the AutoCount change from 01/09/2026: 1 old line (CB110) is retired',
       ),
     );
     await pressPreviewThenConfirm();
@@ -5483,7 +5483,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('1 of 1 orders confirmed');
     expect(block).toHaveTextContent(
-      'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
+      'SO403340: applied the AutoCount change from 01/09/2026: 1 old line (CB110) was retired',
     );
   });
 
@@ -5501,14 +5501,14 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     getPlanningBoard.mockResolvedValue(changeOnlyBoard());
     renderPanel(['SO403340']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
     );
     await walkToConfirmStep();
     const guide = screen.getByTestId('confirm-guide');
     expect(within(guide).getByRole('heading')).toHaveTextContent('Apply AutoCount change');
     expect(screen.getByTestId('confirm-guide-confirm')).toHaveTextContent('Apply AutoCount change');
     expect(guide).toHaveTextContent(
-      'Applies the AutoCount change from 1 Sep: 1 old line (CB110) is retired',
+      'Applies the AutoCount change from 01/09/2026: 1 old line (CB110) is retired',
     );
     expect(guide).not.toHaveTextContent(/0 orders/);
   });
@@ -5517,11 +5517,11 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     retiredPlusNamedCancel();
     renderPanel(['SO403340']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
     );
     await walkToConfirmStep();
     expect(screen.getByTestId('confirm-guide')).toHaveTextContent(
-      'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+      'Also applies the AutoCount change from 01/09/2026: 1 old line (WESERP10B) is retired',
     );
   });
 
@@ -5551,13 +5551,13 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     });
     renderPanel(['SO403340']);
     await waitFor(() =>
-      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 1 Sep'),
+      expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent('from 01/09/2026'),
     );
     await pressPreviewThenConfirm();
     const block = await screen.findByTestId('board-confirm-results');
     await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(1));
     expect(block).toHaveTextContent(
-      'SO403340: applied the AutoCount change from 1 Sep: 1 old line (CB110) was retired',
+      'SO403340: applied the AutoCount change from 01/09/2026: 1 old line (CB110) was retired',
     );
     expect(block).not.toHaveTextContent('pending');
   });
@@ -5595,13 +5595,13 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     renderPanel(['SO403340', 'SO398322', 'SO400001']);
     await waitFor(() =>
       expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'SO398322: from 1 Sep, 1 old line (ZZT-B) is retired',
+        'SO398322: from 01/09/2026, 1 old line (ZZT-B) is retired',
       ),
     );
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
     const note = screen.getByTestId('board-autocount-change-note');
     expect(note).toHaveTextContent('Also applies the AutoCount change on 2 orders');
-    expect(note).toHaveTextContent('SO400001: from 1 Sep, 1 old line (ZZT-C) is retired');
+    expect(note).toHaveTextContent('SO400001: from 01/09/2026, 1 old line (ZZT-C) is retired');
     expect(note).not.toHaveTextContent('SO403340');
   });
 
@@ -5641,12 +5641,12 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
     await waitFor(() =>
       expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'SO403340: from 1 Sep, 1 old line (WESERP10B) is retired',
+        'SO403340: from 01/09/2026, 1 old line (WESERP10B) is retired',
       ),
     );
     const note = screen.getByTestId('board-autocount-change-note');
     expect(note).toHaveTextContent('Applies the AutoCount change on 2 orders');
-    expect(note).toHaveTextContent('SO398322: from 1 Sep, 1 old line (ZZT-B) is retired');
+    expect(note).toHaveTextContent('SO398322: from 01/09/2026, 1 old line (ZZT-B) is retired');
   });
 
   // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15, crew ruling (b)): the count is
@@ -5657,7 +5657,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     await waitFor(() => expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'));
     await waitFor(() =>
       expect(screen.getByTestId('board-autocount-change-note')).toHaveTextContent(
-        'Also applies the AutoCount change from 1 Sep: 1 old line (WESERP10B) is retired',
+        'Also applies the AutoCount change from 01/09/2026: 1 old line (WESERP10B) is retired',
       ),
     );
   });
@@ -5686,7 +5686,7 @@ describe('FulfilmentBoardPanel: SO-CANCEL-LINE round 4 cancel held back by a pen
     expect(block).not.toHaveTextContent('applied the AutoCount change;');
     // COUNT-DISPLAY D4: the retired line is the one note, not a list of lines.
     expect(block).toHaveTextContent(
-      'Also applied the AutoCount change from 1 Sep: 1 old line (WESERP10B) was retired',
+      'Also applied the AutoCount change from 01/09/2026: 1 old line (WESERP10B) was retired',
     );
     expect(block).not.toHaveTextContent('Retired by the AutoCount change:');
     expect(block).toHaveTextContent(

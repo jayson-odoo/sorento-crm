@@ -76,8 +76,8 @@ describe('generatePeriods', () => {
 describe('dateRange (the list and team record Dates cell)', () => {
   it('names the year once when both ends share it, and both years otherwise', async () => {
     const { dateRange } = await import('./format');
-    expect(dateRange('2026-09-01', '2026-11-30')).toBe('1 Sep to 30 Nov 2026');
-    expect(dateRange('2026-12-01', '2027-01-31')).toBe('1 Dec 2026 to 31 Jan 2027');
+    expect(dateRange('2026-09-01', '2026-11-30')).toBe('01/09/2026 - 30/11/2026');
+    expect(dateRange('2026-12-01', '2027-01-31')).toBe('01/12/2026 - 31/01/2027');
     expect(dateRange(null, '2026-11-30')).toBe('');
   });
 });

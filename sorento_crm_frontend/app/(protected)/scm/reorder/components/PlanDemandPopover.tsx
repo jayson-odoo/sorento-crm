@@ -7,7 +7,7 @@ import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { fmtInt, fmtSupplierCost } from '../../lib/format';
+import { fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { DemandContextHeader } from './DemandContextHeader';
 import { orderInquiryWorklistHref } from '../lib/orderInquiryLink';
 import { PLAN_CHANNEL_LABEL, type PlanChannel } from '../lib/planLineGrouping';
@@ -247,7 +247,7 @@ function DemandBody({ data, channel }: { data: PlanDemand; channel?: PlanChannel
                       </Badge>
                     ) : null}
                     {l.order_type ? <span className="capitalize">{l.order_type}</span> : null}
-                    {l.required_date ? <span>needed {l.required_date}</span> : null}
+                    {l.required_date ? <span>needed {fmtDate(l.required_date)}</span> : null}
                   </div>
                   {/* Who ordered it, who sold it, and what they pay. The "it sells RM
                       0.94" question is answerable from the order itself rather than from
@@ -326,7 +326,7 @@ function HistoryBody({ data, channel }: { data: PlanDemand; channel: PlanChannel
                       {l.delivered ? 'Delivered' : 'Open'}
                     </Badge>
                     {l.order_date ? (
-                      <span className="text-2xs text-muted-foreground">{l.order_date}</span>
+                      <span className="text-2xs text-muted-foreground">{fmtDate(l.order_date)}</span>
                     ) : null}
                   </div>
                   <div className="mt-0.5 flex items-baseline gap-1.5 text-2xs text-muted-foreground">

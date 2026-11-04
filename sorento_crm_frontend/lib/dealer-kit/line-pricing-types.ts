@@ -15,6 +15,7 @@
  * `app/(auth)/portal/components/__fixtures__/line-pricing.ts`); this file is
  * what is left for production to import.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 export type SellPriceBasis = 'manual' | 'promotion' | 'list';
 
@@ -28,24 +29,9 @@ export interface LinePricingPromotionOption {
   expired_on?: string | null;
 }
 
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
 /**
  * The promotion's name as the dropdown and the line text show it:
- * `<description> (expired 30 Sep 2026)` for an ended one still in its grace.
+ * `<description> (expired 30/09/2026)` for an ended one still in its grace.
  * Parsed by hand, not through `Date`, so a browser west of UTC cannot show
  * the day before.
  */
@@ -54,8 +40,7 @@ export function promotionOptionName(
 ): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(option.expired_on ?? '');
   if (!match) return option.description;
-  const [, year, month, day] = match;
-  return `${option.description} (expired ${Number(day)} ${MONTHS[Number(month) - 1]} ${year})`;
+  return `${option.description} (expired ${formatDateInMalaysia(match[0])})`;
 }
 
 /** The dropdown label: the name, and the figure only when the option has one. */

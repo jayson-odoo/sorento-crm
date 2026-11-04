@@ -21,6 +21,7 @@ import {
   periodToIsoBounds,
 } from './PeriodPicker';
 import { distinctName } from '@/lib/product-display';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 interface Props {
   id?: string;
@@ -466,7 +467,7 @@ function DOResultRow({
     row.debtor_name,
     row.customer_name,
     row.order_date
-      ? new Date(row.order_date).toLocaleDateString(undefined, { dateStyle: 'medium' })
+      ? formatDateInMalaysia(row.order_date)
       : null,
   ]
     .filter(Boolean)

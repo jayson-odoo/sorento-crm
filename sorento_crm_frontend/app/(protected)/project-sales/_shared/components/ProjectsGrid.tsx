@@ -27,6 +27,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { Project } from '../types/project.types';
 import { projectCodeLabel } from '../lib/projectCode';
 import { ApprovalStatePill, isAwaitingDecision } from './ApprovalStatePill';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * Every registered project as a row. ONE grid, two screens.
@@ -345,5 +346,5 @@ function formatMyr(value: string): string {
 function formatGridDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }

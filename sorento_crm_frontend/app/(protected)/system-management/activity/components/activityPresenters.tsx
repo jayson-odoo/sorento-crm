@@ -9,6 +9,7 @@ import type {
   ActivityEntityType,
   ActivityItem,
 } from '../types/activity.types';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 export const ENTITY_TYPE_OPTIONS: {
   value: ActivityEntityType;
@@ -104,7 +105,7 @@ const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
 /** YYYY-MM-DD for the instant in Malaysia time - the day-bucket key + day math. */
 function dayKey(d: Date): string {
   // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', {
+  return new Intl.DateTimeFormat('en-CA', { // date-format-ok: builds the YYYY-MM-DD day-bucket key, not shown
     timeZone: MALAYSIA_TZ,
     year: 'numeric',
     month: '2-digit',
@@ -112,16 +113,9 @@ function dayKey(d: Date): string {
   }).format(d);
 }
 
-const DAY_MONTH_YEAR = new Intl.DateTimeFormat('en-GB', {
-  timeZone: MALAYSIA_TZ,
-  day: 'numeric',
-  month: 'short',
-  year: 'numeric',
-});
+const WEEKDAY = new Intl.DateTimeFormat('en-GB', { timeZone: MALAYSIA_TZ, weekday: 'long' }); // date-format-ok: weekday name for the day heading, not a date
 
-const WEEKDAY = new Intl.DateTimeFormat('en-GB', { timeZone: MALAYSIA_TZ, weekday: 'long' });
-
-/** "Today", "Yesterday", "Monday", or "28 Jun 2026" - all in Malaysia time. */
+/** "Today", "Yesterday", "Monday", or "28/06/2026" - all in Malaysia time. */
 export function dayLabel(d: Date): string {
   // Diff the two MYT calendar-day keys (parsed as UTC midnight, so DST-free math).
   const diffDays = Math.round(
@@ -131,7 +125,7 @@ export function dayLabel(d: Date): string {
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays > 1 && diffDays < 7) return WEEKDAY.format(d);
-  return DAY_MONTH_YEAR.format(d);
+  return formatDateInMalaysia(d);
 }
 
 /** Group already-sorted (newest-first) items into day buckets. */

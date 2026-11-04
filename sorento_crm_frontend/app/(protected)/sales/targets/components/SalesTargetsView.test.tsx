@@ -183,7 +183,7 @@ describe('SalesTargetsView', () => {
     expect(headers).toEqual(['Number', 'Name', 'Team', 'Measures', 'Dates', 'Target', 'Achieved', '%']);
     expect(screen.getByText('TGT-000001')).toBeTruthy();
     expect(screen.getByText('North FY26 H2')).toBeTruthy();
-    expect(screen.getByText('1 Oct to 31 Dec 2026')).toBeTruthy();
+    expect(screen.getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(screen.getByText('3,000')).toBeTruthy();
     expect(screen.getByText('1,500')).toBeTruthy();
     expect(screen.getByText('50%')).toBeTruthy();

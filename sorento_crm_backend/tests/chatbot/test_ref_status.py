@@ -75,7 +75,7 @@ def test_po_card_fields(session_factory):
     assert out.missing == []
     assert len(out.cards) == 1
     card = out.cards[0]
-    for want in ("Purchase order", number, "ZZT Supplier Bhd", "5 Sep 2026", "ZZTSKUA x 5", "ZZTSKUB x 12"):
+    for want in ("Purchase order", number, "ZZT Supplier Bhd", "05/09/2026", "ZZTSKUA x 5", "ZZTSKUB x 12"):
         assert want in card, (want, card)
     assert "active" in card.lower(), card
 
