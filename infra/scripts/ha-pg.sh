@@ -18,9 +18,6 @@
 #   ensure-slot        on the primary: (re)create the peer's replication slot if missing or lost
 #   set-sync NAMES     synchronous_standby_names (empty = async), synchronous_commit from SYNC_MODE
 #   prune DAYS         delete moved-aside data directories older than DAYS
-#   route local|peer   active-active: point this node's pgbouncer at the local database or the
-#                      peer's (rewrites ROUTE_FILE, reloads pgbouncer) and make this node's Redis
-#                      the master (local) or a replica of the peer's (peer)
 #
 # Env (the same file on both nodes except the names and PEER_HOST):
 #   NODE_NAME PEER_NAME PEER_HOST [PEER_PORT=5432] [REPL_USER=replicator] [PEER_CONNINFO_EXTRA]
@@ -34,9 +31,6 @@
 #   PEER_PSQL              psql that reaches the peer over the private link (host client)
 #   WORKERS_STOP           command (sh -c) that stops worker + worker_fast (the role watcher would stop them a tick later)
 #   SYNC_MODE              off | remote_write | on_commit
-#   Active-active only: ROUTE_FILE (pgbouncer [databases] include, in a directory mounted into the
-#   pgbouncer container), PGB_LOCAL_HOST (the db service, e.g. db), PGB_RELOAD (command, sh -c),
-#   REDIS_CLI (prefix running redis-cli against this node's Redis), PEER_REDIS_PORT (6379)
 # Passwords: never in this env. The replication user's password sits in a pgpass file read by
 # both the container and the host client (PGPASSFILE), mode 600.
 set -uo pipefail
@@ -49,16 +43,11 @@ PEER_CONNINFO_EXTRA="${PEER_CONNINFO_EXTRA:-}"
 PEER_PSQL="${PEER_PSQL:-psql}"
 WORKERS_STOP="${WORKERS_STOP:-true}"
 SYNC_MODE="${SYNC_MODE:-off}"
-ROUTE_FILE="${ROUTE_FILE:-}"
-PGB_LOCAL_HOST="${PGB_LOCAL_HOST:-db}"
-PGB_RELOAD="${PGB_RELOAD:-true}"
-REDIS_CLI="${REDIS_CLI:-}"
-PEER_REDIS_PORT="${PEER_REDIS_PORT:-6379}"
 
 name_ok() { [[ "$1" =~ ^[a-z0-9_-]{1,32}$ ]]; }
 name_ok "$NODE_NAME" && name_ok "$PEER_NAME" || { echo "ha-pg: NODE_NAME/PEER_NAME invalid" >&2; exit 2; }
 # Values are spliced into conninfo strings and one-line shell scripts: refuse quotes outright.
-for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA" "$ROUTE_FILE" "$PGB_LOCAL_HOST" "$PEER_REDIS_PORT"; do
+for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"; do
   case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) echo "ha-pg: quotes, \$, backslashes and line breaks are not allowed in the HA env" >&2; exit 2 ;; esac
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
@@ -144,11 +133,6 @@ case "$cmd" in
     else
       echo "peer_pg=unreachable"; echo "peer_lsn="
     fi
-    route=""
-    if [ -n "$ROUTE_FILE" ] && [ -f "$ROUTE_FILE" ]; then
-      route=$(sed -n '1s/^; route=\(local\|peer\)\b.*/\1/p' "$ROUTE_FILE")
-    fi
-    echo "route=$route"
     ;;
   role)
     self_role
@@ -204,30 +188,6 @@ case "$cmd" in
     fi
     local_sql "SELECT pg_reload_conf()" >/dev/null
     ;;
-  route)
-    target="${2:-}"
-    [ -n "$ROUTE_FILE" ] || { echo "ha-pg: ROUTE_FILE unset (active-active only)" >&2; exit 2; }
-    case "$target" in
-      local) host=$PGB_LOCAL_HOST; port=5432 ;;
-      peer) host=$PEER_HOST; port=$PEER_PORT ;;
-      *) echo "ha-pg: route local|peer" >&2; exit 2 ;;
-    esac
-    tmp="$ROUTE_FILE.tmp.$$"
-    # Written whole, then renamed: pgbouncer never reads half a file. The directory is mounted,
-    # not the file, so the rename is visible inside the container.
-    printf '; route=%s (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
-      "$target" "$host" "$port" > "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
-    sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed" >&2; exit 1; }
-    if [ -n "$REDIS_CLI" ]; then
-      if [ "$target" = local ]; then
-        # shellcheck disable=SC2086
-        timeout 10 $REDIS_CLI REPLICAOF NO ONE >/dev/null || { echo "ha-pg: redis REPLICAOF NO ONE failed" >&2; exit 1; }
-      else
-        # shellcheck disable=SC2086
-        timeout 10 $REDIS_CLI REPLICAOF "$PEER_HOST" "$PEER_REDIS_PORT" >/dev/null || { echo "ha-pg: redis REPLICAOF peer failed" >&2; exit 1; }
-      fi
-    fi
-    ;;
   prune)
     days="${2:-7}"
     [[ "$days" =~ ^[0-9]+$ ]] || exit 2
@@ -237,7 +197,7 @@ case "$cmd" in
     $PG_EXEC find "$parent" -maxdepth 1 -type d -name "$base.old-*" -mtime +"$days" -exec rm -rf {} +
     ;;
   *)
-    echo "usage: ha-pg.sh observe|role|fence|promote|ensure-slot|start-standby|rejoin [reseed]|set-sync NAMES|route local|peer|prune DAYS" >&2
+    echo "usage: ha-pg.sh observe|role|fence|promote|ensure-slot|start-standby|rejoin [reseed]|set-sync NAMES|prune DAYS" >&2
     exit 2
     ;;
 esac

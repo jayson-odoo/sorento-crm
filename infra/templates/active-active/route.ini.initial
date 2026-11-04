@@ -1,3 +1,0 @@
-; route=local (written by ha-pg.sh route; do not edit)
-[databases]
-* = host=db port=5432

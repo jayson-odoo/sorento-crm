@@ -60,7 +60,6 @@ class Config:
     sync_mode: str = "off"
     reseed_keep_days: int = 7
     max_obs_gap: int = 45
-    active_active: bool = False
 
     @classmethod
     def from_env(cls, env) -> "Config":
@@ -92,12 +91,6 @@ class Config:
         promote_after = num("PROMOTE_AFTER", fence_after + max(margin, 3 * interval))
         fence_hold = num("FENCE_HOLD", promote_after + 180)
         sync_mode = env.get("SYNC_MODE", "off") or "off"
-        active_active = env.get("ACTIVE_ACTIVE", "0") in ("1", "true", "yes")
-        # Active-active (owner 4 Nov): an unhealthy app drops out of the Cloudflare pool and the
-        # other node serves through the same primary; the database never moves for an app fault.
-        if active_active and env.get("APP_SICK_AFTER") not in (None, "", "0"):
-            raise ConfigError("APP_SICK_AFTER must be 0 (off) in active-active mode: an app fault never moves the database")
-        app_sick_default = 0 if active_active else 900
 
         if tick < 1 or interval < 1 or down < 1:
             raise ConfigError("TICK, CF_CHECK_INTERVAL and CF_CONSECUTIVE_DOWN must be at least 1")
@@ -116,7 +109,7 @@ class Config:
             cf_check_interval=interval, cf_consecutive_down=down,
             fence_after=fence_after, fence_margin=margin, promote_after=promote_after,
             fence_hold=fence_hold,
-            app_sick_after=num("APP_SICK_AFTER", app_sick_default),
+            app_sick_after=num("APP_SICK_AFTER", 900),
             app_sick_cooldown=num("APP_SICK_COOLDOWN", 86400),
             rejoin_after=num("REJOIN_AFTER", 120),
             both_standby_after=num("BOTH_STANDBY_AFTER", 60),
@@ -124,7 +117,6 @@ class Config:
             sync_mode=sync_mode,
             reseed_keep_days=num("RESEED_KEEP_DAYS", 7),
             max_obs_gap=num("MAX_OBS_GAP", 3 * tick),
-            active_active=active_active,
         )
 
 
@@ -139,7 +131,6 @@ class Obs:
     cf_peer: str                 # same for the peer
     sync_names: str = ""         # synchronous_standby_names on this node, quotes stripped
     peer_slot_ok: bool = True    # primary only: the peer's replication slot exists and is usable
-    route: str = ""              # active-active: where this node's pgbouncer + Redis point (local | peer | "")
 
 
 # Windows: seconds a condition has held without a break. Reset when the controller was not
@@ -173,7 +164,7 @@ def initial_state() -> dict:
 def decide(state: dict, o: Obs, now: float, c: Config):
     """One tick. Returns (new_state, actions). Actions are tuples:
     ("fence", reason) ("promote",) ("start_standby",) ("rejoin",) ("rejoin", "reseed")
-    ("set_sync", names) ("ensure_slot",) ("route", "local"|"peer") ("alert", text)
+    ("set_sync", names) ("ensure_slot",) ("alert", text)
     """
     s = {**initial_state(), **state}
     acts = []
@@ -255,7 +246,7 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             fence(f"lease expired: no Cloudflare-healthy report and no streaming peer for {c.fence_after}s")
             return s, acts
         last_sick = s["last_app_sick_fence"]
-        if (c.app_sick_after > 0 and sick is not None and sick >= c.app_sick_after and o.self_streaming
+        if (sick is not None and sick >= c.app_sick_after and o.self_streaming
                 and (last_sick is None or now - last_sick >= c.app_sick_cooldown)):  # P2
             s["last_app_sick_fence"] = now
             fence(f"app sick: Cloudflare-unhealthy for {int(sick)}s with a streaming standby")
@@ -266,17 +257,11 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             acts.append(("set_sync", desired))
         if not o.peer_slot_ok:  # P5: the standby can only stream into its slot
             acts.append(("ensure_slot",))
-        if c.active_active and o.route != "local":  # R1: this node's endpoints use its own database
-            acts.append(("route", "local"))
         return s, acts
 
     s["fencing"] = False
     s["cf_self_unhealthy_since"] = None
     s["two_primaries_alerted"] = False
-    # R1: a node that is not primary sends its app to the peer, but only to a peer that answers
-    # as primary right now; never to a guess (a standby or an unreachable peer leaves it as is).
-    if c.active_active and o.peer_pg == "primary" and o.route != "peer":
-        acts.append(("route", "peer"))
 
     def rejoin():
         s["last_rejoin_at"] = now
@@ -412,20 +397,17 @@ def parse_observe(text: str) -> dict:
     return d
 
 
-def cf_pool_health(base: str, account: str, pool: str, token: str, timeout: int = 10, origin: str = "") -> str:
-    """Cloudflare's view of one node: healthy | unhealthy | unknown.
-    GET /accounts/{account}/load_balancers/pools/{pool}/health -> result.pop_health.{region}.
-    Active-passive (one endpoint per pool): the region's `healthy`. Active-active (both nodes in
-    ONE pool, `origin` set): that origin's entry in the region's `origins` list, each item
-    {"<origin address>": {"healthy": bool, ...}} (shape UNVERIFIED, checked in runbook phase 3).
-    Unhealthy only when every reporting region says so; no answer for it at all: unknown."""
+def cf_pool_health(base: str, account: str, pool: str, token: str, timeout: int = 10) -> str:
+    """Cloudflare's view of one pool (one endpoint per pool): healthy | unhealthy | unknown.
+    GET /accounts/{account}/load_balancers/pools/{pool}/health -> result.pop_health.{region}.healthy.
+    Unhealthy only when every reporting region says so; no region, an error, or no answer: unknown."""
     try:
-        return _cf_pool_health(base, account, pool, token, timeout, origin)
+        return _cf_pool_health(base, account, pool, token, timeout)
     except Exception:  # noqa: BLE001 - any surprise in the answer is "unknown", never a crash
         return "unknown"
 
 
-def _cf_pool_health(base, account, pool, token, timeout, origin=""):
+def _cf_pool_health(base, account, pool, token, timeout):
     if not (base and account and pool and token):
         return "unknown"
     req = urllib.request.Request(
@@ -443,21 +425,7 @@ def _cf_pool_health(base, account, pool, token, timeout, origin=""):
     pops = result.get("pop_health") if isinstance(result, dict) else None
     if not isinstance(pops, dict):
         return "unknown"
-    flags = []
-    for region in pops.values():
-        if not isinstance(region, dict):
-            continue
-        if not origin:
-            if isinstance(region.get("healthy"), bool):
-                flags.append(region["healthy"])
-            continue
-        items = region.get("origins")
-        if isinstance(items, dict):
-            items = [items]
-        for item in items if isinstance(items, list) else []:
-            entry = item.get(origin) if isinstance(item, dict) else None
-            if isinstance(entry, dict) and isinstance(entry.get("healthy"), bool):
-                flags.append(entry["healthy"])
+    flags = [v.get("healthy") for v in pops.values() if isinstance(v, dict) and isinstance(v.get("healthy"), bool)]
     if not flags:
         return "unknown"
     if any(flags):
@@ -496,11 +464,6 @@ def main() -> int:
     cf_base = env.get("CF_API_BASE", "https://api.cloudflare.com/client/v4")
     cf_account = env.get("CF_ACCOUNT_ID", "")
     pool_self, pool_peer = env.get("CF_POOL_SELF", ""), env.get("CF_POOL_PEER", "")
-    # Active-active: both nodes are origins of ONE pool; each is read by its origin address.
-    origin_self, origin_peer = env.get("CF_ORIGIN_SELF", ""), env.get("CF_ORIGIN_PEER", "")
-    if c.active_active and not (origin_self and origin_peer):
-        log("config refused: ACTIVE_ACTIVE needs CF_ORIGIN_SELF and CF_ORIGIN_PEER (one pool, both origins)")
-        return 2
     token_file = env.get("CF_API_TOKEN_FILE", "")
     max_ticks = int(env.get("MAX_TICKS", "0") or 0)
     if not (cf_base.startswith("https://") or cf_base.startswith("http://127.0.0.1")):
@@ -552,9 +515,8 @@ def main() -> int:
             peer_pg=d.get("peer_pg") if d.get("peer_pg") in PEER_ROLES else "unreachable",
             peer_lsn=lsn("peer_lsn"),
             peer_slot_ok=d.get("peer_slot", "t") != "f",
-            route=d.get("route", "") if d.get("route") in ("local", "peer") else "",
-            cf_self=cf_pool_health(cf_base, cf_account, pool_self, token, origin=origin_self),
-            cf_peer=cf_pool_health(cf_base, cf_account, pool_peer or pool_self, token, origin=origin_peer),
+            cf_self=cf_pool_health(cf_base, cf_account, pool_self, token),
+            cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token),
             sync_names=d.get("sync_names", ""),
         )
         state, actions = decide(state, o, started, c)
