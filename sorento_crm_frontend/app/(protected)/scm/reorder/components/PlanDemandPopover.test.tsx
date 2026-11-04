@@ -460,7 +460,7 @@ describe('PlanDemandPopover', () => {
         'href', '/scm/sales-orders/so-uuid-hist-1',
       );
       expect(screen.getByText('Delivered')).toBeInTheDocument();
-      expect(screen.getByText('2026-06-01')).toBeInTheDocument();
+      expect(screen.getByText('01/06/2026')).toBeInTheDocument();
       expect(screen.getByText(/Vivo Homes Sdn Bhd/)).toBeInTheDocument();
       expect(screen.getByText(/Jeremy/)).toBeInTheDocument();
       expect(screen.getByText('RM 45.00')).toBeInTheDocument();
