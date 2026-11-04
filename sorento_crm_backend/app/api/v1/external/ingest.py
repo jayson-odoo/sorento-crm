@@ -230,10 +230,23 @@ MAX_RECORD_LOG_LINES = 50
 _ERROR_VALUE_LOG_LIMIT = 200
 
 
+# Dropped-line warnings per `ingest.record` line: one record dropping hundreds
+# of lines must not turn into one unbounded log line.
+_DROPPED_LINE_LOG_LIMIT = 20
+
+
+def _capped_warnings(warnings: list[str]) -> list[str]:
+    shown = [w[:_ERROR_VALUE_LOG_LIMIT] for w in warnings[:_DROPPED_LINE_LOG_LIMIT]]
+    if len(warnings) > _DROPPED_LINE_LOG_LIMIT:
+        shown.append(f"+{len(warnings) - _DROPPED_LINE_LOG_LIMIT} more")
+    return shown
+
+
 def _log_record_outcomes(
     entity: str, integration_name, company_id: str, result
 ) -> None:
-    """One INFO line per FAILED/RETRYABLE record, capped at `MAX_RECORD_LOG_LINES`.
+    """One INFO line per FAILED/RETRYABLE record, or landed record that dropped a
+    line, capped at `MAX_RECORD_LOG_LINES`.
 
     Never logs a payload field beyond `source_ref`, the record's own
     `errors` dict and (INGEST-DROP-WARN-CRM) the `line_product_unresolved`
@@ -273,7 +286,7 @@ def _log_record_outcomes(
             record.source_ref,
             record.outcome.value,
             json.dumps(errors),
-            json.dumps([w[:_ERROR_VALUE_LOG_LIMIT] for w in dropped_line_warnings]),
+            json.dumps(_capped_warnings(dropped_line_warnings)),
         )
         logged += 1
     if suppressed:
