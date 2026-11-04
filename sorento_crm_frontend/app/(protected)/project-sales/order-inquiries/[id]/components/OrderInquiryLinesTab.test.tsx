@@ -97,22 +97,21 @@ describe('AC-ND-1 / 2 / 10 / 12: one row per sales order line', () => {
     renderLines();
     expect(await screen.findByRole('columnheader', { name: 'No.' })).toBeInTheDocument();
     expect(screen.queryByRole('columnheader', { name: 'SO line' })).not.toBeInTheDocument();
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): line 6 has only a used row, so it is not a line.
     const products = bodyRows().map((row) => row.textContent ?? '');
-    expect(products).toHaveLength(4);
+    expect(products).toHaveLength(3);
     expect(products[0]).toContain('CKS1050');
     expect(products[1]).toContain('WC200');
     expect(products[2]).toContain('BSN-40');
-    expect(products[3]).toContain('TAP-88');
+    expect(screen.queryByText('TAP-88')).not.toBeInTheDocument();
   });
 
-  it('greys a cancelled line and a line with nothing to buy', async () => {
+  it('greys a cancelled line', async () => {
     renderLines();
     await screen.findByText('BSN-40');
-    const [first, , cancelled, retired] = bodyRows();
+    const [first, , cancelled] = bodyRows();
     expect(first.className).not.toContain('opacity-60');
     expect(cancelled.className).toContain('opacity-60');
-    expect(retired.className).toContain('opacity-60');
-    expect(within(retired).getByRole('checkbox')).toBeDisabled();
   });
 
   it('ticking a line hands back its live row ids, never the used one', async () => {
@@ -126,54 +125,27 @@ describe('AC-ND-1 / 2 / 10 / 12: one row per sales order line', () => {
 });
 
 /**
- * Review S2 (PR #1266 at a98e01cf, SF1 at d0d328d7f): a line whose only waiting row is a
- * used row must be tickable, or no tick can confirm what the header counts (G6).
+ * Review S2 re-pinned (OI-RESERVE-USED-ROW, owner 4 Nov 2026, supersedes G6 for this shape): a
+ * line whose only rows are used is not rendered, so there is nothing to tick; the Documents
+ * counts leave it out too, so the OI does not wait on it.
  */
-describe('Review S2: a line whose only waiting row is used can be ticked', () => {
-  const rows = [
-    line({ id: 'l1-used', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
-    line({ id: 'l2-used', item_code: 'TAP-88', core_line_id: 'cl-2', line_no: 2, qty: '3', redirected_to_pool: true, ack_state: 'acknowledged' }),
-  ];
-
-  function bodyRows() {
-    return screen.getAllByRole('row').filter((row) => row.closest('tbody'));
-  }
-
-  it('ticks a used-only line in changed and hands back its used row id', async () => {
-    const onChange = vi.fn();
+describe('a line whose only rows are used is not rendered', () => {
+  it('renders no row for used-only lines', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={client}>
         <OrderInquiryLinesTab
-          lines={rows}
+          lines={[
+            line({ id: 'l1-used', item_code: 'CKS1050', core_line_id: 'cl-1', line_no: 1, qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
+            line({ id: 'l2-live', item_code: 'WC200', core_line_id: 'cl-2', line_no: 2, qty: '3' }),
+          ]}
           isLoading={false}
           rowSelection={{}}
-          onRowSelectionChange={onChange}
-        />
-      </QueryClientProvider>,
-    );
-    await screen.findByText('CKS1050');
-    const [waiting, done] = bodyRows();
-    expect(waiting.className).not.toContain('opacity-60');
-    expect(within(done).getByRole('checkbox')).toBeDisabled();
-    fireEvent.click(within(waiting).getByRole('checkbox'));
-    expect(onChange).toHaveBeenLastCalledWith({ 'l1-used': true });
-  });
-
-  it('reads a ticked used-only line back as ticked', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={client}>
-        <OrderInquiryLinesTab
-          lines={rows}
-          isLoading={false}
-          rowSelection={{ 'l1-used': true }}
           onRowSelectionChange={vi.fn()}
         />
       </QueryClientProvider>,
     );
-    await screen.findByText('CKS1050');
-    expect(within(bodyRows()[0]).getByRole('checkbox')).toBeChecked();
+    await screen.findByText('WC200');
+    expect(screen.queryByText('CKS1050')).not.toBeInTheDocument();
   });
 });
-

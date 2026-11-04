@@ -469,9 +469,12 @@ def test_a_line_that_lends_keeps_its_lent_units_out_of_the_book_so(scm_app):
     landed units to a nearer line; its order also has an SPO of 40 whose S/O names it. The
     lent units stay lent (`order_back`) and the SPO pins nothing, exactly as before this
     lane: counting only the 56 kept pinned the SPO's 32 back onto the far line."""
+    from tests._borrow_mode import borrow_from_order_on
     from tests.scm.test_stock_debt_lendable_routes import DEFAULT_WINDOW, _owner_case
 
     app, db = _client(scm_app)
+    # The view lends only with "Borrow from another order" on (OI-RESERVE-USED-ROW, 4 Nov).
+    borrow_from_order_on(db)
     far_due = DEFAULT_WINDOW + timedelta(days=60)
     world = _owner_case(db, far_due=far_due)
     product, marker = world["product"], world["marker"]
