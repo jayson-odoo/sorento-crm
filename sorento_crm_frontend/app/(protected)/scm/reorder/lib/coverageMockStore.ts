@@ -383,7 +383,14 @@ function undatedFixture(sku: string, productName: string | null): CoverageTimeli
     buy_qty: 0,
     use_stock: true,
     undated_demand: [
-      { so_number: 'SO-2026-0374', item_code: sku, qty: 48, location: 'WH3-NTC' },
+      {
+        so_number: 'SO-2026-0374',
+        item_code: sku,
+        qty: 48,
+        location: 'WH3-NTC',
+        customer_name: 'Bina Jaya Sdn Bhd',
+        project_label: 'Tuju Residences',
+      },
       { so_number: 'SO-2026-0381', item_code: sku, qty: 12, location: 'WH3' },
     ],
     transfer_proposals: [],

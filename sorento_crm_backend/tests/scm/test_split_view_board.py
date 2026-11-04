@@ -313,8 +313,10 @@ def test_a5_simulate_confirm_with_no_lines_reports_the_change_and_writes_nothing
     result = r.json()["results"][0]
     assert result["ok"] is True, result
     rows = result.get("inquiry_rows") or []
-    assert [x for x in rows if Decimal(str(x["qty"])) == 167 and x["delivery_date"] == D_167_EDIT.isoformat()], (
-        "the simulation reports the 167 moving to 20/12/2029", rows)
+    # OI-ONE-DELIVERY-DATE (AC-A6): the preview prints the SO line's date, the 167's own
+    # planned 20/12/2029 is the part's date, not the line's.
+    assert [x for x in rows if Decimal(str(x["qty"])) == 167 and x["delivery_date"] == s.line[480].delivery_date.isoformat()], (
+        "the simulation reports the 167 on line 480's SO line date", rows)
     s.db.expire_all()
     assert (_snapshot(s), sorted(_worklist(s, s.line[480]), key=str)) == before
     assert _sent_since(emails, start) == []
@@ -584,7 +586,8 @@ def test_r3c_a12_simulate_confirm_reports_the_edit_and_writes_nothing(api, email
     result = r.json()["results"][0]
     assert result["ok"] is True, result
     rows = result.get("inquiry_rows") or []
-    assert [x for x in rows if Decimal(str(x["qty"])) == 167 and x["delivery_date"] == D_167_EDIT.isoformat()], rows
+    # OI-ONE-DELIVERY-DATE (AC-A6): the SO line's date, not the part's own planned date.
+    assert [x for x in rows if Decimal(str(x["qty"])) == 167 and x["delivery_date"] == s.line[480].delivery_date.isoformat()], rows
     s.db.expire_all()
     assert (_snapshot(s), sorted(_worklist(s, s.line[480]), key=str)) == before
     assert _sent_since(emails, start) == []

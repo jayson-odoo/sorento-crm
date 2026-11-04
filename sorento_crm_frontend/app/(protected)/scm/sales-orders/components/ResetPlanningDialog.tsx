@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { useResetSalesOrderPlanning } from '../../hooks/useSalesOrders';
 
 /**
@@ -24,7 +25,12 @@ export function ResetPlanningDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  orders: Array<{ id: string; so_number: string }>;
+  orders: Array<{
+    id: string;
+    so_number: string;
+    customer_name?: string | null;
+    project_label?: string | null;
+  }>;
   onDone: () => void;
   /** What one order is called on the calling list ("consignment"). */
   docLabel?: string;
@@ -46,14 +52,19 @@ export function ResetPlanningDialog({
       description={
         <span className="flex flex-col gap-3">
           <span>
-            Put{' '}
-            <span className="font-medium">
-              {orders.map((o) => o.so_number).join(', ')}
-            </span>{' '}
-            back to never planned? Every order inquiry, link, allocation, stock
-            transfer and confirmed revision on{' '}
-            {orders.length === 1 ? 'it' : 'them'} is removed. The {docLabel} and
+            Put {orders.length === 1 ? 'this' : `these ${orders.length}`} back to never
+            planned? Every order inquiry, link, allocation, stock transfer and confirmed
+            revision on {orders.length === 1 ? 'it' : 'them'} is removed. The {docLabel} and
             its lines stay. This cannot be undone.
+          </span>
+          {/* OI-UX-FILTER-SNAPSHOT: each order with its customer / project. */}
+          <span className="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+            {orders.map((o) => (
+              <span key={o.id} className="min-w-0">
+                <span className="block truncate font-medium tabular-nums">{o.so_number}</span>
+                <SoCustomerProject customer={o.customer_name} project={o.project_label} />
+              </span>
+            ))}
           </span>
           {offerRewind ? (
             <label className="flex items-start gap-2 text-sm">

@@ -248,9 +248,9 @@ export function StockDocumentsPanel({
         doc_type: 'Hold' as const,
         doc_no: hold.so_number ?? '-',
         sales_order_id: null,
-        party: null,
+        party: hold.customer_name ?? null,
         agent_code: null,
-        project_label: null,
+        project_label: hold.project_label ?? null,
         location: hold.location ?? null,
         doc_date: null,
         due_date: hold.required_date ?? null,
@@ -575,6 +575,26 @@ export function StockDocumentsPanel({
         size: 200,
         minSize: 150,
         meta: { headerTitle: 'Customer / supplier' },
+      },
+      {
+        // The order's project (OI-UX-FILTER-SNAPSHOT): sales-order and hold rows only, a
+        // purchase document has none.
+        id: 'project_label',
+        accessorFn: (row) => row.project_label ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span
+            className={cn('block truncate text-sm', emphasis(row.original))}
+            title={row.original.project_label ?? ''}
+          >
+            {row.original.project_label || '-'}
+          </span>
+        ),
+        size: 180,
+        minSize: 130,
+        meta: { headerTitle: 'Project' },
       },
       {
         // Who sold it. A purchase row has no agent - it is not a sales document - so this

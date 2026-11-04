@@ -188,6 +188,22 @@ describe('PlanTrendPopover - the orders behind a customer (AC-4.1)', () => {
     );
   });
 
+  it('names the customer and project beside each order (OI-UX-FILTER-SNAPSHOT)', () => {
+    stubOrders(orders({
+      lines: [
+        {
+          so_number: 'SO414050', order_date: '2026-07-12', qty: 60, unit_price: 0.94,
+          warehouse_code: 'BRW-BB', customer_name: 'Vivo Debtor', project_label: 'Tuju Residences',
+        },
+      ],
+    }));
+    rendered();
+    openTrend();
+    fireEvent.click(screen.getByRole('button', { name: /Vivo Homes/ }));
+
+    expect(screen.getByText('Vivo Debtor / Tuju Residences')).toBeInTheDocument();
+  });
+
   it('names the location each order asked for, and says so when it named none', () => {
     stubOrders(orders({
       lines: [

@@ -241,7 +241,9 @@ def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
     near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
     far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
     near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    near["core_line"].required_date = date(2026, 10, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    far["core_line"].required_date = date(2030, 1, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     db.flush()
 
     poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
@@ -274,7 +276,9 @@ def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app
     near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
     far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
     near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    near["core_line"].required_date = date(2026, 10, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    far["core_line"].required_date = date(2030, 1, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     db.flush()
 
     poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
@@ -311,7 +315,9 @@ def test_a_confirm_off_a_run_that_named_no_horizon_links_under_none(scm_app):
     near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
     far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
     near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    near["core_line"].required_date = date(2026, 10, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    far["core_line"].required_date = date(2030, 1, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     db.flush()
 
     poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=8,
@@ -348,7 +354,9 @@ def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(sc
         soon = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=5)
         late = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=3)
         soon["inquiry_row"].delivery_date = date(2026, 10, 1)
+        soon["core_line"].required_date = date(2026, 10, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
         late["inquiry_row"].delivery_date = date(2030, 1, 1)
+        late["core_line"].required_date = date(2030, 1, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
         db.flush()
         made[name] = {
             "soon": soon["inquiry_row"].id,
@@ -388,7 +396,9 @@ def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm
     near = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
     far = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=3)
     near["inquiry_row"].delivery_date = date(2026, 10, 1)
+    near["core_line"].required_date = date(2026, 10, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     far["inquiry_row"].delivery_date = date(2030, 1, 1)
+    far["core_line"].required_date = date(2030, 1, 1)  # OI-ONE-DELIVERY-DATE: due when its SO line is
     db.flush()
 
     poid = _draft_po(db, product_id=pid, warehouse_id=here, qty=5,

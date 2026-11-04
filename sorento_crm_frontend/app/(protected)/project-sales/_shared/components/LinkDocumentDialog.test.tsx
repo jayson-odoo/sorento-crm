@@ -362,6 +362,35 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
     expect(panel).toHaveTextContent('15');
   });
 
+  it('names each tagged order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', async () => {
+    const tagged: OrderInquiryPoCandidate = {
+      ...EARLY,
+      dedicated_to: 'SO2026001',
+      dedicated_customer_name: 'Maju Debtor',
+      dedicated_project_label: 'Tower B',
+      claims: [
+        {
+          so_number: 'SO2026001', customer_name: 'Maju Debtor', project_label: 'Tower B',
+          item_code: 'BASIN-001', qty: '20', placed_date: '2026-08-01',
+        },
+      ],
+    };
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [tagged], still_to_link: "10" });
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="10" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(
+      screen.getByTestId('po-candidate-dedicated-po:po-line-early'),
+    ).toHaveTextContent('Dedicated to SO SO2026001 (Maju Debtor / Tower B)');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+    const panel = screen.getByTestId('po-candidate-expand-po:po-line-early');
+    expect(panel).toHaveTextContent('Maju Debtor');
+    expect(panel).toHaveTextContent('Tower B');
+  });
+
   it('names no price on file when the line carries none', async () => {
     getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 

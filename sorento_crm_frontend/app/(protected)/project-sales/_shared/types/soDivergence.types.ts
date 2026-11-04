@@ -50,6 +50,9 @@ export interface DivergenceDetail {
   project_sales_order_id: string;
   project_id?: string | null;
   project_title?: string | null;
+  /** The sales order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   provisional_ref?: string | null;
   autocount_doc_no?: string | null;
   status: DivergenceStatus | string;
@@ -72,6 +75,8 @@ export interface DivergenceSummary {
   project_sales_order_id: string;
   project_id?: string | null;
   project_title?: string | null;
+  customer_name?: string | null;
+  project_label?: string | null;
   sales_order_ref?: string | null;
   provisional_ref?: string | null;
   autocount_doc_no?: string | null;

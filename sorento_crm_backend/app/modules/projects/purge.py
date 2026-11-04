@@ -92,6 +92,7 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationSpecSheet,
     ProjectQuotationVersion,
     ProjectSalesProfile,
     ProjectSample,
@@ -201,6 +202,8 @@ PURGE_ORDER: List[Type] = [
     QuotationAmendmentRequest,
     # quotation_issue_views CASCADEs off the issue (PS-QUOTE-VIEWS); counted on its own.
     QuotationIssueView,
+    # quotation_spec_sheets CASCADEs off the document and the issue (SPEC-SHEET-V2).
+    ProjectQuotationSpecSheet,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

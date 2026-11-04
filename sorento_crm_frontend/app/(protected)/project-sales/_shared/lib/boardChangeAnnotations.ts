@@ -41,6 +41,7 @@ import type {
   PlanningChangeHeld,
   PlanningChangeRow,
 } from '../types/planningChange.types';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /** One side of the Was / Now table. `null` on a value the row cannot state. */
 export interface BoardChangeSide {
@@ -76,6 +77,8 @@ export interface BoardChangeAnnotation {
   /** The batch row this came from - the id a decision is PUT against. */
   rowId: string;
   soNumber: string;
+  /** OI-UX-FILTER-SNAPSHOT: the order's `CUSTOMER / project`, null when it names neither. */
+  party?: string | null;
   lineNo: number;
   itemCode: string;
   /** The book's own change kind, for the caption. Never a reaction verb. */
@@ -394,6 +397,7 @@ export function annotationOf(
   row: PlanningChangeRow,
   soNumber: string,
   ownLocation?: string | null,
+  party?: string | null,
 ): BoardChangeAnnotation {
   // `cancelled`, renamed from `closed` (Slice A,
   // `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` rule 5).
@@ -414,6 +418,7 @@ export function annotationOf(
   return {
     rowId: row.id,
     soNumber,
+    party: party ?? null,
     lineNo: row.so_line_no ?? row.line_no,
     itemCode: row.item_code,
     kind: row.kind,
@@ -487,6 +492,7 @@ export function annotationsByCell(
         row,
         order.so_number,
         lineId ? (locationByLine.get(lineId) ?? null) : null,
+        soCustomerProjectLabel(order.customer_name, order.project_label),
       );
       const held = out.get(key);
       if (held) held.push(annotation);
@@ -521,6 +527,7 @@ export function annotationsByLine(
         row,
         order.so_number,
         proposal?.fulfilment_location ?? null,
+        soCustomerProjectLabel(order.customer_name, order.project_label),
       );
       const held = out.get(key);
       if (held) held.push(annotation);

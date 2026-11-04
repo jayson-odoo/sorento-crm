@@ -81,7 +81,10 @@ import {
   tickRowsOf,
   type OrderInquiryLine,
 } from '../../../_shared/lib/orderInquiryLineFold';
-import type { CommitReservePayload } from '../../../_shared/services/orderInquiryReserveService';
+import type {
+  CommitReservePayload,
+  OrderInquiryReserveRequest,
+} from '../../../_shared/services/orderInquiryReserveService';
 import { OrderInquiryLinesTab } from './OrderInquiryLinesTab';
 import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { RequestReserveDialog } from '../../../_shared/components/RequestReserveDialog';
@@ -98,6 +101,9 @@ import {
 
 /** Same grant the worklist gates Choose document / Link / Unlink / Reject / Unconfirm
  * on (`OrderInquiriesClient.tsx`). */
+// A stable empty list while the requests load, so the Lines tab's memos hold.
+const NO_RESERVE_REQUESTS: OrderInquiryReserveRequest[] = [];
+
 const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
 /** Same grant Confirm is gated on everywhere else in this module. */
 const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
@@ -977,6 +983,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
           <OrderInquiryLinesTab
             lines={lines}
+            reserveRequests={reserveRequestsQuery.data ?? NO_RESERVE_REQUESTS}
             isLoading={linesQuery.isLoading}
             error={linesQuery.error}
             onRetry={() => void linesQuery.refetch()}

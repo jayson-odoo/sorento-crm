@@ -328,6 +328,7 @@ function Harness({
   editing,
   unsaved = false,
   seriesId,
+  showEditor = true,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
@@ -335,6 +336,8 @@ function Harness({
   unsaved?: boolean;
   /** The series the form has picked for the scope (undefined: the quotation's own). */
   seriesId?: string | null;
+  /** False unmounts the editor (a section or tab switch) while the session lives on. */
+  showEditor?: boolean;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -360,6 +363,7 @@ function Harness({
     [isEditing, scopes, seedScope, stageScope, toggleRemoved],
   );
 
+  if (!showEditor) return null;
   return (
     <QuotationVersionEditor
       project={project(projectOverrides)}
@@ -2904,5 +2908,37 @@ describe('QuotationVersionEditor round 4: column writes are serial, Edit is opti
     expect(within(row).getAllByText('5').length).toBeGreaterThan(0);
     expect(stagedBody()[0]).toMatchObject({ quantity: '5.00' });
     expect(api.calls.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('QuotationVersionEditor: an unsaved line keeps its product code across a remount', () => {
+  it('still names the picked product after the editor unmounts and comes back (section switch)', async () => {
+    listQuotationLines.mockResolvedValue([line()]);
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const view = (showEditor: boolean) => (
+      <QueryClientProvider client={client}>
+        <Harness projectOverrides={{}} editing showEditor={showEditor} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(true));
+    await screen.findByRole('button', { name: /Add a line/i });
+    await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines ?? null).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Add a line/i }));
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Product on line 2' }));
+    fireEvent.click(await screen.findByRole('option', { name: /SRT-BASIN-02/ }));
+    expect(
+      await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' }),
+    ).toHaveTextContent('SRT-BASIN-02');
+
+    // Another section, then back: the editor (and anything it held) is gone and rebuilt.
+    rerender(view(false));
+    rerender(view(true));
+
+    const picker = await screen.findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
+    expect(picker).toHaveTextContent('SRT-BASIN-02');
+    expect(screen.queryByText('Selected product')).toBeNull();
   });
 });

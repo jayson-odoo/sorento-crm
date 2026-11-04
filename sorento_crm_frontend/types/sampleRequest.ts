@@ -85,6 +85,9 @@ export interface SampleRequestDateAnswer {
 export interface SampleRequestConsignment {
   id: string;
   so_number: string;
+  /** The consignment order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   order_date: string | null;
   status: string;
   /** The delivered date and where it came from: Overall Tracking, else the CG's own date. */
@@ -98,6 +101,8 @@ export interface SampleRequestConsignmentHit {
   so_number: string;
   debtor_code: string | null;
   debtor_name: string | null;
+  customer_name?: string | null;
+  project_label?: string | null;
   order_date: string | null;
 }
 

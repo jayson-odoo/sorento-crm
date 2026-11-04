@@ -317,12 +317,28 @@ def _seed(db, company_id: str, user_id: str) -> dict:
         delivery_date=date(2026, 1, 19),
         state=INQUIRY_ACTIONED,
     )
-    # An undated row, so "nulls last in BOTH directions" has something to be about.
+    # An undated row, so "nulls last in BOTH directions" has something to be about. It sits
+    # on its own undated line: OI-ONE-DELIVERY-DATE, a row on a dated line prints that date.
+    undated_line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=adopted.id,
+        line_no=2,
+        product_id=adopted_product.id,
+        description=f"{MARKER} undated",
+        qty=Decimal("6"),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("60.00"),
+        delivery_date=None,
+    )
+    db.add(undated_line)
+    db.flush()
     undated_row = _row(
         db,
         company_id,
         adopted_inquiry,
-        so_line_id=adopted_line.id,
+        so_line_id=undated_line.id,
         item_code=f"ZZT-UNDATED-{_uid()[:6]}",
         qty="6",
         delivery_date=None,
@@ -2091,12 +2107,19 @@ def test_link_suggests_reallocate_to_every_sooner_open_row(api):
         db, company_id, product=product, qty="300", delivery_date=date(2027, 1, 15),
         so_number=f"ZZT-CANDZ-{_uid()[:6]}",
     )
+    # OI-UX-FILTER-SNAPSHOT: Y's core order names its debtor and project; Z has no core order.
+    core_y = db.query(SalesOrder).filter(SalesOrder.so_number == _order_y.autocount_doc_no).one()
+    core_y.debtor_name = f"{MARKER} Debtor Sdn Bhd"
+    core_y.project_label = f"{MARKER} Tower"
     db.commit()
 
     body = client.get(LIST, params={"limit": 200}).json()
     wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
     [link] = wire_row["links"]
     suggestion = link["suggestion"]
+    assert suggestion["candidates"][0]["customer_name"] == f"{MARKER} Debtor Sdn Bhd"
+    assert suggestion["candidates"][0]["project_label"] == f"{MARKER} Tower"
+    assert suggestion["candidates"][1]["customer_name"] is None
 
     assert suggestion["kind"] == "reallocate"
     assert [c["inquiry_no"] for c in suggestion["candidates"]] == [

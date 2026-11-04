@@ -26,6 +26,7 @@ import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryReserveHistoryEntry } from '../../../_shared/services/orderInquiryReserveService';
 import { documentsOf } from '../../components/orderInquiryWorklistColumns';
 import { ReserveHistoryEntries } from './ReserveLineHistoryDialog';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /**
  * `PLAN-oi-no-double-count-25sep.md` S0 (issue #1248), AC-ND-13..16, owner rulings 26 Sep
@@ -211,6 +212,12 @@ export function OrderInquiryLineHistoryDialog({
       <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{titleOf(line)}</DialogTitle>
+          {/* OI-UX-FILTER-SNAPSHOT: the order's customer / project. */}
+          <SoCustomerProject
+            customer={line.primary.customer_name}
+            project={line.primary.project_title}
+            className="text-sm"
+          />
           <DialogDescription className="sr-only">
             Every row, decision and reserve behind this sales order line
           </DialogDescription>

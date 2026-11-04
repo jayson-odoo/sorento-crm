@@ -674,6 +674,7 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       // LINKAGE-UNIFY U3 (Q5): the "Dead document" filter.
       dead_document: params.dead_document,
       inquiry_no: params.inquiry_no,
+      reserve_request: params.reserve_request,
       delivery_from: params.delivery_from,
       delivery_to: params.delivery_to,
       // S3: a Schedule cell's own drilldown. The pair is sent as the pair - the server

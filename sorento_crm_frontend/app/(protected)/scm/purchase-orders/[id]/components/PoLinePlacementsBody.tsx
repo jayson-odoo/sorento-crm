@@ -43,6 +43,7 @@ interface PlacementRow {
   purchaseOrderId: string | null;
   document: string | null;
   customer: string | null;
+  project: string | null;
   qty: number;
   landsAt: string | null;
   locationDiffers: boolean;
@@ -59,6 +60,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
         purchaseOrderId: p.purchase_order_id ?? null,
         document: p.packing_list ?? null,
         customer: p.customer,
+        project: null,
         qty: p.qty,
         landsAt:
           (p.warehouses ?? []).map((w) => `${w.warehouse_code} ${fmtInt(w.qty)}`).join(', ') ||
@@ -73,7 +75,10 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       number: p.inquiry_no,
       purchaseOrderId: null,
       document: p.so_number,
-      customer: p.customer,
+      // The two halves the server split (issuing party; project with its PRE-ORDER note).
+      // Never the combined `customer`: with no party it is the project title alone.
+      customer: p.customer_name ?? null,
+      project: p.project_label ?? null,
       qty: p.qty,
       landsAt: p.needed_at,
       locationDiffers: Boolean(p.location_differs),
@@ -87,7 +92,8 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       number: null,
       purchaseOrderId: null,
       document: d.so_number,
-      customer: null,
+      customer: d.customer_name ?? null,
+      project: d.project_label ?? null,
       qty: d.unplaced,
       landsAt: null,
       locationDiffers: false,
@@ -157,6 +163,16 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
           </span>
         ),
         size: 200,
+      },
+      {
+        id: 'project',
+        header: 'Project',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project ?? undefined}>
+            {textCell(row.original.project)}
+          </span>
+        ),
+        size: 180,
       },
       {
         id: 'qty',

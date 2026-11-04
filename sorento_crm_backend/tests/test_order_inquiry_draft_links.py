@@ -38,6 +38,7 @@ from urllib.parse import quote
 
 import pytest
 
+from app.models.order import SalesOrderLine
 from app.models.inventory import Warehouse
 from app.models.procurement import (
     InboundShipment,
@@ -57,6 +58,7 @@ from app.models.project_so import (
     IV_ORDER,
     OrderInquiryLink,
     OrderInquiryRow,
+    ProjectSalesOrderLine,
 )
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
@@ -1149,6 +1151,10 @@ def test_auto_link_all_keeps_the_draft_of_a_row_that_is_now_past_the_cut_off(api
     assert before, "the suggestion has to exist for the test to mean anything"
 
     row.delivery_date = FAR
+    # OI-ONE-DELIVERY-DATE: the row is due when its SO line is.
+    mirror = world.db.get(ProjectSalesOrderLine, row.so_line_id)
+    mirror.delivery_date = FAR
+    world.db.get(SalesOrderLine, mirror.core_sales_order_line_id).required_date = FAR
     world.db.flush()
     world.db.commit()
 

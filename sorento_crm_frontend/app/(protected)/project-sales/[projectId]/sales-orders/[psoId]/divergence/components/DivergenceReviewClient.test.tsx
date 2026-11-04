@@ -186,6 +186,15 @@ describe('DivergenceReviewClient', () => {
     expect(screen.queryByText(/autocount comparison/i)).not.toBeInTheDocument();
   });
 
+  it('names the order\'s customer and project under the heading (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getDivergence.mockResolvedValue(
+      detail({ customer_name: 'Maju Debtor', project_label: 'Tower B' }),
+    );
+    renderReview();
+
+    expect(await screen.findByText('Maju Debtor / Tower B')).toBeInTheDocument();
+  });
+
   it('says amendments are blocked while anything is unanswered', async () => {
     renderReview();
 

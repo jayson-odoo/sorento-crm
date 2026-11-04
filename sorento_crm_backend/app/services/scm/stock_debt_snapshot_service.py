@@ -32,6 +32,7 @@ from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotR
 from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 from app.services.order_inquiry_reserve_service import (
     _REQUESTABLE_STATES,
     _REQUESTABLE_VERBS,
@@ -41,7 +42,7 @@ from app.services.order_inquiry_reserve_service import (
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.demand import demand_qty
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
-from app.services.scm.stock_debt_service import StockDebtService
+from app.services.scm.stock_debt_service import StockDebtService, annotate_so_parties
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
 from app.utils.multi_value import multi_values
@@ -112,10 +113,11 @@ class StockDebtSnapshotService:
             core_ids.extend(line["sales_order_line_id"] for line in lines)
 
         linked = self._linked_oi_rows(core_ids)
+        needed_by = resolve_oi_date(self.db, [r for pairs in linked.values() for r, _i in pairs])
         for lines in stored_lines:
             for line in lines:
                 line["oi_rows"] = [
-                    self._frozen_oi(oi_row, inquiry)
+                    self._frozen_oi(oi_row, inquiry, needed_by)
                     for oi_row, inquiry in linked.get(line["sales_order_line_id"], [])
                 ]
 
@@ -192,14 +194,21 @@ class StockDebtSnapshotService:
                 out.setdefault(str(core_id), []).append((oi_row, inquiry))
         return out
 
-    @staticmethod
-    def _frozen_oi(oi_row: OrderInquiryRow, inquiry: OrderInquiry) -> Dict[str, Any]:
+    def _frozen_oi(
+        self,
+        oi_row: OrderInquiryRow,
+        inquiry: OrderInquiry,
+        needed_by: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """One frozen OI row. `delivery_date` is the SO line's (OI-ONE-DELIVERY-DATE, AC-A7);
+        `needed_by` is a batch `resolve` the caller already ran, else one read here."""
+        one_date = (needed_by or resolve_oi_date(self.db, [oi_row]))[str(oi_row.id)].date
         return {
             "oi_id": str(inquiry.id),
             "inquiry_no": inquiry.inquiry_no,
             "row_id": str(oi_row.id),
             "qty": float(oi_row.qty),
-            "delivery_date": oi_row.delivery_date.isoformat() if oi_row.delivery_date else None,
+            "delivery_date": one_date.isoformat() if one_date else None,
             "stock_location": oi_row.stock_location,
             "verb": oi_row.verb,
             "state": oi_row.state,
@@ -428,6 +437,9 @@ class StockDebtSnapshotService:
         lines = [dict(l) for l in row.lines if month is None or l["bucket"] == month]
         lines.sort(key=lambda l: (l["required_date"] is None, l["required_date"] or "", l["so_number"]))
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
+        # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
+        # stored before the lines carried them names them too.
+        annotate_so_parties(self.db, lines)
 
         now = self._line_now(core_ids)
         # Security L1: without `projects.projects.view` no order inquiry row is served,
@@ -447,6 +459,7 @@ class StockDebtSnapshotService:
             for oi_row, _inq in linked.get(core_id, [])
         ]
         oi_now = self._oi_now(sorted(set(live_ids)))
+        needed_by = resolve_oi_date(self.db, [r for pairs in linked.values() for r, _i in pairs])
 
         for line in lines:
             line["now"] = now.get(line["sales_order_line_id"]) or {
@@ -461,7 +474,7 @@ class StockDebtSnapshotService:
                     continue
                 oi_rows.append(
                     {
-                        **self._frozen_oi(oi_row, inquiry),
+                        **self._frozen_oi(oi_row, inquiry, needed_by),
                         **oi_now[str(oi_row.id)],
                         "after_snapshot": True,
                     }

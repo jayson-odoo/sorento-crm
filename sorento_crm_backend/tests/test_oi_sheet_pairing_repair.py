@@ -1319,9 +1319,9 @@ def test_ac_r_34_po_line_capacity_excludes_what_its_own_spo_carries():
 
 
 def test_ac_r_37_row_takes_the_sheets_own_delivery_date():
-    """AC-R-37. The raised row carries the SHEET's own date, and the sales order line's
-    only when the sheet states none (18 Sep 2026, reversing 7.4's rule - owner: "we should
-    have followed the sheet's date").
+    """AC-R-37. The raised row carries the sales order LINE's date and keeps the SHEET's own
+    date as its Was (3 Nov 2026, OI-ONE-DELIVERY-DATE, reversing the 18 Sep 2026 ruling).
+    The sheet states none (ORDER BACK) or the line has none: the other date stands.
 
     SO314593 on prod: the sheet said 182 @ 1.9.2026 and the line's own open AutoCount lines
     are 220 @ 01/03/2027; 7.4 wrote the line's date onto every migrated row, so the
@@ -1344,9 +1344,8 @@ def test_ac_r_37_row_takes_the_sheets_own_delivery_date():
         assert result["rows_raised"] == 1, result
         row = w.one_row()
         assert str(row.so_line_id) == str(w.mirror_of(line).id)
-        assert row.delivery_date == sheet_date, (
-            "the row reports a delivery the sheet did not state"
-        )
+        assert row.delivery_date == line_date, "one date: the SO line's"
+        assert row.previous_delivery_date == sheet_date, "the sheet's date is kept as the Was"
 
     with world() as w:
         # An ORDER BACK row takes the LINE's date (unaffected by this reversal): the words

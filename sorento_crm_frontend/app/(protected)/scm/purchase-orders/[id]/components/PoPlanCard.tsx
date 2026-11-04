@@ -76,8 +76,23 @@ export function PoPlanCard({ plan }: { plan: SpoPlan }) {
         id: 'customer',
         header: 'Customer',
         cell: ({ row }) => (
-          <span className="block truncate" title={row.original.customer ?? undefined}>
-            {row.original.customer || <span className="text-muted-foreground">{EM_DASH}</span>}
+          <span
+            className="block truncate"
+            title={(row.original.customer_name ?? row.original.customer) || undefined}
+          >
+            {(row.original.customer_name ?? row.original.customer) || (
+              <span className="text-muted-foreground">{EM_DASH}</span>
+            )}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'project',
+        header: 'Project',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project_label ?? undefined}>
+            {row.original.project_label || <span className="text-muted-foreground">{EM_DASH}</span>}
           </span>
         ),
         size: 170,
