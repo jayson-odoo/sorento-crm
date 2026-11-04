@@ -244,6 +244,18 @@ def export_snapshot(
 PO_LINK = BASE + "/{snapshot_id}/rows/{row_id}/po-link"
 
 
+SWITCHED_OFF = "AutoCount links from Stock Debt are switched off in Settings."
+
+
+def _require_switch(db: Session) -> None:
+    """Owner, 5 Nov: the PO actions stay inert until the switch is on (System Settings)."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    if not bool(getattr(row, "stock_debt_po_link_enabled", False)):
+        raise AppException(status_code=403, message=SWITCHED_OFF)
+
+
 def _guard(exc: Exception):
     raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -258,6 +270,7 @@ def po_link_options(
     """What AutoCount can do now, and the open PO lines of the row's product."""
     validate_uuid_path(snapshot_id, resource="Snapshot")
     validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
     try:
         return StockDebtPoLinkService(db).options(snapshot_id, row_id)
     except Exception as exc:
@@ -274,6 +287,7 @@ def po_link_link(
 ):
     validate_uuid_path(snapshot_id, resource="Snapshot")
     validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
     try:
         out = StockDebtPoLinkService(db).link(
             snapshot_id, row_id, [line.model_dump() for line in payload.lines]
@@ -294,6 +308,7 @@ def po_link_unlink(
 ):
     validate_uuid_path(snapshot_id, resource="Snapshot")
     validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
     try:
         out = StockDebtPoLinkService(db).unlink(snapshot_id, row_id, payload.po_line_ids)
         db.commit()
@@ -312,6 +327,7 @@ def po_link_relink(
 ):
     validate_uuid_path(snapshot_id, resource="Snapshot")
     validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
     try:
         out = StockDebtPoLinkService(db).relink(
             snapshot_id, row_id, [move.model_dump() for move in payload.moves]
@@ -329,6 +345,7 @@ def po_link_relocate(
     db: Session = Depends(get_db),
 ):
     """Move a linked PO row to its SO row's location (after `LOCATION_NOT_MOVED`)."""
+    _require_switch(db)
     try:
         validate_uuid_path(payload.po_line_id, resource="PO line")
         out = StockDebtPoLinkService(db).relocate(payload.po_line_id)
@@ -346,6 +363,7 @@ def po_link_resume(
     db: Session = Depends(get_db),
 ):
     """Ask the Shared Service to re-read AutoCount and finish an operation it stopped."""
+    _require_switch(db)
     try:
         validate_uuid_path(payload.po_line_id, resource="PO line")
         out = StockDebtPoLinkService(db).resume(

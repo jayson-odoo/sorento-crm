@@ -130,7 +130,11 @@ vi.mock('../services/stockDebtSnapshotService', () => ({
   getSnapshotRowLines: (...args: unknown[]) => getSnapshotRowLines(...args),
   setSnapshotDecision: vi.fn(),
   exportSnapshot: vi.fn(),
+  getPoLinkOptions: (...args: unknown[]) => getPoLinkOptions(...args),
+  getPoLinkSwitch: (...args: unknown[]) => getPoLinkSwitch(...args),
 }));
+const getPoLinkOptions = vi.fn();
+const getPoLinkSwitch = vi.fn();
 
 const getOrderInquiryHeaderLines = vi.fn();
 vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
@@ -963,3 +967,49 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     expect(within(request).getByText('0 of 1 lines')).toBeInTheDocument();
   });
 });
+
+describe('AC-LINK-CRM-UI the "AutoCount links from Stock Debt" switch (owner, 5 Nov)', () => {
+  const CAPS_ON = {
+    split_link: { enabled: true, reason: null },
+    link_row: { enabled: false, reason: 'Waiting for AutoCount' },
+    unlink_row: { enabled: false, reason: 'Waiting for AutoCount' },
+    relink_row: { enabled: false, reason: 'Waiting for AutoCount' },
+  };
+
+  async function menuOf(group: string) {
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    return (await decideItems(groupOf(dialog, group))).map((item) => item.textContent);
+  }
+
+  it('switch OFF: Decide shows no PO actions at all, and the PO options are never read', async () => {
+    permissions = new Set([...permissions, 'projects.stock_debt.link_po']);
+    getPoLinkSwitch.mockResolvedValue(false);
+    getPoLinkOptions.mockResolvedValue({ capabilities: CAPS_ON, po_lines: [], so_books: {} });
+    const items = await menuOf('OI-2609-0417');
+    expect(items).toEqual(['Request CS to reserve…']);
+    expect(getPoLinkOptions).not.toHaveBeenCalled();
+  });
+
+  it('switch ON: Link to PO, Unlink and Move show beside Request CS to reserve', async () => {
+    permissions = new Set([...permissions, 'projects.stock_debt.link_po']);
+    getPoLinkSwitch.mockResolvedValue(true);
+    getPoLinkOptions.mockResolvedValue({ capabilities: CAPS_ON, po_lines: [], so_books: {} });
+    const items = await menuOf('OI-2609-0417');
+    expect(items.map((t) => (t ?? '').split('…')[0])).toEqual([
+      'Request CS to reserve', 'Link to PO', 'Unlink from PO', 'Move PO to another sales order',
+    ]);
+  });
+
+  it('no "N selected" text beside Decide: Decide (N) already says it', async () => {
+    renderPage();
+    const dialog = await openAllMonths();
+    await within(dialog).findAllByText('SO383872');
+    const group = groupOf(dialog, 'OI-2609-0417');
+    fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
+    await waitFor(() => expect(within(group).getByTestId('snapshot-decide-button')).not.toBeDisabled());
+    expect(group).not.toHaveTextContent(/\d+ selected/);
+  });
+});
+

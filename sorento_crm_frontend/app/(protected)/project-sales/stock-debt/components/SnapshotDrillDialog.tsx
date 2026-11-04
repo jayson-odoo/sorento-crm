@@ -26,6 +26,7 @@ import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
 import {
   SNAPSHOTS_KEY,
   usePoLinkOptions,
+  usePoLinkSwitch,
   useSnapshotLinesQuery,
 } from '../hooks/useStockDebtSnapshots';
 import { poLinkMenu, type PoLinkKind } from '../lib/poLinkWording';
@@ -331,12 +332,7 @@ function OiGroupGrid({
         }
         toolbar={
           selectable ? (
-            <div className="flex items-center gap-2">
-              {tickedLines.length ? (
-                <span className="text-sm text-muted-foreground">{`${tickedLines.length} selected`}</span>
-              ) : null}
-              <SnapshotDecideControl count={tickedLines.length} items={items} onOpenChange={setMenuOpen} />
-            </div>
+            <SnapshotDecideControl count={tickedLines.length} items={items} onOpenChange={setMenuOpen} />
           ) : undefined
         }
         columns={columns}
@@ -426,7 +422,10 @@ export function SnapshotDrillDialog({
 }) {
   const queryClient = useQueryClient();
   const canRequest = useHasPermission(ACKNOWLEDGE_PERMISSION);
-  const canLinkPo = useHasPermission(LINK_PO_PERMISSION);
+  const holdsLinkPo = useHasPermission(LINK_PO_PERMISSION);
+  // Owner, 5 Nov: the PO actions stay inert until "AutoCount links from Stock Debt" is on.
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
   const lines = useSnapshotLinesQuery(snapshotId, row.row_id, month);
   const stored = React.useMemo(() => lines.data?.lines ?? [], [lines.data]);
   const groups = React.useMemo(() => groupByOi(stored), [stored]);

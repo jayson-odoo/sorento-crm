@@ -159,10 +159,31 @@ describe('Link to PO popup', () => {
     expect(dialog.querySelector('#po-link-po-sol-1')).toHaveAttribute('data-truncate', 'true');
   });
 
-  it('the PO picker names the line by the number the server gives (AutoCount line number)', () => {
+  it('the PO picker shows only the PO number (owner, 5 Nov: "just show me the PO number")', () => {
     const { dialog } = renderDialog();
     const options = [...(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement).options];
-    expect(options.map((o) => o.textContent)).toContain('202609-S0029 · line 3 · HQ · 380 free');
+    expect(options.slice(1).map((o) => o.textContent)).toEqual([
+      '202609-S0029', '202610-S0007', '202609-S0064',
+    ]);
+    // No line, location, free qty, arrival or supplier text on an option.
+    expect(options.slice(1).map((o) => o.title).filter(Boolean)).toEqual(['In another AutoCount book from this sales order']);
+  });
+
+  it('two lines of one PO tell themselves apart by the AutoCount line number in brackets', () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PoLinkDialog
+          mode="link" snapshotId="snap" rowId="row" lines={[soLine({})]} allLines={[soLine({})]}
+          capabilities={CAPS}
+          poLines={[PO_LINES[0], { ...PO_LINES[0], po_line_id: 'po-3b', po_line_no: 5, free_qty: 40 }]}
+          soBooks={{ 'sol-1': 'DB3' }}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const options = [...(document.querySelector('#po-link-po-sol-1') as HTMLSelectElement).options];
+    expect(options.slice(1).map((o) => o.textContent)).toEqual(['202609-S0029 (3)', '202609-S0029 (5)']);
   });
 
   it('a line already covered by a PO is greyed "Already covered by PO …" and cannot be ticked', () => {

@@ -30,6 +30,13 @@ def upgrade() -> None:
     bind = op.get_bind()
     # AutoCount's own PO line number (`Seq`), so the PO picker matches AutoCount.
     bind.execute(sa.text("ALTER TABLE purchase_order_lines ADD COLUMN IF NOT EXISTS line_no INTEGER"))
+    # "AutoCount links from Stock Debt" (owner, 5 Nov): seeded OFF.
+    bind.execute(
+        sa.text(
+            "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS "
+            "stock_debt_po_link_enabled BOOLEAN NOT NULL DEFAULT false"
+        )
+    )
     bind.execute(
         sa.text(
             """
@@ -71,3 +78,4 @@ def downgrade() -> None:
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": _SLUG})
     bind.execute(sa.text("ALTER TABLE purchase_order_lines DROP COLUMN IF EXISTS line_no"))
+    bind.execute(sa.text("ALTER TABLE system_settings DROP COLUMN IF EXISTS stock_debt_po_link_enabled"))

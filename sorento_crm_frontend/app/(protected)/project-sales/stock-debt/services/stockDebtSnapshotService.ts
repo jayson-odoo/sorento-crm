@@ -201,3 +201,12 @@ export async function resumePoLink(input: {
     'Failed to resume',
   );
 }
+
+/** Whether "AutoCount links from Stock Debt" is on (System Settings, owner 5 Nov), read off
+ *  the app-config projection every signed-in user may read. Off: no PO actions at all. */
+export async function getPoLinkSwitch(): Promise<boolean> {
+  const res = await apiFetch('/api/user-management/settings/app-config');
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load settings'));
+  const body = (await res.json()) as { stock_debt_po_link_enabled?: boolean };
+  return body.stock_debt_po_link_enabled === true;
+}

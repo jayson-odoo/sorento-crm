@@ -110,7 +110,20 @@ def _client(scm_app, permissions=(VIEW, LINK)):
     db.flush()
     as_user(app, gcu, gcuak, uid)
     fake_foundryx.seed_foundryx_connection(db, base_url=FAKE_BASE_URL, api_key="fxa_link_test")
+    _switch(db, True)
     return TestClient(app), db
+
+
+def _switch(db, on: bool) -> None:
+    """The System Settings switch "AutoCount links from Stock Debt" (owner, 5 Nov)."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting()
+        db.add(row)
+    row.stock_debt_po_link_enabled = on
+    db.flush()
 
 
 def _po_line(db, product, warehouse, *, qty, received=0, so_ref=None, doc_key=12008, dtl_key=None,
@@ -628,3 +641,54 @@ def test_a_po_in_another_autocount_book_cannot_be_linked(scm_app, fake_ss):
     books = {l["po_line_id"]: l["book"] for l in body["po_lines"]}
     assert books[other.id] == "LIVE_SRT" and books[w["po_line"].id] == DB
     assert body["so_books"][w["so_line"].id] == DB
+
+
+# --------------------------------------------------------------------------- the switch (owner, 5 Nov)
+
+SWITCHED_OFF_TEXT = "AutoCount links from Stock Debt are switched off in Settings."
+
+
+def test_switch_off_refuses_every_po_link_route_with_a_plain_reason(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    _switch(w["db"], False)
+    c = w["c"]
+    item = {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 10}
+    calls = [
+        c.get(_url(w)),
+        c.post(_url(w, "/link"), json={"lines": [item]}),
+        c.post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]}),
+        c.post(_url(w, "/relink"), json={"moves": [
+            {"po_line_id": w["po_line"].id, "to_sales_order_line_id": w["so_line"].id}]}),
+        c.post(f"{BASE}/po-link/relocate", json={"po_line_id": w["po_line"].id}),
+        c.post(f"{BASE}/po-link/operations/op-1/resume", json={"po_line_id": w["po_line"].id}),
+    ]
+    for resp in calls:
+        assert resp.status_code == 403, resp.text
+        assert SWITCHED_OFF_TEXT in resp.text
+    # Nothing reached the Shared Service, not even the capabilities read.
+    assert fake_ss.calls == []
+
+
+def test_switch_on_lets_the_link_through(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    _switch(w["db"], True)
+    fake_ss.answers["/api/v1/autocount/po-links"] = _done_split
+    resp = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120},
+    ]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+
+
+def test_the_switch_ships_off_and_is_readable_without_settings_access(scm_app, fake_ss):
+    """Seeded OFF; the drill reads it from the open app-config projection."""
+    from app.models.user import SystemSetting
+
+    assert SystemSetting.__table__.c.stock_debt_po_link_enabled.server_default.arg == "false"
+    w = _world(scm_app, fake_ss)
+    _switch(w["db"], False)
+    cfg = w["c"].get("/api/v1/user-management/settings/app-config")
+    assert cfg.status_code == 200, cfg.text
+    assert cfg.json()["stock_debt_po_link_enabled"] is False
+    _switch(w["db"], True)
+    assert w["c"].get("/api/v1/user-management/settings/app-config").json()["stock_debt_po_link_enabled"] is True

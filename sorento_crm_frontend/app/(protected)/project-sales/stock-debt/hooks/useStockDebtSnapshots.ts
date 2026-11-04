@@ -9,6 +9,7 @@ import {
   exportSnapshot,
   getSnapshot,
   getPoLinkOptions,
+  getPoLinkSwitch,
   getSnapshotRowLines,
   linkPoLines,
   relinkPoLines,
@@ -166,4 +167,15 @@ export function usePoLinkMutations(id: string, rowId: string) {
       onError,
     }),
   };
+}
+
+/** "AutoCount links from Stock Debt" (System Settings). Read only for a link_po holder. */
+export function usePoLinkSwitch(enabled: boolean) {
+  return useQuery({
+    queryKey: ['system-app-config', 'stock-debt-po-link'],
+    queryFn: getPoLinkSwitch,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
 }

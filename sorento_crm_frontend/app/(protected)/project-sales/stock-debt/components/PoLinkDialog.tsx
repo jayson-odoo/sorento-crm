@@ -83,9 +83,10 @@ function soLine(line: SnapshotLine): string {
   return line.line_no != null ? String(line.line_no) : '-';
 }
 
-function poOptionLabel(po: PoLinkOption): string {
-  const at = po.location_code ? ` · ${po.location_code}` : '';
-  return `${po.po_number} · line ${po.po_line_no ?? '-'}${at} · ${po.free_qty.toLocaleString()} free`;
+/** Owner, 5 Nov ("just show me the PO number"): the PO number alone; only when two lines of
+ *  one PO are both offered does each carry its AutoCount line number in brackets. */
+function poOptionLabel(po: PoLinkOption, ambiguous: boolean): string {
+  return ambiguous ? `${po.po_number} (${po.po_line_no ?? '-'})` : po.po_number;
 }
 
 /** What the line still needs from a PO: outstanding now, less what POs already cover
@@ -215,13 +216,10 @@ export function PoLinkDialog({
     () =>
       poLines.map((po) => ({
         value: po.po_line_id,
-        label: poOptionLabel(po),
-        description: [
-          po.delivery_date ? `arrives ${formatDateInMalaysia(po.delivery_date)}` : null,
-          po.supplier_name,
-        ]
-          .filter(Boolean)
-          .join(' · '),
+        label: poOptionLabel(
+          po,
+          poLines.filter((other) => other.po_number === po.po_number).length > 1,
+        ),
       })),
     [poLines],
   );
