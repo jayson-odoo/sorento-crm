@@ -93,6 +93,45 @@ def test_accepts_dev_and_ci_tokens(name):
     assert _script().refusal(name) is None
 
 
+# --confirm-db: an operator names the exact database to skip the name-token check (crew's shared
+# dev copy is called sorento_prod_1020). Only an exact match counts; absent keeps the token check.
+DEV_COPY = "sorento_prod_1020"
+
+
+def test_confirm_db_matching_the_connected_name_exactly_is_accepted(db, catalogue, monkeypatch):
+    monkeypatch.setattr(_script(), "database_name", lambda _db: DEV_COPY)
+    assert _script().refusal(DEV_COPY, confirm_db=DEV_COPY) is None
+    code, out = _run(db, "--confirm-db", DEV_COPY)
+    assert code == 0 and "DRY RUN" in out
+
+
+@pytest.mark.parametrize(
+    "confirm", ["sorento_prod_1028", "sorento_prod", "SORENTO_PROD_1020", " sorento_prod_1020", "sorento_prod_*", "*"]
+)
+def test_confirm_db_that_does_not_match_exactly_is_refused(db, catalogue, monkeypatch, confirm):
+    monkeypatch.setattr(_script(), "database_name", lambda _db: DEV_COPY)
+    assert _script().refusal(DEV_COPY, confirm_db=confirm) is not None
+    code, out = _run(db, "--apply", "--confirm-db", confirm)
+    assert code != 0 and "does not match" in out
+    assert _count(db, ProductCombo) == 0 and _count(db, TagTemplate) == 0
+
+
+def test_without_confirm_db_the_token_check_still_refuses_a_prod_name(db, catalogue, monkeypatch):
+    monkeypatch.setattr(_script(), "database_name", lambda _db: DEV_COPY)
+    assert _script().refusal(DEV_COPY) is not None
+    code, _out = _run(db, "--apply")
+    assert code != 0
+    assert _count(db, ProductCombo) == 0
+
+
+def test_prints_host_and_database_before_writing(db, catalogue, monkeypatch):
+    monkeypatch.setattr(_script(), "database_name", lambda _db: DEV_COPY)
+    monkeypatch.setattr(_script(), "database_host", lambda _db: "db.example.internal")
+    _code, out = _run(db, "--confirm-db", DEV_COPY)
+    first = out.splitlines()[0]
+    assert "db.example.internal" in first and DEV_COPY in first
+
+
 def test_prints_the_database_name_it_will_write_to(db, catalogue, as_dev):
     _code, out = _run(db)
     assert "sorento_dev_1028" in out

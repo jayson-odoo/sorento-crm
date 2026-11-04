@@ -12,11 +12,17 @@ It refuses to run unless the connected database name has a token `dev` or `ci` (
 on anything that is not a letter or digit, so `sorento_dev_1028` passes), and refuses outright if
 any token is `prod` or `production`.
 
+`--confirm-db NAME` is the one way past that name check, for a dev copy whose name does not say
+so (crew's shared dev database is `sorento_prod_1020`, a copy of prod): NAME must equal the
+connected database's name exactly (no trimming, no case folding, no wildcard), and only then is
+the token check skipped. Any other value is refused. The host and database are printed first.
+
 USAGE
 -----
     cd sorento_crm_backend
     venv/bin/python scripts/seed_pricetag_combo_shapes_dev.py            # dry run
     venv/bin/python scripts/seed_pricetag_combo_shapes_dev.py --apply
+    venv/bin/python scripts/seed_pricetag_combo_shapes_dev.py --apply --confirm-db sorento_prod_1020
 """
 from __future__ import annotations
 
@@ -64,8 +70,18 @@ DISCONTINUED_COMBO = {
 LINK_HOSTS = ["SRTKS7061", "SRTBF11829"]
 
 
+def _url(db):
+    """The bound URL, whether the session is bound to an Engine or to a Connection."""
+    bind = db.get_bind()
+    return getattr(bind, "url", None) or bind.engine.url
+
+
 def database_name(db) -> str:
-    return db.get_bind().url.database or ""
+    return _url(db).database or ""
+
+
+def database_host(db) -> str:
+    return _url(db).host or "localhost"
 
 
 def name_tokens(name: str) -> set[str]:
@@ -73,7 +89,12 @@ def name_tokens(name: str) -> set[str]:
     return set("".join(c if c.isalnum() else " " for c in name.lower()).split())
 
 
-def refusal(name: str) -> Optional[str]:
+def refusal(name: str, confirm_db: Optional[str] = None) -> Optional[str]:
+    if confirm_db is not None:
+        # Exact equality only: the operator has named this very database.
+        if name and confirm_db == name:
+            return None
+        return f"refusing: --confirm-db {confirm_db!r} does not match the connected database {name!r}"
     tokens = name_tokens(name)
     if tokens & REFUSED_TOKENS:
         return f"refusing: database {name!r} looks like production"
@@ -105,6 +126,11 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--company", default="SRT", help="company code (default SRT)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    parser.add_argument(
+        "--confirm-db",
+        default=None,
+        help="the exact name of the connected database; skips the dev/ci name check only on an exact match",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
     out = out or sys.stdout
 
@@ -115,8 +141,8 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         db = SessionLocal()
     try:
         name = database_name(db)
-        out.write(f"database: {name}\n")
-        reason = refusal(name)
+        out.write(f"database: {name} on host {database_host(db)}\n")
+        reason = refusal(name, args.confirm_db)
         if reason:
             out.write(reason + "\n")
             return 1
