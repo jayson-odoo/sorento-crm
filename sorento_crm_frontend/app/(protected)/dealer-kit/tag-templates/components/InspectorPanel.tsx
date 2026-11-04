@@ -42,12 +42,14 @@ import type {
   LayerShowWhen,
   TagLayerProps,
   TagPartData,
+  TagSlots,
+  SubjectSlot,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
-import { isDynamic } from '@/lib/dealer-kit/product-block';
+import { isDynamic, slotLabel } from '@/lib/dealer-kit/product-block';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -232,6 +234,8 @@ interface InspectorPanelProps {
    * tag, so no picker shows on ANY layer.
    */
   subjectParts?: TagPartData[];
+  /** The previewed combo's positions (template editor only); null/absent = nothing previewed. */
+  subjectSlots?: TagSlots | null;
   /** The parent's own code, for the picker's first entry. */
   subjectParentCode?: string | null;
   /** PS-SPEC-SHEET: a spec sheet page template, so layers can carry "Show only when". */
@@ -262,6 +266,7 @@ export function InspectorPanel({
   editingPoints,
   onToggleEditPoints,
   subjectParts,
+  subjectSlots,
   subjectParentCode,
   specSheet = false,
   specKeys,
@@ -330,7 +335,9 @@ export function InspectorPanel({
       hasSubjectAwareToken(layer.text_override ?? layer.props.text)) ||
     layer.slot_binding != null;
   const isSubjectAwareKind = carriesSubjectPart && readsProductData;
-  const showSubjectPicker = isSubjectAwareKind && (subjectParts?.length ?? 0) > 0;
+  // The template editor has no line, so no parts: it picks a POSITION in the combo instead.
+  const showSubjectPicker =
+    isSubjectAwareKind && (subjectParts ? subjectParts.length > 0 : !specSheet);
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
   // canvas side (S5): a polygon shape, or a price badge whose box IS its
@@ -463,7 +470,8 @@ export function InspectorPanel({
           {showSubjectPicker && (
             <SubjectInspector
               props={layer.props}
-              parts={subjectParts ?? []}
+              parts={subjectParts}
+              slots={subjectSlots}
               parentCode={subjectParentCode ?? ''}
               onChange={updateProps}
             />
@@ -1485,11 +1493,14 @@ function ShowWhenInspector({
 function SubjectInspector({
   props,
   parts,
+  slots,
   parentCode,
   onChange,
 }: {
   props: TagLayerProps;
-  parts: TagPartData[];
+  /** The request designer's line parts; absent in the template editor (positions instead). */
+  parts?: TagPartData[];
+  slots?: TagSlots | null;
   parentCode: string;
   onChange: (changes: Partial<TagLayerProps>) => void;
 }) {
@@ -1502,23 +1513,37 @@ function SubjectInspector({
     'subjectPart' in props && typeof props.subjectPart === 'number'
       ? props.subjectPart
       : undefined;
+  const subjectSlot = 'subjectSlot' in props ? props.subjectSlot : undefined;
   // r10 S6 (AC-S6-4): a tag's parts now carry every candidate of every
   // choice group, not only the one this tag chose, so the list is grouped
   // under the group's role ("Kitchen Tap") once any part carries one, and
   // this tag's own candidate says so. A row without roles - a fixed part, or
   // a row pinned before r10 - renders the same flat list it always did.
-  const grouped = parts.some((part) => Boolean(part.role));
-  const options: SearchableSelectOption[] = [
-    ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
-    { value: '-1', label: parentCode || 'Parent' },
-    ...parts.map((part, index) => ({
-      value: String(index),
-      label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
-      ...(grouped && part.role ? { group: part.role } : {}),
-    })),
-  ];
-  const value =
-    subjectPart === undefined ? (isPriceBadge ? 'default' : '-1') : String(subjectPart);
+  const grouped = (parts ?? []).some((part) => Boolean(part.role));
+  const options: SearchableSelectOption[] = parts
+    ? [
+        ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
+        { value: '-1', label: parentCode || 'Parent' },
+        ...parts.map((part, index) => ({
+          value: String(index),
+          label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
+          ...(grouped && part.role ? { group: part.role } : {}),
+        })),
+      ]
+    : slotOptions(slots, isPriceBadge);
+  const value = parts
+    ? subjectPart === undefined
+      ? isPriceBadge
+        ? 'default'
+        : '-1'
+      : String(subjectPart)
+    : subjectSlot
+      ? slotValue(subjectSlot)
+      : subjectPart !== undefined
+        ? String(subjectPart)
+        : isPriceBadge
+          ? 'default'
+          : 'slot:main';
   return (
     <section>
       <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1535,15 +1560,75 @@ function SubjectInspector({
         id={selectId}
         size="sm"
         value={value}
-        onChange={(v: string) =>
+        onChange={(v: string) => {
+          // A position and a part number are two ways to say the same thing, and the
+          // position wins at read time, so choosing either clears the other.
+          const slot = parseSlotValue(v);
           onChange({
-            subjectPart: v === 'default' ? undefined : Number(v),
-          } as Partial<TagLayerProps>)
-        }
+            subjectSlot: slot,
+            subjectPart: slot || v === 'default' ? undefined : Number(v),
+          } as Partial<TagLayerProps>);
+        }}
         options={options}
       />
     </section>
   );
+}
+
+const SLOT_PICKER_FIXED = 4;
+const SLOT_PICKER_GROUPS = 3;
+const SLOT_PICKER_PICKS = 5;
+const SLOT_PICKER_UPGRADES = 2;
+
+function slotValue(slot: SubjectSlot): string {
+  switch (slot.kind) {
+    case 'main':
+      return 'slot:main';
+    case 'fixed':
+      return `slot:fixed:${slot.index}`;
+    case 'pick':
+      return `slot:pick:${slot.group}:${slot.index}`;
+    case 'upgrade':
+      return `slot:upgrade:${slot.index}`;
+  }
+}
+
+function parseSlotValue(value: string): SubjectSlot | undefined {
+  const [prefix, kind, a, b] = value.split(':');
+  if (prefix !== 'slot') return undefined;
+  if (kind === 'main') return { kind: 'main' };
+  if (kind === 'fixed') return { kind: 'fixed', index: Number(a) };
+  if (kind === 'pick') return { kind: 'pick', group: Number(a), index: Number(b) };
+  if (kind === 'upgrade') return { kind: 'upgrade', index: Number(a) };
+  return undefined;
+}
+
+/** The positions a layer may read: the previewed combo's own, else the generic set. */
+function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean): SearchableSelectOption[] {
+  const out: SearchableSelectOption[] = [];
+  const add = (slot: SubjectSlot, code?: string, group?: string) =>
+    out.push({
+      value: slotValue(slot),
+      label: slotLabel(slot, slots),
+      ...(code ? { description: code } : {}),
+      ...(group ? { group } : {}),
+    });
+  if (isPriceBadge) out.push({ value: 'default', label: 'Tag total' });
+  add({ kind: 'main' });
+  const fixed = slots ? slots.fixed : Array.from({ length: SLOT_PICKER_FIXED }, () => null);
+  fixed.forEach((part, index) => add({ kind: 'fixed', index }, part?.code));
+  const groups = slots
+    ? slots.groups.map((g) => ({ role: g.role, picks: g.picks }))
+    : Array.from({ length: SLOT_PICKER_GROUPS }, (_, g) => ({
+        role: `Choice group ${g + 1}`,
+        picks: Array.from({ length: SLOT_PICKER_PICKS }, () => null),
+      }));
+  groups.forEach((group, g) =>
+    group.picks.forEach((part, index) => add({ kind: 'pick', group: g, index }, part?.code, group.role)),
+  );
+  const upgrades = slots ? slots.upgrades : Array.from({ length: SLOT_PICKER_UPGRADES }, () => null);
+  upgrades.forEach((part, index) => add({ kind: 'upgrade', index }, part?.code));
+  return out;
 }
 
 // ---------------------------------------------------------------------------

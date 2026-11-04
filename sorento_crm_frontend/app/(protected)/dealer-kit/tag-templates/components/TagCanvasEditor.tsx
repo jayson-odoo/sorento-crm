@@ -3515,6 +3515,14 @@ export function TagCanvasEditor({
       : specSheet
         ? SPEC_SHEET_ACCESSORY_PARTS
         : undefined;
+  // PRICETAG-COMBO-RENDER K7: the previewed combo's positions, for the position picker and the
+  // Layers suffix.
+  const subjectSlots =
+    boundData?.kind === 'line'
+      ? boundData.line.slots
+      : boundData?.kind === 'product'
+        ? boundData.product.slots
+        : null;
   const subjectParentCode =
     boundData?.kind === 'line'
       ? boundData.line.code
@@ -4773,6 +4781,7 @@ export function TagCanvasEditor({
                     onMoveLayer={handleMoveLayer}
                     overflowingIds={overflowingIds}
                     subjectParts={subjectParts}
+                    subjectSlots={subjectSlots}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -4787,6 +4796,7 @@ export function TagCanvasEditor({
                   onMoveLayer={handleMoveLayer}
                   overflowingIds={overflowingIds}
                   subjectParts={subjectParts}
+                  subjectSlots={subjectSlots}
                 />
               </div>
             )}
@@ -4869,6 +4879,7 @@ export function TagCanvasEditor({
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
               subjectParts={subjectParts}
+              subjectSlots={subjectSlots}
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}

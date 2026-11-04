@@ -489,7 +489,8 @@ export function trimPicksToTemplate(line: DraftLine): DraftLine {
       if (part.product_ids.length <= keep && keep >= 2) return part;
       const ids = part.product_ids.slice(0, keep);
       if (ids.length >= 2) return { ...part, product_ids: ids };
-      const { product_ids: _dropped, ...rest } = part;
+      const rest = { ...part };
+      delete rest.product_ids;
       const chosen = part.candidates.find((c) => c.product_id === ids[0]);
       return { ...rest, product_id: ids[0], code: chosen?.code ?? part.code, name: chosen?.name ?? part.name };
     }),
