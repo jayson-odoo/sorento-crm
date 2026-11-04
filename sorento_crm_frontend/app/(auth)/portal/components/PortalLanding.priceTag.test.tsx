@@ -229,7 +229,7 @@ describe('PortalLanding - price tag card shows the revision badge/chip too (AC-R
 });
 
 describe('PortalLanding - card needed_by_date is formatted, not raw ISO (review round 3)', () => {
-  it('renders needed_by_date with toLocaleDateString like created_at', async () => {
+  it('renders needed_by_date as dd/mm/yyyy like created_at', async () => {
     searchParams = new URLSearchParams('type=price_tag_request');
     mockContact(['price_tag_request']);
     (listRequestsAsSummaries as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -239,9 +239,7 @@ describe('PortalLanding - card needed_by_date is formatted, not raw ISO (review 
     render(<PortalLanding slug="contact-x" />);
     await screen.findByText('PT-202608-0001');
 
-    const expected = new Date('2026-09-04').toLocaleDateString(undefined, {
-      dateStyle: 'medium',
-    });
+    const expected = '04/09/2026';
     expect(screen.getByText(expected)).toBeInTheDocument();
     expect(screen.queryByText('2026-09-04')).toBeNull();
   });
