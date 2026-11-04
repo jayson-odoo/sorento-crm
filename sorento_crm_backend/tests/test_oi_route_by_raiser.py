@@ -20,6 +20,7 @@ from app.models.project_so import INQUIRY_RAISED
 from .test_oi_route_by_class import _class_rule
 from .test_order_inquiry_reserve import _api, _pso
 from .test_order_inquiry_worklist import LIST, _inquiry_for, _row, _uid, _user
+from .test_rule_facts_endpoint import _SUPERADMIN_ID, make_client  # noqa: F401  (fixture)
 
 HANDOVER = "order_inquiry_handover"
 UNDONE = "order_inquiry_undone"
@@ -510,3 +511,35 @@ def test_partly_failed_send_is_not_reported_as_failed(rs, monkeypatch):
     monkeypatch.setattr(AutomationService, "send_match", _down)
     result = _ok(client.post(SEND, json={"inquiry_ids": [agnes_oi.id]}))
     assert [s["reason"] for s in result["skipped"]] == ["failed"]
+
+
+# --------------------------------------------------------------------------- #
+# Owner hand test, 4 Nov: "the raised by needs to be multi select"            #
+# --------------------------------------------------------------------------- #
+
+
+def test_raiser_fact_offers_only_any_of_and_none_of(make_client):
+    """The editor opens a fact on its first operator; a single "is" made the value a single
+    dropdown. Only is any of / is none of, so the value is always a multi select."""
+    client = make_client(_SUPERADMIN_ID)
+    res = client.get("/api/v1/rule-facts", params={"sources": "order_inquiry"})
+    assert res.status_code == 200, res.text
+    by_key = {item["key"]: item for item in res.json()}
+    assert by_key[RAISER_KEY]["operators"] == ["in", "not_in"]
+    # The class fact keeps the whole enum table.
+    assert by_key[CLASS_KEY]["operators"] == ["eq", "neq", "in", "not_in"]
+
+
+@pytest.mark.parametrize("operator", ["eq", "neq"])
+def test_raiser_condition_rejects_a_single_value_operator(operator):
+    from app.rule_engine.schemas import validate_tree
+    from app.services import automation_triggers
+
+    tree = {
+        "kind": "group",
+        "combinator": "and",
+        "rules": [{"kind": "condition", "fact": RAISER_KEY, "operator": operator,
+                   "value": "u1"}],
+    }
+    problems = validate_tree(tree, automation_triggers.fact_sources_for(HANDOVER))
+    assert problems and "Raised by" in problems[0]
