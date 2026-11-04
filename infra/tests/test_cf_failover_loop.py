@@ -202,3 +202,18 @@ def test_active_active_reads_the_peer_from_the_shared_pool(box, cf):
     # (unhealthy in the shared pool's answer) and this node's (healthy).
     assert "cf_self='healthy'" in r.stdout and "cf_peer='unhealthy'" in r.stdout, r.stdout
     assert "route" in pg_calls(tmp)
+
+
+def test_observe_redis_role_reaches_the_decision(box, cf):
+    # Review round 2 blocker 2: a standby node whose Redis restarted as a master (route file
+    # still "peer") must get `route peer` again; this only works if main() passes redis_role on.
+    tmp, env = box
+    state, base = cf
+    state["body"] = _origins(True, True)
+    (tmp / "ha-pg.sh").write_text(FAKE_PG.replace(
+        "printf 'self_pg=primary\\nself_streaming=t\\nself_lsn=100\\nsync_names=\\npeer_pg=standby\\npeer_lsn=100\\n'",
+        "printf 'self_pg=standby\\nself_streaming=t\\nself_lsn=100\\nsync_names=\\npeer_pg=primary\\npeer_lsn=100\\nroute=peer\\nredis_role=master\\n'"))
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", APP_SICK_AFTER="0", CF_ORIGIN_SELF="10.0.0.1",
+            CF_ORIGIN_PEER="10.0.0.2", CF_POOL_SELF="shared", CF_POOL_PEER="", CF_API_BASE=base)
+    assert r.returncode == 0, r.stdout
+    assert "route peer" in (tmp / "pg.log").read_text(), (tmp / "pg.log").read_text()

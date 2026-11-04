@@ -806,3 +806,16 @@ def test_world_active_active_a_failing_route_never_leaves_two_writers_and_heals(
     w.link = False
     w.run(2400, start=315)
     assert w.pg["b"] == "primary" and w.route["b"] == "local"
+
+
+def test_an_unreadable_redis_role_alerts_once_until_it_reads_again():
+    # Review round 2 should-fix: ROLE failing (admin auth drift, exec failure) must not go unseen.
+    c = aa()
+    o = obs(self_streaming=True, peer_pg="primary", peer_lsn=1, cf_peer="healthy", route="peer", redis_role="")
+    s, a = decide(initial_state(), o, 0, c)
+    assert any(x[0] == "alert" and "Redis" in x[1] for x in a)
+    s, a = decide(s, o, TICK, c)
+    assert not any(x[0] == "alert" for x in a)
+    s, a = decide(s, replace(o, redis_role="slave"), 2 * TICK, c)
+    s, a = decide(s, o, 3 * TICK, c)
+    assert any(x[0] == "alert" and "Redis" in x[1] for x in a)

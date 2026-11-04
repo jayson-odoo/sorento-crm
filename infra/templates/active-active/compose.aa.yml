@@ -6,7 +6,8 @@
 # database (the primary) and one Redis master, on the primary node:
 # - pgbouncer on each node is the app's ONLY database endpoint (DATABASE_URL -> pgbouncer:6432).
 #   Its [databases] target lives in ha/route/route.ini, which the failover controller rewrites
-#   (`ha-pg.sh route local|peer`) whenever the primary moves, then reloads pgbouncer. Never a
+#   (`ha-pg.sh route local|peer`) whenever the primary moves, then RELOADs pgbouncer and KILLs +
+#   RESUMEs the app database so every connection reconnects through the new target. Never a
 #   hardcoded host.
 # - Redis on each node: the primary node's is the master, the other a replica of it (switched by
 #   the same `route`). The app reaches Redis ONLY through redis_proxy (HAProxy) on its own node,
@@ -22,7 +23,7 @@ services:
       - /etc/sorento-ha/pgbouncer-userlist.txt:/etc/pgbouncer/userlist.txt:ro
       # libpq ignores a pgpass looser than 0600, and `exec` runs as the image's user: 0600 owned
       # by the pgbouncer container uid (70 in edoburu/pgbouncer), or RELOAD fails (review S4).
-      - /etc/sorento-ha/pgbouncer-admin.pgpass:/etc/pgbouncer/admin.pgpass:ro   # for RELOAD + RECONNECT
+      - /etc/sorento-ha/pgbouncer-admin.pgpass:/etc/pgbouncer/admin.pgpass:ro   # for RELOAD, KILL, RESUME
       - /etc/sorento-ha/pgbouncer-hba.conf:/etc/pgbouncer/pg_hba.conf:ro        # templates/active-active/pgbouncer-hba.conf
 
   redis:

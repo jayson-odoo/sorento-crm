@@ -170,6 +170,7 @@ def initial_state() -> dict:
         "peer_last_role": None,
         "lag_alerted": False,
         "two_primaries_alerted": False,
+        "redis_unread_alerted": False,
         **{k: None for k in WINDOWS},
     }
 
@@ -222,6 +223,16 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         s["lease_from"] = now
         s["fenced_at"] = None
         s["fencing"] = False
+
+    # Active-active: R1 can only repair a drifted Redis it can read. An unreadable ROLE (admin auth
+    # drift, exec failure) alerts once until it reads again (review round 2 should-fix).
+    if c.active_active and o.self_pg in ("primary", "standby"):
+        if o.redis_role == "":
+            if not s["redis_unread_alerted"]:
+                acts.append(("alert", f"{c.node_name}: cannot read this node's Redis ROLE; a drifted Redis would go unrepaired"))
+                s["redis_unread_alerted"] = True
+        else:
+            s["redis_unread_alerted"] = False
 
     cf_peer_down = held("cf_peer_unhealthy_since", o.cf_peer == "unhealthy")
     peer_gone = held("peer_unreachable_since", o.peer_pg == "unreachable")

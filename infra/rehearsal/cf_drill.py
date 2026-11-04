@@ -86,7 +86,7 @@ def role(n):
 def app_writable(n):
     """The node's app path: its pgbouncer, wherever that points, answers as a writable database."""
     try:
-        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"drill-pgb-{n}", "-p", "6432",
+        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"pgb-local-{n}", "-p", "6432",
                             "-U", "postgres", "-d", "postgres", "-c", "select pg_is_in_recovery()"],
                            capture_output=True, text=True, timeout=3)
     except subprocess.TimeoutExpired:
@@ -97,7 +97,7 @@ def app_writable(n):
 def app_sql(n, sql, timeout=8):
     """A query through node n's app path (its pgbouncer)."""
     try:
-        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"drill-pgb-{n}", "-p", "6432",
+        r = subprocess.run(["docker", "exec", f"drill-probe-{n}", "psql", "-XAtq", "-h", f"pgb-local-{n}", "-p", "6432",
                             "-U", "postgres", "-d", "postgres", "-c", sql], capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, ""
@@ -108,7 +108,7 @@ def app_redis(n, *cmd):
     """A Redis command through node n's app path (its HAProxy, which picks the master)."""
     try:
         r = subprocess.run(["docker", "exec", "-e", f"REDISCLI_AUTH={REDIS_USERS['app']}", f"drill-redis-{n}", "redis-cli",
-                            "--user", "app", "-h", f"drill-rproxy-{n}", "-p", "6380", *cmd], capture_output=True, text=True, timeout=5)
+                            "--user", "app", "-h", f"rproxy-local-{n}", "-p", "6380", *cmd], capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
         return ""
     return (r.stdout or r.stderr).strip()  # an error reply (NOPERM) is the answer too
@@ -232,10 +232,14 @@ class Stack:
             **({
                 "ACTIVE_ACTIVE": "1",
                 "ROUTE_FILE": str(self.dir / f"route-{n}" / "route.ini"),
-                "PGB_LOCAL_HOST": cname(n),
-                # RELOAD alone keeps idle server connections to the OLD primary, which hang on a
-                # dead host; RECONNECT closes them so the next query opens one to the new target.
-                "PGB_RELOAD": f"docker exec drill-pgb-{n} psql -h 127.0.0.1 -p 6432 -U postgres pgbouncer -c RELOAD -c RECONNECT",
+                # Node-local hops use aliases that exist ONLY on the node's own network: a name on
+                # both networks may resolve to the link address, and a link cut would then cut a
+                # path that never crosses the link in prod (drill finding, round 2).
+                "PGB_LOCAL_HOST": f"db-local-{n}",
+                # RELOAD, then KILL + RESUME the app database: every connection, the long-lived
+                # session ones included, reconnects through the new target (review round 2).
+                "PGB_ADMIN": f"docker exec drill-pgb-{n} psql -X -h 127.0.0.1 -p 6432 -U postgres pgbouncer -c",
+                "PGB_DATABASES": "postgres",
                 "REDIS_CLI": f"docker exec drill-redis-{n} redis-cli --user admin",
                 "PEER_REDIS_HOST": f"drill-redis-{p}",
             } if self.aa else {}),
@@ -262,7 +266,7 @@ class Stack:
         sh("docker", "run", "-d", "--name", cname("a"), "--network", NET, "--restart", "no",
            "-v", "drill-a-data:/var/lib/postgresql/data", "-v", f"{init}:/docker-entrypoint-initdb.d:ro",
            *self.pg_args())
-        sh("docker", "network", "connect", local_net("a"), cname("a"))
+        sh("docker", "network", "connect", "--alias", "db-local-a", local_net("a"), cname("a"))
         self.wait_role("a", "primary", 60)
         psql("a", "create table drill(id bigserial primary key, node text, at timestamptz default now())")
         psql("a", "select pg_create_physical_replication_slot('crm_b', true)")
@@ -274,7 +278,7 @@ class Stack:
            IMAGE, "sh", "-c", f"pg_basebackup -h drill-a -U postgres -D {PGDATA} -X stream && {conf}", timeout=300)
         sh("docker", "run", "-d", "--name", cname("b"), "--network", NET, "--restart", "no",
            "-v", "drill-b-data:/var/lib/postgresql/data", *self.pg_args())
-        sh("docker", "network", "connect", local_net("b"), cname("b"))
+        sh("docker", "network", "connect", "--alias", "db-local-b", local_net("b"), cname("b"))
         self.wait_role("b", "standby", 60)
         self.wait_streaming("b", 60)
         if self.aa:
@@ -287,17 +291,19 @@ class Stack:
             p = peer(n)
             rdir = self.dir / f"route-{n}"
             rdir.mkdir(exist_ok=True)
-            target = cname(n) if n == "a" else cname("a")
+            target = "db-local-a" if n == "a" else cname("a")
             (rdir / "route.ini").write_text(
                 f"; route={'local' if n == 'a' else 'peer'} (written by the drill setup)\n[databases]\n* = host={target} port=5432\n")
             (self.dir / f"pgbouncer-{n}.ini").write_text(
                 "%include /etc/pgbouncer/route/route.ini\n\n[pgbouncer]\nlisten_addr = 0.0.0.0\nlisten_port = 6432\n"
-                "auth_type = trust\nauth_file = /etc/pgbouncer/userlist.txt\npool_mode = transaction\n"
-                "server_lifetime = 30\nserver_check_query = select 1\nadmin_users = postgres\nserver_login_retry = 1\n")
+                "auth_type = trust\nauth_file = /etc/pgbouncer/userlist.txt\npool_mode = session\n"
+                "server_lifetime = 30\nserver_check_query = select 1\nadmin_users = postgres\nserver_login_retry = 1\n"
+                "tcp_keepalive = 1\ntcp_keepidle = 5\ntcp_keepintvl = 2\ntcp_keepcnt = 3\ntcp_user_timeout = 10000\n")
             (self.dir / f"userlist-{n}.txt").write_text('"postgres" ""\n')
             for f in (rdir, self.dir / f"pgbouncer-{n}.ini", self.dir / f"userlist-{n}.txt"):
                 os.chmod(f, 0o755 if f.is_dir() else 0o644)
             sh("docker", "run", "-d", "--name", f"drill-pgb-{n}", "--network", local_net(n),
+               "--network-alias", f"pgb-local-{n}",
                "-v", f"{self.dir}/pgbouncer-{n}.ini:/etc/pgbouncer/pgbouncer.ini:ro",
                "-v", f"{self.dir}/userlist-{n}.txt:/etc/pgbouncer/userlist.txt:ro",
                "-v", f"{rdir}:/etc/pgbouncer/route:ro", PGB_IMAGE)
@@ -320,7 +326,7 @@ class Stack:
                "-v", f"{self.dir}/redis-{n}.conf:/usr/local/etc/redis/redis.conf:ro",
                "-v", f"{self.dir}/users-{n}.acl:/etc/redis/users.acl:ro",
                REDIS_IMAGE, "redis-server", "/usr/local/etc/redis/redis.conf")
-            sh("docker", "network", "connect", local_net(n), f"drill-redis-{n}")
+            sh("docker", "network", "connect", "--alias", f"redis-local-{n}", local_net(n), f"drill-redis-{n}")
             (self.dir / f"haproxy-{n}.cfg").write_text(
                 "global\n    maxconn 512\ndefaults\n    mode tcp\n    timeout connect 2s\n    timeout client 1h\n"
                 "    timeout server 1h\n    timeout check 2s\nresolvers docker\n    nameserver dns 127.0.0.11:53\n"
@@ -329,12 +335,12 @@ class Stack:
                 f"    tcp-check send AUTH\\ hacheck\\ {REDIS_USERS['hacheck']}\\r\\n\n    tcp-check expect string +OK\n"
                 "    tcp-check send INFO\\ replication\\r\\n\n    tcp-check expect string role:master\n"
                 "    tcp-check send QUIT\\r\\n\n    tcp-check expect string +OK\n"
-                f"    server local drill-redis-{n}:6379 check inter 1s fall 2 rise 2 resolvers docker init-addr none on-marked-down shutdown-sessions on-marked-up shutdown-backup-sessions\n"
+                f"    server local redis-local-{n}:6379 check inter 1s fall 2 rise 2 resolvers docker init-addr none on-marked-down shutdown-sessions on-marked-up shutdown-backup-sessions\n"
                 f"    server peer drill-redis-{p}:6379 check inter 1s fall 2 rise 2 backup resolvers docker init-addr none on-marked-down shutdown-sessions\n")
             os.chmod(self.dir / f"haproxy-{n}.cfg", 0o644)
             sh("docker", "run", "-d", "--name", f"drill-rproxy-{n}", "--network", NET,
                "-v", f"{self.dir}/haproxy-{n}.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro", HAPROXY_IMAGE)
-            sh("docker", "network", "connect", local_net(n), f"drill-rproxy-{n}")
+            sh("docker", "network", "connect", "--alias", f"rproxy-local-{n}", local_net(n), f"drill-rproxy-{n}")
         # Node B joins the way the runbook says: `ha-pg.sh route peer` (Redis replica, pgbouncer).
         env = {**os.environ, **self.adapter_env("b")}
         r = subprocess.run([str(ADAPTER), "route", "peer"], env=env, capture_output=True, text=True, timeout=60)
@@ -345,6 +351,19 @@ class Stack:
             time.sleep(1)
         if not (app_writable("a") and app_writable("b")):
             raise RuntimeError("app tier did not come up: " + sh("docker", "logs", "--tail", "20", "drill-pgb-b", check=False))
+        for n in ("a", "b"):
+            self.start_long_lived(n)
+
+    def start_long_lived(self, n):
+        """Like the app's SQLAlchemy pool: ONE session that stays open. A read-only error (a
+        connection pinned to a standby) does NOT end it, exactly as the app keeps such a
+        connection; only a lost connection does (ON_ERROR_STOP), and then it reconnects, as the
+        pool's pre-ping does. It inserts every 0.5 s."""
+        stmt = (f"DO \\$\\$ BEGIN INSERT INTO drill(node) VALUES ('ll-{n}'); "
+                "EXCEPTION WHEN read_only_sql_transaction THEN NULL; END \\$\\$;")
+        script = (f"while true; do ( while true; do echo \"{stmt}\"; sleep 0.5; done ) "
+                  f"| psql -X -q -v ON_ERROR_STOP=1 -h pgb-local-{n} -p 6432 -U postgres -d postgres >/dev/null 2>&1; sleep 1; done")
+        sh("docker", "exec", "-d", f"drill-probe-{n}", "sh", "-c", script)
 
     def pg_args(self):
         return ["-e", "POSTGRES_PASSWORD=drill", "-e", f"PGDATA={PGDATA}", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
@@ -629,6 +648,15 @@ def main():
             time.sleep(0.5)
         raise AssertionError(f"not {what} after {timeout}s")
 
+    def long_lived_writes(n, within=30):
+        """Node n's long-lived session is writing into the CURRENT primary again."""
+        def count():
+            p = "a" if role("a") == "primary" else "b"
+            rc, out = psql(p, f"select count(*) from drill where node = 'll-{n}'")
+            return int(out) if rc == 0 and out.isdigit() else -1
+        start = count()
+        wait_until(lambda: count() > start >= 0, within, f"node {n}'s long-lived session writing into the primary")
+
     def routes_follow(primary, only_primary=False):
         """Each live node's endpoints name the one primary: local there, peer on the other node.
         `only_primary` while the other box is dead (its controller is dead with it)."""
@@ -655,6 +683,8 @@ def main():
             assert "NOPERM" in out, (cmd, out)
         rc, out = psql("a", "select count(*) from drill where node = 'via-b'")
         assert rc == 0 and int(out) > 0, "writes through node B's app must land in A's database"
+        long_lived_writes("a")
+        long_lived_writes("b")
         return "both origins healthy; B's writes land on A; one Redis shared"
 
     def aa_app_down(n):
@@ -702,6 +732,7 @@ def main():
         wait_until(lambda: cf.healthy[other], 40, f"{other} serving as the new primary")
         t2 = time.time()
         routes_follow(other, only_primary=True)
+        long_lived_writes(other)
         cf.set(net={primary: True})
         for c in st.node_containers(primary):
             if c not in (cname(primary), f"drill-probe-{primary}"):
@@ -712,6 +743,9 @@ def main():
         st.wait_streaming(primary, 120)
         wait_until(lambda: cf.healthy[primary], 60, f"{primary} back in the pool through {other}'s database")
         routes_follow(other)
+        st.start_long_lived(primary)         # the box came back: its app starts afresh
+        long_lived_writes(primary)
+        long_lived_writes(other)
         wait_until(lambda: app_redis(primary, "set", "after-failover", "x") == "OK"
                    and app_redis(other, "get", "after-failover") == "x", 20, "one Redis shared after the return")
         return (f"{other} primary {t1 - t0:.0f}s after {primary} died, serving at {t2 - t0:.0f}s; "
@@ -737,6 +771,8 @@ def main():
         st.wait_streaming(primary, 120)
         wait_until(lambda: cf.healthy[primary] and cf.healthy[other], 60, "both back in the pool")
         routes_follow(other)
+        long_lived_writes(primary)
+        long_lived_writes(other)
         return f"{primary} fenced at {fenced - t0:.0f}s, {other} promoted at {t1 - t0:.0f}s; both serving again"
 
     def aa_both_reboot():
@@ -755,7 +791,11 @@ def main():
         st.wait_streaming(peer(p), 120)
         wait_until(lambda: cf.healthy["a"] and cf.healthy["b"], 60, "both in the pool")
         routes_follow(p)
-        return f"one writer ({p}), both nodes serving"
+        # The reviewer's case: the node routed at a standby peer, then S3 made a primary; the
+        # long-lived session must not stay pinned to the standby.
+        long_lived_writes("a")
+        long_lived_writes("b")
+        return f"one writer ({p}), both nodes serving; long-lived sessions write on both"
 
     if aa:
         plan = [

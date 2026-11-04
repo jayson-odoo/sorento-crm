@@ -234,7 +234,7 @@ Templates: `infra/templates/active-active/`.
      must print `[]`;
    - `/etc/sorento-ha/haproxy-redis.cfg` (the hacheck password) mode 0640 root:<HAPROXY_UID>;
      `/etc/sorento-ha/pgbouncer-admin.pgpass` mode 0600 owned by the pgbouncer container uid;
-     `/etc/sorento-ha/pgbouncer-hba.conf`; pgbouncer must be 1.15 or later (`RECONNECT`) and KEEPS prod's
+     `/etc/sorento-ha/pgbouncer-hba.conf`; pgbouncer KEEPS prod's
      `pool_mode` (read it first: `SHOW CONFIG` on the pgbouncer admin console; never switch session
      to transaction, the app holds session-level advisory locks); every role that goes through
      pgbouncer today (an analytics read-only URL too, if any) needs its line in
@@ -264,7 +264,7 @@ Templates: `infra/templates/active-active/`.
    LB default pool = that pool, DNS-only TTL 30 s. Note each endpoint's address for the env.
 3. **THIS CHANGES PROD**: in `/etc/sorento-ha/ha-pg.env` on both nodes add the active-active
    block (`ACTIVE_ACTIVE=1`, `CF_ORIGIN_SELF`, `CF_ORIGIN_PEER`, `CF_POOL_SELF` = the one pool,
-   `ROUTE_FILE`, `PGB_LOCAL_HOST`, `PGB_RELOAD`, `REDIS_CLI`), remove `APP_SICK_AFTER` (it must be
+   `ROUTE_FILE`, `PGB_LOCAL_HOST`, `PGB_ADMIN`, `PGB_DATABASES`, `REDIS_CLI`), remove `APP_SICK_AFTER` (it must be
    0) and `CF_POOL_PEER` (the old per-node pool is gone; a different value is refused), then `systemctl restart cf-failover` on the standby node first, then the primary node.
    The logs must show `started: ... app_sick_after=0s` and no action.
 4. **THIS CHANGES PROD, causes an outage on one node** (drill, announced window):

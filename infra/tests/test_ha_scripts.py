@@ -551,8 +551,15 @@ def _route_env(tmp_path, **extra):
         "PEER_PORT": "5432", "PGDATA": "/v/pgdata", "PG_EXEC": "false", "PG_RUNNING": "false",
         "PG_START": "true", "PG_STOP": "true", "PG_OFFLINE_SH": "false", "PEER_PSQL": "false",
         "ROUTE_FILE": str(rdir / "route.ini"), "PGB_LOCAL_HOST": "db",
-        "PGB_RELOAD": f"echo reload >> {log}", "REDIS_CLI": f"{tmp_path}/fake-redis",
+        "PGB_ADMIN": f"{tmp_path}/fake-pgb", "PGB_DATABASES": "sorento_app", "REDIS_CLI": f"{tmp_path}/fake-redis",
     }
+    pgb = tmp_path / "fake-pgb"
+    pgb.write_text(
+        f'#!/usr/bin/env bash\ncase "$1" in RELOAD) echo reload >> {log};;\n'
+        f'  KILL*) echo "kill ${{1#KILL }}" >> {log}; [ -e {tmp_path}/kill_fail ] && exit 1;;\n'
+        f'  RESUME*) echo "resume ${{1#RESUME }}" >> {log}; [ -e {tmp_path}/resume_fail ] && exit 1;;\nesac\n'
+        f'[ -e {tmp_path}/reload_fail ] && [ "$1" = RELOAD ] && exit 1\nexit 0\n')
+    pgb.chmod(0o755)
     fake = tmp_path / "fake-redis"
     fake.write_text(f'#!/usr/bin/env bash\necho "redis $*" >> {log}\n[ -e {tmp_path}/redis_fail ] && exit 1\nexit 0\n')
     fake.chmod(0o755)
@@ -571,7 +578,7 @@ def test_route_local_points_pgbouncer_at_the_local_db_and_makes_redis_master(tmp
     text = route.read_text()
     assert text.splitlines()[0].startswith("; route=local")
     assert "* = host=db port=5432" in text
-    assert log.read_text().splitlines() == ["redis REPLICAOF NO ONE", "reload"]
+    assert log.read_text().splitlines() == ["redis REPLICAOF NO ONE", "reload", "kill sorento_app", "resume sorento_app"]
 
 
 def test_route_peer_points_pgbouncer_at_the_peer_and_makes_redis_a_replica(tmp_path):
@@ -579,7 +586,7 @@ def test_route_peer_points_pgbouncer_at_the_peer_and_makes_redis_a_replica(tmp_p
     r = _adapter(e, "route", "peer")
     assert r.returncode == 0, r.stderr
     assert "* = host=10.9.0.2 port=5432" in route.read_text()
-    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379", "reload"]
+    assert log.read_text().splitlines() == ["redis REPLICAOF 10.9.0.2 6379", "reload", "kill sorento_app", "resume sorento_app"]
 
 
 def test_observe_reports_the_current_route(tmp_path):
@@ -597,7 +604,8 @@ def test_route_refuses_anything_but_local_or_peer(tmp_path, bad):
 
 
 def test_a_failed_reload_leaves_the_route_unconfirmed_so_it_is_retried(tmp_path):
-    e, log, route = _route_env(tmp_path, PGB_RELOAD="exit 1")
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "reload_fail").write_text("")
     r = _adapter(e, "route", "local")
     assert r.returncode == 1 and "unconfirmed" in r.stderr
     assert route.read_text().startswith("; route=unconfirmed")
@@ -648,9 +656,34 @@ def test_a_redis_only_repair_does_not_reload_pgbouncer(tmp_path):
 
 
 def test_an_unconfirmed_route_is_reloaded_again(tmp_path):
-    e, log, route = _route_env(tmp_path, PGB_RELOAD="exit 1")
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "reload_fail").write_text("")
     _adapter(e, "route", "peer")
+    (tmp_path / "reload_fail").unlink()
     e2, log2, _ = _route_env(tmp_path)
     log2.write_text("")
     assert _adapter(e2, "route", "peer").returncode == 0
     assert "reload" in log2.read_text()
+
+
+def test_a_failed_resume_after_kill_leaves_the_route_unconfirmed(tmp_path):
+    # KILL pauses the database; if RESUME then fails the database stays paused: never call that
+    # a confirmed route (review round 2 blocker 1).
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "resume_fail").write_text("")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 1 and "RESUME" in r.stderr
+    assert route.read_text().startswith("; route=unconfirmed")
+
+
+def test_kill_on_a_database_with_no_pool_yet_is_not_an_error(tmp_path):
+    e, log, route = _route_env(tmp_path)
+    (tmp_path / "kill_fail").write_text("")
+    assert _adapter(e, "route", "local").returncode == 0
+    assert "resume sorento_app" not in log.read_text()
+    assert route.read_text().startswith("; route=local")
+
+
+def test_pgbouncer_database_names_must_be_plain(tmp_path):
+    e, _, route = _route_env(tmp_path, PGB_DATABASES="app;RESUME")
+    assert _adapter(e, "route", "local").returncode == 2 and not route.exists()

@@ -35,8 +35,9 @@
 #   WORKERS_STOP           command (sh -c) that stops worker + worker_fast (the role watcher would stop them a tick later)
 #   SYNC_MODE              off | remote_write | on_commit
 #   Active-active only: ROUTE_FILE (pgbouncer [databases] include, in a directory mounted into the
-#   pgbouncer container), PGB_LOCAL_HOST (the db service, e.g. db), PGB_RELOAD (command, sh -c:
-#   must RELOAD and RECONNECT, or idle server connections keep pointing at the old primary),
+#   pgbouncer container), PGB_LOCAL_HOST (the db service, e.g. db), PGB_ADMIN (prefix running ONE
+#   statement on pgbouncer's admin console, e.g. `... psql -h 127.0.0.1 -p 6432 -U <admin>
+#   pgbouncer -c`), PGB_DATABASES (the app's database names through pgbouncer, space-separated),
 #   REDIS_CLI (prefix running redis-cli against this node's Redis), PEER_REDIS_PORT (6379),
 #   PEER_REDIS_HOST (default PEER_HOST: the peer's Redis on its private address)
 # Passwords: never in this env. The replication user's password sits in a pgpass file read by
@@ -53,7 +54,8 @@ WORKERS_STOP="${WORKERS_STOP:-true}"
 SYNC_MODE="${SYNC_MODE:-off}"
 ROUTE_FILE="${ROUTE_FILE:-}"
 PGB_LOCAL_HOST="${PGB_LOCAL_HOST:-db}"
-PGB_RELOAD="${PGB_RELOAD:-true}"
+PGB_ADMIN="${PGB_ADMIN:-}"
+PGB_DATABASES="${PGB_DATABASES:-}"
 REDIS_CLI="${REDIS_CLI:-}"
 PEER_REDIS_PORT="${PEER_REDIS_PORT:-6379}"
 PEER_REDIS_HOST="${PEER_REDIS_HOST:-$PEER_HOST}"
@@ -65,6 +67,9 @@ for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"
   case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) echo "ha-pg: quotes, \$, backslashes and line breaks are not allowed in the HA env" >&2; exit 2 ;; esac
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
+for v in $PGB_DATABASES; do
+  [[ "$v" =~ ^[A-Za-z0-9_]{1,63}$ ]] || { echo "ha-pg: PGB_DATABASES must be plain database names" >&2; exit 2; }
+done
 # Hosts and ports go into a pgbouncer connect string and a REPLICAOF: a space would add keys
 # (review N3), so only a plain host name / address and digits are accepted.
 for v in "$PEER_HOST" "$PGB_LOCAL_HOST" "$PEER_REDIS_HOST"; do
@@ -248,7 +253,7 @@ case "$cmd" in
       fi
     fi
     # Same target, already confirmed (R1 only had to repair the Redis role): leave pgbouncer
-    # alone, a reload + RECONNECT would cut every app connection for nothing.
+    # alone, a reload + KILL would cut every app connection for nothing.
     want="* = host=$host port=$port"
     if [ -f "$ROUTE_FILE" ] && head -1 "$ROUTE_FILE" | grep -q "^; route=$target " \
        && grep -qxF "$want" "$ROUTE_FILE"; then
@@ -260,7 +265,24 @@ case "$cmd" in
     tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1
     printf '; route=unconfirmed (written by ha-pg.sh route; do not edit)\n[databases]\n* = host=%s port=%s\n' \
       "$host" "$port" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$ROUTE_FILE" || { rm -f "$tmp"; exit 1; }
-    timeout 15 sh -c "$PGB_RELOAD" || { echo "ha-pg: pgbouncer reload failed; route left unconfirmed" >&2; exit 1; }
+    # RELOAD reads the new target. Then KILL + RESUME each app database: that drops every client
+    # and server connection so the app reconnects through the new target, in ANY pool mode. In
+    # session mode RECONNECT alone would wait for the app to release its pooled connections,
+    # which it never does, and a connection pinned to a running standby would stay there
+    # (review round 2 blocker 1). A route change never moves away from the writable primary,
+    # so the dropped connections were not doing useful writes.
+    [ -n "$PGB_ADMIN" ] || { echo "ha-pg: PGB_ADMIN unset" >&2; exit 2; }
+    # shellcheck disable=SC2086
+    timeout 15 $PGB_ADMIN "RELOAD" >/dev/null || { echo "ha-pg: pgbouncer RELOAD failed; route left unconfirmed" >&2; exit 1; }
+    for db in $PGB_DATABASES; do
+      # shellcheck disable=SC2086
+      if timeout 15 $PGB_ADMIN "KILL $db" >/dev/null 2>&1; then
+        # shellcheck disable=SC2086
+        timeout 15 $PGB_ADMIN "RESUME $db" >/dev/null \
+          || { echo "ha-pg: pgbouncer RESUME $db FAILED (database paused); route left unconfirmed" >&2; exit 1; }
+      fi
+      # KILL fails only for a database with no pool yet: nothing to drop, nothing paused.
+    done
     tmp=$(mktemp "$ROUTE_FILE.XXXXXX") || exit 1
     sed "1s/^; route=unconfirmed /; route=$target /" "$ROUTE_FILE" > "$tmp" && chmod 0644 "$tmp" && mv -f "$tmp" "$ROUTE_FILE" \
       || { rm -f "$tmp"; exit 1; }
