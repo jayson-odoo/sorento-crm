@@ -34,3 +34,34 @@ describe('resolvePart over a multi-pick row', () => {
     expect(payload.parts).toEqual([{ product_id: 'id-C', role: 'Tap', candidates: [] }]);
   });
 });
+
+describe('reopening a saved line with several picks in one group', () => {
+  it('restores the group candidates once the combos lookup answers, so the row is a multi-pick row', async () => {
+    const { waitFor } = await import('@testing-library/react');
+    const { lineToDraft } = await import('@/lib/dealer-kit/price-tag-draft-lines');
+    const combo = {
+      combo_id: 'c1',
+      name: 'Combo',
+      parts: ['A', 'B', 'C'].map((c) => ({ product_id: `id-${c}`, code: c, name: c, choice_group: 'Tap' })),
+    };
+    const lookups = {
+      lookupTagItems: vi.fn(async () => []),
+      lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [combo] })),
+      lookupLinePricing: vi.fn(async () => []),
+    };
+    const draft = lineToDraft({
+      id: 'l1', line_type: 'product', product_id: 'host', product_set_id: null, name: 'H', code: 'H', quantity: 1,
+      combo_id: 'c1',
+      parts: ['C', 'A'].map((c, i) => ({ id: `p${i}`, product_id: `id-${c}`, code: c, name: c, role: 'Tap', candidates: [] })),
+    } as never);
+    const hook = renderHook(() => {
+      const [lines, setLines] = useState([draft]);
+      return { lines, editor: usePriceTagLineEditor({ lines, setLines, priceMode: 'list', lookups }) };
+    });
+    await waitFor(() => expect(hook.result.current.lines[0].combos_loaded).toBe(true));
+    const [row] = hook.result.current.lines[0].parts;
+    expect(hook.result.current.lines[0].parts).toHaveLength(1);
+    expect(row.candidates.map((c) => c.code)).toEqual(['A', 'B', 'C']);
+    expect(row.product_ids).toEqual(['id-C', 'id-A']);
+  });
+});

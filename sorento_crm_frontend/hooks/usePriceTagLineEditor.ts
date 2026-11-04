@@ -30,6 +30,7 @@ import {
   comboOfLine,
   partsFromCombo,
   pickedProductIds,
+  restoreGroupCandidates,
   trimPicksToTemplate,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -234,7 +235,13 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
                       combo_id: lookup.combos[0].combo_id,
                       parts: partsFromCombo(lookup.combos[0]),
                     }
-                  : {}),
+                  : {
+                      // A reopened multi-pick row gets its group's options back (K5).
+                      parts: restoreGroupCandidates(
+                        l.parts,
+                        lookup.combos.find((c) => c.combo_id === l.combo_id),
+                      ),
+                    }),
               };
             }),
           );

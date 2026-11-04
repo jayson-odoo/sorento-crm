@@ -314,6 +314,22 @@ function foldPicks(parts: DraftPart[]): DraftPart[] {
   return out;
 }
 
+/**
+ * A reopened multi-pick row has no candidates (the server stores the picks only). Once the combos
+ * lookup answers, give it back its group's options, the same source `partsFromCombo` uses, so it
+ * renders as the multi-select it was.
+ */
+export function restoreGroupCandidates(parts: DraftPart[], combo: ProductComboOption | undefined): DraftPart[] {
+  if (!combo) return parts;
+  return parts.map((part) => {
+    if (!part.role || part.candidates.length > 0 || (part.product_ids?.length ?? 0) < 2) return part;
+    const candidates = combo.parts
+      .filter((p) => !p.is_upgrade && p.choice_group === part.role)
+      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, is_discontinued: p.is_discontinued ?? false }));
+    return candidates.length > 0 ? { ...part, candidates } : part;
+  });
+}
+
 export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
