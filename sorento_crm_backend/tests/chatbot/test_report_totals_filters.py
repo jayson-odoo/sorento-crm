@@ -696,6 +696,40 @@ def test_hf2_a_held_company_stays_and_no_brand_the_user_never_said_appears(rbot,
     assert _frame(rbot).get("company") == DEFAULT_COMPANY_ID and not _frame(rbot).get("brand_ids"), _frame(rbot)
 
 
+def _hf_setup(rbot, sorento: str) -> dict[str, Any]:
+    first = _hold(rbot, sorento, group_by=None, customers=[CUSTOMER_NAME], channel="dealer", entities=(_ent(CUSTOMER_NAME, "customer"),),
+                  **{k: OCT[k] for k in OCT}, flat=dict(sales_channel="dealer", **OCTF))
+    assert first.get("customer_ids") and first.get("channel") == "dealer", f"setup: {first}"
+    return first
+
+
+def _hf_new_question(rbot, **flat: Any):
+    ra = _ra2("total", basis="delivered", brands=["Sorento"], **OCT)
+    v = _v("sales_report", ra, _ent("sorento", "brand", "SORENTO", "brand"), basis="delivered", domain_in_message=True, **OCTF, **flat)
+    return rbot.say(v, "Total sale deliver for1/10-9/10/26 Sorento brand")
+
+
+def test_hf3_a_held_customer_survives_a_new_question_with_no_widen_signal_and_the_brand_is_added(rbot, world) -> None:
+    sorento, _m = world
+    first = _hf_setup(rbot, sorento)
+    text, calls = _hf_new_question(rbot, broaden_axis=None, broaden_to=None, scope_intent=None)
+    args = _args(calls)
+    assert args.get("customer_ids") == first["customer_ids"], f"HF-3: the held customer was dropped: {args.get('customer_ids')}"
+    assert args.get("brand_ids"), f"HF-3: the brand was not added: {args}"
+    frame = _frame(rbot)
+    assert frame.get("customer_ids") == first["customer_ids"] and frame.get("brand_ids"), f"HF-3: held state {frame}"
+
+
+def test_hf4_a_customer_widen_signal_drops_the_held_customer(rbot, world) -> None:
+    sorento, _m = world
+    first = _hf_setup(rbot, sorento)
+    text, calls = _hf_new_question(rbot, broaden_axis="customer", broaden_to="all")
+    args = _args(calls)
+    assert not args.get("customer_ids"), f"HF-4: the customer survived a widen: {args.get('customer_ids')}"
+    assert args.get("brand_ids"), args
+    assert not _frame(rbot).get("customer_ids"), _frame(rbot)
+
+
 # ------------------------------------------------------------------------------------------ RB: robustness (#2105 follow-up)
 
 NOT_A_UUID = "not-a-uuid"
