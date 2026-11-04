@@ -839,6 +839,8 @@ class AcknowledgeFilter(BaseModel):
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (the Lines chip with "Select all").
     inquiry_no: Optional[str] = None
+    #: OI-RESERVE-ROUND: reserve request ids, comma-joined (the same chip family).
+    reserve_request: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
 
@@ -1311,6 +1313,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
     #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (no value cap).
     inquiry_no: Optional[str] = None
+    #: OI-RESERVE-ROUND: reserve request ids, comma-joined (no value cap).
+    reserve_request: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
 
     @field_validator("state")
     @classmethod

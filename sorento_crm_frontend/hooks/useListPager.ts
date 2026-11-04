@@ -39,11 +39,18 @@
  *   dead rather than swallowing every further click in silence.
  * - The record is not on the page (deep link into a filtered set, or it was
  *   deleted): `visible` is false and the caller renders nothing. Back still works.
+ * - The walk is kept. Once the record has been seen on the walked page, that page is
+ *   remembered in the QueryClient under its own key (`['list-pager-walk', ...listKey]`),
+ *   which list invalidations never touch. An action on the detail page (reserve, park,
+ *   confirm, ...) invalidates the list, and the refetched page may no longer hold the
+ *   record (it left the filter or moved page); position, neighbours and the counter then
+ *   come from the remembered page instead of the pager vanishing. A record that was never
+ *   on the walked page has no snapshot, so a deep link still hides it.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { skipToken, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { SortingState } from '@tanstack/react-table';
 import { buildDetailSearch, detailViewParams, parseDetailSearch } from '@/lib/listNavQuery';
 import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
@@ -176,9 +183,28 @@ export function useListPager({
     retry: 1,
   });
 
+  // The last answer that held this record, under a key list invalidations do not match.
+  // An observer (`skipToken`, never fetches) keeps it alive as long as the list itself.
+  const walkKey = useMemo<QueryKey>(
+    () => ['list-pager-walk', ...listQueryKey(params)],
+    [listQueryKey, params],
+  );
+  const { data: walked } = useQuery<ListPagerPage>({
+    queryKey: walkKey,
+    queryFn: skipToken,
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+  });
+  const liveHolds = Boolean(data?.data?.some((row) => row.id === currentId));
+  useEffect(() => {
+    if (data && liveHolds) queryClient.setQueryData(walkKey, data);
+  }, [data, liveHolds, queryClient, walkKey]);
+  const page =
+    liveHolds || !walked?.data?.some((row) => row.id === currentId) ? data : walked;
+
   // A fresh `[]` on every render would rebuild both step callbacks every time.
-  const items = useMemo(() => data?.data ?? [], [data]);
-  const total = data?.pagination?.total ?? data?.total ?? 0;
+  const items = useMemo(() => page?.data ?? [], [page]);
+  const total = page?.pagination?.total ?? page?.total ?? 0;
   const idx = items.findIndex((row) => row.id === currentId);
   const onPage = idx >= 0;
 

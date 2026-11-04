@@ -777,6 +777,8 @@ export interface OrderInquiryWorklistParams {
   dead_document?: OrderInquiryDeadReason;
   /** Exact OI numbers, comma-joined (the reserve emails' button). */
   inquiry_no?: string;
+  /** Reserve request ids, comma-joined (the reserve emails' button for two or more OIs). */
+  reserve_request?: string;
   /**
    * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
    * the list for exactly this cell's axis + period rather than reading rows back out of
