@@ -33,6 +33,7 @@ from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
 from app.services.oi_delivery_date import resolve as resolve_oi_date
+from app.services.oi_row_visibility import is_live_row, live_row_clause
 from app.services.order_inquiry_reserve_service import (
     _REQUESTABLE_STATES,
     _REQUESTABLE_VERBS,
@@ -177,8 +178,10 @@ class StockDebtSnapshotService:
         }
 
     def _linked_oi_rows(self, core_line_ids: Sequence[str]) -> Dict[str, List[tuple]]:
-        """`{core line id: [(OrderInquiryRow, OrderInquiry)]}` for every row whose
-        `so_line_id` is a project mirror of that core line (AC-5)."""
+        """`{core line id: [(OrderInquiryRow, OrderInquiry)]}` for every LIVE row whose
+        `so_line_id` is a project mirror of that core line (AC-5). OI-RESERVE-USED-ROW: a
+        used or cancelled row is never linked (`oi_row_visibility`), the same rule the OI
+        page and Order Inquiries > Lines list by."""
         out: Dict[str, List[tuple]] = {}
         for chunk in _chunks(sorted(set(core_line_ids))):
             query = (
@@ -187,7 +190,10 @@ class StockDebtSnapshotService:
                 )
                 .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
                 .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-                .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(chunk))
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(chunk),
+                    live_row_clause(),
+                )
                 .order_by(OrderInquiry.inquiry_no, OrderInquiryRow.id)
             )
             for core_id, oi_row, inquiry in query.all():
@@ -463,8 +469,12 @@ class StockDebtSnapshotService:
                 "so_status": "missing", "open_qty": 0.0,
             }
             seen = {oi["row_id"] for oi in line["oi_rows"]}
+            # OI-RESERVE-USED-ROW: a row frozen live that is now used, cancelled or gone is
+            # not shown, so a snapshot saved before the change reads the same as a new one.
             oi_rows = [
-                {**oi, **oi_now.get(oi["row_id"], self._oi_gone())} for oi in line["oi_rows"]
+                {**oi, **oi_now[oi["row_id"]]}
+                for oi in line["oi_rows"]
+                if oi_now.get(oi["row_id"], {}).get("live")
             ]
             for oi_row, inquiry in linked.get(line["sales_order_line_id"], []):
                 if str(oi_row.id) in seen:
@@ -493,13 +503,6 @@ class StockDebtSnapshotService:
                     "open_qty": float(open_qty or 0) if status == "open" else 0.0,
                 }
         return out
-
-    @staticmethod
-    def _oi_gone() -> Dict[str, Any]:
-        return {
-            "now_state": "missing", "reserve_state": None, "remaining": None,
-            "requestable": False,
-        }
 
     def _oi_now(self, row_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """The live reading of order inquiry rows: state, latest reserve request, what is
@@ -541,11 +544,13 @@ class StockDebtSnapshotService:
             # links on a fully received PO/SPO), so `requestable` here and the request agree.
             remaining = _requestable(self.db, row)
             out[row_id] = {
+                "live": is_live_row(row),
                 "now_state": row.state,
                 "reserve_state": latest.get(row_id),
                 "remaining": float(remaining),
                 "requestable": (
-                    row.verb in _REQUESTABLE_VERBS
+                    is_live_row(row)
+                    and row.verb in _REQUESTABLE_VERBS
                     and row.state in _REQUESTABLE_STATES
                     and row_id not in open_requests
                     and remaining > 0

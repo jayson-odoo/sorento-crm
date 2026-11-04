@@ -716,6 +716,14 @@ class OrderInquiryReserveService:
                     f"{_row_label(row)} is not open for a reserve request.",
                     code="reserve_request_wrong_state",
                 )
+            if row.redirected_to_pool:
+                # OI-RESERVE-USED-ROW (owner, 4 Nov): a used row's goods went back to the
+                # pool when its line changed; the line's live row is the one to ask on.
+                raise AppException(
+                    409,
+                    f"{_row_label(row)} is a used row. Request on its line's live row.",
+                    code="reserve_request_used_row",
+                )
             if row_id in already_open:
                 raise AppException(
                     409,
