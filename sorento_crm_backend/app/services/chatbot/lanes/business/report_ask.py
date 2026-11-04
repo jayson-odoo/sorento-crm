@@ -3604,11 +3604,11 @@ def from_object(
         if slot is not None:
             # HT1, one rule: the parser's own slot for a name that is one of the contact's companies. Company or both: the
             # name is the ask's company. Brand: a same-name company the object put in is not applied (ON-2); the held
-            # company carries instead, as with no company named (owner Q3), and stays when it is that very one (CP-5).
+            # company carries instead, as with no company named (owner Q3), so the held one itself stays (CP-5).
             same = _squash(ask.get("company") or "") == _squash(word)
             if slot != "brand" and not same:
                 ask["company"] = word
-            elif slot == "brand" and same and _squash(word) != _squash(held_company or ""):
+            elif slot == "brand" and same:
                 ask["company"] = held_company
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
@@ -3616,8 +3616,8 @@ def from_object(
             entities.append(_entity(word, "account_type"))
         elif how != "company":  # a word that is the ask's company is no brand or account type filter (C6-1)
             # Unsure: the brand-or-account-type plan reads it against the tables (`_account_plan`), asked when in both;
-            # the entity's `said_as` rides along (HT1-5: a null one, `_company_or_brand`).
-            more = {"said_as": entity.get("said_as")} if entity is not None and "said_as" in entity else {}
+            # a `said_as` null rides along (HT1-5, `_company_or_brand`).
+            more = {"said_as": None} if entity is not None and "said_as" in entity else {}
             entities.append(_entity(word, "brand", kind_said=None, **more))
     # A held customer is never looked up again (the lane takes its id, `_fresh_args`); any other goes to the resolver.
     entities.extend(_entity(name, "customer") for name in names("customers") if not _held_ids(held, "customer_ids", name))

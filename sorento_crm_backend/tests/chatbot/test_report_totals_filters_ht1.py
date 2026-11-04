@@ -399,8 +399,9 @@ def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many
 
 
 def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_company(rbot, world) -> None:
-    """Lock 1: HT1-6 with said_as "brand". Depends on `and _squash(word) != held_name` (report_ask.py:3603): without it the
-    brand branch drops the object's same-name company even though it is the held one (CP-5)."""
+    """Lock 1: HT1-6 with said_as "brand". Depends on the brand branch applying the held company (report_ask.py:3612,
+    `ask["company"] = held_company`): without it the object's same-name company is dropped even though it is the held
+    one (CP-5)."""
     sorento, _m = world
     _hold_agents(rbot, sorento)
     text, calls = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
