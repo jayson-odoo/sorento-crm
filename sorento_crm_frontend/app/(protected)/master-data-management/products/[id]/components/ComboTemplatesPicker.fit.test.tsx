@@ -67,7 +67,7 @@ type PickerProps = React.ComponentProps<typeof ComboTemplatesPicker> & { parts?:
 const Picker = ComboTemplatesPicker as unknown as React.ComponentType<PickerProps>;
 
 function draw(parts?: unknown[]) {
-  render(<Picker idPrefix="c" value={[]} defaultId="" onChange={vi.fn()} parts={parts} />);
+  render(<Picker idPrefix="c" value={[]} defaultId="" onChange={vi.fn()} parts={parts as PickerProps['parts']} />);
 }
 const row = (id: string) => screen.getByTestId(`opt-${id}`);
 const description = (id: string) => within(row(id)).getByTestId('description').textContent;
