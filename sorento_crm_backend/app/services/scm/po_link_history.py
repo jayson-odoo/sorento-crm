@@ -278,12 +278,12 @@ def _seen_batch(after: Optional[str], batch: int):
 def backfill_seen(db: Session, *, batch: int = BACKFILL_BATCH) -> int:
     """One `EVENT_SEEN` row per PO line carrying a `from_so_line_ref` and no S/O link event yet.
 
-    ``changed_at`` is the line's earliest AutoCount claim (MYT read as UTC), else its
-    ``created_at``: an upper bound ("linked on or before"), never the moment. One INSERT ...
-    SELECT and one COMMIT per batch, so a run that dies keeps what it finished and the next run's
-    NOT EXISTS skips it; a rerun over a seeded book inserts nothing. A line the ingest moves
-    before this reaches it already has a change event, so it is skipped (its ref is no longer the
-    pre-history one). Returns the rows inserted.
+    ``changed_at`` is the line's earliest AutoCount claim (Malaysian wall time converted to UTC),
+    else its ``created_at``: an upper bound ("linked on or before"), never the moment. One
+    INSERT ... SELECT and one COMMIT per batch, so a run that dies keeps what it finished and the
+    next run's no-link-event check skips it; a rerun over a seeded book inserts nothing. A line
+    the ingest moves before this reaches it already has a change event, so it is skipped (its ref
+    is no longer the pre-history one). Returns the rows inserted.
     """
     total = 0
     after: Optional[str] = None

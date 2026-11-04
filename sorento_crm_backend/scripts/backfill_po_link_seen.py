@@ -4,8 +4,8 @@ POLH-BACKFILL-ASYNC. This was the `polh_0001_seen_backfill` migration's data ste
 5 Nov release, where it kept blue unhealthy past blue/green's 240 s wait and the whole release
 rolled back. `start.sh` now runs this in the background on every backend start, after
 `alembic upgrade head`; the work is `app.services.scm.po_link_history.backfill_seen` (one commit
-per batch, resumable, idempotent). Once every linked line is seeded a run is one anti-join scan
-(0.55 s on the prod clone) and inserts nothing.
+per batch, resumable, idempotent). Once every linked line is seeded a run is one index probe per
+linked line (1.3 s for 57,876 lines on the prod-clone copy, start-up included) and inserts nothing.
 
 Two backends starting together (blue and green) are serialised by a session advisory lock; the
 one that does not get it does nothing.
@@ -47,9 +47,14 @@ def run(engine) -> Optional[int]:
             with Session(bind=conn) as db:
                 return po_link_history.backfill_seen(db)
         finally:
-            conn.rollback()
-            conn.execute(sa.text("SELECT pg_advisory_unlock(:k)"), key)
-            conn.commit()
+            # On a broken connection these fail too, and the lock dies with the session anyway:
+            # keep the backfill's own error the headline.
+            try:
+                conn.rollback()
+                conn.execute(sa.text("SELECT pg_advisory_unlock(:k)"), key)
+                conn.commit()
+            except Exception:  # noqa: BLE001
+                log.debug("advisory unlock failed", exc_info=True)
 
 
 def main() -> None:

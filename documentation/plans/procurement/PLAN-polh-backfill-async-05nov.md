@@ -19,7 +19,7 @@ serves 9c6b581e6a. polh_0001 never committed on prod, so it is edited in place.
   `scm.order_link_claim` per line (5,000 loops x 63,554 rows; there is no index on `po_line_id`).
   12 batches = ~225 s before the inserts, so prod (more rows than the 20 Oct copy) passes 240 s.
 - Same batch with the claims pre-aggregated once (`GROUP BY po_line_id`, merge left join): **101 ms**.
-- Steady state (every line already seeded, the NOT EXISTS anti join drops all): 0.55 s.
+- Steady state with the original query (every line already seeded, the NOT EXISTS anti join drops all): 0.55 s.
 - Other pending revisions on the same copy: tinv_0001 adds a CHECK over 93 `sales.targets` rows;
   cer_0001 creates an empty table + one permission row; ptag_0014 updates 182
   `price_tag_request_lines`, touches 4 `product_tag_template` rows, creates an empty table;
@@ -38,12 +38,30 @@ serves 9c6b581e6a. polh_0001 never committed on prod, so it is edited in place.
   is a scalar `LIMIT 1` subquery (a per-line index probe) instead of NOT EXISTS, which the planner, on
   stats that predate the rows the run just inserted, materialised and filtered per line (quadratic). Keyset by line id, one INSERT ... SELECT per batch,
   `db.commit()` after each batch, one INFO log line per batch and a total. Resumable: a killed run keeps
-  its committed batches, and the next run's NOT EXISTS skips them.
+  its committed batches, and the next run's no-link-event check skips them.
 - `scripts/backfill_po_link_seen.py`: one dedicated connection, `pg_try_advisory_lock(<own key>)`; a
   backend that does not get it logs and does nothing (blue and green starting together). Every outcome,
   an import error included, exits 0 (gunicorn reaps it like a worker after `start.sh` execs).
 - `start.sh`: `python -m scripts.backfill_po_link_seen &` right after `alembic upgrade head`.
 - polh_0001: `upgrade()` does nothing; the docstring points at the script. Revision id and chain stay.
+
+## Why not keep the fixed query in the migration (reviewer finding 3)
+
+The fixed query takes 5.4 s on the copy, so it would fit inside polh_0001 today. It stays out because:
+
+- The brief asked for it explicitly ("move the DATA backfill out of the migration").
+- Its run time depends on the planner, not just on the data size, and nobody can pin the plan on prod.
+  On the same data and the same SQL, one plan choice made the difference between 101 ms and 18.7 s a
+  batch, and a later one between 5.4 s and 63 s for the whole run. Inside the deploy, any such flip on
+  prod's own stats fails the release again: every pending revision runs in one transaction inside the
+  240 s health wait, and the 180 s statement limit only turns a slow statement into a failed deploy.
+  In the background, the same flip costs a slower backfill, nothing more.
+- It is a data step whose cost grows with `purchase_order_lines` and `audit_logs`, with nothing to retry.
+  `ensure_goods_chain_indexes` is the shape this copies (a start-time `&` job that exits 0), not the
+  reason for it.
+
+Cost on every later start: one index probe per linked line, 1.3 s for 57,876 lines on the copy, start-up
+included.
 
 ## While the backfill runs (seconds on prod at 101 ms/batch)
 
