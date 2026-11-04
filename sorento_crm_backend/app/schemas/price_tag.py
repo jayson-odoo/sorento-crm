@@ -665,6 +665,7 @@ class TextLayerPropsDoc(_StrictProps):
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
     subjectSlot: Optional[SubjectSlotDoc] = None
+    showCurrency: Optional[bool] = None
 
 
 class PolygonPointDoc(_StrictProps):

@@ -492,3 +492,14 @@ def test_starter_layouts_come_from_one_generic_position_function():
     from app.services.dealer_kit.template_needs import template_needs
 
     assert template_needs(doc) == {"fixed": 1, "groups": [3], "upgrades": 1}
+
+
+def test_starter_price_text_layers_print_the_currency_and_validate():
+    """AC-A3: the price text carries its own RM (showCurrency), so an empty price prints nothing
+    at all; the strict doc model accepts the key."""
+    from app.schemas.price_tag import TagTemplateDocModel
+
+    doc = _script().position_template("ZZT shape", 1, [2], 0)
+    TagTemplateDocModel.model_validate(doc)
+    layers = [layer for layer in doc["layers"] if layer.get("slot_binding") in ("list_price", "sell_price")]
+    assert layers and all(layer["props"].get("showCurrency") is True for layer in layers)

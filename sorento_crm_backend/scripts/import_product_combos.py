@@ -509,8 +509,13 @@ def position_template(name: str, fixed: int, groups, upgrades: int) -> dict:
         doc.layers[-1]["props"]["subjectSlot"] = slot
 
     doc.text("combo-name", 4, 4, 97, 10, "", size=14, weight=700, slot="combo_name")
+    def with_currency() -> None:
+        doc.layers[-1]["props"]["showCurrency"] = True
+
     doc.text("list-price", 4, 17, 46, 7, "", size=11, slot="list_price")
+    with_currency()
     doc.text("sell-price", 50, 14, 51, 14, "", size=24, weight=700, color=SELL_COLOUR, align="right", slot="sell_price")
+    with_currency()
 
     slots = [{"kind": "main"}]
     slots += [{"kind": "fixed", "index": i} for i in range(fixed)]
@@ -526,6 +531,7 @@ def position_template(name: str, fixed: int, groups, upgrades: int) -> dict:
         at_slot(slot)
         doc.text(f"price-{n}", 70, y, 31, row_h - 2, "", size=9.5, align="right", slot="list_price")
         at_slot(slot)
+        with_currency()
     return doc.build()
 
 
