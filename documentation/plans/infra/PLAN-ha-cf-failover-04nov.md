@@ -1,6 +1,6 @@
 # PLAN: HA failover with Cloudflare Load Balancing as the witness (HA-CF-FAILOVER)
 
-Status: Plan, CARD posted 4 Nov, waiting on owner answers (section 9). No code before the answers.
+Status: Build. Card answered 4 Nov (section 8, Q1 pending with the owner, 60 s assumed). Building F1-F4 (repo only).
 Track: full (prod infra, size L), LEAD pattern. Nothing in this lane touches production: every prod
 step goes to the owner as reviewed commands.
 
@@ -55,58 +55,98 @@ to use Cloudflare as its quorum. So:
 
 ## 3. The failover controller (`cf-failover`), Cloudflare as the third vote
 
-One script, the same on both nodes, a systemd service like the role watcher. Each tick (15 s) it
-reads three things:
+`infra/scripts/cf_failover.py` (Python 3 stdlib only), the same on both nodes, a systemd service
+beside the role watcher. The decisions are one pure function (`decide(state, observation, now,
+config)`), unit-tested without Postgres or Cloudflare; every side effect goes through one adapter,
+`infra/scripts/ha-pg.sh` (role, LSNs, streaming, peer role, promote, fence, start as standby,
+rewind or re-seed, synchronous standby names, prune), which the container drill exercises for real.
+
+Each tick (`TICK`, 15 s) it observes:
 
 1. **CF**: the Cloudflare API's view of each pool (`GET .../load_balancers/pools/{id}/health`,
-   token scoped to Load Balancing: Read on this account only). Result per node: healthy, unhealthy,
-   or UNKNOWN (API unreachable, error, stale).
-2. **Peer**: can this node reach the other node's Postgres over the private link (WireGuard), and
-   is the replica streaming (`pg_stat_replication` on the primary, `pg_stat_wal_receiver` on the standby).
-3. **Self**: `pg_is_in_recovery()` on the local Postgres.
+   token scoped to Load Balancing: Read on this account only). Per node: healthy, unhealthy, or
+   UNKNOWN (API unreachable, error, no answer for the pool).
+2. **Peer**: the other node's Postgres over the private link: primary, standby or unreachable,
+   and its WAL position.
+3. **Self**: the local Postgres: primary, standby or down; streaming (primary: the peer is in
+   `pg_stat_replication` as `streaming`; standby: `pg_stat_wal_receiver` is `streaming`); WAL
+   position; current `synchronous_standby_names`.
 
-Clocks are NTP-synced on both nodes (checked by `ha-checks.sh`); every window is measured in
-seconds of continuous state, not in tick counts.
+Windows are seconds of continuous state (state file survives a controller restart), never tick
+counts. Clocks are NTP-synced (`ha-checks.sh` alerts otherwise). Config, all env, defaults derived
+from the Cloudflare check so a faster plan needs one change:
 
-**Primary keeps the right to write (a lease).** The primary stays writable while EITHER Cloudflare
-reported it healthy within the last `FENCE_AFTER` (default 240 s) OR the standby is streaming from
-it right now (then the standby can see it, so the standby will not promote). When both have been
-false for `FENCE_AFTER`, the primary **fences itself**: stops the workers (role watcher), then
-stops Postgres (`pg_ctl stop -m fast`), so `/api/v1/health/role` turns 503 and nothing can write.
-It does not restart Postgres until the peer is reachable again (section 3c).
+| Name | Default | Meaning |
+|---|---|---|
+| `CF_CHECK_INTERVAL`, `CF_CONSECUTIVE_DOWN` | 60 s, 2 | what the LB monitor is set to (owner Q1) |
+| `FENCE_AFTER` | `2 x interval x down` = 240 s | primary's lease |
+| `PROMOTE_AFTER` | `FENCE_AFTER + max(180, 3 x interval)` = 420 s | standby's wait; refused at start unless >= `FENCE_AFTER + FENCE_MARGIN` (180 s) |
+| `APP_SICK_AFTER` | 900 s | Q3: Cloudflare-unhealthy primary with a healthy standby fences itself |
+| `APP_SICK_COOLDOWN` | 86400 s | at most one app-sick fence per node per day (no ping-pong on a broken monitor) |
+| `FENCE_HOLD` | `PROMOTE_AFTER + 180` = 600 s | a fenced node stays down this long unless the peer is primary |
+| `REJOIN_AFTER` | 120 s | standby not streaming from a reachable primary this long: rewind / re-seed |
+| `BOTH_STANDBY_AFTER` | 60 s | both nodes standby and reachable: the one further ahead promotes |
+| `MAX_LAG` | 16 MB | a standby further behind the primary's last seen position never promotes |
+| `SYNC_MODE` | `off` | Q5: `remote_write` once A-B RTT < 2 ms |
+| `RESEED_KEEP_DAYS` | 7 | Q4: moved-aside data directories older than this are deleted |
 
-**Standby promotes only when all hold, continuously for `PROMOTE_AFTER` (default 420 s =
-`FENCE_AFTER` + 180 s margin):** Cloudflare positively reports the primary UNHEALTHY (UNKNOWN never
-counts, so a Cloudflare API outage never promotes); the standby's WAL receiver is disconnected; the
-standby cannot open a connection to the primary's Postgres over the link; and its last received WAL
-position was within `MAX_LAG` (16 MB, as `patroni.yml:41`) of the primary's last reported position.
-Then `SELECT pg_promote()`; the role watcher starts the workers; the LB sees 200 and moves traffic.
+**Rules.** Primary (P), standby (S), Postgres down (D):
 
-Why this cannot give two writable DBs: the standby's conditions imply the primary's fence
-conditions (Cloudflare unhealthy, no streaming) have held for at least 180 s longer than the
-primary needs to fence. The one case it relies on clocks and the primary's own controller running:
-a primary whose controller is hung. The watchdog covers that (softdog, `templates/host/`): the
-controller pets it, so a hung controller reboots the box, which also stops Postgres, before
-`PROMOTE_AFTER` passes. Cases:
+- **P1 lease**: writable while Cloudflare reported it healthy within `FENCE_AFTER` OR the peer is
+  streaming from it now. Both false for `FENCE_AFTER`: **fence** = stop the workers, then stop
+  Postgres; `/api/v1/health/role` turns 503, nothing can write.
+- **P2 app sick (Q3)**: Cloudflare positively reports it UNHEALTHY for `APP_SICK_AFTER` while the
+  peer streams from it (a standby is there to take over) and it has not app-sick-fenced in
+  `APP_SICK_COOLDOWN`: fence, alert. During those 15 minutes autoheal restarts unhealthy containers
+  (`templates/compose.ha.yml:13`).
+- **P3 two primaries** (never expected): alert; fence itself unless Cloudflare reports it healthy.
+- **P4 sync standby (Q5)**: with `SYNC_MODE` on, `synchronous_standby_names` = the peer while it
+  streams, empty the moment it stops; with it off, always empty. Set only on change.
+- **S1 promote**: all of these held continuously for `PROMOTE_AFTER`: Cloudflare positively reports
+  the peer UNHEALTHY (UNKNOWN never counts, so a Cloudflare API outage never promotes); this node
+  is not streaming; the peer's Postgres is unreachable. And this node's WAL position is within
+  `MAX_LAG` of the peer's last seen position (else alert, no promotion). Then `pg_promote()`,
+  create the peer's replication slot, alert.
+- **S2 rejoin**: the peer is primary and this node has not streamed from it for `REJOIN_AFTER`:
+  `pg_rewind` onto the peer; if that fails, move the data directory aside and `pg_basebackup`
+  (Q4), alert.
+- **S3 both standby**: both reachable and in recovery for `BOTH_STANDBY_AFTER` (after a double
+  reboot or a crash): the node with the higher WAL position promotes; on a tie the lower node name.
+  The rule is deterministic, so exactly one wins.
+- **D1 not fenced** (boot, crash, watchdog reboot): start Postgres AS A STANDBY, always. A node
+  never comes up writable by itself; S1 or S3 decide who writes.
+- **D2 fenced**: peer primary: rejoin (S2's path), then standby. Otherwise wait `FENCE_HOLD`, then
+  start as a standby if the peer is a standby (S3 then picks) or the peer is unreachable and
+  Cloudflare has reported it unhealthy for `PROMOTE_AFTER` (S1 then applies).
+
+Why there can never be two writable databases: S1 needs `PROMOTE_AFTER` of "Cloudflare says the
+peer is unhealthy, no stream, peer unreachable". Over that time the peer's P1 lease conditions
+were also false (no Cloudflare-healthy report, nobody streaming), and `PROMOTE_AFTER` exceeds
+`FENCE_AFTER` by at least 180 s, so the peer fenced itself first. That rests on the peer's
+controller running: a hung controller stops petting the watchdog (softdog, `templates/host/`) and
+the box reboots, and D1 brings it back read-only. Every other path that starts Postgres starts it
+as a standby.
 
 | Fault | What happens |
 |---|---|
-| Node A box dead / network dead | CF: A unhealthy; B: no link. A is gone (or fences if only its network died). B promotes after 420 s. |
-| Link A-B cut, both reachable from Cloudflare | CF says A healthy, so A keeps writing and B never promotes. Alert (lag). No outage. |
-| Cloudflare API down | UNKNOWN: B never promotes. A keeps writing while B streams; if the link is also down, A fences after 240 s (the safe side: brief outage, no split brain). Alert. |
-| A's app down, DB fine | CF: A unhealthy, but B still streams, so no fence and no promotion: autoheal restarts the containers (`templates/compose.ha.yml:13`). Q3 asks whether to fail over after a longer window. |
-| Cloudflare monitor misconfigured (A shown unhealthy while fine) | B streams, so nothing happens; alert. A wrong monitor alone never moves the DB. |
-| A comes back after a failover | 3c. |
+| Node A box dead / network dead | CF: A unhealthy; B: no link. A is gone (or fences after 240 s if only its network died). B promotes 420 s after Cloudflare first reports A down. |
+| Link A-B cut, both reachable from Cloudflare | CF says A healthy, so A keeps writing and B never promotes. Alert (no replica). |
+| Cloudflare API down | UNKNOWN: B never promotes. A keeps writing while B streams; if the link is also down, A fences after 240 s (safe side: outage, no split brain), and after `FENCE_HOLD` and the link back, S3 hands the write role to the node further ahead. |
+| A's app down, DB fine (Q3) | autoheal restarts it; still Cloudflare-unhealthy after 15 min: A fences (P2), B promotes 420 s later. |
+| Cloudflare monitor misconfigured | at most one app-sick failover per node per day, alerting each time; never two writers. |
+| Both nodes reboot (power) | D1: both come up standby; S3: the one further ahead promotes after 60 s. |
+| A comes back after a failover | D2 / S2: rewind or re-seed, follows B. No switchback. |
 
 ### 3c. The old primary comes back
 
-Its controller starts with Postgres stopped (fenced) and never starts it writable on its own. It
-reads the peer: if node B is primary (reachable, not in recovery), it rewinds A onto B's timeline
-(`pg_rewind --source-server`), writes `standby.signal` + `primary_conninfo` pointing at B, starts
-Postgres as a replica: A is now the standby, B stays primary (no switchback, Q4 of 1 Nov). If the
-rewind fails it re-seeds with `pg_basebackup` (Q4 of this card). If the peer cannot be reached it
-stays stopped and alerts. Transactions A committed but never streamed before it died are discarded
-by the rewind (async: normally under a second; at most `MAX_LAG`).
+D2 then S2: it never starts writable. It rewinds onto the new primary's timeline
+(`pg_rewind --source-server ... --write-recovery-conf`); if the rewind fails, the data directory
+is moved aside to `<PGDATA>.old-<UTC timestamp>` in the same volume (not deleted; kept
+`RESEED_KEEP_DAYS`, 7) and `pg_basebackup -R` copies the primary; an alert goes out either way
+(Q4). Commits the old primary acknowledged but never streamed are discarded by the rewind (async:
+normally under a second; at most `MAX_LAG`; with `SYNC_MODE=remote_write` none while both ran).
+Disk: a re-seed holds two copies of the database for up to 7 days (about 54 GB each today,
+`PLAN-n8n-decom-ha-01nov.md:179`); `ha-checks.sh` alerts on disk and the owner can prune early.
 
 ## 4. Cloudflare LB configuration
 
@@ -132,7 +172,7 @@ by the rewind (async: normally under a second; at most `MAX_LAG`).
   report; Cloudflare marks B healthy at its next check, 0-60 s; DNS caches expire, 30 s+. Total
   about **8-11 minutes**. The 420 s is the safety margin that 60 s checks force (the primary must be
   sure it is fenced before the standby can be sure). With 15 s checks (add-on) the windows shrink
-  to about 60/105 s and the total to about 3-4 minutes. respond.io retries webhooks for about 3
+  to 60/240 s (the 180 s fence margin is a floor) and the total to about 5 minutes (corrected 4 Nov; the card said 3-4). respond.io retries webhooks for about 3
   minutes; messages from the gap are backfilled by the chat-history reconcile
   (`app/scheduler/task_scheduler.py:347`, `PLAN-n8n-decom-ha-01nov.md:55`) once node B runs the
   scheduler. Q1 asks which interval.
@@ -175,6 +215,18 @@ Q1-Q5 below; answers recorded in section 8.
 4. Old primary returns and rewind fails: (a) automatic re-seed from the new primary (`pg_basebackup`, A's old data moved aside, not deleted); (b) stay stopped and page the owner. Rec (a), with the old data kept 7 days.
 5. Replication: (a) async now, synchronous (remote_write) once the measured A-B RTT is under 2 ms; (b) async only. Rec (a): closes the "last second of commits" loss on a fast link; the controller drops the standby from `synchronous_standby_names` the moment it stops streaming, so a dead standby never blocks writes on the primary.
 
-## 8. Owner answers
+## 8. Owner answers (crew, 4 Nov, from the owner rulings of 27 Oct, 1 Nov, 4 Nov)
 
-(pending)
+Standing rulings: AUTOMATIC failover, self-maintaining, never propose manual promotion as the
+default, re-seed the old primary automatically.
+
+- **Q1 pending with the owner** (cost vs failover time). Built for (a) 60 s; the interval and the
+  failure count are config values (`CF_CHECK_INTERVAL`, `CF_CONSECUTIVE_DOWN`), and every window
+  derives from them.
+- **Q2 (a)** DNS-only, TTL 30 s, a DNS-01 certificate on each node.
+- **Q3 (a), not the recommendation (b)**: automatic. For 15 minutes autoheal restarts containers;
+  if A is still Cloudflare-unhealthy after that, A fences itself and B promotes. 15 minutes is a
+  config value (`APP_SICK_AFTER`). Rule P2.
+- **Q4 (a)** automatic re-seed with `pg_basebackup`, old data moved aside and kept 7 days, alert.
+- **Q5 (a)** async now; `remote_write` synchronous once measured RTT < 2 ms; the standby is
+  dropped from `synchronous_standby_names` the moment it stops streaming. Rule P4.
