@@ -30,6 +30,7 @@ from tests.chatbot.test_report_totals_filters import (  # noqa: F401 - fixtures 
     _ra2,
 )
 from tests.chatbot.test_report_unify_routing import bot, console  # noqa: F401 - fixtures
+from tests._mc_lookup_seed import MOCHA_ID
 from tests.chatbot.test_chat_state_parser_input import _fresh_prompt_cache  # noqa: F401 - fixture
 from tests.chatbot.test_report_ask_lane import console_no_grant  # noqa: F401 - fixture
 from tests.chatbot.test_lookup_lists_s2 import scoped
@@ -370,8 +371,8 @@ def test_f5_m7_a_company_row_is_never_a_spans_resolved_match_but_the_block_still
 
 @pytest.mark.parametrize("said_as,both", [("company", False), ("both", True)], ids=["company", "both"])
 def test_f5_m9_said_as_company_or_both_beats_a_kind_said_brand(rbot, world, said_as, both) -> None:
-    """Depends on report_ask._word_kinds' `said_as in ("company", "both")` branch (report_ask.py:3432), which sits before the
-    kind_said branch: without it kind_said "brand" wins and the report runs as the brand only."""
+    """Depends on report_ask._word_kinds' `said_as in ("company", "both")` branch (report_ask.py:3422, covers company/brand/both), which sits
+    before the kind_said branch: without it kind_said "brand" wins and the report runs as the brand only."""
     sorento, _m = world
     ent = _ent("sorento", "brand", "SORENTO", "brand")
     ent["said_as"] = said_as
@@ -383,7 +384,7 @@ def test_f5_m9_said_as_company_or_both_beats_a_kind_said_brand(rbot, world, said
 
 
 def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many(rbot, world) -> None:
-    """Depends on the `axis == held_axis` clause of the HT1-8 rule (report_ask.py:3543): without it a customer ranking with no
+    """Depends on the `axis == held_axis` clause of the HT1-8 rule (report_ask.py:3535): without it a customer ranking with no
     count would be read as the held every-agent list again and run instead of asking."""
     sorento, _m = world
     _hold_agents(rbot, sorento)
@@ -392,3 +393,55 @@ def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many
            entity_op="replace_combine", ranking_refine=True, sales_company=sorento, domain_in_message=False, **SEPF)
     text, calls = rbot.say(v, "customers")
     assert TOP_N_Q in text, f"M14: {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ review round 3
+
+
+def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_company(rbot, world) -> None:
+    """Lock 1: HT1-6 with said_as "brand". Depends on `and _squash(word) != held_name` (report_ask.py:3603): without it the
+    brand branch drops the object's same-name company even though it is the held one (CP-5)."""
+    sorento, _m = world
+    _hold_agents(rbot, sorento)
+    text, calls = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"R3-1: {args}"
+
+
+def test_r3_lock_said_as_brand_decides_before_the_c6_1_company_reading_with_kind_said_null(rbot, world) -> None:
+    """Lock 2: F2's shape with kind_said null. Depends on the said_as branch sitting ahead of the C6-1 `loose` company reading
+    in `_word_kinds` (report_ask.py:3422 before :3426-3432): reordered, the null kind_said + same-name company reads as the
+    company and the brand is lost."""
+    sorento, _m = world
+    ent = _ent("Sorento", "brand", None, None)
+    ent["said_as"] = "brand"
+    text, calls = rbot.say(_fresh(ent, company=sorento, brands=["SORENTO"], message=""), "Sorento brand only Sep 2026 delivered")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("brand_ids") and "company" not in args, f"R3-2: {args}"
+
+
+def test_r3_said_as_decides_the_slot_only_for_a_company_name_a_brand_that_is_no_company_still_asks_on6(rbot, world) -> None:
+    """ON-6 latent regression: Cabana is a brand and an account type, not one of the contact's companies; said_as "brand"
+    must not settle it, the brand-or-account-type question stays."""
+    from tests.chatbot.test_sales_account_type_lane import QUESTION
+
+    sorento, _m = world
+    ent = _ent("cabana", "brand", "CABANA", None)
+    ent["said_as"] = "brand"
+    ra = _ra2(None, basis="delivered", company=sorento, brands=["Cabana"], **SEP)
+    v = _v("sales_report", ra, ent, basis="delivered", sales_company=sorento, domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "Cabana sales Sep delivered")
+    assert not _ran(calls) and text.strip() == QUESTION, (calls, text)
+
+
+def test_r3_a_held_company_carries_when_the_object_names_a_same_name_company_and_said_as_is_brand(rbot, world) -> None:
+    """Owner Q3: Company Mocha held, "Sorento brand only" with the object's company "Sorento" + brands [SORENTO], said_as
+    brand: the held company stays beside the brand, as when the object's company is null."""
+    sorento, mocha = world
+    _hold_agents(rbot, mocha)
+    text, calls = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == MOCHA_ID and args.get("brand_ids"), f"R3-4: {args}"

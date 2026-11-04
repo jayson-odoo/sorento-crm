@@ -1708,3 +1708,19 @@ def test_account_type_gold_open_question_is_the_object_the_engine_sends():
         assert list(asked) == list(sent), (row_id, list(asked), list(sent))
         assert asked["question"] == sent["question"] == "Brand or account type?"
         assert asked["options"] == sent["options"] and asked["owed"] == ["kind"]
+
+
+def _said_as_v(said_as, *, key=True):
+    ent = {"hint": "brand", "raw": "Sorento", "canonical_code": "SORENTO"}
+    if key:
+        ent["said_as"] = said_as
+    return {"entities": [ent]}
+
+
+def test_entity_said_as_grading_flags_a_mismatch_and_a_missing_key_and_passes_a_match():
+    want = {"entity_said_as": {"sorento": "company"}}
+    ok, why = pg.grade_parse(_said_as_v("brand"), want)
+    assert ok is False and any("said_as" in r for r in why), why
+    ok, why = pg.grade_parse(_said_as_v(None, key=False), want)
+    assert ok is False and any("said_as" in r for r in why), why
+    assert pg.grade_parse(_said_as_v("company"), want) == (True, [])
