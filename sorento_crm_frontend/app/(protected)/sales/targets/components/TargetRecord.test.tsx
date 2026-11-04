@@ -173,7 +173,7 @@ vi.mock('../actions', async (importOriginal) => ({
   }),
 }));
 
-import TargetRecord from './TargetRecord';
+import TargetRecord, { rateText } from './TargetRecord';
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const PRODUCT_ID = '6f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
@@ -771,9 +771,9 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     const table = screen.getByRole('table', { name: 'Counted accounts' });
     expect(within(table).getByText('300-A0124')).toBeTruthy();
     expect(within(table).getByText('A/C III')).toBeTruthy();
-    expect(within(table).getByText('70,000')).toBeTruthy();
-    expect(screen.getByText('300-A0123 - DEALER A SDN BHD (A/C I)')).toBeTruthy();
-    expect(within(table).getByText(/provisional, incl\. tax/)).toBeTruthy();
+    expect(within(table).getByText('70,000.00')).toBeTruthy();
+    expect(screen.getAllByText('300-A0123 - DEALER A SDN BHD (A/C I)').length).toBeGreaterThan(0);
+    expect(within(table).getByText(/sales orders, incl\. tax/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
@@ -795,12 +795,12 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
-  it('read mode names the dealer, and Periods labels the SO-based figures provisional', () => {
+  it('read mode names the dealer, and Periods says the figures are sales orders incl. tax', () => {
     hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     expect(screen.getByText('Dealer', { selector: 'span' })).toBeTruthy();
     openTab('Periods');
-    expect(screen.getByText('Achieved (provisional, incl. tax)')).toBeTruthy();
+    expect(screen.getByText('Achieved (sales orders, incl. tax)')).toBeTruthy();
   });
 
   it('the Commission tab shows the four settings and a rate column per account', () => {
@@ -852,5 +852,98 @@ describe('TargetRecord: the one engine on an agent target', () => {
     expect(sent.tiers).toEqual([
       { threshold: 500000, rate: 1.5, bonus_amount: null, is_additional: true },
     ]);
+  });
+});
+
+
+// ----------------------------------------------------------------------------------------
+// Lane TARGET-COMMISSION-VIEW: what the target earned, per period, and where it pays
+// ----------------------------------------------------------------------------------------
+
+/** TGT-000008 in miniature (the owner's 4 Nov case): Q1 + Q2 paid, Q3 none, Q4 current. */
+function tgt8(over: Record<string, unknown> = {}) {
+  const account = { customer_id: A1, code: '300-A077', name: 'A CRAFT IDEA SDN BHD', label: 'A/C I' };
+  const period = (id: string, start: string, end: string, achieved: number, pct: number, paid: number, tier: number | null, rate: number | null, current = false) => ({
+    id, period_start: start, period_end: end, target_value: 60000, achieved_value: achieved, achieved_pct: pct,
+    is_current: current, commission_earned: paid, bonus_earned: 0, tier_reached: tier,
+    tier_rates: rate === null ? [] : [{ label: null, rate }],
+    accounts: [{ ...account, achieved_value: achieved }],
+  });
+  return dealerDetail({
+    periods: [
+      period('q1', '2026-01-01', '2026-03-31', 61351.64, 102.3, 3681.1, 1, 6),
+      period('q2', '2026-04-01', '2026-06-30', 64740.4, 107.9, 3237.02, 1, 5),
+      period('q3', '2026-07-01', '2026-09-30', 23460, 39.1, 0, null, null),
+      period('q4', '2026-10-01', '2026-12-31', 1235.58, 2.1, 0, null, null, true),
+    ],
+    accounts: [account],
+    payout_account: account,
+    commission_to_date: 6918.12,
+    commission_current: 0,
+    ...over,
+  });
+}
+
+describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
+  it('shows what the target earned to date, the current period apart, and the account it pays to', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    const summary = screen.getByRole('region', { name: 'Commission summary' });
+    expect(within(summary).getByText('6,918.12')).toBeTruthy();
+    expect(within(summary).getByText('01/10/2026 to 31/12/2026, 2.1% of target, not final')).toBeTruthy();
+    expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
+    expect(within(summary).getByText('Payment is not tracked in the CRM')).toBeTruthy();
+  });
+
+  it('Periods shows the tier reached, its rate, the commission in RM with 2 decimals, where it pays and a total', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Periods');
+    const q1 = screen.getByText('01/01/2026 to 31/03/2026').closest('tr') as HTMLElement;
+    expect(within(q1).getByText('Tier 1')).toBeTruthy();
+    expect(within(q1).getByText('6.00%')).toBeTruthy();
+    expect(within(q1).getByText('3,681.10')).toBeTruthy();
+    expect(within(q1).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
+    const q3 = screen.getByText('01/07/2026 to 30/09/2026').closest('tr') as HTMLElement;
+    expect(within(q3).getByText('None')).toBeTruthy();
+    expect(within(q3).getAllByText('-').length).toBeGreaterThan(0);
+    const total = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(total).getByText('6,918.12')).toBeTruthy();
+  });
+
+  it('Accounts shows every period, its total, the commission and where it pays, not only the current one', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Accounts');
+    const table = screen.getByRole('table', { name: 'Counted accounts' });
+    expect(within(table).getByText('Sales (RM, sales orders, incl. tax)')).toBeTruthy();
+    for (const label of ['01/01/2026 to 31/03/2026', '01/04/2026 to 30/06/2026', '01/07/2026 to 30/09/2026', '01/10/2026 to 31/12/2026']) {
+      expect(within(table).getByText(label)).toBeTruthy();
+    }
+    expect(within(table).getAllByText('3,681.10')).toHaveLength(1);
+    expect(within(table).getByText('Period total (so far)')).toBeTruthy();
+    // Q4's 1,235.58 now sits on its own period row, not under an ambiguous column header.
+    const current = within(table).getByText('Period total (so far)').closest('tr') as HTMLElement;
+    expect(within(current).getByText('1,235.58')).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(UUID);
+  });
+
+  it('a target with no commission shows no summary', () => {
+    hooks.useSalesTarget.mockReturnValue({
+      data: tgt8({ commission_method: 'none', commission_to_date: null, commission_current: null }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    expect(screen.queryByRole('region', { name: 'Commission summary' })).toBeNull();
+  });
+});
+
+describe('rateText', () => {
+  it('formats one rate, per-account rates and a quantity rate', () => {
+    expect(rateText([{ label: null, rate: 6 }], 'amount')).toBe('6.00%');
+    expect(rateText([{ label: 'A/C I', rate: 2 }, { label: 'A/C III', rate: 3.5 }], 'amount')).toBe('A/C I 2.00%, A/C III 3.50%');
+    expect(rateText([{ label: null, rate: 1.5 }], 'quantity')).toBe('RM 1.50/unit');
+    expect(rateText([], 'amount')).toBe('');
   });
 });

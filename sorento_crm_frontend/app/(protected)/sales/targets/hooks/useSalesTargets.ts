@@ -10,6 +10,7 @@ import {
   getSalesTarget,
   getSalesTargetOptions,
   getSalesTargets,
+  downloadCommissionStatement,
   downloadDealerTargetsTemplate,
   importDealerTargets,
   patchSalesTarget,
@@ -186,5 +187,12 @@ export function useDownloadDealerTemplate() {
   return useMutation({
     mutationFn: (year: number) => downloadDealerTargetsTemplate(year),
     onError: (error: Error) => toast.error(error.message || 'Failed to download the template'),
+  });
+}
+
+export function useDownloadCommissionStatement() {
+  return useMutation({
+    mutationFn: (ids: string[]) => downloadCommissionStatement(ids),
+    onError: (error: Error) => toast.error(error.message || 'Failed to export the commission statement'),
   });
 }
