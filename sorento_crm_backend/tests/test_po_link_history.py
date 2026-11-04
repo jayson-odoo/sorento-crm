@@ -532,6 +532,30 @@ class TestBackfill:
 
         assert _events(env, line_id, SEEN) == []
 
+    def test_the_earliest_autocount_claim_dates_the_line_and_other_sources_do_not(self, env):
+        # A line can carry several claims (identity is company + S/O + PO + item,
+        # `order_link_service.py:355`): ONE seen row, dated by the earliest AUTOCOUNT claim; a
+        # still earlier claim from another source never counts.
+        from app.models.scm import OrderLinkClaim
+
+        record, (line_id,) = _pre_history_lines(env, ["ZZT_BF:4:1"], created_at=datetime(2026, 9, 20))
+        for so_number, source, at in (
+            ("ZZT-SO-LATE", "autocount", datetime(2026, 9, 8, 9, 0)),
+            ("ZZT-SO-EARLY", "autocount", datetime(2026, 9, 5, 9, 0)),
+            ("ZZT-SO-HIST", "po_history", datetime(2026, 9, 1, 9, 0)),
+        ):
+            env.db.add(OrderLinkClaim(
+                id=str(uuid.uuid4()), company_id=env.company_a, so_number=so_number,
+                po_number=record["po_number"], source=source, claimed_at=at, po_line_id=line_id,
+            ))
+        env.db.commit()
+
+        assert _run_backfill(env.db) == 1
+
+        seen = _events(env, line_id, SEEN)
+        assert len(seen) == 1
+        assert seen[0].changed_at == datetime(2026, 9, 5, 1, 0)  # 09:00 MYT on 5 Sep, as UTC
+
     def test_the_migration_no_longer_writes_the_backfill(self, env):
         # The deploy runs every pending revision in ONE transaction inside the 240 s health
         # wait: polh_0001 stays in the chain but seeds nothing.
@@ -576,7 +600,27 @@ def _linked_lines_in(engine) -> int:
         ).scalar()
 
 
-def test_the_script_backfills_and_releases_its_lock():
+def _advisory_held(engine, key: int) -> int:
+    """Sessions holding advisory lock `key` (a key below 2**31: classid 0, objid = key)."""
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                 "AND classid = 0 AND objid = :k AND granted"),
+            {"k": key},
+        ).scalar()
+
+
+@pytest.fixture
+def lock_key(monkeypatch):
+    """A per-test key, so a held lock can never block another test or a real backend."""
+    from scripts import backfill_po_link_seen as script
+
+    key = 0x10000000 + uuid.uuid4().int % 0x0FFFFFFF
+    monkeypatch.setattr(script, "ADVISORY_LOCK_KEY", key)
+    return key
+
+
+def test_the_script_backfills_and_releases_its_lock(lock_key):
     from scripts import backfill_po_link_seen as script
 
     from ._pg_fixture import blank_schema_engine
@@ -585,13 +629,12 @@ def test_the_script_backfills_and_releases_its_lock():
     # Honest only on an empty scratch schema: the script commits for real.
     assert _linked_lines_in(engine) == 0
     assert script.run(engine) == 0
-    with engine.connect() as other:
-        key = {"k": script.ADVISORY_LOCK_KEY}
-        assert other.execute(text("SELECT pg_try_advisory_lock(:k)"), key).scalar() is True
-        other.execute(text("SELECT pg_advisory_unlock(:k)"), key)
+    # pg_locks, not a second try-lock: a pooled engine may hand back the very connection that
+    # still holds it, and a session re-acquires its own lock.
+    assert _advisory_held(engine, lock_key) == 0
 
 
-def test_the_script_leaves_it_to_a_backend_already_backfilling():
+def test_the_script_leaves_it_to_a_backend_already_backfilling(lock_key):
     # Blue and green starting together: the one that does not get the lock does nothing.
     from scripts import backfill_po_link_seen as script
 
@@ -599,8 +642,9 @@ def test_the_script_leaves_it_to_a_backend_already_backfilling():
 
     engine = blank_schema_engine()
     with engine.connect() as other:
-        key = {"k": script.ADVISORY_LOCK_KEY}
-        other.execute(text("SELECT pg_advisory_lock(:k)"), key)
+        key = {"k": lock_key}
+        # try, never a blocking pg_advisory_lock: a leaked lock must fail this test, not hang it.
+        assert other.execute(text("SELECT pg_try_advisory_lock(:k)"), key).scalar() is True
         try:
             assert script.run(engine) is None
         finally:
