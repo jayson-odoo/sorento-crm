@@ -669,7 +669,9 @@ def test_ct1_the_real_parse_both_slots_filled_kind_said_null_asks_the_kind_quest
     rank_direction. Rule A: that is the kind question, never a silent company only; the PROMPT (not the engine) is what
     puts "company only" in the company slot alone."""
     sorento, _m = world
-    _hold(rbot, sorento, group_by=None)
+    held = _v("sales_report", _ra2("total", basis="delivered", **SEP), basis="delivered", domain_in_message=True, **SEPF)
+    text, calls = rbot.say(held, "total sale September 2026 delivered")  # held: Sep, delivered, total, no company
+    assert _ran(calls), f"setup: {text!r}"
     ra = _ra2("breakdown", basis="delivered", group_by="channel", company=sorento, brands=["SORENTO"], **SEP)
     v = _follow("sales_ranking", ra, _ent("sorento", "brand", "SORENTO", None), group_by="channel", rank_direction="top",
                 sales_company=sorento, **SEPF)
