@@ -49,13 +49,23 @@ class StubProvider:
         return ChatResult(content=content, prompt_tokens=1, completion_tokens=1, total_tokens=2)
 
 
-def _pdf(path, pages):
+CODES_ON_PAGE = (
+    "SRTKS7061 SRTKT1862SS SRTKT1863SS SRTKT1871SS SRTKT1880SS SRTKT1892SS SRTKT71SS "
+    "SRTWB1419-BL SRTWT7449-BL SRTWT7449-RG SRTBF11829 SRTMCB8083-BL SRTWT6203-GM"
+).split()
+
+
+def _pdf(path, pages, with_codes=True):
+    """A PDF with one page per text; every page also prints the codes the stub answers use,
+    since a code that is not on the page is dropped (S7). `with_codes=False` prints only the text."""
     import pymupdf
 
     doc = pymupdf.open()
     for text in pages:
         page = doc.new_page()
-        page.insert_text((72, 72), text)
+        lines = [text, *(CODES_ON_PAGE if with_codes else [])]
+        for n, line in enumerate(lines):
+            page.insert_text((72, 72 + 12 * n), line)
     doc.save(str(path))
     doc.close()
     return path
@@ -273,3 +283,51 @@ def test_a_file_that_is_not_a_pdf_is_refused(tmp_path):
     code, out, seed = _run(tmp_path, provider, bogus)
     assert code != 0
     assert provider.calls == []
+
+
+def test_a_code_that_is_not_on_the_page_is_dropped_and_noted(tmp_path):
+    """S7: the model may not name a product the page does not print."""
+    answer = {
+        "combos": [
+            {
+                "host_code": "SRTKS7061",
+                "combo_name": "Invented parts",
+                "components": [{"code": "srt-made-up-1", "role": "Mirror"}, {"code": "SRTWT 6203-GM"}],
+                "choice_groups": [{"role": "Tap", "options": [{"code": "SRTMADEUP2"}, {"code": "SRTKT1862SS"}]}],
+                "topups": [{"code": "SRTMADEUP3", "topup": 10}],
+                "unsure": "",
+            }
+        ]
+    }
+    pdf = _pdf(tmp_path / "i.pdf", ["SRTKS7061 SRTKT1862SS and SRTWT6203-GM printed"], with_codes=False)
+    code, _out, seed = _run(tmp_path, StubProvider(answer), pdf)
+    assert code == 0
+    (entry,) = seed
+    assert entry["host_code"] == "SRTKS7061"
+    assert [c.get("code") or "" for c in entry["components"]] == ["", "SRTWT 6203-GM"], "whitespace is not a difference"
+    assert [o.get("code") or "" for o in entry["choice_groups"][0]["options"]] == ["", "SRTKT1862SS"]
+    assert entry["topups"][0].get("code", "") == ""
+    for invented in ("SRT-MADE-UP-1", "SRTMADEUP2", "SRTMADEUP3"):
+        assert f"code not on page: {invented}" in entry["unsure"]
+
+
+def test_an_invented_host_code_is_dropped(tmp_path):
+    answer = {"combos": [{"host_code": "SRTNOTHERE", "combo_name": "X", "unsure": ""}]}
+    pdf = _pdf(tmp_path / "j.pdf", ["nothing"], with_codes=False)
+    _code, _out, seed = _run(tmp_path, StubProvider(answer), pdf)
+    assert not seed[0].get("host_code")
+    assert "code not on page: SRTNOTHERE" in seed[0]["unsure"]
+
+
+def test_when_every_page_fails_nothing_is_written_and_the_exit_is_non_zero(tmp_path):
+    pdf = _pdf(tmp_path / "k.pdf", ["1", "2"])
+    code, out, seed = _run(tmp_path, StubProvider("not json", "still not json"), pdf)
+    assert code != 0
+    assert seed is None
+    assert "page 1" in out.lower() and "page 2" in out.lower()
+
+
+def test_one_good_page_still_writes_the_rest(tmp_path):
+    pdf = _pdf(tmp_path / "l.pdf", ["1", "2"])
+    code, _out, seed = _run(tmp_path, StubProvider("not json", S2_ANSWER), pdf)
+    assert code == 0 and [e["page"] for e in seed] == [2]

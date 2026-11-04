@@ -195,6 +195,42 @@ def _open_pdf(path: Path):
     return document
 
 
+def _squash(value: str) -> str:
+    return "".join(value.split()).upper()
+
+
+def drop_unseen_codes(combo: Combo, text: str) -> None:
+    """A code the model names that the page does not print is dropped and noted in `unsure`.
+
+    Compared with whitespace removed and upper-cased on both sides; the code itself is never
+    altered. The page is the only source of a code, so the model cannot introduce one."""
+    page = _squash(text)
+    dropped: list[str] = []
+
+    def seen(code: Optional[str]) -> bool:
+        if not code:
+            return True
+        if _squash(code) in page:
+            return True
+        dropped.append(code)
+        return False
+
+    if not seen(combo.host_code):
+        combo.host_code = None
+    items = [
+        *combo.free_items,
+        *combo.components,
+        *(option for group in combo.choice_groups for option in group.options),
+        *combo.topups,
+    ]
+    for item in items:
+        if not seen(item.code):
+            item.code = ""
+    if dropped:
+        note = "; ".join(f"code not on page: {code}" for code in dropped)
+        combo.unsure = f"{combo.unsure}; {note}"[:500] if combo.unsure else note[:500]
+
+
 def read_page(provider, text: str) -> PageAnswer:
     reply = provider.chat(
         [
@@ -206,7 +242,10 @@ def read_page(provider, text: str) -> PageAnswer:
         timeout=MODEL_TIMEOUT_SECONDS,
         response_format={"type": "json_object"},
     )
-    return parse_answer(reply.content or "")
+    answer = parse_answer(reply.content or "")
+    for combo in answer.combos:
+        drop_unseen_codes(combo, text)
+    return answer
 
 
 def main(
@@ -244,6 +283,7 @@ def main(
             out.write("no LLM provider is configured\n")
             return 1
         seed: list[dict] = []
+        read_ok = 0
         for flyer, document in documents:
             stem = Path(flyer).stem
             for index in range(document.page_count):
@@ -259,6 +299,7 @@ def main(
                 except Exception as exc:  # a provider failure is one page, not the run
                     out.write(f"page {number} of {flyer}: the model call failed ({type(exc).__name__}), skipped\n")
                     continue
+                read_ok += 1
                 for position, combo in enumerate(answer.combos, start=1):
                     entry = combo.model_dump(exclude_none=True)
                     entry.update(id=f"{stem}-p{number}-{position}", flyer=flyer, page=number)
@@ -267,6 +308,10 @@ def main(
         for _name, document in documents:
             document.close()
 
+    if read_ok == 0:
+        # Nothing was read: an empty seed would pass for "the flyer has no combos".
+        out.write("no page could be read, nothing written\n")
+        return 1
     Path(args.out).write_text(json.dumps(seed, indent=2, ensure_ascii=False), encoding="utf-8")
     out.write(f"{len(seed)} combos written to {args.out}\n")
     return 0
