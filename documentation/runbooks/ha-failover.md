@@ -1,93 +1,149 @@
-# HA failover runbook (Tier 1, Patroni + etcd)
+# HA failover runbook (two nodes, Cloudflare Load Balancing as the witness)
 
-Plan: `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md`, amended 1 Nov 2026 by
-`documentation/plans/infra/PLAN-n8n-decom-ha-01nov.md` (n8n retires). Templates: `infra/`. This file
-grows with the drills (plan section 12); today it holds the witness sections. Placeholders only:
-no addresses, hostnames or secrets here.
+Plan: `documentation/plans/infra/PLAN-ha-cf-failover-04nov.md` (replaces the Patroni + etcd + witness
+design of 27 Oct / 1 Nov). Templates and scripts: `infra/`. Placeholders only: no addresses,
+hostnames or secrets here. Every step that touches a server is an OWNER command, run in a window
+the owner chooses; crew is on the call, never at the keyboard of a prod box.
 
-## Where the three voters are today
+## What runs where
 
-Owner ruling 27 Oct about 23:55: everything stays in Malaysia for now.
+- Node A: the CRM box (primary today). Node B: the KVM 8, rebuilt after n8n stops (plan
+  `PLAN-n8n-decom-ha-01nov.md` stage 6-8). Both in Malaysia, the same files, only
+  `/etc/sorento-ha/ha-pg.env` differs (names, peer address, pool ids).
+- Postgres streams A -> B over the private link; WAL-G archives from whichever is primary to R2.
+- `cf-failover.service` (controller) and `role-watcher.service` on both. Workers and the scheduler
+  run only where Postgres is primary.
+- Cloudflare LB on the public host: pools `node-a`, `node-b`, steering off (failover order),
+  monitor `GET /api/v1/health/role`, DNS-only, TTL 30 s.
 
-- Node A: the CRM box (primary today).
-- Node B: the former n8n KVM 8, also in Malaysia (standby). Once n8n is retired it is rebuilt and
-  runs exactly node A's CRM stack, nothing else.
-- Witness: the shared-service box, Malaysia: etcd only,
-  `infra/templates/witness/compose.witness.yml` in its own directory next to that box's own
-  stack, joined to the WireGuard mesh; `infra/templates/host/docker-user.nft` loaded there too,
-  with every one of its app networks in `<APP_SUBNETS>`; checks with `ETCD_ONLY=1 PROJECT_DIR=<witness
-  dir> COMPOSE_FILES="-f compose.witness.yml" infra/scripts/ha-checks.sh` every 5 minutes.
+**Known limitation**: a Malaysia-wide or provider-wide outage takes both nodes down; only the
+disaster restore below helps.
 
-**Known limitation**: all three are in Malaysia (provider not confirmed; hPanel suggests Hostinger
-for the two VPSs). Any ONE box failing is handled automatically. A Malaysia-wide or provider-wide
-outage takes all three down together: nothing is left to fail over to, and the CRM is down until
-Malaysia returns, or until the disaster restore below. Plan section 10 has the case table.
+## Phase 1: node A alone (can start now, before node B exists)
 
-## Forced promotion when two voters are down
+Goal: node A on the HA Postgres layout (data in a subdirectory, `wal_log_hints`, WAL archiving to
+R2), role watcher and checks installed. The controller is NOT started in this phase: with no peer
+and no load balancer its lease would expire and it would fence the only database.
 
-When the primary AND the witness are both down (for example node A dies while the shared-service
-box is mid-deploy) and the other node is a healthy replica, Patroni may not promote it: there is no
-majority. If waiting for the witness to return is not acceptable:
+1. Read-only pre-checks (owner, any time):
+   ```
+   cd /opt/sorento-crm2
+   docker compose exec -T db psql -U "$POSTGRES_USER" -d postgres -Atc "show data_directory; show wal_log_hints; show archive_mode; show shared_preload_libraries; show server_version"
+   docker compose config --format json | python3 -c 'import json,sys; c=json.load(sys.stdin)["services"]["db"]; print(c["image"], c.get("volumes"))'
+   ```
+   Note the data directory. If it is the volume root (`/var/lib/postgresql/data`), step 4 moves it
+   into `pgdata/`. Copy `shared_preload_libraries` into `compose.ha.yml`.
+2. A fresh backup exists and restores (`scripts/ops/backup-db.sh`, the weekly restore test).
+3. Replication role (owner types the password at the prompt; it never lands in shell history):
+   ```
+   docker compose exec -it db psql -U "$POSTGRES_USER" -d postgres
+     CREATE ROLE replicator WITH REPLICATION LOGIN;
+     \password replicator
+     GRANT CONNECT ON DATABASE postgres TO replicator;
+     GRANT EXECUTE ON FUNCTION pg_catalog.pg_ls_dir(text, boolean, boolean) TO replicator;
+     GRANT EXECUTE ON FUNCTION pg_catalog.pg_stat_file(text, boolean) TO replicator;
+     GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text) TO replicator;
+     GRANT EXECUTE ON FUNCTION pg_catalog.pg_read_binary_file(text, bigint, bigint, boolean) TO replicator;
+   ```
+   (the grants are what `pg_rewind --source-server` needs from a non-superuser).
+4. WINDOW (about 2-3 minutes of downtime: one Postgres stop and start):
+   ```
+   docker compose stop worker worker_fast
+   docker compose stop db
+   # only if step 1 showed the volume root: move the data into pgdata/ (same filesystem, instant)
+   docker run --rm -v <POSTGRES_VOLUME>:/v <SAME_PG_IMAGE> sh -c \
+     'cd /v && mkdir pgdata && find . -mindepth 1 -maxdepth 1 ! -name pgdata -exec mv {} pgdata/ \; && chown postgres:postgres pgdata && chmod 700 pgdata'
+   # stage compose.ha.yml (templates/compose.ha.yml, image built from templates/postgres/Dockerfile),
+   # walg.env, and in .deploy.env: COMPOSE_FILE=docker-compose.yml:compose.ha.yml
+   # PHASE 1 ONLY: in compose.ha.yml set db `restart: unless-stopped` (no controller yet to start it)
+   docker compose up -d db
+   docker compose exec -T -u postgres db psql -U postgres -Atc "show data_directory; show wal_log_hints; show archive_mode"
+   ```
+   Expect `/var/lib/postgresql/data/pgdata`, `on`, `on`. Then `docker compose up -d worker worker_fast`
+   and check the app.
+5. Install the role watcher and checks: `infra/scripts/` to `/opt/sorento-crm2/infra/scripts/`,
+   `/etc/sorento-ha/ha-pg.env` from `infra/templates/ha-pg.env.example`, the role watcher unit,
+   `.ha-image-tag` from the running worker's image SHA, `ha-checks.sh` cron with
+   `EXPECT_REPLICAS=0`. Load softdog (`infra/templates/host/README.md`) but do not start
+   `cf-failover` yet.
+6. First WAL-G base backup: `docker compose exec -T -u postgres db wal-g backup-push "$PGDATA"`;
+   `ha-checks.sh` green.
 
-1. Confirm both are really down (`scripts/ops/cf-proxy.py status` rules out Cloudflare; the boxes
-   do not answer over the tunnel or from outside).
-2. Fence first. In Cloudflare, disable the dead primary's pool. In hPanel, Stop the dead primary
-   if the panel answers; if not, on the surviving node firewall the tunnel to it and to the
-   witness (`nft add rule inet sorento_ha_guard input ip saddr { <DEAD_NODE_WG_IP>,
-   <WITNESS_WG_IP> } drop`, and the same in `forward`), so they cannot rejoin the old cluster.
-3. On the surviving node: stop etcd, start it ONCE with `--force-new-cluster` (same data dir;
-   it becomes a one-member cluster keeping the data), then normally.
-4. Patroni there promotes itself once the old leader key expires (or `patronictl failover
-   --candidate <survivor> --force`, which works now that etcd answers). Check
-   `curl -s localhost:8008/primary` is 200 and `/api/v1/health/role` is 200.
-5. When the others return: keep them fenced; wipe their etcd data dirs; re-add them one at a time
-   (`etcdctl member add ... --learner`, start with `ETCD_INITIAL_CLUSTER_STATE=existing`,
-   `member promote`); start the old primary's Patroni (it rejoins as a replica via `pg_rewind` or
-   re-seed). Lift the fence and re-enable its pool only when `patronictl list` shows exactly one
-   leader.
+Rollback of phase 1: `COMPOSE_FILE` back to the plain compose and `docker compose up -d db` (the
+data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
 
-Writes that reached the old primary but not the survivor (normally under a second) are lost.
+## Phase 2: node B (after n8n is stopped and its 14-day stop has ended)
+
+1. Fresh OS, Docker, edge rules, WireGuard (`infra/templates/wireguard/`), host psql client
+   (`postgresql-client-17`), the same `/opt/sorento-crm2` files as node A (compose, `.env`,
+   `.deploy.env`, nginx), its own `/etc/sorento-ha/ha-pg.env` (NODE_NAME=crm-b, PEER_HOST = A's
+   private address), `pgpass` files (mode 600). `pg_hba.ha.conf` lines on both nodes.
+2. On node A: `SELECT pg_create_physical_replication_slot('crm_b', true);` and
+   `ALTER SYSTEM SET primary_conninfo = 'host=<B_WG_IP> user=replicator application_name=crm-a';`
+   `ALTER SYSTEM SET primary_slot_name = 'crm_a';` (both ignored while A is primary; used if it
+   ever becomes a standby).
+3. Seed node B (copies the whole database; about 54 GB, tens of minutes; A keeps serving):
+   ```
+   docker compose run --rm --no-deps -T -u postgres --entrypoint sh db -c \
+     "pg_basebackup -h <A_WG_IP> -U replicator -D /var/lib/postgresql/data/pgdata -X stream -c fast \
+      && echo \"primary_conninfo = 'host=<A_WG_IP> user=replicator application_name=crm-b'\" >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf \
+      && echo \"primary_slot_name = 'crm_b'\" >> /var/lib/postgresql/data/pgdata/postgresql.auto.conf \
+      && touch /var/lib/postgresql/data/pgdata/standby.signal"
+   docker compose start db   # or up -d db the first time
+   ```
+   Check on A: `select application_name, state from pg_stat_replication;` shows `crm-b streaming`.
+4. App on B: the first two-node release (below) brings the colours up with `SKIP_MIGRATIONS=1`.
+   TLS for the public host on B by DNS-01 (Cloudflare token: Zone, DNS: Edit, this zone only).
+   Role watcher on B (it keeps the workers stopped there).
+5. Allowlists for B's egress address (OpenAI and any provider with one).
+6. GitHub: add secret `SSH_HOST_B` (and B's deploy key). From the next release on, `deploy.yml`
+   runs `scripts/ha_release.sh`: primary first, then the standby.
+
+## Phase 3: Cloudflare and the controllers
+
+1. Cloudflare (dashboard): monitor HTTPS `GET /api/v1/health/role`, expected 200, Host header =
+   the public host, interval 60 s, retries 1, timeout 5 s. Pools `node-a` and `node-b`, one
+   endpoint each, that monitor, consecutive down 2, up 1. Load balancer on the public host:
+   DNS-only, TTL 30 s, steering off, default pools `node-a`, `node-b`, fallback `node-b`.
+2. API token: Account, Load Balancing: Read, this account only; save as
+   `/etc/sorento-ha/cf-token` (mode 600) on both nodes; pool ids into each `ha-pg.env`.
+3. On node A, switch db back to `restart: "no"` in `compose.ha.yml` (the controller now starts it
+   after a reboot, as a standby: rule D1).
+4. `systemctl enable --now cf-failover role-watcher` on both nodes. Check the logs show `started:`
+   and no action on either; `ha-checks.sh` with `EXPECT_REPLICAS=1` green on both.
+
+Rollback of phase 3: `systemctl stop cf-failover` on both (disarms the watchdog), set the LB's
+default pool to `node-a` only. Postgres keeps replicating; nothing promotes.
+
+## Phase 4: prod drills (owner window; plan section 9a)
+
+Record every time measured into the plan, section 10.
+
+1. Link only: `wg-quick down wg0` on B for 5 minutes. Expect: no failover, alert "peer
+   unreachable", A keeps serving. `wg-quick up wg0`: B streams again.
+2. App crash on A: `docker compose stop backend_<active>` on A. Expect: autoheal does NOT restart
+   a stopped container, so Cloudflare marks A down; after 15 min A fences itself, B promotes about
+   7 min later. (Shorten `APP_SICK_AFTER` for the drill only if the owner wants.)
+3. Whole box A: hPanel Stop on A. Expect users on B in about 8-11 minutes; a test WhatsApp gets
+   its reply from B; staff stay signed in.
+4. A returns: hPanel Start. Expect A as a standby following B (alert "rejoined" or "RE-SEEDED"),
+   users stay on B.
+
+## When something looks wrong
+
+- Alert "TWO PRIMARIES": never expected. The controller already fenced the node Cloudflare does
+  not see. Check `infra/scripts/ha-pg.sh observe` on both; page crew.
+- Alert "too far behind; NOT promoting": the standby lagged more than 16 MB when A died. Nothing
+  promotes automatically (it would lose more than allowed). Options: bring A back, or accept the
+  loss and promote by hand: `docker compose exec -T -u postgres db psql -U postgres -c "select pg_promote()"`
+  on B after confirming A is stopped (hPanel).
+- Stop everything automatic: `systemctl stop cf-failover` on both nodes.
 
 ## Disaster restore (Malaysia-wide outage)
 
-All three voters are down; there is no standby to promote. Only if the outage is long enough to
-justify it (owner's call): provision a VPS in another region from the infra repo, restore the
-newest WAL-G base backup plus WAL from R2 (`wal-g backup-fetch`, then recovery to the latest
-point: RPO about 60 s, `archive_timeout`), start it as a single-node Patroni cluster with its own
-etcd, point Cloudflare at it (`scripts/ops/cf-proxy.py` or the LB pool), and add its egress
-address to the OpenAI allowlist. Hours, not minutes. When Malaysia returns, the old nodes are
-rebuilt as replicas of the new primary (fenced first, as above).
-
-## Move the witness
-
-Config only, no downtime, quorum kept the whole time (etcd learner: the new member does not
-vote until it is promoted). This is how the witness leaves Malaysia later; the standby can move
-region the same way (Hostinger "Change location", then Patroni seeds a fresh replica; plan
-section 3). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
-(`witness-hz`).
-
-1. New box: WireGuard peer added on it, on node A and node B (the old witness stays for now);
-   `docker-user.nft` loaded.
-2. Certs, minted OFFLINE with the private CA (`ca.key` never on a box): `peer` and `server`
-   with the new `<NEW_WITNESS_WG_IP>` AND `IP:127.0.0.1` in the server cert's SAN (local `etcdctl`
-   and `ha-checks.sh` use `https://127.0.0.1:2379`), plus `healthcheck`. Copy to `/etc/etcd/pki`.
-3. On any current member:
-   `etcdctl member add witness-hz --learner --peer-urls=https://<NEW_WITNESS_WG_IP>:2380`
-   It prints the `ETCD_INITIAL_CLUSTER` line for the new member.
-4. On the new box: `/etc/sorento-ha/ha-members.env` with the new `WITNESS_NAME` /
-   `WITNESS_WG_IP`, `etcd.env` with `ETCD_NAME=witness-hz`, the printed
-   `ETCD_INITIAL_CLUSTER` and `ETCD_INITIAL_CLUSTER_STATE=existing`; then
-   `docker compose -f compose.witness.yml up -d`.
-5. Wait until `etcdctl endpoint status --cluster -w table` shows the learner caught up, then
-   `etcdctl member promote <new id>`. Four voters now (quorum 3); set `ETCD_MEMBERS=4` on the
-   ha-checks crons for these minutes or expect one alert.
-6. `etcdctl member remove <witness-ss id>`, then on the shared-service box
-   `docker compose -f compose.witness.yml down` and remove its WireGuard peer and certs.
-7. On node A and node B: edit `/etc/sorento-ha/ha-members.env` (`WITNESS_NAME`, `WITNESS_WG_IP`,
-   `PATRONI_ETCD3_HOSTS`). The container firewall (`docker-user.nft` with `ha-members.nft`) runs
-   on the witness only, so the new box got its own copy in step 1. Patroni discovers etcd members from the cluster itself, so no
-   Patroni restart is needed (the new env applies at its next planned restart; unverified, the
-   step-8 check proves it).
-8. Check: `patronictl list` shows the leader and the replica unchanged; `etcdctl member list`
-   shows crm-a, crm-b, witness-hz; `ha-checks.sh` green on all three; then plan drill 5 (stop the new
-   witness: nothing changes, an alert fires).
+Both nodes down. Only if the outage is long enough to justify it (owner's call): provision a VPS
+in another region from the infra repo, restore the newest WAL-G base backup plus WAL from R2
+(`wal-g backup-fetch`, recovery to the latest point: RPO about 60 s, `archive_timeout`), start it
+as a single node (controller not started), point the LB's pools or the DNS record at it
+(`scripts/ops/cf-proxy.py`), add its egress address to the OpenAI allowlist. Hours, not minutes.
+When Malaysia returns, rebuild A and B as standbys of it (phase 2 steps 2-3).
