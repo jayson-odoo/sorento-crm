@@ -11,7 +11,8 @@ only by the AutoCount PO ingest, and the line table is audit-skipped. These test
    NEW line born with a ref, an explicit clear), and none on a re-push that changes nothing;
 2. the PO detail serializer serves each line's latest link event (`book_so_link`);
 3. a user with Purchase Orders view reads that PO's History tab, a user without it cannot;
-4. the backfill migration seeds one "first seen" event per linked line, idempotently;
+4. the start-time backfill (no longer the migration) seeds one "first seen" event per
+   linked line, one commit per batch, idempotently, behind an advisory lock;
 5. the Placed popup's order-inquiry rows carry who linked them and when.
 
 Driven through the real HTTP ingest route (the `env` fixture of
@@ -20,11 +21,13 @@ tests/test_ingest_documents.py). Postgres only. Every test seeds its own chain.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import uuid
 from datetime import date, datetime
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
@@ -430,63 +433,75 @@ class TestPoHistoryRead:
         assert history_env("admin").status_code == 200
 
 
-# ============================================================== 4. the backfill migration
-MIGRATION = (
-    Path(__file__).resolve().parents[1]
-    / "alembic"
-    / "versions"
-    / "polh_0001_seen_backfill.py"
-)
+# ============================================================== 4. the backfill (after start)
+# POLH-BACKFILL-ASYNC (5 Nov): inside the deploy migration the backfill took ~19 s a batch on
+# the prod clone, blue never got healthy inside 240 s and the whole release rolled back. It
+# now runs after the backend starts (`scripts/backfill_po_link_seen.py`, from `start.sh`).
+BACKEND = Path(__file__).resolve().parents[1]
+MIGRATION = BACKEND / "alembic" / "versions" / "polh_0001_seen_backfill.py"
 
 
-def _run_backfill(db, batch: int | None = None) -> None:
+def _run_migration(db) -> None:
     spec = importlib.util.spec_from_file_location("polh_0001", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if batch is not None:
-        module._BATCH = batch  # walk the keyset loop over several batches
     ctx = MigrationContext.configure(db.connection())
     with Operations.context(ctx):
         module.upgrade()
+
+
+def _run_backfill(db, batch: int | None = None) -> int:
+    from app.services.scm import po_link_history
+
+    if batch is None:
+        return po_link_history.backfill_seen(db)
+    return po_link_history.backfill_seen(db, batch=batch)  # walk the keyset loop
+
+
+def _pre_history_lines(env, refs: list[str | None], *, created_at: datetime):
+    """PO lines linked before history began: pushed with no ref (the ingest writes no event
+    for a line born unlinked), then given their ref the way pre-release rows carry one. No
+    audit row is deleted: `audit_logs` is append-only to a non-maintainer role."""
+    lines = [_po_line(env) for _ in refs]
+    record = _po_record(env, lines=lines)
+    _push(env, record)
+    by_ref = _line_ids(env, record)
+    ids = [by_ref[line["source_ref"]] for line in lines]
+    for line_id, ref in zip(ids, refs):
+        env.db.execute(
+            text(
+                "UPDATE purchase_order_lines SET from_so_line_ref = :ref, created_at = :at "
+                "WHERE id = CAST(:id AS uuid)"
+            ),
+            {"ref": ref, "at": created_at, "id": line_id},
+        )
+    env.db.commit()
+    return record, ids
 
 
 class TestBackfill:
     def test_seeds_one_seen_event_per_linked_line_and_reruns_as_a_no_op(self, env):
         from app.models.scm import OrderLinkClaim
 
-        linked = _po_line(env, from_so_line_ref="ZZT_BF:1:1")
-        claimed = _po_line(env, from_so_line_ref="ZZT_BF:1:2")
-        bare = _po_line(env)
-        record = _po_record(env, lines=[linked, claimed, bare])
-        _push(env, record)
-        ids = _line_ids(env, record)
+        record, (linked, claimed, bare) = _pre_history_lines(
+            env, ["ZZT_BF:1:1", "ZZT_BF:1:2", None], created_at=datetime(2026, 9, 10, 8, 0)
+        )
         header = env.header("purchase_orders", record["source_ref"])
-        # The lines were born before history began: drop the ingest's own events and date
-        # the lines and one claim in the past.
-        env.db.execute(text("SET LOCAL sorento.audit_maintenance = 'on'"))
-        env.db.execute(
-            text("DELETE FROM audit_logs WHERE entity_type = 'purchase_order_lines' "
-                 "AND entity_id = ANY(:ids)"),
-            {"ids": list(ids.values())},
-        )
-        env.db.execute(
-            text("UPDATE purchase_order_lines SET created_at = :at WHERE id = ANY(CAST(:ids AS uuid[]))"),
-            {"at": datetime(2026, 9, 10, 8, 0), "ids": list(ids.values())},
-        )
+        assert _events(env, linked, SEEN) == [] and _events(env, linked) == []
         env.db.add(OrderLinkClaim(
             id=str(uuid.uuid4()), company_id=env.company_a, so_number="ZZT-SO",
             po_number=record["po_number"], source="autocount",
             claimed_at=datetime(2026, 9, 2, 9, 30),  # MYT wall time, as `_now()` stamps it
-            po_line_id=ids[claimed["source_ref"]],
+            po_line_id=claimed,
         ))
-        env.db.flush()
+        env.db.commit()
 
-        _run_backfill(env.db, batch=1)
+        assert _run_backfill(env.db, batch=1) == 2
 
         env.db.expire_all()
-        seen_linked = _events(env, ids[linked["source_ref"]], SEEN)
-        seen_claimed = _events(env, ids[claimed["source_ref"]], SEEN)
-        assert _events(env, ids[bare["source_ref"]], SEEN) == []
+        seen_linked = _events(env, linked, SEEN)
+        seen_claimed = _events(env, claimed, SEEN)
+        assert _events(env, bare, SEEN) == []
         assert len(seen_linked) == 1 and len(seen_claimed) == 1
         assert seen_linked[0].changed_at == datetime(2026, 9, 10, 8, 0)
         # The earliest AutoCount claim beats the line's own created_at. `claimed_at` is
@@ -495,14 +510,16 @@ class TestBackfill:
         assert seen_claimed[0].changed_at == datetime(2026, 9, 2, 1, 30)
         ev = seen_linked[0]
         assert ev.action == "EVENT"
+        assert ev.actor_type == "system"
         assert ev.new_values == {"from_so_line_ref": "ZZT_BF:1:1"}
+        assert ev.description.endswith(": S/O an S/O not held here first seen (linked on or before this date)")
         assert ev.root_entity_type == "purchase_orders"
         assert ev.root_entity_id == str(header["id"])
         assert str(ev.company_id) == env.company_a
 
-        _run_backfill(env.db)
+        assert _run_backfill(env.db) == 0
 
-        assert len(_events(env, ids[linked["source_ref"]], SEEN)) == 1
+        assert len(_events(env, linked, SEEN)) == 1
 
     def test_a_line_that_already_has_a_change_event_is_skipped(self, env):
         key = _held_so(env, "ZZTPLH-SO-BF")
@@ -511,9 +528,103 @@ class TestBackfill:
         _push(env, record)
         line_id = _line_ids(env, record)[line["source_ref"]]
 
-        _run_backfill(env.db)
+        assert _run_backfill(env.db) == 0
 
         assert _events(env, line_id, SEEN) == []
+
+    def test_the_migration_no_longer_writes_the_backfill(self, env):
+        # The deploy runs every pending revision in ONE transaction inside the 240 s health
+        # wait: polh_0001 stays in the chain but seeds nothing.
+        _, (line_id,) = _pre_history_lines(env, ["ZZT_BF:2:1"], created_at=datetime(2026, 9, 10))
+
+        _run_migration(env.db)
+
+        assert _events(env, line_id, SEEN) == []
+
+    def test_each_batch_commits_on_its_own_so_a_killed_run_resumes(self, env, monkeypatch):
+        _, ids = _pre_history_lines(env, ["ZZT_BF:3:1", "ZZT_BF:3:2"], created_at=datetime(2026, 9, 10))
+        real_commit = env.db.commit
+        commits: list[int] = []
+
+        def dying_commit():
+            commits.append(1)
+            if len(commits) == 2:
+                raise RuntimeError("backend stopped mid-backfill")
+            real_commit()
+
+        monkeypatch.setattr(env.db, "commit", dying_commit)
+        with pytest.raises(RuntimeError):
+            _run_backfill(env.db, batch=1)
+        monkeypatch.undo()
+        env.db.rollback()
+
+        # The first batch survived the kill; the second was never committed.
+        assert sum(len(_events(env, i, SEEN)) for i in ids) == 1
+        assert _run_backfill(env.db, batch=1) == 1
+        assert [len(_events(env, i, SEEN)) for i in ids] == [1, 1]
+
+
+# ------------------------------------------------- the start-time script that runs it
+def _linked_lines_in(engine) -> int:
+    from app.models.procurement import PurchaseOrderLine
+
+    with engine.connect() as conn:
+        return conn.execute(
+            sa.select(sa.func.count()).select_from(PurchaseOrderLine.__table__).where(
+                PurchaseOrderLine.__table__.c.from_so_line_ref.isnot(None)
+            )
+        ).scalar()
+
+
+def test_the_script_backfills_and_releases_its_lock():
+    from scripts import backfill_po_link_seen as script
+
+    from ._pg_fixture import blank_schema_engine
+
+    engine = blank_schema_engine()
+    # Honest only on an empty scratch schema: the script commits for real.
+    assert _linked_lines_in(engine) == 0
+    assert script.run(engine) == 0
+    with engine.connect() as other:
+        key = {"k": script.ADVISORY_LOCK_KEY}
+        assert other.execute(text("SELECT pg_try_advisory_lock(:k)"), key).scalar() is True
+        other.execute(text("SELECT pg_advisory_unlock(:k)"), key)
+
+
+def test_the_script_leaves_it_to_a_backend_already_backfilling():
+    # Blue and green starting together: the one that does not get the lock does nothing.
+    from scripts import backfill_po_link_seen as script
+
+    from ._pg_fixture import blank_schema_engine
+
+    engine = blank_schema_engine()
+    with engine.connect() as other:
+        key = {"k": script.ADVISORY_LOCK_KEY}
+        other.execute(text("SELECT pg_advisory_lock(:k)"), key)
+        try:
+            assert script.run(engine) is None
+        finally:
+            other.execute(text("SELECT pg_advisory_unlock(:k)"), key)
+
+
+def test_the_script_never_fails_the_container(monkeypatch, caplog):
+    # gunicorn reaps it like a worker after start.sh execs: a non-zero exit reads as a crash.
+    from scripts import backfill_po_link_seen as script
+
+    def broken(engine):
+        raise RuntimeError("database unreachable")
+
+    monkeypatch.setattr(script, "run", broken)
+    caplog.set_level(logging.WARNING)
+    script.main()
+    assert "database unreachable" in caplog.text
+
+
+def test_start_sh_runs_the_backfill_in_the_background_after_migrating():
+    start = (BACKEND / "start.sh").read_text()
+    upgrade = start.index("alembic upgrade head")
+    backfill = start.index("python -m scripts.backfill_po_link_seen &")
+    assert upgrade < backfill < start.index("exec python -m gunicorn")
 
 
 # ============================================================== 5. Placed popup who/when
