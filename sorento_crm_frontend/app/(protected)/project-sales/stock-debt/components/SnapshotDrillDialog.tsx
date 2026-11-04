@@ -16,7 +16,6 @@ import {
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
-import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -47,9 +46,6 @@ type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
 interface OiGroup {
   oiId: string | null;
   inquiryNo: string | null;
-  /** OI-UX-FILTER-SNAPSHOT: the OI's order customer and project (its first line's). */
-  customerName: string | null;
-  projectLabel: string | null;
   lines: GroupLine[];
 }
 
@@ -226,23 +222,14 @@ function OiGroupGrid({
       <PanelDataGrid<GroupLine>
         title={
           group.oiId ? (
-            <span className="flex min-w-0 flex-col">
-              <Link
-                href={`/project-sales/order-inquiries/${group.oiId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline"
-              >
-                {group.inquiryNo}
-              </Link>
-              {/* Wraps rather than truncates: at 375 px the card header sizes this title by its
-                  content, so a truncating line was clipped with no ellipsis (crew, 4 Nov). */}
-              {soCustomerProjectLabel(group.customerName, group.projectLabel) ? (
-                <span className="text-xs font-normal break-words text-muted-foreground">
-                  {soCustomerProjectLabel(group.customerName, group.projectLabel)}
-                </span>
-              ) : null}
-            </span>
+            <Link
+              href={`/project-sales/order-inquiries/${group.oiId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary hover:underline"
+            >
+              {group.inquiryNo}
+            </Link>
           ) : (
             'No OI'
           )
@@ -278,7 +265,7 @@ function OiGroupGrid({
 
 /** Lines grouped by the OI they sit on (a line on two OIs shows in both), lines with no OI in
  *  a "No OI" group last. */
-export function groupByOi(lines: SnapshotLine[]): OiGroup[] {
+function groupByOi(lines: SnapshotLine[]): OiGroup[] {
   const byOi = new Map<string, OiGroup>();
   const noOi: GroupLine[] = [];
   for (const line of lines) {
@@ -291,13 +278,7 @@ export function groupByOi(lines: SnapshotLine[]): OiGroup[] {
     for (const [oiId, oiRows] of rowsByOi) {
       let group = byOi.get(oiId);
       if (!group) {
-        group = {
-          oiId,
-          inquiryNo: oiRows[0].inquiry_no,
-          customerName: line.customer_name ?? null,
-          projectLabel: line.project_label ?? null,
-          lines: [],
-        };
+        group = { oiId, inquiryNo: oiRows[0].inquiry_no, lines: [] };
         byOi.set(oiId, group);
       }
       group.lines.push({ ...line, group_oi_rows: oiRows });
@@ -306,9 +287,7 @@ export function groupByOi(lines: SnapshotLine[]): OiGroup[] {
   const groups = [...byOi.values()].sort((a, b) =>
     (a.inquiryNo ?? '').localeCompare(b.inquiryNo ?? ''),
   );
-  return noOi.length
-    ? [...groups, { oiId: null, inquiryNo: null, customerName: null, projectLabel: null, lines: noOi }]
-    : groups;
+  return noOi.length ? [...groups, { oiId: null, inquiryNo: null, lines: noOi }] : groups;
 }
 
 /** AC-F5: the frozen drill for one cell (`month`) or one product (`month` null). */

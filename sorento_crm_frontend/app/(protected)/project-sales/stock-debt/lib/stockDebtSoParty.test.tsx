@@ -3,8 +3,9 @@
  * customer and project of each sales order it shows.
  * - Demand grids (live + snapshot drill) carry Customer and Project columns right after Sales
  *   order, like the SO list (`SalesOrdersGrid`).
- * - Compact places (the supply grid's "Assigned to" list, a snapshot OI group's heading) print
- *   one line `CUSTOMER / project` through the shared `SoCustomerProject`.
+ * - Compact places (the supply grid's "Assigned to" list) print one line `CUSTOMER / project`
+ *   through the shared `SoCustomerProject`. A snapshot OI group's heading prints its OI number
+ *   only: its table already has the two columns (owner hand test, 4 Nov).
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -23,9 +24,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 import { AssignedToList, buildDemandColumns, sumDemand } from './stockDebtDemandColumns';
-import { groupByOi } from '../components/SnapshotDrillDialog';
 import type { StockDebtDemandLine } from '../types/stockDebt.types';
-import type { SnapshotLine } from '../types/stockDebtSnapshot.types';
 
 function demandLine(over: Partial<StockDebtDemandLine> = {}): StockDebtDemandLine {
   return {
@@ -140,21 +139,5 @@ describe('<AssignedToList> (supply grid "Assigned to")', () => {
   it('reads Free when nothing took it', () => {
     render(<AssignedToList entries={[]} />);
     expect(screen.getByText('Free')).toBeInTheDocument();
-  });
-});
-
-describe('snapshot drill OI groups', () => {
-  const base = demandLine() as unknown as SnapshotLine;
-  const oiRow = (oi_id: string, inquiry_no: string) => ({
-    oi_id, inquiry_no, row_id: `${oi_id}-r`, qty: 1, delivery_date: null, stock_location: null, verb: 'ORDER', state: 'raised',
-  });
-
-  it('each group carries its order customer and project', () => {
-    const groups = groupByOi([
-      { ...base, bucket: '2026-12', sales_order_line_id: 'l1', now: { so_status: 'open', open_qty: 1 }, oi_rows: [oiRow('oi1', 'OI-1')] },
-      { ...base, customer_name: null, project_label: null, bucket: '2026-12', sales_order_line_id: 'l2', now: { so_status: 'open', open_qty: 1 }, oi_rows: [] },
-    ]);
-    expect(groups[0]).toMatchObject({ inquiryNo: 'OI-1', customerName: 'ACME SDN BHD (PROJECT)', projectLabel: 'TAMAN JAYA' });
-    expect(groups[1]).toMatchObject({ oiId: null, customerName: null, projectLabel: null });
   });
 });

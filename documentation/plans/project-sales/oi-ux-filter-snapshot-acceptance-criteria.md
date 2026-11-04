@@ -4,8 +4,10 @@
 - AC-2: Pressing next/previous OI keeps those query params, so the next OI's lines open with the
   same search, filters and sort.
 - AC-3: Reloading an OI detail page with those params restores the same lines view.
-- AC-4: The Stock Debt snapshot drill names each OI group with its number plus the customer and
-  project. Format (crew answer (a), 3 Nov): grids get the SO list's own **Customer** and
+- AC-4: The Stock Debt snapshot drill names each OI group by its number only (owner hand test,
+  4 Nov: the `CUSTOMER / project` line under the OI heading is struck out, since the group's
+  table already has Customer and Project columns). The format below still applies to the
+  columns and to compact places with no such table. Format (crew answer (a), 3 Nov): grids get the SO list's own **Customer** and
   **Project** columns; compact places print one line `CUSTOMER / project`, where CUSTOMER is the
   debtor name (AutoCount's, which usually already ends `(PROJECT)`), so it reads as the owner's
   `CUSTOMER (PROJECT) / project code`.
