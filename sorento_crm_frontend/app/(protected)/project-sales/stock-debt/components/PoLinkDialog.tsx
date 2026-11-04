@@ -315,6 +315,7 @@ export function PoLinkDialog({
                 disabled={!row.getIsSelected()}
                 placeholder="Pick a PO line"
                 clearable
+                truncateTriggerLabel
                 onChange={(value) => setPicked((prev) => ({ ...prev, [row.original.id]: value }))}
                 options={poOptions}
               />
@@ -412,6 +413,7 @@ export function PoLinkDialog({
               disabled={!row.getIsSelected()}
               placeholder="Pick a sales order line"
               clearable
+              truncateTriggerLabel
               onChange={(value) => setTarget((prev) => ({ ...prev, [row.original.id]: value }))}
               options={targetOptions.filter(
                 (option) => option.value !== row.original.line.sales_order_line_id,

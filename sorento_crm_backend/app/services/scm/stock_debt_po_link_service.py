@@ -69,19 +69,21 @@ def _iso(value: Optional[date]) -> Optional[str]:
 
 
 def _line_numbers(db: Session, po_ids: Iterable[str]) -> Dict[str, int]:
-    """A PO line's position in its document, the order `_po_rows` numbers it."""
+    """A PO line's number as staff read it in AutoCount (`line_no`, AutoCount's Seq), else its
+    position in the document (a line not synced since the column landed), as `_po_rows`."""
     ids = sorted({str(p) for p in po_ids if p})
     if not ids:
         return {}
     numbered = (
         db.query(
             PurchaseOrderLine.id,
-            func.row_number()
-            .over(
-                partition_by=PurchaseOrderLine.purchase_order_id,
-                order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
-            )
-            .label("line_no"),
+            func.coalesce(
+                PurchaseOrderLine.line_no,
+                func.row_number().over(
+                    partition_by=PurchaseOrderLine.purchase_order_id,
+                    order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
+                ),
+            ).label("line_no"),
         )
         .filter(PurchaseOrderLine.purchase_order_id.in_(ids))
         .all()

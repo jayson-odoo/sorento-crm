@@ -28,6 +28,8 @@ _ADMIN_ROLES = ("superadmin", "admin")
 
 def upgrade() -> None:
     bind = op.get_bind()
+    # AutoCount's own PO line number (`Seq`), so the PO picker matches AutoCount.
+    bind.execute(sa.text("ALTER TABLE purchase_order_lines ADD COLUMN IF NOT EXISTS line_no INTEGER"))
     bind.execute(
         sa.text(
             """
@@ -68,3 +70,4 @@ def downgrade() -> None:
         {"slug": _SLUG},
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": _SLUG})
+    bind.execute(sa.text("ALTER TABLE purchase_order_lines DROP COLUMN IF EXISTS line_no"))

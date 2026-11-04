@@ -557,3 +557,20 @@ def test_a_snapshot_stored_without_line_numbers_still_serves_them(scm_app, fake_
     lines = w["c"].get(f"{SNAP}/{w['sid']}/rows/{w['row_id']}/lines").json()["data"]
     (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
     assert line["line_no"] == 140
+
+
+def test_po_lines_are_numbered_as_autocount_numbers_them(scm_app, fake_ss):
+    """Crew pass round 2: the drill's Line is AutoCount's Seq, so the PO picker (and the PO
+    named on a linked line) use AutoCount's own PO line number too, not the position."""
+    w = _world(scm_app, fake_ss)
+    w["po_line"].line_no = 7
+    w["db"].flush()
+    (option,) = w["c"].get(_url(w)).json()["po_lines"]
+    assert option["po_line_no"] == 7
+
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
+    lines = w["c"].get(f"{SNAP}/{w['sid']}/rows/{w['row_id']}/lines").json()["data"]
+    (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
+    assert [p["po_line_no"] for p in line["now"]["po_links"]] == [7]
+

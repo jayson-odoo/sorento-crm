@@ -33,8 +33,14 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     onChange: (value: string) => void;
     options?: { value: string; label: string }[];
     placeholder?: string;
+    truncateTriggerLabel?: boolean;
   }) => (
-    <select id={props.id} value={props.value ?? ''} onChange={(event) => props.onChange(event.target.value)}>
+    <select
+      id={props.id}
+      data-truncate={props.truncateTriggerLabel ? 'true' : 'false'}
+      value={props.value ?? ''}
+      onChange={(event) => props.onChange(event.target.value)}
+    >
       <option value="">{props.placeholder ?? ''}</option>
       {(props.options ?? []).map((option) => (
         <option key={option.value} value={option.value}>
@@ -138,6 +144,17 @@ describe('Link to PO popup', () => {
     expect(dialog).toHaveTextContent('18/11/2026');
     expect(within(dialog).getByRole('checkbox', { name: /select so425045 line 140/i })).toBeChecked();
     expect(dialog).toHaveTextContent('1 of 1 lines');
+  });
+
+  it('the PO picker truncates its label so the clear button never overlaps it (375 px)', () => {
+    const { dialog } = renderDialog();
+    expect(dialog.querySelector('#po-link-po-sol-1')).toHaveAttribute('data-truncate', 'true');
+  });
+
+  it('the PO picker names the line by the number the server gives (AutoCount line number)', () => {
+    const { dialog } = renderDialog();
+    const options = [...(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement).options];
+    expect(options.map((o) => o.textContent)).toContain('202609-S0029 · line 3 · HQ · 380 free');
   });
 
   it('picking a PO shows its PO qty and Free, and Qty defaults to the outstanding', () => {
