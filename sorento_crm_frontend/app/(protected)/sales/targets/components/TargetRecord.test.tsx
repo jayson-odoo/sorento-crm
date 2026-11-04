@@ -800,12 +800,39 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
-  it('read mode names the dealer, and Periods labels the SO-based figures provisional', () => {
+  it('Periods labels the SO-based figures of an Ordered dealer target provisional', () => {
     hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
-    expect(screen.getByText('Dealer', { selector: 'span' })).toBeTruthy();
     openTab('Periods');
     expect(screen.getByText('Achieved (provisional, incl. tax)')).toBeTruthy();
+  });
+
+  it('read mode Details shows the same Accounts as Edit: code and name, one per line (owner, 4 Nov)', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: dealerDetail(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    const list = screen.getByRole('list', { name: 'Accounts' });
+    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      '300-A0123 - DEALER A SDN BHD',
+      '300-A0124 - DEALER A SDN BHD (III)',
+    ]);
+    // The field is labelled Accounts in read mode too, never "Dealer".
+    expect(screen.queryByText('Dealer', { selector: 'span.text-xs' })).toBeNull();
+    expect(document.body.textContent).not.toMatch(UUID);
+  });
+
+  it('an Invoiced dealer target is the billing figure: never marked provisional (TARGET-INVOICED)', () => {
+    hooks.useSalesTarget.mockReturnValue({
+      data: dealerDetail({ basis: 'invoiced', counts_label: 'Invoiced' }),
+      isLoading: false,
+      isError: false,
+    });
+    render(<TargetRecord id="t1" />);
+    expect(screen.getByText('Invoiced')).toBeTruthy();
+    openTab('Periods');
+    expect(screen.queryByText(/provisional/)).toBeNull();
+    expect(screen.getByText('Achieved')).toBeTruthy();
+    openTab('Accounts');
+    expect(screen.queryByText(/provisional/)).toBeNull();
   });
 
   it('the Commission tab shows the four settings and a rate column per account', () => {

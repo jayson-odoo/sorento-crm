@@ -276,5 +276,23 @@ describe('SalesTargetsView', () => {
     // Import and Point ratio are list actions on the Dealers tab only.
     expect(screen.getAllByText(/Import from Excel|Point ratio|Actions/).length).toBeGreaterThan(0);
   });
+
+  it('Dealers whose targets all count Invoiced drop the provisional mark (TARGET-INVOICED)', () => {
+    perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit']);
+    withRows([
+      row({
+        target_id: 'td1', target_no: 'TGT-000214', name: 'Dealer A 2026 quarterly', subject_kind: 'dealer',
+        sales_team_id: null, subject_label: 'Dealer A Sdn Bhd', team_id: null, team_name: null,
+        basis: 'invoiced', product_scope: 'all', scope_labels: [], account_labels: ['A/C I'],
+        account_codes: ['300-A0123'], payout_label: 'A/C I', commission_earned: 0,
+      }),
+    ]);
+    render(<SalesTargetsView />);
+    openTab('Dealers');
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toContain('Achieved');
+    expect(headers.join(' ')).not.toMatch(/provisional/);
+    expect(screen.getByText('Invoiced')).toBeTruthy();
+  });
 });
 

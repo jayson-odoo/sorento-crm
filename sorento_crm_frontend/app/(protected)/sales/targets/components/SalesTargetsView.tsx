@@ -232,6 +232,7 @@ function TargetsGrid({
     ];
   }, [teamList, rows]);
 
+  const provisional = rows.some((r) => r.basis !== 'invoiced');
   const columns = useMemo<ColumnDef<SalesTargetRow>[]>(() => {
     const subjectColumns: ColumnDef<SalesTargetRow>[] =
       tab === 'dealer'
@@ -334,8 +335,9 @@ function TargetsGrid({
         id: 'achieved',
         header: ({ column }) => (
           <DataGridColumnHeader
-            // A dealer's sales are the sales orders' totals until the invoice sync (ruling 1).
-            title={tab === 'dealer' ? 'Achieved (provisional, incl. tax)' : 'Achieved'}
+            // A dealer's Ordered / Delivered figure is the sales orders' totals (ruling 1); an
+            // Invoiced one is the billing figure itself (TARGET-INVOICED), so it is not marked.
+            title={tab === 'dealer' && provisional ? 'Achieved (provisional, incl. tax)' : 'Achieved'}
             column={column}
           />
         ),
@@ -381,7 +383,7 @@ function TargetsGrid({
           ]
         : []),
     ];
-  }, [tab]);
+  }, [tab, provisional]);
 
   const table = useReactTable({
     columns,
