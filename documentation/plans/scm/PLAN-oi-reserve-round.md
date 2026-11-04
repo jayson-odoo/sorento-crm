@@ -1,6 +1,6 @@
 # PLAN: reserve email button opens that email's lines, in every state
 
-Status: Review READY at 896c667bba, hand test filed, CI pending. Small fix track (size S after the owner's 3 Nov scope cut): no migration, no
+Status: owner hand test OK except prev/next after reserve + park; fixed in round 2 (e600b89bb2, shared pager keeps its walk), reviewer READY; owner re-check (script steps 15-19) pending. Small fix track (size S after the owner's 3 Nov scope cut): no migration, no
 auth/RBAC change, no new external ingest. One coder (tests first, `test(red):` commit alone),
 one reviewer, hand test on the crew test copy.
 
