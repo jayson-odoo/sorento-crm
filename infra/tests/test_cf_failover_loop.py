@@ -150,3 +150,35 @@ def test_a_failed_fence_stops_petting_the_watchdog(box, cf):
     pets = (tmp / "watchdog").read_bytes().rstrip(b"V").count(b"\0")
     assert pets <= 2, pets                        # only the ticks before the lease ran out
     assert "watchdog not petted" in r.stdout
+
+
+# ---------------------------------------------------------------- active-active: one pool, two origins
+
+sys.path.insert(0, str(CONTROLLER.parent))
+from cf_failover import cf_pool_health  # noqa: E402
+
+
+def _origins(a, b):
+    return {"success": True, "result": {"pop_health": {"SG": {"healthy": a or b, "origins": [
+        {"10.0.0.1": {"healthy": a}}, {"10.0.0.2": {"healthy": b}}]}}}}
+
+
+@pytest.mark.parametrize("a, b", [(True, True), (True, False), (False, True), (False, False)])
+def test_each_origin_of_the_shared_pool_is_read_on_its_own(cf, a, b):
+    state, base = cf
+    state["body"] = _origins(a, b)
+    want = {True: "healthy", False: "unhealthy"}
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.1") == want[a]
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.2") == want[b]
+
+
+def test_an_origin_missing_from_the_answer_is_unknown(cf):
+    state, base = cf
+    state["body"] = _origins(True, True)
+    assert cf_pool_health(base, "acc", "pool", "t", origin="10.0.0.9") == "unknown"
+
+
+def test_active_active_without_origins_is_refused(box):
+    _, env = box
+    r = run(env, ticks=1, ACTIVE_ACTIVE="1", CF_API_BASE="http://127.0.0.1:1")
+    assert r.returncode == 2 and "CF_ORIGIN_SELF" in r.stdout
