@@ -197,6 +197,20 @@ def test_af7_top_5_with_a_breakdown_frame_keeps_the_objects_own_count_never_ever
     assert _frame(rbot).get("top_n") == 5, _frame(rbot)
 
 
+def test_af7_bottom_5_with_a_breakdown_frame_keeps_the_parsers_direction(rbot, world) -> None:
+    """Held customer breakdown; "bottom 5" parses as frame "breakdown", top_n 5, message-level rank_direction "bottom".
+    A ranking cut to 5 sorted ascending, the direction reaches the run, and the reply is not a "Top" list."""
+    sorento, _m = world
+    _hold(rbot, sorento, group_by="customer")
+    ra = _ra2("breakdown", basis="delivered", group_by="customer", top_n=5, company=sorento, **SEP)
+    v = _follow("sales_analysis", ra, group_by="customer", rank_direction="bottom", sales_company=sorento, **SEPF)
+    text, calls = rbot.say(v, "bottom 5")
+    assert MEASURE_Q not in text and TOP_N_Q not in text, f"AF-7 bottom: looped a question: {text!r}"
+    args = _args(calls)
+    assert args.get("top_n") == 5 and args.get("sort") == "asc", f"AF-7 bottom: want top_n 5 sorted asc, got {args}"
+    assert not text.lstrip().lower().startswith("top"), f"AF-7 bottom: the reply is a Top list: {text!r}"
+
+
 def test_af5_top_10_products_asks_only_the_measure(rbot, world) -> None:
     sorento, _m = world
     ra = _ra2("ranking", basis="delivered", group_by="product", top_n=10, company=sorento, **SEP)
