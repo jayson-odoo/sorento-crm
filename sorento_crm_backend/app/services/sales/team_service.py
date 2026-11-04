@@ -18,6 +18,7 @@ or moves, the leader clears. `trg_sales_teams_leader_is_member` holds the same r
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple, cast
@@ -261,7 +262,7 @@ def set_members(
             earliest = min(overlapping, key=lambda m: m.valid_to or date.max)
             raise _unprocessable(
                 f"{agent_label(agent)} was in another team after the Moves on date; pick "
-                f"{(earliest.valid_to + timedelta(days=1)).isoformat()} or later.",
+                f"{fmt_date(earliest.valid_to + timedelta(days=1))} or later.",
                 "MEMBERSHIP_OVERLAP",
             )
         covering = overlapping[0] if overlapping else None
@@ -303,8 +304,8 @@ def set_members(
                 # day after it began.
                 raise _unprocessable(
                     f"{agent_label(agent)} joined {from_team.name} on "
-                    f"{covering.valid_from.isoformat()}, on or after the Moves on date; pick "
-                    f"{(covering.valid_from + timedelta(days=1)).isoformat()} or later.",
+                    f"{fmt_date(covering.valid_from)}, on or after the Moves on date; pick "
+                    f"{fmt_date(covering.valid_from + timedelta(days=1))} or later.",
                     "MEMBERSHIP_OVERLAP",
                 )
         if not history:

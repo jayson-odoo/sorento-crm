@@ -19,6 +19,7 @@ import { parseServerDate } from './timeUtil';
 import { summariseFile, ERROR_CODE_FRIENDLY } from './translation';
 import { useAttachmentIntegrationLog } from './useAttachmentIntegrationLog';
 import type { LinkedEntity, UploadActivityFile } from './types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 interface AttachmentLikeForLinked {
   linked_products?: { id: string; name: string }[] | null;
@@ -140,7 +141,7 @@ export function IntegrationPanel({ attachmentId, attachment }: Props) {
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Clock className="size-3.5" />
         <span>
-          Last run: {parseServerDate(effectiveLog.last_updated_at).toLocaleString()}
+          Last run: {formatDateTimeInMalaysia(parseServerDate(effectiveLog.last_updated_at))}
         </span>
       </div>
 

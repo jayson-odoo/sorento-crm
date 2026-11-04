@@ -538,8 +538,8 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     const agents = screen.getByRole('region', { name: 'Agents' });
     // Three agents (one with no figure yet) by three months.
     expect(within(agents).getAllByRole('spinbutton')).toHaveLength(9);
-    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 1 Nov 2026'), { target: { value: '900' } });
-    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 1 Dec 2026'), { target: { value: '50' } });
+    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 01/11/2026'), { target: { value: '900' } });
+    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 01/12/2026'), { target: { value: '50' } });
     const totals = within(agents).getByTestId('team-totals');
     // Oct 1,000; Nov 900 + 400; Dec 1,000 + 50.
     expect(within(totals).getByText('1,000')).toBeTruthy();
@@ -694,7 +694,7 @@ describe('TargetRecord round 3, F3: the agent target record', () => {
     expect(within(team).getByText('Amount (RM)')).toBeTruthy();
     expect(within(team).getByText('Ordered')).toBeTruthy();
     expect(within(team).getByText('All products')).toBeTruthy();
-    expect(within(team).getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(within(team).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(within(team).getByText('Every month')).toBeTruthy();
     expect(within(team).getAllByText('1,000')).toHaveLength(3);
     expect(within(team).getByRole('link', { name: 'Open team target' }).getAttribute('href')).toBe('/sales/targets/team1');
@@ -923,7 +923,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     render(<TargetRecord id="t1" />);
     const summary = screen.getByRole('region', { name: 'Commission summary' });
     expect(within(summary).getByText('6,918.12')).toBeTruthy();
-    expect(within(summary).getByText('01/10/2026 to 31/12/2026, 2.1% of target, not final')).toBeTruthy();
+    expect(within(summary).getByText('01/10/2026 - 31/12/2026, 2.1% of target, not final')).toBeTruthy();
     expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
     expect(within(summary).getByText('Payment is not tracked in the CRM')).toBeTruthy();
   });
@@ -932,14 +932,14 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     openTab('Periods');
-    const q1 = screen.getByText('01/01/2026 to 31/03/2026').closest('tr') as HTMLElement;
+    const q1 = screen.getByText('01/01/2026 - 31/03/2026').closest('tr') as HTMLElement;
     expect(within(q1).getByText('Tier 1')).toBeTruthy();
     expect(within(q1).getByText('6.00%')).toBeTruthy();
     expect(within(q1).getByText('3,681.10')).toBeTruthy();
     // The cell names the code and account; the full name is its title and in the summary.
     expect(within(q1).getByText('300-A077 (A/C I)').getAttribute('title')).toBe('300-A077 - A CRAFT IDEA SDN BHD (A/C I)');
     expect(within(q1).getByText('61,351.64')).toBeTruthy();
-    const q3 = screen.getByText('01/07/2026 to 30/09/2026').closest('tr') as HTMLElement;
+    const q3 = screen.getByText('01/07/2026 - 30/09/2026').closest('tr') as HTMLElement;
     expect(within(q3).getByText('None')).toBeTruthy();
     expect(within(q3).getAllByText('-').length).toBeGreaterThan(0);
     const total = screen.getByText('Total').closest('tr') as HTMLElement;
@@ -953,7 +953,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     openTab('Accounts');
     const table = screen.getByRole('table', { name: 'Counted accounts' });
     expect(within(table).getByText('Sales (RM, sales orders, incl. tax)')).toBeTruthy();
-    for (const label of ['01/01/2026 to 31/03/2026', '01/04/2026 to 30/06/2026', '01/07/2026 to 30/09/2026', '01/10/2026 to 31/12/2026']) {
+    for (const label of ['01/01/2026 - 31/03/2026', '01/04/2026 - 30/06/2026', '01/07/2026 - 30/09/2026', '01/10/2026 - 31/12/2026']) {
       expect(within(table).getByText(label)).toBeTruthy();
     }
     expect(within(table).getAllByText('3,681.10')).toHaveLength(1);

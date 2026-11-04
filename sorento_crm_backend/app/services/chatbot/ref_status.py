@@ -10,6 +10,7 @@ One card per row, words only:
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import re
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -54,7 +55,7 @@ def _qty(value: Any) -> str:
 
 
 def _day(d: Any) -> str:
-    return f"{d.day} {d:%b %Y}"
+    return fmt_date(d)
 
 
 def _words(value: str | None) -> str:

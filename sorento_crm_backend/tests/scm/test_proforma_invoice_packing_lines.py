@@ -692,4 +692,4 @@ def test_resolve_attach_pi_refuses_when_two_pis_share_no_number_container_or_dat
         assert e.value.status_code == 409
         assert e.value.detail["code"] == "proforma_invoice_required"
         assert supplier.supplier_name in (e.value.detail.get("message") or "")
-        assert "2026-07-30" in (e.value.detail.get("message") or "")
+        assert "30/07/2026" in (e.value.detail.get("message") or "")

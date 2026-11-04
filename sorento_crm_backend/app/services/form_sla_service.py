@@ -10,6 +10,7 @@ A single emit_event() call is dropped at every form-service state transition;
 the orchestrator decides whether to start/respond/resolve based on the
 configured event names. Multi-stage chains spawn the next stage on resolve.
 """
+from app.utils.date_format import fmt_datetime
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -201,7 +202,7 @@ def _ticket_deep_link(base_url: Optional[str], tracking_id) -> str:
 
 
 def _fmt_due(due_at) -> Optional[str]:
-    """Format a naive-UTC due_at as readable KL wall time, e.g. '22 May 2026, 10:00 AM'."""
+    """Format a naive-UTC due_at as readable KL wall time, e.g. '22/05/2026, 10:00 am'."""
     if due_at is None:
         return None
     try:
@@ -211,7 +212,7 @@ def _fmt_due(due_at) -> Optional[str]:
         dt = due_at
         aware = dt.replace(tzinfo=_tz.utc) if dt.tzinfo is None else dt
         local = aware.astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
-        return local.strftime("%d %b %Y, %I:%M %p")
+        return fmt_datetime(local)
     except Exception:  # pragma: no cover
         return str(due_at)
 

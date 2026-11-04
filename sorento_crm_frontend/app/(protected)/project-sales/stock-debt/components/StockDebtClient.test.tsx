@@ -439,7 +439,7 @@ describe('StockDebtClient', () => {
         expect.objectContaining({ dateFrom: '2026-11-01', dateTo: '2026-11-30' }),
       ),
     );
-    expect(screen.getByText('Delivery: 1 Nov 26 to 30 Nov 26')).toBeInTheDocument();
+    expect(screen.getByText('Delivery: 01/11/2026 - 30/11/2026')).toBeInTheDocument();
 
     // The Filters dropdown (a Radix DropdownMenu) marks the rest of the page
     // `aria-hidden` while it is open, which is exactly right for a real reader but

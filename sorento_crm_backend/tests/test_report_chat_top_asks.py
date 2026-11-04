@@ -291,7 +291,7 @@ def test_the_note_states_the_labelled_share_and_the_taxonomy_version(db):
 
     # 5 of the 7 counted asks are labelled: 71%.
     assert "Topics labelled: 71% of asks (taxonomy v2)." in note
-    assert "5 Sep 2026" in note, "the coverage line stays"
+    assert "05/09/2026" in note, "the coverage line stays"
 
 
 def test_the_note_on_an_empty_table_does_not_divide_by_zero(db):

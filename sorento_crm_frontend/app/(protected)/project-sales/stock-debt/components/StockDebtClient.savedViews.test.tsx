@@ -355,7 +355,7 @@ describe('Saved views menu (AC-V1..V4, AC-R10)', () => {
 
     expect(await screen.findByText('Book: Project')).toBeInTheDocument();
     expect(screen.getByText('Location: BRW-IB')).toBeInTheDocument();
-    expect(screen.getByText('Delivery: 14 Oct 26 to 13 Nov 26')).toBeInTheDocument();
+    expect(screen.getByText('Delivery: 14/10/2026 - 13/11/2026')).toBeInTheDocument();
     await waitFor(() =>
       expect(getStockDebtList).toHaveBeenLastCalledWith(
         expect.objectContaining({

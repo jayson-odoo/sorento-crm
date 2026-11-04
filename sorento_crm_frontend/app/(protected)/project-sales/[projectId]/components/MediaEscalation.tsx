@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Flag, Loader2 } from 'lucide-react';
-import { parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import {
   AT_RISK_MS,
@@ -14,38 +14,13 @@ import type {
   QuotationLine,
 } from '../../_shared/types/project.types';
 
-const TZ = 'Asia/Kuala_Lumpur';
-
 function when(value: string, withYear: boolean): string {
   const date = parseDateTimeAsUTC(value);
-  const day = new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: TZ,
-  });
-  if (!withYear) return day.format(date);
-  const time = new Intl.DateTimeFormat('en-GB', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hourCycle: 'h12',
-    timeZone: TZ,
-  });
-  const year = new Intl.DateTimeFormat('en-GB', {
-    year: 'numeric',
-    timeZone: TZ,
-  });
-  return `${day.format(date)} ${year.format(date)}, ${time.format(date).toUpperCase()}`;
+  return withYear ? formatDateTimeInMalaysia(date) : formatDateInMalaysia(date);
 }
 
 function whenShort(value: string): string {
-  const date = parseDateTimeAsUTC(value);
-  const time = new Intl.DateTimeFormat('en-GB', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hourCycle: 'h12',
-    timeZone: TZ,
-  });
-  return `${when(value, false)}, ${time.format(date).toUpperCase()}`;
+  return formatDateTimeInMalaysia(parseDateTimeAsUTC(value));
 }
 
 /**

@@ -115,6 +115,7 @@ import {
 import type { AIExtractedProductLine } from '../lib/portal-client';
 import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
 import { distinctName } from '@/lib/product-display';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -1730,7 +1731,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {/* Read-only metadata, never a form field: created is derived, not
               something the salesperson typed. */}
           <p className="text-xs text-muted-foreground">
-            Created {new Date(request.created_at).toLocaleDateString()}
+            Created {formatDateInMalaysia(request.created_at)}
           </p>
         </div>
 
@@ -1740,7 +1741,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
               {request.ready_for_collection_at
-                ? `Ready to collect since ${new Date(request.ready_for_collection_at).toLocaleDateString()}`
+                ? `Ready to collect since ${formatDateInMalaysia(request.ready_for_collection_at)}`
                 : 'Ready to collect'}
             </p>
             <Button

@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUserLookup } from '@/services/userSelectService';
-import { parseDateTimeAsUTC } from '@/lib/helpers';
+import { parseDateTimeAsUTC, formatDateInMalaysia } from '@/lib/helpers';
 import { useUpdateProject } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
 import { InfoHint } from './InfoHint';
@@ -183,18 +183,13 @@ export function CriticalPanel({ project }: { project: Project }) {
 
 /**
  * The server stores `critical_at` as naive UTC. Read it as UTC and show the Malaysia date: a
- * flag raised at 06:46 MYT on 3 Nov is 22:46 UTC on 2 Nov, and must read "03 Nov".
+ * flag raised at 06:46 MYT on 3 Nov is 22:46 UTC on 2 Nov, and must read "03/11/2026".
  */
 export function formatCriticalDate(iso?: string | null): string | null {
   if (!iso) return null;
   const date = parseDateTimeAsUTC(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'Asia/Kuala_Lumpur',
-  }).format(date);
+  return formatDateInMalaysia(date);
 }
 
 function daysSince(iso: string): number {

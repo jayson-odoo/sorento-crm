@@ -157,9 +157,9 @@ describe('AutocountPullReview - review phase (AC-RV-1, R3)', () => {
 
     render(<AutocountPullReview jobId="job-1" />);
 
-    // header.extractedAt / header.expiresAt formatted dd/MM/yyyy HH:mm, Asia/Kuala_Lumpur.
-    expect(screen.getByText(/20\/09\/2026 10:00/)).toBeInTheDocument();
-    expect(screen.getByText(/21\/09\/2026 10:00/)).toBeInTheDocument();
+    // header.extractedAt / header.expiresAt formatted dd/mm/yyyy, h:mm am/pm, Asia/Kuala_Lumpur.
+    expect(screen.getByText(/20\/09\/2026, 10:00 am/)).toBeInTheDocument();
+    expect(screen.getByText(/21\/09\/2026, 10:00 am/)).toBeInTheDocument();
   });
 
   it('R3b: renders the counters from `counts`', () => {
