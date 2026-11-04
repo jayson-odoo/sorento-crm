@@ -1,6 +1,6 @@
 # PLAN: My Team shows only tasks the viewer's segment/brand tags serve
 
-Status: in review (small fix track: backend filter only, no migration, no RBAC change)
+Status: merged 4 Nov 2026 in #2150 (240d6e8679), owner hand test PASS (small fix track: backend filter only, no migration, no RBAC change)
 
 Lane: MYTEAM-BY-SEGMENT. Owner approval 3 Nov 22:50 ("ok for my team and coverage").
 
