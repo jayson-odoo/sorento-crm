@@ -42,7 +42,6 @@ otherwise. "Held" = the state the previous turn left. Every row is checked on th
 | ON-16 | nothing | the object puts the same name in company AND brands with no kind word for both | One company-or-brand question, never both filters silently (wrong totals are worse than one question) |
 | ON-6 | nothing | "Cabana sales Sep delivered" | Unchanged #2105 behaviour: "brand or account type?" |
 | ON-7 | overlap detection | any name present in two filter lists | Found from data (the name resolves in both), never from a list of names in code |
-
 | ON-17 | nothing | object company "Sorento" AND brands ["SORENTO"], kind_said null, the brand entity has NO canonical code (the parser did not match it as a listed brand) | The company, no question: #2105's C6-1 rule (a word that is the object's own company and no listed brand), kept by lead ruling 4 Nov |
 
 ## Known companies line (gate 2: the parser cannot know which brand names are companies)
