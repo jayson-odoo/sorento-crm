@@ -1790,8 +1790,11 @@ def _slots_from_pin(tag, pinned_slots: Optional[dict], pinned_parts: list, resig
             if chosen is not None:
                 picks = [*picks, chosen]
         groups.append({**group, "picks": fresh(picks)})
+    # An upgrade offered as an open row reflects the tag's CURRENT choice alone; a resolved one
+    # keeps its pinned flag.
+    open_upgrade = "Upgrade" in choices and bool(candidates.get("Upgrade"))
     upgrades = [
-        {**up, "chosen": bool(up.get("chosen")) or str(choices.get("Upgrade", "")) == up.get("product_id")}
+        {**up, "chosen": str(choices["Upgrade"]) == up.get("product_id") if open_upgrade else bool(up.get("chosen"))}
         for up in pinned_slots.get("upgrades") or []
     ]
     main = pinned_slots.get("main")

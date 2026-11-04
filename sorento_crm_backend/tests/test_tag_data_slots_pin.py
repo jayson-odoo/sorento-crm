@@ -123,3 +123,28 @@ def test_the_preview_carries_main(db):
     data = tag_data_service.product_tag_data(db, s["host"], tag_data_service.staff_viewer(), None)
     out = tag_data_service.with_preview_combo(db, s["host"], data, s["combo"].id)
     assert out["slots"]["main"]["code"] == "SRTKS7061"
+
+
+def test_re_choosing_the_upgrade_after_the_pin_leaves_exactly_one_chosen(db):
+    s = shapes.s1(db)
+    s["upgrade2"] = shapes.prod(db, "SRTKT72SS", list_price="650.00")
+    combo = seed.combo(
+        db, s["host"], "ZZT S1 two ups",
+        parts=[{"product": s["options"][0], "group": s["group"]}, {"product": s["upgrade"], "is_upgrade": True},
+               {"product": s["upgrade2"], "is_upgrade": True}],
+    )
+    parts = shapes.pick_parts(s["group"], s["options"][0]) + [
+        {"product_id": None, "role": "Upgrade", "candidates": [s["upgrade"].id, s["upgrade2"].id]}
+    ]
+    request = seed.submit_one(db, s["host"], combo, parts)
+    db.flush()
+    tag = request.lines[0].tags[0]
+    tag.choices = {"Upgrade": s["upgrade"].id}
+    db.flush()
+    seed.rows(db, request)  # pins with the first upgrade chosen
+    first = _reread(db, request, tag)["slots"]["upgrades"]
+    assert [u["chosen"] for u in first] == [True, False]
+    tag.choices = {"Upgrade": s["upgrade2"].id}
+    db.flush()
+    second = _reread(db, request, tag)["slots"]["upgrades"]
+    assert [u["code"] for u in second if u["chosen"]] == ["SRTKT72SS"]

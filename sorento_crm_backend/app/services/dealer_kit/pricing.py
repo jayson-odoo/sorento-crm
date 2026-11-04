@@ -540,6 +540,7 @@ def line_pricing(
         # PRICETAG-COMBO-RENDER K8: on a combo line the figure an option SHOWS is what the tag
         # would print, the combo's own price or nothing, never a sum of the parts. The sum is
         # still read for the line's basis below (whether this promotion beats list at all).
+        sort_totals: dict[str, Decimal] = {}
         combo_figure = None
         if combo_row is not None:
             _combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
@@ -549,6 +550,7 @@ def line_pricing(
                 db, products_by_id, resolved_ids, part_ids, viewer, promo.id
             )
             totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
+            sort_totals[promo.id] = total
             promotion_options.append(
                 {
                     "id": promo.id,
@@ -567,8 +569,8 @@ def line_pricing(
         promotion_options.sort(
             key=lambda option: (
                 option["expired_on"] is not None,
-                option["sell_price"] is None,
-                option["sell_price"] or Decimal("0"),
+                # The order follows what each promotion would total, whatever figure is shown.
+                sort_totals[option["id"]],
                 option["description"],
                 option["id"],
             )

@@ -698,3 +698,19 @@ def test_the_request_design_route_answers_200_with_the_combo_on_a_combo_line(crm
     assert response.status_code == 200, response.text
     (line,) = response.json()["lines"]
     assert line["combo"]["name"] == "ZZT pair"
+
+
+def test_ac_2_7_the_cheaper_covering_promotion_is_auto_picked_on_a_combo_line(db):
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.pricing import line_pricing
+
+    s = _std(db, combo_fields={"sell_price": D("1800.00")})
+    dear = seed.promotion(db, [(s["host"], "900.00")], description="AAA first alphabetically")
+    cheap = seed.promotion(db, [(s["host"], "700.00")], description="ZZZ last alphabetically")
+    (priced,) = line_pricing(
+        db, lines=[_pricing_line(s, [s["mirror"].id, s["white"].id])], viewer=tag_data_service.staff_viewer()
+    )
+    # Every option SHOWS the combo's figure; the order still follows what each promotion would total.
+    assert {o["sell_price"] for o in priced["promotion_options"]} == {D("1800.00")}
+    assert priced["auto_promotion_id"] == cheap.id
+    assert [o["id"] for o in priced["promotion_options"]] == [cheap.id, dear.id]
