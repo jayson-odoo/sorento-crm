@@ -618,8 +618,8 @@ describe('AC-D-01 record card and AC-D-06', () => {
     for (const value of ['Jane Lim', 'WhatsApp', 'Sorento CRM', formatDateTime('2026-07-21T09:05:00Z')]) {
       expect(screen.getByText(new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeInTheDocument();
     }
-    // dd/MM/yyyy, h:mm AM/PM
-    expect(document.body.textContent).toMatch(/\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} (AM|PM)/);
+    // dd/MM/yyyy, h:mm am/pm
+    expect(document.body.textContent).toMatch(/\d{2}\/\d{2}\/\d{4}, \d{1,2}:\d{2} (am|pm)/);
   });
 
   it('has the tabs Details and Attachments and NO Business requirements tab (ss returns no BR links, AC-D-05)', async () => {

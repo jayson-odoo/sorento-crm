@@ -38,8 +38,7 @@ import {
   confirmLineFrom,
   suggestionWithReasons,
 } from './boardAmend';
-import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
-import { SHORT_MONTHS } from './boardChangeAnnotations';
+import { formatDateInMalaysia, formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/helpers';
 import { fromMinor, toMinor } from './supplyComposition';
 import { unpostableNotices } from './unpostableNotices';
 import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
@@ -967,16 +966,12 @@ export function autocountChangeNotes(
   return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
 }
 
-/** Malaysia is UTC+8 all year (no daylight saving). */
-const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
-
 /**
- * "24 Sep" from a batch's `created_at`, a naive UTC timestamp, read as the Malaysia calendar
+ * "24/09/2026" from a batch's `created_at`, a naive UTC timestamp, read as the Malaysia calendar
  * date (reviewer round 1: a change uploaded before 08:00 MYT is the previous UTC day).
  */
 function dayMonth(iso: string): string {
-  const date = new Date(parseDateTimeAsUTC(iso).getTime() + MYT_OFFSET_MS);
-  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
+  return formatDateInMalaysia(iso);
 }
 
 type NoteLines = { count: number; itemCodes: string[]; createdAt?: string | null };

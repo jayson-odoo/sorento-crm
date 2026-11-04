@@ -146,7 +146,7 @@ describe('PipelineBoard', () => {
         onMove={vi.fn()}
       />,
     );
-    expect(screen.getByText('01 Jul 2026')).toBeInTheDocument();
+    expect(screen.getByText('01/07/2026')).toBeInTheDocument();
     expect(screen.getByTitle(/Next action .* overdue/i)).toBeInTheDocument();
   });
 

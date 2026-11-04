@@ -8,6 +8,7 @@ so a stakeholder can sort and sum the cells.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date_range, fmt_datetime
 import io
 from datetime import date, datetime
 from typing import Iterable, List, Optional
@@ -51,7 +52,7 @@ def _rates(entries: Iterable[dict], metric: str) -> str:
 
 
 def _period_label(p: dict) -> str:
-    return f"{p['period_start']:%d/%m/%Y} to {p['period_end']:%d/%m/%Y}"
+    return fmt_date_range(p["period_start"], p["period_end"])
 
 
 def _paid(p: dict) -> Optional[float]:
@@ -103,7 +104,7 @@ def _target_sheet(ws, t: dict, generated: datetime, on: date) -> None:
     sheet.write(["Payment", NOT_TRACKED])
     sheet.write(["Earned to date (RM)", t.get("commission_to_date")], money=[2])
     sheet.write(["Current period so far (RM), not final", t.get("commission_current")], money=[2])
-    sheet.write(["Generated", generated.strftime("%d/%m/%Y %H:%M")])
+    sheet.write(["Generated", fmt_datetime(generated, naive_is_utc=False)])
     sheet.gap()
 
     sheet.write(["Summary"], bold=True)
@@ -166,7 +167,7 @@ def build(statements: List[dict], *, on: date, generated: Optional[datetime] = N
     wb = Workbook()
     summary = _Sheet(wb.active)
     wb.active.title = "Summary"
-    summary.write(["Commission statement", f"Generated {generated:%d/%m/%Y %H:%M}"], bold=True)
+    summary.write(["Commission statement", f"Generated {fmt_datetime(generated, naive_is_utc=False)}"], bold=True)
     summary.write(["Earned to date counts periods that have ended; the current period can still change. " + NOT_TRACKED])
     summary.gap()
     summary.write(

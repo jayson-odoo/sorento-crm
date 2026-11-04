@@ -26,6 +26,7 @@ it is reported in ``unmatched`` rather than dressed up as an instruction.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import io
 import logging
 from dataclasses import dataclass, field
@@ -685,7 +686,7 @@ class ProjectSODeltaService:
         )
         for index, row in enumerate(delta["rows"]):
             row["row_key"] = str(index)
-        when = delivery_date.strftime("%d %b %Y") if delivery_date else "no date"
+        when = fmt_date(delivery_date) if delivery_date else "no date"
         return self._persist_amendment(
             order,
             delta,

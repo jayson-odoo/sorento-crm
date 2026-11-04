@@ -20,6 +20,7 @@ rewrite a quotation drafted in February, and must never touch one already issued
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import re
 from datetime import date
 from decimal import Decimal
@@ -224,10 +225,8 @@ def _money(amount: Optional[Decimal]) -> str:
 
 
 def _long_date(value: Optional[date]) -> str:
-    """"26 February 2026", the way the sample workbook writes it. No leading zero on the day."""
-    if value is None:
-        return ""
-    return f"{value.day} {value.strftime('%B')} {value.year}"
+    """`26/02/2026`, the one date shape (DATE-FORMAT-UNIFY, owner 4 Nov 2026)."""
+    return fmt_date(value)
 
 
 def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:

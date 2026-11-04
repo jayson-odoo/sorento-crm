@@ -19,6 +19,7 @@ import {
   useSendContactPortalLinkMutation,
 } from '@/hooks/useContactPortalLink';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 export interface PortalLinkDialogProps {
   open: boolean;
@@ -29,12 +30,7 @@ export interface PortalLinkDialogProps {
 }
 
 function formatExpiry(iso: string): string {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  } catch {
-    return iso;
-  }
+  return formatDateTimeInMalaysia(iso) || iso;
 }
 
 export default function PortalLinkDialog({

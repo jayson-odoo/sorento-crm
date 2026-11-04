@@ -70,7 +70,7 @@ import { SnapshotsList } from './SnapshotsList';
 const MINE = 'c0a80101-7d3e-4b8a-9f21-5e6d7c8b9a01';
 const THEIRS = 'c0a80101-7d3e-4b8a-9f21-5e6d7c8b9a02';
 const FILTERS_LABEL =
-  'Book Project · All locations · Delivery 01/01/2023 to 31/05/2027 · Only in debt · Stock and PO columns';
+  'Book Project · All locations · Delivery 01/01/2023 - 31/05/2027 · Only in debt · Stock and PO columns';
 
 function snap(over: Record<string, unknown> = {}) {
   return {

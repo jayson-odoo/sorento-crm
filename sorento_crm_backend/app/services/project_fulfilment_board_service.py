@@ -40,6 +40,7 @@ The locking fix belongs to the confirmation path and is not attempted here.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -161,6 +162,7 @@ DAY_WINDOW_COLUMNS = 30
 GRANULARITIES = ("day", "date", "week", "month")
 
 _MONTHS = (
+    # date-format-ok: month bucket header (day and week buckets use fmt_date)
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
@@ -241,10 +243,10 @@ def _bucket_label(key: str, granularity: str) -> str:
     if granularity == "month":
         return f"{month} {when.year}"
     if granularity == "day":
-        return f"{when.day} {month} {when.year}"
+        return fmt_date(when)
     if granularity == "date":
         return when.strftime("%d/%m/%Y")
-    return f"w/c {when.day} {month} {when.year}"
+    return f"w/c {fmt_date(when)}"
 
 
 #: Where a location on a cell's stock table stands. The table is the evidence behind the
@@ -351,11 +353,11 @@ def _shown(value: Any) -> Any:
 
 
 def _date_words(when: Optional[date]) -> str:
-    """A date as it is said out loud: `3 Sep 2026`. Never ISO inside a sentence."""
+    """A date in a sentence: `03/09/2026`. Never ISO inside a sentence."""
     when = spo_supply.shown_date(when)
     if when is None:
         return "an unstated date"
-    return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
+    return fmt_date(when)
 
 
 def _option_row(option: Any) -> Dict[str, Any]:

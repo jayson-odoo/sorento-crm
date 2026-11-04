@@ -18,6 +18,7 @@ back, and deleted when the line it belongs to is confirmed.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_datetime
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -424,7 +425,7 @@ def _refuse_newer(db: Session, row: Any, based_on_saved_at: Any) -> None:
     if based is not None and row.saved_at <= based:
         return
     # Said in Malaysia time, the planners' own clock (`saved_at` is stored as naive UTC).
-    when = row.saved_at.replace(tzinfo=timezone.utc).astimezone(_MALAYSIA).strftime("%d/%m/%Y %H:%M")
+    when = fmt_datetime(row.saved_at)
     who = _saver_name(db, row.saved_by) or "another planner"
     raise AppException(
         status_code=409,

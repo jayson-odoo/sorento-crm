@@ -37,7 +37,7 @@ import { useStockInquiries } from '../hooks/useStockInquiries';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalList from '@/components/common/MyRequestPortalList';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatMaybeDate } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
@@ -287,7 +287,7 @@ function StaffStockInquiriesList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Delivery Date" column={column} />
         ),
-        cell: ({ row }) => row.original.delivery_date ?? '-',
+        cell: ({ row }) => formatMaybeDate(row.original.delivery_date) || '-',
         size: 150,
         meta: {
           headerTitle: 'Delivery Date',

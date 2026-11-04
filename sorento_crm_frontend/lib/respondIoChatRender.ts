@@ -500,7 +500,7 @@ export function formatDatePillLabel(ms: number): string {
     a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   if (sameDay(d, today)) return 'Today';
   if (sameDay(d, yest)) return 'Yesterday';
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString(undefined, { // date-format-ok: chat day pill (Fri, 10 Apr), a conversation divider not a record date
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -512,5 +512,5 @@ export function formatDatePillLabel(ms: number): string {
 export function formatBubbleTime(ms: number): string {
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true });
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true }); // date-format-ok: chat bubble time of day, time only
 }

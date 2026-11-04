@@ -860,9 +860,5 @@ function formatDate(iso?: string | null): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDateInMalaysia(date);
 }

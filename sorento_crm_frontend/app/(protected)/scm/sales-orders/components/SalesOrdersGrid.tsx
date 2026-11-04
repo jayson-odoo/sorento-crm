@@ -67,6 +67,7 @@ import {
 } from '../../hooks/useSalesOrders';
 import { useSalesAgentOptions } from '../hooks/useSalesAgentOptions';
 import { SOURCE_FILTER_OPTIONS, SOURCE_LABELS } from '../lib/sourceLabels';
+import { formatDateRange } from '@/lib/helpers';
 import { fmtDate, fmtInt } from '../../lib/format';
 import type { SalesOrder, SalesOrderFormData } from '../../types/scm.types';
 import { SalesOrderFormModal } from './SalesOrderFormModal';
@@ -957,7 +958,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       const label = optionLabel(TRANSFERABLE_FILTER_OPTIONS, transferableFilter);
       if (label) parts.push(`Transferable: ${label}`);
     }
-    if (dateFrom && dateTo) parts.push(`Dates ${fmtDate(dateFrom)} to ${fmtDate(dateTo)}`);
+    if (dateFrom && dateTo) parts.push(`Dates ${formatDateRange(dateFrom, dateTo)}`);
     else if (dateFrom) parts.push(`Dates from ${fmtDate(dateFrom)}`);
     else if (dateTo) parts.push(`Dates to ${fmtDate(dateTo)}`);
     // Customer/agent options are a multi-thousand-row master that loads slower than the
