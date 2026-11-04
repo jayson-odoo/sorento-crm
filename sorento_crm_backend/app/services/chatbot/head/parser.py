@@ -169,6 +169,10 @@ class ParserConfig:
     # `report_ask` object (`with_report_ask`), the user turn carries the `Held report:` line and the report lane builds
     # the ask from the object. False for a bare config and for every text without the line: all of it unchanged.
     report_ask: bool = False
+    # CHATBOT-TOTALS-FILTERS: the `report_ask` keys of `REPORT_ASK_DEFINED` the prompt in use defines
+    # (`report_ask_defined_in`): only those join its schema and its `Held report:` line. Empty for a bare config and for
+    # #2105's text.
+    report_ask_defined: frozenset[str] = frozenset()
     # SUPPLIER-ASK: the prompt in use carries `SUPPLIER_ID_ASK`, so a Supplier candidate line ends with its row id
     # and the parser answers with it; the id binds the supplier (and every supplier the span pass scored as close).
     supplier_ids: bool = False
@@ -970,6 +974,9 @@ REPORT_ASK_KEYS = (
 #: CHATBOT-TOTALS-FILTERS M1: what the report gives back (`report_ask.from_object` acts on it): one figure, one row per
 #: value of the axis, or the axis's rows in order cut to a count.
 REPORT_ASK_FRAMES = ("total", "breakdown", "ranking")
+#: CHATBOT-TOTALS-FILTERS: the keys a prompt text offers only when it defines them (`report_ask_defined_in`), so a text
+#: without them (#2105's) keeps its schema and its `Held report:` line exactly.
+REPORT_ASK_DEFINED = ("frame", "company_or_brand")
 #: The keys that hold a list of names.
 REPORT_ASK_LISTS = (
     "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
@@ -977,11 +984,22 @@ REPORT_ASK_LISTS = (
 )
 
 
-def with_report_ask(schema: dict[str, Any]) -> dict[str, Any]:
+def report_ask_defined_in(raw_template: Any) -> frozenset[str]:
+    """The keys of `REPORT_ASK_DEFINED` the prompt text defines: the text names the key as `"<key>":`."""
+    return frozenset(key for key in REPORT_ASK_DEFINED if f'"{key}":' in (raw_template or ""))
+
+
+def report_ask_keys(defined: Any = ()) -> tuple[str, ...]:
+    """The `report_ask` keys in order, less the `REPORT_ASK_DEFINED` ones the prompt in use does not define."""
+    return tuple(key for key in REPORT_ASK_KEYS if key not in REPORT_ASK_DEFINED or key in set(defined or ()))
+
+
+def with_report_ask(schema: dict[str, Any], defined: Any = ()) -> dict[str, Any]:
     """A copy of `schema` with the flag-gated `report_ask` object last in `properties` and `required` (required and
     nullable, as strict mode needs): the whole report the user wants after this message. `basis`, `group_by` and
     `measure` take the enums of `schema`'s own top-level keys, so the account type axis and the old measures follow
-    the text exactly as those keys do."""
+    the text exactly as those keys do. `defined`: the `REPORT_ASK_DEFINED` keys the prompt defines (the others are left
+    out)."""
     out = copy.deepcopy(schema)
     props = out["properties"]
     strings = {"type": "array", "items": {"type": "string"}}
@@ -998,11 +1016,12 @@ def with_report_ask(schema: dict[str, Any]) -> dict[str, Any]:
         "company": {"type": ["string", "null"]},
         **{key: copy.deepcopy(strings) for key in REPORT_ASK_LISTS},
     }
+    keys = report_ask_keys(defined)
     props["report_ask"] = {
         "type": ["object", "null"],
         "additionalProperties": False,
-        "properties": {key: shape[key] for key in REPORT_ASK_KEYS},
-        "required": list(REPORT_ASK_KEYS),
+        "properties": {key: shape[key] for key in keys},
+        "required": list(keys),
     }
     out["required"] = [*[k for k in out["required"] if k != "report_ask"], "report_ask"]
     return out
@@ -1180,7 +1199,7 @@ def resolve_config(
         if LANGUAGE_ASK in (raw_template or ""):
             json_schema = with_message_language(json_schema)
         if REPORT_ASK_LINE in (raw_template or ""):
-            json_schema = with_report_ask(json_schema)
+            json_schema = with_report_ask(json_schema, report_ask_defined_in(raw_template))
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1204,6 +1223,7 @@ def resolve_config(
         supplier_ids=SUPPLIER_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
         report_ask=REPORT_ASK_LINE in (raw_template or ""),
+        report_ask_defined=report_ask_defined_in(raw_template),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         max_output_tokens=max_output_tokens_setting(db),
@@ -1479,7 +1499,7 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
     schema = with_message_language(schema) if config.message_language else schema
-    return with_report_ask(schema) if config.report_ask else schema
+    return with_report_ask(schema, config.report_ask_defined) if config.report_ask else schema
 
 
 def _usage(config: ParserConfig, result: Any, effort: str, started: float) -> dict[str, Any]:

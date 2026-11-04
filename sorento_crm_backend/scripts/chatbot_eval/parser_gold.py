@@ -105,11 +105,13 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
 }
 #: The `report_ask` slots (`parser.REPORT_ASK_KEYS`, stdlib-only here like the rest of this module) and the list ones.
 REPORT_ASK_SLOTS = (
-    "kind", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
-    "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "kind", "frame", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company",
+    "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "company_or_brand",
 )
 _REPORT_ASK_LIST_SLOTS = frozenset(
-    {"sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type"}
+    {"sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+     "company_or_brand"}
 )
 _REPORT_ASK_DATE_SLOTS = ("date_from", "date_to")
 #: A gold row's `held`: the whole `Held report...` line the engine prints for the conversation before the message

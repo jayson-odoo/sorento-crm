@@ -3575,11 +3575,13 @@ def _positions_read_elsewhere(state: Any) -> bool:
     return bool(ideation.get("pending_media"))
 
 
-def _held_report_line(focus: Any) -> str | None:
-    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`)."""
+def _held_report_line(focus: Any, config: Any = None) -> str | None:
+    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`), in the
+    keys the prompt in use defines (`parser.report_ask_keys`)."""
+    from app.services.chatbot.head.parser import report_ask_keys
     from app.services.chatbot.lanes.business import report_ask
 
-    return report_ask.held_report(focus)
+    return report_ask.held_report(focus, report_ask_keys(getattr(config, "report_ask_defined", ())))
 
 
 def run_turn(
@@ -6052,7 +6054,7 @@ def _run_stages_body(  # noqa: PLR0915
         state_block=state_block,
         # SALES-ACCOUNT-TYPE semantic carry (A2): the held report in words, only for a prompt carrying the report ask
         # marker (`ParserConfig.report_ask`); every other text's user block is unchanged.
-        held_report=_held_report_line(state_in.focus) if getattr(parser_config, "report_ask", False) else None,
+        held_report=_held_report_line(state_in.focus, parser_config) if getattr(parser_config, "report_ask", False) else None,
     )
     user_block, context_report = context_mod.assemble(context_layers)
     # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
@@ -6859,7 +6861,12 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if carried_rule:
                 turn_trace.add("so_list", {"verdict_rule": carried_rule})
-        verdict, so_list_rule = so_status_mod.so_list_verdict(
+        # CHATBOT-TOTALS-FILTERS (owner wording, 4 Nov): the report ask's outstanding kind question offers "Sales order";
+        # a reply to it that the parser wrote as the report ask object is that answer, never the SO list's words.
+        answers_kind = semantic_ask and (asked_before or {}).get("ask") == report_ask.ASK_NAME and bool(
+            ((asked_before or {}).get("extras") or {}).get("kind_ask")
+        )
+        verdict, so_list_rule = (verdict, None) if answers_kind else so_status_mod.so_list_verdict(
             verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )
         if so_list_rule:

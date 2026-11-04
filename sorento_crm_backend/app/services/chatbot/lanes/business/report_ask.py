@@ -234,7 +234,8 @@ BASES = ("invoiced", "delivered", "ordered", "outstanding", "pending_delivery", 
 #: Never defaulted: an outstanding ask whose parse names none is asked `KIND_QUESTION`. They take no period
 #: (absent = every date).
 OUTSTANDING_KINDS = ("outstanding", "pending_delivery", "unpaid")
-KIND_QUESTION = "Undelivered orders or pending delivery?"
+#: Owner wording ruling (4 Nov, CHATBOT-TOTALS-FILTERS): the kinds by the document each lists.
+KIND_QUESTION = "Sales order or delivery order?"
 #: Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY): "outstanding" means undelivered orders or pending delivery, never unpaid
 #: invoices (only when the user names them). The kind question offers only the kinds the contact may see; a contact
 #: that may see one (pending delivery without the Outstanding reveal, as before #1922) gets it with no question.
@@ -350,7 +351,7 @@ TOP_N = rf.FieldSpec(name="top_n", noun="number", question=TOP_N_QUESTION, resol
 METRIC = rf.FieldSpec(name="metric", noun="measure", question=ranking_ask.METRIC_LINE, question_fn=_metric_question, resolve=_resolve_metric, allow_all=False)
 #: The kind question's options (the outstanding kinds, in the question's order) and the basis question's, as the
 #: pick the parser is shown (`FieldSpec.offered`).
-KIND_OPTIONS = (("outstanding", "Undelivered orders"), ("pending_delivery", "Pending delivery"))
+KIND_OPTIONS = (("outstanding", "Sales order"), ("pending_delivery", "Delivery order"))
 BASIS_OPTIONS = (("invoiced", "Invoiced"), ("delivered", "Delivered"), ("ordered", "Ordered"), ("outstanding", "Outstanding"))
 
 
@@ -414,20 +415,6 @@ def _kind_options(extras: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     if extras.get("kind_both"):
         return (COMPANY_KIND_OPTION, WORD_KIND_OPTIONS[0], BOTH_KIND_OPTION)
     return (*WORD_KIND_OPTIONS, COMPANY_KIND_OPTION) if extras.get("kind_company") else WORD_KIND_OPTIONS
-
-
-def _kinds_said(value: Any) -> frozenset[str]:
-    """M2: the kinds an entity's `kind_said` names, read against the kind questions' own options (their values and
-    labels: brand, account type, company), never a word list of the message's ("company and brand" names two). One that
-    names none of them names no kind here: the #2105 reading stands (said, the entity's hint is its kind)."""
-    tokens = ["".join(ch for ch in t if ch.isalnum()) for t in _squash(value).split()]
-    found: set[str] = set()
-    for kind, label in (*WORD_KIND_OPTIONS, COMPANY_KIND_OPTION):
-        for form in {_squash(kind.replace("_", " ")), _squash(label)}:
-            run = form.split()
-            if any(tokens[i:i + len(run)] == run for i in range(len(tokens))):
-                found.add(kind)
-    return frozenset(found)
 
 
 def _kind_question(extras: dict[str, Any]) -> str:
@@ -1756,13 +1743,17 @@ def _kind_ask(
 
 
 def _company_or_brand(db: Any, parse_output: dict[str, Any], plan: dict[str, Any], companies: Any) -> dict[str, Any] | None:
-    """M2 (owner Q2 c), read against the DATA: the first brand word of this message the parser left unsaid (`kind_said`
-    null, `report_ask_kind`) that is one of the contact's companies (its name or code, as `_kind_ask` reads it) and
-    resolves as a brand. None for a contact who sees one company (the word is the brand, nothing to ask), and for a word
-    the account type plan already took."""
+    """M2 (owner Q2 c): the slots say which name is in doubt, the DATA settles it. A name in the object's
+    `company_or_brand`, or a brand word left unsaid (`kind_said` null, `report_ask_kind`) that is the very company the
+    object also names, is read against the brand catalogue and the contact's companies (its name or code, as `_kind_ask`
+    reads it): one of those companies AND a brand is asked (`ask`), company or brand or both; a company and no brand is
+    that company; a contact who sees one company gets the brand. None for any other word, and for one the account type
+    plan already took."""
     own = _own_companies(companies)
-    if db is None or len(own) < 2:
+    if db is None or not own:
         return None
+    either = {_squash(w or "") for w in jsc.array(_dict(parse_output.get(OBJECT_KEY)).get("company_or_brand"))} - {""}
+    named, _foreign = _company_said(parse_output, own)
     for entry in jsc.array(parse_output.get("report_ask_kind")):
         if not isinstance(entry, dict) or entry.get("hint") != "brand" or entry.get("said") is True:
             continue
@@ -1772,8 +1763,12 @@ def _company_or_brand(db: Any, parse_output: dict[str, Any], plan: dict[str, Any
             continue
         forms = {_squash(word), _squash(typed)}
         hits = [c for c in own if forms & {_squash(c[1] or ""), _squash(c[2] or "")}]
-        if len(hits) == 1 and _is_brand(db, word, typed):
-            return {"word": word, "raw": typed, "company": [str(hits[0][0]), str(hits[0][1])]}
+        if len(hits) != 1 or not (forms & either or (named is not None and str(named[0]) == str(hits[0][0]))):
+            continue
+        brand = _is_brand(db, word, typed)
+        if brand and len(own) < 2:
+            continue  # one company: the brand, nothing to ask
+        return {"word": word, "raw": typed, "company": [str(hits[0][0]), str(hits[0][1])], "ask": brand}
     return None
 
 
@@ -1893,8 +1888,9 @@ def _fresh_args(
     )
     words = _dict(parse_output.get("report_ask_words"))
     scope = _object_scope(parse_output, companies)
-    # M2 (owner Q2 c), the object path: a name of this message left unsaid that is a brand and one of the contact's
-    # companies is asked once, company, brand or both; it is no brand filter until answered.
+    # M2 (owner Q2 c), the object path: a name in doubt (`_company_or_brand`) that is a brand and one of the contact's
+    # companies is asked once, company, brand or both; one that is only a company is that company. Neither is a brand
+    # filter.
     either = (
         _company_or_brand(db, parse_output, plan, companies)
         if scope is not None and ask_kind and not dealer and not plan["ask"] else None
@@ -1916,11 +1912,13 @@ def _fresh_args(
         if asked is None:
             return None, line
         args["_kind_ask"] = asked  # popped by `settle`; never a route param
-    elif either is not None:
+    elif either is not None and either["ask"]:
         asked, line = _company_brand_ask(db, parse_output, either, args, scope)
         if asked is None:
             return None, line
         args["_kind_ask"] = asked  # popped by `settle`; never a route param
+    elif either is not None:
+        args["company"] = either["company"][0]  # M2: a company and no brand is that company
 
     # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
     # earlier question is not this ask's filter).
@@ -2944,10 +2942,14 @@ def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> d
     after `route_args`). A customer the office grouped is one customer: each id widens to every ledger of its explicit
     `customer_group_id` in the same company (read from `customers` on the turn's company-scoped session, never a name
     rule). `linked` (a dealer's own customers): a widened ledger outside them is left out (the route's own cap stays
-    behind it). Args without customer ids, or ids in no group, are returned as they are."""
+    behind it). Args without customer ids, or ids in no group, are returned as they are, less any id that is no UUID (no
+    row: the route would refuse it, the query would raise)."""
     from app.services.chatbot.lanes.business.fetch import is_uuid
 
-    ids = [str(i) for i in jsc.array(args.get("customer_ids")) if is_uuid(i)]  # M5: a non-UUID is no row (no DataError)
+    given = [str(i) for i in jsc.array(args.get("customer_ids")) if i]
+    ids = [i for i in given if is_uuid(i)]  # M5: a non-UUID is no row (no DataError, no route 400)
+    if ids != given:
+        args = {**{k: v for k, v in args.items() if k != "customer_ids"}, **({"customer_ids": ids} if ids else {})}
     if not ids or db is None:
         return args
     from sqlalchemy import and_, or_
@@ -3231,12 +3233,15 @@ def _object_of(args: dict[str, Any], names: dict[str, Any], *, words: Any = (), 
     return {key: ask[key] for key in REPORT_ASK_KEYS}
 
 
-def held_report(focus: Any) -> str | None:
+def held_report(focus: Any, keys: Any = None) -> str | None:
     """The one `Held report` line of the user turn (A2): the open question's ask so far, naming the field it asks, or
-    else the report that last ran (`Focus.sales_ranking_frame`); None when neither is held."""
+    else the report that last ran (`Focus.sales_ranking_frame`); None when neither is held. `keys`: the `report_ask` keys
+    the prompt in use defines (`parser.report_ask_keys`; None: every key)."""
     from app.services.chatbot.turn.context import held_report_line
 
     ask, asking = _held_object(focus)
+    if ask is not None and keys is not None:
+        ask = {key: ask[key] for key in keys if key in ask}
     return held_report_line(ask, asking) if ask is not None else None
 
 
@@ -3337,8 +3342,9 @@ def _word_kinds(
     object's own `company` (`company`) is the company (C6-1: the model read "company" and wrote the word twice), else
     unsure; a word the open question still owes is unsure (asked again), except that the object's brands answer the
     company-or-brand question (M2, `kind_both`); a word left in `brand_or_account_type` or `company_or_brand` is unsure
-    (`company_or_brand` read first: a name still there is still asked); a `kind_said` naming company and brand is
-    `both`; any other word, carried from the held report, keeps its list and is never asked."""
+    (`company_or_brand` read first and whatever `kind_said` says: the slots decide, the data settles it); any other
+    word, carried from the held report, keeps its list and is never asked. `kind_said` is read as said or not, never
+    by its words."""
     def fold(value: Any) -> str:
         return " ".join(jsc.js_string(value).split()).casefold()
 
@@ -3348,6 +3354,7 @@ def _word_kinds(
     owed_words = [w for w in jsc.array(extras.get("kind_words")) if fold(w)] if "kind" not in _dict(slot.get("values")) else []
     owed = {fold(w) for w in (*owed_words, *(jsc.array(extras.get("kind_match")) if owed_words else ()))}
     both_open = bool(owed_words) and bool(extras.get("kind_both"))  # M2: the company-or-brand question is open
+    either = {fold(w) for w in jsc.array(ask.get("company_or_brand"))} - {""}
     named: dict[str, dict[str, Any]] = {}
     for e in jsc.array(verdict.get("entities")):
         if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type"):
@@ -3377,16 +3384,10 @@ def _word_kinds(
         entity = named.get(key)
         if picked and key in owed:
             how = picked
+        elif key in either:
+            how = "unsure"  # M2: a `company_or_brand` name is the data's to settle (`_company_or_brand`), asked when both
         elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
-            # M2 (owner Q2 c): a word the message said as a company and as no other kind is that company, no brand.
-            # Both kinds named: the brand AND the company (`from_object`).
-            said = _kinds_said(entity.get("kind_said"))
-            if said == {"company"}:
-                how = "company"
-            elif {"company", "brand"} <= said:
-                how = BOTH_KIND_OPTION[0]
-            else:
-                how = jsc.js_string(entity.get("hint")).strip().lower()
+            how = jsc.js_string(entity.get("hint")).strip().lower()
         elif entity is not None and "kind_said" in entity:
             # The model committed the word to neither reading (left out of `brand_or_account_type`, bound to no candidate):
             # equal to its own company, it is that company.
@@ -3455,6 +3456,14 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     if pick is not None and _PICK_FILLS.get(pick[0]) and ask.get(_PICK_FILLS[pick[0]]) in (None, ""):
         # One rule: the open question's declared pick fills the slot it asks when the object left that slot null.
         ask[_PICK_FILLS[pick[0]]] = pick[1]
+    asked = _dict(getattr(focus, "required_ask", None))
+    if (
+        ask.get("basis") in (None, "") and asked.get("ask") == ASK_NAME and asked.get("asking") == "basis"
+        and _dict(asked.get("extras")).get("kind_ask") and status in STATUS_KIND
+    ):
+        # Owner wording (4 Nov): the outstanding kind question's answer the parser wrote as the document status that
+        # names the kind ("Sales order" -> so_outstanding) is that kind, the report ask's own outstanding ask.
+        ask["basis"], status = STATUS_KIND[status], "outstanding"
     kind_company = _dict(_dict(getattr(focus, "required_ask", None)).get("extras")).get("kind_company")
     if (
         pick is not None and pick[0] == "kind" and pick[1] in (COMPANY_KIND_OPTION[0], BOTH_KIND_OPTION[0])
@@ -3477,13 +3486,19 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         axis = None  # M1: one figure; the held axis and count are not carried, so no count or measure is asked
     elif frame == "breakdown" and axis is None:
         axis = held_axis  # M1: a breakdown on the held axis
-    # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`);
-    # M1: a frame with an axis is the parser's own call, so its axis wins over a held one (and an open count question).
-    typed = (frame is not None and axis is not None) or bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+    # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
+    typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
     )
+    # M1: a frame naming an axis other than the held one, on a new ask (no declared answer to the open question), is the
+    # parser's own call: that axis wins over the held one, an open count question included. It never lifts the
+    # one-value rule below.
+    framed = (
+        frame is not None and axis is not None and axis != held_axis
+        and _dict(verdict.get("open_question_answer")).get("mode") is None
+    )
     open_slot = _dict(getattr(focus, "required_ask", None))
-    if axis and open_slot.get("ask") == ASK_NAME and not typed:
+    if axis and open_slot.get("ask") == ASK_NAME and not (typed or framed):
         # A reply to this ask's open question sets no axis the held ask did not have unless this message types one: the
         # held ask's axis stays (a total stays one).
         held_group = _dict(_dict(open_slot.get("extras")).get("args")).get("group_by")
@@ -3499,8 +3514,6 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         slot_of_axis = _AXIS_SLOTS.get(axis or "")
     if carrying:
         _carry(ask, held_ask, verdict, slot_of_axis)
-        if _squash(ask.get("company") or "") == _squash(held_ask.get("company") or "") and _moves_to_brand(verdict, held_ask):
-            ask["company"] = None  # M2: the held company's name, said now as a brand only, is that brand alone
     breakdown = frame == "breakdown" and axis is not None
     if outstanding:
         status = status if status in OUTSTANDING_STATUSES else "outstanding"
@@ -3519,12 +3532,7 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
-    either = {_squash(w) for w in names("company_or_brand")}
     for word, how in _word_kinds(ask, verdict, focus, picked, company=own_company):
-        if how in ("company", BOTH_KIND_OPTION[0]) and not own_company and _squash(word) in either:
-            # M2: a `company_or_brand` name the message's `kind_said` settles as the company (and the brand, for both) is
-            # this ask's company when the object named none of its own.
-            ask["company"] = own_company = word
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
         elif how == "account_type":
@@ -3589,21 +3597,6 @@ def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any
         for key in keys:
             if key not in ("brand_or_account_type", axis_slot) and held_ask.get(key):
                 ask[key] = held_ask[key]
-
-
-def _moves_to_brand(verdict: dict[str, Any], held_ask: dict[str, Any]) -> bool:
-    """M2 (owner Q2 c), over the parser's own outputs: does this message say the held report's company name as a brand and
-    as no company (an entity's `kind_said`, `_kinds_said`)? The name moves to the brand slot. A held report that already
-    holds a brand of that name beside the company (both settled earlier) keeps both (Q3)."""
-    company = _squash(held_ask.get("company") or "")
-    if not company or company in {_squash(b or "") for b in jsc.array(held_ask.get("brands"))}:
-        return False
-    return any(
-        isinstance(e, dict) and e.get("current_message") is not False
-        and _kinds_said(e.get("kind_said")) & {"brand", "company"} == {"brand"}
-        and company in {_squash(e.get(k) or "") for k in ("raw", "canonical_code")}
-        for e in jsc.array(verdict.get("entities"))
-    )
 
 
 _COMPANY_ROWS = {"sales_agent": "SalesAgent", "brand": "Brand", "category": "ProductCategory", "customer": "Customer"}
