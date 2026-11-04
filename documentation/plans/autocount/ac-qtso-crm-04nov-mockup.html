@@ -1,0 +1,259 @@
+<title>AutoCount Quotation and SO</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the app's own shell. A snapshot drill dialog, the Link dialog it opens, then the result states. Tokens copy css/config.reui.css (zinc neutrals, blue-500 primary, 0.5rem radius, Inter). */
+:root {
+  --bg: #fafafa; --card: #ffffff; --fg: #09090b; --muted: #f4f4f5; --muted-fg: #71717a;
+  --border: #ececee; --primary: #3b82f6; --primary-fg: #ffffff;
+  --green-bg: #d1fae5; --green-fg: #065f46; --amber-bg: #fef3c7; --amber-fg: #92400e;
+  --red-bg: #fee2e2; --red-fg: #991b1b; --blue-bg: #dbeafe; --blue-fg: #1e40af;
+  --note-bg: #f8fafc; --radius: 0.5rem;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #09090b; --card: #111113; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-fg: #ffffff;
+  --green-bg: #064e3b; --green-fg: #a7f3d0; --amber-bg: #451a03; --amber-fg: #fde68a;
+  --red-bg: #450a0a; --red-fg: #fecaca; --blue-bg: #172554; --blue-fg: #bfdbfe; --note-bg: #0f172a;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #09090b; --card: #111113; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-fg: #ffffff;
+  --green-bg: #064e3b; --green-fg: #a7f3d0; --amber-bg: #451a03; --amber-fg: #fde68a;
+  --red-bg: #450a0a; --red-fg: #fecaca; --blue-bg: #172554; --blue-fg: #bfdbfe; --note-bg: #0f172a;
+  color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-fg); font-weight: 600; }
+p { margin: 0; }
+.muted { color: var(--muted-fg); }
+.tab { font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.dialog { background: var(--card); border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; min-width: 0; }
+.dlg-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
+.dlg-body { padding: 16px 20px; display: grid; gap: 16px; min-width: 0; }
+.dlg-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; }
+.panel { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--card); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 860px; table-layout: fixed; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { font-weight: 500; color: var(--muted-fg); font-size: 13px; background: var(--muted); }
+th .sort { opacity: .55; font-size: 10px; margin-left: 4px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tfoot td { font-weight: 600; background: var(--muted); }
+a, .link { color: var(--primary); text-decoration: none; font-weight: 500; }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.p-neutral { background: var(--muted); color: var(--fg); }
+.p-green { background: var(--green-bg); color: var(--green-fg); }
+.p-amber { background: var(--amber-bg); color: var(--amber-fg); }
+.p-red { background: var(--red-bg); color: var(--red-fg); }
+.p-blue { background: var(--blue-bg); color: var(--blue-fg); }
+.btn { font: inherit; font-size: 13px; font-weight: 500; border-radius: 6px; padding: 5px 12px; border: 1px solid var(--border); background: var(--card); color: var(--fg); cursor: pointer; white-space: nowrap; }
+.btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn.sm { padding: 3px 10px; font-size: 12px; }
+.menu { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 6px 18px rgba(0,0,0,.1); width: min(320px, 100%); padding: 4px; }
+.menu-item { display: grid; gap: 1px; padding: 7px 10px; border-radius: 6px; }
+.menu-item.on:hover { background: var(--muted); }
+.menu-item.off { opacity: .55; }
+.menu-item .why { font-size: 12px; color: var(--muted-fg); }
+.cap { display: flex; flex-wrap: wrap; gap: 6px; }
+.callout { border: 1px solid var(--border); background: var(--note-bg); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 4px; }
+.callout.warn { background: var(--amber-bg); color: var(--amber-fg); border-color: transparent; }
+.callout.err { background: var(--red-bg); color: var(--red-fg); border-color: transparent; }
+.callout.ok { background: var(--green-bg); color: var(--green-fg); border-color: transparent; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.field { display: grid; gap: 4px; }
+.field label { font-size: 13px; font-weight: 500; }
+.input { font: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; background: var(--card); color: var(--fg); width: 140px; }
+.select { font: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; background: var(--card); color: var(--fg); min-width: 0; width: 100%; max-width: 260px; display: inline-flex; justify-content: space-between; gap: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.selected td { background: var(--blue-bg); }
+.ann { font-size: 12px; color: var(--muted-fg); border-left: 2px solid var(--border); padding-left: 8px; }
+.map td { white-space: normal; }
+.map table { min-width: 720px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--muted); padding: 1px 4px; border-radius: 4px; }
+input[type=radio] { accent-color: var(--primary); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.strip { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.cb { width:16px; height:16px; accent-color: var(--primary); }
+tr.ticked td { background: var(--blue-bg); }
+.ver { font-size:11px; font-weight:600; padding:1px 6px; border-radius:4px; background: var(--muted); color: var(--muted-fg); }
+</style>
+<style>
+.new { outline: 2px dashed var(--primary); outline-offset: 3px; border-radius: 6px; }
+.strip { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 20px; }
+.kv div { display: grid; gap: 2px; min-width: 0; }
+.kv span:first-child { font-size: 12px; color: var(--muted-fg); }
+.toggle { display: inline-block; width: 34px; height: 20px; border-radius: 999px; background: var(--border); position: relative; vertical-align: middle; }
+.toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--card); }
+</style>
+
+<div class="wrap">
+  <header class="stack">
+    <span class="eyebrow">Mock v1 · lane AC-QTSO-CRM · not wired · only the dashed outlines are new; everything else is today's screen</span>
+    <h1>Project sales: quotations and sales orders into AutoCount</h1>
+    <p class="muted" style="max-width:78ch">The data is an example. The lines follow the real document SO397450 that the worksheet is built from (one area-group section, Your Ref = the customer's PO). Product code SRTWB242 and locations come from the repo's test data. This cloud sandbox has no copy of dev data, so crew swaps in a real project QT and SO on the hand-test copy.</p>
+  </header>
+
+  <!-- 0. Switch -->
+  <section class="dialog" aria-labelledby="s0">
+    <div class="dlg-head"><span class="eyebrow">User management &gt; Settings &gt; General (existing page)</span><h2 id="s0">The switch (ruling R1)</h2></div>
+    <div class="dlg-body">
+      <div class="row new" style="padding:8px">
+        <span class="toggle" aria-hidden="true"></span>
+        <div><b>AutoCount quotations and sales orders from Project sales</b><p class="muted" style="font-size:12px">Off</p></div>
+      </div>
+      <p class="ann">Sits beside "AutoCount links from Stock Debt" (#2168). Off by default. While it is off, none of the dashed buttons below show, and every write route answers 403 "AutoCount quotations and sales orders from Project sales are switched off in Settings." without calling the Shared Service.</p>
+    </div>
+  </section>
+
+  <!-- 1. Worksheet -->
+  <section class="dialog" aria-labelledby="s1">
+    <div class="dlg-head">
+      <span class="eyebrow">Project &gt; Sales orders &gt; an order &gt; AutoCount worksheet (existing page)</span>
+      <div class="row" style="justify-content:space-between">
+        <div><div class="row"><h2 id="s1">PSO-2026-0187</h2><span class="pill p-green">Published</span></div>
+          <p class="muted" style="font-size:13px">AutoCount SO worksheet · TOWER A · Customer PO PO/BV/2026/0931</p></div>
+        <div class="strip">
+          <button class="btn sm" type="button">← Back to the sales order</button>
+          <button class="btn sm" type="button">Copy for AutoCount</button>
+          <button class="btn sm" type="button">Download CSV</button>
+          <button class="btn sm primary new" type="button">Create in AutoCount</button>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-body">
+      <div class="panel"><div class="panel-head"><h3>Header fields</h3></div>
+        <div class="dlg-body kv tab">
+          <div><span>Debtor</span><span>300-B012 · Bayu Vista Development Sdn Bhd</span></div>
+          <div><span>Your Ref No.</span><span>PO/BV/2026/0931</span></div>
+          <div><span>Our Ref No.</span><span>Residensi Bayu Vista</span></div>
+          <div><span>Our QT Ref No.</span><span>QT26-00412</span></div>
+          <div><span>Terms</span><span>*Net 60 days</span></div>
+          <div><span>Provisional Ref</span><span>PSO-2026-0187</span></div>
+        </div></div>
+      <p class="ann">Download CSV stays as the fallback (R2). Create in AutoCount shows only when the switch is on, the order is published, it has no unacknowledged hard finding, and it has no AutoCount number yet. Once it has one, the button goes and the header reads <b>AutoCount SO412350</b> (the same place the number shows after a pull today). A missing debtor code or line location greys the button with the reason, for example "No location on line 3".</p>
+    </div>
+  </section>
+
+  <!-- 2. Create dialog: confirm, then result -->
+  <div class="grid2">
+    <section class="dialog new" aria-labelledby="s2">
+      <div class="dlg-head"><h2 id="s2">Create PSO-2026-0187 in AutoCount</h2><p class="muted" style="font-size:12px">Bayu Vista Development Sdn Bhd · 3 lines · RM 41,580.00</p></div>
+      <div class="dlg-body">
+        <p>AutoCount gives it a number. The worksheet's lines go as they are.</p>
+        <div class="dlg-foot" style="padding:0;border:0"><button class="btn" type="button">Cancel</button><button class="btn primary" type="button">Create in AutoCount</button></div>
+      </div>
+    </section>
+    <section class="dialog new" aria-labelledby="s3">
+      <div class="dlg-head"><h2 id="s3">Created: SO412350</h2></div>
+      <div class="dlg-body">
+        <div class="callout ok">AutoCount read back 3 lines. They match what was sent.</div>
+        <div class="scroll"><table style="min-width:520px"><colgroup><col style="width:48px"><col style="width:110px"><col style="width:70px"><col style="width:90px"><col style="width:110px"><col style="width:110px"></colgroup>
+          <thead><tr><th class="num">Line</th><th>Item</th><th class="num">Qty</th><th>Location</th><th>Delivery date</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td>SRTWB242</td><td class="num">120</td><td>BRW-BB</td><td class="tab">18/11/2026</td><td class="num">21,600.00</td></tr>
+            <tr><td class="num">2</td><td>SRTWB250</td><td class="num">60</td><td>BRW-BB</td><td class="tab">18/11/2026</td><td class="num">12,780.00</td></tr>
+            <tr><td class="num">3</td><td>SRTBS110</td><td class="num">40</td><td>BRW-BB</td><td class="tab">02/12/2026</td><td class="num">7,200.00</td></tr>
+          </tbody></table></div>
+      </div>
+      <div class="dlg-foot"><button class="btn primary" type="button">Done</button></div>
+    </section>
+  </div>
+
+  <section class="stack" aria-labelledby="s4">
+    <h2 id="s4">Other answers, same dialog</h2>
+    <div class="grid2">
+      <div class="callout err"><b>Not created</b>AutoCount refused: Item SRTBS110 has no UOM "BOX". Nothing was changed.</div>
+      <div class="callout warn"><b>Sent, not confirmed yet</b>AutoCount has not confirmed it yet. It will show here after the next sync.</div>
+      <div class="callout"><b>Switched off</b>Changes to AutoCount are switched off here (the Shared Service's own test-book guard).</div>
+      <div class="callout warn"><b>Created, with a note</b>SO412350 created. Line 2 took its price and location from QT26-00412.</div>
+    </div>
+  </section>
+
+  <!-- 3. Revisions: Update -->
+  <section class="dialog" aria-labelledby="s5">
+    <div class="dlg-head">
+      <span class="eyebrow">Same order &gt; Revisions (existing page) · AMD-3, published 04/11/2026</span>
+      <div class="row" style="justify-content:space-between"><h2 id="s5">AutoCount change list</h2>
+        <div class="strip"><button class="btn sm" type="button">Export</button><button class="btn sm primary new" type="button">Update in AutoCount (2)</button></div></div>
+    </div>
+    <div class="dlg-body">
+      <div class="scroll"><table><colgroup><col style="width:60px"><col style="width:120px"><col style="width:120px"><col style="width:200px"><col style="width:260px"></colgroup>
+        <thead><tr><th class="num">Line</th><th>Item</th><th>Change</th><th>Was → now</th><th class="new">AutoCount</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>SRTWB242</td><td>Qty</td><td class="tab">120 → 150</td><td><span class="pill p-blue">Will update</span></td></tr>
+          <tr><td class="num">3</td><td>SRTBS110</td><td>Delivery date</td><td class="tab">02/12/2026 → 16/12/2026</td><td><span class="pill p-blue">Will update</span></td></tr>
+          <tr><td class="num">2</td><td>SRTWB250</td><td>Remove line</td><td class="tab">60 → 0</td><td><span class="pill p-neutral">Waiting for AutoCount</span></td></tr>
+        </tbody></table></div>
+      <p class="ann">Only a published amendment updates the AutoCount document (R3). Qty, date and added lines go. A removed line and a balance cancel stay "Waiting for AutoCount" until the Shared Service can cancel a line. The count on the button counts only the rows that will go.</p>
+      <div class="grid2">
+        <div class="callout ok"><b>Updated: SO412350</b>Line 1 qty 150, line 3 delivery date 16/12/2026. AutoCount read back the same.</div>
+        <div class="callout err"><b>Not updated</b>Changed in AutoCount since 04/11/2026. Open Compare first. Nothing was changed.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. SO list: Decide -->
+  <section class="dialog" aria-labelledby="s6">
+    <div class="dlg-head"><span class="eyebrow">Project &gt; Sales orders tab (existing list)</span><h2 id="s6">Tick orders, then Decide</h2></div>
+    <div class="dlg-body">
+      <div class="panel">
+        <div class="panel-head"><span></span><div class="strip"><button class="btn sm primary new" type="button" aria-haspopup="menu">Decide (1) ▾</button></div></div>
+        <div class="scroll"><table><colgroup><col style="width:40px"><col style="width:140px"><col style="width:120px"><col style="width:120px"><col style="width:110px"><col style="width:120px"></colgroup>
+          <thead><tr><th></th><th>Sales order</th><th>AutoCount</th><th>Area</th><th>Status</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            <tr class="ticked"><td><input type="checkbox" checked aria-label="PSO-2026-0187"></td><td>PSO-2026-0187</td><td>SO412350</td><td>TOWER A</td><td><span class="pill p-green">Published</span></td><td class="num">41,580.00</td></tr>
+            <tr><td><input type="checkbox" aria-label="PSO-2026-0188"></td><td>PSO-2026-0188</td><td class="muted">-</td><td>TOWER B</td><td><span class="pill p-neutral">Draft</span></td><td class="num">18,240.00</td></tr>
+          </tbody></table></div>
+      </div>
+      <div class="menu new" role="menu">
+        <div class="menu-item off" role="menuitem" aria-disabled="true"><span>Cancel in AutoCount</span><span class="why">Waiting for AutoCount</span></div>
+        <div class="menu-item on" role="menuitem"><span>Delete</span><span class="why">Drafts only, as today</span></div>
+      </div>
+      <p class="ann">Cancel in AutoCount cancels only the remaining (undelivered) balance (R4). Today the Shared Service reports cancel as not supported, so the item shows greyed with that reason. It turns on by itself once the Shared Service capability feed enables it. Nothing is hard-coded.</p>
+    </div>
+  </section>
+
+  <!-- 5. Quotation -->
+  <section class="dialog" aria-labelledby="s7">
+    <div class="dlg-head">
+      <span class="eyebrow">Project &gt; Quotation (existing document page)</span>
+      <div class="row" style="justify-content:space-between">
+        <div><div class="row"><h2 id="s7">SRT/Q/2026/0141 (R2)</h2><span class="pill p-green">Accepted 03/11/2026</span></div>
+          <p class="muted" style="font-size:13px">Bayu Vista Development Sdn Bhd</p></div>
+        <div class="strip"><button class="btn sm" type="button">Download PDF</button><button class="btn sm primary new" type="button">Create in AutoCount</button><button class="btn sm new" type="button" aria-haspopup="menu">Decide ▾</button></div>
+      </div>
+    </div>
+    <div class="dlg-body">
+      <p class="ann">Shows only once the customer has accepted (R5). Before that it is greyed "The customer has not accepted this quotation yet". Proposals never show it. Once the quotation is in AutoCount, a newly accepted revision shows <b>Update in AutoCount</b> instead, and Decide holds Cancel in AutoCount (greyed "Waiting for AutoCount" today). Rate-only lines and product sets wait on Q6.</p>
+      <div class="callout ok"><b>Created: QT26-00412</b>AutoCount read back 3 lines. They match the accepted revision R2.</div>
+    </div>
+  </section>
+
+  <!-- 6. Component map -->
+  <section class="stack" aria-labelledby="s8">
+    <h2 id="s8">Element → existing component</h2>
+    <div class="scroll"><table class="map" style="min-width:720px"><colgroup><col style="width:34%"><col style="width:66%"></colgroup>
+      <thead><tr><th>Element</th><th>Component (existing unless marked new)</th></tr></thead>
+      <tbody>
+        <tr><td>Switch</td><td><code>user-management/settings/page.tsx</code> general switches, same row as #2168's Stock Debt switch; read by screens from <code>/settings/app-config</code></td></tr>
+        <tr><td>Create in AutoCount (SO)</td><td><code>Button</code> in the action strip of <code>sales-orders/[psoId]/worksheet/components/SalesOrderWorksheetClient.tsx</code>, after Download CSV</td></tr>
+        <tr><td>Create / result dialog</td><td>new <code>AutocountWriteDialog</code> on the shell of #2168's <code>PoLinkDialog</code> (<code>Dialog</code>, <code>DataGrid</code> read-back), wording from a shared <code>autocountWriteWording.ts</code> modelled on <code>poLinkWording.ts</code></td></tr>
+        <tr><td>Update in AutoCount + "AutoCount" column</td><td><code>components/AmendmentAutocountChangeList.tsx</code> (extra column, header button) on <code>revisions/components/AmendmentReviewClient.tsx</code></td></tr>
+        <tr><td>Decide (N) on the SO list</td><td><code>components/SalesOrdersPanel.tsx</code> row selection, menu shaped like <code>SnapshotDecideControl</code> / <code>BoardDecideControl</code></td></tr>
+        <tr><td>Quotation Create / Update / Decide</td><td><code>quotation-documents/[documentId]/components/QuotationDocumentPageHeader.tsx</code> action strip</td></tr>
+        <tr><td>Status pills</td><td><code>Badge</code> via <code>SalesOrderStatusPill</code>; AutoCount number beside it</td></tr>
+        <tr><td>Dates</td><td><code>formatDateInMalaysia</code> (dd/mm/yyyy)</td></tr>
+      </tbody></table></div>
+  </section>
+</div>

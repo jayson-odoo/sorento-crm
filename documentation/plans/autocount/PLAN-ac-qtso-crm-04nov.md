@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q5 5 Nov ~07:20 MYT; Q6 asked; mock on the existing screens next).
+Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q5 5 Nov ~07:20 MYT; Q6 asked; mock v1 `ac-qtso-crm-04nov-mockup.html` posted for review).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
