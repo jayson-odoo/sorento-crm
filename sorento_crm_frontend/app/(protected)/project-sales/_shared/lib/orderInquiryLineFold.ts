@@ -66,6 +66,8 @@ function num(value: string | null | undefined): number {
   return Number(value ?? '0') || 0;
 }
 
+/** The ONE row visibility rule, twin of the backend's `oi_row_visibility.is_live_row`: not
+ *  cancelled and not used. Listed, counted and requestable only when live. */
 export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
   return row.state !== 'cancelled' && !row.redirected_to_pool;
 }
@@ -189,7 +191,10 @@ export function foldInquiryLines(rows: OrderInquiryWorklistRow[]): OrderInquiryL
     else groups.set(key, [row]);
   }
   const lines = [...groups.entries()]
-    .filter(([, group]) => group.some((row) => row.state !== 'cancelled'))
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): a line renders only with a LIVE row, the rule the
+    // Documents counts (`oi_row_visibility.py`) and Order Inquiries > Lines list by. A line
+    // left with only used or cancelled rows is History, not a line.
+    .filter(([, group]) => group.some(isLiveInquiryRow))
     .map(([key, group]) => buildLine(key, group));
   return lines
     .map((line, index) => ({ line, index }))

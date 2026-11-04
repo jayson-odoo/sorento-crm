@@ -27,6 +27,7 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrderLine,
     RESERVE_REQUESTED,
+    RESERVE_RESERVED,
 )
 from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
 from app.models.user import User
@@ -519,12 +520,14 @@ class StockDebtSnapshotService:
             for r in self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(chunk)).all()
         }
         open_requests = _open_request_row_ids(self.db, list(rows))
-        latest: Dict[str, str] = {}
-        for rr_row_id, state, parked_at in (
+        latest: Dict[str, tuple] = {}
+        for rr_row_id, state, parked_at, qty_requested, qty_reserved in (
             self.db.query(
                 OrderInquiryReserveRequestRow.row_id,
                 OrderInquiryReserveRequest.state,
                 OrderInquiryReserveRequest.parked_at,
+                OrderInquiryReserveRequestRow.qty_requested,
+                OrderInquiryReserveRequestRow.qty_reserved,
             )
             .join(
                 OrderInquiryReserveRequest,
@@ -537,10 +540,15 @@ class StockDebtSnapshotService:
             )
             .all()
         ):
-            latest.setdefault(
-                str(rr_row_id),
-                "parked" if state == RESERVE_REQUESTED and parked_at is not None else state,
-            )
+            # OI-RESERVE-USED-ROW (Now, one pill): a row CS already answered reads reserved
+            # with the answered qty, even while the request stays open for its siblings.
+            if qty_reserved is not None:
+                reading = (RESERVE_RESERVED, qty_reserved)
+            elif state == RESERVE_REQUESTED and parked_at is not None:
+                reading = ("parked", qty_requested)
+            else:
+                reading = (state, qty_requested)
+            latest.setdefault(str(rr_row_id), reading)
         out: Dict[str, Dict[str, Any]] = {}
         for row_id, row in rows.items():
             # What `create_request` caps a request against (OI-RESERVE-RECEIVED: includes
@@ -549,7 +557,8 @@ class StockDebtSnapshotService:
             out[row_id] = {
                 "live": is_live_row(row),
                 "now_state": row.state,
-                "reserve_state": latest.get(row_id),
+                "reserve_state": latest[row_id][0] if row_id in latest else None,
+                "reserve_qty": float(latest[row_id][1]) if row_id in latest else None,
                 "remaining": float(remaining),
                 "requestable": (
                     is_live_row(row)

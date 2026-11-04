@@ -5,7 +5,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
-import { SoCustomerProject } from '@/components/common/SoCustomerProject';
+import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { OrderInquiryDocumentLink } from '../../order-inquiries/components/OrderInquiryDocumentDialog';
 import type {
   StockDebtAssignedFrom,
@@ -71,22 +72,64 @@ export function PoLineLink({
   );
 }
 
+type LentEntry = Extract<StockDebtAssignedFrom, { kind: 'lent' }>;
+
+/** The entry's text with its `CUSTOMER / project` (OI-UX-FILTER-SNAPSHOT) as one hover title:
+ *  the drill keeps every row on one line (OI-RESERVE-USED-ROW, owner 4 Nov). */
+function titled(text: string, customer?: string | null, project?: string | null): string {
+  const party = soCustomerProjectLabel(customer, project);
+  return party ? `${text} · ${party}` : text;
+}
+
 /** STOCK-DEBT-LENDABLE: "Lent to SO396071 (32)", linked to the receiving order. */
-function LentReceiver({ entry }: { entry: Extract<StockDebtAssignedFrom, { kind: 'lent' }> }) {
+function LentReceiver({ entry, label }: { entry: LentEntry; label?: string }) {
+  const title = titled(entry.ref, entry.customer_name, entry.project_label);
   return entry.sales_order_id ? (
     <Link
       href={`/scm/sales-orders/${entry.sales_order_id}`}
       target="_blank"
       rel="noreferrer"
       className="truncate text-muted-foreground hover:underline"
-      title={entry.ref}
+      title={title}
     >
-      {entry.ref}
+      {label ?? entry.ref}
     </Link>
   ) : (
-    <span className="truncate text-muted-foreground" title={entry.ref}>
-      {entry.ref}
+    <span className="truncate text-muted-foreground" title={title}>
+      {label ?? entry.ref}
     </span>
+  );
+}
+
+/** OI-RESERVE-USED-ROW (owner, 4 Nov: one line per row): two or more receivers read as ONE
+ *  entry, "Lent to 4 SOs (47)"; the list, each linked with its customer / project, opens on
+ *  click. */
+export function LentSummary({ entries }: { entries: LentEntry[] }) {
+  const total = entries.reduce((sum, entry) => sum + entry.qty, 0);
+  const label = `Lent to ${entries.length} SOs (${total.toLocaleString()})`;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="shrink-0 truncate text-muted-foreground underline-offset-2 hover:underline"
+          aria-label={`${label}, show the orders`}
+        >
+          {label}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto max-w-xs space-y-1.5 p-3 text-sm">
+        {entries.map((entry, index) => (
+          <div key={`${entry.so_number}:${index}`} className="min-w-0">
+            <div className="flex items-center justify-between gap-3">
+              <LentReceiver entry={entry} label={entry.so_number ?? entry.ref} />
+              <span className="shrink-0 tabular-nums">{entry.qty.toLocaleString()}</span>
+            </div>
+            <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
+          </div>
+        ))}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -94,26 +137,21 @@ function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
   if (entry.kind === 'on_hand') {
     // STOCK-DEBT-LENDABLE: the server's own wording carries the lender's name when the
     // take was lent ("On hand BRW-BB (from SO381065)"); a free take stays plain.
-    // OI-UX-FILTER-SNAPSHOT: a lent take also names the lender's customer / project.
+    // OI-UX-FILTER-SNAPSHOT: a lent take also names the lender's customer / project, in
+    // the hover title (one line per row).
     return (
-      <span className="flex min-w-0 flex-col">
-        <span className="truncate text-muted-foreground" title={entry.ref}>
-          {entry.ref}
-        </span>
-        <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
+      <span
+        className="truncate text-muted-foreground"
+        title={titled(entry.ref, entry.customer_name, entry.project_label)}
+      >
+        {entry.ref}
       </span>
     );
   }
   if (entry.kind === 'lent') {
     // STOCK-DEBT-LENDABLE: a line that lent its landed goods names each receiver,
     // linked to the receiving order the way the Sales order cell links its own.
-    // OI-UX-FILTER-SNAPSHOT: with the receiver's customer / project under it.
-    return (
-      <span className="flex min-w-0 flex-col">
-        <LentReceiver entry={entry} />
-        <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
-      </span>
-    );
+    return <LentReceiver entry={entry} />;
   }
   if (entry.kind === 'po') {
     // R42: a purchase order covers a line too. The same link, kind `po`, opened on the
@@ -347,11 +385,16 @@ export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDema
       if (!entries.length) {
         return <span className="text-muted-foreground">-</span>;
       }
+      // OI-RESERVE-USED-ROW (owner, 4 Nov): one line per row. Own sources inline; two or
+      // more "Lent to" receivers collapse into one `LentSummary`.
+      const lent = entries.filter((entry): entry is LentEntry => entry.kind === 'lent');
+      const shown = lent.length >= 2 ? entries.filter((entry) => entry.kind !== 'lent') : entries;
       return (
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-          {entries.map((entry, index) => (
+        <div className="flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden whitespace-nowrap">
+          {shown.map((entry, index) => (
             <CoveredByEntry key={`${entry.kind}:${entry.ref}:${index}`} entry={entry} />
           ))}
+          {lent.length >= 2 && <LentSummary entries={lent} />}
         </div>
       );
     },
