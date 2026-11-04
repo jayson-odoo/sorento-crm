@@ -137,6 +137,19 @@ before said_as. Spend OK crew 5 Nov: USD 0.40 for this round.
 | HT1-16 | the schema with said_as_text | parser output order | said_as_text is generated before said_as (property ordering), so the word is quoted before the kind is chosen |
 | HT1-17 | the copy pinned to the new version | the bare-name block ("Sorento total sale September 2026 delivered", then "company") x3, and the owner thread x3 | Every run asks once on the bare name and runs Company Sorento after "company"; owner thread 5/5 each run |
 
+### Crew re-pass round 2 on v202 (5 Nov, 5e6078e12c): garbled held-company echo, 1 run of 3
+
+Step 5 "break down project and retail" (Company Sorento held, turn 06bb03fc; traces crew/state/handtest/2156/repass-v202/):
+the parser's top-level sales_company was "Sorento" and its entities list was empty, but the report-ask object copied the
+held company as "Sorenth"; from_object took the object's company as this message's, the contact holds no "Sorenth", so the
+reply was "You do not have access to that company." and the split was lost for steps 6-8.
+
+| # | Given | When | Expected |
+|---|---|---|---|
+| HT1-18 | Company Sorento held | a parse whose object company differs from the held one (e.g. "Sorenth") while this message names nothing (no entity with current_message true) | The held company stays: the report runs for Company Sorento, never "You do not have access to that company." Parser fields only (as `_customer_stays`), no text comparison |
+| HT1-19 | Company Sorento held | the message names another company ("Mocha sales only", an entity of this message) | That company replaces the held one (unchanged) |
+| HT1-20 | Company Sorento held | the message names a company the contact does not hold (an entity of this message) | "You do not have access to that company." (unchanged) |
+
 ## Robustness (#2105 follow-up)
 
 | # | Case | Expected |
