@@ -321,3 +321,73 @@ def test_g4_tf30_company_and_brand_runs_both_filters(rbot, world) -> None:
     _no_question(rbot, text)
     args = _args(calls)
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"tf-30: {args}"
+
+
+# ------------------------------------------------------------------------------------------ review round (a900795c1a)
+
+
+def _fresh(ent: dict[str, Any], *, company: Any, brands: list[str], message: str, basis: str = "delivered"):
+    ra = _ra2("total", basis=basis, company=company, brands=brands, **SEP)
+    return _v("sales_analysis", ra, ent, basis=basis, entity_op="replace_combine", domain_in_message=True, **SEPF)
+
+
+def test_f2_said_as_brand_beats_a_same_name_company_when_the_entity_has_no_canonical_code(rbot, world) -> None:
+    """F2: fresh, object company "Sorento" + brands [SORENTO]; the entity has canonical_code null, kind_said brand, said_as
+    brand. said_as present and non-null decides: Brand only, no company filter, no question (ON-17's company reading applies
+    only when said_as is null or absent)."""
+    sorento, _m = world
+    ent = _ent("Sorento", "brand", None, "brand")
+    ent["said_as"] = "brand"
+    text, calls = rbot.say(_fresh(ent, company=sorento, brands=["SORENTO"], message=""), "Sorento brand only Sep 2026 delivered")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("brand_ids") and "company" not in args, f"F2: {args}"
+
+
+def test_f3_the_committed_totals_filters_gold_file_loads_whole() -> None:
+    """F3: the repo's own loader reads the committed gold file (every expect key and slot the rows use is known to it)."""
+    from pathlib import Path
+
+    from scripts.chatbot_eval import parser_gold as pg
+
+    path = Path(pg.__file__).parent / "gold" / "parser_report_totals_filters.jsonl"
+    with open(path, encoding="utf-8") as fh:
+        want = sum(1 for ln in fh if ln.strip())
+    assert want >= 30
+    assert len(pg.load_gold(path)) == want
+
+
+def test_f5_m7_a_company_row_is_never_a_spans_resolved_match_but_the_block_still_renders(session_factory, seeded, stub_access, monkeypatch) -> None:
+    """Depends on engine._span_lookup's `all_rows` filter (`r.list_name != "company"`, engine.py:2075): without it the span
+    'zzmocha' (typed brand) would also resolve to the Company row ZZMOCHA, so a candidate of list "company" appears."""
+    r = _span_run(session_factory, stub_access, monkeypatch, PHRASED, TWO)
+    ev = se.trace_events(session_factory, r)[0]
+    cands = [c for s in ev["spans"] for c in s["candidates"]]
+    assert cands and {c["list"] for c in cands} == {"brand"}, cands
+    assert COMPANY_HDR in r.lines and "- ZZMOCHA" in r.lines[r.lines.index(COMPANY_HDR):], r.lines
+
+
+@pytest.mark.parametrize("said_as,both", [("company", False), ("both", True)], ids=["company", "both"])
+def test_f5_m9_said_as_company_or_both_beats_a_kind_said_brand(rbot, world, said_as, both) -> None:
+    """Depends on report_ask._word_kinds' `said_as in ("company", "both")` branch (report_ask.py:3432), which sits before the
+    kind_said branch: without it kind_said "brand" wins and the report runs as the brand only."""
+    sorento, _m = world
+    ent = _ent("sorento", "brand", "SORENTO", "brand")
+    ent["said_as"] = said_as
+    text, calls = rbot.say(_fresh(ent, company=None, brands=["SORENTO"], message=""), "sorento company")
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID, f"M9 {said_as}: {args}"
+    assert bool(args.get("brand_ids")) is both, f"M9 {said_as}: {args}"
+
+
+def test_f5_m14_a_ranking_on_another_axis_than_the_held_list_still_asks_how_many(rbot, world) -> None:
+    """Depends on the `axis == held_axis` clause of the HT1-8 rule (report_ask.py:3543): without it a customer ranking with no
+    count would be read as the held every-agent list again and run instead of asking."""
+    sorento, _m = world
+    _hold_agents(rbot, sorento)
+    ra = _ra2("ranking", basis="delivered", group_by="customer", top_n=None, company=sorento, **SEP)
+    v = _v("sales_ranking", ra, basis="delivered", group_by="customer", rank_direction="top", continuation=False,
+           entity_op="replace_combine", ranking_refine=True, sales_company=sorento, domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v, "customers")
+    assert TOP_N_Q in text, f"M14: {text!r}"
