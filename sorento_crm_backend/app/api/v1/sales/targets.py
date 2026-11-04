@@ -11,14 +11,17 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime
-from typing import Literal, Optional
+from typing import List, Literal, Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.schemas.download import DownloadResponse
 from app.schemas.sales import (
     SalesPointRatioIn,
     SalesPointRatioList,
@@ -215,22 +218,38 @@ def import_dealer_targets(
 MAX_STATEMENT_TARGETS = 50
 
 
-@router.get("/commission-statement")
-@heavy
+class CommissionStatementRequest(BaseModel):
+    ids: List[str] = Field(default_factory=list)
+    on: Optional[date] = None
+
+
+def statement_filename(targets, now: datetime) -> str:
+    """`commission-statement-TGT-000008-20261104.xlsx`, or `...-3-targets-...` for many."""
+    name = targets[0].target_no if len(targets) == 1 else f"{len(targets)}-targets"
+    return f"commission-statement-{name}-{now:%Y%m%d}.xlsx"
+
+
+@router.post("/commission-statement", response_model=DownloadResponse)
 def commission_statement(
-    ids: Optional[str] = Query(None, description="Comma-separated target ids"),
-    on: Optional[date] = Query(None),
-    _user: dict = Depends(require_permission(VIEW)),
+    payload: CommissionStatementRequest = Body(default_factory=CommissionStatementRequest),
+    current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """The commission statement (xlsx) of one or more targets: the target page's figures, the
-    tier table used and the documents behind each period's Achieved (TARGET-COMMISSION-VIEW)."""
-    from zoneinfo import ZoneInfo
+    """The commission statement (xlsx) of one or more targets, through My Downloads (owner hand
+    test, 4 Nov): the target page's figures, the tier table used and the documents behind each
+    period's Achieved (TARGET-COMMISSION-VIEW).
 
-    from app.services.sales import commission_statement_xlsx
+    The order inquiry export's shape (`app/api/v1/projects/order_inquiries.py`
+    `_queue_worklist_export`): every refusal (422 none / too many, 404 unknown or another
+    company's target) comes BEFORE the `user_downloads` row; the row is created, the render
+    enqueued on `imports`, and an enqueue failure marks the row failed and answers 503."""
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.services.sales.team_service import acting_company_id
+    from app.tasks.export_tasks import generate_commission_statement_xlsx
 
     try:
-        picked = list(dict.fromkeys(multi_uuids(ids, "Targets") or []))
+        picked = list(dict.fromkeys(multi_uuids(payload.ids, "Targets") or []))
         if not picked:
             raise AppException(status_code=422, message="Pick at least one target.", code="NO_TARGETS")
         if len(picked) > MAX_STATEMENT_TARGETS:
@@ -240,18 +259,43 @@ def commission_statement(
                 code="TOO_MANY_TARGETS",
             )
         targets = [target_service.get_target_or_404(db, target_id) for target_id in picked]
-        on = on or target_service._today()
-        statements = target_service.commission_statements(db, targets, on=on)
+        # The worker has no request scope: the caller's own company travels with the job.
+        company_id = acting_company_id(db)
+        on = payload.on or target_service._today()
+        user_id = str(current_user["id"])
+        kind = "commission_statement_xlsx"
+        single = len(targets) == 1
+        source = {"source_entity_type": "sales_target", "source_entity_id": targets[0].id} if single else {}
+        service = DownloadService(db)
+        if service.has_in_flight(user_id=user_id, kind=kind, **source):
+            raise AppException(
+                status_code=409,
+                message="A commission statement is already being prepared - check My Downloads.",
+                code="EXPORT_IN_FLIGHT",
+            )
         now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).replace(tzinfo=None)
-        content = commission_statement_xlsx.build(statements, on=on, generated=now)
-        name = targets[0].target_no if len(targets) == 1 else f"{len(targets)}-targets"
-        return Response(
-            content=content,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={
-                "Content-Disposition": f'attachment; filename="commission-statement-{name}-{now:%Y%m%d}.xlsx"'
-            },
+        download = service.create(
+            user_id=user_id, kind=kind, filename=statement_filename(targets, now), **source
         )
+        try:
+            enqueue_job(
+                generate_commission_statement_xlsx,
+                str(download.id),
+                [t.id for t in targets],
+                on.isoformat(),
+                user_id,
+                company_id=company_id,
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as exc:
+            service.mark_failed(str(download.id), f"Could not queue the commission statement: {exc}")
+            raise AppException(
+                status_code=503,
+                message="Could not queue the commission statement. Please try again.",
+                code="EXPORT_NOT_QUEUED",
+            ) from exc
+        return DownloadResponse.model_validate(service.get(str(download.id)))
     except Exception as exc:
         _reraise(db, exc)
 

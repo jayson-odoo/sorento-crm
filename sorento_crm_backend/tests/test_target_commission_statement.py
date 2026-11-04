@@ -216,6 +216,10 @@ class _NoCloseSession:
         return getattr(self._inner, name)
 
 
+def _values(ws):
+    return [[c for c in row] for row in ws.iter_rows(values_only=True)]
+
+
 def _export(client, db, monkeypatch, ids, expect=200):
     """The statement through My Downloads (owner hand test, 4 Nov): the POST creates a
     `user_downloads` row and enqueues the render; the RQ task (run here inline) stores the file

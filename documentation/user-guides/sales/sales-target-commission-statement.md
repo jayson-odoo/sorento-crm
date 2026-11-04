@@ -20,6 +20,12 @@ send stakeholders a statement they can cross-check.
 5. To export, open the gear menu and choose **Export commission statement**. For several targets
    at once, tick them in the **Targets** list and choose **Commission statement (N)** (at most
    50 targets per file).
+6. The statement is prepared in the background: open **My Downloads** (the download icon at the
+   top of the page) and download the file once it reads ready.
+
+## How you'll be notified
+
+A toast says the statement is being prepared; the file appears in **My Downloads**.
 
 ## What the statement holds
 

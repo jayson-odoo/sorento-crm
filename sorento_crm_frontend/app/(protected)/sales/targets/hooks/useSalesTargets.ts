@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createSalesTarget,
@@ -10,7 +11,7 @@ import {
   getSalesTarget,
   getSalesTargetOptions,
   getSalesTargets,
-  downloadCommissionStatement,
+  requestCommissionStatement,
   downloadDealerTargetsTemplate,
   importDealerTargets,
   patchSalesTarget,
@@ -190,9 +191,19 @@ export function useDownloadDealerTemplate() {
   });
 }
 
+/** The commission statement through My Downloads: the drawer and, for one target, the
+ * target's own downloads refresh; the file is fetched from there once ready. */
 export function useDownloadCommissionStatement() {
+  const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (ids: string[]) => downloadCommissionStatement(ids),
-    onError: (error: Error) => toast.error(error.message || 'Failed to export the commission statement'),
+    mutationFn: (ids: string[]) => requestCommissionStatement(ids),
+    onSuccess: (_job, ids) => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      if (ids.length === 1) {
+        queryClient.invalidateQueries({ queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'sales_target', ids[0]] });
+      }
+      toast.success('Preparing the commission statement - it will appear in My Downloads.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to start the commission statement'),
   });
 }

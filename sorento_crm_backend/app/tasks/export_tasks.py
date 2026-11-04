@@ -1562,3 +1562,55 @@ def generate_stock_debt_xlsx(
     finally:
         set_company_scope(db, caller_scope)
         db.close()
+
+
+def generate_commission_statement_xlsx(
+    download_id: str,
+    target_ids: list,
+    on: str,
+    user_id: str,
+    *,
+    company_id: Optional[str] = None,
+) -> dict:
+    """Render the commission statement workbook (TARGET-COMMISSION-VIEW), store it, mark the
+    My Downloads row ready. `generate_order_inquiry_worklist_xlsx`'s shape: the enqueuing
+    request's single company travels as `company_id` (none = UNSET, fail-closed: no target
+    is found and the row is marked failed); the figures are `target_service.commission_statements`,
+    the screen's own computation, for the date `on` the request named."""
+    from datetime import date as _date, datetime as _datetime
+    from zoneinfo import ZoneInfo
+
+    from app.models.base import UNSET, get_company_scope
+    from app.services.sales import commission_statement_xlsx, target_service
+
+    db = SessionLocal()
+    caller_scope = get_company_scope(db)
+    set_company_scope(db, frozenset({str(company_id)}) if company_id else UNSET)
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        row = svc.get(download_id)
+        targets = [target_service.get_target_or_404(db, target_id) for target_id in target_ids]
+        day = _date.fromisoformat(on)
+        statements = target_service.commission_statements(db, targets, on=day)
+        generated = _datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).replace(tzinfo=None)
+        file_bytes = commission_statement_xlsx.build(statements, on=day, generated=generated)
+        filename = (row.filename if row else None) or "commission-statement.xlsx"
+
+        provider = default_provider()
+        backend = get_backend(provider)
+        stored_key, _signed = backend.upload_file(
+            file_content=file_bytes,
+            file_path=f"exports/commission-statement/{download_id}/{filename}",
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        svc.mark_ready(download_id, storage_provider=provider, storage_key=stored_key, filename=filename)
+        logger.info("generate_commission_statement_xlsx: download %s ready (%d bytes)", download_id, len(file_bytes))
+        return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes)}
+    except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_commission_statement_xlsx failed for download %s", download_id)
+        _record_failure(db, svc, download_id, e, "generate_commission_statement_xlsx")
+        return {"download_id": download_id, "status": "failed", "error": str(e)}
+    finally:
+        set_company_scope(db, caller_scope)
+        db.close()

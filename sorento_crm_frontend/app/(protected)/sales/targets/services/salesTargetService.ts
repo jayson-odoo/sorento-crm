@@ -19,7 +19,7 @@
  *   POST   /sales/targets/point-ratios   body {effective_from, rm_per_point}        sales.targets.edit
  *   POST   /sales/targets/import?dry_run&year  multipart file (+ picks JSON) -> DealerImportResult sales.targets.edit
  *   GET    /sales/targets/import/template?year  -> .xlsx                           sales.targets.edit
- *   GET    /sales/targets/commission-statement?ids  -> .xlsx (max 50 targets)      sales.targets.view
+ *   POST   /sales/targets/commission-statement  body {ids} -> MyDownload (max 50)  sales.targets.view
  * The screens park `sales_target.delete` instead of calling DELETE (D7), through
  * useDeferredAction. Products for the scope picker come from master data's own
  * `/master-data/products/select`, paged on the server (about 22,000 rows).
@@ -39,6 +39,7 @@ import type {
   SalesTargetUpdatePayload,
 } from '../types/salesTarget.types';
 import { codeWithName } from '@/lib/product-display';
+import type { MyDownload } from '@/services/myDownloadsService';
 
 const BASE = '/api/v1/sales/targets';
 
@@ -179,12 +180,12 @@ export async function downloadDealerTargetsTemplate(year: number): Promise<void>
 /** Most targets one commission statement file takes (the backend refuses more). */
 export const MAX_STATEMENT_TARGETS = 50;
 
-/** The commission statement workbook of one or more targets (TARGET-COMMISSION-VIEW). */
-export async function downloadCommissionStatement(ids: string[]): Promise<void> {
-  const search = new URLSearchParams({ ids: ids.join(',') });
-  const response = await apiFetch(`${BASE}/commission-statement?${search.toString()}`);
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to export the commission statement'));
-  const disposition = response.headers.get('content-disposition') ?? '';
-  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'commission-statement.xlsx';
-  saveBlobAs(await response.blob(), name);
+/** The commission statement workbook of one or more targets (TARGET-COMMISSION-VIEW), through
+ * My Downloads (owner, 4 Nov): the POST queues it and answers the download row; the file appears
+ * in the My Downloads drawer once ready, like every other export. */
+export async function requestCommissionStatement(ids: string[]): Promise<MyDownload> {
+  return read(
+    await apiFetch(`${BASE}/commission-statement`, jsonInit('POST', { ids })),
+    'Failed to start the commission statement',
+  );
 }
