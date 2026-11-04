@@ -139,3 +139,14 @@ AC-WRITE-QTSO lane before Phase 2.
   AutoCount book from this sales order") and the server refuses it. `/write-capabilities` does
   not name the book it can write; when it does, a book it cannot write can be greyed with the
   switched-off reason too.
+
+## Owner hand test (5 Nov ~00:15 MYT): "too complex, just show me the PO number ... should be a switch"
+
+- PO picker: the PO number only; when one PO offers two lines, each carries its AutoCount line
+  number in brackets ("202608-S0040 (2)"). No location, free, arrival or supplier text.
+- The "N selected" text beside Decide is gone (Decide (N) says it).
+- Switch "AutoCount links from Stock Debt" (`system_settings.stock_debt_po_link_enabled`, admin
+  Settings, seeded OFF by pol_0001). Off: Decide shows no PO actions and every po-link route
+  answers 403 "AutoCount links from Stock Debt are switched off in Settings." with no Shared
+  Service call. Read by the drill from `/settings/app-config`.
+- Guide: `documentation/user-guides/supply-chain/stock-debt-link-to-po.md`.
