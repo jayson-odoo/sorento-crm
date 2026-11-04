@@ -636,7 +636,9 @@ def test_every_company_id_table_is_registered():
     #   links = 176.
     # + 1 (PS-REGISTRATION-V3): `party_contacts`, the people at one company's parties; read by
     #   party within the company = 177.
-    expected_owned = 177
+    # + 1 (SPEC-SHEET-V2, #2124): `projects.quotation_spec_sheets`, one company's saved spec
+    #   sheets of its quotation documents = 178.
+    expected_owned = 178
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
