@@ -36,4 +36,93 @@ Any new layer must keep that single path.
 
 ## 2. Behaviour card
 
-*(drafting; posted as one owner ask once the dev data is in)*
+### Rules (proposed)
+
+R1. **Component list layer.** A new template layer, "Component list", holds one repeated block
+    per item of the combo. Item order: host, fixed parts ("+"), the options of each choice group
+    ("OR" between them), free items ("FOC"), upgrades ("TOP UP"). Each block shows, as the
+    designer switches on: picture, full code, tag description, LP, the option's own SP, and a
+    connector label ("+", "OR", "FOC", "TOP UP RM 150"). The designer places ONE block; the layer
+    repeats it across its box (row or column, designer's pick), cells share the box equally, so
+    1..5 items always fit; type shrinks to a floor (6 pt) and a description longer than its cell
+    is cut with an ellipsis, never dropped silently. The designer chooses which item kinds the
+    layer shows (for example a second list only for FOC).
+R2. **One renderer.** The block layout is one pure function in `lib/dealer-kit/` called by the
+    canvas, the live preview and the PDF print page, the same way `textLayerLines` is today, so
+    the three cannot disagree.
+R3. **Description per component** comes from that product's `price_tag_description`; blank
+    falls back to the product name, and the request flags "No tag description" on the line so it
+    is seen before printing. The combo's own description stays for the combo-level layers
+    (bathroom furniture keeps working as today).
+R4. **FOC and upgrades are catalogue products, not text.** A FOC is a combo part marked free
+    (new column `product_combo_parts.is_free`); an upgrade is a part marked upgrade with its
+    top-up amount (exists). `free_items` text stays readable for old combos and is shown as
+    "FOC (text, not linked)" in the combo card until replaced. Catalogue-only codes: a FOC code
+    must resolve to a product.
+R5. **Prices.** Combo SP ("RM 949 NETT"), per-option SP and top-up amount are stored on the
+    combo (columns exist: `product_combos.sell_price`, `product_combo_parts.sell_price`,
+    `topup_amount`). A combo line never prints a sum of its parts: with no combo SP, no picked
+    option SP and no typed line price, the price slot prints nothing and Submit refuses the line
+    ("No combo price. Enter the selling price or set it on the combo."). An ala carte line is
+    unchanged. Top-up prints "TOP UP RM 150, UPGRADE TO SRTKT71SS".
+R6. **Combo info line.** A new slot "Combo codes" prints the full codes joined with "+", the
+    open group as "(A / B / C)": `SRTKS7061+SRTKT1862SS`.
+R7. **Re-seed combos from the current flyers, Cabana included.** A script reads each current
+    flyer PDF (promotion attachments with an end date on or after today) page by page through
+    the existing AI document read (semantic, no regex, 28 Oct ruling), returns combos (host,
+    parts, choice groups, FOC, upgrades, prices) per page, resolves every code through the one
+    product resolver, and writes a review report: one row per combo with status `new`,
+    `matches`, `differs` (what differs), `unsure` (why) and the flyer page. Nothing is written
+    until the owner approves the report; then `--apply` loads it through `ProductComboService`,
+    prices included. Existing combos are updated in place; a combo the flyer no longer shows is
+    reported, never deleted.
+R8. **Templates.** Ship three combo templates built on the component list: Big 105 x 148 sink
+    combo (1..5 taps), Big 105 x 148 basin combo (basin + tap + FOC), and the bathroom furniture
+    set; plus a Small 59 x 29 single-product template. The seeded `sink-combo` template's three
+    unbound tap blocks (which print the host sink three times) are replaced by one component list.
+R9. **Gaps report.** The re-seed report also lists every combo product with no tag description,
+    no picture or no barcode, per brand, so marketing can close them before printing.
+
+### Examples (real codes from the reference PDF and dev)
+
+E1. Sink + taps, choose one: SRTKS7061 + SRTKT1862SS, FOC as on the flyer, SP RM 849 NETT.
+    Component list: [SRTKS7061 picture/code/description] + [SRTKT1862SS ...] OR [the other taps of
+    the group], FOC block(s), price "RM 849 NETT". Today on dev: combo and FOC match, SP missing
+    (prints the sum), SRTKT71SS stored as a choice where the flyer has "+150 top up": the re-seed
+    report lists it as `differs`.
+E2. Basin + tap + FOC: SRTWB1419-BL + SRTWT7449-BL / -RG, FOC SRTW5102-BL. Component list: basin,
+    "+", tap in two finishes "OR", "FOC" block with SRTW5102-BL's picture. Today: no combo at all
+    (re-seed reports `new`).
+E3. Five-tap sink: *(dev data pending: largest tap group)*. Five cells across the 105 mm box,
+    about 19 mm each; descriptions cut with an ellipsis at the floor size.
+E4. Top-up: SRTKS7061 with SRTKT71SS: "TOP UP RM 150, UPGRADE TO SRTKT71SS" with SRTKT71SS's
+    picture in its own block.
+E5. Bathroom furniture set: SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM, SP RM 2099. Combo-level
+    picture and description as today, price from the combo SP once the re-seed sets it (today it
+    is only in an expired promotion, so the tag prints the sum).
+
+### Edge cases
+
+- A part with no picture: its cell shows the code on a blank tile, never the host's picture.
+- More than 5 items in one list: cells keep shrinking to the floor; past 8 the layer prints the
+  first 7 and "+N more" and the request flags the line.
+- A choice group the salesperson picked: the list shows only the pick (as `combo_choices` does).
+- Cabana (no system SP): combo SP comes only from the flyer or a typed price (R5 refusal applies).
+- An expired flyer: combos stay; their prices are not changed by the re-seed of a newer flyer
+  unless that flyer shows the same combo.
+
+### Questions (each with a recommendation)
+
+Q1. A sink with 2..5 tap choices: one tag showing all taps side by side, or one tag per tap
+    (today's auto-split)? Recommend: one tag with all taps, because that is how the reference
+    PDF and the flyer print it.
+Q2. A combo line with no combo price: refuse Submit (R5), or print the summed LP with no NETT?
+    Recommend: refuse Submit, because a wrong figure on a shelf tag is the worst failure.
+Q3. FOC: store as combo parts marked free (R4) and retire the free-text field once the re-seed
+    has linked them? Recommend: yes, because FOC needs a picture and a catalogue code.
+Q4. Re-seed when a flyer's combo differs from the stored one (SRTKS2432's tap group): update the
+    stored combo to the current flyer after your report approval, or keep both? Recommend: update
+    to the current flyer, listed as `differs` in the report you approve.
+Q5. Tag description and barcode gaps: where should the missing text and barcodes come from?
+    Recommend: description proposed from the flyer read into the same review report (you approve);
+    barcodes reported only until you name a source (supplier list or AutoCount).
