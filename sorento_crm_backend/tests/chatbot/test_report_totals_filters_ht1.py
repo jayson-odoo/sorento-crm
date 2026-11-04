@@ -28,6 +28,8 @@ from tests.chatbot.test_report_totals_filters import (  # noqa: F401 - fixtures 
     TOP_N_Q,
     _args,
     _kind_slot,
+    _follow,
+    _hold,
     _ra2,
 )
 from tests.chatbot.test_report_unify_routing import bot, console  # noqa: F401 - fixtures
@@ -600,3 +602,42 @@ def test_ht1_16_a_v200_text_without_said_as_text_has_no_such_key(monkeypatch, se
     _c, v200 = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to by_words kind_said said_as.\n")
     assert "said_as_text" not in _entity_props(v200) and "said_as" in _entity_props(v200)
     assert "said_as_text" not in v200["properties"]["entities"]["items"]["required"]
+
+
+# ------------------------------------------------------------------------------------------ HT1-18..20 held company vs object echo
+
+
+def _company_held_breakdown(rbot, object_company: str, entities: tuple, message: str):
+    """Company Sorento held (total, delivered, Sep 2026); then "break down project and retail" as the v202 parse gave it:
+    top-level sales_company the held name, the object's company `object_company`, entities as given."""
+    sorento = "Sorento"
+    _hold(rbot, sorento, group_by=None)
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", company=object_company, brands=[], **SEP)
+    v = _follow("sales_analysis", ra, *entities, group_by="channel", sales_company=sorento, **SEPF)
+    return rbot.say(v, message)
+
+
+FORBIDDEN = "You do not have access to that company."
+
+
+def test_ht1_18_a_held_company_is_not_overridden_by_an_object_company_echo_that_names_nothing(rbot, world) -> None:
+    text, calls = _company_held_breakdown(rbot, "Sorenth", (), "break down project and retail")
+    assert FORBIDDEN not in text, f"HT1-18: {text!r}"
+    _no_question(rbot, text)
+    args = _args(calls)
+    assert args.get("group_by") == "channel" and args.get("company") == DEFAULT_COMPANY_ID, f"HT1-18: {args}"
+
+
+def test_ht1_19_lock_a_company_the_message_names_replaces_the_held_one(rbot, world) -> None:
+    ent = _ent("Mocha", "brand", None, None)
+    text, calls = _company_held_breakdown(rbot, "Mocha", (ent,), "Mocha sales only")
+    assert FORBIDDEN not in text, f"HT1-19: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == MOCHA_ID, f"HT1-19: {args}"
+
+
+def test_ht1_20_lock_a_company_the_message_names_that_the_contact_does_not_hold_is_forbidden(rbot, world) -> None:
+    ent = _ent("Fujiwara", "brand", None, None)
+    text, calls = _company_held_breakdown(rbot, "Fujiwara", (ent,), "Fujiwara sales only")
+    assert text.strip() == FORBIDDEN, f"HT1-20: {text!r}"
+    assert not _ran(calls), _ran(calls)
