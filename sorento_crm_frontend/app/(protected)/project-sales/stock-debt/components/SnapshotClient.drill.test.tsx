@@ -289,6 +289,7 @@ const LINES = [
         qty: 10,
         remaining: 10,
         reserve_state: 'parked',
+        reserve_qty: 10,
         requestable: false,
         delivery_date: '2027-01-01',
       }),
@@ -311,6 +312,7 @@ const LINES = [
         qty: 633,
         remaining: 0,
         reserve_state: 'reserved',
+        reserve_qty: 633,
         requestable: false,
       }),
     ],
@@ -331,6 +333,7 @@ const LINES = [
         qty: 2,
         remaining: 2,
         reserve_state: 'requested',
+        reserve_qty: 2,
         requestable: false,
       }),
     ],
@@ -609,51 +612,54 @@ describe('AC-F5 grouping by OI', () => {
   });
 });
 
-describe('AC-F5 Now badges (AC-12)', () => {
-  it('prints the OI row state and the live open quantity', async () => {
+// OI-RESERVE-USED-ROW (owner, 4 Nov): Now is ONE pill per line, first match wins -
+// SO cancelled > Reserved N > Reserve requested / parked N > Open N. The OI row's state and
+// the "after the snapshot" badge left this cell.
+describe('AC-F5 Now, one pill per line', () => {
+  const pillsIn = (row: HTMLElement) => row.querySelectorAll('td:last-child span');
+
+  it('an open line with nothing requested reads Open N, and no OI row state', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
     const row = rowWith(groupOf(dialog, 'OI-2609-0417'), 'SO383872');
-    expect(row).toHaveTextContent('Raised');
     expect(row).toHaveTextContent('Open 30');
+    expect(row).not.toHaveTextContent('Raised');
+    expect(pillsIn(row)).toHaveLength(1);
   });
 
-  it('Reserve parked', async () => {
+  it('Reserve parked N', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0271'), 'SO391092')).toHaveTextContent('Reserve parked');
+    const row = rowWith(groupOf(dialog, 'OI-2609-0271'), 'SO391092');
+    expect(row).toHaveTextContent('Reserve parked 10');
+    expect(row).not.toHaveTextContent('Open 10');
   });
 
-  it('Reserve requested', async () => {
+  it('Reserve requested N', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0501'), 'SO400001')).toHaveTextContent('Reserve requested');
+    expect(rowWith(groupOf(dialog, 'OI-2609-0501'), 'SO400001')).toHaveTextContent('Reserve requested 2');
   });
 
-  it('Reserved', async () => {
+  it('SO cancelled wins over a reserve on the same line', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078')).toHaveTextContent('Reserved');
+    const row = rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078');
+    expect(row).toHaveTextContent('SO cancelled');
+    expect(row).not.toHaveTextContent('Reserved');
   });
 
-  it('SO cancelled', async () => {
-    renderPage();
-    const dialog = await openAllMonths();
-    await within(dialog).findAllByText('SO383872');
-    expect(rowWith(groupOf(dialog, 'OI-2609-0733'), 'SO422078')).toHaveTextContent('SO cancelled');
-  });
-
-  it('an OI row added after the snapshot is badged "after the snapshot"', async () => {
+  it('a row linked after the snapshot carries no badge: Now stays one pill', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
     const row = rowWith(groupOf(dialog, 'OI-2609-0637'), 'SO411132');
-    expect(row).toHaveTextContent(/after the snapshot/i);
-    expect(row).toHaveTextContent('Placed');
+    expect(row).not.toHaveTextContent(/after the snapshot/i);
+    expect(row).toHaveTextContent('Open 3');
   });
 });
 

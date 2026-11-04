@@ -101,7 +101,7 @@ describe('demand grid columns', () => {
 });
 
 describe('Covered by names the orders it points at', () => {
-  it('a "Lent to" receiver and an on-hand lender print CUSTOMER / project', () => {
+  it('a "Lent to" receiver and an on-hand lender carry CUSTOMER / project in their title', () => {
     render(
       <Grid
         rows={[
@@ -114,10 +114,13 @@ describe('Covered by names the orders it points at', () => {
         ]}
       />,
     );
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): one line per row, so CUSTOMER / project rides in
+    // each entry's hover title instead of a second line.
     const cell = document.querySelector('td[data-col="covered_by"]') as HTMLElement;
     expect(cell.textContent).toContain('Lent to SO2 (32)');
-    expect(cell.textContent).toContain('NEAR CO / NEAR SITE');
-    expect(cell.textContent).toContain('FAR CO / FAR SITE');
+    expect(cell.textContent).not.toContain('NEAR CO / NEAR SITE');
+    expect(screen.getByTitle('Lent to SO2 (32) · NEAR CO / NEAR SITE')).toBeInTheDocument();
+    expect(screen.getByTitle('On hand BRW-BB (from SO3) · FAR CO / FAR SITE')).toBeInTheDocument();
   });
 });
 

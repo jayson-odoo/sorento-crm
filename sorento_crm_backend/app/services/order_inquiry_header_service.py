@@ -53,6 +53,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryRelatedSPOOut,
 )
 from app.services.error_handler import AppException
+from app.services.oi_row_visibility import live_row_clause
 from app.utils.multi_value import multi_text, multi_values
 from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.scm import spo_supply
@@ -192,11 +193,13 @@ class OrderInquiryHeaderService:
           (`orderInquiryLineFold.ts::foldKeyOf`): the row's MIRROR line (`so_line_id`),
           else the row alone. The mirror is one-to-one with the core line and is there
           before AutoCount reconciles it (PR #1266 review S1: a core-line key split an
-          unreconciled line in two). Only NON-CANCELLED rows make a line render,
-          so a line whose every row was superseded is not one; a used row and a
-          cancelled sales order line's row still do (the tab shows them folded, or grey).
+          unreconciled line in two). Only a LIVE row (`oi_row_visibility`: not cancelled,
+          not used) makes a line render (OI-RESERVE-USED-ROW, owner 4 Nov), so a line whose
+          rows are all superseded or used is not one; a cancelled sales order line's live
+          row still is (the tab shows it grey).
         * `lines_total` = distinct lines. `lines_to_confirm` = distinct lines with a
-          non-cancelled row in awaiting / changed, used rows included (G6).
+          LIVE row in awaiting / changed (OI-RESERVE-USED-ROW: the rows Lines lists; a waiting
+          used row is still swept by Confirm, G6, but no longer counts).
         * `qty_total` = the tab's Requested footer: `qty` of the live buy rows (a buy
           verb, not cancelled, not `redirected_to_pool`) on lines not cancelled on the SO.
           The two line joins below are for that last test (`line_status`) only.
@@ -217,14 +220,19 @@ class OrderInquiryHeaderService:
             ),
             else_=0,
         )
-        return (
+        # OI-RESERVE-USED-ROW (owner, 4 Nov): a line is listed only when it has a LIVE row
+        # (`oi_row_visibility`), the rule the Lines tab lists by, so the two tabs tally. A
+        # line left with only used rows is no longer one, and only a waiting LIVE row makes a
+        # listed line To confirm: the rows Lines lists and Select-all Confirm takes. A used row
+        # still waiting is swept by that Confirm (G6, `_acknowledge_used_rows_of`).
+        per_line = (
             self.db.query(
                 OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
-                func.count(func.distinct(line_key)).label("lines_total"),
-                func.count(func.distinct(line_key))
-                .filter(OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
-                .label("lines_to_confirm"),
-                func.sum(live_buy_qty).label("qty_total"),
+                func.bool_or(live_row_clause()).label("has_live"),
+                func.bool_or(
+                    and_(live_row_clause(), OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
+                ).label("waiting"),
+                func.sum(live_buy_qty).label("qty"),
             )
             .select_from(OrderInquiryRow)
             .outerjoin(
@@ -236,7 +244,19 @@ class OrderInquiryHeaderService:
                 SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
             )
             .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
-            .group_by(OrderInquiryRow.order_inquiry_id)
+            .group_by(OrderInquiryRow.order_inquiry_id, line_key)
+            .subquery()
+        )
+        return (
+            self.db.query(
+                per_line.c.order_inquiry_id.label("order_inquiry_id"),
+                func.count().filter(per_line.c.has_live.is_(True)).label("lines_total"),
+                func.count()
+                .filter(and_(per_line.c.has_live.is_(True), per_line.c.waiting.is_(True)))
+                .label("lines_to_confirm"),
+                func.sum(per_line.c.qty).label("qty_total"),
+            )
+            .group_by(per_line.c.order_inquiry_id)
             .subquery()
         )
 
@@ -264,6 +284,10 @@ class OrderInquiryHeaderService:
                 OrderInquiryReserveRequest,
                 OrderInquiryReserveRequest.id == OrderInquiryReserveRequestRow.request_id,
             )
+            # OI-RESERVE-USED-ROW: a request row on a used row is not listed on Lines, so it
+            # gives the document no reserve status either (the repair moves it to the live row).
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryReserveRequestRow.row_id)
+            .filter(live_row_clause())
             .group_by(OrderInquiryReserveRequest.order_inquiry_id)
             .subquery()
         )
@@ -387,7 +411,7 @@ class OrderInquiryHeaderService:
                 self.db.query(OrderInquiryRow.id)
                 .filter(
                     OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
-                    OrderInquiryRow.state != INQUIRY_CANCELLED,
+                    live_row_clause(),
                     or_(
                         OrderInquiryRow.item_code.ilike(like, escape=_LIKE_ESCAPE),
                         OrderInquiryRow.stock_location.ilike(like, escape=_LIKE_ESCAPE),

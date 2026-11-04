@@ -59,6 +59,7 @@ from app.models.project_so import (
     RESERVE_RESERVED,
 )
 from app.services.certificate_service import today_malaysia
+from app.services.oi_row_visibility import live_row_clause
 from app.services.error_handler import AppException
 from app.services.oi_delivery_date import OiDate, resolve as resolve_oi_date
 
@@ -715,6 +716,14 @@ class OrderInquiryReserveService:
                     409,
                     f"{_row_label(row)} is not open for a reserve request.",
                     code="reserve_request_wrong_state",
+                )
+            if row.redirected_to_pool:
+                # OI-RESERVE-USED-ROW (owner, 4 Nov): a used row's goods went back to the
+                # pool when its line changed; the line's live row is the one to ask on.
+                raise AppException(
+                    409,
+                    f"{_row_label(row)} is a used row. Request on its line's live row.",
+                    code="reserve_request_used_row",
                 )
             if row_id in already_open:
                 raise AppException(
@@ -1522,6 +1531,9 @@ class OrderInquiryReserveService:
             )
             .select_from(rr)
             .join(req, req.id == rr.request_id)
+            # OI-RESERVE-USED-ROW: counted on LIVE rows only, as Lines lists them.
+            .join(OrderInquiryRow, OrderInquiryRow.id == rr.row_id)
+            .filter(live_row_clause())
             .one()
         )
         keys = (
