@@ -61,6 +61,12 @@ def run(c, o, seconds, start=0.0, state=None, step=TICK):
     return state, out
 
 
+def followed(c, t=-TICK):
+    """State of a standby that has streamed from the peer as primary (one tick)."""
+    state, _ = decide(initial_state(), obs(self_streaming=True, peer_pg="primary", peer_lsn=1000, cf_peer="healthy"), t, c)
+    return state
+
+
 def first(out, kind):
     for t, actions in out:
         if kind in kinds(actions):
@@ -107,23 +113,23 @@ def test_config_refuses_an_unsafe_setup(env):
 
 def test_standby_promotes_after_promote_after_of_all_three_conditions():
     c = cfg()
-    _, out = run(c, obs(), 600)
+    _, out = run(c, obs(), 600, state=followed(c))
     t = first(out, "promote")
     assert t is not None and c.promote_after <= t < c.promote_after + TICK
 
 
 def test_standby_never_promotes_on_an_unknown_cloudflare_answer():
-    _, out = run(cfg(), obs(cf_peer="unknown"), 7200)
+    _, out = run(cfg(), obs(cf_peer="unknown"), 7200, state=followed(cfg()))
     assert first(out, "promote") is None
 
 
 def test_standby_never_promotes_while_cloudflare_says_the_peer_is_healthy():
-    _, out = run(cfg(), obs(cf_peer="healthy"), 7200)
+    _, out = run(cfg(), obs(cf_peer="healthy"), 7200, state=followed(cfg()))
     assert first(out, "promote") is None
 
 
 def test_standby_never_promotes_while_streaming():
-    _, out = run(cfg(), obs(self_streaming=True), 7200)
+    _, out = run(cfg(), obs(self_streaming=True), 7200, state=followed(cfg()))
     assert first(out, "promote") is None
 
 
@@ -140,7 +146,7 @@ def test_a_break_in_any_condition_restarts_the_wait():
     def o(t):
         return obs(cf_peer="unknown") if 300 <= t < 315 else obs()
 
-    _, out = run(c, o, 700)
+    _, out = run(c, o, 900, state=followed(c))
     t = first(out, "promote")
     assert t is not None and t >= 315 + c.promote_after
 
@@ -157,11 +163,23 @@ def test_standby_too_far_behind_never_promotes_and_alerts():
 
 def test_promotion_survives_a_controller_restart_through_the_state():
     c = cfg()
-    state, out = run(c, obs(), 300)
+    state, out = run(c, obs(), 300, state=followed(c))
     assert first(out, "promote") is None
     _, out = run(c, obs(), 200, start=315, state=state)
     t = first(out, "promote")
     assert t is not None and t < 315 + c.promote_after
+
+
+def test_standby_that_never_saw_the_peer_lead_never_promotes():
+    # Double reboot with the link down: both come up standby, each answers 503 to Cloudflare,
+    # so each sees the other as unhealthy. Only a node that last saw its peer as PRIMARY may
+    # take over; here neither did.
+    c = cfg()
+    _, out = run(c, obs(), 7200)
+    assert first(out, "promote") is None
+    s, _ = decide(initial_state(), obs(peer_pg="standby", peer_lsn=1000), 0, c)
+    _, out = run(c, obs(), 7200, start=TICK, state=s)
+    assert first(out, "promote") is None
 
 
 # ---------------------------------------------------------------- S2 rejoin, S3 both standby
@@ -342,7 +360,8 @@ class World:
         self.lsn = {"a": 1000, "b": 1000}
         self.state = {"a": initial_state(), "b": initial_state()}
         self.link = True
-        self.public = {"a": True, "b": True}
+        self.net = {"a": True, "b": True}      # the node reaches the internet (and Cloudflare reaches it)
+        self.app_ok = {"a": True, "b": True}   # its app answers the monitor
         self.cf_api = True
         self.cf_down_ticks = {"a": 0, "b": 0}
         self.sync = {"a": "", "b": ""}
@@ -358,7 +377,7 @@ class World:
 
     def cf_truth(self, n):
         # The monitor: 200 only from a primary reachable from the internet; 2 failures to go down.
-        ok = self.public[n] and self.pg[n] == "primary"
+        ok = self.net[n] and self.app_ok[n] and self.pg[n] == "primary"
         self.cf_down_ticks[n] = 0 if ok else self.cf_down_ticks[n] + 1
         return "healthy" if ok or self.cf_down_ticks[n] < 2 * 4 else "unhealthy"  # 2 x 60 s at 15 s ticks
 
@@ -374,7 +393,7 @@ class World:
             p = self.peer(n)
 
             def seen(x):
-                if not self.cf_api or not self.public[n]:
+                if not self.cf_api or not self.net[n]:
                     return "unknown"
                 if rng is not None and rng.random() < 0.1:
                     return "unknown"
@@ -423,12 +442,12 @@ def test_world_node_a_dies_b_takes_over_and_a_rejoins_as_standby():
     w = World()
     w.run(300)
     assert w.pg == {"a": "primary", "b": "standby"}
-    w.public["a"] = False
+    w.net["a"] = False
     w.link = False
     w.run(1500, start=315)
     assert w.pg["b"] == "primary"
     assert w.pg["a"] == "down"
-    w.public["a"] = True
+    w.net["a"] = True
     w.link = True
     w.run(1800, start=1515)
     assert w.pg == {"a": "standby", "b": "primary"}
@@ -463,7 +482,7 @@ def test_world_cloudflare_api_and_link_down_fence_then_recover_to_one_writer():
 
 def test_world_app_sick_on_a_moves_the_writer_to_b():
     w = World()
-    w.public["a"] = False  # Cloudflare cannot get a 200 from A; the link stays up
+    w.app_ok["a"] = False  # Cloudflare cannot get a 200 from A; the link stays up
     w.run(3600)
     assert w.pg["b"] == "primary"
     assert w.pg["a"] == "standby"  # rejoined
@@ -477,6 +496,18 @@ def test_world_both_reboot_one_writer_comes_back():
     assert w.pg == {"a": "primary", "b": "standby"}
 
 
+def test_world_both_reboot_with_the_link_down_only_the_follower_takes_over():
+    w = World()
+    w.run(300)
+    w.link = False
+    w.pg = {"a": "down", "b": "down"}
+    w.run(3600, start=315)
+    assert w.pg == {"a": "standby", "b": "primary"}
+    w.link = True
+    w.run(4500, start=3615)
+    assert w.pg == {"a": "standby", "b": "primary"} and w.tl["a"] == w.tl["b"]
+
+
 def test_world_sync_names_track_the_stream():
     w = World(sync="remote_write")
     w.run(60)
@@ -486,14 +517,15 @@ def test_world_sync_names_track_the_stream():
     assert w.sync["a"] == ""
 
 
-@pytest.mark.parametrize("seed", range(40))
+@pytest.mark.parametrize("seed", range(200))
 def test_world_random_faults_never_two_writers(seed):
     rng = random.Random(seed)
     w = World(sync=rng.choice(["off", "remote_write"]))
     t = 0
     for _ in range(25):
         w.link = rng.random() < 0.6
-        w.public = {"a": rng.random() < 0.7, "b": rng.random() < 0.7}
+        w.net = {"a": rng.random() < 0.8, "b": rng.random() < 0.8}
+        w.app_ok = {"a": rng.random() < 0.8, "b": rng.random() < 0.8}
         w.cf_api = rng.random() < 0.85
         if rng.random() < 0.1:
             n = rng.choice("ab")
