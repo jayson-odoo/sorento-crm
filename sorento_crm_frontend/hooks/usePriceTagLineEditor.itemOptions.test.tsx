@@ -7,12 +7,27 @@
  * Bug 14: the line's code comes from the option's own `code`, never parsed out of a label, so an
  * item whose name equals its code still carries the code (the eye preview header reads it).
  */
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/components/dealer-kit/DesignViewer', () => ({
+  __esModule: true,
+  default: () => null,
+}));
+vi.mock('@/components/dealer-kit/DesignLightbox', () => ({
+  __esModule: true,
+  default: ({ title }: { title: string }) => <div data-testid="lightbox">{title}</div>,
+}));
+vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+
+import { PriceTagLivePreview } from '@/components/dealer-kit/PriceTagLivePreview';
+
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
-import type { TagItemOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type {
+  TagItemOption,
+  TagPreviewResponse,
+} from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { usePriceTagLineEditor } from './usePriceTagLineEditor';
 
 const ITEMS: TagItemOption[] = [
@@ -120,5 +135,45 @@ describe('usePriceTagLineEditor item pick (bug 14)', () => {
     await waitFor(() => expect(result.current.lines[0].parts).toHaveLength(1));
     expect(result.current.lines[0].parts[0].code).toBe('SRTSH2626-GY');
     expect(result.current.lines[0].parts[0].name).toBe('SRTSH2626-GY');
+  });
+});
+
+describe('the eye preview header after a pick (bug 14)', () => {
+  it('reads "CODE - LP" for an item whose name equals its code, never "Preview"', async () => {
+    const { result } = setup();
+    const options = await result.current.editor.fetchItemOptions('');
+    act(() =>
+      result.current.editor.handleItemSelect('l1', options.find((o) => o.value === 'product:p-2')!),
+    );
+    const line = result.current.lines[0];
+    const lookup = vi.fn(
+      async () =>
+        ({
+          lines: [{ line_id: line.key, tag_id: line.key, code: 'SRTSH2626-GY', name: 'x', images: [] }],
+          templates: {
+            [line.key]: {
+              id: 'tpl',
+              name: 'A5',
+              family: 'art_basin',
+              doc: { layers: [], width_mm: 80, height_mm: 50 },
+              print_size: { width_mm: 80, height_mm: 50 },
+            },
+          },
+          assets: {},
+          images: {},
+          fonts: [],
+        }) as unknown as TagPreviewResponse,
+    );
+    render(
+      <PriceTagLivePreview
+        lines={[line]}
+        priceMode="list"
+        lookupTagPreview={lookup}
+        {...({ lineKey: line.key } as object)}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('lightbox')).toHaveTextContent('SRTSH2626-GY - LP'),
+    );
   });
 });

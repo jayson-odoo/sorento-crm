@@ -16,7 +16,6 @@ import type {
   ProductTagTemplateOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
-import { distinctName } from '@/lib/product-display';
 
 /**
  * One part row under a draft line (D2).
@@ -281,19 +280,6 @@ export function emptyDraftLine(): DraftLine {
 
 /** The Item picker's option value: kind and id together, so one dropdown can
  *  answer for two tables without either half guessing which it got. */
-/** The Item picker option's second line (owner, 4 Nov): the name only when it adds
- *  something other than the code, and "Set" in front for a set (D47). A product with
- *  nothing to add has no second line. */
-export function itemOptionDescription(
-  isSet: boolean,
-  code: string | null | undefined,
-  name: string | null | undefined,
-): string | undefined {
-  const extra = distinctName(code, name);
-  if (isSet) return extra ? `Set - ${extra}` : 'Set';
-  return extra ?? undefined;
-}
-
 export function itemValue(line: DraftLine): string {
   if (line.line_type === 'product_set') {
     return line.product_set_id ? `product_set:${line.product_set_id}` : '';

@@ -27,7 +27,6 @@ import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
-  itemOptionDescription,
   itemValue,
   linePriceType,
   lineTemplateState,
@@ -373,9 +372,7 @@ function LineRow({
   const selectedItem: SearchableSelectOption | undefined = picked
     ? {
         value: picked,
-        // The same code-once shape as the options (owner, 4 Nov).
-        label: line.code || line.name,
-        description: itemOptionDescription(isSet, line.code, line.name),
+        label: line.name || line.code,
       }
     : undefined;
 
@@ -522,6 +519,9 @@ function LineRow({
             onOptionChange={(option) => onItemSelect(line.key, option)}
             fetchOptions={fetchItemOptions}
             selectedOption={selectedItem}
+            // The closed cell reads the line's own item, not a picker option's
+            // "CODE  RM <price>" text when the picked value is among the options.
+            renderTriggerLabel={() => selectedItem?.label}
             clearable
             wrapOptions
             placeholder="Search a set or product..."

@@ -21,15 +21,28 @@ import type {
   TagItemOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { distinctName } from '@/lib/product-display';
 import {
   emptyDraftLine,
   formatRM,
-  itemOptionDescription,
   MISSING_TAG_TEMPLATE,
   newPartKey,
   partsFromCombo,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
+
+/** The Item picker option's second line (owner, 4 Nov): the name only when it adds
+ *  something other than the code, and "Set" in front for a set (D47). A product with
+ *  nothing to add has no second line. */
+function itemOptionDescription(
+  isSet: boolean,
+  code: string | null | undefined,
+  name: string | null | undefined,
+): string | undefined {
+  const extra = distinctName(code, name);
+  if (isSet) return extra ? `Set - ${extra}` : 'Set';
+  return extra ?? undefined;
+}
 
 /** One Item / part picker option: "CODE  RM <list price>" (the price only when known
  *  and above 0), the name under it per `itemOptionDescription`, and the code and name
