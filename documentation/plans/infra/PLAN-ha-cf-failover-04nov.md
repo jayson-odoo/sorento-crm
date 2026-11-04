@@ -489,27 +489,43 @@ Built for DNS-only. Switching to proxied is a Cloudflare setting (orange cloud o
 hostname), with no code change. It also hides the origin addresses; per-node certificates remain
 valid (Cloudflare to origin: Full (strict)).
 
-### 12e. Drill (`python3 infra/rehearsal/cf_drill.py --mode aa`, 4 Nov, after review round 1)
+### 12e. Drill (`python3 infra/rehearsal/cf_drill.py --mode aa`, 4 Nov, after review round 2)
 
-Each node: Postgres 17, pgbouncer (route include), Redis (the template's config + ACL users, no
-persisted replicaof), HAProxy for Redis (checks as `hacheck`), all on the node's own network. The link is a separate network. The fake Cloudflare checks each node's APP PATH
-(through its pgbouncer) as two origins of one pool. Real controller + adapter on each node,
-scaled timings.
+Each node runs:
+- Postgres 17;
+- pgbouncer in SESSION mode (prod keeps its mode; session is the hard case), with the route
+  include and TCP timeouts;
+- Redis (the template's config + ACL users, no persisted replicaof);
+- HAProxy for Redis (checks as `hacheck`).
+
+All of it sits on the node's own network; node-local hops use names that exist only there. The
+link is a separate network. The fake Cloudflare checks each node's APP PATH (through its
+pgbouncer) as two origins of one pool, each check on its own. Each node also runs a long-lived
+session client modelled on the app's SQLAlchemy pool: it stays on a connection that only
+returns read-only errors, and reconnects only when the connection is lost. The real controller
+and adapter run on each node, with scaled timings.
 
 | Scenario | Result |
 |---|---|
-| steady state | PASS: both origins healthy; writes through B's app land on A; one Redis shared (set on A, read on B) |
+| steady state | PASS: both origins healthy; writes through B's app land on A; one Redis shared (set on A, read on B); the app's Redis user gets NOPERM for REPLICAOF, FLUSHALL, SWAPDB, CONFIG, SHUTDOWN; both long-lived sessions write |
 | app down on A only | PASS: A out of the pool and back; no fence, no promotion; B kept serving writes |
 | app down on B only | PASS: same, mirrored |
 | link cut only | PASS: B left the pool (no route to the primary), no failover; back after the link returned |
-| primary box dies | PASS: B primary 19 s after A died, serving at 21 s; B routes local and its Redis is master; A came back read-only and serves again through B |
-| primary isolated | PASS: the isolated primary fenced (11 s) before the other promoted (20 s); both serving again |
-| both nodes reboot | PASS: one writer, both serving; both Redis restarted as masters and R1 repaired the standby's from its real role |
-| never two writers / acknowledged writes | PASS: 0 bad Postgres samples; 0 of 270 acknowledged writes lost; 14 samples (0.3 s each, about 4 s in all) with two Redis masters, all right after a Redis restart, each repaired within a tick. "Never two writers" is the Postgres check; Redis two-master samples are reported separately (expected for up to one tick after a restart, 12b) |
+| primary box dies | PASS: B primary 19 s after A died, serving at 22 s; B routes local and its Redis is master; B's long-lived session writes into B; A came back read-only and serves again through B |
+| primary isolated | PASS: the isolated primary fenced (11 s) before the other promoted (20 s); both serving again, both long-lived sessions writing |
+| both nodes reboot | PASS: one writer. Both Redis restarted as masters and R1 repaired the standby's from its real role. The long-lived session of the node that was routed at a standby peer writes into the new primary (the round-2 case: KILL + RESUME, not RECONNECT) |
+| never two writers | PASS: 0 two-Postgres samples ("never two writers" is the Postgres check) |
+| Redis two masters | NOTE: 14 samples (0.3 s each, about 4 s in all), all right after a Redis restart, each repaired within a tick (12b) |
+| acknowledged writes | NOTE: 2 of 355 lost, written through the ISOLATED primary's own app path in the seconds before it fenced (the drill reaches it through Docker; a real isolated box has no users) |
 
 Drill findings fixed in the build:
-- pgbouncer `KILL` + `RESUME` after `RELOAD` (round 1: RECONNECT; round 2: KILL, so session mode is covered).
-- `server_login_retry = 2`.
-- Redis role switched before pgbouncer.
+- Round 1: pgbouncer re-point after `RELOAD` (`RECONNECT`); `server_login_retry = 2`; Redis role
+  switched before pgbouncer.
+- Round 2: `KILL` + `RESUME` instead of `RECONNECT`, so session mode is covered; pgbouncer TCP
+  keepalive and `tcp_user_timeout`, so a cut link drops server connections in about 10 s
+  instead of hanging app requests for the kernel's 15 minutes.
+- Drill fidelity: names that resolved to the link address made a link cut also cut node-local
+  paths, so node-local hops now use local-only aliases; the old long-lived client never
+  reconnected, unlike the app's pool.
 
 `--mode ap` keeps the active-passive scenarios.
