@@ -47,9 +47,11 @@ R1. **Component list layer.** A new template layer, "Component list", holds one 
     ("OR" between them), free items ("FOC"), upgrades ("TOP UP"). Each block shows, as the
     designer switches on: picture, full code, tag description, LP, the option's own SP, and a
     connector label ("+", "OR", "FOC", "TOP UP RM 150"). The designer places ONE block; the layer
-    repeats it across its box (row or column, designer's pick), cells share the box equally, so
-    1..5 items always fit; type shrinks to a floor (6 pt) and a description longer than its cell
-    is cut with an ellipsis, never dropped silently. The designer chooses which item kinds the
+    repeats it across its box (row or column, designer's pick), at most 3 cells per row, then a
+    second row, so host + 5 taps fits in two rows; the picture height gives way first so
+    every row fits inside the layer's box; type shrinks to a floor (6 pt); a full code
+    is never cut (it wraps); a description longer than its cell ends with an ellipsis, never
+    dropped silently. The designer chooses which item kinds the
     layer shows (for example a second list only for FOC).
 R2. **One renderer.** The block layout is one pure function in `lib/dealer-kit/` called by the
     canvas, the live preview and the PDF print page, the same way `textLayerLines` is today, so
@@ -111,8 +113,8 @@ E1. Sink + taps, choose one: SRTKS7061 + SRTKT1862SS, FOC as on the flyer, SP RM
 E2. Basin + tap + FOC: SRTWB1419-BL + SRTWT7449-BL / -RG, FOC SRTW5102-BL. Component list: basin,
     "+", tap in two finishes "OR", "FOC" block with SRTW5102-BL's picture. Today: no combo at all
     (re-seed reports `new`).
-E3. Five-tap sink: *(dev data pending: largest tap group)*. Five cells across the 105 mm box,
-    about 19 mm each; descriptions cut with an ellipsis at the floor size.
+E3. Five-tap sink: *(dev data pending: largest tap group)*. Host + 5 taps = 6 cells in two rows of 3
+    (about 30 mm each on the 105 mm box); full codes wrap, descriptions end with an ellipsis.
 E4. Top-up: SRTKS7061 with SRTKT71SS: "TOP UP RM 150, UPGRADE TO SRTKT71SS" with SRTKT71SS's
     picture in its own block.
 E5. Bathroom furniture set: SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM, SP RM 2099. Combo-level
