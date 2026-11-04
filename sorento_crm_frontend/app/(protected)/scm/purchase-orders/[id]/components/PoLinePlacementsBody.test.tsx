@@ -210,6 +210,17 @@ describe('PoLinePlacementsBody', () => {
     ...extra,
   });
 
+  it('fits the dialog at 1280: the columns sum to no more than its content width', () => {
+    // 95vw at 1280 less the body's 2 x 24px padding is ~1168px; every column has a fixed size.
+    renderWithClient(<PoLinePlacementsBody allocation={LINE} />);
+
+    const widths = screen
+      .getAllByRole('columnheader')
+      .map((h) => parseFloat((h as HTMLElement).style.width || '0'));
+    expect(widths.every((w) => w > 0)).toBe(true);
+    expect(widths.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1160);
+  });
+
   it('names who linked an inquiry row and when', () => {
     renderWithClient(
       <PoLinePlacementsBody
@@ -226,7 +237,8 @@ describe('PoLinePlacementsBody', () => {
 
     expect(screen.getByRole('columnheader', { name: 'Linked' })).toBeInTheDocument();
     const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
-    expect(within(row).getByText('Aisyah 04/09/2026, 2:05 pm')).toBeInTheDocument();
+    expect(within(row).getByText('Aisyah')).toBeInTheDocument();
+    expect(within(row).getByText('04/09/2026, 2:05 pm')).toBeInTheDocument();
     // The SPO row and the dedication carry no link of this kind.
     const spoRow = screen.getByText('CRM-SPO-2026/08-0007').closest('tr') as HTMLElement;
     expect(within(spoRow).queryByText(/04\/09\/2026/)).toBeNull();
@@ -246,6 +258,7 @@ describe('PoLinePlacementsBody', () => {
     );
 
     const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
-    expect(within(row).getByText('Auto 04/09/2026, 2:05 pm')).toBeInTheDocument();
+    expect(within(row).getByText('Auto')).toBeInTheDocument();
+    expect(within(row).getByText('04/09/2026, 2:05 pm')).toBeInTheDocument();
   });
 });

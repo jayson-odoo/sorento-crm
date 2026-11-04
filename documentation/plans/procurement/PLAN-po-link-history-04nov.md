@@ -36,17 +36,18 @@ audit trails of when is this linked in the UI?"
    "<item code>: S/O <old | none> -> <new | none>". A re-push with the same ref writes nothing.
    Inside the record's savepoint, so a failed record leaves no event.
 2. Backfill (data migration, idempotent): one `scm.po_line.book_so_seen` EVENT per currently linked PO line
-   with no event yet, `changed_at` = the line's earliest `order_link_claim.claimed_at` (source autocount)
-   else the line's `created_at`. Shown as "on or before <date>" because it is an upper bound, not the moment.
+   with no event yet, `changed_at` = the line's earliest `order_link_claim.claimed_at` (source autocount),
+   converted from Malaysian wall time to UTC (`order_link_service._now()` stamps MYT; crew pass found 22,248
+   rows 8 h late before the fix), else the line's `created_at` (already UTC). Shown as "on or before <date>" because it is an upper bound, not the moment.
 3. PO detail, Lines tab, S/O cell: the value opens a popover: "Linked by AutoCount sync on <date time>",
    "Was <previous SO | not linked>"; a backfilled one reads "Linked on or before <date>" and "Earlier history
    not recorded". A line whose latest event is an unlink shows the dash with the same popover.
-4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`), readable by anyone who
-   can open the PO page: `scm.dashboard.view`, the SCM purchase-order routes' own `_READ`
-   (`app/api/v1/scm/purchase_orders.py:36`). Security review B1: `scm.purchase_orders.view` is the
-   AutoCount ESB's push/read slug, held by no staff role. Non-admin per-record reads get
-   `ip_address` blanked (security review S1).
-5. Placed popup: a "Linked" column on order-inquiry rows: "<user name> <date>" or "Auto <date>".
+4. PO detail gains a History tab (`AuditTrail`, entity `purchase_orders`), readable with
+   `scm.purchase_orders.view` scoped to that PO (crew ruling, re-pass on 2339d063; it reversed the
+   security review's move to `scm.dashboard.view`). The tab is hidden, and `?tab=history` opens General,
+   for a user without it. Non-admin per-record reads get `ip_address` blanked (security review S1).
+5. Placed popup: a "Linked" column on order-inquiry rows: the user's name (or "Auto") with the date and time
+   beneath it; column widths sum to 1150px so the grid fits the dialog at 1280 with no inner scroll.
 
 ## Tests (red first)
 
@@ -55,8 +56,8 @@ audit trails of when is this linked in the UI?"
 - backfill: seeds one per linked line (run with a batch of 1, so the keyset loop is walked), second run
   seeds 0, a line with an event is skipped.
 - PO detail serializer: `book_so_link` carries at / estimated / previous.
-- audit read: `scm.dashboard.view` user reads the `purchase_orders` trail (no IP); no permission or
-  the ESB slug alone gets 403; another company's viewer gets nothing.
+- audit read: `scm.purchase_orders.view` user reads the `purchase_orders` trail (no IP); no permission or
+  `scm.dashboard.view` alone gets 403; another record type 403s; another company's viewer gets nothing.
 - placements: `linked_at`, `linked_by_name`, `auto` served.
 - vitest: BookSoCell popover text (event, estimated, none); Placed "Linked" column; History tab renders.
 

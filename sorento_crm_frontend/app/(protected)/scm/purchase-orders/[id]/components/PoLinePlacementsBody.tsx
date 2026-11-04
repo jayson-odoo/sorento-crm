@@ -49,20 +49,21 @@ interface PlacementRow {
   landsAt: string | null;
   locationDiffers: boolean;
   eta: string | null;
-  /** PO-LINK-HISTORY: "<who> <when>" / "Auto <when>" on an order-inquiry row, else null. */
-  linked: string | null;
+  /** PO-LINK-HISTORY: who linked an order-inquiry row (a name, or Auto) and when; else null. */
+  linked: { who: string | null; when: string } | null;
 }
 
 /** Who made an order-inquiry link and when: the person's name, or Auto for the cascade. */
-function linkedLabel(p: {
+function linkedOf(p: {
   linked_at?: string | null;
   linked_by_name?: string | null;
   auto?: boolean | null;
-}): string | null {
+}): PlacementRow['linked'] {
   if (!p.linked_at) return null;
-  const who = p.auto ? 'Auto' : p.linked_by_name || null;
-  const when = formatDateTimeInMalaysia(p.linked_at);
-  return who ? `${who} ${when}` : when;
+  return {
+    who: p.auto ? 'Auto' : p.linked_by_name || null,
+    when: formatDateTimeInMalaysia(p.linked_at),
+  };
 }
 
 function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
@@ -99,7 +100,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       landsAt: p.needed_at,
       locationDiffers: Boolean(p.location_differs),
       eta: null,
-      linked: linkedLabel(p),
+      linked: linkedOf(p),
     };
   });
   const fromDedications = (allocation.dedicated_to ?? []).map(
@@ -164,13 +165,13 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
           }
           return textCell(r.number);
         },
-        size: 150,
+        size: 140,
       },
       {
         id: 'document',
         header: 'Document',
         cell: ({ row }) => textCell(row.original.document),
-        size: 170,
+        size: 150,
       },
       {
         id: 'customer',
@@ -180,7 +181,7 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
             {textCell(row.original.customer)}
           </span>
         ),
-        size: 200,
+        size: 180,
       },
       {
         id: 'project',
@@ -190,13 +191,13 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
             {textCell(row.original.project)}
           </span>
         ),
-        size: 180,
+        size: 160,
       },
       {
         id: 'qty',
         header: 'Qty',
         cell: ({ row }) => fmtInt(row.original.qty),
-        size: 90,
+        size: 80,
         meta: RIGHT,
       },
       {
@@ -215,25 +216,37 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
             </span>
           );
         },
-        size: 200,
+        size: 180,
       },
       {
         id: 'eta',
         header: 'ETA',
         cell: ({ row }) => textCell(row.original.eta),
-        size: 110,
+        size: 100,
         meta: RIGHT,
       },
       {
-        // PO-LINK-HISTORY (card 5): who linked an order-inquiry row and when.
+        // PO-LINK-HISTORY (card 5): who linked an order-inquiry row, and when beneath it, so
+        // the whole grid fits the dialog at 1280 with no inner scroll (crew pass, 4 Nov).
         id: 'linked',
         header: 'Linked',
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.linked ?? undefined}>
-            {textCell(row.original.linked)}
-          </span>
-        ),
-        size: 190,
+        cell: ({ row }) => {
+          const linked = row.original.linked;
+          if (!linked) return textCell(null);
+          return (
+            <span className="block min-w-0">
+              {linked.who ? (
+                <span className="block truncate" title={linked.who}>
+                  {linked.who}
+                </span>
+              ) : null}
+              <span className="block whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+                {linked.when}
+              </span>
+            </span>
+          );
+        },
+        size: 160,
       },
     ],
     [],

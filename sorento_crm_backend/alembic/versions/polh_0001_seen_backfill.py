@@ -6,8 +6,9 @@ Data only, no DDL. From this release the AutoCount PO ingest writes a
 this seeds ONE ``scm.po_line.book_so_seen`` event for every PO line that carries a
 ``from_so_line_ref`` and has no S/O link event yet:
 
-    changed_at := the line's earliest AutoCount ``order_link_claim.claimed_at``,
-                  else the line's own ``created_at``
+    changed_at := the line's earliest AutoCount ``order_link_claim.claimed_at``
+                  (Malaysian wall time, converted to UTC), else the line's own
+                  ``created_at`` (already UTC)
 
 That time is an UPPER bound ("linked on or before"), never the moment, and the screen says
 so. Idempotent: a line with any S/O link event is skipped, so a rerun inserts nothing.
@@ -89,8 +90,14 @@ _audit = sa.Table(
 
 def _batch_select(after):
     """The next `_BATCH` linked lines (by id) with no S/O link event, as audit rows."""
+    # `claimed_at` is Malaysian wall time (`order_link_service._now()`, every claim writer
+    # stamps it) while `audit_logs.changed_at` is UTC, like `created_at`: read it as
+    # Asia/Kuala_Lumpur and store it as UTC, or the screen shows it 8 hours late.
+    claim_utc = sa.func.timezone(
+        "UTC", sa.func.timezone("Asia/Kuala_Lumpur", _claims.c.claimed_at)
+    )
     first_claim = (
-        sa.select(sa.func.min(_claims.c.claimed_at))
+        sa.select(sa.func.min(claim_utc))
         .where(_claims.c.po_line_id == _lines.c.id, _claims.c.source == "autocount")
         .scalar_subquery()
     )

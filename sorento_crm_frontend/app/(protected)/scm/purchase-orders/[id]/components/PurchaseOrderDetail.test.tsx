@@ -129,6 +129,13 @@ vi.mock('../../../services/salesOrderService', () => ({
     ]),
 }));
 
+// PO-LINK-HISTORY: the History tab is shown only with `scm.purchase_orders.view` (crew ruling,
+// 4 Nov), the permission the audit read checks. Granted by default; one test takes it away.
+let grantedPermissions = new Set(['scm.purchase_orders.view']);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => grantedPermissions.has(slug),
+}));
+
 // PO-LINK-HISTORY: the History tab is the shared trail; what it is pointed at is the contract.
 vi.mock('@/components/audit/AuditTrail', () => ({
   __esModule: true,
@@ -219,6 +226,7 @@ beforeEach(() => {
   usePurchaseOrder.mockReset();
   updatePurchaseOrderMutateAsync.mockReset().mockResolvedValue({});
   searchParams = new URLSearchParams();
+  grantedPermissions = new Set(['scm.purchase_orders.view']);
 });
 
 describe('PurchaseOrderDetail - states', () => {
@@ -1074,6 +1082,18 @@ describe('PurchaseOrderDetail - History tab (PO-LINK-HISTORY)', () => {
     const trail = screen.getByTestId('audit-trail');
     expect(trail).toHaveAttribute('data-entity-type', 'purchase_orders');
     expect(trail).toHaveAttribute('data-entity-id', 'po-1');
+  });
+
+  it('hides the History tab from a user without Purchase Orders view', () => {
+    grantedPermissions = new Set();
+    // Even a link that names the tab lands on General rather than an empty panel.
+    searchParams = new URLSearchParams('tab=history');
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.queryByRole('tab', { name: 'History' })).toBeNull();
+    expect(screen.queryByTestId('audit-trail')).toBeNull();
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('data-state', 'active');
   });
 
   it('opens the S/O cell\'s link history from the Lines tab', () => {

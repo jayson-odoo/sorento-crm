@@ -36,9 +36,9 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     # Product Specifications record page, History tab.
     "product_spec_registry": "master_data.spec_registry.view",
     # SCM purchase-order detail, History tab: the order's S/O link events (PO-LINK-HISTORY).
-    # The page's own gate (`app/api/v1/scm/purchase_orders.py` `_READ`), NOT
-    # `scm.purchase_orders.view`, which is the AutoCount ESB's push/read slug.
-    "purchase_orders": "scm.dashboard.view",
+    # Crew ruling (4 Nov, re-pass on 2339d063): `scm.purchase_orders.view`, scoped to that PO,
+    # not the page's own `scm.dashboard.view`. The tab is hidden for anyone without it.
+    "purchase_orders": "scm.purchase_orders.view",
 }
 
 

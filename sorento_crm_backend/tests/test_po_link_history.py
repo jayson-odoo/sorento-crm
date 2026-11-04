@@ -323,10 +323,10 @@ class TestDetailServesTheLatestEvent:
 
 
 # ============================================================== 3. History tab permission
-def test_po_history_is_readable_with_the_po_pages_permission_and_not_without():
-    """Gated on the PO page's own permission (`scm.dashboard.view`, the SCM purchase-order
-    routes' `_READ`). `scm.purchase_orders.view` is the AutoCount ESB's slug and opens
-    nothing here. Company-scoped like every per-record read, and no IP address."""
+def test_po_history_is_readable_with_purchase_orders_view_and_not_without():
+    """Gated on `scm.purchase_orders.view` (crew ruling, 4 Nov). The PO page's own
+    `scm.dashboard.view` alone does not open it. Company-scoped like every per-record read,
+    and no IP address."""
     from fastapi.testclient import TestClient
 
     import app.database as app_database
@@ -339,8 +339,8 @@ def test_po_history_is_readable_with_the_po_pages_permission_and_not_without():
     from tests.test_audit_read_gate import _role, _user
 
     with blank_session() as db:
-        buyer = _user(db, "buyer", _role(db, "zz_po_viewer", ["scm.dashboard.view"]))
-        esb = _user(db, "esb", _role(db, "zz_esb_slug_only", ["scm.purchase_orders.view"]))
+        buyer = _user(db, "buyer", _role(db, "zz_po_viewer", ["scm.purchase_orders.view"]))
+        page_only = _user(db, "page_only", _role(db, "zz_page_only", ["scm.dashboard.view"]))
         plain = _user(db, "plain", _role(db, "zz_nothing", []))
         po_id = str(uuid.uuid4())
         db.add(AuditLog(
@@ -375,8 +375,12 @@ def test_po_history_is_readable_with_the_po_pages_permission_and_not_without():
             assert rows[0]["ip_address"] is None
             caller["id"] = plain
             assert TestClient(app).get(url).status_code == 403
-            caller["id"] = esb
+            caller["id"] = page_only
             assert TestClient(app).get(url).status_code == 403
+            # Scoped to that PO: the permission opens no other record type's history.
+            other = f"/api/v1/audit/logs/?entity_type=users&entity_id={uuid.uuid4()}"
+            caller["id"] = buyer
+            assert TestClient(app).get(other).status_code == 403
             # The view permission opens that PO's history, not the line table's listing.
             caller["id"] = buyer
             r = TestClient(app).get("/api/v1/audit/logs/?entity_type=purchase_order_lines")
@@ -436,7 +440,8 @@ class TestBackfill:
         env.db.add(OrderLinkClaim(
             id=str(uuid.uuid4()), company_id=env.company_a, so_number="ZZT-SO",
             po_number=record["po_number"], source="autocount",
-            claimed_at=datetime(2026, 9, 2, 9, 30), po_line_id=ids[claimed["source_ref"]],
+            claimed_at=datetime(2026, 9, 2, 9, 30),  # MYT wall time, as `_now()` stamps it
+            po_line_id=ids[claimed["source_ref"]],
         ))
         env.db.flush()
 
@@ -448,8 +453,10 @@ class TestBackfill:
         assert _events(env, ids[bare["source_ref"]], SEEN) == []
         assert len(seen_linked) == 1 and len(seen_claimed) == 1
         assert seen_linked[0].changed_at == datetime(2026, 9, 10, 8, 0)
-        # The earliest AutoCount claim beats the line's own created_at.
-        assert seen_claimed[0].changed_at == datetime(2026, 9, 2, 9, 30)
+        # The earliest AutoCount claim beats the line's own created_at. `claimed_at` is
+        # Malaysian wall time (`order_link_service._now`) and `changed_at` is UTC, so
+        # 09:30 MYT on 2 Sep lands as 01:30 UTC (crew pass on 2339d063: 22,248 rows 8 h late).
+        assert seen_claimed[0].changed_at == datetime(2026, 9, 2, 1, 30)
         ev = seen_linked[0]
         assert ev.action == "EVENT"
         assert ev.new_values == {"from_so_line_ref": "ZZT_BF:1:1"}
