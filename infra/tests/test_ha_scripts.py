@@ -499,3 +499,22 @@ def test_checks_no_prune_below_threshold(env):
     r = run(CHECKS, e, SNAPSHOT_DIR=snap, FAKE_BACKUPS=_fresh_backup())
     assert len(list(snap.glob("*.dump"))) == 4
     assert r.returncode == 1 and "disk 82% used" in r.stdout
+
+
+# ---------------------------------------------------------------- ha-pg.sh observe (review round 2)
+
+ADAPTER = SCRIPTS / "ha-pg.sh"
+
+
+@pytest.mark.parametrize("running, want", [("true", "self_pg=unknown"), ("false", "self_pg=down")])
+def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, running, want):
+    # `exec psql` fails (wedged dockerd) while the container still runs: Postgres may still be
+    # taking writes, so the controller must see "unknown" (a failed tick), never "down" (D1).
+    e = {
+        "PATH": os.environ["PATH"], "NODE_NAME": "crm-a", "PEER_NAME": "crm-b", "PEER_HOST": "peer",
+        "PGDATA": "/v/pgdata", "PG_EXEC": "false", "PG_RUNNING": running,
+        "PG_START": "true", "PG_STOP": "true", "PG_OFFLINE_SH": "false", "PEER_PSQL": "false",
+    }
+    r = subprocess.run(["bash", str(ADAPTER), "observe"], env=e, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert want in r.stdout.splitlines(), r.stdout

@@ -143,9 +143,13 @@ Record every time measured into the plan, section 10.
   not see. Check `infra/scripts/ha-pg.sh observe` on both; page crew.
 - Alert "too far behind; NOT promoting": the standby lagged more than 16 MB when A died. Nothing
   promotes automatically (it would lose more than allowed). Options: bring A back, or accept the
-  loss and promote by hand: `docker compose exec -T -u postgres db psql -U postgres -c "select pg_promote()"`
-  on B after confirming A is stopped (hPanel).
-- Stop everything automatic: `systemctl stop cf-failover` on both nodes.
+  loss and promote by hand: confirm A is stopped (hPanel), `systemctl stop cf-failover` on B FIRST
+  (a running controller fences a node it did not promote itself, within one tick), then
+  `docker compose exec -T -u postgres db psql -U postgres -c "select pg_promote()"` on B. Start
+  `cf-failover` on B again only once A is back as B's standby.
+- Stop everything automatic: `systemctl stop cf-failover` on BOTH nodes, standby first. Never stop
+  it on the primary alone: that switches off the primary's fence while the standby can still
+  promote (two writers if the primary is then cut off).
 
 ## Disaster restore (Malaysia-wide outage)
 

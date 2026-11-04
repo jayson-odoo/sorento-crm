@@ -6,6 +6,7 @@
 # Commands:
 #   observe            key=value lines: self_pg self_streaming self_lsn sync_names peer_slot peer_pg peer_lsn
 #   role               primary | standby | down (local only; the role watcher reads this)
+#   (observe prints self_pg=unknown when psql fails but the container runs: not "down")
 #   fence              stop Postgres FIRST (workers cannot write without it), mark it a standby
 #                      (standby.signal: any later start, even a manual one, comes up read-only),
 #                      then stop the workers fast
@@ -103,6 +104,11 @@ case "$cmd" in
       IFS='|' read -r role lsn streaming sync slot <<<"$out"
       echo "self_pg=$role"; echo "self_lsn=$lsn"; echo "self_streaming=$streaming"; echo "sync_names=$sync"
       echo "peer_slot=$slot"
+    elif running; then
+      # Postgres may still be up and taking writes over TCP while `exec psql` fails (wedged
+      # dockerd, cgroup pressure). Never call that "down": the controller counts the tick as
+      # failed and its failure path fences or lets the watchdog reboot (review round 2).
+      echo "self_pg=unknown"
     else
       echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="; echo "peer_slot=t"
     fi

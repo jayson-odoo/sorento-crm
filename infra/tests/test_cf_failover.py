@@ -322,6 +322,16 @@ def test_a_fence_that_did_not_take_is_retried_every_tick_and_never_renews_the_le
     assert len(alerts) == 1, alerts  # one alert, not one per retry
 
 
+def test_an_app_sick_fence_that_did_not_take_is_issued_again_next_tick():
+    # P2 fenced (cooldown now blocks P2, the streaming peer keeps the lease): only the
+    # `fencing` retry can re-issue it while the node still reads primary.
+    c = cfg()
+    state, out = run(c, prim(self_streaming=True, peer_pg="standby"), c.app_sick_after)
+    assert first(out, "fence") == c.app_sick_after
+    _, a = decide(state, prim(self_streaming=True, peer_pg="standby"), c.app_sick_after + TICK, c)
+    assert "fence" in kinds(a)
+
+
 def test_brief_down_readings_never_renew_an_isolated_primary_lease():
     c = cfg()
 

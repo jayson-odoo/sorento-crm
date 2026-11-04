@@ -361,3 +361,11 @@ stops Postgres first, is bounded at 60 s, kills its whole process group and neve
 watchdog; should-fix: `standby.signal` on fence, clock steps back keep elapsed time, peer query
 timeouts, P5 slot, rejoin escalation and failed re-seed cleanup, P3 tie-break. Tests for each, in
 `infra/tests/` (the two-node world model now also fails fences at random and models the watchdog).
+
+Review round 2 (verification of round 1): one blocker left and fixed: `ha-pg.sh observe` printed
+`down` when `exec psql` failed with the container still running, so a primary whose Docker exec
+wedged while cut off took the D1 path and never fenced; it now prints `unknown` (a failed tick:
+fence after `FENCE_AFTER`, else the watchdog). Also: the runbook's manual promotion stops the
+controller first (a controller fences a node it did not promote), a warning never to stop the
+controller on the primary alone, a test for the fence retry, and the two-node release checks the
+public URL from the runner. Reviewer kill tests on the B1 lease rule all went red.
