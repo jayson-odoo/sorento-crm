@@ -32,6 +32,7 @@ from app.models.project_so import (
 )
 from app.services import park_send
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import line_date_sql as oi_line_date_sql, resolve as resolve_oi_date
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class OrderInquiryHandoverResend:
                 OrderInquiryRow.order_inquiry_id == inquiry.id,
                 OrderInquiryRow.state.in_(OPEN_STATES),
             )
-            .order_by(OrderInquiryRow.delivery_date.asc().nulls_last(), OrderInquiryRow.id.asc())
+            .order_by(oi_line_date_sql(OrderInquiryRow).asc().nulls_last(), OrderInquiryRow.id.asc())
             .all()
         )
 
@@ -132,6 +133,7 @@ class OrderInquiryHandoverResend:
         # `actor` stays the OI's raiser (`handover_item`'s own fallback), so "Raised by" in
         # the email is true and the raiser is on Cc as on the automatic email; the presser
         # is recorded as `sent_by`.
+        service.prime_oi_dates(rows)
         items = [
             service.handover_item(
                 row,
@@ -218,14 +220,14 @@ class OrderInquiryHandoverResend:
             }
         return out
 
-    @staticmethod
-    def _lines(rows, selected_ids, notes, linked) -> List[Dict[str, Any]]:
+    def _lines(self, rows, selected_ids, notes, linked) -> List[Dict[str, Any]]:
         """Every open row of a single OI for the preview's ticks. `sent_at`: the newest
         earlier handover email of this OI whose body names the row's item code (owner, 16
         Oct: "the first 2 lines were sent in the previous confirm"). A hint, not a lock."""
         from app.services.order_inquiry_reserve_service import as_utc
 
         out = []
+        one_date = resolve_oi_date(self.db, rows)
         for row in rows:
             sent_at = None
             if row.item_code:
@@ -244,7 +246,7 @@ class OrderInquiryHandoverResend:
                     # The open remainder, the same quantity the email asks for (SF3).
                     "qty": str(Decimal(str(row.qty)) - linked.get(str(row.id), Decimal("0"))),
                     "location": row.stock_location,
-                    "delivery_date": row.delivery_date,
+                    "delivery_date": one_date[str(row.id)].date,
                     "selected": str(row.id) in selected_ids,
                     "sent_at": sent_at,
                 }
