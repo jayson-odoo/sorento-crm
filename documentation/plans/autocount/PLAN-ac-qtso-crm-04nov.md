@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Plan (behaviour card posted, SS contract pinned 4 Nov; waiting on owner answers, no code before them).
+Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q5 5 Nov ~07:20 MYT; Q6 asked; mock on the existing screens next).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -112,7 +112,7 @@ delete_line / cancel). An amendment mixing both: the editable rows go, the rest 
 4. Resume or `GET` by actionId for QT / SO writes, so a 202 can be confirmed without waiting for the next sync.
 5. `dtlKey` of the new row in the add-line answer (today the CRM diffs `document.Details`).
 
-## Questions for the owner (open)
+## Questions for the owner
 
 1. Switch. #2168 already has "AutoCount links from Stock Debt". (a) reuse it; (b) a sibling "AutoCount quotations and sales orders from Project sales", OFF. Recommendation: (b), so links can go live without document creation.
 2. Import file. Create in AutoCount sits beside "Download import file". (a) keep the download as a fallback; (b) hide it once the switch is ON. Recommendation: (a), AutoCount can refuse and CS still needs a way to key it in.
@@ -122,3 +122,12 @@ delete_line / cancel). An amendment mixing both: the editable rows go, the rest 
 6. Quotation lines AutoCount cannot hold as one row (rate-only lines, product sets). (a) refuse the whole quotation by name; (b) send a set as its parts and skip rate-only lines with a note. Recommendation: (a) for now, because sending something different from the issued quotation breaks "AutoCount = what the customer accepted".
 
 Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount is greyed "Waiting for AutoCount" either way; the answer decides what we build once SS adds it.
+
+## Owner rulings (5 Nov ~07:20 MYT, "Ok for the qtso question": every recommendation of 61aad31d)
+
+- R1: own switch "AutoCount quotations and sales orders from Project sales" (`system_settings.project_autocount_write_enabled`), default OFF; off hides every write action and every write route answers 403 with no SS call.
+- R2: "Download import file" stays beside Create in AutoCount as the fallback.
+- R3: only a published amendment updates the AutoCount document; no direct edits of a published order.
+- R4: Cancel in AutoCount = cancel the remaining (undelivered) balance. Greyed "Waiting for AutoCount" until SS ships cancel (SS gaps 1-2).
+- R5: a quotation is created in AutoCount only after the customer accepted it (issue `accepted_at` set); a later accepted revision goes as Update.
+- Q6 (rate-only lines and product sets): asked separately, not yet answered.
