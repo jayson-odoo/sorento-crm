@@ -75,6 +75,8 @@ const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
   { value: 'included_accessories', label: 'Accessories' },
   { value: 'list_price', label: 'List Price' },
   { value: 'sell_price', label: 'Sell Price' },
+  { value: 'price', label: 'Price (LP or SP)' },
+  { value: 'price_label', label: 'Price label' },
   { value: 'badges', label: 'Badges' },
   { value: 'alternatives', label: 'Alternatives' },
   { value: 'set_members', label: 'Set Members' },
