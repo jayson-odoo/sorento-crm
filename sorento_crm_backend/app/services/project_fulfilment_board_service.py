@@ -84,7 +84,7 @@ from app.models.user import User
 from app.services import project_line_draft_service
 from app.services import so_remark_rules
 from app.services.error_handler import AppException
-from app.services.scm.so_party import EMPTY_PARTY, so_parties, with_party
+from app.services.scm.so_party import party_of, so_parties, with_party
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -431,6 +431,16 @@ def _project_label(order: SalesOrder) -> Optional[str]:
     return order.project_label or _project_label_from_note(order.internal_note)
 
 
+def _so_party(order: SalesOrder, master_name: Optional[str]) -> Dict[str, Optional[str]]:
+    """OI-UX-FILTER-SNAPSHOT: the order's Customer and Project exactly as the SO list names them
+    (`so_party.party_of`, off the order this row already read, so no extra query). What the
+    board's CUSTOMER / project labels and the List view's Project column print. The row's own
+    `project_label` keeps its note fallback (#813) for the pivot by project; a note such as
+    "OWN COLLECT" is not a project, so those labels never read it."""
+    party = party_of(order.debtor_name, master_name, order.project_label)
+    return {"so_customer_name": party["customer_name"], "so_project_label": party["project_label"]}
+
+
 class _Row:
     """One still-owed core sales-order line, which is all the board is ever built from."""
 
@@ -480,6 +490,8 @@ class _Row:
         "is_mockup", "remark_type",
         #: SO-LINE-DESC: the core line's AutoCount description, off the same line row.
         "description",
+        #: OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project (`_so_party`).
+        "so_customer_name", "so_project_label",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -670,25 +682,7 @@ class FulfilmentBoardService:
 
     def build(self, so_numbers: Sequence[str], **kwargs: Any) -> Dict[str, Any]:
         """`_build`, with every masked delay printed as its published ETA."""
-        return self._name_orders(_shown(self._build(so_numbers, **kwargs)))
-
-    def _name_orders(self, board: Dict[str, Any]) -> Dict[str, Any]:
-        """OI-UX-FILTER-SNAPSHOT: every contributing line names its sales order's Customer and
-        Project the way the SO list does (`so_party`, one query by order id), for the board's
-        CUSTOMER / project labels and the List view's Project column. The line's own
-        `project_label` keeps its note fallback (#813) for the pivot by project; it is never
-        what those labels print, since a note such as "OWN COLLECT" is not a project."""
-        lines = [
-            *board.get("contributions", []),
-            *(line for cell in board.get("cells", []) for line in cell.get("contributions", [])),
-        ]
-        parties = so_parties(self.db, ids=[line.get("sales_order_id") for line in lines])
-        for line in lines:
-            order_id = line.get("sales_order_id")
-            party = parties.get(str(order_id), EMPTY_PARTY) if order_id else EMPTY_PARTY
-            line["so_customer_name"] = party["customer_name"]
-            line["so_project_label"] = party["project_label"]
-        return board
+        return _shown(self._build(so_numbers, **kwargs))
 
     def stock_detail(self, product_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """`_stock_detail`, with every masked delay printed as its published ETA."""
@@ -1742,6 +1736,7 @@ class FulfilmentBoardService:
                 so_number=order.so_number,
                 customer_id=customer_id,
                 customer_name=customers.get(customer_id or ""),
+                **_so_party(order, customers.get(customer_id or "")),
                 agent_code=agent.sales_agent if agent else None,
                 agent_label=agent.person_label if agent else None,
                 # Which warehouse-suffix ownership group this agent's stock lives in. The
@@ -1933,6 +1928,7 @@ class FulfilmentBoardService:
                     so_number=order.so_number,
                     customer_id=customer_id,
                     customer_name=customers.get(customer_id or ""),
+                    **_so_party(order, customers.get(customer_id or "")),
                     agent_code=agent.sales_agent if agent else None,
                     agent_label=agent.person_label if agent else None,
                     # Same field `_demand_rows` sets, same reason (nit, review round): the
@@ -2031,6 +2027,7 @@ class FulfilmentBoardService:
                     so_number=order.so_number,
                     customer_id=customer_id,
                     customer_name=customers.get(customer_id or ""),
+                    **_so_party(order, customers.get(customer_id or "")),
                     line_no=project_line.line_no,
                     so_line_no=core_line.line_no,
                     **_remark_facts(order, core_line),
@@ -5689,6 +5686,9 @@ class FulfilmentBoardService:
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,
             "project_label": row.project_label,
+            #: OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project (`_so_party`).
+            "so_customer_name": row.so_customer_name,
+            "so_project_label": row.so_project_label,
             #: The key a pivot BY PROJECT groups on (see `_project_key`).
             "project_key": row.project_key,
             "line_no": row.line_no,

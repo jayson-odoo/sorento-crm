@@ -25,6 +25,17 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
     return value or None
 
 
+def party_of(
+    debtor_name: Optional[str], customer_name: Optional[str], project_label: Optional[str]
+) -> Dict[str, Optional[str]]:
+    """The two values `so_parties` reads, from an order already in hand (no query): the
+    debtor name it was issued under, else the customer master's name; and its project label."""
+    return {
+        "customer_name": _blank_to_none(debtor_name) or _blank_to_none(customer_name),
+        "project_label": _blank_to_none(project_label),
+    }
+
+
 def so_parties(
     db: Session, *, ids: Iterable[Optional[str]] = (), numbers: Iterable[Optional[str]] = ()
 ) -> Dict[str, Dict[str, Optional[str]]]:
