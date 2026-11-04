@@ -10,36 +10,47 @@ combos have to exist on their host product first. This loads them once, through 
 
 SEED FORMAT
 -----------
-A JSON list. Per entry: `id`, `family`, `host_code`, `combo_name` (or `title`),
-`combo_description`, `free_items` [{code, label, note}], `components` [{code, role}],
-`choice_groups` [{role, options: [{code, descr}]}], `topups` [{code, descr}], `photo` (a file
-name relative to --photos) and `guess` (text, listed in the report). Every price in the seed
-(`lp`, `sp`, option `sp`, `topup`) is IGNORED: no price is loaded, so a combo prints the summed
-price until marketing fills one in.
+A JSON list (written by `flyer_combo_read.py`, or by hand). Per entry: `id`, `host_code`,
+`combo_name` (or `title`), `combo_description`, `free_items` [{code, label, note}],
+`components` [{code, role}], `choice_groups` [{role, options: [{code, descr, sp}]}],
+`topups` [{code, descr, topup}], `lp`, `sp`, `photo` (a file name relative to --photos), `flyer`,
+`page`, `unsure` and `guess` (text, listed in the report).
+
+PRICES
+------
+`lp`/`sp` are the combo's list and selling price, option `sp` the option's own selling price,
+`topup` an upgrade's top-up. A price already on the combo is never overwritten without
+`--update`. A host whose brand carries no promotion selling price never gets `sp`, option `sp` or
+`topup` (`price_note` says so); its list price still loads.
 
 RULES
 -----
-* Host lookup is under the chosen company's scope only (--company, default SRT). A host code
-  with no product: the combo is not loaded, status `not_loaded_host_missing`.
-* A part code with no product (in that company), or a component with no code: the part is
-  dropped and listed; the combo still loads.
+* Host and part lookup is under the chosen company's scope only (--company, default SRT). A host
+  code with no product: `not_loaded_host_missing`.
+* A part code with no product (in that company), a component with no code, or a discontinued
+  product: that part is not loaded and is listed (`dropped_parts`, `discontinued`), and the combo
+  is `unsure`. The combo still loads with the parts that did resolve.
 * Components become fixed parts, `choice_groups` become parts sharing a `choice_group`,
   `topups` become parts with `is_upgrade`.
-* Re-running changes nothing already there: a combo is matched on host + name; a description,
-  free items or cover already set stays; parts missing are added, parts present are never
-  removed; combos under other names are not touched.
-* A missing photo file is listed in the report; the combo still loads.
-* `--templates` also creates and publishes the two starter templates (Bathroom furniture combo,
-  Kitchen sink combo), skipping any that already exist by name.
+* A combo is matched on host + name; combos under other names are not touched.
+* Statuses: `new` (no such combo yet), `matches`, `differs` (the report names each difference),
+  `unsure`. The same statuses are reported on `--apply`.
+* `--apply` creates, fills what is empty (description, free items, cover, prices) and adds missing
+  parts. `--apply --update` also brings a differing combo to the seed: removes parts the seed no
+  longer has, regroups and re-flags parts, overwrites the prices. An `unsure` combo is never pruned.
+* `--link-templates` links every published template of the company whose needs fit the combo
+  (`template_needs.fit_reason`), keeping the links the combo has.
+* `--templates` creates and publishes one 105 x 148 starter template per shape in STARTER_SHAPES,
+  all from `position_template`, skipping any that already exist by name.
 
-Dry run is the default: nothing is written, photos and templates included. A report CSV (one
-row per seed entry: id, status, dropped parts, guess, notes) is written either way.
+Dry run is the default: nothing is written, photos, links and templates included. A report CSV
+(one row per seed entry) is written either way.
 
 USAGE
 -----
     cd sorento_crm_backend
     venv/bin/python scripts/import_product_combos.py --file seed.json --photos DIR --report out.csv
-    venv/bin/python scripts/import_product_combos.py --file seed.json --photos DIR --report out.csv --apply [--templates]
+    venv/bin/python scripts/import_product_combos.py --file seed.json --photos DIR --report out.csv --apply [--update] [--link-templates] [--templates]
 
 The seed and the photos are real business data and stay outside this repository.
 """
@@ -52,6 +63,8 @@ import mimetypes
 import os
 import sys
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional, Sequence, TextIO
 
@@ -66,14 +79,22 @@ from app.models.dealer_kit import TagTemplate  # noqa: E402
 from app.models.product import Product  # noqa: E402
 from app.models.product_combo import ProductCombo  # noqa: E402
 from app.services.audit_service import register_audit_listeners  # noqa: E402
+from app.services.dealer_kit.pricing import _no_selling_price_product_ids  # noqa: E402
+from app.services.dealer_kit.product_tag_template_service import NON_PRICE_TAG_FAMILY_PREFIX  # noqa: E402
+from app.services.dealer_kit.template_needs import combo_shape, fit_reason, template_needs  # noqa: E402
 from app.services.error_handler import AppException  # noqa: E402
 from app.services.product_combo_service import ProductComboService  # noqa: E402
 
 JOB_ID = "import_product_combos"
 MAX_SEED_BYTES = 20 * 1024 * 1024
-REPORT_COLUMNS = ["id", "status", "dropped_parts", "guess", "notes"]
+REPORT_COLUMNS = [
+    "id", "flyer", "page", "host", "combo", "shape", "status", "differences",
+    "dropped_parts", "discontinued", "price_note", "unsure", "guess", "notes",
+]
+NO_SP_NOTE = "price not loaded: no selling price brand"
 
 S_HOST_MISSING = "not_loaded_host_missing"
+S_NEW, S_MATCHES, S_DIFFERS, S_UNSURE = "new", "matches", "differs", "unsure"
 
 
 # --------------------------------------------------------------------------- seed
@@ -89,25 +110,36 @@ def free_items_text(items) -> str:
     return ", ".join(out)
 
 
+def _money(value) -> Optional[Decimal]:
+    """A seed price as money, or None when it is absent, not a number or out of range."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
+    return amount if Decimal("0") <= amount <= Decimal("10000000") else None
+
+
 def wanted_parts(entry) -> list[dict]:
-    """The parts the entry asks for, in seed order: `{code, role, group, upgrade}`."""
+    """The parts the entry asks for, in seed order: `{code, role, group, upgrade, sp, topup}`."""
     parts = []
     for item in entry.get("components") or []:
         parts.append(
             {"code": (item.get("code") or "").strip(), "role": item.get("role") or "",
-             "group": None, "upgrade": False}
+             "group": None, "upgrade": False, "sp": None, "topup": None}
         )
     for group in entry.get("choice_groups") or []:
         role = (group.get("role") or "").strip()
         for option in group.get("options") or []:
             parts.append(
                 {"code": (option.get("code") or "").strip(), "role": role,
-                 "group": role or None, "upgrade": False}
+                 "group": role or None, "upgrade": False, "sp": _money(option.get("sp")), "topup": None}
             )
     for item in entry.get("topups") or []:
         parts.append(
             {"code": (item.get("code") or "").strip(), "role": "Upgrade",
-             "group": None, "upgrade": True}
+             "group": None, "upgrade": True, "sp": None, "topup": _money(item.get("topup"))}
         )
     return parts
 
@@ -153,31 +185,117 @@ def products_by_code(db, company_id: str, codes: set[str]) -> dict[str, Product]
 # --------------------------------------------------------------------------- entry
 
 
-def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
-    """Load (or, on a dry run, only judge) one seed entry. Returns its report row."""
-    row = {
-        "id": str(entry.get("id") or ""),
-        "status": "",
-        "dropped_parts": "",
-        "guess": entry.get("guess") or "",
-        "notes": "",
+def _shape_text(shape: dict) -> str:
+    groups = ",".join(str(g["size"]) for g in shape["groups"]) or "0"
+    return f"fixed {shape['fixed']}; groups {groups}; upgrades {shape['upgrades']}"
+
+
+def _shape_of(parts: list[dict]) -> dict:
+    """The shape of a list of `{product, group, upgrade}` parts, through the one `combo_shape`."""
+    return combo_shape(
+        SimpleNamespace(
+            parts=[
+                SimpleNamespace(part_product=p["product"], is_upgrade=p["upgrade"], choice_group=p["group"])
+                for p in parts
+            ]
+        )
+    )
+
+
+def _show(value) -> str:
+    return "none" if value is None else str(value)
+
+
+def _wanted(existing_value, seed_value, update: bool):
+    """What to write over `existing_value`: a seed value fills an empty one, and replaces a
+    different one only on `--update`. None = leave as it is."""
+    if seed_value is None:
+        return None
+    if existing_value is None:
+        return seed_value
+    return seed_value if update and existing_value != seed_value else None
+
+
+def link_fitting_templates(db, combo, published, apply: bool) -> str:
+    """Link the published templates whose needs fit this combo (K4's one `fit_reason`), keeping
+    the links it has. Returns a note for the report."""
+    from app.models.dealer_kit import ComboTagTemplate
+    from app.services.dealer_kit import product_tag_template_service
+
+    shape = combo_shape(combo)
+    fitting = [t for t, needs in published if fit_reason(needs, shape) is None]
+    have = {
+        link.template_id
+        for link in db.query(ComboTagTemplate).filter(ComboTagTemplate.combo_id == combo.id).all()
     }
+    add = [t for t in fitting if t.id not in have]
+    if not add:
+        return ""
+    if apply:
+        product_tag_template_service.set_combo_templates(
+            db, combo.id, [*have, *(t.id for t in add)], user_id=None
+        )
+    return f"{'linked' if apply else 'would link'}: {', '.join(t.name for t in add)}"
+
+
+def process_entry(
+    db, entry, host, parts_by_code, photos, apply: bool,
+    *, update: bool = False, published=None, no_sp_hosts=frozenset(),
+) -> dict:
+    """Load (or, on a dry run, only judge) one seed entry. Returns its report row."""
+    row = {column: "" for column in REPORT_COLUMNS}
+    row.update(
+        id=str(entry.get("id") or ""),
+        flyer=str(entry.get("flyer") or ""),
+        page=str(entry.get("page") or ""),
+        host=(entry.get("host_code") or "").strip(),
+        guess=entry.get("guess") or "",
+    )
     if host is None:
         row["status"] = S_HOST_MISSING
         return row
 
     name = ((entry.get("combo_name") or entry.get("title") or "").strip())[:100]
+    row["combo"] = name
     notes: list[str] = []
     dropped: list[str] = []
+    discontinued: list[str] = []
     keep: list[dict] = []
     for part in wanted_parts(entry):
+        product = parts_by_code.get(part["code"].upper()) if part["code"] else None
         if not part["code"]:
             dropped.append(f"no code ({part['role'] or 'part'})")
-        elif part["code"].upper() not in parts_by_code:
+        elif product is None:
             dropped.append(part["code"])
-        else:
-            keep.append(part)
+        elif product.is_discontinued:
+            discontinued.append(product.product_code)
+        elif product.id != host.id and not any(k["product"].id == product.id for k in keep):
+            # The host listed among the components is the flyer's own layout, not a drop; a
+            # product named twice is one part.
+            keep.append({**part, "product": product})
     row["dropped_parts"] = "; ".join(dropped)
+    row["discontinued"] = "; ".join(discontinued)
+    row["shape"] = _shape_text(_shape_of(keep))
+
+    # A brand with no promotion selling price: no combo SP, option SP or top-up (the list price loads).
+    no_sp = host.id in no_sp_hosts
+    seed_lp = _money(entry.get("lp"))
+    seed_sp = _money(entry.get("sp"))
+    if no_sp:
+        if seed_sp is not None or any(k["sp"] is not None or k["topup"] is not None for k in keep):
+            row["price_note"] = NO_SP_NOTE
+        seed_sp = None
+        for k in keep:
+            k["sp"] = k["topup"] = None
+
+    unsure = []
+    if (entry.get("unsure") or "").strip():
+        unsure.append(entry["unsure"].strip())
+    if dropped:
+        unsure.append(f"not loaded: {'; '.join(dropped)}")
+    if discontinued:
+        unsure.append(f"discontinued: {'; '.join(discontinued)}")
+    row["unsure"] = " | ".join(unsure)
 
     photo_name = (entry.get("photo") or "").strip()
     photo = photo_path(photos, photo_name)
@@ -195,20 +313,31 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
         .filter(ProductCombo.host_product_id == host.id, func.lower(ProductCombo.name) == name.lower())
         .first()
     )
-    present = {part.part_product_id for part in existing.parts} if existing else set()
+    have = {part.part_product_id: part for part in existing.parts} if existing else {}
+    want = {k["product"].id: k for k in keep}
 
-    # What apply would add, judged the same way on a dry run. The host listed among the
-    # components is the flyer's own layout, not a drop: it is skipped silently, as is a
-    # product named twice.
-    to_add: list[dict] = []
-    for part in keep:
-        product = parts_by_code[part["code"].upper()]
-        if product.id == host.id:
-            continue
-        elif product.id in present or any(a["product"].id == product.id for a in to_add):
-            continue
-        else:
-            to_add.append({**part, "product": product})
+    # ---- what differs from the flyer (named by code), judged the same on a dry run
+    differences: list[str] = []
+    if existing is not None:
+        for k in keep:
+            part = have.get(k["product"].id)
+            code = k["product"].product_code
+            if part is None:
+                differences.append(f"added {code}")
+            elif (part.choice_group or None) != k["group"] or bool(part.is_upgrade) != k["upgrade"]:
+                differences.append(f"regrouped {code}")
+            else:
+                if _wanted(part.sell_price, k["sp"], True) is not None:
+                    differences.append(f"{code} sell price {_show(part.sell_price)} -> {k['sp']}")
+                if _wanted(part.topup_amount, k["topup"], True) is not None:
+                    differences.append(f"{code} top-up {_show(part.topup_amount)} -> {k['topup']}")
+        for product_id, part in have.items():
+            if product_id not in want:
+                differences.append(f"removed {part.part_product.product_code}")
+        if _wanted(existing.list_price, seed_lp, True) is not None:
+            differences.append(f"list price {_show(existing.list_price)} -> {seed_lp}")
+        if _wanted(existing.sell_price, seed_sp, True) is not None:
+            differences.append(f"selling price {_show(existing.sell_price)} -> {seed_sp}")
 
     description = (entry.get("combo_description") or "").strip()
     free_items = free_items_text(entry.get("free_items"))
@@ -218,120 +347,147 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
     if free_items and not (existing and (existing.free_items or "").strip()):
         fill["free_items"] = free_items
     want_photo = photo is not None and not (existing and existing.image_attachment_id)
-    changes = existing is None or bool(fill) or bool(to_add) or want_photo
-    row["dropped_parts"] = "; ".join(dropped)
+    if existing is not None:
+        differences += [f"{field.replace('_', ' ')} to fill" for field in fill]
+        if want_photo:
+            differences.append("cover to load")
+    row["differences"] = "; ".join(differences)
 
-    if not apply:
-        row["status"] = "would_create" if existing is None else ("would_update" if changes else "unchanged")
-        row["notes"] = "; ".join(notes)
-        return row
+    if unsure:
+        row["status"] = S_UNSURE
+    elif existing is None:
+        row["status"] = S_NEW
+    else:
+        row["status"] = S_DIFFERS if differences else S_MATCHES
 
-    combo_id = (
-        service.create(host.id, name, created_by=None)["id"] if existing is None else existing.id
-    )
-    if fill:
-        service.update(combo_id, fill)
-    for part in to_add:
-        # `is_upgrade` goes in with the part, so a crash cannot leave an upgrade as a fixed part.
-        service.add_part(combo_id, part["product"].id, part["group"], is_upgrade=part["upgrade"])
-    if want_photo:
-        content_type = mimetypes.guess_type(photo.name)[0]
-        try:
-            service.upload_image(
-                combo_id, content=photo.read_bytes(), filename=photo.name,
-                content_type=content_type, user_id=None,
-            )
-        except AppException as exc:
-            notes.append(f"photo not loaded: {photo.name} ({exc.message})")
+    # An unsure combo is never pruned: its dropped codes would otherwise read as "removed".
+    prune = update and not unsure
 
-    row["status"] = "created" if existing is None else ("updated" if changes else "unchanged")
+    if apply:
+        combo_id = (
+            service.create(host.id, name, created_by=None)["id"] if existing is None else existing.id
+        )
+        update_fields = dict(fill)
+        for field, current, seed_value in (
+            ("list_price", existing.list_price if existing else None, seed_lp),
+            ("sell_price", existing.sell_price if existing else None, seed_sp),
+        ):
+            target = _wanted(current, seed_value, update)
+            if target is not None:
+                update_fields[field] = target
+        if update_fields:
+            service.update(combo_id, update_fields)
+        if prune:
+            for product_id, part in have.items():
+                if product_id not in want:
+                    service.delete_part(part.id)
+        for k in keep:
+            part = have.get(k["product"].id)
+            if part is None:
+                # `is_upgrade` goes in with the part, so a crash cannot leave an upgrade as a fixed part.
+                created = service.add_part(combo_id, k["product"].id, k["group"], is_upgrade=k["upgrade"])
+                part_id, sell, topup = created["id"], None, None
+            else:
+                part_id, sell, topup = part.id, part.sell_price, part.topup_amount
+                if prune and ((part.choice_group or None) != k["group"] or bool(part.is_upgrade) != k["upgrade"]):
+                    service.update_part(
+                        part_id, {"choice_group": k["group"], "is_upgrade": k["upgrade"]},
+                        fields_set={"choice_group"},
+                    )
+            prices = {}
+            if (value := _wanted(sell, k["sp"], update)) is not None:
+                prices["sell_price"] = value
+            if (value := _wanted(topup, k["topup"], update)) is not None:
+                prices["topup_amount"] = value
+            if prices:
+                service.update_part(part_id, prices, fields_set=set(prices))
+        if want_photo:
+            content_type = mimetypes.guess_type(photo.name)[0]
+            try:
+                service.upload_image(
+                    combo_id, content=photo.read_bytes(), filename=photo.name,
+                    content_type=content_type, user_id=None,
+                )
+            except AppException as exc:
+                notes.append(f"photo not loaded: {photo.name} ({exc.message})")
+
+    if published is not None:
+        if apply:
+            db.expire_all()
+            combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+        else:
+            combo = existing
+        if combo is not None:
+            note = link_fitting_templates(db, combo, published, apply)
+        else:
+            # A new combo on a dry run: judged on the shape the flyer would give it.
+            shape = _shape_of(keep)
+            fits = [t.name for t, needs in published if fit_reason(needs, shape) is None]
+            note = f"would link: {', '.join(fits)}" if fits else ""
+        if note:
+            notes.append(note)
     row["notes"] = "; ".join(notes)
     return row
 
 
 # --------------------------------------------------------------------------- templates
 
-#: The approved mock's type, in points: name bold 14, description 10, list price 11, sell price the
-#: biggest thing on the tag (38 bold, muted brown), choices and top-ups 9.5, free items 10.
+#: The approved mock's type, in points. The combo's price is the figure of the tag; every
+#: position's own list price is smaller.
 SELL_COLOUR = "#8c7355"
-STYLES = {
-    "combo_name": {"size": 14, "weight": 700},
-    "combo_description": {"size": 10},
-    "list_price": {"size": 11},
-    "sell_price": {"size": 38, "weight": 700, "color": SELL_COLOUR, "align": "right"},
-    "combo_choices": {"size": 9.5},
-    "included_accessories": {"size": 10},
-    "combo_topups": {"size": 9.5},
-}
 
-#: (name, family, [(slug, slot, kind, x, y, w, h)]) in mm on A5 portrait 148 x 210.
-STARTER_TEMPLATES = [
-    (
-        "Bathroom furniture combo",
-        "furniture_set",
-        [
-            ("combo-image", "combo_image", "image", 6, 6, 70, 110),
-            ("combo-name", "combo_name", "text", 80, 8, 62, 14),
-            ("combo-description", "combo_description", "text", 80, 24, 62, 62),
-            ("list-price", "list_price", "text", 80, 90, 62, 8),
-            ("sell-price", "sell_price", "text", 80, 99, 62, 16),
-            ("combo-choices", "combo_choices", "text", 6, 120, 136, 46),
-            ("accessories", "included_accessories", "text", 6, 168, 136, 10),
-            ("combo-topups", "combo_topups", "text", 6, 180, 136, 24),
-        ],
-    ),
-    (
-        "Kitchen sink combo",
-        "sink_combo",
-        [
-            ("combo-image", "combo_image", "image", 6, 6, 64, 42),
-            ("combo-name", "combo_name", "text", 74, 8, 68, 8),
-            ("combo-description", "combo_description", "text", 74, 17, 68, 16),
-            ("list-price", "list_price", "text", 74, 35, 68, 8),
-            ("sell-price", "sell_price", "text", 74, 43, 68, 14),
-            ("combo-choices", "combo_choices", "text", 6, 60, 136, 76),
-            ("accessories", "included_accessories", "text", 6, 138, 136, 12),
-            ("combo-topups", "combo_topups", "text", 6, 152, 136, 54),
-        ],
-    ),
+#: One starter per combo shape: (template name, fixed parts, picks per group, upgrades). The name
+#: is data (what marketing calls it); the layout is `position_template` for every one of them.
+STARTER_SHAPES = [
+    ("Combo 105 x 148: 5 picks and an upgrade", 0, [5], 1),
+    ("Combo 105 x 148: 1 fixed part", 1, [], 0),
+    ("Combo 105 x 148: 2 picks", 0, [2], 0),
+    ("Combo 105 x 148: 2 fixed parts", 2, [], 0),
 ]
-
-#: Placeholders are empty on purpose: a combo with no price, or no free items, must print
-#: nothing - never a stray figure, `RM` or label. Prices print as the bare figure the text
-#: slot gives; a `price_badge` would print "Price TBC" for a blank price, and a label ("LP:",
-#: "SP RM", "FREE:") in front of a text slot cannot be made conditional with the layer kinds
-#: that exist, so none is drawn.
-PLACEHOLDERS = {
-    "combo_name": "Combo name",
-    "combo_description": "Combo description",
-    "list_price": "",
-    "sell_price": "",
-    "combo_choices": "Choices",
-    "included_accessories": "",
-    "combo_topups": "Upgrade",
-}
+STARTER_FAMILY = "combo"
+TAG_WIDTH_MM, TAG_HEIGHT_MM = 105, 148
 
 
-def starter_doc(family: str, layers) -> dict:
-    """A published-ready document in the shape the eight seeded templates use."""
+def position_template(name: str, fixed: int, groups, upgrades: int, free_asset=None) -> dict:
+    """A 105 x 148 document with one row per position: the main product, `fixed` fixed parts,
+    `groups[g]` picks of group g, and `upgrades` upgrades. Each row is a picture, a code and the
+    position's own list price, all reading that position through `subjectSlot`. `free_asset` is a
+    library asset id drawn once as the combo's free item, or None.
+
+    Unbound placeholders are empty on purpose: a position the line has not filled, or a combo with
+    no price, prints nothing."""
     from scripts.tag_template_seed_docs import _Doc
 
-    doc = _Doc(family, 148, 210)
-    for slug, slot, kind, x, y, w, h in layers:
-        if kind == "image":
-            doc.image(slug, x, y, w, h, slot=slot, fit="contain")
-        else:
-            style = STYLES[slot]
-            doc.text(
-                slug, x, y, w, h, PLACEHOLDERS[slot],
-                size=style["size"], weight=style.get("weight", 400),
-                color=style.get("color", "#231f20"), align=style.get("align", "left"), slot=slot,
-            )
+    doc = _Doc(name, TAG_WIDTH_MM, TAG_HEIGHT_MM)
+
+    def at_slot(slot: dict) -> None:
+        doc.layers[-1]["props"]["subjectSlot"] = slot
+
+    doc.text("combo-name", 4, 4, 97, 10, "", size=14, weight=700, slot="combo_name")
+    doc.text("list-price", 4, 17, 46, 7, "", size=11, slot="list_price")
+    doc.text("sell-price", 50, 14, 51, 14, "", size=24, weight=700, color=SELL_COLOUR, align="right", slot="sell_price")
+    if free_asset:
+        doc.image("free-item", 76, 4, 25, 10, asset_id=free_asset)
+
+    slots = [{"kind": "main"}]
+    slots += [{"kind": "fixed", "index": i} for i in range(fixed)]
+    slots += [{"kind": "pick", "group": g, "index": i} for g, size in enumerate(groups) for i in range(size)]
+    slots += [{"kind": "upgrade", "index": i} for i in range(upgrades)]
+    top, bottom = 32, TAG_HEIGHT_MM - 8
+    row_h = min(20, (bottom - top) / len(slots))
+    for n, slot in enumerate(slots):
+        y = top + n * row_h
+        doc.image(f"pic-{n}", 4, y, row_h - 2, row_h - 2, slot="product_image")
+        at_slot(slot)
+        doc.text(f"code-{n}", 4 + row_h, y, 55, row_h - 2, "", size=9.5, slot="code")
+        at_slot(slot)
+        doc.text(f"price-{n}", 70, y, 31, row_h - 2, "", size=9.5, align="right", slot="list_price")
+        at_slot(slot)
     return doc.build()
 
 
 def create_templates(db, company_id: str, apply: bool, out: TextIO) -> None:
-    """Create and publish the two starters in the chosen company.
+    """Create and publish the starter templates (STARTER_SHAPES) in the chosen company.
 
     This script runs as its own process and never installs the company-scope listeners, so
     nothing stamps `company_id` or filters a query here: both are done explicitly. A starter
@@ -342,7 +498,8 @@ def create_templates(db, company_id: str, apply: bool, out: TextIO) -> None:
     from app.services.dealer_kit import tag_template_service
     from scripts.tag_template_seed_docs import print_size_of
 
-    for name, family, layers in STARTER_TEMPLATES:
+    for name, fixed, groups, upgrades in STARTER_SHAPES:
+        family = STARTER_FAMILY
         with company_scope(db, None):
             rows = db.query(TagTemplate).filter(TagTemplate.name == name).all()
         mine = [row for row in rows if row.company_id == company_id]
@@ -358,7 +515,7 @@ def create_templates(db, company_id: str, apply: bool, out: TextIO) -> None:
         elif not apply:
             out.write(f"would create and publish template: {name}\n")
         else:
-            doc = starter_doc(family, layers)
+            doc = position_template(name, fixed, groups, upgrades)
             with company_scope(db, frozenset({company_id})):
                 created = tag_template_service.create_and_publish(
                     db, name=name, family=family, doc=doc, print_size=print_size_of(doc)
@@ -371,6 +528,18 @@ def create_templates(db, company_id: str, apply: bool, out: TextIO) -> None:
 
 
 # --------------------------------------------------------------------------- report / main
+
+
+def published_templates(db, company_id: str) -> list[tuple[TagTemplate, dict]]:
+    """The company's published price tag templates with what each reads from a combo."""
+    with company_scope(db, frozenset({company_id})):
+        rows = (
+            db.query(TagTemplate)
+            .filter(TagTemplate.company_id == company_id, TagTemplate.published_version_id.isnot(None))
+            .filter(~TagTemplate.family.startswith(NON_PRICE_TAG_FAMILY_PREFIX))
+            .all()
+        )
+        return [(row, template_needs(row.published_version.doc)) for row in rows]
 
 
 def write_report(path: Path, rows: list[dict]) -> None:
@@ -396,7 +565,9 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
     parser.add_argument("--company", default="SRT", help="company code (default SRT)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     parser.add_argument("--report", default=None, help="report CSV path (default: next to the seed)")
-    parser.add_argument("--templates", action="store_true", help="also create the two starter templates")
+    parser.add_argument("--update", action="store_true", help="with --apply: bring a differing combo to the seed")
+    parser.add_argument("--link-templates", action="store_true", help="link the published templates that fit each combo")
+    parser.add_argument("--templates", action="store_true", help="also create the starter templates")
     args = parser.parse_args(list(argv) if argv is not None else None)
     out = out or sys.stdout
 
@@ -426,6 +597,14 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
             codes.update(part["code"] for part in wanted_parts(entry))
         found = products_by_code(db, company_id, codes)
 
+        found_ids = [product.id for product in found.values()]
+        no_sp_hosts = (
+            frozenset(db.execute(_no_selling_price_product_ids(found_ids)).scalars().all())
+            if found_ids
+            else frozenset()
+        )
+        published = published_templates(db, company_id) if args.link_templates else None
+
         register_audit_listeners()
         stamp_actor(AuditActor(actor_type="system", job_id=JOB_ID), db=db)
         rows = []
@@ -434,11 +613,17 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
                 for entry in entries:
                     host = found.get((entry.get("host_code") or "").strip().upper())
                     try:
-                        rows.append(process_entry(db, entry, host, found, photos, args.apply))
+                        rows.append(
+                            process_entry(
+                                db, entry, host, found, photos, args.apply,
+                                update=args.update, published=published, no_sp_hosts=no_sp_hosts,
+                            )
+                        )
                     except Exception as exc:  # one bad entry must not stop the rest
                         db.rollback()
                         rows.append(
-                            {"id": str(entry.get("id") or ""), "status": "failed", "dropped_parts": "",
+                            {**{column: "" for column in REPORT_COLUMNS},
+                             "id": str(entry.get("id") or ""), "status": "failed",
                              "guess": entry.get("guess") or "", "notes": str(exc)[:300]}
                         )
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

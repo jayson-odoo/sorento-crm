@@ -195,14 +195,15 @@ def test_ac_8_2_components_become_fixed_parts_options_share_a_group_topups_are_u
 # --------------------------------------------------------------------------- AC-8.3
 
 
-def test_ac_8_3_no_price_is_loaded(db, catalogue, photos, tmp_path, storage):
+def test_ac_8_3_prices_are_loaded(db, catalogue, photos, tmp_path, storage):
+    # PRICETAG-COMBO-RENDER K9: the old rule (no price loaded) is retired; the seed's prices load.
     _run(db, tmp_path, photos, apply=True)
-    with company_scope(db, None):
-        combos = db.query(ProductCombo).all()
-        parts = db.query(ProductComboPart).all()
-    assert combos and parts
-    assert all(c.list_price is None and c.sell_price is None for c in combos)
-    assert all(p.sell_price is None and p.topup_amount is None for p in parts)
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    assert (combo.list_price, combo.sell_price) == (Decimal("1500.00"), Decimal("1200.00"))
+    parts = _parts(db, combo)
+    assert parts["ZZTBW"].sell_price == Decimal("250.00")
+    assert parts["ZZTU1"].topup_amount == Decimal("100.00")
+    assert parts["ZZTM1"].sell_price is None, "a component's own lp is not a price to load"
 
 
 # --------------------------------------------------------------------------- AC-8.4
@@ -390,43 +391,22 @@ def _templates(db):
         return {t.name: t for t in db.query(TagTemplate).all()}
 
 
-def test_ac_8_9_templates_flag_creates_and_publishes_the_two_starters(
+def _starter_names():
+    return [shape[0] for shape in _script().STARTER_SHAPES]
+
+
+def test_ac_8_9_templates_flag_creates_and_publishes_one_starter_per_shape(
     db, catalogue, photos, tmp_path, storage
 ):
     _run(db, tmp_path, photos, apply=True, templates=True)
     found = _templates(db)
-    assert set(found) == {"Bathroom furniture combo", "Kitchen sink combo"}
-    assert found["Bathroom furniture combo"].family == "furniture_set"
-    assert found["Kitchen sink combo"].family == "sink_combo"
+    assert set(found) == set(_starter_names())
     for template in found.values():
         assert template.published_version_id is not None, "published, so the designer can pick it"
-        text = json.dumps(template.doc)
-        for slot in ("combo_image", "combo_name", "combo_description", "combo_choices", "combo_topups"):
-            assert slot in text, f"{template.name} does not use {slot}"
-        # The doc is a valid TagTemplateDoc (the combo slots are in SLOT_BINDINGS), and a
-        # combo with no price prints nothing, never a placeholder figure.
-        from app.schemas.price_tag import TagTemplateDocModel
-
-        TagTemplateDocModel.model_validate(template.doc)
-        prices = [
-            layer for layer in template.doc["layers"] if layer["slot_binding"] in ("list_price", "sell_price")
-        ]
-        assert len(prices) == 2
-        assert all(layer["props"]["text"] == "" for layer in prices)
-        by_slot = {layer["slot_binding"]: layer for layer in template.doc["layers"]}
-        # The approved mock's type: the sell price is the biggest thing on the tag.
-        sell = by_slot["sell_price"]["props"]
-        assert (sell["fontSize"], sell["fontWeight"], sell["color"]) == (38, 700, "#8c7355")
-        assert by_slot["list_price"]["props"]["fontSize"] == 11
-        assert by_slot["combo_name"]["props"]["fontSize"] == 14
-        assert by_slot["combo_name"]["props"]["fontWeight"] == 700
-        assert by_slot["combo_description"]["props"]["fontSize"] == 10
-        assert by_slot["combo_choices"]["props"]["fontSize"] == 9.5
-        assert max(l["props"].get("fontSize", 0) for l in template.doc["layers"]) == 38
-        # Prices come from the text slots (a price_badge prints "Price TBC" when blank), and
-        # free items start empty, so nothing prints when there is nothing to print.
-        assert all(layer["type"] == "text" for layer in prices)
-        assert by_slot["included_accessories"]["props"]["text"] == ""
+        # Every starter reads positions, never a part number. (`TagTemplateDocModel` is not
+        # applied: it forbids `subjectPart` and `subjectSlot` alike and no save path uses it.)
+        assert "subjectSlot" in json.dumps(template.doc)
+        assert "subjectPart" not in json.dumps(template.doc)
 
 
 def test_ac_8_9_no_templates_flag_means_no_templates(db, catalogue, photos, tmp_path, storage):
@@ -441,7 +421,7 @@ def test_ac_8_9_rerunning_does_not_duplicate_or_overwrite_the_templates(
     first = _templates(db)
     versions_before = _count(db, TagTemplateVersion)
     with company_scope(db, None):
-        edited = db.query(TagTemplate).filter(TagTemplate.name == "Kitchen sink combo").one()
+        edited = db.query(TagTemplate).filter(TagTemplate.name == _starter_names()[0]).one()
         edited.doc = {**edited.doc, "marketing_edit": "kept"}
         db.commit()
         published_before = {n: t.published_version_id for n, t in first.items()}
@@ -449,8 +429,8 @@ def test_ac_8_9_rerunning_does_not_duplicate_or_overwrite_the_templates(
     _run(db, tmp_path, photos, apply=True, templates=True)
 
     found = _templates(db)
-    assert len(found) == 2 and _count(db, TagTemplate) == 2
-    assert found["Kitchen sink combo"].doc.get("marketing_edit") == "kept"
+    assert len(found) == len(_starter_names()) and _count(db, TagTemplate) == len(_starter_names())
+    assert found[_starter_names()[0]].doc.get("marketing_edit") == "kept"
     assert {n: t.published_version_id for n, t in found.items()} == published_before
     assert _count(db, TagTemplateVersion) == versions_before
 
@@ -475,14 +455,14 @@ def test_ac_8_11_the_repo_holds_the_script_and_a_synthetic_fixture_only():
     assert all(entry["host_code"].startswith("ZZT") for entry in data), "made-up codes only"
 
 
-def test_a_rerun_with_nothing_to_change_reports_unchanged_and_an_upgrade_is_one_write(
+def test_a_rerun_with_nothing_to_change_reports_matches_and_an_upgrade_is_one_write(
     db, catalogue, photos, tmp_path, storage
 ):
     _run(db, tmp_path, photos, apply=True)
     _code, _out, rows = _run(db, tmp_path, photos, apply=True)
-    assert _by_id(rows)["C1"]["status"] == "unchanged"
+    assert _by_id(rows)["C1"]["status"] == "matches"
     _code, _out, dry = _run(db, tmp_path, photos)
-    assert _by_id(dry)["C1"]["status"] == "unchanged"
+    assert _by_id(dry)["C1"]["status"] == "matches"
     assert _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))["ZZTU1"].is_upgrade is True
 
 
@@ -554,8 +534,8 @@ def test_templates_are_written_in_the_chosen_company_and_list_for_it(
     db, catalogue, photos, tmp_path, storage, _standalone
 ):
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    found = _templates_named(db, "Kitchen sink combo") + _templates_named(db, "Bathroom furniture combo")
-    assert len(found) == 2
+    found = [t for name in _starter_names() for t in _templates_named(db, name)]
+    assert len(found) == len(_starter_names())
     assert {t.company_id for t in found} == {DEFAULT_COMPANY_ID}, "NULL company hides them from staff"
     assert all(t.published_version_id for t in found)
 
@@ -563,7 +543,7 @@ def test_templates_are_written_in_the_chosen_company_and_list_for_it(
 
     with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
         listed = {t.name for t in tag_template_service._scoped(db).all()}
-    assert {"Kitchen sink combo", "Bathroom furniture combo"} <= listed
+    assert set(_starter_names()) <= listed
 
 
 def test_a_starter_left_with_no_company_is_claimed_not_duplicated(
@@ -571,39 +551,39 @@ def test_a_starter_left_with_no_company_is_claimed_not_duplicated(
 ):
     from app.models.dealer_kit import TagTemplateVersion as Version
 
-    row_id, version_id = _seed_template(db, "Kitchen sink combo", None)
+    row_id, version_id = _seed_template(db, _starter_names()[0], None)
 
     # A dry run reports it and writes nothing.
     _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", templates=True)
-    assert "Kitchen sink combo" in out and "would" in out.lower()
-    assert _templates_named(db, "Kitchen sink combo")[0].company_id is None
+    assert _starter_names()[0] in out and "would" in out.lower()
+    assert _templates_named(db, _starter_names()[0])[0].company_id is None
 
     _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    rows = _templates_named(db, "Kitchen sink combo")
+    rows = _templates_named(db, _starter_names()[0])
     assert [r.id for r in rows] == [row_id], "no duplicate"
     assert rows[0].company_id == DEFAULT_COMPANY_ID
-    assert rows[0].doc["marker"] == "seeded Kitchen sink combo", "its doc is left alone"
+    assert rows[0].doc["marker"] == f"seeded {_starter_names()[0]}", "its doc is left alone"
     assert rows[0].published_version_id == version_id
     with company_scope(db, None):
         assert db.query(Version).filter(Version.template_id == row_id).count() == 1
-    assert "Kitchen sink combo" in out
+    assert _starter_names()[0] in out
 
     # And a further rerun changes nothing.
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
-    assert [r.id for r in _templates_named(db, "Kitchen sink combo")] == [row_id]
+    assert [r.id for r in _templates_named(db, _starter_names()[0])] == [row_id]
 
 
 def test_another_companys_template_and_other_unowned_names_are_not_touched(
     db, catalogue, photos, tmp_path, storage, _standalone
 ):
-    theirs_id, _ = _seed_template(db, "Kitchen sink combo", MOCHA_ID)
+    theirs_id, _ = _seed_template(db, _starter_names()[0], MOCHA_ID)
     loose_id, _ = _seed_template(db, "ZZT Some other template", None)
 
     _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
 
-    theirs = [r for r in _templates_named(db, "Kitchen sink combo") if r.id == theirs_id]
-    assert theirs[0].company_id == MOCHA_ID and theirs[0].doc["marker"] == "seeded Kitchen sink combo"
-    mine = [r for r in _templates_named(db, "Kitchen sink combo") if r.id != theirs_id]
+    theirs = [r for r in _templates_named(db, _starter_names()[0]) if r.id == theirs_id]
+    assert theirs[0].company_id == MOCHA_ID and theirs[0].doc["marker"] == f"seeded {_starter_names()[0]}"
+    mine = [r for r in _templates_named(db, _starter_names()[0]) if r.id != theirs_id]
     assert len(mine) == 1 and mine[0].company_id == DEFAULT_COMPANY_ID, "ours is created, theirs not claimed"
     loose = _templates_named(db, "ZZT Some other template")[0]
     assert loose.id == loose_id and loose.company_id is None
