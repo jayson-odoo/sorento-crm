@@ -593,6 +593,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             # Read-only: the same checks the approval runs, so a bad sheet or a
             # line with no template is refused while it is still a draft.
             PriceTagRequestService._server_sheet(db, req, payload.doc)
+            PriceTagRequestService.require_combo_prices(db, req)
         _submit_in_place(db, req)
         with company_scope(db, frozenset({req.company_id})):
             result = PriceTagRequestService.self_approve(
