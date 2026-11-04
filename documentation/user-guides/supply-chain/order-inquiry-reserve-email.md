@@ -59,14 +59,21 @@ The subject says who raised the order inquiries and how the answers went, for ex
 
 ### The button in the email
 
-* An email about one order inquiry opens that order inquiry.
-* An email about several opens the order inquiry list showing exactly those order inquiries, whatever
-  their state. Remove the **Order inquiries** filter on the list to see all order inquiries again.
+The button opens exactly the lines the email is about, in every state: still waiting, reserved,
+partly reserved or rejected. A line CS has already answered stays in view.
 
-If you prefer to work in **Lines**, press **Lines** after opening the link: the filter comes with you,
-and you see every line of those order inquiries and no others. **Documents** brings you back to the
-same list. Your usual Lines view is not changed by working this way. **Unlink all** is the one action on
-Lines that does not follow this filter: it stays company-wide, as its dialog says.
+* An email about one order inquiry opens that order inquiry's **Lines** tab with the **Request**
+  filter set to the request the email is about, for example **Request #1**. Clear the **Request**
+  filter to see every line of the order inquiry, or tick another request to add its lines.
+* An email about several order inquiries opens the order inquiry list in **Lines**, showing only the
+  lines the email asked about. Two filters show at the top: **Order inquiries** (the order inquiry
+  numbers) and **Reserve requests** (how many requests the email covers). Remove **Reserve requests**
+  to see every line of those order inquiries; remove both to see the whole list again.
+
+Pressing **Documents** keeps the **Order inquiries** filter and drops **Reserve requests**, so coming
+back to **Lines** shows every line of those order inquiries. Your usual Lines view is not changed by
+working this way. **Unlink all** is the one action on Lines that does not follow these filters: it stays
+company-wide, as its dialog says.
 
 Prev and next on an order inquiry's page walk the list you opened it from, and changing the line filter
 on that page does not change the walk. An email about one order inquiry opens its page directly, with no

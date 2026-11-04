@@ -84,7 +84,9 @@ before anything is confirmed), **SO Qty** (the sales order line's own quantity),
 **Location**, **Instruction**, **State**. A **Raised via** column is there too, hidden by
 default. A checkbox column lets you tick lines; a search box narrows by product; a **State**
 filter beside it narrows by status, including **Request to reserve**, **Reserved** and **Not
-reserved**; **Columns** lets you show or hide columns, the four quantity columns included; the
+reserved**; when the order inquiry has a reserve request, a **Request** filter (**Request #1**,
+**Request #2**, ...) narrows to the lines that request asked about, whatever their state;
+**Columns** lets you show or hide columns, the four quantity columns included; the
 footer totals **SO Qty**, **Requested**, **Taken** and **Remaining**, cancelled lines left out.
 **PO** and **SPO** name the line's first document with a **+N** chip listing the rest; clicking
 a number opens the same **Backing documents** lightbox as the worklist.
@@ -208,7 +210,10 @@ and you hold the **Reserve Stock for Order Inquiries** permission.
 
 1. Open the order inquiry from the request email's **Open in Order Inquiries** link (you'll need
    to be logged in), or open it from the list yourself. The link lands on the **Lines** tab
-   filtered to **Request to reserve**, so you see only the lines that still need you.
+   with the **Request** filter set to that request, so you see exactly the lines purchasing
+   asked about. Lines you have already answered stay in view with their **Reserved** or
+   **Not reserved** pill; pick **Request to reserve** in the **State** filter to see only the
+   lines that still need you.
 2. On a line reading **Request to reserve \<qty\>**, two icons sit at the end of the **State**
    cell, after the line's **History** icon and paperclip:
    * The tick, **Reserve**, stages the full requested quantity at the pool the request named,

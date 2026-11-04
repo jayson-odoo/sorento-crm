@@ -371,6 +371,7 @@ def _build_context(
     link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
     reserve = {
         "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
+        "request_id": str(request.id),
         "ordinal": request.ordinal,
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
@@ -478,6 +479,7 @@ def _build_commit_context(
     link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
     reserve = {
         "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
+        "request_id": str(request.id),
         "ordinal": request.ordinal,
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
@@ -600,8 +602,23 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     else:
         what = short = f"{inquiry_count} order inquiries{by}"
 
+    # The button opens THIS email's lines: the distinct request ids, grouped by OI in the
+    # same sorted order as `ordered`, first-seen within an OI.
+    ids_by_oi: Dict[str, List[str]] = {}
+    for context in contexts:
+        ctx_reserve = context["reserve"]
+        request_id = ctx_reserve.get("request_id")
+        bucket = ids_by_oi.setdefault(ctx_reserve.get("inquiry_no") or "", [])
+        if request_id and request_id not in bucket:
+            bucket.append(request_id)
+    request_ids = [rid for entry in ordered for rid in ids_by_oi.get(entry["inquiry_no"], [])]
     if inquiry_count >= 2:
-        link = f"{build_order_inquiry_link(None)}?inquiry_no={','.join(e['inquiry_no'] for e in ordered)}"
+        numbers = ",".join(e["inquiry_no"] for e in ordered)
+        link = f"{build_order_inquiry_link(None)}?display=lines&inquiry_no={numbers}"
+        if request_ids:
+            link += f"&reserve_request={','.join(request_ids)}"
+    elif request_ids:
+        link = f"{ordered[0]['link']}?reserve={','.join(request_ids)}"
     elif len(contexts) == 1:
         link = base["reserve"]["link"]
     else:
