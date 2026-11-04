@@ -308,7 +308,7 @@ def test_tag_price_sum_promotion_override(db):
     request = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         parts=[
             {"product_id": mirror.id},
             {"role": "Basin", "candidates": [white.id, black.id]},
@@ -328,7 +328,7 @@ def test_tag_price_sum_promotion_override(db):
     promoted = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         promotion_id=promotion.id,
         price_mode="selling",
         parts=[{"product_id": mirror.id}, {"product_id": white.id}],
@@ -374,7 +374,7 @@ def test_two_split_tags_price_their_own_candidate(db):
     request = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         parts=[{"role": "Basin", "candidates": [white.id, black.id]}],
     )
     db.flush()

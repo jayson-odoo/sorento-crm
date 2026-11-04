@@ -600,13 +600,12 @@ def line_pricing(
         # data also reads. A manual figure still wins the sell side.
         if combo_row is not None:
             combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
-            if combo_list is not None:
-                list_price = combo_list
-            if sell_decided and manual is None:
-                sell_price = combo_sell
-                # A combo's sell price always prints, even at or above its list price
-                # (a sink with an included tap can list at 1,090 and sell at 1,099).
-                if combo_sell is not None and sell_price_basis == "list":
+            # PRICETAG-COMBO-RENDER K8: stored or nothing, the part sum never prints.
+            list_price = combo_list
+            if manual is None:
+                sell_price = combo_sell if sell_decided else None
+                # A combo's sell price always prints, even at or above its list price.
+                if sell_decided and combo_sell is not None and sell_price_basis == "list":
                     sell_price_basis = "promotion"
 
         # One lookup for every candidate on the line, not one per candidate

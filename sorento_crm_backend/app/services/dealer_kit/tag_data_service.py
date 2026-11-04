@@ -889,18 +889,22 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         elif open_groups:
             set_members = _package_text([], open_groups)
 
-        # PRICETAG-COMBO AC-2.4: the combo's own price replaces the sum, below a
-        # hand-typed line price and the tag override.
+        # PRICETAG-COMBO-RENDER K8: a combo line prints the combo's stored price or
+        # nothing, never the sum of its parts (a typed price and the override still win).
         combo_row = _line_combo(db, line, combo_cache)
         combo_obj = None
+        slots = None
         if combo_row is not None:
             picked_ids = {product.id for product in part_products}
             combo_obj = _combo_object(db, combo_row, picked_ids, viewer)
             combo_list, combo_sell, sell_decided = combo_prices(combo_row, picked_ids)
-            if combo_list is not None:
-                list_price = combo_list
-            if sell_decided:
-                sell_price = combo_sell
+            list_price = combo_list
+            sell_price = combo_sell if sell_decided else None
+        if not line.product_set_id:
+            slots = _line_slots(
+                db, line, tag, combo_row, viewer, promotion_id, parts_cache,
+                price_mode=line_mode,
+            )
 
         # D3/AC-S9-3: a hand-typed line price wins over the engine's sum, the
         # same as it does at save time (S7's `line_pricing`).
@@ -974,6 +978,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 or (combo_obj or {}).get("free_items")
                 or "",
                 "combo": combo_obj,
+                "slots": slots,
                 # The TAG's own quantity, seeded from the line's at submit and
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
@@ -984,6 +989,127 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         )
 
     return rows
+
+
+def _slots_dict(fixed: list, groups: list, upgrades: list) -> dict:
+    return {"fixed": fixed, "groups": groups, "upgrades": upgrades}
+
+
+def _combo_choice_groups(combo) -> dict[str, int]:
+    """The combo's choice groups in part order: group name -> number of options."""
+    sizes: dict[str, int] = {}
+    for part in combo.parts or []:
+        if part.part_product is not None and not part.is_upgrade and part.choice_group:
+            sizes[part.choice_group] = sizes.get(part.choice_group, 0) + 1
+    return sizes
+
+
+def _combo_upgrade_products(combo) -> list:
+    return [
+        part.part_product
+        for part in (combo.parts or [])
+        if part.part_product is not None and part.is_upgrade
+    ]
+
+
+def _line_slots(
+    db: Session,
+    line,
+    tag,
+    combo_row,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> Optional[dict]:
+    """PRICETAG-COMBO-RENDER K2: where each product of this tag sits.
+
+    ``fixed`` = the line's resolved parts with no role, ``groups`` = one entry
+    per choice group with the picks in pick order, ``upgrades`` = the combo's
+    upgrades with ``chosen`` set on the one the line picked. None when the
+    line has neither parts nor a combo.
+    """
+    from app.models.product import Product
+
+    chosen_by_role = dict(tag.choices or {})
+    placed: list[tuple[str, str]] = []  # (role, product id) in line part order
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        role = part.role or ""
+        if part.product_id:
+            placed.append((role, str(part.product_id)))
+        elif role in chosen_by_role:
+            placed.append((role, str(chosen_by_role[role])))
+    if not placed and combo_row is None:
+        return None
+
+    upgrade_products = _combo_upgrade_products(combo_row) if combo_row is not None else []
+    upgrade_ids = {product.id for product in upgrade_products}
+    wanted = {product_id for _, product_id in placed}
+    products = (
+        {p.id: p for p in db.query(Product).filter(Product.id.in_(wanted)).all()}
+        if wanted
+        else {}
+    )
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode))
+
+    fixed: list[dict] = []
+    picks_by_role: dict[str, list[dict]] = {}
+    picked_upgrade_ids: set[str] = set()
+    for role, product_id in placed:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        if role == "Upgrade" or product_id in upgrade_ids:
+            picked_upgrade_ids.add(product_id)
+        elif not role:
+            fixed.append(row(product))
+        else:
+            picks_by_role.setdefault(role, []).append(row(product))
+
+    if combo_row is not None:
+        group_sizes = _combo_choice_groups(combo_row)
+    else:
+        group_sizes = {role: len(picks) for role, picks in picks_by_role.items()}
+    groups = [
+        {"role": role, "size": size, "picks": picks_by_role.get(role, [])}
+        for role, size in group_sizes.items()
+    ]
+    upgrades = [
+        {**row(product), "chosen": product.id in picked_upgrade_ids}
+        for product in upgrade_products
+    ]
+    return _slots_dict(fixed, groups, upgrades)
+
+
+def _preview_slots(db: Session, combo) -> dict:
+    """The template editor's preview of a combo: fixed parts, every option of each
+    group in combo order, every upgrade (AC-A6)."""
+    viewer = staff_viewer()
+    cache: dict = {}
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, None, cache))
+
+    fixed: list[dict] = []
+    picks: dict[str, list[dict]] = {}
+    upgrades: list[dict] = []
+    for part in combo.parts or []:
+        product = part.part_product
+        if product is None:
+            continue
+        if part.is_upgrade:
+            upgrades.append({**row(product), "chosen": False})
+        elif part.choice_group:
+            picks.setdefault(part.choice_group, []).append(row(product))
+        else:
+            fixed.append(row(product))
+    groups = [
+        {"role": role, "size": len(items), "picks": items} for role, items in picks.items()
+    ]
+    return _slots_dict(fixed, groups, upgrades)
 
 
 def _tag_sell_price_basis(
@@ -1135,7 +1261,7 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
     from app.services.uuid_path_param import validate_uuid_path
 
     if not combo_id:
-        return {**data, "combo": None}
+        return {**data, "combo": None, "slots": None}
     combo_id = validate_uuid_path(combo_id, resource="Combo")
     combo = combo_for_host(db, combo_id, product.id, {product.id: product})
     if combo is None:
@@ -1148,6 +1274,7 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
         "offer_price": combo_sell if sell_decided else data.get("offer_price"),
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
+        "slots": _preview_slots(db, combo),
     }
 
 
@@ -1630,6 +1757,7 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
         # kept as pinned rather than reprocessed, so `set_members`/Tag total
         # keep reading the right thing.
         row["own_parts"] = pinned.get("parts") or []
+    row["slots"] = _slots_from_pin(db, line, tag, pinned.get("slots"))
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
@@ -1647,6 +1775,33 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     if tag.marketing_price_override is not None:
         row["sell_price"] = Decimal(str(tag.marketing_price_override))
     return row
+
+
+def _slots_from_pin(db: Session, line, tag, pinned_slots: Optional[dict]) -> Optional[dict]:
+    """The pinned `slots` with live photo links. A tag that holds its own choices reads
+    them fresh (a pick is the tag's fact, like `combo.picked`), so the picks follow
+    `tag.choices` rather than the moment of the pin."""
+    from app.services.dealer_kit.product_images import resign_images
+
+    if pinned_slots is None:
+        return None
+    if tag.choices:
+        return _line_slots(
+            db, line, tag, _line_combo(db, line, {}), staff_viewer(), line.promotion_id, {},
+            price_mode=line.price_type or "selling",
+        )
+
+    def fresh(parts: list) -> list:
+        return [{**part, "images": resign_images(db, part.get("images") or [])} for part in parts]
+
+    return _slots_dict(
+        fresh(pinned_slots.get("fixed") or []),
+        [
+            {**group, "picks": fresh(group.get("picks") or [])}
+            for group in pinned_slots.get("groups") or []
+        ],
+        fresh(pinned_slots.get("upgrades") or []),
+    )
 
 
 # ---------------------------------------------------------------------------

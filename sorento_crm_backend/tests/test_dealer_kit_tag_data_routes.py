@@ -362,6 +362,7 @@ def test_product_tag_data_keeps_every_field(api):
         "barcode",
         "currency",
         "combo",
+        "slots",
         # r10 S11 (5ce3bd5d8): declared on `ProductTagData` too, so the
         # template designer's own preview (bound to a bare product, not a
         # request line) can resolve `{{product.price_tag_description}}`

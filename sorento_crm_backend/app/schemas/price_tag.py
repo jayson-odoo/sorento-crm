@@ -815,6 +815,14 @@ class TagTemplateUpdate(BaseModel):
     print_size: Optional[dict] = None
 
 
+class TemplateNeeds(BaseModel):
+    """PRICETAG-COMBO-RENDER K4: what a template reads from a combo, from its PUBLISHED document."""
+
+    fixed: int = 0
+    groups: list[int] = []
+    upgrades: int = 0
+
+
 class TagTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -834,6 +842,7 @@ class TagTemplateResponse(BaseModel):
     # route substitutes a VERSION's doc/print_size for the draft above.
     published_version_id: Optional[str] = None
     published_version_no: Optional[int] = None
+    needs: Optional[TemplateNeeds] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1178,7 +1187,7 @@ class LinePricingRow(BaseModel):
     """
 
     key: str
-    list_price: float
+    list_price: Optional[float] = None
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
     sell_price: Optional[float] = None
@@ -1275,6 +1284,7 @@ class ProductTagData(BaseModel):
     currency: str = "MYR"
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1408,6 +1418,21 @@ class TagPartData(BaseModel):
     chosen: Optional[bool] = None
 
 
+class TagSlotGroup(BaseModel):
+    role: str
+    size: int
+    picks: list[TagPartData] = []
+
+
+class TagSlots(BaseModel):
+    """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
+    choice groups with their picks in pick order, upgrades with `chosen`)."""
+
+    fixed: list[TagPartData] = []
+    groups: list[TagSlotGroup] = []
+    upgrades: list[TagPartData] = []
+
+
 class ResolvedLineData(BaseModel):
     """Display data for one TAG, for the designer and the print page (D3).
 
@@ -1447,6 +1472,7 @@ class ResolvedLineData(BaseModel):
     included_accessories: str = ""
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1645,6 +1671,7 @@ class ProductTagTemplateItem(BaseModel):
     height_mm: Optional[float] = None
     #: PRICETAG-LPSP: the link preselected on a line (a lone link counts).
     is_default: bool = False
+    needs: Optional[TemplateNeeds] = None
 
 
 class ProductTagTemplatesUpdate(BaseModel):

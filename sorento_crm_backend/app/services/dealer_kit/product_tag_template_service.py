@@ -38,6 +38,7 @@ from sqlalchemy.orm import Query, Session
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
 from app.models.product import Product
 from app.models.product_combo import ProductCombo
+from app.services.dealer_kit.template_needs import template_needs
 from app.services.company_scope import build_company_predicate, get_company_scope
 from app.services.error_handler import AppException
 
@@ -621,6 +622,7 @@ def template_item(template: TagTemplate, is_default: bool = False) -> dict:
         "width_mm": size.get("width_mm"),
         "height_mm": size.get("height_mm"),
         "is_default": is_default,
+        "needs": template_needs(version.doc) if version is not None else None,
     }
 
 
