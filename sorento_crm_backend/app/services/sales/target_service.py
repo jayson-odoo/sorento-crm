@@ -1735,6 +1735,8 @@ def list_all_targets(
 def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"
+    if basis == "invoiced":
+        return "Invoiced"
     return "Delivered (by DO date)" if ach.any_do_linked(db, company_id) else "Delivered"
 
 

@@ -94,6 +94,10 @@ Credit = Tuple[str, Optional[date], Optional[date]]
 
 _UUID = UUID(as_uuid=False)
 
+#: The basis counted from billing documents (TARGET-INVOICED); `ordered` and `delivered` count
+#: sales order lines.
+INVOICED = "invoiced"
+
 
 @dataclass
 class PeriodSpec:
@@ -266,6 +270,15 @@ def _achieved(
     group, date) through the credit rows of the line's agent: lines dated in the period, DO
     quantity dated in the period, and all linked DO quantity on the line's own period.
     """
+    invoiced = [s for s in specs if s.basis == INVOICED]
+    if invoiced:
+        # Invoiced periods count billing documents, not sales order lines: their own statement
+        # (TARGET-INVOICED), so the order query below never changes shape for them.
+        out = _achieved_invoiced(db, invoiced, company_id, split=split)
+        rest = [s for s in specs if s.basis != INVOICED]
+        if rest:
+            out.update(_achieved(db, rest, company_id, split=split))
+        return out
     out: Dict[str, Dict[Optional[str], Decimal]] = {s.period_id: {} for s in specs}
     group_of, credit_rows = _credit_groups(specs)
     if not credit_rows:
@@ -604,6 +617,142 @@ def _achieved(
                 ),
             )
         )
+    for period_id, customer_id, total in db.execute(stmt).all():
+        key = None if customer_id is None else str(customer_id)
+        out[str(period_id)][key] = Decimal(total or 0)
+    return out
+
+
+def _achieved_invoiced(
+    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool
+) -> Dict[str, Dict[Optional[str], Decimal]]:
+    """`{period_id: {customer_id or None: achieved}}` for Invoiced periods (TARGET-INVOICED).
+
+    The 27 Oct sales definition through the one shared sales service
+    (`app/services/sales/invoiced_sales.py`): posted invoices, cash sales and debit notes less
+    credit notes, filed by the document's own `doc_date`, cancelled documents excluded; the
+    sign and the predicate are `invoiced_sales`'s, never restated here.
+
+    **Credited** like the order basis: an agent target or a team stay meets the sale's agent
+    (`invoiced_sales.agent_id()`, which honours the company's agent source), a dealer target the
+    document's customer. A team stay's window reads the DOCUMENT's date (a billing document has
+    no sales order date of its own). The credit windows are the merged ones of `_credit_groups`,
+    so a document meets at most one credit row per period.
+
+    **Value.** Amount over all products: the document's signed `local_net_total`, the figure
+    that tallies AutoCount to the cent. Amount over a product scope: the in-scope lines' signed
+    net x rate (`signed_line_amount`). Quantity: the lines' signed quantity
+    (`signed_line_quantity`), lines with a product only; a credit note's quantity counts
+    negative in the credit note's own period, so a returned unit nets out there.
+    """
+    from app.models.finance import BillingDocument, BillingDocumentLine
+    from app.services.sales import invoiced_sales
+
+    out: Dict[str, Dict[Optional[str], Decimal]] = {s.period_id: {} for s in specs}
+    group_of, credit_rows = _credit_groups(specs)
+    if not credit_rows:
+        return out
+
+    pv = values(
+        column("period_id", _UUID),
+        column("target_id", _UUID),
+        column("credit_group", Integer),
+        column("pstart", Date),
+        column("pend", Date),
+        column("metric", String),
+        column("product_scope", String),
+        name="ipv",
+    ).data(
+        [
+            (s.period_id, s.target_id, group_of[s.period_id], s.period_start, s.period_end,
+             s.metric, s.product_scope)
+            for s in specs
+        ]
+    )
+    cr = values(
+        column("credit_group", Integer),
+        column("ckind", Integer),
+        column("credit_key", _UUID),
+        column("valid_from", Date),
+        column("valid_to", Date),
+        name="icr",
+    ).data(credit_rows)
+
+    doc_date = BillingDocument.doc_date
+    # The sale's agent once per document (a correlated CASE over the company's agent source).
+    docs = (
+        select(
+            BillingDocument.id.label("doc_id"),
+            doc_date.label("doc_date"),
+            BillingDocument.customer_id.label("customer_id"),
+            invoiced_sales.agent_id().label("agent_id"),
+            invoiced_sales.signed_amount().label("amount"),
+        )
+        .where(
+            invoiced_sales.posted(),
+            BillingDocument.company_id == company_id,
+            doc_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs)),
+        )
+        .cte("inv_docs")
+    )
+    docs_credited = (
+        select(
+            pv.c.period_id, pv.c.target_id, pv.c.metric, pv.c.product_scope,
+            docs.c.doc_id, docs.c.amount,
+            (docs.c.customer_id if split else null().cast(_UUID)).label("customer_id"),
+        )
+        .select_from(docs)
+        .join(
+            cr,
+            and_(
+                cr.c.credit_key == case((cr.c.ckind == 1, docs.c.customer_id), else_=docs.c.agent_id),
+                docs.c.doc_date.between(cr.c.valid_from, cr.c.valid_to),
+            ),
+        )
+        .join(
+            pv,
+            and_(
+                pv.c.credit_group == cr.c.credit_group,
+                docs.c.doc_date.between(pv.c.pstart, pv.c.pend),
+            ),
+        )
+        .cte("inv_credited")
+    )
+    # Amount over all products: the document's own figure.
+    header = select(
+        docs_credited.c.period_id, docs_credited.c.customer_id, docs_credited.c.amount.label("value")
+    ).where(docs_credited.c.metric == "amount", docs_credited.c.product_scope == "all")
+    # Everything else: the lines (a line's sign and rate are the shared service's).
+    line_value = case(
+        (docs_credited.c.metric == "amount", invoiced_sales.signed_line_amount()),
+        else_=invoiced_sales.signed_line_quantity(),
+    )
+    lines = (
+        select(docs_credited.c.period_id, docs_credited.c.customer_id, line_value.label("value"))
+        .select_from(docs_credited)
+        .join(BillingDocument, BillingDocument.id == docs_credited.c.doc_id)
+        .join(BillingDocumentLine, BillingDocumentLine.document_id == BillingDocument.id)
+        .where(
+            BillingDocumentLine.company_id == company_id,
+            or_(docs_credited.c.metric != "amount", docs_credited.c.product_scope != "all"),
+            or_(docs_credited.c.metric == "amount", BillingDocumentLine.product_id.isnot(None)),
+        )
+    )
+    scoped = sorted({s.target_id for s in specs if s.product_scope != "all"})
+    if scoped:
+        lines = lines.where(
+            or_(
+                docs_credited.c.product_scope == "all",
+                tuple_(
+                    docs_credited.c.target_id, docs_credited.c.product_scope,
+                    BillingDocumentLine.product_id,
+                ).in_(_scope_products(scoped, {s.product_scope for s in specs}, company_id)),
+            )
+        )
+    rows = union_all(header, lines).subquery("inv_rows")
+    stmt = select(rows.c.period_id, rows.c.customer_id, func.sum(rows.c.value)).group_by(
+        rows.c.period_id, rows.c.customer_id
+    )
     for period_id, customer_id, total in db.execute(stmt).all():
         key = None if customer_id is None else str(customer_id)
         out[str(period_id)][key] = Decimal(total or 0)

@@ -105,6 +105,7 @@ const METRIC_OPTIONS = [
   { value: 'quantity', label: 'Quantity (units)' },
 ];
 const COUNTS_OPTIONS = [
+  { value: 'invoiced', label: 'Invoiced' },
   { value: 'ordered', label: 'Ordered' },
   { value: 'delivered', label: 'Delivered' },
 ];
@@ -212,7 +213,7 @@ function emptyDraft(preset: TargetRecordPreset | undefined): Draft {
     subjectId: preset?.subjectId ?? '',
     name: '',
     metric: 'amount',
-    basis: 'ordered',
+    basis: 'invoiced',
     scope: 'all',
     categoryIds: [],
     productIds: [],

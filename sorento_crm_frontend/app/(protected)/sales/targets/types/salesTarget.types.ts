@@ -4,7 +4,7 @@
  */
 export type TargetSubjectKind = 'agent' | 'team' | 'dealer';
 export type TargetMetric = 'amount' | 'quantity';
-export type TargetBasis = 'ordered' | 'delivered';
+export type TargetBasis = 'invoiced' | 'ordered' | 'delivered';
 export type TargetProductScope = 'all' | 'categories' | 'products' | 'brands';
 export type TargetScopeKind = 'category' | 'product' | 'brand';
 export type TargetSplitUnit = 'day' | 'week' | 'month';
@@ -159,7 +159,7 @@ export interface SalesTargetDetail {
   end_date: string;
   split_every: number | null;
   split_unit: TargetSplitUnit | null;
-  /** "Ordered", "Delivered", or "Delivered (by DO date)". */
+  /** "Invoiced", "Ordered", "Delivered", or "Delivered (by DO date)". */
   counts_label: string;
   /** The categories, products or brands counted: their id, kind and "CODE - Name" label. */
   scope: { id: string; kind: TargetScopeKind; label: string }[];
