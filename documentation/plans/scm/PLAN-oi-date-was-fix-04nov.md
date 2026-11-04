@@ -1,6 +1,6 @@
 # PLAN: OI date change, restore pending DELAY/ADVANCE emails + Was column in OI export
 
-Status: in progress (small fix track: data migration with no DDL on a live table + one export column; no auth/RBAC change)
+Status: in progress, waiting on owner (small fix track). Owner 4 Nov ~18:00: Gap B DROPPED; Gap A migration kept ready but not for merge until the owner has seen the prod count from `SQL-oi-date-was-fix-count-04nov.sql`.
 
 Lane: OI-DATE-WAS-FIX. Follows OI-ONE-DELIVERY-DATE (#2145, `PLAN-oi-one-delivery-date-03nov.md`).
 
@@ -28,7 +28,7 @@ back to the logged `old_previous_delivery_date`. Every changed row is logged fir
 `projects.oi_delivery_date_pending_restore` so the downgrade reverses exactly. No email at
 migration time; the next Confirm emails as normal.
 
-## Gap B: Was column in the OI Excel exports
+## Gap B: Was column in the OI Excel exports (DROPPED by the owner, 4 Nov ~18:00)
 
 Both the OI list-page export (`order_inquiry_worklist_service.py` `EXPORT_HEADINGS`/`_records`)
 and the per-project download print only DELIVERY DATE. Add `WAS DELIVERY DATE` as the LAST
@@ -39,4 +39,4 @@ dd/mm/yyyy.
 
 - Migration: pending delayed row restored + logged; row without pending change untouched;
   row not in the backfill log untouched; downgrade reverses.
-- Export: last heading is `WAS DELIVERY DATE`; moved row shows dd/mm/yyyy Was; unmoved row blank.
+- Owner SQL: the read-only DBeaver query lists exactly the rows the migration restores.
