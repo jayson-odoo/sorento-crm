@@ -1403,11 +1403,11 @@ def test_every_new_field_reaches_the_list_the_row_and_the_export(api):
     printed = []
     for name in book.sheetnames:
         sheet = book[name]
-        headings = [cell.value for cell in sheet[2]]
+        headings = [cell.value for cell in sheet[1]]
         assert "ACKNOWLEDGED" in headings
         printed.extend(
             row_values[headings.index("ACKNOWLEDGED")]
-            for row_values in sheet.iter_rows(min_row=3, values_only=True)
+            for row_values in sheet.iter_rows(min_row=2, values_only=True)
         )
     assert any("Factory closed" in (value or "") for value in printed)
 

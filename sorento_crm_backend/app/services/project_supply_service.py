@@ -12253,7 +12253,7 @@ class ProjectSupplyService:
         from app.services.project_order_inquiry_service import (
             _HANDOVER_PENDING_KEY,
             _build_handover_context,
-            _handover_sort_key,
+            _handover_sorted,
         )
 
         queued = [
@@ -12268,7 +12268,7 @@ class ProjectSupplyService:
             return []
         context, _source = built
         lines = (context.get("handover") or context).get("lines") or []
-        ordered = sorted(queued, key=_handover_sort_key)
+        ordered = _handover_sorted(queued)
         return [
             {
                 "so_line_id": str(item.get("so_line_id") or ""),
