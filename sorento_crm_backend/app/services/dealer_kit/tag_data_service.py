@@ -1757,7 +1757,9 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
         # kept as pinned rather than reprocessed, so `set_members`/Tag total
         # keep reading the right thing.
         row["own_parts"] = pinned.get("parts") or []
-    row["slots"] = _slots_from_pin(db, line, tag, pinned.get("slots"))
+    row["slots"] = _slots_from_pin(
+        tag, pinned.get("slots"), pinned.get("parts") or [], lambda images: resign_images(db, images)
+    )
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
@@ -1777,31 +1779,37 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     return row
 
 
-def _slots_from_pin(db: Session, line, tag, pinned_slots: Optional[dict]) -> Optional[dict]:
-    """The pinned `slots` with live photo links. A tag that holds its own choices reads
-    them fresh (a pick is the tag's fact, like `combo.picked`), so the picks follow
-    `tag.choices` rather than the moment of the pin."""
-    from app.services.dealer_kit.product_images import resign_images
-
+def _slots_from_pin(tag, pinned_slots: Optional[dict], pinned_parts: list, resign) -> Optional[dict]:
+    """The pinned `slots` with live photo links, and the tag's own pick of an open group read
+    fresh (like `combo.picked`, `_combo_with_picks`): it re-chooses among the candidates the pin
+    already holds in `parts`, so no position is re-read from master data."""
     if pinned_slots is None:
         return None
-    if tag.choices:
-        return _line_slots(
-            db, line, tag, _line_combo(db, line, {}), staff_viewer(), line.promotion_id, {},
-            price_mode=line.price_type or "selling",
-        )
+    choices = dict(tag.choices or {})
+    candidates: dict[str, dict[str, dict]] = {}
+    for part in pinned_parts or []:
+        if part.get("role") and part.get("product_id"):
+            candidates.setdefault(part["role"], {})[part["product_id"]] = part
 
     def fresh(parts: list) -> list:
-        return [{**part, "images": resign_images(db, part.get("images") or [])} for part in parts]
+        return [{**part, "images": resign(part.get("images") or [])} for part in parts]
 
-    return _slots_dict(
-        fresh(pinned_slots.get("fixed") or []),
-        [
-            {**group, "picks": fresh(group.get("picks") or [])}
-            for group in pinned_slots.get("groups") or []
-        ],
-        fresh(pinned_slots.get("upgrades") or []),
-    )
+    groups = []
+    for group in pinned_slots.get("groups") or []:
+        held = candidates.get(group.get("role") or "", {})
+        picks = group.get("picks") or []
+        chosen = held.get(str(choices.get(group.get("role"), "")))
+        if held and group.get("role") in choices:
+            # Picks that came from this open row are replaced by the tag's current choice.
+            picks = [p for p in picks if p.get("product_id") not in held]
+            if chosen is not None:
+                picks = [*picks, chosen]
+        groups.append({**group, "picks": fresh(picks)})
+    upgrades = [
+        {**up, "chosen": bool(up.get("chosen")) or str(choices.get("Upgrade", "")) == up.get("product_id")}
+        for up in pinned_slots.get("upgrades") or []
+    ]
+    return _slots_dict(fresh(pinned_slots.get("fixed") or []), groups, fresh(upgrades))
 
 
 # ---------------------------------------------------------------------------
