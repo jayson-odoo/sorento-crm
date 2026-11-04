@@ -2223,14 +2223,19 @@ jobs:
           HOST_B: ${{ secrets.SSH_HOST_B }}
           SSH_USER: ${{ secrets.SSH_USER }}
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          # Both hosts' public keys (`ssh-keyscan` output, checked against the boxes' own
+          # fingerprints): the release refuses a host whose key does not match.
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
           key=$(mktemp)
-          trap 'rm -f "$key"' EXIT
+          kh=$(mktemp)
+          trap 'rm -f "$key" "$kh"' EXIT
           printf '%s\n' "$SSH_KEY" > "$key"
-          chmod 600 "$key"
-          HA_HOSTS="$HOST_A $HOST_B" SSH_KEY_FILE="$key" ./scripts/ha_release.sh
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$kh"
+          chmod 600 "$key" "$kh"
+          HA_HOSTS="$HOST_A $HOST_B" SSH_KEY_FILE="$key" KNOWN_HOSTS_FILE="$kh" ./scripts/ha_release.sh
 
       - name: Sync deploy script to server
         if: steps.targets.outputs.should_deploy == 'true' && steps.ha.outputs.two_nodes != 'true'

@@ -12,16 +12,19 @@
 # A standby that cannot be reached is skipped and the release FAILS at the end, after the
 # primary is done, so users get the new code and the owner gets a red run to look at.
 #
-# Env: HA_HOSTS (space-separated), SSH_USER, SSH_KEY_FILE, IMAGE_TAG (40 hex),
-#      [REMOTE_DIR=/opt/sorento-crm2] [SSH=ssh] [SCP=scp] [SSH_OPTS]
+# Env: HA_HOSTS (space-separated), SSH_USER, SSH_KEY_FILE, KNOWN_HOSTS_FILE (both hosts' keys:
+#      a host whose key is not in it is refused, never trusted on first use), IMAGE_TAG (40 hex),
+#      [REMOTE_DIR=/opt/sorento-crm2] [SSH=ssh] [SCP=scp]
 set -uo pipefail
 
 : "${HA_HOSTS:?space-separated hosts}" "${SSH_USER:?}" "${SSH_KEY_FILE:?}" "${IMAGE_TAG:?}"
+: "${KNOWN_HOSTS_FILE:?the public keys of both hosts, secret SSH_KNOWN_HOSTS}"
+[ -s "$KNOWN_HOSTS_FILE" ] || { echo "ERROR: KNOWN_HOSTS_FILE is empty; set the SSH_KNOWN_HOSTS secret. Nothing was deployed."; exit 1; }
 [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "ERROR: IMAGE_TAG must be a 40 hex git SHA"; exit 1; }
 REMOTE_DIR="${REMOTE_DIR:-/opt/sorento-crm2}"
 SSH="${SSH:-ssh}"
 SCP="${SCP:-scp}"
-SSH_OPTS="${SSH_OPTS:--o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new}"
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS_FILE"
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/blue_green_deploy.sh"
 
 # shellcheck disable=SC2086

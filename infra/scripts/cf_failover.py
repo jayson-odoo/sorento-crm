@@ -292,14 +292,25 @@ def log(msg: str) -> None:
 
 
 class Watchdog:
-    """Pets /dev/watchdog (softdog) each tick. A hung controller stops petting and the box reboots,
-    and D1 brings Postgres back read-only. Closed WITHOUT the magic 'V', so a crash also reboots;
-    a deliberate stop (SIGTERM) disarms it first."""
+    """Pets /dev/watchdog (softdog). Opened only after the first COMPLETE tick, and petted only
+    while ticks keep completing (security review S2): a controller that crash-loops or cannot
+    observe never keeps the box alive. When it stops petting, the box reboots and Postgres comes
+    back as a standby (rule D1). Closed WITHOUT the magic 'V' on a crash; a deliberate stop
+    (SIGTERM) disarms it first."""
 
     def __init__(self, path: str):
-        self.fd = os.open(path, os.O_WRONLY) if path else None
+        self.path = path
+        self.fd = None
 
     def pet(self) -> None:
+        if not self.path:
+            return
+        if self.fd is None:
+            self.fd = os.open(self.path, os.O_WRONLY)
+        os.write(self.fd, b"\0")
+
+    def keepalive(self) -> None:
+        """Pet only if already armed (used while a long command runs inside a good tick)."""
         if self.fd is not None:
             os.write(self.fd, b"\0")
 
@@ -319,7 +330,7 @@ def run_cmd(argv, watchdog: Watchdog, timeout: Optional[int], tick: int):
             out, _ = p.communicate(timeout=max(1, tick // 2))
             return p.returncode, out or ""
         except subprocess.TimeoutExpired:
-            watchdog.pet()
+            watchdog.keepalive()
             if timeout is not None and time.monotonic() - start > timeout:
                 p.kill()
                 out, _ = p.communicate()
@@ -339,6 +350,13 @@ def cf_pool_health(base: str, account: str, pool: str, token: str, timeout: int 
     """Cloudflare's view of one pool (one endpoint per pool): healthy | unhealthy | unknown.
     GET /accounts/{account}/load_balancers/pools/{pool}/health -> result.pop_health.{region}.healthy.
     Unhealthy only when every reporting region says so; no region, an error, or no answer: unknown."""
+    try:
+        return _cf_pool_health(base, account, pool, token, timeout)
+    except Exception:  # noqa: BLE001 - any surprise in the answer is "unknown", never a crash
+        return "unknown"
+
+
+def _cf_pool_health(base, account, pool, token, timeout):
     if not (base and account and pool and token):
         return "unknown"
     req = urllib.request.Request(
@@ -352,7 +370,10 @@ def cf_pool_health(base: str, account: str, pool: str, token: str, timeout: int 
         return "unknown"
     if not isinstance(body, dict) or not body.get("success"):
         return "unknown"
-    pops = ((body.get("result") or {}).get("pop_health") or {})
+    result = body.get("result")
+    pops = result.get("pop_health") if isinstance(result, dict) else None
+    if not isinstance(pops, dict):
+        return "unknown"
     flags = [v.get("healthy") for v in pops.values() if isinstance(v, dict) and isinstance(v.get("healthy"), bool)]
     if not flags:
         return "unknown"
@@ -394,6 +415,11 @@ def main() -> int:
     pool_self, pool_peer = env.get("CF_POOL_SELF", ""), env.get("CF_POOL_PEER", "")
     token_file = env.get("CF_API_TOKEN_FILE", "")
     max_ticks = int(env.get("MAX_TICKS", "0") or 0)
+    if not (cf_base.startswith("https://") or cf_base.startswith("http://127.0.0.1")):
+        log("config refused: CF_API_BASE must be https:// (http only to 127.0.0.1, for the drill)")
+        return 2
+    if token_file and os.path.exists(token_file) and os.stat(token_file).st_mode & 0o077:
+        log(f"warning: {token_file} is readable by group or others; make it mode 600")
     watchdog = Watchdog(env.get("WATCHDOG_DEVICE", ""))
 
     def stop(signum, frame):
@@ -412,14 +438,8 @@ def main() -> int:
             except (OSError, subprocess.SubprocessError) as e:
                 log(f"alert command failed: {type(e).__name__}")
 
-    log(f"started: node={c.node_name} peer={c.peer_name} fence_after={c.fence_after}s "
-        f"promote_after={c.promote_after}s app_sick_after={c.app_sick_after}s sync={c.sync_mode}")
-    state = load_state(state_path)
-    last_prune = 0.0
-    ticks = 0
-    while True:
-        started = time.time()
-        watchdog.pet()
+    def tick(state: dict, started: float) -> dict:
+        """One complete tick: observe, decide, persist, act. Raises on any failure."""
         token = ""
         if token_file:
             try:
@@ -436,41 +456,70 @@ def main() -> int:
 
         self_pg = d.get("self_pg") if d.get("self_pg") in ROLES else None
         if self_pg is None:
-            log(f"observe failed (rc={rc}); skipping this tick")
-        else:
-            o = Obs(
-                self_pg=self_pg,
-                self_streaming=d.get("self_streaming") == "t",
-                self_lsn=lsn("self_lsn"),
-                peer_pg=d.get("peer_pg") if d.get("peer_pg") in PEER_ROLES else "unreachable",
-                peer_lsn=lsn("peer_lsn"),
-                cf_self=cf_pool_health(cf_base, cf_account, pool_self, token),
-                cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token),
-                sync_names=d.get("sync_names", ""),
-            )
-            state, actions = decide(state, o, started, c)
-            save_state(state_path, state)
-            for a in actions:
-                if a[0] == "alert":
-                    alert(a[1])
-                    continue
-                log(f"action {a[0]} {' '.join(a[1:])} (obs {o})")
-                argv = [pg_cmd, a[0].replace("_", "-")] + list(a[1:])
-                rc, out = run_cmd(argv, watchdog, None if a[0] == "rejoin" else 300, c.tick)
-                tail = out.strip().splitlines()[-3:]
-                if a[0] == "rejoin":
-                    if rc == 0:
-                        alert(f"{c.node_name}: rejoined the primary by pg_rewind, now a standby")
-                    elif rc == 3:
-                        alert(f"{c.node_name}: rewind failed; RE-SEEDED from the primary, old data kept "
-                              f"{c.reseed_keep_days} days")
-                    else:
-                        alert(f"{c.node_name}: rejoin failed (rc={rc}): {' | '.join(tail)}")
-                elif rc != 0:
-                    alert(f"{c.node_name}: {a[0]} failed (rc={rc}): {' | '.join(tail)}")
+            raise RuntimeError(f"observe failed (rc={rc})")
+        o = Obs(
+            self_pg=self_pg,
+            self_streaming=d.get("self_streaming") == "t",
+            self_lsn=lsn("self_lsn"),
+            peer_pg=d.get("peer_pg") if d.get("peer_pg") in PEER_ROLES else "unreachable",
+            peer_lsn=lsn("peer_lsn"),
+            cf_self=cf_pool_health(cf_base, cf_account, pool_self, token),
+            cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token),
+            sync_names=d.get("sync_names", ""),
+        )
+        state, actions = decide(state, o, started, c)
+        save_state(state_path, state)  # before acting: a crash mid-action keeps the decision's windows
+        for a in actions:
+            if a[0] == "alert":
+                alert(a[1])
+                continue
+            log(f"action {a[0]} {' '.join(a[1:])} (obs {o})")
+            argv = [pg_cmd, a[0].replace("_", "-")] + list(a[1:])
+            rc, out = run_cmd(argv, watchdog, None if a[0] == "rejoin" else 300, c.tick)
+            tail = out.strip().splitlines()[-3:]
+            if a[0] == "rejoin":
+                if rc == 0:
+                    alert(f"{c.node_name}: rejoined the primary by pg_rewind, now a standby")
+                elif rc == 3:
+                    alert(f"{c.node_name}: rewind failed; RE-SEEDED from the primary, old data kept "
+                          f"{c.reseed_keep_days} days")
+                else:
+                    alert(f"{c.node_name}: rejoin failed (rc={rc}): {' | '.join(tail)}")
+            elif rc != 0:
+                alert(f"{c.node_name}: {a[0]} failed (rc={rc}): {' | '.join(tail)}")
+        return state
+
+    log(f"started: node={c.node_name} peer={c.peer_name} fence_after={c.fence_after}s "
+        f"promote_after={c.promote_after}s app_sick_after={c.app_sick_after}s sync={c.sync_mode}")
+    state = load_state(state_path)
+    last_prune = 0.0
+    last_ok = time.time()
+    self_fenced_on_failure = False
+    ticks = 0
+    while True:
+        started = time.time()
+        try:
+            state = tick(state, started)
+            last_ok = time.time()
+            self_fenced_on_failure = False
+            watchdog.pet()
+        except Exception as e:  # noqa: BLE001 - the loop itself must never die silently
+            failing = time.time() - last_ok
+            log(f"tick failed ({type(e).__name__}: {str(e)[:200]}); failing for {int(failing)}s")
+            if failing < c.fence_after:
+                watchdog.keepalive()
+            elif not self_fenced_on_failure:
+                # The controller cannot hold this node's lease, so it gives it up the same way P1
+                # would. If even the fence fails, the watchdog (no longer petted) reboots the box.
+                self_fenced_on_failure = True
+                alert(f"{c.node_name}: controller failing for {int(failing)}s; fencing this node")
+                run_cmd([pg_cmd, "fence"], watchdog, 300, c.tick)
         if started - last_prune > 3600:
             last_prune = started
-            run_cmd([pg_cmd, "prune", str(c.reseed_keep_days)], watchdog, 300, c.tick)
+            try:
+                run_cmd([pg_cmd, "prune", str(c.reseed_keep_days)], watchdog, 300, c.tick)
+            except Exception as e:  # noqa: BLE001
+                log(f"prune failed: {type(e).__name__}")
         ticks += 1
         if max_ticks and ticks >= max_ticks:
             watchdog.disarm()

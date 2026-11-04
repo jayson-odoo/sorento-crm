@@ -49,8 +49,10 @@ def env(tmp_path):
         (b / name).chmod(0o755)
     key = tmp_path / "key"
     key.write_text("k")
+    kh = tmp_path / "known_hosts"
+    kh.write_text("hosta ssh-ed25519 AAAA\nhostb ssh-ed25519 BBBB\n")
     e = {"PATH": f"{b}:{os.environ['PATH']}", "FAKE_DIR": str(tmp_path), "HA_HOSTS": "hosta hostb",
-         "SSH_USER": "deploy", "SSH_KEY_FILE": str(key), "IMAGE_TAG": SHA}
+         "SSH_USER": "deploy", "SSH_KEY_FILE": str(key), "IMAGE_TAG": SHA, "KNOWN_HOSTS_FILE": str(kh)}
     return e, tmp_path
 
 
@@ -136,3 +138,24 @@ def test_image_tag_must_be_a_sha(env):
     roles(d, hosta="primary", hostb="standby")
     r = run(e, IMAGE_TAG="abc")
     assert r.returncode == 1 and deployed(d) == []
+
+
+def test_host_keys_are_pinned_never_trusted_on_first_use(env):
+    e, d = env
+    roles(d, hosta="primary", hostb="standby")
+    r = run(e)
+    assert r.returncode == 0, r.stdout
+    ssh_calls = [l for l in (d / "calls.log").read_text().splitlines()]
+    assert ssh_calls
+    # the fake logs only host + command for ssh; check the script's options directly
+    src = SCRIPT.read_text()
+    assert "StrictHostKeyChecking=yes" in src and "accept-new" not in src
+
+
+def test_missing_known_hosts_deploys_nothing(env):
+    e, d = env
+    roles(d, hosta="primary", hostb="standby")
+    (Path(e["KNOWN_HOSTS_FILE"])).write_text("")
+    r = run(e)
+    assert r.returncode == 1 and "SSH_KNOWN_HOSTS" in r.stdout
+    assert deployed(d) == []

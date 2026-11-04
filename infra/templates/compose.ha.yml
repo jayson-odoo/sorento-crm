@@ -18,6 +18,8 @@ services:
   db:
     image: <REGISTRY>/sorento-pg17:<PIN>          # built from templates/postgres/Dockerfile
     restart: "no"
+    # pg_hba.conf names the compose network as <COMPOSE_SUBNET>: pin that subnet on the default
+    # network in docker-compose.yml (networks.default.ipam.config[0].subnet), or it can change.
     env_file: [walg.env]
     environment:
       # A subdirectory of the volume, so a re-seed can move the old data aside (plan 3c).
@@ -54,10 +56,13 @@ services:
       - archive_timeout=60              # PITR RPO bound about 60 s
       - -c
       - shared_preload_libraries=<PROD_SHARED_PRELOAD_LIBRARIES>   # copy prod's SHOW value; never drop one
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf   # outside PGDATA: a rewind / re-seed never copies the peer's
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # replication password for pg_rewind / pg_basebackup run in this image (mode 600, uid 999)
       - /etc/sorento-ha/pgpass.container:/var/lib/postgresql/.pgpass:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro      # templates/postgres/pg_hba.conf
     ports:
       - "127.0.0.1:5432:5432"
       - "<THIS_WG_IP>:5432:5432"

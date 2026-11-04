@@ -7,6 +7,9 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=/etc/sorento-ha/ha-pg.env
+# /var/lib/sorento-ha for STATE_FILE, root-only.
+StateDirectory=sorento-ha
+StateDirectoryMode=0700
 ExecStart=/usr/bin/python3 /opt/sorento-crm2/infra/scripts/cf_failover.py
 # A clean stop disarms the watchdog first (SIGTERM handler); a crash or hang lets it fire.
 KillSignal=SIGTERM

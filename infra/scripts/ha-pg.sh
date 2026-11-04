@@ -43,7 +43,7 @@ name_ok() { [[ "$1" =~ ^[a-z0-9_-]{1,32}$ ]]; }
 name_ok "$NODE_NAME" && name_ok "$PEER_NAME" || { echo "ha-pg: NODE_NAME/PEER_NAME invalid" >&2; exit 2; }
 # Values are spliced into conninfo strings and one-line shell scripts: refuse quotes outright.
 for v in "$PEER_HOST" "$PEER_PORT" "$REPL_USER" "$PEER_CONNINFO_EXTRA" "$PGDATA"; do
-  case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*) echo "ha-pg: quotes, \$ and backslashes are not allowed in the HA env" >&2; exit 2 ;; esac
+  case "$v" in *"'"*|*'"'*|*'\'*|*'$'*|*'`'*|*$'\n'*|*$'\r'*) echo "ha-pg: quotes, \$, backslashes and line breaks are not allowed in the HA env" >&2; exit 2 ;; esac
 done
 case "$PGDATA" in /*/*) ;; *) echo "ha-pg: PGDATA must be a subdirectory of the volume" >&2; exit 2 ;; esac
 
