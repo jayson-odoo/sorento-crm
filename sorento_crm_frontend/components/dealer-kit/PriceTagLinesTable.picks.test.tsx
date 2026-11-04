@@ -257,3 +257,33 @@ describe('the Template select (AC-B4)', () => {
     expect(options.some((o) => o?.includes('Template t6'))).toBe(false);
   });
 });
+
+
+describe('a discontinued fixed part (round 3)', () => {
+  const fixedLine = (flag: 'row' | 'lookup' | 'none') => {
+    const lookup = {
+      ...combo(),
+      parts: [
+        ...combo().parts,
+        { product_id: 'id-FIX', code: 'SRTWB2380', name: 'Fixed basin', choice_group: null, is_discontinued: flag === 'lookup' },
+      ],
+    };
+    return {
+      combos: [lookup],
+      tag_template_id: 't1',
+      parts: [
+        { key: 'f1', product_id: 'id-FIX', code: 'SRTWB2380', name: 'Fixed basin', role: null, candidates: [], is_discontinued: flag === 'row' },
+      ],
+    };
+  };
+
+  it.each(['row', 'lookup'] as const)('marks the fixed row Discontinued (flag from the %s)', (flag) => {
+    renderTable(fixedLine(flag) as never);
+    expect(screen.getByText('Discontinued')).toBeInTheDocument();
+  });
+
+  it('marks nothing on a fixed part that is current', () => {
+    renderTable(fixedLine('none') as never);
+    expect(screen.queryByText('Discontinued')).toBeNull();
+  });
+});

@@ -335,8 +335,16 @@ function PartRow({
               </div>
             ) : (
               <div className="min-w-0">
-                <div className="truncate text-sm" title={part.name || part.code}>
-                  {part.name || part.code}
+                <div className="flex items-center gap-1.5">
+                  <div className="truncate text-sm" title={part.name || part.code}>
+                    {part.name || part.code}
+                  </div>
+                  {part.is_discontinued ||
+                  (part.product_id && discontinued({ product_id: part.product_id, code: part.code, name: part.name })) ? (
+                    <Badge variant="warning" appearance="light" size="sm">
+                      Discontinued
+                    </Badge>
+                  ) : null}
                 </div>
                 {!sameDisplayText(part.code, part.name) ? (
                   <div className="text-xs text-muted-foreground">{part.code || '-'}</div>

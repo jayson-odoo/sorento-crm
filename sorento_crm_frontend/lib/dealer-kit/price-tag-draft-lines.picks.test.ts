@@ -297,7 +297,8 @@ describe('linePickProblems', () => {
     const fixed = { key: 'f', product_id: 'fx', code: 'SRTMCB8083-BL', name: 'Mirror', role: null, candidates: [] };
     const l = line({ combos: [combo], tag_template_id: 't1', parts: [fixed, single] });
     expect(api.linePickProblems([l], {})).toEqual([
-      'SRTMCB8083-BL is discontinued. Pick another or escalate it to marketing.',
+      // A fixed part has nothing to pick instead (round 3): only escalate.
+      'SRTMCB8083-BL is discontinued. Escalate it to marketing.',
       'SRTKT1862SS is discontinued. Pick another or escalate it to marketing.',
     ]);
   });
@@ -342,5 +343,20 @@ describe('linePickProblems', () => {
   it('a line with no combo is never blocked for a combo list price', () => {
     const l = line({ combo_id: null, combos: [], parts: [], price_type: 'list' });
     expect(api.linePickProblems([l], { l1: { list_price: null } })).toEqual([]);
+  });
+});
+
+
+describe('a fixed part that arrives from the combo with its discontinued flag', () => {
+  it('partsFromCombo carries is_discontinued onto the fixed row', () => {
+    const rows = draft.partsFromCombo({
+      combo_id: 'c',
+      name: 'C',
+      parts: [
+        { product_id: 'a', code: 'A', name: 'A', choice_group: null, is_discontinued: true },
+        { product_id: 'b', code: 'B', name: 'B', choice_group: null },
+      ],
+    } as never);
+    expect(rows.map((r) => (r as { is_discontinued?: boolean }).is_discontinued)).toEqual([true, false]);
   });
 });

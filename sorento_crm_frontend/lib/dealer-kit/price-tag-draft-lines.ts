@@ -36,6 +36,8 @@ export interface DraftPart {
   candidates: LinePartCandidate[];
   /** Ordered picks for a group the chosen template needs 2 or more from (K5). */
   product_ids?: string[];
+  /** The part's product is discontinued (a fixed part cannot be swapped, AC-C6). */
+  is_discontinued?: boolean;
 }
 
 export interface DraftLine {
@@ -152,6 +154,7 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
         name: part.name,
         role: null,
         candidates: [],
+        is_discontinued: part.is_discontinued ?? false,
       });
       continue;
     }
@@ -538,7 +541,12 @@ export function linePickProblems(
       for (const id of picked) {
         const option = combo?.parts.find((p) => p.product_id === id);
         if (option?.is_discontinued) {
-          out.push(`${option.code} is discontinued. Pick another or escalate it to marketing.`);
+          // A fixed part has nothing to pick instead.
+          out.push(
+            part.role
+              ? `${option.code} is discontinued. Pick another or escalate it to marketing.`
+              : `${option.code} is discontinued. Escalate it to marketing.`,
+          );
         }
       }
     }
