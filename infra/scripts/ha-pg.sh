@@ -108,7 +108,15 @@ case "$cmd" in
       # Postgres may still be up and taking writes over TCP while `exec psql` fails (wedged
       # dockerd, cgroup pressure). Never call that "down": the controller counts the tick as
       # failed and its failure path fences or lets the watchdog reboot (review round 2).
-      echo "self_pg=unknown"
+      # Only a postmaster that itself refuses every connection (starting up, crash recovery,
+      # shutting down) is "down": it takes no writes, and fencing it would loop a long recovery.
+      # shellcheck disable=SC2086
+      ready=$(timeout 10 $PG_EXEC pg_isready -d postgres 2>/dev/null || true)
+      case "$ready" in
+        *"rejecting connections"*|*"no response"*)
+          echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="; echo "peer_slot=t" ;;
+        *) echo "self_pg=unknown" ;;
+      esac
     else
       echo "self_pg=down"; echo "self_streaming=f"; echo "self_lsn="; echo "sync_names="; echo "peer_slot=t"
     fi

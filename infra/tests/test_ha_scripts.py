@@ -506,13 +506,21 @@ def test_checks_no_prune_below_threshold(env):
 ADAPTER = SCRIPTS / "ha-pg.sh"
 
 
-@pytest.mark.parametrize("running, want", [("true", "self_pg=unknown"), ("false", "self_pg=down")])
-def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, running, want):
+@pytest.mark.parametrize("pg_exec, running, want", [
+    ("false", "true", "self_pg=unknown"),          # exec broken, container up: maybe still writable
+    ("{fake}", "true", "self_pg=down"),            # postmaster rejecting connections (recovery)
+    ("false", "false", "self_pg=down"),            # container stopped
+])
+def test_observe_never_calls_a_running_but_unanswering_postgres_down(tmp_path, pg_exec, running, want):
     # `exec psql` fails (wedged dockerd) while the container still runs: Postgres may still be
     # taking writes, so the controller must see "unknown" (a failed tick), never "down" (D1).
+    # A postmaster that refuses every connection (starting, crash recovery) is safely "down".
+    fake = tmp_path / "fake-exec"
+    fake.write_text('#!/usr/bin/env bash\ncase "$1" in pg_isready) echo "/var/run/postgresql:5432 - rejecting connections"; exit 1 ;; *) exit 2 ;; esac\n')
+    fake.chmod(0o755)
     e = {
         "PATH": os.environ["PATH"], "NODE_NAME": "crm-a", "PEER_NAME": "crm-b", "PEER_HOST": "peer",
-        "PGDATA": "/v/pgdata", "PG_EXEC": "false", "PG_RUNNING": running,
+        "PGDATA": "/v/pgdata", "PG_EXEC": pg_exec.format(fake=fake), "PG_RUNNING": running,
         "PG_START": "true", "PG_STOP": "true", "PG_OFFLINE_SH": "false", "PEER_PSQL": "false",
     }
     r = subprocess.run(["bash", str(ADAPTER), "observe"], env=e, capture_output=True, text=True, timeout=30)
