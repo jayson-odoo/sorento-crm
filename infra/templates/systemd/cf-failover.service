@@ -1,0 +1,17 @@
+# /etc/systemd/system/cf-failover.service on BOTH CRM nodes (HA-CF-FAILOVER, plan section 3).
+[Unit]
+Description=Sorento CRM failover controller (Cloudflare LB as witness)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/sorento-ha/ha-pg.env
+ExecStart=/usr/bin/python3 /opt/sorento-crm2/infra/scripts/cf_failover.py
+# A clean stop disarms the watchdog first (SIGTERM handler); a crash or hang lets it fire.
+KillSignal=SIGTERM
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

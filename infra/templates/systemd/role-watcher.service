@@ -1,11 +1,13 @@
-# /etc/systemd/system/role-watcher.service on BOTH CRM nodes. Plan section 2 "role watcher".
+# /etc/systemd/system/role-watcher.service on BOTH CRM nodes (HA-CF-FAILOVER, plan section 2 row 5).
 [Unit]
-Description=Sorento CRM role watcher (workers + scheduler only on the Patroni leader)
+Description=Sorento CRM role watcher (workers + scheduler only where the local Postgres is primary)
 After=docker.service
 Requires=docker.service
 
 [Service]
 WorkingDirectory=/opt/sorento-crm2
+# ha-pg.sh (ROLE_CMD default) reads its settings from here.
+EnvironmentFile=/etc/sorento-ha/ha-pg.env
 Environment="COMPOSE_FILES=-f docker-compose.yml -f compose.ha.yml"
 # Must match DEPLOY_LOCK_PATH of scripts/blue_green_deploy.sh (same default).
 Environment=DEPLOY_LOCK_PATH=/opt/sorento-crm2/.deploy.lock

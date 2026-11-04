@@ -19,12 +19,12 @@
 #   PGDATA                 data directory INSIDE the container; must be a subdirectory of the volume
 #                          (e.g. /var/lib/postgresql/data/pgdata) so a re-seed can move it aside
 #   PG_EXEC                prefix running a command in the RUNNING db container as postgres
-#   PG_RUNNING             command that succeeds when the db container is running
-#   PG_START / PG_STOP     start / stop the db container (never recreate it)
+#   PG_RUNNING             command (run by sh -c) that succeeds when the db container is running
+#   PG_START / PG_STOP     commands (sh -c) that start / stop the db container (never recreate it)
 #   PG_OFFLINE_SH          prefix taking ONE shell script, run as postgres with the data volume
 #                          mounted while the db container is stopped, able to reach the peer
 #   PEER_PSQL              psql that reaches the peer over the private link (host client)
-#   WORKERS_STOP           stops worker + worker_fast (the role watcher would stop them a tick later)
+#   WORKERS_STOP           command (sh -c) that stops worker + worker_fast (the role watcher would stop them a tick later)
 #   SYNC_MODE              off | remote_write | on_commit
 # Passwords: never in this env. The replication user's password sits in a pgpass file read by
 # both the container and the host client (PGPASSFILE), mode 600.
@@ -56,8 +56,10 @@ STANDBY_CONNINFO="host=$PEER_HOST port=$PEER_PORT user=$REPL_USER application_na
 local_sql() { $PG_EXEC psql -XAtq -F'|' -d postgres -v ON_ERROR_STOP=1 -c "$1"; }
 # shellcheck disable=SC2086
 offline() { $PG_OFFLINE_SH "$1"; }
-# shellcheck disable=SC2086
-running() { $PG_RUNNING >/dev/null 2>&1; }
+# Whole commands (they may hold a pipe) run through sh -c; PG_EXEC / PG_OFFLINE_SH are prefixes.
+running() { sh -c "$PG_RUNNING" >/dev/null 2>&1; }
+pg_start() { sh -c "$PG_START"; }
+pg_stop() { sh -c "$PG_STOP"; }
 
 SELF_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END,
   (CASE WHEN pg_is_in_recovery()
@@ -109,10 +111,8 @@ case "$cmd" in
     self_role
     ;;
   fence)
-    # shellcheck disable=SC2086
-    $WORKERS_STOP || echo "ha-pg: stopping the workers failed; stopping Postgres anyway" >&2
-    # shellcheck disable=SC2086
-    $PG_STOP
+    sh -c "$WORKERS_STOP" || echo "ha-pg: stopping the workers failed; stopping Postgres anyway" >&2
+    pg_stop
     ;;
   promote)
     [ "$(self_role)" = standby ] || { echo "ha-pg: not a standby, refusing to promote" >&2; exit 1; }
@@ -124,24 +124,20 @@ case "$cmd" in
   start-standby)
     if running; then exit 0; fi
     offline "touch '$PGDATA/standby.signal'" || exit 1
-    # shellcheck disable=SC2086
-    $PG_START
+    pg_start
     ;;
   rejoin)
-    # shellcheck disable=SC2086
-    running && { $PG_STOP || exit 1; }
+    running && { pg_stop || exit 1; }
     if offline "pg_rewind -D '$PGDATA' --source-server='$PEER_CONNINFO' --write-recovery-conf"; then
       offline "$(standby_conf_script)" || exit 1
-      # shellcheck disable=SC2086
-      $PG_START || exit 1
+      pg_start || exit 1
       exit 0
     fi
     echo "ha-pg: pg_rewind failed; re-seeding from the peer (old data kept aside)" >&2
     ts=$(date -u +%Y%m%dT%H%M%SZ)
     offline "mv '$PGDATA' '$PGDATA.old-$ts' && pg_basebackup -D '$PGDATA' -d '$PEER_CONNINFO' -X stream -c fast" || exit 1
     offline "$(standby_conf_script)" || exit 1
-    # shellcheck disable=SC2086
-    $PG_START || exit 1
+    pg_start || exit 1
     exit 3
     ;;
   set-sync)

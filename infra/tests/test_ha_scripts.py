@@ -1,6 +1,6 @@
-"""Shell tests for infra/scripts/role-watcher.sh and infra/scripts/ha-checks.sh (HA-TIER1-N8N-BOX).
+"""Shell tests for infra/scripts/role-watcher.sh and infra/scripts/ha-checks.sh (HA-CF-FAILOVER).
 
-No network, no Docker, no Postgres: fake `curl`, `docker`, `etcdctl` and `df` executables sit
+No network, no Docker, no Postgres: fake `curl`, `docker`, role/observe/clock and `df` executables sit
 first on PATH and log their argv to calls.log, like scripts/ops/tests/test_backup_scripts.py.
 
 Run: python3 -m pytest infra/tests -q
@@ -30,9 +30,6 @@ case " $* " in
     q="$FAKE_DIR/codes"
     if [ -s "$q" ]; then code=$(head -1 "$q"); tail -n +2 "$q" > "$q.tmp"; mv "$q.tmp" "$q"; else code=${FAKE_HTTP_CODE:-200}; fi
     printf '%s' "$code"; [ "$code" = "000" ] && exit 7; exit 0 ;;
-  *"/cluster"*)
-    if [ -n "${FAKE_CLUSTER:-}" ]; then echo "$FAKE_CLUSTER"; else echo '{"members": [{"role": "leader"}, {"role": "replica"}]}'; fi
-    exit 0 ;;
 esac
 exit 0
 """,
@@ -43,10 +40,7 @@ echo "docker $* IMAGE_TAG=${IMAGE_TAG-UNSET}" >> "$FAKE_DIR/env.log"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
-  *"etcdctl auth status"*) if [ -n "${FAKE_ETCD_AUTH_ERR:-}" ]; then echo "$FAKE_ETCD_AUTH_ERR" >&2; exit 1; fi; echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
-  *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
-  *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
   *"pg_wal_lsn_diff"*) echo "${FAKE_LAG:-0}"; exit 0 ;;
   *"pg_stat_archiver"*) echo "${FAKE_ARCHIVER:-30 0}"; exit 0 ;;
   *"pg_ls_waldir"*) echo "${FAKE_WAL:-1000}"; exit 0 ;;
@@ -61,6 +55,31 @@ echo "Filesystem 1024-blocks Used Available Capacity Mounted"
 echo "/dev/x 100 $pct $((100 - pct)) ${pct}% /"
 """,
     "sleep": "#!/usr/bin/env bash\nexit 0\n",
+    # The role watcher's ROLE_CMD: answers from the same queue as the fake curl (200 = primary,
+    # 000 = down, anything else = standby), so one queue drives every role reading.
+    "fake-role": r"""#!/usr/bin/env bash
+echo "role $*" >> "$FAKE_LOG"
+q="$FAKE_DIR/codes"
+if [ -s "$q" ]; then code=$(head -1 "$q"); tail -n +2 "$q" > "$q.tmp"; mv "$q.tmp" "$q"; else code=${FAKE_HTTP_CODE:-200}; fi
+case "$code" in 200) echo primary ;; 000) exit 1 ;; *) echo standby ;; esac
+""",
+    # ha-checks' OBSERVE_CMD (ha-pg.sh observe) and CLOCK_CMD.
+    "fake-observe": r"""#!/usr/bin/env bash
+echo "observe $*" >> "$FAKE_LOG"
+echo "self_pg=${FAKE_SELF_PG-primary}"
+echo "self_streaming=${FAKE_STREAMING:-t}"
+echo "self_lsn=100"
+echo "sync_names="
+echo "peer_pg=${FAKE_PEER_PG:-standby}"
+echo "peer_lsn=100"
+""",
+    "fake-clock": "#!/usr/bin/env bash\necho \"${FAKE_NTP:-yes}\"\n",
+    "fake-peer-hash": r"""#!/usr/bin/env bash
+[ -n "${FAKE_PEER_HASH_FAIL:-}" ] && exit 1
+cd "$PROJECT_DIR" && sha256sum ${SHARED_FILES}
+[ -n "${FAKE_PEER_EXTRA_LINE:-}" ] && echo "$FAKE_PEER_EXTRA_LINE"
+exit 0
+""",
 }
 
 
@@ -81,6 +100,9 @@ def env(tmp_path):
         "FAKE_DIR": str(tmp_path),
         "HOME": str(tmp_path),
         "PROJECT_DIR": str(tmp_path),
+        "ROLE_CMD": str(bindir / "fake-role"),
+        "OBSERVE_CMD": str(bindir / "fake-observe"),
+        "CLOCK_CMD": str(bindir / "fake-clock"),
     }
     return e, log, tmp_path
 
@@ -138,7 +160,7 @@ def test_watcher_stops_on_a_replica_even_when_ps_cannot_tell(env):
     assert len(_stops(log)) == 2  # ticks 2 and 3
 
 
-def test_watcher_treats_unreachable_patroni_as_not_leader(env):
+def test_watcher_treats_an_unreadable_role_as_not_leader(env):
     e, log, _ = env
     run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE="000", FAKE_RUNNING="a")
     assert len(_stops(log)) == 1
@@ -354,17 +376,14 @@ def test_checks_all_ok_pings_success(env):
     assert pings and not any("/fail" in c for c in pings)
 
 
-def test_checks_one_member_phase_expects_no_replica(env):
-    # Phase A (PLAN-n8n-decom-ha-01nov.md H4-H6): node A leads a one-member cluster for weeks
-    # before node B exists, with 2 of the 3 etcd members started. No replica is expected then.
+def test_checks_one_node_phase_expects_no_replica(env):
+    # Node A runs alone for weeks before node B exists.
     e, log, _ = env
     r = run(
-        CHECKS, e, HC_URL="https://hc.example/abc", EXPECT_REPLICAS=0, ETCD_MEMBERS=2,
-        FAKE_REPLICAS=0, FAKE_ETCD_HEALTHY=2, FAKE_CLUSTER='{"members": [{"role": "leader"}]}',
-        FAKE_BACKUPS=_fresh_backup(),
+        CHECKS, e, HC_URL="https://hc.example/abc", EXPECT_REPLICAS=0,
+        FAKE_STREAMING="f", FAKE_PEER_PG="unreachable", FAKE_BACKUPS=_fresh_backup(),
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "no replica streaming" not in r.stdout
     pings = [c for c in calls(log) if "hc.example" in c]
     assert pings and not any("/fail" in c for c in pings)
 
@@ -372,17 +391,18 @@ def test_checks_one_member_phase_expects_no_replica(env):
 @pytest.mark.parametrize(
     "extra, reason",
     [
-        ({"FAKE_REPLICAS": 0}, "no replica streaming"),
+        ({"FAKE_STREAMING": "f"}, "no replica streaming"),
         ({"FAKE_LAG": 99999999}, "replica lag"),
         ({"FAKE_ARCHIVER": "4000 0"}, "WAL archive stale"),
         ({"FAKE_ARCHIVER": "30 1"}, "WAL archive failing"),
         ({"FAKE_WAL": 20000000000}, "pg_wal"),
-        ({"FAKE_ETCD_HEALTHY": 2}, "etcd 2/3"),
-        ({"FAKE_ETCD_AUTH": "false"}, "etcd auth not enabled"),
         ({"FAKE_BACKUPS": "[]"}, "base backup age"),
-        ({"FAKE_CLUSTER": '{"members": [{"role": "replica"}, {"role": "replica"}]}'}, "cluster has 0 leaders"),
-        ({"FAKE_CLUSTER": '{"members": [{"role": "leader"}, {"role": "leader"}]}'}, "cluster has 2 leaders"),
-        ({"FAKE_CLUSTER": "not json"}, "cluster state unreadable"),
+        ({"FAKE_PEER_PG": "primary"}, "TWO PRIMARIES"),
+        ({"FAKE_SELF_PG": "standby", "FAKE_PEER_PG": "standby"}, "no primary"),
+        ({"FAKE_SELF_PG": "standby", "FAKE_PEER_PG": "unreachable"}, "peer unreachable"),
+        ({"FAKE_SELF_PG": "down"}, "local postgres down"),
+        ({"FAKE_SELF_PG": ""}, "role unreadable"),
+        ({"FAKE_NTP": "no"}, "clock not NTP-synced"),
     ],
 )
 def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
@@ -395,22 +415,6 @@ def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
     assert fails and reason in fails[0]
 
 
-def test_checks_etcd_refusing_auth_status_means_auth_is_on(env):
-    # H4a rehearsal: with auth on, etcd refuses `auth status` to the role-less healthcheck user.
-    e, _, _ = env
-    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR="Error: etcdserver: permission denied")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "etcd auth not enabled" not in r.stdout
-
-
-def test_checks_docker_permission_error_is_not_read_as_auth_on(env):
-    e, _, _ = env
-    err = "permission denied while trying to connect to the Docker daemon socket"
-    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR=err)
-    assert r.returncode == 1
-    assert "etcd auth not enabled" in r.stdout
-
-
 def test_checks_accept_go_nanosecond_backup_timestamps(env):
     from datetime import datetime, timedelta, timezone
 
@@ -420,17 +424,51 @@ def test_checks_accept_go_nanosecond_backup_timestamps(env):
     assert r.returncode == 0, r.stdout
 
 
-def test_checks_skip_leader_checks_on_a_replica(env):
+def test_checks_skip_primary_checks_on_a_standby(env):
     e, log, _ = env
-    r = run(CHECKS, e, FAKE_HTTP_CODE=503, FAKE_REPLICAS=0, FAKE_BACKUPS="[]")
+    r = run(CHECKS, e, FAKE_SELF_PG="standby", FAKE_PEER_PG="primary", FAKE_STREAMING="f", FAKE_BACKUPS="[]")
     assert r.returncode == 0, r.stdout
     assert not any("psql" in c for c in calls(log))
 
 
-def test_checks_alert_when_patroni_does_not_answer(env):
-    e, _, _ = env
-    r = run(CHECKS, e, FAKE_HTTP_CODE="000")
-    assert r.returncode == 1 and "patroni not answering" in r.stdout
+def _shared(tmp, **contents):
+    names = []
+    for name, body in contents.items():
+        (tmp / name).write_text(body)
+        names.append(name)
+    return " ".join(names)
+
+
+def test_checks_identical_config_on_both_nodes_is_ok(env):
+    e, _, tmp = env
+    files = _shared(tmp, **{"a.env": "X=1\n", "b.yml": "y\n"})
+    peer = str(Path(e["PATH"].split(":")[0]) / "fake-peer-hash")
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), SHARED_FILES=files, PEER_HASH_CMD=peer)
+    assert r.returncode == 0, r.stdout
+
+
+def test_checks_name_a_differing_config_file_never_its_content(env):
+    e, _, tmp = env
+    files = _shared(tmp, **{"a.env": "SECRET=hunter2\n", "b.yml": "y\n"})
+    peer_dir = tmp / "peer"
+    peer_dir.mkdir()
+    (peer_dir / "a.env").write_text("SECRET=other\n")
+    (peer_dir / "b.yml").write_text("y\n")
+    peer = str(Path(e["PATH"].split(":")[0]) / "fake-peer-hash")
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), SHARED_FILES=files,
+            PEER_HASH_CMD=f"env PROJECT_DIR={peer_dir} {peer}")
+    assert r.returncode == 1
+    assert "config differs between nodes: a.env" in r.stdout
+    assert "b.yml" not in r.stdout.split("config differs")[1].splitlines()[0]
+    assert "hunter2" not in r.stdout and "other" not in r.stdout
+
+
+def test_checks_peer_hashes_unreadable_alerts(env):
+    e, _, tmp = env
+    files = _shared(tmp, **{"a.env": "X=1\n"})
+    peer = str(Path(e["PATH"].split(":")[0]) / "fake-peer-hash")
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), SHARED_FILES=files, PEER_HASH_CMD=peer, FAKE_PEER_HASH_FAIL=1)
+    assert r.returncode == 1 and "peer config hashes unreadable" in r.stdout
 
 
 def test_checks_prune_keeps_newest_dumps_when_disk_is_high(env):
@@ -444,7 +482,7 @@ def test_checks_prune_keeps_newest_dumps_when_disk_is_high(env):
     other = snap / "keep-me.txt"
     other.write_text("not a dump")
     (tmp / "disk_pct").write_text("90")
-    r = run(CHECKS, e, ETCD_ONLY=1, SNAPSHOT_DIR=snap)
+    r = run(CHECKS, e, SNAPSHOT_DIR=snap, FAKE_BACKUPS=_fresh_backup())
     left = sorted(p.name for p in snap.glob("pre-migrate-*.dump"))
     assert left == ["pre-migrate-20261023T000000Z-sha3.dump", "pre-migrate-20261024T000000Z-sha4.dump"]
     assert other.exists()
@@ -458,6 +496,6 @@ def test_checks_no_prune_below_threshold(env):
     for i in range(4):
         (snap / f"pre-migrate-{i}.dump").write_text("x")
     (tmp / "disk_pct").write_text("82")
-    r = run(CHECKS, e, ETCD_ONLY=1, SNAPSHOT_DIR=snap)
+    r = run(CHECKS, e, SNAPSHOT_DIR=snap, FAKE_BACKUPS=_fresh_backup())
     assert len(list(snap.glob("*.dump"))) == 4
     assert r.returncode == 1 and "disk 82% used" in r.stdout

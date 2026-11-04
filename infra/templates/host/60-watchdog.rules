@@ -1,2 +1,0 @@
-# /etc/udev/rules.d/60-watchdog.rules: let the Patroni container's postgres uid open the watchdog.
-KERNEL=="watchdog", OWNER="<POSTGRES_UID>", MODE="0600"
