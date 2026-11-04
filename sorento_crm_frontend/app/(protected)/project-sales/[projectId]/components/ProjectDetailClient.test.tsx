@@ -263,8 +263,12 @@ describe('the project header', () => {
     renderDetail();
 
     expect(screen.getByText('Quoted')).toBeInTheDocument();
-    // The stage dropdown is gone: SearchableSelect exposes role=combobox.
-    expect(screen.queryByRole('combobox')).toBeNull();
+    // The stage dropdown is gone: SearchableSelect exposes role=combobox. The only combobox a
+    // manager sees is the Critical card's Discount approver (PS-QUOTE-RULES), which sets who
+    // approves discounts, not the stage.
+    expect(
+      screen.queryAllByRole('combobox').filter((el) => el.id !== 'discount-approver'),
+    ).toHaveLength(0);
   });
 
   it('carries exactly one action, with everything else behind the overflow', () => {

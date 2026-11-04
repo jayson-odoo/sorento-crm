@@ -1007,6 +1007,26 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
     }
   });
 
+  it('saves no draft once the request has left design (crew pass on #2101: 409, "Save failed")', async () => {
+    const { onAutosave } = await mountQuiet({
+      status: 'ready_for_collection',
+      print_by: 'office',
+      assigned_to_id: 'user-1',
+    } as Partial<PriceTagRequestDetail>);
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(onAutosave).not.toHaveBeenCalled();
+      expect(screen.queryByText(/Save failed/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says nothing on a successful autosave - the indicator is the whole report (D22)', async () => {
     const { onAutosave } = await mountQuiet();
 

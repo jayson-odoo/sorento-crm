@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Any, Mapping, Optional
 
+from app.utils.log_redaction import redact_url
+
 logger = logging.getLogger(__name__)
 
 REDACTED = "***redacted***"
@@ -107,13 +109,15 @@ def sanitize_body(payload: Any) -> Optional[str]:
         parsed = json.loads(raw)
     except (ValueError, TypeError):
         # Not JSON (form-encoded, plain text, HTML error page). No structure to
-        # redact by key; store bounded as-is.
-        return truncate_payload(raw)
+        # redact by key; link tokens inside URLs are still stripped.
+        return truncate_payload(redact_url(raw))
 
+    # A key-named secret is masked structurally; a customer link URL in a value (`view_url`,
+    # `portal_url`, a sign `path`) is a bearer credential too (SIGN-TOKEN-LOG-REDACT).
     try:
-        return truncate_payload(json.dumps(redact_mapping(parsed), default=str))
+        return truncate_payload(redact_url(json.dumps(redact_mapping(parsed), default=str)))
     except (TypeError, ValueError):
-        return truncate_payload(raw)
+        return truncate_payload(redact_url(raw))
 
 
 def resolve_source(headers: Mapping[str, str]) -> str:

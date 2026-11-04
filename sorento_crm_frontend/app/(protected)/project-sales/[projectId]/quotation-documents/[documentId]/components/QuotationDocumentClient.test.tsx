@@ -53,6 +53,19 @@ vi.mock('@/lib/toast', () => ({
   },
 }));
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const updateQuotationDocument = vi.fn();
@@ -371,7 +384,7 @@ function seedOneScope(lines: QuotationLine[] = [line()]) {
 
 /** The gear. Radix opens it on pointerDown, not click. */
 async function openGear() {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Proposal actions' }), {
     button: 0,
     ctrlKey: false,
   });
@@ -387,7 +400,7 @@ async function openGear() {
  */
 async function pressEdit() {
   const menu = await openGear();
-  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit quotation' }));
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit proposal' }));
   // Selecting an item closes the menu, which - like every Radix modal layer -
   // keeps `aria-hidden` over the rest of the page for as long as it stays
   // mounted for its own close animation (S8-01's shared spring, unlike the old
@@ -404,7 +417,7 @@ async function pressEdit() {
  */
 async function gearOffersEdit() {
   const menu = await openGear();
-  const offered = within(menu).queryByRole('menuitem', { name: 'Edit quotation' }) !== null;
+  const offered = within(menu).queryByRole('menuitem', { name: 'Edit proposal' }) !== null;
   fireEvent.keyDown(menu, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
   return offered;
@@ -532,6 +545,19 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
   });
 
+  it('PS-PROPOSAL-QUOTATION: the Send button names the next revision the server will stamp (C, not R3)', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        current_issue_no: 2,
+        next_revision_label: 'C',
+      }),
+    );
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Send to Customer C' })).toBeEnabled();
+  });
+
   it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
@@ -631,7 +657,7 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     await pressEdit();
 
-    expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save proposal' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
@@ -880,7 +906,7 @@ describe('QuotationDocumentClient queued exports', () => {
     // no revision, so there is nothing for it to count and it is not rendered.
     getQuotationDocument.mockResolvedValue(quotationDocument());
     const { unmount } = renderScreen();
-    await screen.findByRole('button', { name: 'Quotation actions' });
+    await screen.findByRole('button', { name: 'Proposal actions' });
     expect(fetchDownloadsForEntity).not.toHaveBeenCalled();
     unmount();
 
@@ -1346,7 +1372,7 @@ function primaryButtons() {
 }
 
 async function screenReady() {
-  await screen.findByRole('button', { name: 'Quotation actions' });
+  await screen.findByRole('button', { name: 'Proposal actions' });
 }
 
 describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
@@ -1383,7 +1409,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       screen.queryAllByRole('button', { name: 'Sign' }).filter((b) => b.classList.contains('bg-primary')),
     ).toHaveLength(0);
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E1: the label comes off the graph edge, and falls back to Send for approval with no graph', async () => {
@@ -1460,6 +1486,19 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
 
     fireEvent.click(approve);
     await waitFor(() => expect(approveQuotationDocument).toHaveBeenCalledWith('p1', 'd1'));
+  });
+
+  it('PS-QUOTE-RULES: a grant holder the request is NOT routed to is not offered Approve or Reject', async () => {
+    granted = new Set(['projects.quotations.approve']);
+    graphData = approvalGraph();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { viewer_may_decide: false }),
+    );
+    renderScreen();
+
+    expect((await screen.findAllByText(/for approval/i)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
   });
 
   it('E2: Reject asks for a reason before it can be sent', async () => {
@@ -1561,11 +1600,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const menu = await openGear();
     for (const name of [
       'Sign again',
-      'Edit quotation',
+      'Edit proposal',
       'Download PDF',
       'Download Excel',
       'Copy counter-sign link',
-      'Delete quotation',
+      'Delete proposal',
     ]) {
       expect(within(menu).getByRole('menuitem', { name: new RegExp(name) })).toBeInTheDocument();
     }
@@ -1576,7 +1615,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     renderScreen();
 
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E8: the approval banner states the situation and holds no buttons', async () => {
@@ -1762,7 +1801,7 @@ describe('QuotationDocumentClient: Delete is the deferred countdown (F7)', () =>
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
@@ -1833,7 +1872,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     expect(await screen.findByTestId('deferred-countdown')).toBeInTheDocument();
   });
@@ -2005,25 +2044,32 @@ describe('QuotationDocumentClient cover page fields', () => {
     await expectTermsClass(inner);
   });
 
-  it('polish 2: the Cover letter read panel keeps prose and not the terms class', async () => {
+  it('the Cover letter read tab shows the preview card with the intro and no separate letter panel', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'QUOTATION',
+            cover_show_letterhead: true,
+            cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER ONE</p><p>LETTER TWO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>LETTER ONE</p><p>LETTER TWO</p>' }),
     );
     renderScreen(<QuotationCoverLetterTab />);
 
-    const one = await screen.findByText('LETTER ONE');
-    const loaders = import.meta.glob('/lib/terms-html.ts') as Record<
-      string,
-      () => Promise<{ TERMS_HTML_CLASS: string }>
-    >;
-    const { TERMS_HTML_CLASS } = await loaders['/lib/terms-html.ts']();
-    const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
-    const chain: HTMLElement[] = [];
-    for (let el = one.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
-      chain.push(el);
-    }
-    expect(chain.some((el) => el.classList.contains('prose'))).toBe(true);
-    expect(chain.some((el) => tokens.every((t) => el.classList.contains(t)))).toBe(false);
+    expect(await screen.findByText('LETTER ONE')).toBeInTheDocument();
+    expect(screen.getByText('LETTER TWO')).toBeInTheDocument();
+    expect(screen.getAllByText('LETTER ONE')).toHaveLength(1);
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
   });
 
   it('polish 2: the Email line comes before the Attn line in the To block', async () => {
@@ -2064,3 +2110,39 @@ async function expectTermsClass(inner: HTMLElement) {
   ).toBe(true);
   expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
 }
+
+
+/** QUOTE-COVER-DESIGN (UAC B2, B3): the read Cover letter tab is the preview card, no editors. */
+describe('Cover letter tab preview (read)', () => {
+  it('renders the design title and rows from the preview endpoint and no editors', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'OFFER SHEET',
+            cover_show_letterhead: false,
+            cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER AS INTRO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>LETTER AS INTRO</p>' }),
+    );
+    renderScreen(<QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Offer Number')).toBeInTheDocument();
+    expect(screen.getByText('LETTER AS INTRO')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+    expect(screen.queryByLabelText('Intro text')).toBeNull();
+    expect(screen.queryByLabelText('Closing text')).toBeNull();
+    const body = JSON.parse(String((coverPreview.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({ document_id: 'd1' });
+  });
+});

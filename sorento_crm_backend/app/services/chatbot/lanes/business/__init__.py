@@ -601,6 +601,10 @@ def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[
     return fragment
 
 
+#: SUPPLIER-ASK fix round 9: said when a supplier-scoped turn carried no line of its own.
+SUPPLIER_SCOPE_FALLBACK_LINE = "Which supplier do you mean? Give me its name or code."
+
+
 def _fixed_reply(
     text: str,
     *,
@@ -1552,6 +1556,9 @@ def run_fetch(
     scoped_to_links = bool(customer_scope.get("enforced") and customer_scope.get("ids"))
     if scoped_to_links:
         semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
+    if isinstance(ctx.get("supplier_scope"), dict):
+        # SUPPLIER-ASK fix round 9: read by `entity_ids_transformer`'s guard (`fetch.SupplierScopeViolation`).
+        semantic_input["supplier_scope"] = dict(ctx["supplier_scope"])
     # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026, "Mr Loo"): a contact WITH linked
     # accounts asking for sales is asking about those accounts, staff tier or not - the
     # company analysis route refuses any linked contact outright (`analysis.py:253-258`,
@@ -2260,10 +2267,14 @@ def run_fetch(
             # Eval rpt-030/-038, as before #1922 (D13): undelivered orders asked by a contact that may see pending
             # delivery only is answered with pending delivery, under the one SO sentence; never refused outright.
             parse_output = {**parse_output, "basis": "pending_delivery"}
+        _own_companies = sales_company_ask._companies(db, contact_id, space_id)
         settled, line = report_ask.settle(
             db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
-            companies=sales_company_ask._companies(db, contact_id, space_id), kinds=_kinds,
+            companies=_own_companies, kinds=_kinds,
         )
+        # SALES-ACCOUNT-TYPE semantic carry: with the report ask marker in the prompt (the engine keeps the key only
+        # then), the ask's ids are kept with their names, on the open question and on the frame (`Held report:` line).
+        _named = report_ask.OBJECT_KEY in parse_output
         if trace is not None:
             trace.add(
                 "required_ask",
@@ -2277,8 +2288,11 @@ def run_fetch(
         if settled is None:
             return _fixed_reply(_with_so_line(line or ""), refused=line == report_ask.DEALER_REFUSAL)
         if not settled.done:
-            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=settled.slot)
-        semantic_input["report_ask_args"] = report_ask.route_args(settled)
+            _asked = report_ask.with_names(db, settled.slot, _own_companies) if _named else settled.slot
+            return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=_asked)
+        semantic_input["report_ask_args"] = report_ask.with_customer_groups(
+            db, report_ask.route_args(settled), customer_scope.get("ids") if customer_scope.get("enforced") else None
+        )
         listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
             semantic_input["report_ask_args"], settled
         )
@@ -2307,6 +2321,10 @@ def run_fetch(
         if so_redirect:
             semantic_input["report_ask_note"] = "\n\n".join(
                 n for n in (fetch_mod.SO_NOT_ENABLED_MESSAGE, semantic_input.get("report_ask_note")) if n
+            )
+        if _named:
+            semantic_input["report_ask_names"] = report_ask.arg_names(
+                db, semantic_input["report_ask_args"], _own_companies, settled.extras.get("agent_words")
             )
         if settled.extras.get("detail"):
             semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
@@ -2419,6 +2437,11 @@ def run_fetch(
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
         if dry_run and tool_name == _LOW_STOCK_TOOL:
             args["dry_run"] = True
+    except fetch_mod.SupplierScopeViolation as violation:
+        # SUPPLIER-ASK fix round 9: no tool is called; the turn says the scope's own line.
+        if trace is not None:
+            trace.add("supplier_scope", {"refused": "unfiltered_list", "tool": tool_name})
+        return _fixed_reply(violation.line or SUPPLIER_SCOPE_FALLBACK_LINE, refused=True)
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:

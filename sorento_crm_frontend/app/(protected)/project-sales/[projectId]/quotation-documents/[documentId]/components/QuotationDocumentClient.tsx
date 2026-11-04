@@ -21,7 +21,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
-  useQuotationAmendmentRequest,
+  useQuotationFeedback,
   useQuotationApprovalGraph,
   useQuotationDocument,
   useQuotationDocumentMutations,
@@ -49,6 +49,7 @@ import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -148,9 +149,9 @@ export function QuotationDocumentClient({
   }, [quotations.data, scopeVersions.rows, scopes]);
 
   const canEditProject = project.data?.can_edit ?? false;
-  // The customer's suggested changes, shared with the Lines tab (same query): while there are
-  // some, the free-text banner below stands down. Staff with the edit right only, as the route.
-  const amendment = useQuotationAmendmentRequest(projectId, documentId, canEditProject);
+  // The customer's feedback notes (PS-QUOTE-MATRIX): the open count is the tab's badge. The same
+  // query as the Customer feedback tab and the Lines grid's marks.
+  const feedback = useQuotationFeedback(projectId, documentId);
   const gear = useQuotationDocumentActions({
     projectId,
     document: document.data,
@@ -159,6 +160,8 @@ export function QuotationDocumentClient({
     onEdit: startEditing,
     onDeleted: () => router.push(`/project-sales/${projectId}?tab=quotations`),
     surface: 'inline',
+    projectOutcome: project.data?.outcome ?? null,
+    projectHasQuotation: (siblingDocuments.data ?? []).some((row) => row.kind === 'quotation'),
   });
 
   if (document.isLoading || project.isLoading) {
@@ -206,7 +209,14 @@ export function QuotationDocumentClient({
    * server refuses it.
    */
   const isSigned = Boolean(sorentoSignature);
-  const action = nextAction(record, { canEdit, canApprove, isSigned });
+  // The grant is the RIGHT to approve; the server says whether THIS viewer may decide THIS
+  // request (routed approver, someone above them, or an admin, never the sender). An older
+  // payload without the field falls back to the grant.
+  const mayDecide =
+    record.viewer_may_decide === undefined || record.viewer_may_decide === null
+      ? canApprove
+      : canApprove && record.viewer_may_decide;
+  const action = nextAction(record, { canEdit, canApprove: mayDecide, isSigned });
   const locked = isLockedForApproval(record);
   /**
    * The "Send for approval" label comes off the graph's own draft -> pending edge, so a renamed
@@ -372,7 +382,10 @@ export function QuotationDocumentClient({
             }
             pendingAction={gear.pending}
             gear={
-              <DetailActionsMenu actions={gear.actions} ariaLabel="Quotation actions" />
+              <DetailActionsMenu
+                actions={gear.actions}
+                ariaLabel={`${documentNoun(document.data)} actions`}
+              />
             }
             primary={
               <>
@@ -429,7 +442,7 @@ export function QuotationDocumentClient({
                       {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
                           stays in the label, as it did, because R2 is a different paper from R1. The
                           API and the status names keep "issue". */}
-                      {`Send to Customer R${nextIssueNo}`}
+                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
@@ -500,7 +513,6 @@ export function QuotationDocumentClient({
         // asked about. Withheld from a reader.
         onRevise={canEdit ? startEditing : undefined}
         isRevising={quotationMutations.revise.isPending}
-        amendment={amendment.data ?? null}
       />
 
       {/* The price-floor gate. Renders nothing at all unless a line on this quotation is
@@ -509,7 +521,11 @@ export function QuotationDocumentClient({
 
       {/* The letterhead card lives in the Header tab now, first of the tabs (#1341): "i need this
           to be under 'Header' tab to align with our system design". */}
-      <QuotationDocumentTabs projectId={projectId} documentId={documentId} />
+      <QuotationDocumentTabs
+        projectId={projectId}
+        documentId={documentId}
+        openFeedback={feedback.data?.open_count ?? 0}
+      />
 
       <QuotationDocumentProvider
         value={{

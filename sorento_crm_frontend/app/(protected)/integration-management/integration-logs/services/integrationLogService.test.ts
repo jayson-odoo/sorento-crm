@@ -76,3 +76,15 @@ describe('getIntegrationLogs - System Health drill-down params', () => {
     );
   });
 });
+
+describe('getIntegrationLogs - cancellation (INTLOG-SPEED)', () => {
+  it('hands the caller\'s AbortSignal to apiFetch so a superseded load is cancelled', async () => {
+    mockedFetch.mockResolvedValue(okResponse(emptyEnvelope));
+    const controller = new AbortController();
+
+    await getIntegrationLogs({ pageIndex: 0, pageSize: 50 }, controller.signal);
+
+    const init = mockedFetch.mock.calls[0][1] as RequestInit | undefined;
+    expect(init?.signal).toBe(controller.signal);
+  });
+});

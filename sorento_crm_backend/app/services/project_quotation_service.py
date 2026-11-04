@@ -46,6 +46,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.services import project_pricing_service as pricing
+from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
 
 OUTCOME_OPEN_Q = QUOTATION_OUTCOME_OPEN
@@ -73,6 +74,7 @@ LINE_FIELDS = (
     "drawing_attachment_id",
     "unit_price",
     "quantity",
+    "qty_cells",
     "uom",
     "unit_type",
     "sort_order",
@@ -395,42 +397,13 @@ def revise(
         issued_by=actor_user_id,
         total_amount=live.total_amount,
         notes=live.notes,
+        matrix_columns=live.matrix_columns,
     )
     db.add(nxt)
     db.flush()
 
     for line in list_lines(db, live.id):
-        copy = ProjectQuotationLine(
-            company_id=quotation.company_id,
-            version_id=nxt.id,
-            product_id=line.product_id,
-            product_set_id=line.product_set_id,
-            set_parts_snapshot=line.set_parts_snapshot,
-            product_code_snapshot=line.product_code_snapshot,
-            description_snapshot=line.description_snapshot,
-            list_price_snapshot=line.list_price_snapshot,
-            image_attachment_id=line.image_attachment_id,
-            drawing_attachment_id=line.drawing_attachment_id,
-            # The printed columns: a revision is the same quotation with some prices moved,
-            # and dropping these silently re-typed the bill-of-quantities layout to nothing.
-            item_label=line.item_label,
-            brand_snapshot=line.brand_snapshot,
-            technical_spec=line.technical_spec,
-            complete_set=line.complete_set,
-            band_label=line.band_label,
-            is_rate_only=line.is_rate_only,
-            unit_price=line.unit_price,
-            quantity=line.quantity,
-            uom=line.uom,
-            unit_type=line.unit_type,
-            line_total=line.line_total,
-            is_non_standard=line.is_non_standard,
-            floor_value_applied=line.floor_value_applied,
-            floor_level_applied=line.floor_level_applied,
-            is_below_floor=line.is_below_floor,
-            sort_order=line.sort_order,
-            notes=line.notes,
-        )
+        copy = copy_line(line, version_id=nxt.id, company_id=quotation.company_id)
         db.add(copy)
         if line_map is not None:
             line_map[str(line.id)] = copy
@@ -453,6 +426,53 @@ def revise(
         )
         db.flush()
     return nxt
+
+
+def copy_line(
+    line: ProjectQuotationLine, *, version_id: str, company_id: Optional[str]
+) -> ProjectQuotationLine:
+    """A new line on ``version_id`` carrying everything ``line`` priced and printed.
+
+    The one copy a revision and a proposal-to-quotation conversion both use, so a column added to
+    the line is carried by both or by neither.
+    """
+    return ProjectQuotationLine(
+        company_id=company_id,
+        version_id=version_id,
+        product_id=line.product_id,
+        product_set_id=line.product_set_id,
+        set_parts_snapshot=line.set_parts_snapshot,
+        product_code_snapshot=line.product_code_snapshot,
+        description_snapshot=line.description_snapshot,
+        list_price_snapshot=line.list_price_snapshot,
+        image_attachment_id=line.image_attachment_id,
+        drawing_attachment_id=line.drawing_attachment_id,
+        # The printed columns: a revision is the same quotation with some prices moved,
+        # and dropping these silently re-typed the bill-of-quantities layout to nothing.
+        item_label=line.item_label,
+        brand_snapshot=line.brand_snapshot,
+        technical_spec=line.technical_spec,
+        complete_set=line.complete_set,
+        band_label=line.band_label,
+        is_rate_only=line.is_rate_only,
+        unit_price=line.unit_price,
+        quantity=line.quantity,
+        qty_cells=line.qty_cells,
+        uom=line.uom,
+        unit_type=line.unit_type,
+        line_total=line.line_total,
+        is_non_standard=line.is_non_standard,
+        floor_value_applied=line.floor_value_applied,
+        floor_level_applied=line.floor_level_applied,
+        is_below_floor=line.is_below_floor,
+        is_discounted=line.is_discounted,
+        sort_order=line.sort_order,
+        notes=line.notes,
+    )
+
+
+def recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
+    _recalculate_total(db, version)
 
 
 def delete_quotation(db: Session, quotation: ProjectQuotation) -> None:
@@ -663,6 +683,36 @@ def line_floor(
     )
 
 
+def line_default_price(
+    db: Session,
+    *,
+    line: ProjectQuotationLine,
+    quotation: ProjectQuotation,
+    series_pricing: Optional[Dict[str, tuple]] = None,
+) -> Optional[Decimal]:
+    """The price a line opens at, which any lower price discounts (PS-QUOTE-RULES R1).
+
+    The series' selling price where the scope's series names one for this product or set, else
+    the list price snapshot. The same rule the line editor fills a new line by
+    (``QuotationVersionEditor.fillFromProduct`` / ``fillFromSet``). None when neither is known:
+    a price with nothing to compare against is not a discount.
+    """
+    stated = None
+    if quotation.series_id:
+        if line.product_set_id:
+            row = pricing.series_set_pricing_map(db, quotation.series_id).get(line.product_set_id)
+        else:
+            rows = (
+                series_pricing
+                if series_pricing is not None
+                else pricing.series_pricing_map(db, quotation.series_id)
+            )
+            row = rows.get(line.product_id) if line.product_id else None
+        stated = row[0] if row else None
+    value = stated if stated is not None else line.list_price_snapshot
+    return Decimal(value) if value is not None else None
+
+
 def _apply_guardrails(
     db: Session,
     *,
@@ -701,6 +751,8 @@ def _apply_guardrails(
             product=product,
             membership=membership,
         )
+    default = line_default_price(db, line=line, quotation=quotation, series_pricing=series_pricing)
+    line.is_discounted = default is not None and Decimal(line.unit_price or 0) < default
     floor = line_floor(
         db,
         line=line,
@@ -959,6 +1011,19 @@ def _write_line(
         )
         db.add(line)
 
+    # With columns the cells own the quantity (a payload quantity is ignored); without them a
+    # non-empty cell map is refused. Checked before the line is mutated, so a bad cell stores nothing.
+    columns = version.matrix_columns or []
+    if columns:
+        cells = (
+            matrix.normalise_cells(columns, payload["qty_cells"])
+            if "qty_cells" in payload
+            else (line.qty_cells if line is not None else None)
+        )
+        payload = {**payload, "qty_cells": cells, "quantity": matrix.cells_total(cells)}
+    elif "qty_cells" in payload:
+        payload = {**payload, "qty_cells": matrix.normalise_cells(columns, payload["qty_cells"])}
+
     for field in LINE_FIELDS:
         if field in payload:
             value = payload[field]
@@ -1125,6 +1190,50 @@ def replace_lines(
     return written
 
 
+def set_columns(
+    db: Session, *, version: ProjectQuotationVersion, columns: Any
+) -> List[ProjectQuotationLine]:
+    """Replace the version's column layout and carry every line's cells with it, atomically.
+
+    First columns take the quantity in, the last removal leaves the sum behind, anything else
+    drops the cells of a removed leaf. The one exception: a header that was itself a leaf (no
+    cols) and gains cols keeps its cells, moved into its first col, so no total moves (R12).
+    Totals are recomputed here so the caller reads one state.
+    """
+    assert_editable(db, version)
+    new = matrix.validate_columns(columns)
+    old = version.matrix_columns or []
+    keep = set(matrix.leaf_keys(new))
+    first = matrix.leaf_keys(new)[:1]
+    was_leaf = {h["key"] for h in old if not (h.get("cols") or [])}
+    grew = {
+        h["key"]: h["cols"][0]["key"] for h in new if h["key"] in was_leaf and (h.get("cols") or [])
+    }
+    lines = list_lines(db, version.id)
+    for line in lines:
+        if not new:
+            line.qty_cells = None
+        elif not old:
+            qty = Decimal(line.quantity or 0).quantize(_CENTS)
+            line.qty_cells = {first[0]: f"{qty:.2f}"} if qty > 0 else None
+        else:
+            cells = dict(line.qty_cells or {})
+            for header_key, first_col in grew.items():
+                moved = cells.pop(header_key, None)
+                if moved is not None and first_col not in cells:
+                    cells[first_col] = moved
+            kept = {k: v for k, v in cells.items() if k in keep}
+            line.qty_cells = kept or None
+            line.quantity = matrix.cells_total(kept)
+        line.line_total = (
+            Decimal(line.unit_price or 0) * Decimal(line.quantity or 0)
+        ).quantize(_CENTS)
+    version.matrix_columns = new or None
+    db.flush()
+    _recalculate_total(db, version)
+    return lines
+
+
 def delete_line(
     db: Session, *, version: ProjectQuotationVersion, line: ProjectQuotationLine
 ) -> None:
@@ -1215,6 +1324,7 @@ def recompute_version(
             bool(line.is_below_floor),
             line.floor_value_applied,
             line.floor_level_applied,
+            bool(line.is_discounted),
         )
         event = _apply_guardrails(
             db,
@@ -1232,6 +1342,7 @@ def recompute_version(
             bool(line.is_below_floor),
             line.floor_value_applied,
             line.floor_level_applied,
+            bool(line.is_discounted),
         )
         if before == after:
             continue
@@ -1444,14 +1555,30 @@ def serialize_quotations(
 
     labels = {row["value"]: row["label"] for row in loss_reasons(db)}
 
+    # PS-PROPOSAL-QUOTATION: which document each scope sits on, so a reader (the bot included)
+    # can tell a proposal's figure from the quotation's.
+    from app.models.projects import ProjectQuotationDocument
+
+    document_ids = {q.document_id for q in quotations if q.document_id}
+    documents = {
+        row.id: row
+        for row in db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id.in_(document_ids))
+        .all()
+    } if document_ids else {}
+
     out: List[Dict[str, Any]] = []
     for quotation in quotations:
         version = highest.get(quotation.id)
         stats = alerts.get(version.id if version else "", {})
+        document = documents.get(quotation.document_id or "")
         out.append(
             {
                 "id": quotation.id,
                 "project_id": quotation.project_id,
+                "document_id": quotation.document_id,
+                "document_no": document.document_no if document is not None else None,
+                "document_kind": (document.kind or "proposal") if document is not None else None,
                 "scope_label": quotation.scope_label,
                 "series_id": quotation.series_id,
                 "series_name": series_names.get(quotation.series_id or ""),
@@ -1538,6 +1665,7 @@ def serialize_versions(
             "issued_on": version.issued_on,
             "total_amount": version.total_amount,
             "notes": version.notes,
+            "matrix_columns": list(version.matrix_columns or []),
             "created_at": version.created_at,
         }
         for version in versions
@@ -1591,8 +1719,10 @@ def serialize_lines(
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,
             "is_below_floor": line.is_below_floor,
+            "is_discounted": line.is_discounted,
             "sort_order": line.sort_order,
             "notes": line.notes,
+            "qty_cells": dict(line.qty_cells or {}),
         }
         for line in lines
     ]

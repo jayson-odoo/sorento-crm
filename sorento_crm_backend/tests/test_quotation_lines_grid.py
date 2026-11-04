@@ -29,6 +29,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentType
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 from .test_project_quotation_bulk_lines import (  # noqa: F401  (api is a pytest fixture)
     _bulk,
     _quotation,
@@ -250,7 +251,7 @@ def _fixture_for_write(api):
             description="Wall-hung basin",
             category_id=category.id,
             base_uom_id=uom.id,
-            list_price=Decimal("100.00"),
+            list_price=Decimal(UNDISCOUNTED_LIST_PRICE),
         )
         db.add(row)
         db.flush()

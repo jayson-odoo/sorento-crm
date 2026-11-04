@@ -145,6 +145,7 @@ from app.models.dealer_kit import (
     Edition,
     ExportRequest,
     TagTemplate,
+    ProductTagTemplate,
 )
 from app.models.price_tag import (
     ContactPortalFormOverride,
@@ -417,6 +418,7 @@ __all__ = [
     "AutocountCancelLine",
     "AutocountCompareMapping",
     # Dealer Kit (schema: dealer_kit)
+    "ProductTagTemplate",
     "Page",
     "PageVersion",
     "PageLabel",

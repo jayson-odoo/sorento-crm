@@ -19,7 +19,9 @@
 #   - memory: refuse to start the new colour when MemAvailable is below
 #     DEPLOY_MIN_AVAILABLE_MB (default 4500), so the overlap cannot OOM the box (10 Sep).
 #   - snapshot: pg_dump of the database before the new colour runs `alembic upgrade`;
-#     no snapshot, no migration. Kept SNAPSHOT_KEEP_MINUTES (default 48 h).
+#     no snapshot, no migration. Kept SNAPSHOT_KEEP_MINUTES (default 48 h). Skipped only
+#     when the database is provably at the new image's alembic head already (nothing to
+#     migrate); any doubt takes the snapshot (DEPLOY-SKIP-SNAPSHOT, 3 Nov).
 #   - postgres: fail the deploy when the db container restarted, or Postgres crash-recovered
 #     (a killed backend makes the postmaster reinitialize WITHOUT a container restart), at
 #     any point during the deploy.
@@ -68,9 +70,11 @@ case "${COMPOSE_FILE:-}" in *compose.ha.yml*) HA_MODE=1 ;; esac
 # shellcheck disable=SC2016
 if [ "$HA_MODE" = 1 ]; then
   ALEMBIC_CMD='psql -U postgres -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  VERSIONS_CMD='psql -U postgres -d "$DUMP_DB" -Atc "select version_num from public.alembic_version"'
   DUMP_CMD='pg_dump -U postgres -d "$DUMP_DB" -Fc'
 else
   ALEMBIC_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  VERSIONS_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select version_num from public.alembic_version"'
   DUMP_CMD='pg_dump -U "$POSTGRES_USER" -d "$DUMP_DB" -Fc'
 fi
 
@@ -172,6 +176,57 @@ alembic_rows() {
     docker compose exec -T -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
       sh -c "$ALEMBIC_CMD" 2>/dev/null || true
   fi
+}
+
+# Revisions stamped in public.alembic_version, sorted, one per line. Fails (returns 1) when
+# the query fails or prints anything that is not a revision id.
+db_revisions() {
+  local out as_user=()
+  if [ "$HA_MODE" = 1 ]; then as_user=(-u postgres); fi
+  out=$(docker compose exec -T ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+          sh -c "$VERSIONS_CMD" 2>/dev/null) || return 1
+  if grep -Eqv '^[0-9A-Za-z_]+$' <<< "$out"; then return 1; fi
+  sort -u <<< "$out"
+}
+
+# Heads the NEW backend image ships, sorted, one per line. `alembic heads` reads the image's
+# migration scripts only: it loads no env.py and opens no database connection. --entrypoint
+# skips start.sh (which would wait for the db and could run `alembic upgrade head`).
+# Assumes every migration lives under alembic.ini's script_location: env.py's extra
+# app/modules/*/migrations version_locations are not seen here (none exist on 3 Nov).
+# A head line is `<rev> (head)` or, for a branch-labelled head, `<rev> (<label>) (head)`.
+# A failure's last output line goes to stderr (this function's stdout is captured).
+image_heads() {
+  local out heads
+  if ! out=$(docker compose --profile "$NEW" run --rm --no-deps -T --entrypoint alembic \
+               "backend_${NEW}" heads 2>&1); then
+    echo "    migration check: alembic heads failed: $(tail -n 1 <<< "$out" | cut -c1-200)" >&2
+    return 1
+  fi
+  heads=$(awk '$NF == "(head)" { print $1 }' <<< "$out")
+  if [ -z "$heads" ] || grep -Eqv '^[0-9A-Za-z_]+$' <<< "$heads"; then return 1; fi
+  sort -u <<< "$heads"
+}
+
+# Returns 0 only when the database is provably at the new image's head(s): nothing for
+# `alembic upgrade head` to run, so there is nothing a snapshot would protect. Any failure
+# or doubt returns 1 and the caller takes the snapshot (fail safe).
+no_pending_migrations() {
+  local heads current
+  if ! heads=$(image_heads); then
+    echo "    migration check: could not read alembic heads from backend_${NEW}; taking the snapshot"
+    return 1
+  fi
+  if ! current=$(db_revisions) || [ -z "$current" ]; then
+    echo "    migration check: could not read public.alembic_version in '${DB_NAME}'; taking the snapshot"
+    return 1
+  fi
+  if [ "$heads" != "$current" ]; then
+    echo "    migration check: database at ${current//$'\n'/ }, image head ${heads//$'\n'/ }: migrations pending"
+    return 1
+  fi
+  echo "    migration check: database already at image head ${heads//$'\n'/ }"
+  return 0
 }
 
 # HA checks, one per output line "item|detail" for each failure; returns 1 when any fail.
@@ -457,9 +512,16 @@ docker compose pull worker worker_fast
 echo "==> Memory guard"
 check_memory
 
-# 1c. Snapshot before anything can migrate (start.sh runs `alembic upgrade head`).
+# 1c. Snapshot before anything can migrate (start.sh runs `alembic upgrade head`). A release
+#     with no new migration has nothing to protect, and the dump is the slowest step (10+
+#     minutes on 3 Nov), so it is skipped only when the database is provably at the new
+#     image's head; any doubt takes it exactly as before.
 echo "==> Pre-migration snapshot"
-take_snapshot
+if no_pending_migrations; then
+  echo "    no pending migrations: snapshot skipped"
+else
+  take_snapshot
+fi
 
 # 1d. Memory again, right before the overlap starts: the dump took time.
 check_memory

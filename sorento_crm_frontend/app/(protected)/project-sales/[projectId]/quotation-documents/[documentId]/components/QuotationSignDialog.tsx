@@ -25,6 +25,7 @@ export function QuotationSignDialog({
   signatoryName,
   isSaving,
   onSign,
+  noun = 'quotation',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -32,6 +33,8 @@ export function QuotationSignDialog({
   signatoryName: string | null;
   isSaving: boolean;
   onSign: (body: QuotationSignatureBody) => void;
+  /** "proposal" or "quotation" (PS-PROPOSAL-QUOTATION). */
+  noun?: string;
 }) {
   const handleChange = (value: SignatureValue | null) => {
     // Null is Clear, which is a local act on the pad and nothing to send.
@@ -53,7 +56,7 @@ export function QuotationSignDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Sign this quotation</DialogTitle>
+          <DialogTitle>{`Sign this ${noun}`}</DialogTitle>
           <DialogDescription>
             Draw, type or initial. Applying records the time, your address and, when your browser
             offers it, your location.

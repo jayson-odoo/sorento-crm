@@ -39,7 +39,6 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
-import io
 import logging
 import re
 import uuid
@@ -53,7 +52,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session
 
-from app.models.base import company_scope
+from app.models.base import company_scope, get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.services import so_remark_rules
@@ -1093,12 +1092,8 @@ def _format_handover_was(was: Optional[Dict[str, Any]]) -> Optional[Dict[str, An
     return formatted
 
 
-# The headings on `(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`, committed to the golden set
-# as `e2e/fixtures/project-cs/expected-order-inquiry-2026-03-04.xlsx`. Read off the file
-# rather than retyped: this is the spreadsheet purchasing already works from, and a
-# renamed column is a column their own filters stop finding.
-EXPORT_TITLE = "ORDER INQUIRY"
-EXPORT_SHEET = "NEW"
+# OI-EXPORT-SHARED (owner, 3 Nov 2026): the per-project download prints the shared OI
+# exporter's header row (`order_inquiry_export.HEADINGS`) - LOCATION, no title row above it.
 EXPORT_HEADINGS = (
     "SO DATE",
     "S/O NO",
@@ -1106,7 +1101,7 @@ EXPORT_HEADINGS = (
     "QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
-    "STOCK LOCATION",
+    "LOCATION",
     "REMARK",
 )
 
@@ -1554,6 +1549,19 @@ class ProjectOrderInquiryService:
         # tier asks it for every candidate of every row, and it does not change inside one
         # request.
         self._pool_codes_cache: Optional[set] = None
+        # CONFIRM-DIALOG-SPEED (crew profile, prod clone 3 Nov 2026): a placement pass walks
+        # every open row of its products (489 rows over 8 products for SO373923) and each
+        # row read the SAME product's open purchase-order lines and SPO allocations again:
+        # ~3,000 statements, 76% of a warm confirm-all dry run. Those two reads depend on
+        # the product alone and nothing in the pass writes a purchase-order line or an SPO
+        # allocation, so `auto_place_for_products` holds them for the length of ONE pass
+        # (`_document_rows`); None outside a pass, so the Link dialog always reads fresh.
+        self._document_rows_memo: Optional[Dict[Tuple[Any, ...], List[Any]]] = None
+        # CONFIRM-SPEED-PR2: the same pass re-read a project line's product / core line
+        # (`_resolve_product_id` x2, `claim_identity` x1 per row) and an inquiry's SO number
+        # (`claim_identity` x1 per row), 3,684 statements over 489 rows on SO373923. Neither
+        # changes inside a pass; held by `auto_place_for_products` for ONE pass, None outside.
+        self._line_identity_memo: Optional[Dict[Tuple[Any, ...], Any]] = None
         # What every link already claims, per target. `auto_place_for_products` asks for
         # it once per ROW through `_candidates_for_row`, which on a full pass is two
         # aggregate queries per row over the whole link table. Cached here and dropped by
@@ -4912,6 +4920,7 @@ class ProjectOrderInquiryService:
                         if key in _PURCHASING_KEYS
                     ],
                 )
+                self._keep_rows_was(queue, str(line.id), row_lines)
                 continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
@@ -4992,6 +5001,37 @@ class ProjectOrderInquiryService:
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
         )
+
+    @staticmethod
+    def _keep_rows_was(
+        queue: List[Dict[str, Any]], so_line_id: str, row_lines: Sequence[Mapping[str, Any]]
+    ) -> None:
+        """CONFIRM-REMARK-FIX F2-dates (crew, SO418869 CB771): the planner's words replace
+        the REMARK only. What the line's rows told purchasing moved (a pending AutoCount date
+        or quantity, Was -> Now) stays on the line, as the popup and the generated words show
+        it: a revision that already froze the new date has no Was of its own to tell. The
+        saved line's own Was wins where it has one."""
+        told: Dict[str, Any] = {}
+        for item in row_lines:
+            for key, value in (((item.get("line") or {}).get("was")) or {}).items():
+                if value and key not in told:
+                    told[key] = value
+        if not told:
+            return
+        target = next(
+            (item for item in reversed(queue) if item.get("row_id") == f"saved:{so_line_id}"),
+            None,
+        )
+        if target is None:
+            return
+        entry = target["line"]
+        entry["was"] = {**told, **(entry.get("was") or {})}
+        keys = list(target.get("verb_keys") or [])
+        for item in row_lines:
+            for key in item.get("verb_keys") or ():
+                if key in (IV_DELAY, IV_ADVANCE) and key not in keys:
+                    keys.append(key)
+        target["verb_keys"] = keys
 
     def stamp_so_remark(self, pso_id: str, so_remark: Optional[str]) -> None:
         """FULFIL-SO-REMARK (AC-10, AC-11): the planner's own SO remark for this Confirm
@@ -11048,6 +11088,24 @@ class ProjectOrderInquiryService:
         _add(row.spo_ref)
         return {document: rank for rank, document in enumerate(ordered)}
 
+    def _document_rows(self, key: Tuple[Any, ...], read: Callable[[], List[Any]]) -> List[Any]:
+        """`read()`, held for the rest of the placement pass running now (see
+        `_document_rows_memo`); read fresh every time outside a pass."""
+        memo = self._document_rows_memo
+        if memo is None:
+            return read()
+        # The session's company scope filters these reads, and the book step runs a nested
+        # pass per company under its own scope (`follow_book_for_rows`): a read made under
+        # one company's scope must never answer for another's (the S2 rule `_linked_by_target`
+        # keeps for the same reason).
+        scope = get_company_scope(self.db)
+        if isinstance(scope, (set, frozenset)):
+            scope = frozenset(str(company) for company in scope)
+        key = (*key, scope)
+        if key not in memo:
+            memo[key] = read()
+        return memo[key]
+
     def _candidates_for_row(
         self, row: OrderInquiryRow, *, manual: bool = False, credit_own_links: bool = False
     ) -> List[Dict[str, Any]]:
@@ -11164,8 +11222,9 @@ class ProjectOrderInquiryService:
 
         candidates: List[Dict[str, Any]] = []
 
-        po_rows = (
-            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
+        po_rows = self._document_rows(
+            ("po", product_id, manual),
+            lambda: self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
             .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
@@ -11179,7 +11238,7 @@ class ProjectOrderInquiryService:
                     else (PurchaseOrder.status.in_(("active", "partial")),)
                 ),
             )
-            .all()
+            .all(),
         )
         # LADDER V4's group-deficit rule applies to what is OFFERED - the dialog's list and
         # the cascade's walk. A PERSON naming a line by hand is let through, exactly as
@@ -11249,8 +11308,9 @@ class ProjectOrderInquiryService:
             )
 
         if spo_allowed:
-            spo_rows = (
-                self.db.query(SPOAllocation, Supplier, Warehouse)
+            spo_rows = self._document_rows(
+                ("spo", product_id),
+                lambda: self.db.query(SPOAllocation, Supplier, Warehouse)
                 .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
                 # OI-SUPPLIER-FROM-PO: the source PO's supplier, not the SPO's own.
                 .outerjoin(Supplier, Supplier.id == spo_supply.supplier_id_for())
@@ -11260,7 +11320,7 @@ class ProjectOrderInquiryService:
                     SPOAllocation.spo_number.isnot(None),
                     *spo_supply.open_incoming_clauses(),
                 )
-                .all()
+                .all(),
             )
             self._prime_claims([str(a.id) for a, _sup, _wh in spo_rows])
             for allocation, supplier, warehouse in spo_rows:
@@ -13318,7 +13378,22 @@ class ProjectOrderInquiryService:
             and row.delivery_date > link_up_to
         )
 
-    def auto_place_for_products(
+    def auto_place_for_products(self, product_ids: Optional[Sequence[str]], **kwargs: Any) -> Dict[str, Any]:
+        """`_auto_place_for_products` with the per-pass document memo held (CONFIRM-DIALOG-
+        SPEED, `_document_rows_memo`). A nested pass (a displaced holder re-offered) shares
+        the outer pass's memo; only the outermost drops it."""
+        owner = self._document_rows_memo is None
+        if owner:
+            self._document_rows_memo = {}
+            self._line_identity_memo = {}
+        try:
+            return self._auto_place_for_products(product_ids, **kwargs)
+        finally:
+            if owner:
+                self._document_rows_memo = None
+                self._line_identity_memo = None
+
+    def _auto_place_for_products(
         self,
         product_ids: Optional[Sequence[str]],
         *,
@@ -14438,15 +14513,39 @@ class ProjectOrderInquiryService:
     #: The name this check carried before section 3.I. Same call.
     _assert_placeable = _assert_linkable
 
+    def _line_identity(self, so_line_id: str) -> Optional[Tuple[Any, Any]]:
+        """`(product_id, core_sales_order_line_id)` of a project line, None when it is gone;
+        one query, held for the rest of the placement pass running now
+        (`_line_identity_memo`) and read fresh outside one."""
+        memo = self._line_identity_memo
+        key = ("line", str(so_line_id), self._scope_key())
+        if memo is not None and key in memo:
+            return memo[key]
+        line = (
+            self.db.query(
+                ProjectSalesOrderLine.product_id,
+                ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .filter(ProjectSalesOrderLine.id == so_line_id)
+            .first()
+        )
+        value = (line[0], line[1]) if line else None
+        if memo is not None:
+            memo[key] = value
+        return value
+
+    def _scope_key(self) -> Any:
+        """The session's company scope, as `_document_rows` keys it."""
+        scope = get_company_scope(self.db)
+        if isinstance(scope, (set, frozenset)):
+            scope = frozenset(str(company) for company in scope)
+        return scope
+
     def _resolve_product_id(self, row: OrderInquiryRow) -> Optional[str]:
         """The product this row is FOR: the reconciled line's product first, the item
         code second. Never invented when neither resolves."""
         if row.so_line_id:
-            line = (
-                self.db.query(ProjectSalesOrderLine.product_id)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
-                .first()
-            )
+            line = self._line_identity(row.so_line_id)
             if line and line[0]:
                 return line[0]
         if row.item_code:
@@ -14630,29 +14729,34 @@ class ProjectOrderInquiryService:
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """The (so_number, item_code, core so_line_id) the audit claim is written and
         matched on - the same identity `order_link_service.resolve()` already reads."""
-        inquiry = (
-            self.db.query(OrderInquiry).filter(OrderInquiry.id == row.order_inquiry_id).first()
-        )
-        order = (
-            self.db.query(ProjectSalesOrder)
-            .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
-            .first()
-            if inquiry is not None
-            else None
-        )
-        so_number = (
-            (order.autocount_doc_no or order.provisional_ref)
-            if order is not None
-            else str(row.order_inquiry_id)
-        )
-        core_line_id = None
-        if row.so_line_id:
-            line = (
-                self.db.query(ProjectSalesOrderLine.core_sales_order_line_id)
-                .filter(ProjectSalesOrderLine.id == row.so_line_id)
+        memo = self._line_identity_memo
+        memo_key = ("so_number", str(row.order_inquiry_id), self._scope_key())
+        if memo is not None and memo_key in memo:
+            so_number = memo[memo_key]
+        else:
+            inquiry = (
+                self.db.query(OrderInquiry)
+                .filter(OrderInquiry.id == row.order_inquiry_id)
                 .first()
             )
-            core_line_id = line[0] if line else None
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(ProjectSalesOrder.id == inquiry.project_sales_order_id)
+                .first()
+                if inquiry is not None
+                else None
+            )
+            so_number = (
+                (order.autocount_doc_no or order.provisional_ref)
+                if order is not None
+                else str(row.order_inquiry_id)
+            )
+            if memo is not None:
+                memo[memo_key] = so_number
+        core_line_id = None
+        if row.so_line_id:
+            line = self._line_identity(row.so_line_id)
+            core_line_id = line[1] if line else None
         return so_number, row.item_code, core_line_id
 
     # ---------------------------------------------------------------- export
@@ -14671,37 +14775,32 @@ class ProjectOrderInquiryService:
         Generated on demand rather than stored, for the same reason the AutoCount import
         file is: a stored file goes stale the moment an amendment publishes, and a stale
         instruction is exactly what this slice exists to stop being emailed around.
+
+        Written by the shared OI exporter (`order_inquiry_export`, OI-EXPORT-SHARED): header
+        row first, rows by S/O then delivery date.
         """
-        import openpyxl
+        from app.services import order_inquiry_export
 
         rows = self.all_rows(project_id, query=query, verb=verb, state=state, pso_id=pso_id)
-        serialized = self.serialize_rows(rows)
-
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.title = EXPORT_SHEET
-        sheet.append([EXPORT_TITLE])
-        sheet.append(list(EXPORT_HEADINGS))
-        for row in serialized:
-            sheet.append(
-                [
-                    self._as_naive(row.get("so_date")),
-                    row.get("sales_order_ref") or "",
-                    row.get("item_code") or "",
-                    float(_dec(row.get("qty"))),
-                    row.get("delivery_date"),
-                    row.get("project_customer") or "",
-                    # Empty rather than a guess when no allocation is confirmed.
-                    row.get("stock_location") or "",
-                    row.get("remark") or "",
-                ]
-            )
-        buffer = io.BytesIO()
-        workbook.save(buffer)
+        records = [
+            {
+                "SO DATE": self._as_naive(row.get("so_date")),
+                "S/O NO": row.get("sales_order_ref") or "",
+                "ITEM CODE": row.get("item_code") or "",
+                "QTY": float(_dec(row.get("qty"))),
+                "DELIVERY DATE": row.get("delivery_date"),
+                "PROJECT/CUSTOMER": row.get("project_customer") or "",
+                # Empty rather than a guess when no allocation is confirmed.
+                "LOCATION": row.get("stock_location") or "",
+                "REMARK": row.get("remark") or "",
+            }
+            for row in self.serialize_rows(rows)
+        ]
+        body = order_inquiry_export.xlsx(records, EXPORT_HEADINGS)
         project = self.db.query(Project).filter(Project.id == project_id).first()
         stem = (project.project_code if project else "project") or "project"
         filename = f"order-inquiry-{stem}-{date.today().isoformat()}.xlsx"
-        return filename, buffer.getvalue()
+        return filename, body
 
     def _as_naive(self, value: Any) -> Any:
         if isinstance(value, datetime):
@@ -14803,6 +14902,27 @@ def _handover_sort_key(item: Dict[str, Any]) -> Tuple[str, bool, int, str]:
     )
 
 
+def _handover_sorted(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The handover email's line order, which is the OI export's order (OI-EXPORT-SHARED,
+    owner 3 Nov 2026): S/O, then DELIVERY DATE earliest first, the date being the one the
+    attachment's DELIVERY DATE column prints (the old date on a changed line). A split
+    line's later rows (`continued`) stay under its first row. Lines due the same day keep
+    `_handover_sort_key`'s order (line sequence, then item code). The email, the Confirm
+    preview and the attachment all read this, so the three tally."""
+    from app.services import order_inquiry_export
+
+    def printed_date(item: Dict[str, Any]) -> Any:
+        line = item.get("line") or {}
+        return (line.get("was") or {}).get("delivery_date") or line.get("delivery_date")
+
+    return order_inquiry_export.in_export_order(
+        sorted(items, key=_handover_sort_key),
+        so=lambda item: item.get("so_number"),
+        when=printed_date,
+        continued=lambda item: bool((item.get("line") or {}).get("continued")),
+    )
+
+
 def _so_remark_of(
     pending: Sequence[Dict[str, Any]], pso_id: Any, flags: Sequence[bool]
 ) -> str:
@@ -14827,8 +14947,9 @@ def _build_handover_context(
     and formatted eagerly (see its own docstring for why: a fresh drain-time session
     cannot see a write that is still open under a savepoint). `None` on an empty queue.
 
-    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sort_key` -
-    every queued item sorts the same way, whichever path queued it. The SO
+    AC-2/AC-3: the LINE TABLE is built off a copy sorted by `_handover_sorted` (S/O, then
+    delivery date, OI-EXPORT-SHARED) - every queued item sorts the same way, whichever
+    path queued it, and the attached Excel prints the same order. The SO
     summary table (`orders`) is separately re-sorted by S/O no after it is built, so
     the two tables agree on which order comes first (reviewer nit) - everything ELSE
     below (`so_numbers`/location aggregation for the subject, `first_inquiry_id`)
@@ -14871,7 +14992,7 @@ def _build_handover_context(
     }
 
     lines: List[Dict[str, Any]] = []
-    for item in sorted(pending, key=_handover_sort_key):
+    for item in _handover_sorted(pending):
         line = dict(item["line"])
         if label_by_pso.get(item.get("pso_id")) and item.get("is_mockup"):
             text = (line.get("remark") or "").strip()
@@ -15079,11 +15200,11 @@ def _lines_by_inquiry(
     items: Sequence[Dict[str, Any]], lines: Sequence[Dict[str, Any]], inquiry_ids: Sequence[str]
 ) -> Dict[str, List[Dict[str, Any]]]:
     """The email's lines per OI. `_build_handover_context` builds one line per item, in
-    `_handover_sort_key` order, so the two zip; a line naming no OI goes with the first OI so no
+    `_handover_sorted` order, so the two zip; a line naming no OI goes with the first OI so no
     email line is ever missing from the Excel."""
     first = inquiry_ids[0] if inquiry_ids else None
     out: Dict[str, List[Dict[str, Any]]] = {}
-    for item, line in zip(sorted(items, key=_handover_sort_key), lines):
+    for item, line in zip(_handover_sorted(items), lines):
         out.setdefault(item.get("order_inquiry_id") or first, []).append(line)
     return out
 
@@ -15178,6 +15299,16 @@ def _build_undo_context(
 _POST_COMMIT_DISPATCH_REGISTERED = False
 
 
+def queue_purchasing_notification(session, item: dict) -> None:
+    """Queue an in-app purchasing notice on this session, sent on a fresh session once the
+    write commits (`_fire_pending_purchasing_notifications`), dropped if the transaction it was
+    queued under rolls back. `item` carries `user_ids`, `title`, `body`, `data` and the
+    notification's `source_entity_type` / `source_entity_id` / `dedup_key`."""
+    session.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
+        {**item, "tx_chain": _transaction_chain(session)}
+    )
+
+
 def register_order_inquiry_post_commit_dispatch() -> None:
     """Fire every `order_inquiry_changed_with_links` a settle queued, once this session's
     write actually commits (S5, review of PR #471).
@@ -15249,6 +15380,12 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         """
         if session.info.get("confirm_preview"):
             return
+        if session.get_nested_transaction() is not None:
+            # A savepoint's own commit (a batch apply gives each order one): the write has not
+            # landed, and a later rollback can still remove it (CONFIRM-REMARK-FIX review S1).
+            # The queue waits for the root commit; `after_soft_rollback` drops what a rollback
+            # took with it.
+            return
         pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
         if not pending:
             return
@@ -15266,9 +15403,14 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                             title=item["title"],
                             body=item["body"],
                             data=item["data"],
-                            source_entity_type="order_inquiry",
-                            source_entity_id=item["inquiry_id"],
-                            dedup_key=f"{item['inquiry_id']}:order_inquiry_raised",
+                            source_entity_type=item.get(
+                                "source_entity_type", "order_inquiry"
+                            ),
+                            source_entity_id=item.get(
+                                "source_entity_id", item.get("inquiry_id")
+                            ),
+                            dedup_key=item.get("dedup_key")
+                            or f"{item['inquiry_id']}:order_inquiry_raised",
                             event_type="project_order_inquiry_raised",
                             send_in_app=True,
                             # Deliberately not email. AC-I4 is that this stops being an
@@ -15279,8 +15421,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                     except Exception:  # noqa: BLE001 - post-commit work never raises
                         fresh.rollback()
                         logger.exception(
-                            "order inquiry %s raised, but purchasing was not notified",
-                            item.get("inquiry_id"),
+                            "%s: purchasing was not notified",
+                            item.get("dedup_key") or item.get("inquiry_id"),
                         )
         finally:
             fresh.close()

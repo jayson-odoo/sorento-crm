@@ -106,12 +106,16 @@ def _seed_registries_to_the_file(db) -> None:
     """Tables shaped like the owner's text: the policy block's 14 domains (no `sales` and no
     `chat_analytics` (CA-3, 10 Oct 2026: a domain the 1 Oct file cannot carry), and
     master_products narrowing product list_all), the entity kinds without the five
-    REF-PROBES reference kinds (same reason), only the two order statuses, the five agents
-    and the seven access levels."""
+    REF-PROBES reference kinds and the SUPPLIER-ASK `supplier` kind (same reason), only the two order
+    statuses, the five agents and the seven access levels."""
     db.execute(text("DELETE FROM chatbot_domains WHERE name IN ('sales', 'chat_analytics')"))
-    db.execute(text("DELETE FROM chatbot_entity_kinds WHERE kind = ANY(:k)"), {"k": REFERENCE_KINDS})
+    db.execute(text("DELETE FROM chatbot_entity_kinds WHERE kind = ANY(:k)"), {"k": [*REFERENCE_KINDS, "supplier"]})
     db.execute(
         text("UPDATE chatbot_domains SET narrowing = '{\"product\": \"list_all\"}'::jsonb WHERE name = 'master_products'")
+    )
+    # SUPPLIER-ASK: the 1 Oct file predates the purchase_order supplier narrowing too.
+    db.execute(
+        text("UPDATE chatbot_domains SET narrowing = narrowing - 'supplier' WHERE name = 'purchase_order'")
     )
     db.execute(text("DELETE FROM chatbot_status_words WHERE value NOT IN ('outstanding', 'delivered')"))
     db.execute(text("UPDATE access_agents SET is_active = false, in_parser_prompt = false"))

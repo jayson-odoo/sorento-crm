@@ -57,6 +57,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.composers import format as composers_format
 from app.services.chatbot.label_catalog import IDENTITY, Localizer, defaults as label_defaults
 from app.services.chatbot.contracts import (
+    SUPPLIER_GRANT,
     SALES_REPORT_GROUP_BYS,
     UNDOMAINED_CHATBOT_TOOLS,
     is_timeline,
@@ -343,6 +344,9 @@ TYPE_TO_PARAM: dict[str, str] = {
     # tools that already take `product_ids` (orders list, orders by product) all
     # take `brand_ids` the same way.
     "brand": "brand_ids",
+    # SUPPLIER-ASK: `crm_procurement_po_placed_list` only. A supplier entity exists on a turn
+    # only for an asker `contracts.supplier_visible` admits (`resolve_gate`).
+    "supplier": "supplier_ids",
 }
 
 _UUID_RE = re.compile(
@@ -948,6 +952,15 @@ def entity_ids_transformer(
         "unmapped_types": unmapped_types,
     }
 
+    # SUPPLIER-ASK (security review): the second refusal below the resolver, as
+    # `RESTRICTED_SORT_KEYS` refuses a supplier sort: a supplier filter says which lines belong
+    # to a supplier, so it is never sent for an asker without the supplier reveal.
+    if "supplier_ids" in out:
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if SUPPLIER_GRANT not in attributes:
+            out["_diagnostics"]["refused"] = {"supplier_ids": out.pop("supplier_ids")}
+
     out["view"] = "render"
     # `out.date_mode = semantic_input?.date_mode` - an ABSENT key leaves `undefined` here,
     # and `JSON.stringify` drops an undefined value rather than writing null. So the key is
@@ -1324,6 +1337,14 @@ def entity_ids_transformer(
     if isinstance(predicate, dict) and predicate.get("certificate_ids"):
         out["certificate_ids"] = predicate["certificate_ids"]
 
+    # SUPPLIER-ASK fix round 9: the structural guard. A supplier-scoped turn never lists without a supplier filter.
+    supplier_scope = jsc.get(semantic_input, "supplier_scope") if isinstance(semantic_input, dict) else None
+    if isinstance(supplier_scope, dict) and tool_name in SUPPLIER_GUARDED_TOOLS and not out.get("supplier_ids"):
+        raise SupplierScopeViolation(
+            f"{tool_name} would list without the supplier this turn is about",
+            line=str(supplier_scope.get("line") or ""),
+        )
+
     # PLAN-chatbot-customer-scope-29sep.md D4, the LAST step before `contact_id`: a
     # customer-scoped contact's `customer_ids` are its linked customers on every
     # customer-scoped tool, whatever the earlier steps built. Defence in depth behind
@@ -1416,6 +1437,31 @@ class ScopeViolation(ToolNotAllowed):
     def __init__(self, message: str, *, dropped: list[str] | None = None) -> None:
         super().__init__(message)
         self.dropped: list[str] = list(dropped or [])
+
+
+class SupplierScopeViolation(ScopeViolation):
+    """SUPPLIER-ASK fix round 9 (crew sweep at c5333b37: 全部 under the supplier question listed every customer's orders;
+    "outstanding PO for zzqqxx supplier" once listed the PO book): a turn about a supplier (`ctx["supplier_scope"]`,
+    set by the engine) reached a list tool with no `supplier_ids`. Never a tool call; `run_fetch` answers with the
+    scope's own line (the supplier question again, or "couldn't find a supplier")."""
+
+    def __init__(self, message: str, *, line: str) -> None:
+        super().__init__(message)
+        self.line = line
+
+
+#: The list tools a supplier-scoped turn may never run without `supplier_ids`: the PO book (the only one that takes
+#: them) and the customer-side lists an order-side reading would fall to.
+SUPPLIER_GUARDED_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_procurement_po_placed_list",
+        "crm_order_management_orders_list",
+        "crm_order_management_orders_by_product_list",
+        "crm_outstanding_report",
+        "crm_report_ask",
+        "crm_sales_report",
+    }
+)
 
 
 #: The MCP tools that return per-customer data: every catalogue tool whose `query_params`
@@ -3015,6 +3061,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     if frame is not None:
         frame.pop("shown", None)
         frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
+        names = semantic_input.get("report_ask_names") if isinstance(semantic_input, dict) else None
+        if isinstance(names, dict):
+            frame["names"] = names  # semantic carry: each id's name, for the `Held report:` line (never a route param)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):

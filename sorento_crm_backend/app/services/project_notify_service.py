@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional
 
@@ -354,6 +355,18 @@ def _whatsapp_for(db: Session, project: Project, document, text: str):
     return build
 
 
+def approval_reason_text(below: int, below_proposal: int = 0) -> str:
+    """"2 lines below the minimum price and 1 line below the proposal": what needs the manager."""
+    parts = []
+    if below or not below_proposal:
+        parts.append(f"{below} line{'' if below == 1 else 's'} below the minimum price")
+    if below_proposal:
+        parts.append(
+            f"{below_proposal} line{'' if below_proposal == 1 else 's'} below the proposal"
+        )
+    return " and ".join(parts)
+
+
 def notify_quotation_approval_requested(
     db: Session,
     *,
@@ -364,17 +377,31 @@ def notify_quotation_approval_requested(
     requester_id: Optional[str],
     requester_name: str,
     resubmitted: bool = False,
+    below_proposal: int = 0,
+    reasons: Optional[str] = None,
 ) -> int:
-    """A quotation was sent for approval: tell every approver but the sender. One per press."""
-    lines = f"{below} line{'' if below == 1 else 's'} below the minimum price"
+    """A quotation was sent for approval: tell its routed approver (PS-QUOTE-RULES R4), or every
+    approver but the sender when it was routed to nobody. One per press. ``reasons`` is the
+    approval service's own sentence (every reason); without it, the minimum-price and
+    below-proposal counts are worded here."""
+    lines = (
+        reasons[:1].lower() + reasons[1:]
+        if reasons
+        else approval_reason_text(below, below_proposal)
+    )
     verb = "appealed" if resubmitted else "sent"
     text = (
         f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {requester_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {requester_id})
+        ),
         notif_type="project_quotation_approval_requested",
         title=f"{project_label(project)}: approval needed on {document.document_no}",
         body=text,
@@ -430,14 +457,19 @@ def notify_quotation_approval_withdrawn(
     actor_name: str,
     reason: Optional[str],
 ) -> int:
-    """The creator pulled a pending quotation back to change it: tell the approvers."""
+    """The creator pulled a pending quotation back to change it: tell its approver(s)."""
     text = (
         f"{actor_name} took quotation {document.document_no} ({project_label(project)}) back "
         f"for changes: {reason or ''}"
     ).strip()
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {actor_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {actor_id})
+        ),
         notif_type="project_quotation_approval_withdrawn",
         title=f"{project_label(project)}: {document.document_no} withdrawn",
         body=text,
@@ -511,6 +543,12 @@ def notify_quotation_changes_requested(
     )
 
 
+def _half_hour(request) -> int:
+    """The 30 minute window the request was submitted in (the notification collapse key)."""
+    when = getattr(request, "submitted_at", None) or datetime.utcnow()
+    return int(when.timestamp() // 1800)
+
+
 def notify_quotation_amendment_requested(
     db: Session,
     *,
@@ -520,17 +558,17 @@ def notify_quotation_amendment_requested(
     request,
     line_count: int,
 ) -> int:
-    """The customer suggested quantities or prices on the quotation link (QUOTE-CUSTOMER-AMEND).
+    """The customer left feedback notes on the quotation link (QUOTE-CUSTOMER-AMEND).
 
     Same recipients as a free-text request (the owner, else management), and on WhatsApp as
-    well as in-app and email, the channels the approval alerts use: until somebody answers,
-    the customer cannot sign. One notice per request, so the dedup key is the request.
+    well as in-app and email, the channels the approval alerts use. One notice per request, so
+    the dedup key is the issue plus a 30 minute window, so a flood of submits is one notice.
     """
     reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
     who = (getattr(request, "requester_name", None) or "").strip() or "The customer"
     if line_count:
         lines = f"{line_count} line{'' if line_count == 1 else 's'}"
-        text = f"{who} suggested changes to {lines} on {reference}."
+        text = f"{who} left feedback on {lines} on {reference}."
     else:
         text = f"{who} sent a note on {reference}."
     note = " ".join((getattr(request, "note", None) or "").split())
@@ -547,7 +585,7 @@ def notify_quotation_amendment_requested(
         db,
         user_ids=recipients,
         notif_type="project_quotation_amendment_requested",
-        title=f"{project_label(project)}: changes suggested on {reference}",
+        title=f"{project_label(project)}: feedback on {reference}",
         body=text,
         data={
             **_approval_data(project, document),
@@ -557,7 +595,7 @@ def notify_quotation_amendment_requested(
             "request_id": str(getattr(request, "id", "") or ""),
         },
         project_id=str(project.id),
-        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{getattr(request, 'id', '')}",
+        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{_half_hour(request)}",
         send_whatsapp=True,
         data_for=_whatsapp_for(db, project, document, text),
     )
@@ -615,4 +653,85 @@ def notify_po_mismatch(
         # Per PO per shape of problem: adding a third mismatched line to a PO that already
         # alerted is the same conversation.
         dedup_key=f"{po.id}:po_mismatch:{'|'.join(kinds)}",
+    )
+
+
+def notify_proposal_price_changed(
+    db: Session,
+    *,
+    project: Project,
+    document,
+    record,
+    changes: List[Dict[str, Any]],
+) -> int:
+    """PS-PROPOSAL-QUOTATION rule 3: a proposal revision went out with a unit price that differs
+    from the previous revision of the same proposal. Management only; not a gate."""
+    if not changes:
+        return 0
+    from app.services.project_quotation_document_service import issue_no_text
+
+    reference = issue_no_text(document.document_no, record)
+    shown = ", ".join(
+        f"{c.get('product_code') or c.get('description') or 'unnamed line'} "
+        f"RM {Decimal(str(c.get('old_price') or 0)):,.2f} -> RM {Decimal(str(c.get('new_price') or 0)):,.2f}"
+        for c in changes[:5]
+    )
+    more = "" if len(changes) <= 5 else f" and {len(changes) - 5} more"
+    to = document.recipient_name_snapshot or "the customer"
+    return _send(
+        db,
+        user_ids=management_user_ids(db, project.company_id),
+        notif_type="project_proposal_price_changed",
+        title=f"{project_label(project)}: proposal price changed ({reference})",
+        body=f"{reference} to {to}: {shown}{more}.",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "document_id": str(document.id),
+            "issue_id": str(record.id),
+            "reference": reference,
+            "change_count": len(changes),
+            "link": _approval_link(project, document),
+        },
+        project_id=str(project.id),
+        dedup_key=f"{record.id}:proposal_price_changed",
+    )
+
+
+def notify_po_qty_over(
+    db: Session,
+    *,
+    project: Project,
+    po,
+    products: List[Dict[str, Any]],
+    reason: str,
+    actor_name: Optional[str] = None,
+) -> int:
+    """PS-PROPOSAL-QUOTATION rule 6: the project's POs order more of a product than the quotation
+    quoted, and the salesperson gave a reason. Management and the owner are told."""
+    shown = ", ".join(
+        f"{p.get('product_code') or p.get('description') or 'unnamed line'} "
+        f"ordered {Decimal(str(p.get('ordered') or 0)).normalize():f}, "
+        f"quoted {Decimal(str(p.get('quoted') or 0)).normalize():f}"
+        for p in products[:5]
+    )
+    more = "" if len(products) <= 5 else f" and {len(products) - 5} more"
+    recipients = management_user_ids(db, project.company_id)
+    if project.owner_user_id:
+        recipients.append(str(project.owner_user_id))
+    return _send(
+        db,
+        user_ids=recipients,
+        notif_type="project_po_qty_over_quote",
+        title=f"{project_label(project)}: PO {po.po_number} orders more than the quotation",
+        body=f"{shown}{more}. Reason{f' ({actor_name})' if actor_name else ''}: {reason}",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "po_id": str(po.id),
+            "po_number": po.po_number,
+            "product_count": len(products),
+        },
+        project_id=str(project.id),
+        dedup_key=f"{po.id}:po_qty_over_quote",
     )

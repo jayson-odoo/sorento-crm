@@ -62,6 +62,20 @@ def segment_key_for(segments) -> str:
     return "|".join(codes)
 
 
+def member_serves_segments(member_segment_codes, contact_segments) -> bool:
+    """The member-level matching rule (module docstring): a member serves a contact when
+    the member has NO segments (serves all), the contact has NO segments (narrows nobody),
+    or the two sets intersect.
+
+    ONE copy of the rule: the round-robin pool (``UserService._rr_pool``) and the My Team
+    visibility filter (``ConversationSLATrackingService.list_team_pending``) both call it,
+    so who gets a task and who sees it cannot drift apart.
+    """
+    member = {str(c) for c in (member_segment_codes or ())}
+    contact = {str(c) for c in (contact_segments or ())}
+    return not member or not contact or bool(member & contact)
+
+
 class MarketSegmentService:
     def __init__(self, db: Session):
         self.db = db

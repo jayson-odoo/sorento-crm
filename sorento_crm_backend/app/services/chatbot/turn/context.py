@@ -209,6 +209,16 @@ def _cut_bytes(value: str, limit: int) -> str:
     return encoded[:limit].decode("utf-8", errors="ignore")
 
 
+HELD_REPORT_PREFIX = "Held report"
+
+
+def held_report_line(ask: dict[str, Any], open_question: str | None = None) -> str:
+    """The `Held report:` line: the report ask in the `report_ask` shape (the caller's keys, in its order, names never
+    ids) as compact JSON; while a field question is open, `Held report (open question: <it>): ` + the ask so far."""
+    head = f"{HELD_REPORT_PREFIX} (open question: {open_question}): " if open_question else f"{HELD_REPORT_PREFIX}: "
+    return head + json.dumps(ask, ensure_ascii=False, separators=(",", ":"))
+
+
 PAGE_LINE_PREFIX = "Current page: "
 _PAGE_LINE_JSON_BYTES = 400
 
@@ -308,6 +318,10 @@ class ContextLayers:
     #: lines (Current subject, Open task, Open question, Pending, Open question options)
     #: and is never trimmed.
     state_block: str | None = None
+    #: SALES-ACCOUNT-TYPE semantic carry: the one `Held report:` line (`held_report_line`), right after the state
+    #: lines and never trimmed. Set only for a prompt that carries `parser.REPORT_ASK_LINE`; None leaves the block as
+    #: it was.
+    held_report: str | None = None
 
 
 def _l5_segment(fact: dict[str, Any]) -> str:
@@ -459,10 +473,11 @@ def _render_l2(
     open_question_line: str | None = None,
     brands_line: str | None = None,
     state_block: str | None = None,
+    held_report: str | None = None,
 ) -> tuple[str, bool]:
     if state_block:
         # Never cut: the block is the whole state, and the shrink loop below only trims a subject.
-        return "\n".join(p for p in (brands_line, state_block) if p), False
+        return "\n".join(p for p in (brands_line, state_block, held_report) if p), False
     dropped = False
     options_line: str | None = None
     if pending_options:
@@ -501,6 +516,8 @@ def _render_l2(
             parts.append(pending_line)
         if options_line:
             parts.append(options_line)
+        if held_report:
+            parts.append(held_report)
         return "\n".join(parts)
 
     text = _render(subject_text)
@@ -568,6 +585,8 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         lines.append(brands_line)
     if layers.state_block:
         lines.append(layers.state_block)
+    if layers.held_report:
+        lines.append(layers.held_report)
     exchanges = recent_exchange_lines(layers.recent_exchanges, previous)
     if exchanges:
         lines.append(_RECENT_EXCHANGES_HEADER)
@@ -615,6 +634,7 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         layers.open_question_line,
         _brands_and_kinds(layers),
         layers.state_block,
+        layers.held_report,
     )
     l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line, layers.page_line)
     if layers.candidate_lines:

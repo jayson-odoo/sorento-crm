@@ -38,6 +38,11 @@ from app.services import project_seed_service
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-qpdf"
 
 # Off the real workbook shape: one priced line and one rate-only alternate. The two line totals
@@ -102,7 +107,7 @@ def _product(db, category_id: str, uom_id: str, *, description: str, code=None) 
         description=description,
         category_id=category_id,
         base_uom_id=uom_id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(FIXTURE_LIST_PRICE),
     )
     db.add(row)
     db.flush()
@@ -981,7 +986,7 @@ def test_the_issue_renders_to_real_pdf_bytes():
         assert pdf_bytes[:4] == b"%PDF"
         assert len(pdf_bytes) > 1000
         assert filename.endswith(".pdf")
-        assert "R1" in filename
+        assert filename.startswith("proposal-") and filename.endswith("-A.pdf")
 
 
 # ------------------------------------------------------- component lines (real data)
@@ -1010,6 +1015,9 @@ def test_a_component_of_a_set_prints_no_money_rather_than_zero():
         component = _product(
             db, env["category"].id, env["uom"], description=f"{MARKER} cistern only, no charge"
         )
+        # A no-charge component lists at nothing, so its 0.00 is not a discount (PS-QUOTE-RULES).
+        component.list_price = Decimal("0.00")
+        db.flush()
 
         document = qdocs.create_document(db, project=env["project"], actor_user_id=owner)
         scope = qdocs.add_scope(
@@ -1187,7 +1195,7 @@ def test_the_pdf_shows_one_quotation_no_row_built_from_document_no_and_issue_no(
 
         html = qpdf.build_issue_html(db, issue)
 
-        assert _row("Quotation No.", f"{document.document_no}-R{issue.issue_no}").search(html)
+        assert _row("Proposal No.", f"{document.document_no}-A").search(html)
         assert "Our Ref" not in html
         assert "(R1)" not in html
         assert "Revision" not in html
@@ -1262,9 +1270,9 @@ def test_the_pdf_file_name_is_built_from_document_no_and_issue_no():
         db.flush()
 
         issue.our_ref_text = "PRJQ-2026-0003 (R1)"
-        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+        assert qpdf.build_filename(issue) == "proposal-PRJQ-2026-0003-A.pdf"
         issue.our_ref_text = "STALE TEXT"
-        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+        assert qpdf.build_filename(issue) == "proposal-PRJQ-2026-0003-A.pdf"
 
 
 def test_the_letterhead_holds_the_logo_image_when_the_download_gives_one(monkeypatch):

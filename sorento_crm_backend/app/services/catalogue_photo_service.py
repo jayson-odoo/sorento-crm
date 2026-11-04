@@ -816,6 +816,18 @@ def attach(db: Session, reading: CataloguePhotoReading, user_id: Optional[str]) 
                 links.delete_product_attachment(str(removed_link.id))
             _pin_lone_photo(db, product_id)
             was_linked = product_link_audit.link_exists(db, product_id, str(row.attachment_id))
+            audited: list = []
+
+            def _audit_link(link, product_id=product_id, attachment_id=str(row.attachment_id)):
+                # Same transaction as the new link (HOTFIX-ATTACH-AUDIT).
+                product_link_audit.log_product_file_link(
+                    db, product_link_audit.LINK,
+                    product_id=product_id, attachment_id=attachment_id,
+                    entity_type="product_attachments", entity_id=str(link.id),
+                    user_id=user_id,
+                )
+                audited.append(link)
+
             created = links.create_product_attachment(
                 ProductAttachmentCreate(
                     product_id=product_id,
@@ -824,14 +836,11 @@ def attach(db: Session, reading: CataloguePhotoReading, user_id: Optional[str]) 
                     access_levels=levels,
                 ),
                 created_by=user_id,
+                before_commit=None if was_linked else _audit_link,
             )
-            if not was_linked and created is not None:
-                product_link_audit.log_product_file_link(
-                    db, product_link_audit.LINK,
-                    product_id=product_id, attachment_id=str(row.attachment_id),
-                    entity_type="product_attachments", entity_id=str(created.id),
-                    user_id=user_id,
-                )
+            if not was_linked and not audited and created is not None:
+                # The certificate path commits on its own.
+                _audit_link(created)
             if was_primary:
                 # The replaced photo was the product's chosen one: the new photo takes over.
                 brochure_image_service.set_brochure_image(db, product_id, str(row.attachment_id))

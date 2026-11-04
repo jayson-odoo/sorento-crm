@@ -3965,6 +3965,7 @@ def make_tool_runner(
     not_checked: list[str] | None = None,
     asked_promo_filter: dict[str, list[str]] | None = None,
     profile: Any = None,
+    supplier_scope: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -4088,6 +4089,8 @@ def make_tool_runner(
             # The contact's customer scope (`engine._customer_scope_gate`), read by
             # `lanes.business.run_fetch`; a lane-only key, never on the engine's own ctx.
             "customer_scope": customer_scope,
+            # SUPPLIER-ASK fix round 9: the turn's supplier scope (`engine._supplier_scope`), guarded at the tool call.
+            "supplier_scope": supplier_scope,
             # CHAT-LANGUAGE: read by `output_structurer` (render-only).
             "localizer": localizer,
             # PHOTO-SEND-CAP: link mode prints each file's link under its row
@@ -5965,17 +5968,23 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     for row in plan_rows:
         if row.get("uuid"):
             settled.setdefault((row["entity_type"], _code_of(row)), set()).add(str(row["uuid"]))
+    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
+    # O-R3 rule A (owner, 3 Nov 2026): a kind the plan names only by rows with no uuid that no resolver row answers by
+    # code is answered by the resolver's rows of that kind this turn. The customer-or-supplier pick's answer is such a
+    # row (the option carries no rows, its code is the typed word): the resolver's customer row is the customer.
+    unplaced = {row["entity_type"] for row in plan_rows} - {
+        row["entity_type"] for row in plan_rows if row.get("uuid") or (row["entity_type"], _code_of(row)) in returned
+    }
 
     def answers_the_plan(e: dict[str, Any]) -> bool:
         kind, code = e.get("entity_type"), _code_of(e)
         if kind not in kinds or not codes:
             return True
         held = settled.get((kind, code))
-        return code in codes and (held is None or str(e.get("uuid")) in held)
+        return (code in codes or kind in unplaced) and (held is None or str(e.get("uuid")) in held)
 
     picked = [e for e in compatible if answers_the_plan(e)]
     answered = {e.get("entity_type") for e in picked}
-    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
     kept = {str(e.get("uuid")) for e in picked}
     return picked + [
         row for row in plan_rows
@@ -6134,6 +6143,14 @@ def envelope_of(
         # composer's generic line), only read by `engine._run_answer` to open no fit line.
         "refused": bool(fragment.get("refused")),
         "entities": codes,
+        # SUPPLIER-ASK fix round 3 (#2066, owner turn 3): a supplier subject is a record named with its code
+        # ("NAME (400-X006)"); the header keeps it whole instead of folding it by the customer-account rule.
+        "supplier_subjects": [
+            name for name in (
+                _answer_subject(e) for e in entities
+                if isinstance(e, dict) and jsc.lower_or_empty(e.get("entity_type")) == "supplier"
+            ) if name
+        ],
         # The PRODUCT subjects alone, for the composer's "No stock found for X" line: a
         # customer pinned from an earlier turn is a subject too, and is not a stock code.
         "product_codes": [
@@ -6308,6 +6325,11 @@ def envelope_of(
     return envelope
 
 
+#: SUPPLIER-ASK fix round 3 (#2066, owner turn 3): the window a tool filters on, named as that tool's date. The PO
+#: list filters the expected date (`purchase_order_service._apply_expected_date_window`), not an order date.
+_DATE_LINE_LABELS = {"crm_procurement_po_placed_list": "Expected date"}
+
+
 def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str | None:
     """`Order date: 01/09/2026 to 30/09/2026`, or None when the fetch had no window.
 
@@ -6329,4 +6351,4 @@ def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str 
         return None
     from app.services.chatbot.lanes.business import order_date_text
 
-    return f"Order date: {order_date_text(start, end)}"
+    return f"{_DATE_LINE_LABELS.get(tool or '', 'Order date')}: {order_date_text(start, end)}"

@@ -253,7 +253,10 @@ POLICY_BLOCKS_SEED_FILE = FIXTURES_DIR / "prompt_blocks_seed.txt"
 # REPORT-SMART-L 22 Oct: `compare_to` + count measure lines (owner ruling allowing the two additive parser fields). Measured: production prompt 53,467, whole prompt 53,983 (= CEILING + 512).
 # REPORT-SMART-L R6 (24 Oct): the `by_words` key line in REPORT_ASK_ADDENDUM (the schema guard needs every declared key
 # in the prompt). Measured: production prompt 53,514 (+43), so CEILING is 53,518 (+4).
-CEILING = 53_518
+# SUPPLIER-ASK (#2066, after merging main on 2 Nov): the policy-blocks seed gains the `supplier` entity kind line
+# and the purchase_order `supplier narrows optional_filter` clause. Measured: production prompt 53,557 on the lane
+# merged with main, so CEILING is 53,561 (+4).
+CEILING = 53_561
 # The memory addendum on its own, bounded separately so this PR's growth stays bounded.
 # 26 Sep baseline (lane d89110c0): 339 est. tokens. Round 4 (baf4c813, 28 Sep: the history
 # question in any wording, the number re-run, commercial_request) took it to 512, which is

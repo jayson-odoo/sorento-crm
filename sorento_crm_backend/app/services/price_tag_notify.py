@@ -42,7 +42,11 @@ def _copy(event: str, *, doc_number: str, link: str, ctx: dict) -> Optional[str]
     tail = f" {link}" if link else ""
 
     if event == "submitted":
-        return f"{doc_number} received. We will start designing shortly.{tail}"
+        # PRICETAG-SELF-APPROVAL R1: the tag waits for HIS approval, not marketing.
+        return f"{doc_number} received. Your tag is ready for you to check and approve.{tail}"
+    if event == "new":
+        # Only Escalate moves a submitted request to `new` (R6).
+        return f"{doc_number} sent to marketing with your note.{tail}"
     if event == "designing":
         who = ctx.get("assignee") or "the marketing team"
         return f"{doc_number} is being designed by {who}.{tail}"

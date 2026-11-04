@@ -137,9 +137,11 @@ _AXIS_FILTERS = {
     "location": ("warehouse_codes",),
     "channel": ("channel",),
     "account_type": ("account_types",),
+    # Not an axis: what "every company" widens (`_widened`, owner O-R2), so the refine drops the held company too.
+    "company": ("company",),
 }
-#: The frame keys that are not route params.
-_FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale")
+#: The frame keys that are not route params (`names`: the id -> name map of the semantic carry, `arg_names`).
+_FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale", "names")
 
 
 def kind_was_said(value: Any) -> bool:
@@ -374,63 +376,62 @@ SALES_AGENT = rf.FieldSpec(
     allow_all=False, required=False, pick_head="Which sales agent? Reply with a number:", parser_only=True,
 )
 
-def _company_question(extras: dict[str, Any]) -> str:
-    from app.api.v1.sales.analysis import company_question
-
-    names = [str(o[1]) for o in (extras.get("company_options") or []) if isinstance(o, (list, tuple)) and len(o) == 2]
-    return company_question(names) if len(names) > 1 else "Which company?"
-
-
-#: A company the message named that the contact does not hold: said plainly, nothing runs (never run without it).
+#: A company the message named that the contact does not hold: said plainly, nothing runs (never run without it). Owner
+#: O-R2 (3 Nov): a company is never asked; an ask naming none runs over every company the contact holds.
 COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
 
 
-def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
-    """`held` with the word question (last) and the company question brought back while still owed: the first message found the company
-    unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
+def asks_the_retired_company(slot: Any) -> bool:
+    """A live session's open question of this ask that is the company question (O-R2 removed it): read as none open."""
+    return isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "company"
+
+
+def _owed_held(extras: dict[str, Any], values: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
+    """`held` with the word question (last) and the agent pick brought back while still owed (their options ride the
+    slot's extras) and no answer has settled them."""
     if extras.get("kind_words") and "kind" not in values and "kind" not in held:
         # The word question is the last field: it stays owed until answered, whatever the earlier answers settled.
-        held = {**held, "kind": rf.Resolved("ambiguous", options=WORD_KIND_OPTIONS)}
+        held = {**held, "kind": rf.Resolved("ambiguous", options=_kind_options(extras))}
     agents = extras.get("agent_options")
     if agents and "sales_agent" not in values and "sales_agent" not in held:
-        # The agent pick stays owed behind any earlier question, as the company's does.
+        # The agent pick stays owed behind any earlier question.
         held = {**held, "sales_agent": rf.Resolved("ambiguous", options=tuple((str(o[0]), str(o[1])) for o in agents))}
-    options = extras.get("company_options")
-    if not options or "company" in values or args.get("company"):
-        return held
-    return {**held, "company": rf.Resolved("ambiguous", options=tuple((str(o[0]), str(o[1])) for o in options))}
+    return held
 
-
-#: REPORT-UNIFY phase 3 (R1): a contact in two companies who names neither and no product or customer is asked "<A> or
-#: <B>?" (the SALES-COMPANY rule, `sales_company_ask`). A field of this ask, so every filter the message named rides the
-#: slot to the answer. Never required: it is a field only when the lane found the company unnamed.
-COMPANY = rf.FieldSpec(
-    name="company", noun="company", question="Which company?", question_fn=_company_question,
-    resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False, pick_head_is_question=True,
-    parser_only=True,
-)
 
 #: SALES-ACCOUNT-TYPE PR 2: a word that is both a brand and a stored account type is asked once, after every other owed
 #: field (the last one). Its options are the pick the parser is shown; the reply to the user is the bare question (`_kind_question`).
 WORD_KIND_OPTIONS = (("brand", "Brand"), ("account_type", "Account type"))
+#: Crew C6-1 (round 6): a both-table word that is also one of the contact's companies (`kind_company`) is offered the
+#: company as a third kind.
+COMPANY_KIND_OPTION = ("company", "Company")
+
+
+def _kind_options(extras: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return (*WORD_KIND_OPTIONS, COMPANY_KIND_OPTION) if extras.get("kind_company") else WORD_KIND_OPTIONS
 
 
 def _kind_question(extras: dict[str, Any]) -> str:
-    """"Cabana, sorento: brand or account type?": the first word's first letter upper, the rest as typed."""
+    """"Cabana, sorento: brand or account type?": the first word's first letter upper, the rest as typed. A word that is
+    also one of the contact's companies (C6-1) is asked with the three kinds numbered."""
     words = [w for w in (extras.get("kind_words") or []) if isinstance(w, str) and w.strip()]  # printed forms (`_account_plan`)
     head = ", ".join(words)
-    return f"{head[:1].upper()}{head[1:]}: brand or account type?" if head else "Brand or account type?"
+    head = f"{head[:1].upper()}{head[1:]}: " if head else ""
+    if extras.get("kind_company"):
+        options = [f"{i}. {label}" for i, (_value, label) in enumerate(_kind_options(extras), start=1)]
+        return "\n".join([f"{head}brand, account type or company?" if head else "Brand, account type or company?", *options])
+    return f"{head}brand or account type?" if head else "Brand or account type?"
 
 
 KIND = rf.FieldSpec(
     name="kind", noun="kind", question="Brand or account type?", question_fn=_kind_question,
     resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False,
-    pick_head_is_question=True, parser_only=True, offered=lambda _extras: WORD_KIND_OPTIONS,
+    pick_head_is_question=True, parser_only=True, offered=_kind_options,
 )
 
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT, KIND),  # the required fields first, the word question last
+    fields=(PERIOD, TOP_N, METRIC, BASIS, SALES_AGENT, KIND),  # the required fields first, the word question last
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -941,9 +942,9 @@ def _binds_subject(verdict: dict[str, Any]) -> bool:
 
 def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     """Engine seam, the basis (or outstanding kind) question open: the parser's own position reading of the reply
-    (`reference_positions`, exactly one in range of the offered options) is the pick, as `sales_company_ask.as_answer`
-    does for the company question. Without it the position is read against whatever list stands underneath (a customer
-    roster the kind question replaced) and picks the wrong row. Parser fields only."""
+    (`reference_positions`, exactly one in range of the offered options) is the pick. Without it the position is read
+    against whatever list stands underneath (a customer roster the kind question replaced) and picks the wrong row.
+    Parser fields only."""
     if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "basis":
         return verdict
     options = slot.get("options") or []
@@ -999,14 +1000,14 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
 
 
 def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], bool]:
-    """Engine seam beside the company pick, the word question open. `(verdict, True)` when the reply settles the kind:
+    """Engine seam beside the basis pick, the word question open. `(verdict, True)` when the reply settles the kind:
     the parser's declared pick of an offered option, a repeat of one of the held words with the parser's `kind_said`
     ("cabana account"), or an account type number or tag (alone or beside the held word), which answers as the account
     type and is carried in `report_ask_kind_reply`. Whatever else such a reply says edits the held ask (`kind_edits`).
     The only exits to a new ask, for the pick and the repeat alike: `domain_in_message` true with a non-sales read, or
     an entity beyond the held words (an `account_type` entity is the held dimension). A reply that exits has any declared
     answer stripped (as `as_basis_answer`), since `reply_verdict` would still honour the pick. An untyped `group_by` is
-    a guess and is dropped (the company seam's `_typed` rule). Parser fields only."""
+    a guess and is dropped (the `_typed` rule: `by_words`, a count, a direction or a ranked measure). Parser fields only."""
     from app.services.chatbot import contracts
 
     if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "kind":
@@ -1104,7 +1105,6 @@ def kind_edits(
         if named is None:
             return None, COMPANY_FORBIDDEN_LINE
         args["company"] = str(named[0])
-        values["company"] = {"value": str(named[0]), "label": str(named[1])}
     new_extras = {**extras, "args": args, "top_n": top_n}
     reply = _dict(parse_output.get("report_ask_kind_reply"))
     if reply and not dealer:
@@ -1133,7 +1133,7 @@ def kind_edits(
                         words[hint].append(word)
                         kinds.append({"hint": hint, "word": word, "raw": h["raw"], "said": True})
         read = {**parse_output, "report_ask_words": words, "report_ask_kind": kinds}
-        held_company = args.get("company") or _dict(values.get("company")).get("value")  # named, or picked at its question
+        held_company = args.get("company")  # the company the held ask or this reply names
         plan = _account_plan(db, read, companies, ask=True, held_company=held_company) if not plain else None
         found, line = (
             _word_filters(db, {**read, "report_ask_words": {"brand": _brand_words(words, plan)}}, (("brand", "brand_ids"),))
@@ -1240,9 +1240,11 @@ def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[s
     2026 (CHATBOT-FOLLOWUP-CARRY): a follow-up over a held customer keeps it unless a new customer is named, and the parser
     reads the same words as `modify` on some runs and `replace_combine` on others (its own table: "a new product keeps the
     held customer"), so those count too when they name no customer. `replace_combine` needs a customer held: over anything
-    else it stays what R8 ruled, a message naming its own value."""
+    else it stays what R8 ruled, a message naming its own value. Owner O-R3 (3 Nov): a `replace` that names no subject of
+    its own (`_binds_subject`) replaces nothing, so it is a follow-up as `reuse` is; one naming a subject is a restated
+    ask and drops what it does not name (17 Sep)."""
     entity_op = verdict.get("entity_op")
-    if entity_op == "reuse":
+    if entity_op == "reuse" or (entity_op == "replace" and not _binds_subject(verdict)):
         return True
     if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
         return False
@@ -1289,13 +1291,22 @@ def with_held(
     outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
     frame = _dict(getattr(focus, "sales_ranking_frame", None))
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
     if (
-        jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
+        # SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): an outstanding ask IS this report ask under its
+        # outstanding kind (`as_outstanding` reroutes it after this seam), so the answer to the open kind question
+        # ("Pending delivery", parsed as a fresh outstanding ask naming nothing) keeps the held customer as well.
+        not (status == ASK_NAME or (status in OUTSTANDING_STATUSES and replaced is not None))
         or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
         or (frame.get("group_by") and not _holds_a_customer(frame))
-        or contracts.SALES_DOMAIN not in (domains or [])
+        or not (
+            contracts.SALES_DOMAIN in (domains or [])
+            # Fix round 8: an outstanding ask's open kind question can sit under `order` (a customer picked over a
+            # purchase-side ask moves it there, `turn/apply._side_of_the_parties`); it is the same report ask.
+            or (status in OUTSTANDING_STATUSES and "order" in (domains or []))
+        )
         or (open_ask is not None and replaced is None)
     ):
         return verdict
@@ -1327,7 +1338,23 @@ def with_held(
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
         held = {k: v for k, v in held.items() if v}
+    verdict = _kind_answered_by_position(verdict, replaced)
     return {**verdict, HELD_KEY: held} if held else verdict
+
+
+def _kind_answered_by_position(verdict: dict[str, Any], replaced: dict[str, Any] | None) -> dict[str, Any]:
+    """SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): "Pending delivery" under the open kind question
+    ("Undelivered orders or pending delivery?") parses as a fresh outstanding ask with no `basis` but the position it
+    picked (`reference_positions` [2]). That fresh ask replaces the question, so the position is read against the
+    question it answered: its option there is the basis. Parser fields and the replaced question only."""
+    if verdict.get("basis") or not isinstance(replaced, dict) or replaced.get("asking") != "basis":
+        return verdict
+    positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
+    options = [o for o in jsc.array(replaced.get("options")) if isinstance(o, (list, tuple)) and o]
+    if len(positions) != 1 or not 1 <= positions[0] <= len(options):
+        return verdict
+    basis = options[positions[0] - 1][0]
+    return {**verdict, "basis": basis} if basis in OUTSTANDING_KINDS else verdict
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:
@@ -1453,20 +1480,33 @@ def _bound_by_id(db: Any, hint: str, word: str) -> tuple[list[str], list[str]] |
 
 def _word_filters(
     db: Any, parse_output: dict[str, Any], pairs: tuple[tuple[str, str], ...] = _WORD_PARAMS, *,
-    agent_filter: bool = True, lenient: bool = False,
+    agent_filter: bool = True, lenient: bool = False, scope: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The brand / sales agent / category ids the verdict's `report_ask_words` resolve to, or
     the one line to say instead. Shared by a fresh ask and a ranking refine.
 
     `lenient` (a fresh ask, owner Q4 a): a word that binds to nothing is not the end of the ask. It rides on
     `out["_unbound"]` as `(Not applied text, the line to say)`, and the caller says the line only when the word was the
-    sole subject. An id the parser echoed (H2) and an ambiguous word are never lenient."""
+    sole subject. An id the parser echoed (H2) and an ambiguous word are never lenient.
+
+    `scope` (semantic carry, `_object_scope`): the company the ask names. One rule for every word, typed or carried (the
+    Held report line shows each row by a word that resolves back to it, `arg_names`): it is resolved here, through the
+    permission-gated resolvers, and kept to the named company's rows (and the shared ones); an echoed id binds only to
+    a row of that company; a word with no row there is not applied (said), never dropped."""
     out: dict[str, Any] = {}
     unbound: list[tuple[str, str]] = []
+    agent_words: dict[str, list[str]] = {}
+    company = jsc.js_string((scope or {}).get("company") or "").strip() or None
 
-    def not_bound(hint: str, word: str) -> tuple[str, str]:
+    def not_bound(hint: str, word: str, outside: bool = False) -> tuple[str, str]:
         noun = WORD_HINTS[hint]
+        if outside:
+            name = (scope or {}).get("company_name") or "that company"
+            return f"{noun.capitalize()} {word} (not in {name})", f"I don't know '{word}' as a {noun} in {name}."
         return f"{noun.capitalize()} {word} (no such {noun})", f"I don't know '{word}' as a {noun}."
+
+    def in_scope(hint: str, ids: list[str]) -> list[str]:
+        return _in_company(db, hint, ids, company) if scope is not None else ids
     words = _dict(parse_output.get("report_ask_words"))
     for hint, param in pairs:
         ids: list[str] = []
@@ -1476,9 +1516,10 @@ def _word_filters(
                 continue
             bound = _bound_by_id(db, hint, word)
             if bound is not None:
-                if not bound[0]:
+                bound_ids = in_scope(hint, bound[0])
+                if not bound_ids:
                     return None, f"I don't know that {WORD_HINTS[hint]}."
-                ids.extend(i for i in bound[0] if i not in ids)
+                ids.extend(i for i in bound_ids if i not in ids)
                 continue
             if hint == "category":
                 # One category definition (owner, 4 Oct 2026): code or name, then the class
@@ -1497,7 +1538,13 @@ def _word_filters(
                 if ambiguous:
                     listed = ", ".join(sorted(set(ambiguous)))
                     return None, f"'{word}' matches several {SEVERAL_NOUNS[hint]}: {listed}. Ask again naming one."
-                ids.extend(i for i in found if i not in ids)
+                inside = in_scope(hint, [str(i) for i in found])
+                if not inside:  # a row of another company only
+                    if lenient:
+                        unbound.append(not_bound(hint, word, outside=True))
+                        continue
+                    return None, not_bound(hint, word, outside=True)[1]
+                ids.extend(i for i in inside if i not in ids)
                 continue
             if hint == "sales_agent" and word.casefold() == jsc.js_string(parse_output.get("sales_channel") or "").casefold():
                 continue  # the channel word the verdict already set (`sales_channel`), not a person
@@ -1507,6 +1554,14 @@ def _word_filters(
                     unbound.append(not_bound(hint, word))
                     continue
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
+            if scope is not None:
+                inside = set(in_scope(hint, found))
+                if not inside:  # a row of another company only
+                    if lenient:
+                        unbound.append(not_bound(hint, word, outside=True))
+                        continue
+                    return None, not_bound(hint, word, outside=True)[1]
+                found, names = [i for i in found if i in inside], [n for i, n in zip(found, names) if i in inside]
             distinct = {" ".join(n.split()).casefold(): " ".join(n.split()) for n in reversed(names)}
             if hint == "sales_agent" and len({business_services._code_stem(n) for n in names}) > 1:
                 if not agent_filter:
@@ -1522,10 +1577,14 @@ def _word_filters(
                 listed = ", ".join(sorted(distinct.values()))
                 return None, f"'{word}' matches several {SEVERAL_NOUNS[hint]}: {listed}. Ask again naming one."
             ids.extend(i for i in found if i not in ids)
+            if hint == "sales_agent" and scope is not None:
+                agent_words[word] = [i for i in found if i]  # the word as typed and the rows it resolved to (`arg_names`)
         if ids:
             out[param] = ids
     if unbound:
         out["_unbound"] = unbound
+    if agent_words:
+        out["_agent_words"] = agent_words
     return out, None
 
 
@@ -1553,7 +1612,7 @@ def _account_plan(
     words = _dict(parse_output.get("report_ask_words"))
     brand_words = [w for w in (" ".join(jsc.js_string(x).split()) for x in jsc.array(words.get("brand"))) if w]
     acct_words = [w for w in (" ".join(jsc.js_string(x).split()) for x in jsc.array(words.get("account_type"))) if w]
-    plan: dict[str, Any] = {"account_types": [], "drop": set(), "ask": [], "brand_words": [], "covered": False}
+    plan: dict[str, Any] = {"account_types": [], "drop": set(), "ask": [], "brand_words": []}
     if db is None or not (brand_words or acct_words):
         return plan
     from app.services.reports.ask_params import account_book, account_type_options, resolve_account_types
@@ -1606,7 +1665,6 @@ def _account_plan(
         if how == "ask" and numbers:
             if same:
                 plan["drop"].add(word)  # the number is this word's own type: the account filter alone
-                plan["covered"] = True
             elif hint == "account_type":
                 plan["brand_words"].append(word)  # a bare word hinted account type reads as the brand on that account
             continue  # another type: the brand on that account
@@ -1625,8 +1683,6 @@ def _account_plan(
             continue
         if hint == "brand":
             plan["drop"].add(word)
-        if same:
-            plan["covered"] = True
         if not same and kind not in account:
             account.append(kind)
     plan["account_types"] = [*account, *[n for n in numbers if n not in account]]
@@ -1640,24 +1696,36 @@ def _brand_words(words: dict[str, Any], plan: dict[str, Any]) -> list[Any]:
     return [*kept, *[w for w in plan["brand_words"] if w not in kept]]
 
 
-def _kind_ask(db: Any, parse_output: dict[str, Any], plan: dict[str, Any], args: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _kind_ask(
+    db: Any, parse_output: dict[str, Any], plan: dict[str, Any], args: dict[str, Any], scope: dict[str, Any] | None = None,
+    companies: Any = (),
+) -> tuple[dict[str, Any] | None, str | None]:
     """The held answer of the word question: the words as printed, the spellings a repeat may carry, and for each choice
     the route params it sets. `args` holds what THIS message settled for the same params; the answer REPLACES any
-    held value of them."""
+    held value of them. `companies` (the object path, crew C6-1, SC-19): when every asked word is one of the contact's
+    companies (its name or code, from data), that company is a third choice."""
     brand_words = [a["word"] for a in plan["ask"]]
     found, line = _word_filters(
-        db, {**parse_output, "report_ask_words": {"brand": brand_words}}, (("brand", "brand_ids"),)
+        db, {**parse_output, "report_ask_words": {"brand": brand_words}}, (("brand", "brand_ids"),), scope=scope
     )
     if found is None:
         return None, line
     brand_ids = [*jsc.array(args.get("brand_ids")), *[i for i in found.get("brand_ids", []) if i not in jsc.array(args.get("brand_ids"))]]
     types = [*jsc.array(args.get("account_types")), *[a["type"] for a in plan["ask"] if a["type"] not in jsc.array(args.get("account_types"))]]
-    return {
+    asked = {
         "words": [a["shown"] for a in plan["ask"]],
         "match": [w for a in plan["ask"] for w in (a["raw"], a["type"])],
         "held": [{"word": a["word"], "raw": a["raw"], "type": a["type"]} for a in plan["ask"]],
         "choices": {"brand": {"brand_ids": brand_ids}, "account_type": {"account_types": types}},
-    }, None
+    }
+    per_word = [
+        {(str(c[0]), str(c[1])) for c in _own_companies(companies) if {_squash(a[k]) for k in ("word", "raw", "type")} & {_squash(c[1]), _squash(c[2])}}
+        for a in plan["ask"]
+    ]
+    one = per_word[0] if per_word and len(per_word[0]) == 1 and all(p == per_word[0] for p in per_word) else set()
+    if one:
+        asked["company"] = list(next(iter(one)))
+    return asked, None
 
 
 def _product_args(
@@ -1754,17 +1822,18 @@ def _fresh_args(
     )
     words = _dict(parse_output.get("report_ask_words"))
     read = {**parse_output, "report_ask_words": {**words, "brand": _brand_words(words, plan)}}
-    filters, line = _word_filters(db, read, agent_filter=agent_filter, lenient=True)
+    scope = _object_scope(parse_output, companies)
+    filters, line = _word_filters(db, read, agent_filter=agent_filter, lenient=True, scope=scope)
     if filters is None:
         return None, line
     unbound = filters.pop("_unbound", [])
+    agent_words = filters.pop("_agent_words", None)
     args.update(filters)
     if plan["account_types"]:
         args["account_types"] = plan["account_types"]
-    if plan["covered"]:
-        args["_covered"] = True  # a word the number made redundant was still a named subject; popped by `_settle`
     if plan["ask"]:
-        asked, line = _kind_ask(db, parse_output, plan, args)
+        # The company as a third kind (C6-1) is the object path's (`scope`): the flag-off path keeps its two kinds.
+        asked, line = _kind_ask(db, parse_output, plan, args, scope=scope, companies=companies if scope is not None else ())
         if asked is None:
             return None, line
         args["_kind_ask"] = asked  # popped by `settle`; never a route param
@@ -1787,6 +1856,25 @@ def _fresh_args(
         # its own runs on the product in context ("<code> stock", then "outstanding"), never the whole company's list.
         kinds = kinds | {"product"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
+    if scope is not None:
+        # Semantic carry: a held customer the object names again is the id it ran with when that id is in the named
+        # company (or none is named), so a shared name never widens; else the name is looked up again in the named
+        # company (`_customer_in`); one with no row there is not applied (said).
+        # A dealer's are only among its own linked accounts (the engine's scope rows).
+        linked = _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer") if dealer else None
+        for name in jsc.array(_dict(parse_output.get(OBJECT_KEY)).get("customers")):
+            name = " ".join(jsc.js_string(name).split())
+            held = _held_ids(_dict(scope.get("held")), "customer_ids", name)
+            if not held:
+                continue  # not held: its entity went to the resolver (`from_object`)
+            inside = _in_company(db, "customer", held, scope.get("company")) or _customer_in(db, name, scope.get("company"))
+            inside = [i for i in inside if linked is None or i in linked]
+            if inside:
+                customer_ids.extend(i for i in inside if i not in customer_ids)
+            else:
+                # The reply a word with no row in the named company gets (`_word_filters`), carried or typed.
+                company_name = scope.get("company_name") or "that company"
+                unbound.append((f"Customer {name} (not in {company_name})", f"I don't know '{name}' as a customer in {company_name}."))
     if parse_output.get("self_reference") is True and not customer_ids:
         # "my ...": the engine's scope rows, a linked contact's own accounts, whether a dealer or office staff. A
         # dealer's ask naming no customer sends none: the route forces its links itself.
@@ -1836,6 +1924,8 @@ def _fresh_args(
         if not set(args) - _NON_FILTER_ARGS - {"date_from", "date_to", "top_n"}:
             return None, unbound[0][1]  # the word was the only subject: said, and the ask
         args["_unbound"] = [text for text, _line in unbound]  # popped by `settle`; never a route param
+    if agent_words:
+        args["_agent_words"] = agent_words  # popped by `settle`; never a route param
     return args, None
 
 
@@ -1981,27 +2071,24 @@ def settle(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
     companies: Any = (), kinds: tuple[str, ...] = ASKED_KINDS,
 ) -> tuple[rf.Outcome | None, str | None]:
-    """`_settle`, with the company question asked as the one line `sales_company_ask` asks on the Yearly path (one
-    question, one wording); the slot keeps its options, and the parser's declared pick of one of them is the only answer
-    (`required_fields.picked_option`: the company and sales agent fields are `parser_only`). `kinds`: the outstanding
-    kinds the contact may see (`outstanding_kinds`); with one, an outstanding ask naming none is that kind, unasked."""
+    """`_settle`, with the word question asked as its own bare line (`_kind_question`); the slot keeps its options, and
+    the parser's declared pick of one of them is the only answer (`required_fields.picked_option`: the kind and sales
+    agent fields are `parser_only`). `kinds`: the outstanding kinds the contact may see (`outstanding_kinds`); with one,
+    an outstanding ask naming none is that kind, unasked."""
     if (
         len(kinds) == 1 and parse_output.get("capability_from") == "outstanding"
         and parse_output.get("basis") not in OUTSTANDING_KINDS
     ):
         parse_output = {**parse_output, "basis": kinds[0]}
     outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
-    if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
-        outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
     if outcome is not None and outcome.slot and outcome.slot.get("asking") == "kind" and outcome.reply:
         outcome.reply = _kind_question(_dict(outcome.slot.get("extras")))  # bare, as the mock draws it
-    for field in ("company", "kind"):
-        asked = _dict(outcome.values.get(field)) if outcome is not None else {}
-        if asked.get("value") == rf.ALL and outcome is not None:
-            # Two unreadable answers to the company (or kind) question: a plain give-up, never a run (the route would
-            # 403 "all", and an unanswered kind would run without the word).
-            word = str(asked.get("missed") or "that")
-            return rf.Outcome(values=outcome.values, reply=GIVE_UP.format(word=word), slot=None, extras=outcome.extras), line
+    asked = _dict(outcome.values.get("kind")) if outcome is not None else {}
+    if asked.get("value") == rf.ALL and outcome is not None:
+        # Two unreadable answers to the kind question: a plain give-up, never a run (an unanswered kind would run
+        # without the word).
+        word = str(asked.get("missed") or "that")
+        return rf.Outcome(values=outcome.values, reply=GIVE_UP.format(word=word), slot=None, extras=outcome.extras), line
     return outcome, line
 
 
@@ -2044,6 +2131,17 @@ def _settle(
         return so_list_outcome(db, shown_frame, ranking_detail["group_by"]), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
         return _scope_answer(db, parse_output, slot), None
+    semantic = isinstance(parse_output.get(OBJECT_KEY), dict)
+    if semantic:
+        # SALES-ACCOUNT-TYPE semantic carry (A3): the parser's object is the whole ask (`from_object`). A scoped drill over
+        # the rows on screen runs first (V5); then the ask is read as a fresh one: no open slot, no held frame, no refine.
+        shown_frame = _dict(parse_output.get("sales_ranking_frame"))
+        if parse_output.get("ranking_drill") == "scoped" and shown_frame:
+            drilled = _drill(db, parse_output, shown_frame, entities, reading="scoped", dealer=dealer, companies=companies)
+            if drilled is not None:
+                return drilled
+        parse_output = {k: v for k, v in parse_output.items() if k not in _OBJECT_DROPS}
+        slot = None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:
         extras = _dict(slot.get("extras"))
         if (dealer or not agent_filter) and extras.get("agent_options") and "sales_agent" not in _dict(slot.get("values")):
@@ -2051,7 +2149,7 @@ def _settle(
             return None, DEALER_REFUSAL
         args = _dict(extras.get("args"))
         held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
-        held = _company_held(extras, _dict(slot.get("values")), args, held)
+        held = _owed_held(extras, _dict(slot.get("values")), held)
         asked_field = next((f for f in SALES_RANKING_ASK.fields if f.name == slot.get("asking")), None)
         if asked_field is not None and asked_field.name == "basis":
             # The basis (or kind) question: the parser's pick of an offered option, else its own `basis` reading when it is
@@ -2067,7 +2165,7 @@ def _settle(
         elif extras.get("kind_ask") and parse_output.get("basis") not in OUTSTANDING_KINDS:
             parse_output = {**parse_output, "basis": None}
         if asked_field is not None and asked_field.name != "basis" and rf.is_parser_only(asked_field, extras):
-            # The company and the sales agent pick: the parser's declared pick only, never the reply's text.
+            # The word question and the sales agent pick: the parser's declared pick only, never the reply's text.
             answer = _dict(parse_output.get("required_ask_answer"))
             if asked_field.name == "kind":
                 # What else the reply says edits the held ask (`kind_edits`); the held values are recomputed from it.
@@ -2077,7 +2175,7 @@ def _settle(
                 extras = _dict(slot.get("extras"))
                 args = _dict(extras.get("args"))
                 held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
-                held = _company_held(extras, _dict(slot.get("values")), args, held)
+                held = _owed_held(extras, _dict(slot.get("values")), held)
             return rf.collect(
                 db, SALES_RANKING_ASK, slot=slot, reply=rf.picked_option(slot, answer),
                 cancel=answer.get("mode") == "cancel", given=held,
@@ -2100,14 +2198,14 @@ def _settle(
                 return None, DEALER_REFUSAL
             args = swapped["args"]
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
-            held = _company_held(extras, _dict(slot.get("values")), args, held)
+            held = _owed_held(extras, _dict(slot.get("values")), held)
             if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, *TREND_AXES):
                 # What a total or a month trend settled on its own (no count, both measures) is not
                 # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
                 slot = {**slot, "values": _settled_by_its_axis(_dict(slot.get("values")), _dict(extras.get("args")).get("group_by"))}
             slot, args = _reply_wins(parse_output, slot, args)
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
-            held = _company_held(extras, _dict(slot.get("values")), args, held)
+            held = _owed_held(extras, _dict(slot.get("values")), held)
             extras = {**extras, "args": args}
         if parse_output.get("compare_to") in COMPARE_TO:
             # REPORT-SMART-L S4-1: a reply that sets the comparison and fills no owed field adds the
@@ -2126,7 +2224,7 @@ def _settle(
             # second echo gives up as today (default top 10).
             slot, args = _reply_wins(parse_output, slot, args)
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
-            held = _company_held(extras, _dict(slot.get("values")), args, held)
+            held = _owed_held(extras, _dict(slot.get("values")), held)
             again = rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": args})
             if again.slot:
                 again.slot["misses"] = 1
@@ -2155,8 +2253,8 @@ def _settle(
         if slot.get("asking") == "top_n" and outcome.slot is None and not outcome.done and not outcome.cancelled:
             # The helper gave up on the count (a second miss): run the default top 10 and say
             # so (crew ruling). The period field keeps the helper's own give-up.
-            # It goes on through the collector with the count settled, so every later field still owed (the company, the
-            # agent pick, the word question) is asked; the note rides the extras to the result.
+            # It goes on through the collector with the count settled, so every later field still owed (the agent pick,
+            # the word question) is asked; the note rides the extras to the result.
             values = {**outcome.values, "top_n": {"value": DEFAULT_TOP_N, "label": str(DEFAULT_TOP_N)}}
             return rf.collect(
                 db, SALES_RANKING_ASK, slot={**slot, "values": values, "misses": 0}, given=held,
@@ -2247,15 +2345,19 @@ def _settle(
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
+    agent_words = args.pop("_agent_words", None)
     kind_ask = args.pop("_kind_ask", None)
-    covered = args.pop("_covered", False)
     from app.services.reports.ask_params import _asked_number
 
     own_book = {"channel"}
     if args.get("account_types") and all(_asked_number(str(v).strip().upper()) is not None for v in args["account_types"]):
         own_book.add("account_types")  # an account number names no company; a type word may be in the other one
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - own_book:
-        # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
+    if (
+        holding and source.get("company") and _widened(parse_output) != "company"
+        and not set(args) - _NON_FILTER_ARGS - own_book
+    ):
+        # The company it ran in stays, unless this message has a subject of its own (that may be in the other company)
+        # or widens to every company.
         args["company"] = source["company"]
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
@@ -2319,19 +2421,16 @@ def _settle(
     agent_pick = args.pop("sales_agent_pick", None)
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
-    company_extras: dict[str, Any] = {}
     own = _own_companies(companies)
-    if own and not dealer and parse_output.get("ranking_refine") is not True and not outstanding_ask:
-        # Item 4: never the company question on an outstanding ask (pre-#1922 it ran over the contact's own companies).
-        # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
-        # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
+    if own and not dealer and parse_output.get("ranking_refine") is not True:
+        # R1: the company the message (the parser's `sales_company`) names, among the contact's own, narrows the ask, a
+        # sales and an outstanding one alike. Owner O-R2 (3 Nov): none named is never asked; the route runs over every
+        # company the contact holds and the reply shows each one's total.
         named, foreign = _company_said(parse_output, own)
         if foreign:
             return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
-        elif not covered and _owes_company(args, own):
-            given["company"], company_extras = _company_question_fields(own)
     if (
         parse_output.get("capability_from") == "outstanding"
         and args.get("basis") in OUTSTANDING_KINDS
@@ -2352,9 +2451,10 @@ def _settle(
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if agent_words:
+        extras["agent_words"] = agent_words  # semantic carry: the words the agents were typed as (`arg_names`)
     if breakdown:
         extras["breakdown"] = True
-    extras.update(company_extras)
     if not_applied:
         extras["not_applied"] = not_applied
     if parse_output.get("capability_from") == "outstanding":
@@ -2374,11 +2474,13 @@ def _settle(
 
 def _ask_kind(given: dict[str, Any], extras: dict[str, Any], kind_ask: dict[str, Any]) -> None:
     """Owe the word question (the last field). The words ride the extras to the answer."""
-    given["kind"] = rf.Resolved("ambiguous", options=WORD_KIND_OPTIONS)
     extras["kind_words"] = kind_ask["words"]
     extras["kind_match"] = kind_ask["match"]
     extras["kind_held"] = kind_ask["held"]
     extras["kind_choices"] = kind_ask["choices"]
+    if kind_ask.get("company"):
+        extras["kind_company"] = kind_ask["company"]  # C6-1: `[id, name]` of the company the word also is
+    given["kind"] = rf.Resolved("ambiguous", options=_kind_options(extras))
 
 
 def _own_companies(companies: Any) -> list[Any]:
@@ -2391,21 +2493,6 @@ def _company_said(parse_output: dict[str, Any], own: list[Any]) -> tuple[Any, bo
     said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
     named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
     return named, bool(said) and named is None
-
-
-def _owes_company(args: dict[str, Any], own: list[Any]) -> bool:
-    """Two or more companies, and nothing in the ask says which: a company, a customer, a product or another subject."""
-    return len(own) > 1 and not any(
-        args.get(k) for k in ("company", "customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
-    )
-
-
-def _company_question_fields(own: list[Any]) -> tuple[rf.Resolved, dict[str, Any]]:
-    """The company question as a field to ask, and what its slot needs to read the answer."""
-    return rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own)), {
-        "company_options": [[str(c[0]), str(c[1])] for c in own],
-        "company_codes": [str(c[2]) for c in own],  # the pick's aliases (`sales_company_ask.as_answer`)
-    }
 
 
 def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
@@ -2425,11 +2512,12 @@ def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
 
 def _widened(parse_output: dict[str, Any]) -> str | None:
     """The one held axis the parser widened to "all" this turn (`broaden_axis` with `broaden_to`
-    "all", template R-P3-09): the hold drops it and keeps the rest. Parser fields only."""
+    "all", template R-P3-09): the hold drops it and keeps the rest (the company: every company, the semantic carry,
+    `_carry`). Parser fields only."""
     if parse_output.get("broaden_to") != "all":
         return None
     axis = jsc.js_string(parse_output.get("broaden_axis") or "").strip().lower()
-    return axis if axis in ("channel", "product", "customer") else None
+    return axis if axis in ("channel", "product", "customer", "company") else None
 
 
 def _refine(
@@ -2540,19 +2628,15 @@ def _refine(
     if period is not None:
         given["period"] = period
     extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
-    outstanding = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
-    if frame.get("customer_ids") and not args.get("customer_ids") and not dealer and not outstanding:
-        # The customer went (all customers, "my ..."): it was the subject, so the company is owed now, as on a fresh ask.
-        # Item 4 (owner 29 Oct): never the company question on an outstanding ask.
-        own = _own_companies(companies)
+    own = _own_companies(companies)
+    if own and not dealer:
+        # A company the refine names narrows it, as on a fresh ask (sales and outstanding alike); one the contact does
+        # not hold is said. None named keeps the held one, or every company (owner O-R2: never asked).
         named, foreign = _company_said(parse_output, own)
-        if own and foreign:
+        if foreign:
             return None, COMPANY_FORBIDDEN_LINE
         if named is not None:
             args["company"] = str(named[0])
-        elif not plan["covered"] and _owes_company(args, own):
-            given["company"], company_extras = _company_question_fields(own)
-            extras.update(company_extras)
     if kind_ask:
         _ask_kind(given, extras, kind_ask)
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
@@ -2618,7 +2702,7 @@ def _drill(
     if own is None:
         return None, line
     kind_ask = own.pop("_kind_ask", None)
-    own.pop("_covered", None)
+    own.pop("_agent_words", None)
     group_by = own.get("group_by")
     if group_by is None:
         return None, CATALOGUE_LINE
@@ -2742,9 +2826,6 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     top_n = (outcome.values.get("top_n") or {}).get("value")
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
-    company = _dict(outcome.values.get("company")).get("value")
-    if company and company != rf.ALL:
-        args["company"] = str(company)  # the company the person chose
     agent = _dict(outcome.values.get("sales_agent")).get("value")
     if agent:
         args["sales_agent_ids"] = [str(agent)]  # the agent the person picked
@@ -2770,6 +2851,34 @@ def document_list_args(args: dict[str, Any], outcome: rf.Outcome) -> dict[str, A
     if any(args.get(k) for k in _SUBJECT_ARGS):
         return None
     return {**args, "group_by": LIST_GROUPS[args["basis"]], "top_n": BREAKDOWN_TOP_N}
+
+
+def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> dict[str, Any]:
+    """Owner R3 (round 7d): the ONE point the report ask's customer ids are final for the route (both paths pass it,
+    after `route_args`). A customer the office grouped is one customer: each id widens to every ledger of its explicit
+    `customer_group_id` in the same company (read from `customers` on the turn's company-scoped session, never a name
+    rule). `linked` (a dealer's own customers): a widened ledger outside them is left out (the route's own cap stays
+    behind it). Args without customer ids, or ids in no group, are returned as they are."""
+    ids = [str(i) for i in jsc.array(args.get("customer_ids")) if i]
+    if not ids or db is None:
+        return args
+    from sqlalchemy import and_, or_
+
+    from app.models.order import Customer
+
+    groups = {
+        (str(g), str(c))
+        for g, c in db.query(Customer.customer_group_id, Customer.company_id).filter(Customer.id.in_(ids)).all()
+        if g
+    }
+    if not groups:
+        return args
+    rows = db.query(Customer.id).filter(
+        or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
+    ).all()
+    own = None if linked is None else {str(i) for i in jsc.array(linked)}
+    added = [str(r[0]) for r in rows if str(r[0]) not in ids and (own is None or str(r[0]) in own)]
+    return {**args, "customer_ids": [*ids, *sorted(added)]} if added else args
 
 
 #: SALES-UNIFIED (contract section 7): a billing line has no warehouse, so the route answers an
@@ -2837,3 +2946,553 @@ def error_line(envelope: Any) -> str | None:
         thing = message.split(" not found", 1)[0].strip().lower() if " not found" in message else ""
         return f"I couldn't find that {thing}." if thing else "I couldn't find that."
     return None
+
+
+# --------------------------------------------------------------------------- #
+# SALES-ACCOUNT-TYPE semantic carry (PLAN-report-semantic-carry-2nov.md A2, A3): the parser's `report_ask` object
+# --------------------------------------------------------------------------- #
+
+#: The parser's whole report ask after the message (`parser.with_report_ask`). The engine keeps the key on a verdict only
+#: for a prompt that carries the marker (`from_object`), so the key's presence is that prompt in use; a dict is the ask.
+OBJECT_KEY = "report_ask"
+#: The held names -> ids (the frame's and the open question's, `_held_names`), written by `from_object` alone, which drops
+#: any value the parser put there: the lane maps a name carried back to the id it ran with by the company rule (SC-5).
+HELD_IDS_KEY = "report_ask_ids"
+#: The route's axis name the parser's `group_by` spells otherwise.
+_PARSER_AXIS = {"location": "warehouse"}
+#: An open field of this ask -> the words the `Held report (open question: ...)` line names it with.
+OPEN_QUESTION_WORDS = {
+    "basis": "basis", "period": "period", "top_n": "count", "metric": "measure",
+    "kind": "brand or account type", "sales_agent": "sales agent", "scope": "scope",
+}
+#: Crew C6-2 (round 6): the kinds a held filter carries by, each as (the object lists that hold it, the entity hints that
+#: name it this message). Brand and account type are ONE kind (the model moves a word between the two lists).
+_CARRY_KINDS = (
+    (("sales_agents",), frozenset({"sales_agent"})),
+    (("brands", "account_types", "brand_or_account_type"), frozenset({"brand", "account_type"})),
+    (("categories",), frozenset({"category"})),
+    (("customers",), frozenset({"customer"})),
+    (("products",), frozenset({"product"})),
+    (("company",), frozenset({"company"})),
+)
+#: A breakdown axis -> the object slot that filters its own dimension (C6-2: an axis whose slot the ask filters to ONE
+#: value is one row, not a breakdown).
+_AXIS_SLOTS = {
+    "sales_agent": "sales_agents", "brand": "brands", "account_type": "account_types", "category": "categories",
+    "customer": "customers", "product": "products", "channel": "channel",
+}
+#: The id params the held report names, the object list each one is shown in, and the row column it is named by.
+_NAMED_PARAMS = (
+    ("sales_agent_ids", "sales_agents"), ("brand_ids", "brands"), ("category_ids", "categories"),
+    ("customer_ids", "customers"), ("product_ids", "products"),
+)
+#: The verdict keys an object turn does not read: the held ranking, the parser's per-message refine and drill readings
+#: (a scoped drill runs first, `_settle`), and the engine's held stamps. The object is the whole ask.
+_OBJECT_DROPS = ("sales_ranking_frame", "ranking_refine", "ranking_drill", HELD_KEY, "bare_top_selling", "required_ask")
+#: The entity hints the object's lists replace (every other entity of the message stays: a location, a spec).
+_OBJECT_HINTS = frozenset({"sales_agent", "brand", "category", "account_type", "customer", "product"})
+#: The parser's report statuses: the object counts on a parse that is a report ask, or that answers this ask's question.
+REPORT_STATUSES = frozenset({ASK_NAME, "top_selling", *SALES_STATUSES, *OUTSTANDING_STATUSES})
+
+
+def arg_names(db: Any, args: Any, companies: Any = (), words: Any = None) -> dict[str, dict[str, str]]:
+    """The word each id of a report's route args is shown with, and the company's name among the contact's own. Kept
+    beside the ids on the frame and on an open question's slot, so the `Held report:` line names them and never prints
+    an id. A carried word is resolved again (`_word_filters`), so a row is shown by a word that resolves back to exactly
+    the held rows in the ask's company: a sales agent by the one word it was typed as (`words`: word -> the ids it
+    resolved to) when that word resolves back to exactly those rows, else by its code (unique per company); a brand or
+    category by its name when the name resolves to exactly those rows, else by its code; a customer by its name (the
+    held ids ride beside it, `_fresh_args`), and every ledger of a customer group held whole by the group's one name, so
+    that name maps back to exactly those ids (round 7d, `_group_names`); a product by its code."""
+    from app.models.order import Customer
+    from app.models.product import Brand, Product, ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    args = _dict(args)
+    out: dict[str, dict[str, str]] = {}
+    columns = {
+        "sales_agent_ids": (SalesAgent, SalesAgent.sales_agent, None),
+        "brand_ids": (Brand, Brand.brand_name, Brand.brand_code),
+        "category_ids": (ProductCategory, ProductCategory.category_name, ProductCategory.category_code),
+        "customer_ids": (Customer, Customer.customer_name, None),
+        "product_ids": (Product, Product.product_code, None),
+    }
+    company = jsc.js_string(args.get("company") or "").strip()
+    for param, (model, name, code) in columns.items():
+        ids = [str(i) for i in jsc.array(args.get(param)) if i]
+        if not ids or db is None:
+            continue
+        rows = db.query(model.id, name, code if code is not None else name).filter(model.id.in_(ids)).all()
+        named = {str(i): str(n or c or "").strip() for i, n, c in rows}
+        if code is not None:
+            codes = {str(i): str(c or "").strip() for i, _n, c in rows}
+            hint = "brand" if param == "brand_ids" else "category"
+            for shown in {n.casefold() for n in named.values() if n}:
+                held = {i for i, n in named.items() if n.casefold() == shown}
+                word = next(n for n in named.values() if n.casefold() == shown)
+                if set(_in_company(db, hint, _fresh_ids(db, hint, word), company or None)) != held:
+                    named.update({i: codes[i] or named[i] for i in held})  # the name would widen or miss: the code
+        if param == "customer_ids":
+            named.update(_group_names(db, ids))
+        if param == "sales_agent_ids":
+            for word, typed in _dict(words).items():
+                typed = {str(i) for i in jsc.array(typed) if str(i) in named}
+                if typed and set(_in_company(db, "sales_agent", _fresh_ids(db, "sales_agent", word), company or None)) == typed:
+                    named.update({i: str(word) for i in typed})  # one person's codes, as the one word that names them
+        out[param] = {i: n for i, n in named.items() if n}
+    shown = next((str(c[1]) for c in _own_companies(companies) if company and company == str(c[0])), None)
+    if shown:
+        out["company"] = {company: shown}
+    return out
+
+
+def _group_names(db: Any, ids: list[str]) -> dict[str, str]:
+    """Round 7d: the held customer ids that make up a whole explicit customer group (every ledger of it, in its company),
+    each by the group's one name: the Held report line shows the group once, and that name maps back (`_held_ids`) to
+    exactly those ids. A group held only in part keeps each ledger's own name."""
+    from app.models.order import Customer, CustomerGroup
+
+    held = set(ids)
+    members: dict[tuple[str, str, str], set[str]] = {}
+    for i, group, company, name in (
+        db.query(Customer.id, Customer.customer_group_id, Customer.company_id, CustomerGroup.name)
+        .join(CustomerGroup, CustomerGroup.id == Customer.customer_group_id)
+        .filter(Customer.id.in_(ids))
+        .all()
+    ):
+        if str(name or "").strip():
+            members.setdefault((str(group), str(company), str(name).strip()), set()).add(str(i))
+    out: dict[str, str] = {}
+    for (group, company, name), found in members.items():
+        whole = {
+            str(r[0])
+            for r in db.query(Customer.id).filter(Customer.customer_group_id == group, Customer.company_id == company).all()
+        }
+        if whole <= held:
+            out.update({i: name for i in found})
+    return out
+
+
+def with_names(db: Any, slot: Any, companies: Any = ()) -> Any:
+    """An open question's slot with the names of the ask so far beside its ids (`extras["names"]`, `arg_names`)."""
+    if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME:
+        return slot
+    extras = _dict(slot.get("extras"))
+    so_far = route_args(rf.Outcome(values=_dict(slot.get("values")), extras=extras))
+    return {**slot, "extras": {**extras, "names": arg_names(db, so_far, companies, extras.get("agent_words"))}}
+
+
+def _object_of(args: dict[str, Any], names: dict[str, Any], *, words: Any = (), outstanding: bool = False) -> dict[str, Any]:
+    """Route args (a frame, or an open question's ask so far) in the `report_ask` shape, in its key order: every id by the
+    name it was shown with (an id with no name is left out, never printed), nulls and empty lists kept."""
+    from app.services.chatbot.head.parser import REPORT_ASK_KEYS
+
+    def named(param: str) -> list[str]:
+        shown = _dict(names.get(param))
+        out: list[str] = []
+        for i in jsc.array(args.get(param)):
+            name = shown.get(str(i))
+            if name and name not in out:
+                out.append(name)
+        return out
+
+    axis = jsc.js_string(args.get("group_by") or "").strip()
+    axis = _PARSER_AXIS.get(axis, axis) if axis in GROUP_BY.values() else ""
+    basis = args.get("basis") if args.get("basis") in BASES else None
+    company = jsc.js_string(args.get("company") or "").strip()
+    code = jsc.js_string(args.get("product_code") or "").strip()
+    ask = {
+        "kind": "outstanding" if outstanding or basis in OUTSTANDING_KINDS else "sales",
+        "basis": basis,
+        "date_from": args.get("date_from") or None,
+        "date_to": args.get("date_to") or None,
+        "group_by": axis or None,
+        # A count only for a ranking (a measure ranks it): a breakdown's and a trend's row cap is not the user's count.
+        "top_n": args.get("top_n") if axis not in ("", *TREND_AXES) and args.get("measure") and isinstance(args.get("top_n"), int) else None,
+        "measure": args.get("measure") or None,
+        "channel": args.get("channel") if args.get("channel") in ("dealer", "project") else None,
+        "company": _dict(names.get("company")).get(company) if company else None,
+        "sales_agents": named("sales_agent_ids"),
+        "account_types": [str(t) for t in jsc.array(args.get("account_types")) if str(t).strip()],
+        "brands": named("brand_ids"),
+        "categories": named("category_ids"),
+        "customers": named("customer_ids"),
+        "products": [code] if code else named("product_ids"),
+        "brand_or_account_type": [str(w) for w in jsc.array(words) if str(w).strip()],
+    }
+    return {key: ask[key] for key in REPORT_ASK_KEYS}
+
+
+def held_report(focus: Any) -> str | None:
+    """The one `Held report` line of the user turn (A2): the open question's ask so far, naming the field it asks, or
+    else the report that last ran (`Focus.sales_ranking_frame`); None when neither is held."""
+    from app.services.chatbot.turn.context import held_report_line
+
+    ask, asking = _held_object(focus)
+    return held_report_line(ask, asking) if ask is not None else None
+
+
+def _held_object(focus: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """The held report in the `report_ask` shape and the open question it asks (its words), or `(None, None)`: the open
+    question's ask so far (its asked words in `brand_or_account_type`), else the report that last ran."""
+    slot = _dict(getattr(focus, "required_ask", None))
+    if slot.get("ask") == ASK_NAME:
+        extras = _dict(slot.get("extras"))
+        values = _dict(slot.get("values"))
+        so_far = route_args(rf.Outcome(values=values, extras=extras))
+        words = extras.get("kind_words") if "kind" not in values else ()
+        ask = _object_of(so_far, _dict(extras.get("names")), words=words, outstanding=bool(extras.get("kind_ask")))
+        asking = jsc.js_string(slot.get("asking") or "").strip()
+        return ask, OPEN_QUESTION_WORDS.get(asking, asking.replace("_", " ")) or None
+    frame = _dict(getattr(focus, "sales_ranking_frame", None))
+    return (_object_of(frame, _dict(frame.get("names"))), None) if frame else (None, None)
+
+
+def _held_names(focus: Any) -> dict[str, dict[str, str]]:
+    """Every id -> name the held report and the open question's ask hold, per param (the open ask's win)."""
+    out: dict[str, dict[str, str]] = {}
+    sources = (
+        _dict(_dict(getattr(focus, "sales_ranking_frame", None)).get("names")),
+        _dict(_dict(_dict(getattr(focus, "required_ask", None)).get("extras")).get("names")),
+    )
+    for names in sources:
+        for param, ids in names.items():
+            out.setdefault(param, {}).update({str(i): str(n) for i, n in _dict(ids).items()})
+    return out
+
+
+def _held_bases(focus: Any) -> set[str]:
+    """The basis the held report ran with and the one the open question's ask already holds (the user chose them)."""
+    frame = _dict(getattr(focus, "sales_ranking_frame", None))
+    slot = _dict(getattr(focus, "required_ask", None))
+    held = {frame.get("basis")}
+    if slot.get("ask") == ASK_NAME:
+        held |= {
+            _dict(_dict(slot.get("extras")).get("args")).get("basis"),
+            _dict(_dict(slot.get("values")).get("basis")).get("value"),
+        }
+    return {b for b in held if b in BASES}
+
+
+def _rows_on_screen(verdict: dict[str, Any], focus: Any, pending: Any) -> bool:
+    """V5 and the agent pick: a pick of a position under an open pick list or offer, and the answer to this ask's own
+    scope or sales agent pick, are read off the rows and options on screen, as today. The parser's `continuation` alone
+    sets nothing aside: a "more" under a cut summary is the pick list's own answer (`apply._answer_top_selling_pick` sets
+    `ranking_detail`), which `_settle` reads before the object."""
+    slot = _dict(getattr(focus, "required_ask", None))
+    if slot.get("ask") == ASK_NAME and slot.get("asking") in ("sales_agent", "scope"):
+        return True
+    answer = _dict(verdict.get("open_question_answer"))
+    picked = answer.get("mode") == "pick" and bool(jsc.array(answer.get("picked")))
+    return pending is not None and bool(picked or jsc.array(verdict.get("reference_positions")))
+
+
+#: An open offered-option field of this ask -> the object slot its declared pick fills (the brand-or-account-type pick:
+#: `_word_kinds`, its company option the object's `company`). The measure question is a free one: the object's own
+#: `measure` answers it.
+_PICK_FILLS = {"basis": "basis"}
+
+
+def _open_pick(verdict: dict[str, Any], focus: Any) -> tuple[str, Any, str] | None:
+    """`(field, value, label)` of the offered option the parser DECLARED picked (`open_question_answer` mode pick, its first
+    position in range) while one of this ask's questions is open; None otherwise. The list-pick class (V5): read off the
+    options shown, never the message's words."""
+    slot = _dict(getattr(focus, "required_ask", None))
+    if slot.get("ask") != ASK_NAME or not slot.get("asking"):
+        return None
+    picked = rf.picked_option(slot, verdict.get("open_question_answer"))
+    return (str(slot["asking"]), picked.value, str(picked.label)) if picked.status == "ok" else None
+
+
+def _word_kinds(
+    ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked: Any = None, *, company: Any = None
+) -> list[tuple[str, str]]:
+    """V4: each brand / account type word of the object as `(word, how)`, how = brand | account_type | company | unsure
+    (`unsure`: the tables decide, `_account_plan`, and a word in both is asked). Not the object's list alone (a model may
+    list a word the message left open as a brand), never the message's text: in order, the declared pick of an offered
+    option while the brand-or-account-type question is open fills the asked words (the V5 list-pick class): all of them
+    unless the object adds a word the open ask did not already hold, else only those it still carries (a dropped one
+    stays dropped, the object being the newer value); a word this message names
+    as an entity is that entity's kind when `kind_said` says it; with `kind_said` null, a word the object put in its
+    brands or account types, whose entity the parser bound to no candidate (`canonical_code` null), that is also the
+    object's own `company` (`company`) is the company (C6-1: the model read "company" and wrote the word twice), else
+    unsure; a word the open question still owes is unsure (asked again); a word left in
+    `brand_or_account_type` is unsure; any other word, carried from the held report, keeps its list and is never asked."""
+    def fold(value: Any) -> str:
+        return " ".join(jsc.js_string(value).split()).casefold()
+
+    slot = _dict(getattr(focus, "required_ask", None))
+    slot = slot if slot.get("ask") == ASK_NAME else {}
+    extras = _dict(slot.get("extras"))
+    owed_words = [w for w in jsc.array(extras.get("kind_words")) if fold(w)] if "kind" not in _dict(slot.get("values")) else []
+    owed = {fold(w) for w in (*owed_words, *(jsc.array(extras.get("kind_match")) if owed_words else ()))}
+    named: dict[str, dict[str, Any]] = {}
+    for e in jsc.array(verdict.get("entities")):
+        if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type"):
+            for key in ("raw", "canonical_code"):
+                if fold(e.get(key)):
+                    named.setdefault(fold(e.get(key)), e)
+    out: list[tuple[str, str]] = []
+    lists = [(key, default) for key, default in (("brands", "brand"), ("account_types", "account_type"), ("brand_or_account_type", None))]
+    words = [(w, default) for key, default in lists for w in jsc.array(ask.get(key))]
+    if picked:
+        # One rule: the asked words are what the pick answers, and carry, unless the object adds a brand or account type
+        # word the open ask did not already hold (the newer value: a dropped asked word then stays dropped).
+        held = owed | {fold(n) for n in _dict(_dict(extras.get("names")).get("brand_ids")).values()} | {
+            fold(t) for t in jsc.array(_dict(extras.get("args")).get("account_types"))
+        }
+        if not any(fold(w) and fold(w) not in held for w, _default in words):
+            words += [(w, None) for w in owed_words]
+    for word, default in words:
+        word = " ".join(jsc.js_string(word).split())
+        key = fold(word)
+        if not key or key in {fold(w) for w, _how in out}:
+            continue
+        entity = named.get(key)
+        if picked and key in owed:
+            how = picked
+        elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
+            how = jsc.js_string(entity.get("hint")).strip().lower()
+        elif entity is not None and "kind_said" in entity:
+            # The model committed the word to neither reading (left out of `brand_or_account_type`, bound to no candidate):
+            # equal to its own company, it is that company.
+            loose = default is not None and not jsc.js_string(entity.get("canonical_code") or "").strip()
+            how = "company" if loose and key == fold(company or "") else "unsure"
+        elif default is None or key in owed:
+            how = "unsure"
+        else:
+            how = default
+        out.append((word, how))
+    return out
+
+
+def _entity(raw: str, hint: str, code: Any = None, **more: Any) -> dict[str, Any]:
+    return {"raw": raw, "hint": hint, "canonical_code": code, "current_message": True, "confident": True, **more}
+
+
+def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None) -> dict[str, Any]:
+    """Engine seam, right after the parse (A3). `on`: the prompt in use carries the report ask marker
+    (`ParserConfig.report_ask`); off, the key is dropped and nothing else changes.
+
+    On, a `report_ask` object is the whole report the user wants after this message: its slots become the flat fields the
+    fresh ask already reads (the kind, the period, the axis, the count, the measure, the channel, the company, the basis,
+    and one entity per name), so every word -> id resolution, question and rail below runs unchanged and no carry seam
+    reads the turn. Value checks only: V1, the object's basis counts when this message's own `basis` / `sales_basis` says
+    it or the held report / open ask already has it; the open question's declared pick fills the slot it asks when the
+    object left it null (`_open_pick`; the word question's company option fills the company, C6-1); a month or year axis
+    takes only this message's own count. C6-2, over the model's own outputs: a held filter of a kind this message's
+    entities name nothing of and the object dropped stays (`_carry`); an axis this message does not type stays the held
+    one on an answer to the open question, and over a slot the ask filters to one value. The held names -> ids ride
+    along for the lane's customer rule (`_fresh_args`). The object counts only on a report parse (`REPORT_STATUSES`)
+    or a reply while this ask's question is open; an object that is not a sales or outstanding ask, or a turn read off
+    the rows on screen (`_rows_on_screen`), keeps today's path: the object is set aside (null)."""
+    if HELD_IDS_KEY in verdict:
+        verdict = {k: v for k, v in verdict.items() if k != HELD_IDS_KEY}  # the engine's own key: no parser value survives
+    if not on:
+        return {k: v for k, v in verdict.items() if k != OBJECT_KEY} if OBJECT_KEY in verdict else verdict
+    from app.services.chatbot.head.parser import REPORT_ASK_KEYS
+
+    raw = verdict.get(OBJECT_KEY)
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
+    reported = status in REPORT_STATUSES or _dict(getattr(focus, "required_ask", None)).get("ask") == ASK_NAME
+    if (
+        not isinstance(raw, dict) or raw.get("kind") not in ("sales", "outstanding") or not reported
+        or _rows_on_screen(verdict, focus, pending)
+    ):
+        return {**verdict, OBJECT_KEY: None}
+    ask = {key: raw.get(key) for key in REPORT_ASK_KEYS}  # the schema's keys only
+
+    def names(key: str) -> list[str]:
+        out: list[str] = []
+        for value in jsc.array(ask.get(key)):
+            word = " ".join(jsc.js_string(value).split())
+            if word and word.casefold() not in {w.casefold() for w in out}:
+                out.append(word)
+        return out
+
+    basis = ask.get("basis") if ask.get("basis") in BASES else None
+    if basis is not None and basis not in {verdict.get("basis"), verdict.get("sales_basis")} | _held_bases(focus):
+        basis = None  # V1: never defaulted; the basis question asks
+    ask["basis"] = basis
+    own_company = ask.get("company")  # the object's own, before any carry (C6-1)
+    pick = _open_pick(verdict, focus)
+    if pick is not None and _PICK_FILLS.get(pick[0]) and ask.get(_PICK_FILLS[pick[0]]) in (None, ""):
+        # One rule: the open question's declared pick fills the slot it asks when the object left that slot null.
+        ask[_PICK_FILLS[pick[0]]] = pick[1]
+    kind_company = _dict(_dict(getattr(focus, "required_ask", None)).get("extras")).get("kind_company")
+    if pick is not None and pick[0] == "kind" and pick[1] == COMPANY_KIND_OPTION[0] and jsc.array(kind_company):
+        # C6-1: the company option of the word question: the word is that company (`_word_kinds` drops it as a word).
+        ask["company"] = own_company = str(jsc.array(kind_company)[-1])
+    basis = ask["basis"] if ask.get("basis") in BASES else None
+    outstanding = ask.get("kind") == "outstanding" or basis in OUTSTANDING_KINDS
+    held_ask, _asking = _held_object(focus)
+    # C6-2: the held report carries into this one unless the message starts another report kind or resets the topic.
+    carrying = (
+        held_ask is not None and verdict.get("topic_reset") is not True
+        and held_ask.get("kind") == ("outstanding" if outstanding else "sales")
+    )
+    held_axis = (held_ask or {}).get("group_by") if carrying else None
+    axis = jsc.js_string(ask.get("group_by") or "").strip().lower() or None
+    # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
+    typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+        verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+    )
+    open_slot = _dict(getattr(focus, "required_ask", None))
+    if axis and open_slot.get("ask") == ASK_NAME and not typed:
+        # A reply to this ask's open question sets no axis the held ask did not have unless this message types one: the
+        # held ask's axis stays (a total stays one).
+        held_group = _dict(_dict(open_slot.get("extras")).get("args")).get("group_by")
+        if GROUP_BY.get(axis, axis) != held_group:
+            axis = _PARSER_AXIS.get(held_group, held_group) if held_group in GROUP_BY.values() else None
+    slot_of_axis = _AXIS_SLOTS.get(axis or "")
+    if slot_of_axis and not typed and (
+        len(names(slot_of_axis)) == 1 if slot_of_axis != "channel" else ask.get("channel") in ("dealer", "project")
+    ):
+        # C6-2 (turn 23d6cb50): an axis this message does not type, over a slot the ask filters to ONE value, is one
+        # row: not a breakdown, the held axis stays.
+        axis = held_axis
+        slot_of_axis = _AXIS_SLOTS.get(axis or "")
+    if carrying:
+        _carry(ask, held_ask, verdict, slot_of_axis)
+    if outstanding:
+        status = status if status in OUTSTANDING_STATUSES else "outstanding"
+    elif axis is None:
+        status = "sales_report"  # a total
+    elif status not in (ASK_NAME, "top_selling", *SALES_STATUSES):
+        status = "sales_report"
+    held = _held_names(focus)
+    entities = [
+        e for e in jsc.array(verdict.get("entities"))
+        if not (isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() in _OBJECT_HINTS)
+    ]
+    # By name: the lane maps a held name back to its id, or resolves it, by the company rule (`_word_filters`).
+    entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
+    entities.extend(_entity(name, "category") for name in names("categories"))
+    picked = pick[1] if pick is not None and pick[0] == "kind" else None
+    for word, how in _word_kinds(ask, verdict, focus, picked, company=own_company):
+        if how == "brand":
+            entities.append(_entity(word, "brand"))
+        elif how == "account_type":
+            entities.append(_entity(word, "account_type"))
+        elif how != "company":  # a word that is the ask's company is no brand or account type filter (C6-1)
+            # Unsure: the brand-or-account-type plan reads it against the tables (`_account_plan`), asked when in both.
+            entities.append(_entity(word, "brand", kind_said=None))
+    # A held customer is never looked up again (the lane takes its id, `_fresh_args`); any other goes to the resolver.
+    entities.extend(_entity(name, "customer") for name in names("customers") if not _held_ids(held, "customer_ids", name))
+    entities.extend(_entity(code, "product") for code in names("products"))
+    # A month or year axis lists every bucket: it takes no count this message did not give (a copied one is not its own).
+    top_n = verdict.get("top_n") if axis in TREND_AXES else ask.get("top_n")
+    out = {k: v for k, v in verdict.items() if k != "by_words"}  # the object names the axis, not this message's words
+    out.update(
+        order_status=status,
+        group_by=axis,
+        top_n=top_n if isinstance(top_n, int) and not isinstance(top_n, bool) else None,
+        measure=ask.get("measure") if ask.get("measure") in METRICS else None,
+        sales_channel=ask.get("channel") if ask.get("channel") in ("dealer", "project") else None,
+        sales_company=" ".join(jsc.js_string(ask.get("company") or "").split()) or None,
+        date_filter_start=ask.get("date_from") or None,
+        date_filter_end=ask.get("date_to") or None,
+        basis=basis,
+        sales_basis=None,
+        ranking_refine=False,
+        entities=entities,
+        # A pick here is of the open question's options (no list is on screen, `_rows_on_screen`): the object already
+        # holds what it picked, and the open question is not read on an object turn.
+        open_question_answer=None,
+        reference_positions=[],
+    )
+    out[OBJECT_KEY] = ask  # as read, the carried lists included: the lane maps its held customer names to their ids
+    if held:
+        out[HELD_IDS_KEY] = held
+    return out
+
+
+def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None) -> None:
+    """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
+    name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
+    word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
+    widens is not carried (`turn.decide.widened_kinds`, the reader the open which-one customer pick shares: `broaden_axis`
+    with `broaden_to` "all" naming one of the kind's hints, and for the customer a global drill or "my ..."). The axis's
+    own slot is not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
+    named = {
+        jsc.js_string(e.get("hint") or "").strip().lower()
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    }
+    from app.services.chatbot.turn.decide import widened_kinds
+
+    # R-P3-09: the kinds the parse widens, read as each kind's own hint (brand and account type clear together).
+    widened = widened_kinds(verdict)
+    for keys, hints in _CARRY_KINDS:
+        if named & hints or hints & widened or any(ask.get(k) for k in keys):
+            continue
+        for key in keys:
+            if key not in ("brand_or_account_type", axis_slot) and held_ask.get(key):
+                ask[key] = held_ask[key]
+
+
+_COMPANY_ROWS = {"sales_agent": "SalesAgent", "brand": "Brand", "category": "ProductCategory", "customer": "Customer"}
+
+
+def _in_company(db: Any, hint: str, ids: Any, company: Any) -> list[str]:
+    """The ids (of one subject kind) that are rows of `company` or shared (no company); every id when no company is
+    named."""
+    ids = [str(i) for i in jsc.array(ids) if i]
+    if not ids or not company or db is None:
+        return ids
+    from sqlalchemy import or_
+
+    from app.models.order import Customer
+    from app.models.product import Brand, ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    model = {"SalesAgent": SalesAgent, "Brand": Brand, "ProductCategory": ProductCategory, "Customer": Customer}[_COMPANY_ROWS[hint]]
+    rows = db.query(model.id).filter(model.id.in_(ids), or_(model.company_id == str(company), model.company_id.is_(None))).all()
+    keep = {str(r[0]) for r in rows}
+    return [i for i in ids if i in keep]
+
+
+def _fresh_ids(db: Any, hint: str, word: str) -> list[str]:
+    """The ids a brand, category or sales agent word resolves to, as `_word_filters` resolves it (none for an ambiguous
+    category)."""
+    if hint == "category":
+        from app.services.chatbot.lanes import business as business_pkg
+
+        found, _named, ambiguous, _unknown = business_pkg._top_selling_category_ids({"category_words": [word]}, db=db)
+        return [] if ambiguous else [str(i) for i in found]
+    return [str(i) for i in _resolve_word(db, hint, word)[0]]
+
+
+def _customer_in(db: Any, name: str, company: Any) -> list[str]:
+    """The one customer of `company` whose stored name is `name` (the Held report line prints it as stored, case aside),
+    for a principal that may read customers; none when no company is named, when no row has it, or when several share it
+    (a shared name is never widened)."""
+    if db is None or not company or not name or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
+        return []
+    from sqlalchemy import func
+
+    from app.models.order import Customer
+
+    rows = db.query(Customer.id).filter(
+        func.lower(Customer.customer_name) == " ".join(name.split()).casefold(), Customer.company_id == str(company)
+    ).limit(2).all()
+    return [str(rows[0][0])] if len(rows) == 1 else []
+
+
+def _held_ids(held: dict[str, Any], param: str, name: str) -> list[str]:
+    """The ids the held report (or the open question's ask) showed by this name."""
+    folded = " ".join(jsc.js_string(name).split()).casefold()
+    return [str(i) for i, n in _dict(held.get(param)).items() if folded and " ".join(str(n).split()).casefold() == folded]
+
+
+def _object_scope(parse_output: dict[str, Any], companies: Any) -> dict[str, Any] | None:
+    """An object turn's word scope (`_word_filters`): the contact's own company the ask names (None: none named) and
+    the held names -> ids (`from_object`). None off the object path."""
+    if not isinstance(parse_output.get(OBJECT_KEY), dict):
+        return None
+    named, _foreign = _company_said(parse_output, _own_companies(companies))
+    return {
+        "company": str(named[0]) if named is not None else None,
+        "company_name": str(named[1]) if named is not None else "",
+        "held": _dict(parse_output.get(HELD_IDS_KEY)),
+    }

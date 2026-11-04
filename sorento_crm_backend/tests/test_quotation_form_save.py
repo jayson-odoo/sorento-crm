@@ -24,6 +24,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 from .test_project_quotation_document_routes import (  # noqa: F401  (fixture import)
     BASE,
     MARKER,
@@ -69,7 +70,7 @@ def _patch(client, project_id: str, document_id: str, body: dict):
     )
 
 
-def _seed_product(db, list_price: str = "300.00"):
+def _seed_product(db, list_price: str = UNDISCOUNTED_LIST_PRICE):
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
     product = _product(db, category.id, uom, list_price)
@@ -226,7 +227,10 @@ def test_a_scope_with_no_name_is_refused_and_nothing_is_created(api):
 # -------------------------------------------------------------------- edit
 
 
-def _created(client, db, project_id: str, product) -> dict:
+def _created(client, db, project_id: str, product, *, at_default_price: bool = False) -> dict:
+    """at_default_price: price both lines at the product's list price, so issuing needs no
+    discount approval (PS-QUOTE-RULES, #2096)."""
+    first_price, second_price = ("300.00", "300.00") if at_default_price else ("250.00", "5.00")
     response = _create(
         client,
         project_id,
@@ -235,11 +239,11 @@ def _created(client, db, project_id: str, product) -> dict:
                 {
                     "scope_label": f"{MARKER} Townhouse",
                     "lines": [
-                        {"product_id": product.id, "unit_price": "250.00", "quantity": "4"},
+                        {"product_id": product.id, "unit_price": first_price, "quantity": "4"},
                         {
                             "product_id": product.id,
                             "description_snapshot": "Old line",
-                            "unit_price": "5.00",
+                            "unit_price": second_price,
                             "quantity": "1",
                         },
                     ],
@@ -347,7 +351,7 @@ def test_edit_sending_lines_to_an_issued_scope_is_refused_and_writes_nothing(api
     """AC-QF023: the existing 422, and the header change in the same save does not land."""
     client, db, _company_id, _user_id, project, _party = api
     product = _seed_product(db)
-    document = _created(client, db, project.id, product)
+    document = _created(client, db, project.id, product, at_default_price=True)
     root = f"{BASE}/projects/{project.id}/quotation-documents"
     _sign(client, root, document["id"])
     issued = client.post(f"{root}/{document['id']}/issue")
@@ -477,7 +481,7 @@ def test_removing_a_scope_that_was_issued_is_refused_and_writes_nothing(api):
     the same save lands."""
     client, db, _company_id, _user_id, project, _party = api
     product = _seed_product(db)
-    document = _created(client, db, project.id, product)
+    document = _created(client, db, project.id, product, at_default_price=True)
     root = f"{BASE}/projects/{project.id}/quotation-documents"
     _sign(client, root, document["id"])
     issued = client.post(f"{root}/{document['id']}/issue")
@@ -506,7 +510,7 @@ def test_removing_a_scope_that_was_issued_then_revised_is_still_refused(api):
     one. A revision opened after the issue does not make the scope deletable."""
     client, db, _company_id, _user_id, project, _party = api
     product = _seed_product(db)
-    document = _created(client, db, project.id, product)
+    document = _created(client, db, project.id, product, at_default_price=True)
     root = f"{BASE}/projects/{project.id}/quotation-documents"
     _sign(client, root, document["id"])
     assert client.post(f"{root}/{document['id']}/issue").status_code == 201
@@ -570,6 +574,7 @@ class _FakeTemplate:
         self.body_html = body_html
         self.payment_terms = None
         self.validity = None
+        self.design = None
 
 
 def _fake_templates(monkeypatch):

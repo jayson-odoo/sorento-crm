@@ -27,6 +27,7 @@ import {
   formatRM,
   hasOpenGroup,
   itemValue,
+  lineTemplateState,
   packageWarningFor,
   partsAtListTitle,
   type DraftLine,
@@ -131,6 +132,7 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
+              onChooseTemplate={editor.chooseTemplate}
               onResolvePart={editor.resolvePart}
               onRemovePart={editor.removePart}
               onAddPart={editor.addPart}
@@ -166,6 +168,8 @@ interface LineRowProps {
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the Template select on a many-template line. */
+  onChooseTemplate: (key: string, templateId: string) => void;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
@@ -324,6 +328,7 @@ function LineRow({
   onUpdate,
   onRemove,
   onChoosePackage,
+  onChooseTemplate,
   onResolvePart,
   onRemovePart,
   onAddPart,
@@ -332,6 +337,7 @@ function LineRow({
   onManualSellPriceChange,
   showNumberErrors,
 }: LineRowProps) {
+  const templateState = lineTemplateState(line);
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // Only when there is a choice to make: one combo is applied on pick, and none
@@ -566,9 +572,55 @@ function LineRow({
       {line.guard_error && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">
-            <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
+            {/* The anchor the form's Submit scrolls to (`scrollToFirstProblem`): a
+                row's own refusal, the missing-template one included, sits below
+                the fold on a long request (crew browser pass). */}
+            <p
+              data-error-anchor={`line:${index}`}
+              className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
+            >
               {line.guard_error}
             </p>
+          </td>
+        </tr>
+      )}
+      {templateState.kind === 'single' && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            {/* Sticky + capped to the viewport: the table scrolls sideways at
+                375px, and a sub-row spanning every column otherwise runs past
+                the card's right edge (browser pass). */}
+            <p
+              className="sticky left-0 max-w-[calc(100vw-9rem)] truncate border-l-2 border-border pl-3 text-xs text-muted-foreground sm:max-w-none"
+              title={templateState.template.name}
+            >
+              Template: {templateState.template.name}
+            </p>
+          </td>
+        </tr>
+      )}
+      {templateState.kind === 'many' && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            <div className="sticky left-0 max-w-[calc(100vw-9rem)] border-l-2 border-border pl-3 sm:max-w-none">
+              <SearchableSelect
+                clearable
+                truncateTriggerLabel
+                value={line.tag_template_id ?? ''}
+                onChange={(value) => onChooseTemplate(line.key, value)}
+                options={templateState.options.map((template) => ({
+                  value: template.id,
+                  label: template.name,
+                  description:
+                    template.width_mm && template.height_mm
+                      ? `${template.width_mm} x ${template.height_mm} mm`
+                      : undefined,
+                }))}
+                placeholder="Tag template"
+                emptyMessage="No templates."
+                size="sm"
+              />
+            </div>
           </td>
         </tr>
       )}

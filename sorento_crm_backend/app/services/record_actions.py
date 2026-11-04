@@ -1707,6 +1707,57 @@ for _key, _fn, _label in (
     )
 
 
+def _unassign_tag_template_products(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
+    an unlink, so it parks (5s, reversible: Add puts the links back). The
+    filter is re-applied at commit, under the requester's own scope."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.bulk_assign(
+        db,
+        _entity_id(payload),
+        {
+            key: payload.get(key) or []
+            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+        },
+        "remove",
+        user_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="tag_template.unassign_products",
+        entity_types=("tag_template",),
+        execute=_unassign_tag_template_products,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Remove tag template from products",
+    )
+)
+
+
+def _unlink_product_tag_templates(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: unticking templates on the product page."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_product_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="product.unlink_tag_templates",
+        entity_types=("product",),
+        execute=_unlink_product_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from product",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through
@@ -2706,6 +2757,88 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.projects.delete",
         label="Delete quotation",
+    )
+)
+
+
+def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
+    """The spec sheet routes' write checks (edit right + write access to the project), run at park
+    time and again when the window lapses. 404 when the sheet is gone or not in the caller's
+    company, 403 without the right. Returns the sheet."""
+    from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationSpecSheet
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    query = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id)
+    if lock:
+        # Held until commit so a reset cannot interleave with a page save (both rewrite page_edits).
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
+    document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if sheet is None or project is None:
+        raise handle_not_found("Spec sheet", sheet_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return sheet
+
+
+def assert_spec_sheet_page_resettable(db: Session, sheet_id: str, page_key, user_id) -> None:
+    """Park-time check for `quotation_spec_sheet.reset_page`: the sheet is editable and the page
+    key is `cover` or one of its pages (422 otherwise)."""
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    sheet = assert_spec_sheet_editable(db, sheet_id, user_id)
+    key = str(page_key or "")
+    if len(key) > 120 or key not in {spec.COVER_KEY} | {p["key"] for p in spec.pages(db, sheet)}:
+        raise AppException(
+            status_code=422, message="That page is not on this spec sheet.", code="spec_sheet_keys_invalid"
+        )
+
+
+def _delete_quotation_spec_sheet(db: Session, payload: dict):
+    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    db.delete(sheet)
+    db.flush()
+    return {"deleted": True}
+
+
+def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
+    from app.services import project_spec_sheet_service as spec
+
+    assert_spec_sheet_page_resettable(
+        db, _entity_id(payload), payload.get("page_key"), payload.get("requested_by_id")
+    )
+    sheet = assert_spec_sheet_editable(
+        db, _entity_id(payload), payload.get("requested_by_id"), lock=True
+    )
+    spec.reset_page_edit(
+        db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")
+    )
+    return {"reset": True}
+
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.delete",
+        entity_types=("quotation_spec_sheet",),
+        execute=_delete_quotation_spec_sheet,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete spec sheet",
+    )
+)
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.reset_page",
+        entity_types=("quotation_spec_sheet",),
+        execute=_reset_quotation_spec_sheet_page,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Reset page to template",
     )
 )
 

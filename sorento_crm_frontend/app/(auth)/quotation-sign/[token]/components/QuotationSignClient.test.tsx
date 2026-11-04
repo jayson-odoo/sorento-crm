@@ -452,7 +452,7 @@ describe('QuotationSignClient letterhead', () => {
     getQuotationSignPage.mockResolvedValue(page());
     renderPage();
 
-    expect(await screen.findByText('Quotation No.')).toBeInTheDocument();
+    expect(await screen.findByText('Proposal No.')).toBeInTheDocument();
     expect(screen.getByText('PRJQ-2026-0003-R1')).toBeInTheDocument();
     expect(screen.queryByText('Our Ref')).not.toBeInTheDocument();
     expect(screen.getByText('Revision')).toBeInTheDocument();
@@ -475,7 +475,7 @@ describe('QuotationSignClient letterhead', () => {
     getQuotationSignPage.mockResolvedValue(page({ sender_logo_url: null }));
     renderPage();
 
-    await screen.findByText('Quotation No.');
+    await screen.findByText('Proposal No.');
     expect(screen.queryByRole('img', { name: /logo/i })).not.toBeInTheDocument();
   });
 
@@ -498,7 +498,7 @@ describe('QuotationSignClient letterhead', () => {
 
     getQuotationSignPage.mockResolvedValue(page({ signatory_name: null, signatory_phone: null }));
     renderPage();
-    await screen.findByText('Quotation No.');
+    await screen.findByText('Proposal No.');
     expect(screen.queryByText('Sales contact')).not.toBeInTheDocument();
   });
 });
@@ -925,12 +925,21 @@ describe('QuotationSignClient cover card', () => {
     ).toBeInTheDocument();
   });
 
+  it('C2: a designed page whose cover rows include the terms row has no bottom terms panel', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover({ cover_title: 'OFFER SHEET', terms: '<p>CLAUSE A</p>' }));
+    renderPage();
+
+    await screen.findByText('INNER ITEM');
+    expect(screen.queryByText('Terms and conditions')).not.toBeInTheDocument();
+    expect(screen.getAllByText('CLAUSE A')).toHaveLength(1);
+  });
+
   it('says Quotation from once and shows the same reference as the PDF', async () => {
     getQuotationSignPage.mockResolvedValue(withCover());
     renderPage();
 
     await screen.findByText('Reference No.');
-    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
     expect(screen.getAllByText(REF).length).toBeGreaterThan(0);
   });
 
@@ -942,7 +951,7 @@ describe('QuotationSignClient cover card', () => {
 
     expect(await screen.findByText('Terms and conditions')).toBeInTheDocument();
     expect(screen.queryByText('Reference No.')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
   });
 
   it('polish: the cover terms row carries every TERMS_HTML_CLASS token and no prose', async () => {
@@ -979,3 +988,138 @@ async function expectTermsClass(inner: HTMLElement) {
   ).toBe(true);
   expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
 }
+
+/**
+ * QUOTE-COVER-DESIGN (UAC C3): a layout-3 payload carries the design's title, letterhead switch,
+ * intro and closing; a layout-2 payload (none of these fields) renders as today.
+ */
+describe('QuotationSignClient designed cover card', () => {
+  const designed = (overrides: Record<string, unknown> = {}) =>
+    page({
+      our_ref: 'PRJQ-2026-0042-R2 SERI MUTIARA',
+      terms: '<p>CLAUSE A</p>',
+      cover_rows: [
+        { key: 'reference', label: 'Offer Number', text: 'PRJQ-2026-0042-R2 SERI MUTIARA' },
+        { key: 'attn', label: 'Sent To', text: 'Kelly' },
+      ],
+      cover_title: 'OFFER SHEET',
+      cover_show_letterhead: true,
+      cover_intro_html: '<p>INTRO WORDS</p>',
+      cover_closing_html: '<p>CLOSING WORDS</p>',
+      ...overrides,
+    } as Partial<QuotationSignPage>);
+
+  it('renders the title, intro, rows and closing in the cover card, in that order', async () => {
+    getQuotationSignPage.mockResolvedValue(designed());
+    renderPage();
+
+    await screen.findByText('OFFER SHEET');
+    const cover = within(screen.getByTestId('quotation-sign-cover'));
+    const nodes = [
+      cover.getByText('OFFER SHEET'),
+      cover.getByText('INTRO WORDS'),
+      cover.getByText('Offer Number'),
+      cover.getByText('Sent To'),
+      cover.getByText('CLOSING WORDS'),
+    ];
+    const all = Array.from(document.body.querySelectorAll('*'));
+    const positions = nodes.map((n) => all.indexOf(n));
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('hides the sender block when cover_show_letterhead is false', async () => {
+    getQuotationSignPage.mockResolvedValue(designed({ cover_show_letterhead: false, document_kind: 'quotation' }));
+    renderPage();
+
+    await screen.findByText('OFFER SHEET');
+    expect(screen.queryByText('Quotation from')).not.toBeInTheDocument();
+  });
+
+  it('shows the sender block when cover_show_letterhead is true', async () => {
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'quotation' }));
+    renderPage();
+
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+  });
+
+  it('names the sender row after the document kind: Proposal from / Quotation from', async () => {
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'proposal' }));
+    const first = renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
+    expect(screen.queryByText('Quotation from')).not.toBeInTheDocument();
+    first.unmount();
+
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'quotation' }));
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.queryByText('Proposal from')).not.toBeInTheDocument();
+  });
+
+  it('a layout-2 payload with no design fields renders as today', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        our_ref: 'PRJQ-2026-0042-R2 SERI MUTIARA',
+        cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'PRJQ-2026-0042-R2 SERI MUTIARA' }],
+        document_kind: 'quotation',
+      }),
+    );
+    renderPage();
+
+    await screen.findByText('Reference No.');
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.queryByText('OFFER SHEET')).not.toBeInTheDocument();
+  });
+});
+
+/** QUOTE-COVER-DESIGN round 2 guards (C2): terms panel and the old letter panel on a designed cover. */
+describe('QuotationSignClient designed cover guards', () => {
+  const base = (overrides: Record<string, unknown> = {}) =>
+    page({
+      our_ref: 'PRJQ-2026-0042-R2 SERI MUTIARA',
+      terms: '<p>BOTTOM CLAUSE</p>',
+      cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'PRJQ-2026-0042-R2 SERI MUTIARA' }],
+      cover_title: 'OFFER SHEET',
+      cover_show_letterhead: true,
+      cover_intro_html: '<p>INTRO WORDS</p>',
+      cover_closing_html: '',
+      ...overrides,
+    } as Partial<QuotationSignPage>);
+
+  it('shows the bottom Terms and conditions panel when the Terms row is hidden', async () => {
+    getQuotationSignPage.mockResolvedValue(base());
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getByText('Terms and conditions')).toBeInTheDocument();
+    expect(screen.getByText('BOTTOM CLAUSE')).toBeInTheDocument();
+  });
+
+  it('does not show the old Cover letter panel on a designed cover', async () => {
+    getQuotationSignPage.mockResolvedValue(base({ cover_letter: '<p>OLD LETTER BODY</p>' }));
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.queryByText('Cover letter')).not.toBeInTheDocument();
+    expect(screen.queryByText('OLD LETTER BODY')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('QuotationSignClient designed cover with no rows (round 2)', () => {
+  it('keys on cover_title: empty cover_rows still renders the title, intro and closing', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        cover_rows: [],
+        cover_title: 'OFFER SHEET',
+        cover_show_letterhead: true,
+        cover_intro_html: '<p>INTRO WORDS</p>',
+        cover_closing_html: '<p>CLOSING WORDS</p>',
+      } as Partial<QuotationSignPage>),
+    );
+    renderPage();
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('INTRO WORDS')).toBeInTheDocument();
+    expect(screen.getByText('CLOSING WORDS')).toBeInTheDocument();
+  });
+});

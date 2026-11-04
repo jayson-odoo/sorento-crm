@@ -26,6 +26,11 @@ from app.services.quotation_cover_service import cover_reference
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-qsign"
 
 PRICED_QTY = Decimal("1046")
@@ -63,7 +68,7 @@ def _product(db, code: str) -> Product:
         product_name=f"{MARKER} {code}",
         category_id=category.id,
         base_uom_id=uom.id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(FIXTURE_LIST_PRICE),
     )
     db.add(product)
     db.flush()
@@ -533,7 +538,7 @@ def _accept_body(**extra):
 
 
 def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored_text():
-    """AC2.3: an issue stored with the old text still shows <document_no>-R<issue_no>."""
+    """AC2.3: an issue stored with the old text still shows the built <document_no>-A."""
     with blank_session() as db:
         _project_row, document, owner, _scopes = _setup(db)
         _sign_draft(db, document, owner)
@@ -547,7 +552,7 @@ def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored
 
         page = qdocs.serialize_sign_page(db, record)
 
-        assert page["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+        assert page["our_ref"] == f"{document.document_no}-A"
         assert page["issue_no"] == record.issue_no
 
 

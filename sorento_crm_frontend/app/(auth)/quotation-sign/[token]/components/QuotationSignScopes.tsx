@@ -1,75 +1,36 @@
 'use client';
 
 import * as React from 'react';
-import { Trash2, Undo2 } from 'lucide-react';
+import { MessageSquarePlus } from 'lucide-react';
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
 import {
-  compareMoney,
   formatFigureExact,
   formatMyrExact,
   formatQty,
-  multiplyMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
+import {
+  hasColumns,
+  leaves,
+  type MatrixHeader,
+} from '@/app/(protected)/project-sales/_shared/lib/quotationMatrix';
 import type {
   QuotationSignAmendment,
-  QuotationSignAmendmentRow,
   QuotationSignColumn,
   QuotationSignLine,
   QuotationSignScope,
 } from '../../services/quotationSignService';
-import {
-  editOf,
-  editedAmount,
-  priceError,
-  priceIsEditable,
-  quantityError,
-  totalAfter,
-  type LineEdit,
-  type LineEdits,
-} from './quotationSuggest';
-
-/**
- * A money figure in suggest mode: the new value, and "quoted RM x" beneath it in the same style
- * as a changed quantity's "quoted X". Unchanged, it is the issued figure alone.
- */
-function MoneyChange({
-  before,
-  after,
-  className,
-}: {
-  before: string;
-  after: string;
-  className?: string;
-}) {
-  if (compareMoney(after, before) === 0) {
-    return (
-      <span className={cn('tabular-nums', className)}>
-        {formatMyrExact(before)}
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex flex-col items-end">
-      <span className={cn('tabular-nums', className)}>
-        {formatMyrExact(after)}
-      </span>
-      <span className="whitespace-nowrap text-xs font-normal text-muted-foreground">{`quoted ${formatMyrExact(before)}`}</span>
-    </span>
-  );
-}
+import type { FeedbackTarget } from './quotationSuggest';
 
 /**
  * How each column the server sends is drawn. The SET, order and labels are the server's
@@ -106,12 +67,9 @@ function Picture({ src, alt }: { src?: string | null; alt: string }) {
 }
 
 /** The QTY cell as the PDF prints it: the count, then the unit when there is one ("2 pcs"). */
-function withUom(
-  line: QuotationSignLine,
-  value: string = line.quantity,
-): string {
+function withUom(line: QuotationSignLine): string {
   const uom = line.uom?.trim();
-  return uom ? `${formatQty(value)} ${uom}` : formatQty(value);
+  return uom ? `${formatQty(line.quantity)} ${uom}` : formatQty(line.quantity);
 }
 
 /** Description, with any typed technical-spec text from before drawings beneath it, as the PDF. */
@@ -168,132 +126,18 @@ function Cells({
   );
 }
 
-/** Suggest mode: Qty and Unit rate become inputs, and one narrow column holds Remove / Restore. */
-export type QuotationSignSuggest = {
-  edits: LineEdits;
-  onEdit: (line: QuotationSignLine, patch: Partial<LineEdit>) => void;
-  onToggleRemove: (line: QuotationSignLine) => void;
-  disabled?: boolean;
-};
 
-/** The suggestions already sent, by line and field, shown in the cells they concern. */
-type Answers = Map<string, QuotationSignAmendmentRow>;
+/** What already has feedback on it: whole items by line, cells by line and cell. */
+type Sent = { items: Set<string>; cells: Set<string> };
 
-function answersOf(
-  amendment: QuotationSignAmendment | null | undefined,
-): Answers {
-  const map: Answers = new Map();
-  (amendment?.rows ?? []).forEach((row) =>
-    map.set(`${row.line_id}:${row.field}`, row),
-  );
-  return map;
-}
-
-/**
- * One sent suggestion in its cell. While open: the issued value struck through above the
- * suggested one. Once answered: the value that now stands, and Accepted or Not accepted with the
- * reason. A request closed by a newer revision says it was not applied.
- */
-function SentValue({
-  row,
-  status,
-  issued,
-  format,
-}: {
-  row: QuotationSignAmendmentRow;
-  status: QuotationSignAmendment['status'];
-  issued: string;
-  format: (value: string) => string;
-}) {
-  const suggested = row.value_to ? format(row.value_to) : '-';
-  if (status === 'open') {
-    return (
-      <span className="flex flex-col items-end">
-        <s className="text-xs text-muted-foreground">{format(issued)}</s>
-        <span className="font-medium">{suggested}</span>
-      </span>
-    );
-  }
-  if (status === 'superseded') {
-    return (
-      <span className="flex flex-col items-end gap-0.5">
-        <span>{format(issued)}</span>
-        <Badge variant="secondary" appearance="light" size="sm">
-          Not applied
-        </Badge>
-      </span>
-    );
-  }
-  const accepted = row.decision === 'accepted';
-  return (
-    <span className="flex flex-col items-end gap-0.5">
-      <span>{accepted ? suggested : format(issued)}</span>
-      <Badge
-        variant={accepted ? 'success' : 'secondary'}
-        appearance="light"
-        size="sm"
-      >
-        {accepted ? 'Accepted' : 'Not accepted'}
-      </Badge>
-      {!accepted && row.decision_reason && (
-        <span className="max-w-[160px] whitespace-normal break-words text-xs text-muted-foreground">
-          {`"${row.decision_reason}"`}
-        </span>
-      )}
-    </span>
-  );
-}
-
-/**
- * What a line comes to once its suggestions were answered: the accepted quantity and price, the
- * issued value for a side not accepted. Null when nothing on the line was accepted (or the
- * request is not answered yet), so the issued amount stands.
- */
-function answeredAmount(
-  line: QuotationSignLine,
-  answers: Answers,
-  amendment: QuotationSignAmendment | null | undefined,
-): string | null {
-  if (amendment?.status !== 'applied' || line.is_rate_only) return null;
-  const accepted = (field: string) => {
-    const row = answers.get(`${line.id}:${field}`);
-    return row && row.decision === 'accepted' ? row.value_to : null;
-  };
-  const quantity = accepted('quantity');
-  const price = accepted('unit_price');
-  if (quantity === null && price === null) return null;
-  return multiplyMoney(quantity ?? line.quantity, price ?? line.unit_price);
-}
-
-function RemovalAnswer({
-  row,
-  status,
-}: {
-  row: QuotationSignAmendmentRow;
-  status: QuotationSignAmendment['status'];
-}) {
-  const [variant, words] =
-    status === 'open'
-      ? (['warning', 'Removal suggested'] as const)
-      : status === 'superseded'
-        ? (['secondary', 'Not applied'] as const)
-        : row.decision === 'accepted'
-          ? (['success', 'Removal accepted'] as const)
-          : (['secondary', 'Removal not accepted'] as const);
-  return (
-    <span className="flex flex-col items-end gap-0.5">
-      <Badge variant={variant} appearance="light" size="sm">
-        {words}
-      </Badge>
-      {status === 'applied' &&
-        row.decision === 'rejected' &&
-        row.decision_reason && (
-          <span className="max-w-[160px] whitespace-normal break-words text-xs text-muted-foreground">
-            {`"${row.decision_reason}"`}
-          </span>
-        )}
-    </span>
-  );
+function sentOf(amendment: QuotationSignAmendment | null | undefined): Sent {
+  const items = new Set<string>();
+  const cells = new Set<string>();
+  (amendment?.rows ?? []).forEach((row) => {
+    if (row.cell_key) cells.add(`${row.line_id}:${row.cell_key}`);
+    else items.add(row.line_id);
+  });
+  return { items, cells };
 }
 
 /**
@@ -336,22 +180,75 @@ function LineAmount({ line }: { line: QuotationSignLine }) {
   return <span className="tabular-nums">{lineMoney(line.amount)}</span>;
 }
 
+/** The item as the customer reads it: its description, else its code, else its position. */
+function itemName(line: QuotationSignLine, position: number): string {
+  // Not `item_label`: since #2106 that is the printed item NUMBER ("1"), which the ITEM column
+  // shows, and "Feedback on 1" names nothing a customer would recognise (fix round 2, B2).
+  return line.description?.trim() || line.product_code?.trim() || `Item ${position + 1}`;
+}
+
+/** Brand and code under the item's name in the grid, muted (mock v3 frame 4). */
+function itemDetail(line: QuotationSignLine): string {
+  return [line.brand?.trim(), line.product_code?.trim()].filter(Boolean).join(' · ');
+}
+
+/** The amber dot by an item that already has feedback (mock v3 frame 4). */
+function SentDot() {
+  return (
+    <span
+      role="img"
+      aria-label="Feedback sent"
+      data-testid="sign-feedback-dot"
+      className="ms-1 inline-block size-2 rounded-full bg-warning align-middle"
+    />
+  );
+}
+
+function FeedbackButton({ name, onClick }: { name: string; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      mode="icon"
+      variant="ghost"
+      size="sm"
+      aria-label={`Leave feedback on ${name}`}
+      title="Leave feedback"
+      onClick={onClick}
+    >
+      <MessageSquarePlus className="size-4 text-primary" />
+    </Button>
+  );
+}
+
+/** A band label heads its section ONCE, above the line that opens it. */
+function bandsOf(lines: QuotationSignLine[]): (string | null)[] {
+  let current: string | null = null;
+  return lines.map((line) => {
+    const band = line.band_label?.trim() ? line.band_label.trim() : null;
+    if (band !== null && band !== current) {
+      current = band;
+      return band;
+    }
+    return null;
+  });
+}
+
 function ScopeTable({
+  scopeLabel,
   columns,
   lines,
-  suggest,
-  amendment,
+  sent,
+  onFeedback,
 }: {
+  scopeLabel: string;
+  /** The quotation's own column set for this scope, as the server (and the PDF) decides it. */
   columns: QuotationSignColumn[];
   lines: QuotationSignLine[];
-  suggest?: QuotationSignSuggest;
-  amendment?: QuotationSignAmendment | null;
+  sent: Sent;
+  onFeedback?: (target: FeedbackTarget) => void;
 }) {
-  const answers = React.useMemo(() => answersOf(amendment), [amendment]);
-  const span = suggest ? columns.length + 1 : columns.length;
-  // A band label heads its section ONCE, above the line that opens it. Repeating it on every row
-  // is how the printed quotation stops being readable.
-  let currentBand: string | null = null;
+  const span = onFeedback ? columns.length + 1 : columns.length;
+  const bands = bandsOf(lines);
 
   return (
     // Hand-rolled and read-only on purpose: this is a printed quotation being read by a stranger
@@ -371,103 +268,60 @@ function ScopeTable({
             {columns.map((column) => (
               <th
                 key={column.key}
-                className={cn(
-                  'px-2 py-2 font-semibold',
-                  presentation(column.key).th,
-                )}
+                className={cn('px-2 py-2 font-semibold', presentation(column.key).th)}
               >
                 {column.label}
               </th>
             ))}
-            {suggest && (
+            {onFeedback && (
               <th className="w-10 px-1 py-2">
-                <span className="sr-only">Remove</span>
+                <span className="sr-only">Feedback</span>
               </th>
             )}
           </tr>
         </thead>
         <tbody>
           {lines.map((line, index) => {
-            const band = line.band_label?.trim()
-              ? line.band_label.trim()
-              : null;
-            const opensBand = band !== null && band !== currentBand;
-            if (opensBand) currentBand = band;
+            const name = itemName(line, index);
+            const common = commonCells(line, index);
             return (
               <React.Fragment key={index}>
-                {opensBand && (
+                {bands[index] !== null && (
                   <tr className="bg-muted/60">
                     <td
                       colSpan={span}
                       className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
                     >
-                      {band}
+                      {bands[index]}
                     </td>
                   </tr>
                 )}
-                {suggest ? (
-                  <SuggestRow
+                <tr className="border-t border-border align-top">
+                  <Cells
                     columns={columns}
-                    line={line}
-                    position={index}
-                    suggest={suggest}
+                    cells={{
+                      ...common,
+                      // The dot marks an item that already has feedback, beside its number.
+                      item: (
+                        <>
+                          {common.item}
+                          {sent.items.has(line.id) && <SentDot />}
+                        </>
+                      ),
+                      qty: withUom(line),
+                      unit_rate: lineMoney(line.unit_price),
+                      amount: <LineAmount line={line} />,
+                    }}
                   />
-                ) : (
-                  <tr className="border-t border-border align-top">
-                    <Cells
-                      columns={columns}
-                      cells={{
-                        ...commonCells(line, index),
-                        qty:
-                          amendment && answers.get(`${line.id}:quantity`) ? (
-                            <SentValue
-                              row={answers.get(`${line.id}:quantity`)!}
-                              status={amendment.status}
-                              issued={line.quantity}
-                              format={(value) => withUom(line, value)}
-                            />
-                          ) : (
-                            withUom(line)
-                          ),
-                        unit_rate:
-                          amendment && answers.get(`${line.id}:unit_price`) ? (
-                            <SentValue
-                              row={answers.get(`${line.id}:unit_price`)!}
-                              status={amendment.status}
-                              issued={line.unit_price}
-                              format={formatFigureExact}
-                            />
-                          ) : (
-                            lineMoney(line.unit_price)
-                          ),
-                        amount:
-                          amendment && answers.get(`${line.id}:remove`) ? (
-                            <span className="flex flex-col items-end gap-0.5">
-                              {/* An accepted removal leaves no amount; any other keeps the issued one. */}
-                              {!(
-                                amendment.status === 'applied' &&
-                                answers.get(`${line.id}:remove`)!.decision ===
-                                  'accepted'
-                              ) && <LineAmount line={line} />}
-                              <RemovalAnswer
-                                row={answers.get(`${line.id}:remove`)!}
-                                status={amendment.status}
-                              />
-                            </span>
-                          ) : answeredAmount(line, answers, amendment) !==
-                            null ? (
-                            <span className="tabular-nums">
-                              {lineMoney(
-                                answeredAmount(line, answers, amendment),
-                              )}
-                            </span>
-                          ) : (
-                            <LineAmount line={line} />
-                          ),
-                      }}
-                    />
-                  </tr>
-                )}
+                  {onFeedback && (
+                    <td className="px-1 py-1.5 text-center">
+                      <FeedbackButton
+                        name={name}
+                        onClick={() => onFeedback({ line, itemLabel: name, scopeLabel })}
+                      />
+                    </td>
+                  )}
+                </tr>
               </React.Fragment>
             );
           })}
@@ -477,135 +331,188 @@ function ScopeTable({
   );
 }
 
-/** One line in suggest mode: the page's own cells, with Qty and Unit rate as inputs. */
-function SuggestRow({
+/**
+ * A scope with column headers, read-only (R18, mock v3 frame 4): the item pinned on the left, the
+ * headers over their columns, Total qty, the rate and the amount; the table scrolls sideways on a
+ * phone. Tapping a quantity leaves feedback on that cell; the item's button, on the whole item.
+ */
+function MatrixScopeTable({
+  scopeLabel,
   columns,
-  line,
-  position,
-  suggest,
+  headers,
+  lines,
+  sent,
+  onFeedback,
 }: {
+  scopeLabel: string;
+  /** The quotation's own column set: the grid shows the photo column when it carries one. */
   columns: QuotationSignColumn[];
-  line: QuotationSignLine;
-  position: number;
-  suggest: QuotationSignSuggest;
+  headers: MatrixHeader[];
+  lines: QuotationSignLine[];
+  sent: Sent;
+  onFeedback?: (target: FeedbackTarget) => void;
 }) {
-  const edit = editOf(suggest.edits, line);
-  const name = line.item_label?.trim() || String(position + 1);
-  const removed = edit.remove;
-  const pricing = priceIsEditable(line);
-  const qtyError = removed ? null : quantityError(edit.quantity);
-  const rateError = removed || !pricing ? null : priceError(edit.unit_price);
-  const qtyChanged =
-    !removed && compareMoney(edit.quantity.trim(), line.quantity) !== 0;
-  const rateChanged =
-    !removed &&
-    pricing &&
-    compareMoney(edit.unit_price.trim(), line.unit_price) !== 0;
-  const inputs = suggest.disabled || removed;
+  const allLeaves = leaves(headers);
+  const photo = columns.find((column) => column.key === 'image');
+  const span = 1 + (photo ? 1 : 0) + allLeaves.length + 3 + (onFeedback ? 1 : 0);
+  const bands = bandsOf(lines);
+  const pinned = 'sticky left-0 z-10 bg-background';
 
   return (
-    <tr
-      className={cn(
-        'border-t border-border align-top',
-        removed && 'text-muted-foreground line-through',
-      )}
+    <div
+      data-testid="quotation-sign-scroller"
+      className="relative min-w-0 overflow-x-auto"
     >
-      <Cells
-        columns={columns}
-        cells={{
-          ...commonCells(line, position),
-          qty: (
-            <>
-              <Input
-                variant="sm"
-                value={edit.quantity}
-                inputMode="decimal"
-                aria-label={`Quantity on line ${name}`}
-                aria-invalid={qtyError ? true : undefined}
-                disabled={inputs}
-                className={cn(
-                  'w-20 text-end tabular-nums',
-                  qtyChanged && 'border-warning bg-warning/10',
+      <table className="w-full border-separate border-spacing-0 text-sm">
+        <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th
+              rowSpan={2}
+              className={cn(pinned, 'min-w-[140px] max-w-[180px] bg-muted px-2 py-2 text-left font-semibold')}
+            >
+              Item
+            </th>
+            {photo && (
+              <th rowSpan={2} className={cn('bg-muted/40 px-2 py-2 font-semibold', presentation('image').th)}>
+                {photo.label}
+              </th>
+            )}
+            {headers.map((header) => (
+              <th
+                key={header.key}
+                rowSpan={header.cols.length === 0 ? 2 : 1}
+                colSpan={Math.max(header.cols.length, 1)}
+                className="border-b border-border bg-primary/5 px-2 py-2 text-center font-semibold"
+              >
+                {header.label}
+              </th>
+            ))}
+            <th rowSpan={2} className="min-w-[80px] bg-muted/40 px-2 py-2 text-right font-semibold">
+              Total qty
+            </th>
+            <th rowSpan={2} className="min-w-[110px] bg-muted/40 px-2 py-2 text-right font-semibold">
+              Unit rate
+            </th>
+            <th rowSpan={2} className="min-w-[120px] bg-muted/40 px-2 py-2 text-right font-semibold">
+              Amount
+            </th>
+            {onFeedback && (
+              <th rowSpan={2} className="w-10 bg-muted/40 px-1 py-2">
+                <span className="sr-only">Feedback</span>
+              </th>
+            )}
+          </tr>
+          <tr>
+            {allLeaves
+              .filter((leaf) => !leaf.isHeader)
+              .map((leaf) => (
+                <th key={leaf.key} className="min-w-[64px] bg-muted/40 px-2 py-2 text-center font-semibold">
+                  {leaf.label}
+                </th>
+              ))}
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((line, index) => {
+            const name = itemName(line, index);
+            const cells = line.qty_cells ?? {};
+            return (
+              <React.Fragment key={index}>
+                {bands[index] !== null && (
+                  <tr className="bg-muted/60">
+                    <td
+                      colSpan={span}
+                      className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
+                    >
+                      {bands[index]}
+                    </td>
+                  </tr>
                 )}
-                onChange={(event) =>
-                  suggest.onEdit(line, { quantity: event.target.value })
-                }
-              />
-              {qtyError ? (
-                <p className="mt-1 max-w-[120px] whitespace-normal text-xs text-destructive">
-                  {qtyError}
-                </p>
-              ) : qtyChanged ? (
-                <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatQty(line.quantity)}`}</p>
-              ) : null}
-            </>
-          ),
-          unit_rate: pricing ? (
-            <>
-              <Input
-                variant="sm"
-                value={edit.unit_price}
-                inputMode="decimal"
-                aria-label={`Unit rate on line ${name}`}
-                aria-invalid={rateError ? true : undefined}
-                disabled={inputs}
-                className={cn(
-                  'w-28 text-end tabular-nums',
-                  rateChanged && 'border-warning bg-warning/10',
-                )}
-                onChange={(event) =>
-                  suggest.onEdit(line, { unit_price: event.target.value })
-                }
-              />
-              {rateError ? (
-                <p className="mt-1 max-w-[140px] whitespace-normal text-xs text-destructive">
-                  {rateError}
-                </p>
-              ) : rateChanged ? (
-                <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatFigureExact(line.unit_price)}`}</p>
-              ) : null}
-            </>
-          ) : (
-            <span className="tabular-nums">{lineMoney(line.unit_price)}</span>
-          ),
-          // A removed line keeps its issued amount, struck through with the row; it drops out of
-          // the subtotal and the total instead.
-          amount:
-            removed ||
-            line.is_rate_only ||
-            compareMoney(editedAmount(line, edit), line.amount ?? '0') === 0 ? (
-              <LineAmount line={line} />
-            ) : (
-              <>
-                <span className="block tabular-nums">
-                  {lineMoney(editedAmount(line, edit))}
-                </span>
-                <span className="block whitespace-nowrap text-xs text-muted-foreground">
-                  {`quoted ${formatFigureExact(line.amount ?? '0')}`}
-                </span>
-              </>
-            ),
-        }}
-      />
-      <td className="px-1 py-1.5 text-center">
-        <Button
-          type="button"
-          mode="icon"
-          variant="ghost"
-          size="sm"
-          aria-label={removed ? `Restore line ${name}` : `Remove line ${name}`}
-          title={removed ? 'Restore' : 'Remove'}
-          disabled={suggest.disabled}
-          onClick={() => suggest.onToggleRemove(line)}
-        >
-          {removed ? (
-            <Undo2 className="size-3.5 text-primary" />
-          ) : (
-            <Trash2 className="size-3.5 text-destructive" />
-          )}
-        </Button>
-      </td>
-    </tr>
+                <tr className="align-top">
+                  <td className={cn(pinned, 'max-w-[180px] border-t border-border px-2 py-2')}>
+                    <span className="block break-words">
+                      {name}
+                      {sent.items.has(line.id) && <SentDot />}
+                    </span>
+                    {itemDetail(line) && itemDetail(line) !== name && (
+                      <span className="block break-words text-xs text-muted-foreground">
+                        {itemDetail(line)}
+                      </span>
+                    )}
+                  </td>
+                  {photo && (
+                    <td className="border-t border-border px-2 py-2">
+                      {commonCells(line, index).image}
+                    </td>
+                  )}
+                  {allLeaves.map((leaf) => {
+                    const value = cells[leaf.key] ?? '';
+                    const shown = value.trim() ? formatQty(value) : '';
+                    const marked = sent.cells.has(`${line.id}:${leaf.key}`);
+                    const where = leaf.isHeader ? leaf.headerLabel : `${leaf.headerLabel} / ${leaf.label}`;
+                    return (
+                      <td key={leaf.key} className="border-t border-border px-1 py-1 text-center">
+                        {onFeedback ? (
+                          <button
+                            type="button"
+                            aria-label={`Leave feedback on ${name}, ${where}`}
+                            className="relative inline-flex h-8 min-w-[48px] items-center justify-center rounded-md border border-border bg-background px-1.5 tabular-nums hover:border-primary"
+                            onClick={() =>
+                              onFeedback({
+                                line,
+                                itemLabel: name,
+                                scopeLabel,
+                                cell: { key: leaf.key, label: where, value: shown || '0' },
+                              })
+                            }
+                          >
+                            {shown}
+                            {marked && <CellCorner />}
+                          </button>
+                        ) : (
+                          <span className="relative inline-block min-w-[48px] tabular-nums">
+                            {shown}
+                            {marked && <CellCorner />}
+                          </span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="border-t border-border px-2 py-2 text-right font-medium tabular-nums">
+                    {formatQty(line.quantity)}
+                  </td>
+                  <td className="border-t border-border px-2 py-2 text-right tabular-nums">
+                    {lineMoney(line.unit_price)}
+                  </td>
+                  <td className="border-t border-border px-2 py-2 text-right">
+                    <LineAmount line={line} />
+                  </td>
+                  {onFeedback && (
+                    <td className="border-t border-border px-1 py-1.5 text-center">
+                      <FeedbackButton
+                        name={name}
+                        onClick={() => onFeedback({ line, itemLabel: name, scopeLabel })}
+                      />
+                    </td>
+                  )}
+                </tr>
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CellCorner() {
+  return (
+    <span
+      role="img"
+      aria-label="Feedback sent"
+      data-testid="sign-feedback-corner"
+      className="absolute end-0 top-0 size-0 border-s-[8px] border-t-[8px] border-s-transparent border-t-warning"
+    />
   );
 }
 
@@ -622,23 +529,24 @@ function SuggestRow({
 export function QuotationSignScopes({
   scopes,
   grandTotal,
-  suggest,
-  amendment,
+  sent,
+  onFeedback,
   action,
 }: {
   scopes: QuotationSignScope[];
   grandTotal: string;
-  /** One control beside the card's title (Suggest changes). */
+  /** One control beside the card's title (Leave a note). */
   action?: React.ReactNode;
-  /** Present while the customer is suggesting changes. */
-  suggest?: QuotationSignSuggest;
-  /** The suggestions already sent, shown in the cells they concern. */
-  amendment?: QuotationSignAmendment | null;
+  /** Feedback already sent, marked on the items and cells it points at. */
+  sent?: QuotationSignAmendment | null;
+  /** Present while feedback can be left: opens the form for an item or a cell. */
+  onFeedback?: (target: FeedbackTarget) => void;
 }) {
   const keys = scopes.map((_, index) => `scope-${index}`);
   const [open, setOpen] = React.useState<string[]>(
     scopes.length === 1 ? keys : [],
   );
+  const marks = React.useMemo(() => sentOf(sent), [sent]);
 
   return (
     <Card>
@@ -669,21 +577,9 @@ export function QuotationSignScopes({
                           ? '1 item'
                           : `${scope.lines.length} items`}
                       </span>
-                      {suggest ? (
-                        <MoneyChange
-                          className="font-semibold"
-                          before={scope.scope_total}
-                          after={totalAfter(
-                            scope.lines,
-                            suggest.edits,
-                            scope.scope_total,
-                          )}
-                        />
-                      ) : (
-                        <span className="font-semibold tabular-nums">
-                          {formatMyrExact(scope.scope_total)}
-                        </span>
-                      )}
+                      <span className="font-semibold tabular-nums">
+                        {formatMyrExact(scope.scope_total)}
+                      </span>
                     </span>
                   </span>
                 </AccordionTrigger>
@@ -694,12 +590,22 @@ export function QuotationSignScopes({
                     <p className="text-sm text-muted-foreground">
                       No items under this section.
                     </p>
+                  ) : hasColumns(scope.matrix_columns) ? (
+                    <MatrixScopeTable
+                      scopeLabel={scope.scope_label}
+                      columns={scope.columns ?? []}
+                      headers={scope.matrix_columns}
+                      lines={scope.lines}
+                      sent={marks}
+                      onFeedback={onFeedback}
+                    />
                   ) : (
                     <ScopeTable
-                      columns={scope.columns}
+                      scopeLabel={scope.scope_label}
+                      columns={scope.columns ?? []}
                       lines={scope.lines}
-                      suggest={suggest}
-                      amendment={amendment}
+                      sent={marks}
+                      onFeedback={onFeedback}
                     />
                   )}
                 </AccordionContent>
@@ -716,21 +622,9 @@ export function QuotationSignScopes({
           <span className="text-sm font-semibold uppercase tracking-wide">
             Total amount
           </span>
-          {suggest ? (
-            <MoneyChange
-              className="text-base font-semibold"
-              before={grandTotal}
-              after={totalAfter(
-                scopes.flatMap((scope) => scope.lines),
-                suggest.edits,
-                grandTotal,
-              )}
-            />
-          ) : (
-            <span className="text-base font-semibold tabular-nums">
-              {formatMyrExact(grandTotal)}
-            </span>
-          )}
+          <span className="text-base font-semibold tabular-nums">
+            {formatMyrExact(grandTotal)}
+          </span>
         </div>
       </CardContent>
     </Card>

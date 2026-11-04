@@ -44,6 +44,8 @@ export interface KitAsset {
   kind: string;
   tags: string[];
   url: string | null;
+  /** A rendition for a screen (thumbnail or medium), never the original. Absent on older replies. */
+  thumb_url?: string | null;
   mime_type: string | null;
 }
 

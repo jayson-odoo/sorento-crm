@@ -127,6 +127,15 @@ def resolve_for_prompt(db: Session, *, ctx: dict) -> dict:
     from app.services.chatbot.lanes.business.resolve_gate import _allowed_entity_types
 
     hints = _allowed_entity_types(ctx, entities)
+    if not hints:
+        # SUPPLIER-ASK (#2066) drops a null hint (the resolver route rejects None). When the
+        # parser typed none of the words, an empty list makes `_resolve_input` skip its
+        # cross-type fallback (it runs only under a non-empty whitelist) and the clarifier
+        # sees no entity at all. A blank entry names no type (the resolver skips it), so, as
+        # the null hints did before, the typed pass places nothing and every word goes to
+        # that fallback; `without_denied_kinds` below still drops the kinds this asker may
+        # not see.
+        hints = [""]
     goal = out.get("user_goal")
 
     from app.services.chatbot.lanes.business.services import without_denied_kinds

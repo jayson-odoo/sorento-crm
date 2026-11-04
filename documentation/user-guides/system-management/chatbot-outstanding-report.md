@@ -134,6 +134,10 @@ While the scope question or detail offer is on screen, you can close it and move
 
 When neither requested scope has anything open, the report still prints its header and its "No open sales order." / "No outstanding delivery order." lines, then the bot offers to escalate to the Sorento customer service team. The offer arrives with the numbered list of who it can be routed to, and a reply of "yes" (no name picked) assigns automatically - the same escalate offer the bot uses whenever any question comes up empty. You can also reply "no" or ask about something else to close this offer without escalating.
 
+## More than one company
+
+The bot never asks which company. With no company named, an outstanding total covers every company you hold, and when two or more of them have something outstanding, one line per company sits right above the Total line (they add up to it). Name a company ("Mocha outstanding") to see that company alone; a company you do not hold is refused.
+
 ## Access: who can see sales order figures
 
 **Everyone with order enquiries access sees delivery order outstanding figures** - that half of the report is on by default, the same as today.

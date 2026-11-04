@@ -108,6 +108,10 @@ describe('the rest of the lifecycle is unchanged', () => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
 
+  it('a proof nobody is assigned to is the salesperson\'s own: nothing to design (PRICETAG-SELF-APPROVAL R8)', () => {
+    expect(kinds('proof_ready', null)).not.toContain('design');
+  });
+
   it.each(['rejected', 'void'])('%s offers nothing at all', (status) => {
     expect(priceTagActions(status, 'user-1')).toEqual([]);
   });

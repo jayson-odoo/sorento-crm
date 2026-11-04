@@ -1,6 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { qtyOverAwareError } from '../lib/qtyOverQuote';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
   PartyContact,
   PartyContactBody,
@@ -992,6 +994,24 @@ export async function replaceQuotationLines(
   return body.data;
 }
 
+/**
+ * A version's column headers and columns, whole (PS-QUOTE-MATRIX). Editable version only, the
+ * same refusal as a line write. The server moves quantities in on the first column, sums them
+ * back on the last, drops cells under removed columns, and answers the version and its lines.
+ */
+export async function replaceQuotationColumns(
+  versionId: string,
+  columns: MatrixHeader[],
+): Promise<{ version: QuotationVersion; lines: QuotationLine[] }> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/columns`, {
+    method: 'PUT',
+    body: JSON.stringify({ columns }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the columns'));
+  return response.json();
+}
+
 export async function updateQuotationLine(
   versionId: string,
   lineId: string,
@@ -1294,7 +1314,8 @@ export async function updatePurchaseOrder(
     method: 'PUT',
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the PO'));
+  // A 409 `po_qty_over_quoted` carries the products, so the screen can ask for the reason.
+  if (!response.ok) throw await qtyOverAwareError(response, 'Failed to save the PO');
   return response.json();
 }
 

@@ -1,7 +1,45 @@
-# Project Sales Rep - Review a price tag design, ask for changes, approve and collect
+# Project Sales Rep - Approve your price tag, edit it, escalate it, collect
 
-What happens to a price tag request after you submit it: how you print your tags, how you read the
-design, how you ask for changes by pointing at the tag itself, and how the request closes.
+What happens to a price tag request after you submit it: you check the tag and approve it yourself,
+edit it after approval if something changes, and send it to marketing only when you cannot fix it
+yourself.
+
+## Approving your own tag
+
+There is no Submit button on a price tag request. While you fill it in, the **Preview** draws your tags
+with each item's tag template. When they look right, press **Approve** at the bottom of the form: the
+request is created and approved in one step, the PDF starts preparing, and you are back at your list.
+Marketing is not involved.
+
+* **Save Draft** keeps the request to finish later. Reopen it from your list; it ends the same way,
+  with **Approve** or **Escalate to marketing**.
+* When an item has no tag template yet, **Approve** is greyed out and the reason sits right beside it
+  (*"No tag template yet for <code>. Escalate it to marketing."*). Use **Escalate to marketing**.
+* The PDF prints exactly the tags you approved, with the product data as it was when you clicked
+  Approve.
+
+## Editing after approval
+
+Found a mistake, or the dealer changed their mind? Open the request, open the gear menu and click
+**Edit**, change what you need, say what changed, and send it. There is no limit on how many times
+you can do this, and each edit is kept under **Revisions**.
+
+An edit takes the request back to **Design Ready**: the old PDF stops downloading, the tag is drawn
+again from your new lines at the top of the request, and you press **Approve** there again.
+
+You cannot edit while marketing is working on the request, or once the office has printed it
+(**Ready for collection** or later).
+
+## Escalating to marketing
+
+When the tag needs something you cannot fix yourself (a wrong picture, a layout problem, an item
+with no tag template), click **Escalate to marketing**: at the bottom of a new request or draft,
+under the tag of a request waiting for your approval, or in the gear menu of an approved request.
+Write what needs fixing and click **Send to marketing**.
+
+The request goes to the marketing person your company has set up for price tags. From then on it
+works the way the sections below describe: marketing designs it, you review their design, ask for
+changes or approve it.
 
 Filling in and submitting the request is a different guide - see
 [Submit via portal](submit-via-portal.md#price-tag-request).
@@ -26,7 +64,7 @@ requests raised before this existed.
 
 ## Reading the design
 
-Once marketing marks the design ready, the request shows a **Design** card as the first thing on the
+Once marketing marks an escalated design ready, the request shows a **Design** card as the first thing on the
 page, above Customer, Sales Order & Lines and the rest. It stays there through changes requested,
 approval and collection, so you can always go back and look at what you approved.
 
@@ -109,7 +147,7 @@ request. Nobody has to remember to tell you.
 
 | What happened | What the message tells you |
 |----|----|
-| You submitted the request | It was received and designing will start shortly. |
+| You escalated to marketing | It was sent to marketing with your note. |
 | Marketing started designing | Who is designing it. |
 | The design is ready | It is ready for your review. |
 | You sent change requests | How many were sent, as a confirmation. |
