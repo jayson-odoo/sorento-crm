@@ -24,9 +24,24 @@ sweep_log() { echo "[sweep] $*" >&2; }
 
 sweep_sudo() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 
-# Postgres, Redis, venv, node_modules, MCP package (idempotent).
+# Postgres, Redis, venv, node_modules, MCP package (idempotent). cloud-env-setup.sh also
+# re-bootstraps its own sorento_ci database whenever the checkout's alembic head moved, and
+# bootstrap_env over an existing database can fail ("cannot drop columns from view", measured
+# 4 Nov). The sweep never uses sorento_ci (each run bootstraps a fresh database), so that
+# failure is tolerated and only what the sweep needs is checked.
 sweep_env_setup() {
-  bash "$SWEEP_REPO_ROOT/scripts/cloud-env-setup.sh" >&2
+  bash "$SWEEP_REPO_ROOT/scripts/cloud-env-setup.sh" >&2 \
+    || sweep_log "cloud-env-setup.sh exited non-zero; checking what the sweep needs"
+  local missing=()
+  pg_isready -h localhost -q || missing+=("postgres not accepting connections")
+  redis-cli ping 2>/dev/null | grep -q PONG || missing+=("redis not answering PING")
+  [ -x "$SWEEP_REPO_ROOT/sorento_crm_backend/venv/bin/python" ] || missing+=("backend venv")
+  [ -d "$SWEEP_REPO_ROOT/sorento_crm_frontend/node_modules" ] || missing+=("frontend node_modules")
+  [ -f "$SWEEP_REPO_ROOT/sorento_crm_backend/.env.ci-tests" ] || missing+=("backend .env.ci-tests")
+  if [ ${#missing[@]} -gt 0 ]; then
+    sweep_log "environment incomplete: ${missing[*]}"
+    return 1
+  fi
 }
 
 # Build and install pgvector $SWEEP_PGVECTOR_TAG when the packaged one is older.
