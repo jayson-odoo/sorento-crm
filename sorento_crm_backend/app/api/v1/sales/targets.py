@@ -240,9 +240,10 @@ def commission_statement(
                 code="TOO_MANY_TARGETS",
             )
         targets = [target_service.get_target_or_404(db, target_id) for target_id in picked]
+        on = on or target_service._today()
         statements = target_service.commission_statements(db, targets, on=on)
         now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).replace(tzinfo=None)
-        content = commission_statement_xlsx.build(statements, generated=now)
+        content = commission_statement_xlsx.build(statements, on=on, generated=now)
         name = targets[0].target_no if len(targets) == 1 else f"{len(targets)}-targets"
         return Response(
             content=content,

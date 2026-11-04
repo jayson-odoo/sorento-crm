@@ -1062,7 +1062,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   paysTo={isDealer}
                   footer={
                     target.commission_method !== 'none' && !editing ? (
-                      <PeriodsTotal target={target} />
+                      <PeriodsTotal target={target} paysTo={isDealer} />
                     ) : null
                   }
                 >
@@ -1352,7 +1352,7 @@ function CommissionSummary({ target }: { target: SalesTargetDetail }) {
 
 /** The Periods table's Total row: every period's figures summed (a period not started yet
  * adds its target and nothing else). */
-function PeriodsTotal({ target }: { target: SalesTargetDetail }) {
+function PeriodsTotal({ target, paysTo }: { target: SalesTargetDetail; paysTo: boolean }) {
   const sum = (pick: (p: SalesTargetDetail['periods'][number]) => number | null | undefined) =>
     target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
   return (
@@ -1363,6 +1363,7 @@ function PeriodsTotal({ target }: { target: SalesTargetDetail }) {
         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(sum((p) => p.achieved_value))}</td>
         <td colSpan={target.threshold_unit === 'points' ? 4 : 3} className="px-3 py-2" aria-hidden="true" />
         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(sum(paidIn))}</td>
+        {paysTo ? <td className="px-3 py-2" aria-hidden="true" /> : null}
       </tr>
     </tfoot>
   );

@@ -27,6 +27,10 @@ METHODS = {
     "none": "No commission",
 }
 NOT_TRACKED = "Payment is not tracked in the CRM."
+#: A string starting with one of these is a formula to Excel: a target name typed by staff or a
+#: customer name synced from AutoCount must stay text in a file sent to stakeholders.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
 
 
 def _account(account: Optional[dict]) -> str:
@@ -69,6 +73,10 @@ class _Sheet:
             if value is None or value == "":
                 continue
             cell = self.ws.cell(row=self.row, column=col, value=value)
+            if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+                # Kept as text, as project_quotation_excel_service does: the name reads as typed.
+                cell.data_type = "s"
+                cell.quotePrefix = True
             if isinstance(value, (date, datetime)):
                 cell.number_format = DATE_FMT
             elif col in money:
@@ -83,7 +91,7 @@ class _Sheet:
         self.row += 1
 
 
-def _target_sheet(ws, t: dict, generated: datetime) -> None:
+def _target_sheet(ws, t: dict, generated: datetime, on: date) -> None:
     metric = t["metric"]
     unit = "RM" if metric == "amount" else "units"
     sheet = _Sheet(ws)
@@ -106,7 +114,7 @@ def _target_sheet(ws, t: dict, generated: datetime) -> None:
     )
     pays_to = (t.get("payout_account") or {}).get("code", "")
     for p in t["periods"]:
-        status = "Current, not final" if p["is_current"] else ("Not started" if p["period_start"] > generated.date() else "Ended")
+        status = "Current, not final" if p["is_current"] else ("Not started" if p["period_start"] > on else "Ended")
         if p.get("replaced"):
             status = "Replaced by another target"
         paid = _paid(p)
@@ -151,8 +159,10 @@ def _target_sheet(ws, t: dict, generated: datetime) -> None:
         ws.column_dimensions[get_column_letter(col)].width = width
 
 
-def build(statements: List[dict], *, generated: Optional[datetime] = None) -> bytes:
+def build(statements: List[dict], *, on: date, generated: Optional[datetime] = None) -> bytes:
+    """`on`: the date the figures were computed for (what "current" means)."""
     generated = generated or datetime.now()
+    used: set = set()
     wb = Workbook()
     summary = _Sheet(wb.active)
     wb.active.title = "Summary"
@@ -169,7 +179,13 @@ def build(statements: List[dict], *, generated: Optional[datetime] = None) -> by
              _account(t.get("payout_account")), t.get("commission_to_date"), t.get("commission_current")],
             money=[6, 7],
         )
-        _target_sheet(wb.create_sheet(t["target_no"][:31]), t, generated)
+        # Target numbers are unique per company, so a statement over two companies can repeat one.
+        title, n = t["target_no"][:31], 1
+        while title in used:
+            n += 1
+            title = f"{t['target_no'][:27]} ({n})"
+        used.add(title)
+        _target_sheet(wb.create_sheet(title), t, generated, on)
     for col, width in enumerate((14, 40, 34, 22, 44, 20, 24), start=1):
         wb["Summary"].column_dimensions[get_column_letter(col)].width = width
     buf = io.BytesIO()
