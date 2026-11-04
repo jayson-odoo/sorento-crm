@@ -47,7 +47,7 @@ _FIXTURES = (bot, console, _fresh_prompt_cache)
 LINE = getattr(parser_mod, "REPORT_ASK_LINE", "== ZZT REPORT ASK LINE PLACEHOLDER (contract name missing) ==")
 TOOL = "crm_report_ask"
 KEYS = [
-    "kind", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
+    "kind", "frame", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
     "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
 ]
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -205,7 +205,7 @@ def _ra(**over: Any) -> dict[str, Any]:
         brand_or_account_type=[],
     )
     base.update(over)
-    assert list(base) == KEYS, "test bug: report_ask keys out of order"
+    assert list(base) == [k for k in KEYS if k != "frame"], "test bug: report_ask keys out of order"
     return base
 
 
