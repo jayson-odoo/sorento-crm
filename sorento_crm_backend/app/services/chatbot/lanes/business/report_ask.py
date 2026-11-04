@@ -1755,6 +1755,11 @@ def _company_or_brand(db: Any, parse_output: dict[str, Any], plan: dict[str, Any
         return None
     either = {_squash(w or "") for w in jsc.array(_dict(parse_output.get(OBJECT_KEY)).get("company_or_brand"))} - {""}
     named, _foreign = _company_said(parse_output, own)
+    # CP-5: a company the held report already ran for is carried, not new in this message: the same name in brands is
+    # this message's new brand, no doubt to ask.
+    held_company = {str(i) for i in _dict(_dict(parse_output.get(HELD_IDS_KEY)).get("company"))}
+    if named is not None and str(named[0]) in held_company:
+        named = None
     for entry in jsc.array(parse_output.get("report_ask_kind")):
         if not isinstance(entry, dict) or entry.get("hint") != "brand" or entry.get("said") is True:
             continue
@@ -3506,13 +3511,8 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         and isinstance(own_count, int) and not isinstance(own_count, bool) and own_count > 0
     )
     if counted:
-        # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row). CP-2 (crew ruling,
-        # ask less): it ranks by the measure the object names, else the held one, else amount (the breakdown's own
-        # order); never "By quantity or by amount?".
+        # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row).
         frame = "ranking"
-        if ask.get("measure") not in METRICS:
-            held_measure = (held_ask or {}).get("measure") if carrying else None
-            ask["measure"] = held_measure if held_measure in METRICS else "amount"
     # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
     typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
@@ -3539,6 +3539,11 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         # row: not a breakdown, the held axis stays.
         axis = held_axis
         slot_of_axis = _AXIS_SLOTS.get(axis or "")
+    if frame == "ranking" and axis is not None and axis not in TREND_AXES and ask.get("measure") not in METRICS:
+        # CP-2 / CP-6 (crew ruling, ask less): a ranking the parser framed (or a counted breakdown, AF-7) ranks by the
+        # object's measure, else the held one, else amount; it never asks "By quantity or by amount?".
+        held_measure = (held_ask or {}).get("measure") if carrying else None
+        ask["measure"] = held_measure if held_measure in METRICS else "amount"
     if carrying:
         # CP-1: while a clarification is open, every held filter the parse leaves out stays (the channel too).
         _carry(ask, held_ask, verdict, slot_of_axis, answering=bool(_dict(getattr(focus, "required_ask", None)).get("asking")))
