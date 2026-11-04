@@ -141,6 +141,17 @@ def list_reports(
     return rows, total
 
 
+def user_names(db: Session, user_ids) -> dict:
+    """id -> display name (name, else email) for one page of rows."""
+    from app.models.user import User
+
+    ids = {str(u) for u in user_ids if u}
+    if not ids:
+        return {}
+    rows = db.query(User.id, User.name, User.email).filter(User.id.in_(ids)).all()
+    return {str(r.id): (r.name or r.email or "Unknown user") for r in rows}
+
+
 def prune_client_error_reports(db: Session, *, retention_days: int = RETENTION_DAYS) -> int:
     cutoff = datetime.utcnow() - timedelta(days=int(retention_days))
     return (

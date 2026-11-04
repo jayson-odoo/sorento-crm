@@ -21,7 +21,7 @@ class ClientErrorReport(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     # The reporting user. No other identity is stored: no email, no IP.
-    user_id = Column(UUID(as_uuid=False), nullable=True)
+    user_id = Column(String(64), nullable=True)
     # `global` (root boundary, the "could not start" screen) or `protected` (route boundary).
     boundary = Column(String(16), nullable=False)
     error_name = Column(String(128), nullable=True)

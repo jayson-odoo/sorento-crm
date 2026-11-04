@@ -40,6 +40,8 @@ class ClientErrorIn(BaseModel):
 class ClientErrorRow(BaseModel):
     id: str
     user_id: Optional[str] = None
+    # Resolved for the list; the screen never shows the raw id.
+    user_name: Optional[str] = None
     boundary: str
     error_name: Optional[str] = None
     message: Optional[str] = None
@@ -133,8 +135,14 @@ def list_client_errors(
         page=page,
         limit=limit,
     )
+    names = svc.user_names(db, [r.user_id for r in rows])
+    data = []
+    for r in rows:
+        item = ClientErrorRow.model_validate(r)
+        item.user_name = names.get(r.user_id) if r.user_id else None
+        data.append(item)
     return ClientErrorListResponse(
-        data=[ClientErrorRow.model_validate(r) for r in rows],
+        data=data,
         total=total,
         page=page,
         limit=limit,
