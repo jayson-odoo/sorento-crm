@@ -1,9 +1,10 @@
 # PLAN: chatbot totals vs top-N, company vs brand, clearing a held filter, combined turn (4 Nov 2026)
 
-Status: Build (M track, LEAD pattern). Answers 4 Nov: Q1 (a) new path only; Q3 (a) held filters survive until the user
-changes them; Q2 (c) ask once, both must work; Q5 no code (owner raised the limit); Q4 open (neither path lists
-per-agent totals today). Prompt gates OK up to USD 0.80 (raise to 1.30 asked). Combined candidate with #2120 PARTY_SIDE: v198 md5 8098801c
-(gate 1: 13 of 23). Round 2 text md5 768d73d1 (company_or_brand slot), tests ON-13..16 first, then coder round 2.
+Status: Build, owner hand test 1 fix round (M track, LEAD pattern). 4 Nov: PR #2156 READY on v199 dc77a7ac; owner hand
+test 1 FAIL on 75a72336 ("sorento company only" read as the brand; a filter follow-up asked "How many?"). 5 Nov round:
+UAC HT1-1..12, red 23a9861fa4, fix in progress; new candidate text md5 9ad88b43 (Company candidates block + entity
+said_as), gate + TRAIN control CAND arm + stability x3 inside crew's USD 0.60 OK. Earlier answers: Q1 (a) new path only;
+Q3 (a) held filters survive until the user changes them; Q2 (c) ask once, both must work; Q5 no code.
 
 ## Journey
 
