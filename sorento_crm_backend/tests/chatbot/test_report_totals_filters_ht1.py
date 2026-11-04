@@ -566,6 +566,9 @@ def test_ht1_16_the_entity_schema_offers_said_as_text_before_said_as_only_when_t
     assert required.index("said_as_text") < required.index("said_as"), required
     if "propertyOrdering" in entity:
         assert entity["propertyOrdering"].index("said_as_text") < entity["propertyOrdering"].index("said_as"), entity["propertyOrdering"]
+
+
+def test_ht1_16_a_v200_text_without_said_as_text_has_no_such_key(monkeypatch, session_factory) -> None:
     _c, v200 = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to by_words kind_said said_as.\n")
     assert "said_as_text" not in _entity_props(v200) and "said_as" in _entity_props(v200)
     assert "said_as_text" not in v200["properties"]["entities"]["items"]["required"]

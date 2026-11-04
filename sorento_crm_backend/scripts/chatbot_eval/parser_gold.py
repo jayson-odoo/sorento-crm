@@ -71,6 +71,9 @@ EXPECT_KEYS = frozenset({
     # CHATBOT-TOTALS-FILTERS HT1: {word -> company | brand | both | null}: the `said_as` of every entity whose raw holds
     # the word, case aside (no such entity, or another value, fails; an absent key reads as null).
     "entity_said_as",
+    # {word -> null | "*" | text}: the `said_as_text` of every entity whose raw holds the word. null: no typed word (null or
+    # blank); "*": any non-blank text; otherwise the text, case aside.
+    "entity_said_as_text",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -106,6 +109,7 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "date_filter_end": (str, type(None)),
     "report_ask": (dict, type(None)),
     "entity_said_as": (dict,),
+    "entity_said_as_text": (dict,),
 }
 #: The `report_ask` slots (`parser.REPORT_ASK_KEYS`, stdlib-only here like the rest of this module) and the list ones.
 REPORT_ASK_SLOTS = (
@@ -407,6 +411,14 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         got = {e.get("said_as") for e in named}
         if not named or got != {want}:
             reasons.append(f"entity {word!r} said_as {sorted(map(str, got))} != {want!r}")
+    for word, want in (expect.get("entity_said_as_text") or {}).items():
+        named = [e for e in entities if str(word).casefold() in str(e.get("raw") or "").casefold()]
+        typed = {str(e.get("said_as_text") or "").strip().casefold() or None for e in named}
+        ok = bool(named) and (
+            typed == {None} if want is None else (None not in typed if want == "*" else typed == {str(want).casefold()})
+        )
+        if not ok:
+            reasons.append(f"entity {word!r} said_as_text {sorted(map(str, typed))} != {want!r}")
     if "suggested_team" in expect:
         routing = verdict.get("routing")
         team = routing.get("suggested_team") if isinstance(routing, dict) else None
