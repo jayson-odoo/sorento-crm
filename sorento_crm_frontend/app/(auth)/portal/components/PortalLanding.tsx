@@ -47,6 +47,7 @@ import {
   type LandingFilters,
   type LandingSort,
 } from '../lib/landing-fields';
+import { localStore, sessionStore } from '@/lib/storage';
 
 // AC-L3: a contact whose overrides hide every kind gets a WhatsApp escape
 // hatch rather than a blank landing.
@@ -152,7 +153,7 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
     if (userPickedTabRef.current) return;
     if (searchParams?.get('type')) return;
     if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(
+    const stored = localStore.getItem(
       `sorento.portalDefaultTab.${contact.contact_id}`,
     );
     if (isLandingKind(stored) && landingKinds.includes(stored)) {
@@ -193,13 +194,13 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
       setSavedDefaultTab(null);
       return;
     }
-    const stored = window.localStorage.getItem(defaultTabKey);
+    const stored = localStore.getItem(defaultTabKey);
     setSavedDefaultTab(isLandingKind(stored) ? stored : null);
   }, [defaultTabKey]);
 
   const handleSetDefaultTab = useCallback(() => {
     if (!activeTab || !defaultTabKey || typeof window === 'undefined') return;
-    window.localStorage.setItem(defaultTabKey, activeTab);
+    localStore.setItem(defaultTabKey, activeTab);
     setSavedDefaultTab(activeTab);
     toast.success(`${LANDING_LABELS[activeTab]} is now your default tab.`);
   }, [activeTab, defaultTabKey]);
@@ -293,7 +294,7 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
         // Token validated - clear the freshness stamp so subsequent transient
         // 401s (e.g. real expiry) bounce back immediately without retry.
         if (typeof window !== 'undefined') {
-          window.sessionStorage.removeItem('sorento.portalTokenWrittenAt');
+          sessionStore.removeItem('sorento.portalTokenWrittenAt');
         }
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {

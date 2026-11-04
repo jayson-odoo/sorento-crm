@@ -22,6 +22,7 @@ import { getQuote, getSelection } from '../../../services/selectionService';
 import { boxesForSelection } from '@/lib/dealer-kit/roomBoxes';
 import { RoomPlan } from '../../components/RoomPlan';
 import { distinctName } from '@/lib/product-display';
+import { localStore } from '@/lib/storage';
 
 /**
  * The design as a figure somebody can hand to a customer.
@@ -53,7 +54,7 @@ export function DesignSummary() {
 
   useEffect(() => {
     if (selectionId) return;
-    setSelectionId(window.localStorage.getItem(LAST_SELECTION_KEY));
+    setSelectionId(localStore.getItem(LAST_SELECTION_KEY));
   }, [selectionId]);
 
   const {

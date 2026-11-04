@@ -12,6 +12,7 @@ import {
   DEFAULT_CONVERSATION_SORT,
   normalizeConversationSort,
 } from '../lib/conversation-landing';
+import { localStore } from '@/lib/storage';
 
 /** A customer's reply arrives on their schedule: the list re-reads itself while it is open. */
 export const CONVERSATION_LIST_POLL_MS = 30_000;
@@ -88,7 +89,7 @@ export function usePortalConversationSort(
       return;
     }
     try {
-      const raw = window.localStorage.getItem(`${SORT_KEY_PREFIX}${contactId}`);
+      const raw = localStore.getItem(`${SORT_KEY_PREFIX}${contactId}`);
       setSortState(normalizeConversationSort(raw ? JSON.parse(raw) : null));
     } catch {
       setSortState(DEFAULT_CONVERSATION_SORT);
@@ -99,7 +100,7 @@ export function usePortalConversationSort(
     (next: LandingSort) => {
       setSortState(next);
       if (contactId && typeof window !== 'undefined') {
-        window.localStorage.setItem(
+        localStore.setItem(
           `${SORT_KEY_PREFIX}${contactId}`,
           JSON.stringify(next),
         );
