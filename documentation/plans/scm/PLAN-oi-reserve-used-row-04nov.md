@@ -105,7 +105,9 @@ entry per source; a line that lent landed goods gets one "Lent to SO... (n)" ent
 ## 6. Counts
 
 Prod: read-only SQL for the owner, `SQL-oi-reserve-used-row-count-04nov.sql` beside this file.
-Dev copy: `crew-data-request:` with the same SQL.
+Dev copy (crew ran the SQL, 4 Nov): no open request row on a used or cancelled row there, so it gives no
+positive case. The repair script's tests seed their own (an open request row on a used row with exactly 1
+live sibling, plus the hold cases). The prod count stays with the owner's run.
 
 ## 7. Workaround for CS today (no code)
 
