@@ -105,6 +105,44 @@ describe('one line is drawn upright on a page of its own size', () => {
   });
 });
 
+describe('lightbox heading says what the tag prints', () => {
+  it('an SP line with no selling price resolved is headed LP', async () => {
+    const lookup = vi.fn(async () => {
+      const r = response(['b']);
+      (r.lines[0] as unknown as Record<string, unknown>).show_promo_price = true;
+      (r.lines[0] as unknown as Record<string, unknown>).sell_price = null;
+      return r;
+    });
+    render(
+      <PriceTagLivePreview
+        lines={[line({ key: 'b', code: 'C-b', product_id: 'p2', price_type: 'selling' })]}
+        priceMode="list"
+        lookupTagPreview={lookup}
+        {...({ lineKey: 'b' } as object)}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('lightbox')).toHaveTextContent('C-b - LP'));
+  });
+
+  it('an SP line with a selling price resolved is headed SP', async () => {
+    const lookup = vi.fn(async () => {
+      const r = response(['b']);
+      (r.lines[0] as unknown as Record<string, unknown>).show_promo_price = true;
+      (r.lines[0] as unknown as Record<string, unknown>).sell_price = 599;
+      return r;
+    });
+    render(
+      <PriceTagLivePreview
+        lines={[line({ key: 'b', code: 'C-b', product_id: 'p2', price_type: 'selling' })]}
+        priceMode="list"
+        lookupTagPreview={lookup}
+        {...({ lineKey: 'b' } as object)}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('lightbox')).toHaveTextContent('C-b - SP'));
+  });
+});
+
 describe('PriceTagLivePreview one line (AC-20)', () => {
   it('asks for that line only and draws it', async () => {
     const lookup = vi.fn(async () => response(['b']));

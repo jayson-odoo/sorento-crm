@@ -19,7 +19,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { toast } from '@/lib/toast';
-import { linePriceType } from '@/lib/dealer-kit/price-tag-draft-lines';
 import { buildRequestSheet, buildSingleTagSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -152,6 +151,8 @@ export function PriceTagLivePreview({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
+  // One-line mode: what the resolved tag prints (SP only when it has a selling figure to show).
+  const [printsSp, setPrintsSp] = useState(false);
   const codeByKey = useMemo(
     () => Object.fromEntries(lines.map((line) => [line.key, line.code])),
     [lines],
@@ -180,6 +181,8 @@ export function PriceTagLivePreview({
         .then((response) => {
           if (ask !== askSeq.current) return; // a newer edit is on its way
           setPayload(previewPayload(lines, response, lineKeyRef.current !== undefined));
+          const row = response.lines.find((r) => r.line_id === lineKeyRef.current);
+          setPrintsSp(!!row && !!row.show_promo_price && row.sell_price != null);
           setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
           setFailed(false);
         })
@@ -228,7 +231,7 @@ export function PriceTagLivePreview({
         onOpenChange={(next) => {
           if (!next) onClose?.();
         }}
-        title={`${oneLine.code || docNumber || 'Preview'} - ${linePriceType(oneLine, priceMode) === 'selling' ? 'SP' : 'LP'}`}
+        title={`${oneLine.code || docNumber || 'Preview'} - ${printsSp ? 'SP' : 'LP'}`}
         payload={payload}
       />
     );
