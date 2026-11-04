@@ -704,7 +704,14 @@ def _achieved_invoiced(
         )
 
     parts = [credited_docs(kind) for kind in sorted(keys_by_kind)]
-    docs = (parts[0] if len(parts) == 1 else union_all(*parts)).cte("inv_docs")
+    # Read once and hashed: inlined, the planner re-scanned a month of the company's documents
+    # for every (period, account) pair (40 dealer targets x 12 months: 1,440 index scans, 2.2 s
+    # on 40,000 documents; materialized, 0.27 s).
+    docs = (
+        (parts[0] if len(parts) == 1 else union_all(*parts))
+        .cte("inv_docs")
+        .prefix_with("MATERIALIZED")
+    )
     docs_credited = (
         select(
             pv.c.period_id, pv.c.target_id, pv.c.metric, pv.c.product_scope,
