@@ -141,7 +141,9 @@ describe('QuotationSignScopes columns', () => {
     expect(screen.queryByText('PRODUCT IMAGE')).toBeNull();
   });
 
-  it('keeps the photo column in suggest mode, plus one icon column', () => {
+  // PS-QUOTE-MATRIX retired suggest mode: the icon column is the feedback button now.
+  it('keeps the photo column with feedback on, plus one icon column', () => {
+    const onFeedback = vi.fn();
     render(
       <QuotationSignScopes
         scopes={[
@@ -153,13 +155,18 @@ describe('QuotationSignScopes columns', () => {
           },
         ]}
         grandTotal="400.00"
-        suggest={{ edits: {}, onEdit: vi.fn(), onToggleRemove: vi.fn() }}
+        onFeedback={onFeedback}
       />,
     );
     expect(headers().slice(0, -1)).toEqual(
       SIGN_COLUMNS_WITH_IMAGE.map((c) => c.label),
     );
+    expect(headers()).toHaveLength(SIGN_COLUMNS_WITH_IMAGE.length + 1);
     expect(screen.getByAltText('Product photo, line 1')).toBeInTheDocument();
-    expect(screen.getByLabelText('Quantity on line 1')).toBeInTheDocument();
+    // Named by its description, never by the printed number the ITEM column shows.
+    screen.getByRole('button', { name: 'Leave feedback on Item 1' }).click();
+    expect(onFeedback).toHaveBeenCalledWith(
+      expect.objectContaining({ itemLabel: 'Item 1', scopeLabel: 'Sanitary ware' }),
+    );
   });
 });

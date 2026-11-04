@@ -635,6 +635,27 @@ class CoverageSubscriptionService:
         )
         return [str(r[0]) for r in rows]
 
+    def active_targets_for(self, subscriber_id: str) -> set[str]:
+        """Active, non-expired target ids ``subscriber_id`` covers (the mirror of
+        ``active_subscribers_for``). My Team shows these colleagues' tasks unfiltered
+        by segment / brand (MYTEAM-BY-SEGMENT), so a coverage never opens empty."""
+        now = _now_naive()
+        from sqlalchemy import or_
+
+        rows = (
+            self.db.query(NotificationSubscription.target_user_id)
+            .filter(
+                NotificationSubscription.subscriber_id == str(subscriber_id),
+                NotificationSubscription.is_active.is_(True),
+                or_(
+                    NotificationSubscription.expires_at.is_(None),
+                    NotificationSubscription.expires_at > now,
+                ),
+            )
+            .all()
+        )
+        return {str(r[0]) for r in rows}
+
     def active_coverer_for(self, target_user_id: str) -> Optional[str]:
         """Return the single active, non-expired REDIRECT coverer's user id for
         ``target_user_id`` (only ``redirect_assignments=True`` coverages auto-route).

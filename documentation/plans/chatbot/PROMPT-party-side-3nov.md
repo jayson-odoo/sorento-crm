@@ -13,6 +13,11 @@ no gold-message examples, no word lists).
 
 ## Base and order with SALES-ACCOUNT-TYPE (#2105)
 
+Update 4 Nov: #2105 is merged (3a05967c). Base for this edit: #2105's candidate text md5 `e4aa6d43fedd996579b8c1caa2c54556`
+(its REPORT_ASK section applied), or whatever parser version crew publishes #2105 as. Section bytes to insert (the code
+block below, from `== PARTY_SIDE` through the last line's newline): 1315 bytes, md5 `9fcfa92c8b6045279b8889734c0fe4d8`.
+The resulting full-text md5 is crew's to compute on publish (the full parser text is not in this repo) and to pin.
+
 #2105 inserts its `== REPORT_ASK ... ==` section before the same banner (`PROMPT-report-semantic-carry-e4aa6d43.md`, base
 `99b5fc65`, result `e4aa6d43`). Recommended: **one parser version carrying both sections**. Apply #2105's Edit 1 to the
 base, then Edit 1 below (it lands after the REPORT_ASK section, right before the banner). The owner then moves one

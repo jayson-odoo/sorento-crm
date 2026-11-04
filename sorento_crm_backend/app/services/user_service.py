@@ -1969,7 +1969,10 @@ class AccessAgentService:
         from sqlalchemy.orm import selectinload
 
         from app.models.base import company_scope
-        from app.services.market_segment_service import segment_key_for
+        from app.services.market_segment_service import (
+            member_serves_segments,
+            segment_key_for,
+        )
         # Check agent is linked to this team. Read scope-free: `team_id` is passed in
         # already resolved for the work item's company (by get_team_id_by_tier), so
         # the ambient company must not veto it - otherwise a caller switched to
@@ -2021,8 +2024,9 @@ class AccessAgentService:
             segment_pool = [
                 m
                 for m in pool
-                if not m.market_segments
-                or {str(s.code) for s in m.market_segments} & contact_segments
+                if member_serves_segments(
+                    {str(s.code) for s in m.market_segments}, contact_segments
+                )
             ]
             # Nobody serves this segment -> the whole team on the legacy '' cursor.
             if segment_pool:

@@ -366,6 +366,30 @@ def _without_the_drill_pick_words(parse_output: dict[str, Any], pending: Any, tr
     return {**parse_output, "entities": kept}
 
 
+def _as_the_kind_picked(parse_output: dict[str, Any], pending: Any, trace: Any, domains: Any) -> dict[str, Any]:
+    """The resolver's input on a turn that answered a customer-or-supplier kind pick with the customer.
+
+    Round 7b S1 (reviewer, 3 Nov 2026): the picked position chose a KIND, never a row, so the resolver reads the picked
+    word exactly as that word typed as a customer in the ask's domain: no position (the gate takes one as a row already
+    picked, `gate.py` `pick_applied`), the word as this message's own (a carried customer word is a pick already made),
+    and the plan's one domain when the bare pick names none (the gate scopes its customer pick by it). Several customers
+    answering to the word then get the gate's own which-one pick and never run merged; one customer's rows (its ledgers
+    joined by an explicit customer group) pass as one, as they do for the typed word.
+    """
+    if getattr(pending, "kind", None) != "kind_pick" or "customer" not in (getattr(trace, "picked_kinds", None) or []):
+        return parse_output
+    entities = [
+        {**e, "current_message": True}
+        if isinstance(e, dict) and e.get("hint") == "customer" and not e.get("uuid") else e
+        for e in parse_output.get("entities") or []
+    ]
+    out = {**parse_output, "entities": entities, "reference_positions": []}
+    domains = [d for d in (domains or []) if isinstance(d, str) and d]
+    if not out.get("domain_hint") and len(domains) == 1:
+        out["domain_hint"] = domains[0]
+    return out
+
+
 def _without_carried_domain_on_a_roster_pick(
     parse_output: dict[str, Any], rules_fired: list[str]
 ) -> dict[str, Any]:
@@ -3558,6 +3582,13 @@ def _positions_read_elsewhere(state: Any) -> bool:
     return bool(ideation.get("pending_media"))
 
 
+def _held_report_line(focus: Any) -> str | None:
+    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`)."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    return report_ask.held_report(focus)
+
+
 def run_turn(
     envelope: Envelope,
     *,
@@ -5667,6 +5698,12 @@ def _run_stages_body(  # noqa: PLR0915
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_retired
+
+        if _report_ask_retired.asks_the_retired_company(state_in.focus.required_ask):
+            # Owner O-R2 (3 Nov): the report ask never asks the company. A live session still holding that question
+            # (written before the release) is read as no open question, never answered or asked again.
+            state_in.focus.required_ask = None
         remembered_before = session_state.five_keys(session_block)
         state_in, quoted_turn_facts = _quoted_context(
             db,
@@ -6020,6 +6057,9 @@ def _run_stages_body(  # noqa: PLR0915
         candidate_lines=candidate_lines,
         lookup_lines=lookup_lines,
         state_block=state_block,
+        # SALES-ACCOUNT-TYPE semantic carry (A2): the held report in words, only for a prompt carrying the report ask
+        # marker (`ParserConfig.report_ask`); every other text's user block is unchanged.
+        held_report=_held_report_line(state_in.focus) if getattr(parser_config, "report_ask", False) else None,
     )
     user_block, context_report = context_mod.assemble(context_layers)
     # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
@@ -6269,6 +6309,12 @@ def _run_stages_body(  # noqa: PLR0915
     # A sales ranking's `status` that is a report basis ("by qty, outstanding") is its basis, not a document status.
     from app.services.chatbot.lanes.business import report_ask as _report_ask_basis
 
+    # SALES-ACCOUNT-TYPE semantic carry (A3): with the report ask marker in the prompt, the parser's `report_ask` object
+    # is the whole report ask; its slots become the fresh ask's own fields here, before any report seam reads them.
+    # Without the marker the key is dropped and the turn is today's.
+    verdict = _report_ask_basis.from_object(
+        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending
+    )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
     # own (`chat_state.apply_changes`); `report_ask.with_held` gates on them, so an order list's window never reaches a
@@ -6672,7 +6718,7 @@ def _run_stages_body(  # noqa: PLR0915
         # when the parser declared one; a fresh low stock ask keeps only the entities that
         # scope the run. Read before every other seam below.
         from app.services.chatbot import required_fields
-        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask, sales_company_ask
+        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
@@ -6721,26 +6767,19 @@ def _run_stages_body(  # noqa: PLR0915
         if opportunity_lane.own_pending(state_in.pending) is not None:
             state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
-        _company_pick = False
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
-            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
-            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
-            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
-            _candidate = sales_company_ask.as_answer(verdict, open_ask)
-            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
-                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
-            )
-            _declared = _candidate.get("open_question_answer")
-            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
-                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
-                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
+        # SALES-ACCOUNT-TYPE semantic carry (A3): the parser's object is the whole ask, so an open question of the
+        # report ask is not answered off this turn's flags: none of the carry seams below reads it (`from_object` set
+        # aside the object for an answer that picks off the screen).
+        semantic_ask = isinstance(verdict.get(report_ask.OBJECT_KEY), dict)
+        if semantic_ask and (open_ask or {}).get("ask") == report_ask.ASK_NAME:
+            replaced_ask, open_ask = open_ask, None
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
         _kind_pick = False
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "kind":
             # SALES-ACCOUNT-TYPE PR 2: the word repeated with the parser's `kind_said` is the kind question's pick.
             verdict, _kind_pick = report_ask.as_kind_answer(verdict, open_ask)
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and not _kind_pick and report_ask.names_its_own_ask(
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _kind_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
@@ -6750,15 +6789,12 @@ def _run_stages_body(  # noqa: PLR0915
             verdict = {**verdict, "chat_report_reading": chat_report.read_reply(db, open_ask, _message_text) or {}}
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and chat_report.names_its_own_ask(verdict, open_ask):
             open_ask = None  # a new chat report, not the answer to the open question
-        # SALES-COMPANY: a reply naming an offered company ("Sorento" as the parser's company,
-        # its escalation company pick, or a brand word) is that company's pick.
-        verdict = sales_company_ask.as_answer(verdict, open_ask)
         verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
         if required_rule:
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
-        else:
+        elif not semantic_ask:
             # Chat fix PR-B S3: a refine of the report on screen re-runs it, whatever report
             # type the parser named (`report_ask.as_held_refine`).
             verdict = report_ask.as_held_refine(verdict, state_in.focus.sales_ranking_frame)
@@ -7310,6 +7346,9 @@ def _run_stages_body(  # noqa: PLR0915
             )
             resolver_parse_output = _without_the_drill_pick_words(
                 resolver_parse_output, state_in.pending, plan.trace
+            )
+            resolver_parse_output = _as_the_kind_picked(
+                resolver_parse_output, state_in.pending, plan.trace, plan.domains
             )
             # REPORT-ENGINE 1b fix round F1: a dealer's sales ranking never has a location
             # word looked up (the resolver's miss line would probe warehouse codes); the
@@ -9104,15 +9143,6 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
-                if (
-                    (state_out.focus.required_ask or {}).get("ask") == sales_company_ask.ASK_NAME
-                    and state_out.pending is not None
-                ):
-                    # SALES-COMPANY: the company question is the newest one on the table, so
-                    # an offer still stored from an earlier turn (a sales report's drill offer)
-                    # closes; left open, the reply "Sorento" would answer it. Only this ask:
-                    # every other required ask keeps the stored question as before.
-                    state_out = dataclasses_replace(state_out, pending=None)
                 # The frame lives only through sales ranking turns (one that ran replaces it,
                 # one that asked a required field keeps it); any other ask clears it.
                 state_out.focus.sales_ranking_frame = next(

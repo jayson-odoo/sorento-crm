@@ -1,11 +1,11 @@
 import { Metadata } from 'next';
-import { QuotationSpecSheetTab } from '../../components/QuotationSpecSheetTab';
+import { QuotationSpecSheetsList } from '../../components/QuotationSpecSheetsList';
 
 export const metadata: Metadata = {
-  title: 'Quotation spec sheet',
-  description: 'The project catalogue: a cover and one page per quoted item.',
+  title: 'Quotation spec sheets',
+  description: 'The spec sheets made from this quotation: a cover and one page per quoted item.',
 };
 
 export default function ProjectQuotationSpecSheetPage() {
-  return <QuotationSpecSheetTab />;
+  return <QuotationSpecSheetsList />;
 }

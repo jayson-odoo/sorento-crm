@@ -61,8 +61,6 @@ from app.services import project_seed_service
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import (
     EXPORT_HEADINGS,
-    EXPORT_SHEET,
-    EXPORT_TITLE,
     ProjectOrderInquiryService,
 )
 from app.services.project_so_draft_service import ProjectSODraftService
@@ -1006,9 +1004,8 @@ def test_the_export_uses_the_clients_own_column_headings(seeded):
 
     assert filename.endswith(".xlsx")
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
-    assert sheet.title == EXPORT_SHEET
-    assert sheet.cell(row=1, column=1).value == EXPORT_TITLE
-    headings = [cell.value for cell in sheet[2][: len(EXPORT_HEADINGS)]]
+    assert sheet.title == "ORDER INQUIRY"
+    headings = [cell.value for cell in sheet[1][: len(EXPORT_HEADINGS)]]
     assert headings == list(EXPORT_HEADINGS)
     assert headings == [
         "SO DATE",
@@ -1017,7 +1014,7 @@ def test_the_export_uses_the_clients_own_column_headings(seeded):
         "QTY",
         "DELIVERY DATE",
         "PROJECT/CUSTOMER",
-        "STOCK LOCATION",
+        "LOCATION",
         "REMARK",
     ]
 
@@ -1048,7 +1045,7 @@ def test_the_export_writes_the_remark_the_way_purchasing_reads_it(seeded):
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
     data = [
         (row[1], row[2], row[3], row[7])
-        for row in sheet.iter_rows(min_row=3, values_only=True)
+        for row in sheet.iter_rows(min_row=2, values_only=True)
         if row[1]
     ]
     # An inbound row prints its SPO reference, exactly as the client's file does.
@@ -1067,7 +1064,7 @@ def test_the_export_leaves_an_unallocated_location_blank(seeded):
     _filename, body = service.export_xlsx(project.id)
 
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
-    first = next(sheet.iter_rows(min_row=3, values_only=True))
+    first = next(sheet.iter_rows(min_row=2, values_only=True))
     assert not first[6]
 
 
@@ -1079,9 +1076,8 @@ def test_an_empty_project_still_exports_a_readable_sheet(seeded):
     _filename, body = ProjectOrderInquiryService(db).export_xlsx(project.id)
 
     sheet = openpyxl.load_workbook(io.BytesIO(body)).worksheets[0]
-    assert sheet.cell(row=1, column=1).value == EXPORT_TITLE
-    assert [cell.value for cell in sheet[2][: len(EXPORT_HEADINGS)]] == list(EXPORT_HEADINGS)
-    assert sheet.max_row == 2
+    assert [cell.value for cell in sheet[1][: len(EXPORT_HEADINGS)]] == list(EXPORT_HEADINGS)
+    assert sheet.max_row == 1
 
 
 # -------------------------------------------------------------------- AC-I6

@@ -1,8 +1,9 @@
-# Project Sales Rep - Quote a project, send it, and handle the customer's suggestions
+# Project Sales Rep - Quote a project, send it, and handle the customer's feedback
 
 Use this when you build a quotation for a project, send it to the customer by email or your own
-WhatsApp, and deal with what comes back: the customer signs it, or suggests different quantities
-or prices first. It also covers asking for a missing drawing or photo of a product on a line.
+WhatsApp, and deal with what comes back: the customer signs it, or leaves feedback notes first.
+It also covers quoting in a grid (unit types or levels across, areas or rooms below) and asking
+for a missing drawing or photo of a product on a line.
 
 This is the **Project Sales** quotation (inside a project). The older **Commercial >
 Quotations** screen is a different module.
@@ -65,10 +66,23 @@ Once a project has a quotation, a new PO cannot be checked against a proposal.
 ## Fill the cover page
 
 Every quotation sent from now on starts with a cover page: page 1 of the PDF (portrait) and the
-first card on the customer's sign link. It replaces the separate Excel cover sheet. It shows, in
-this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
+first card on the customer's sign link. It replaces the separate Excel cover sheet. The company's
+cover page design (set by an admin in **Quotation Templates > Cover page**) decides the title, the
+letterhead, which rows show and in what order, and their printed names. Without a design it shows,
+in this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
 **Proposal Purpose** (**Quotation Purpose** on the quotation), **Terms & Conditions**, **Payment
-Terms**, **Validity**, **Prepared By**.
+Terms**, **Validity**, **Prepared By**. Where a design keeps the standard title and Purpose name,
+they follow the document too: PROPOSAL on a proposal, QUOTATION on a quotation.
+
+### See it before you send: the Cover letter tab
+
+* The **Cover letter** tab shows page 1 as it will print, with this document's values. Before the
+  first save the reference reads `NEW-R1`; after that it shows the next revision.
+* In edit mode, type the **Intro text** (above the rows) and **Closing text** (below the rows) for
+  this customer. A new document starts with the design's wording, with fields such as the
+  project name already filled in. Changes here affect this document only.
+* The preview follows your unsaved changes on every tab.
+* An old free-text cover letter is now the intro text.
 
 * **Reference No.** is the proposal or quotation number with its revision and the project name
   (for example `PRJQ-2026-0042-B SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
@@ -84,9 +98,10 @@ Terms**, **Validity**, **Prepared By**.
   pages as before.
 
 The terms print the way you wrote them: a heading stays a heading, a blank line keeps its gap,
-bullets and indented bullets print as bullets, and nothing is numbered for you. They print once,
-on the cover page. Quotations sent before this change keep their old layout when downloaded
-again.
+bullets and indented bullets print as bullets, and nothing is numbered for you. They print once:
+on the cover page, or after the price table when the design hides the Terms row. Each revision
+keeps the design it was sent with, so changing the design later never changes a sent quotation,
+and quotations sent before the cover page existed keep their old layout.
 
 ## Every line must be a catalogue product or set
 
@@ -97,16 +112,49 @@ free-text description as a line.
   the quotation does not save until you pick one.
 * On the quotation form the refusal reads *One line still needs a catalogue product or set.*
 * A **Non-standard** flag on a line means the product is real but outside the series this scope
-  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed.
+  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
+  the quotation then needs approval before it can be sent (see below).
 
 ### Minimum price, while you type
 
 * Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
   lowest price allowed for that item. It shows on a new quotation too, before the first save.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
-* A quotation with a line below the minimum price says *One line is priced below minimum price*
-  (or *N lines are priced below minimum price*) and needs a manager's approval before it can be
-  sent.
+* A quotation with a line below the minimum price says *One line is priced below the minimum
+  price* (or *N lines are ...*) and needs approval before it can be sent.
+
+### Which quotations need approval, and who approves
+
+A quotation needs approval before it can be sent when any line:
+
+* is priced below its **default price**, even by RM 1. The default price is the price a new line
+  opens at: the series price where the scope's series names one, else the list price. The
+  banner reads *One line is priced below the default price*.
+* is **outside the project's series** (*One line is outside the project's series*).
+
+Press **Send for approval**. The request goes to ONE person, worked out in this order:
+
+1. a line outside the series: the company's **off-series approver** (set in Settings);
+2. the project's own **Discount approver** (on the project's Critical / final negotiation card,
+   set by a sales manager);
+3. your **superior** (your regional sales manager; set on your user in Settings > Users);
+4. the company's **default quotation approver** (Settings).
+
+The banner names who it is with (*... is with Aminah for approval*). Only that person, someone
+they report to, or an admin can approve or reject it. If nobody is set up, Send for approval
+says *Nobody is set up to approve this quotation* and names what an admin should set.
+
+Approval covers the revision you send: issuing spends it, and the next revision that still has a
+discount or an off-series line asks again.
+
+### A discount puts the project in Final Negotiation
+
+Sending a quotation with a discount for approval raises the project's **Critical / final
+negotiation** flag and moves the project to the **Final Negotiation** stage, if it is at an
+earlier stage. A project already at Final Negotiation or later (Sponsorship Form, PO Received,
+Lost, Dormant) keeps its stage. An approval asked only for an off-series line does not move it.
+If the approver rejects the discount, or you take it back to change it, the project stays in
+Final Negotiation; a sales manager moves it back by hand if the deal cooled.
 
 ### The customer wants something we do not sell yet (bespoke item)
 
@@ -201,40 +249,81 @@ What counts as a view:
 Nothing that identifies the reader is kept: no IP address and no name, only the time, the
 revision and the kind of device.
 
-## The customer suggests changes (quantity, price, remove a line)
+## Quote in a grid (unit types or levels across, areas or rooms below)
 
-Instead of signing, the customer can click **Suggest changes** on the sign page. They can change a
-line's **Qty** or **Unit rate**, or remove a line, add an optional note, and click **Send
-suggestions**. They cannot change descriptions or anything else.
+A project bill of quantities often lists the products down the side and the unit types or levels
+across the top, each split into areas or rooms, with a quantity in every box. Any section (scope)
+of a quotation can be laid out that way. A section with no grid stays exactly as before.
 
-While their suggestions wait for you, their page says *Your suggestions are with Sorento* and
-they cannot sign.
+### Set up the columns
+
+On the section's **Lines** tab, while the revision is still a draft:
+
+1. Click **+ Column header** under the table (once the grid exists it is also the narrow column at
+   the far right) and type its name, for example *TYPE A - 1 BH* or *LEVEL 9*. Your lines' current quantities move into the
+   new column, so no total changes.
+2. Click **+** (*Add a column*) after a header to add the columns under it, for example *1 BH*,
+   *KITCHEN*, *YARD*, *BALCONY* or *SURAU M*, *JANITOR*. A header with no columns under it is one
+   quantity column on its own (for example *BREAK TANK*).
+3. Click any header or column name to rename it. Drag the grip to reorder. Click **Remove** (the
+   x) to take one away: it counts down with **Undo** in the header, and its quantities leave the
+   totals when the countdown ends.
+4. **Copy columns from** on the table's toolbar copies another section's headers and columns (not
+   its quantities), so the second LEVEL sheet takes seconds.
+
+Column changes save as you make them: **Cancel** on the edit session does not undo them. The
+quantities you type save when you click **Save**, like any other change to the lines.
+
+Every column you already use stays: photo, drawing, product code, description, brand, UOM, rate,
+complete set, rate only, and the section headings (*Bathroom*, *Kitchen and yard*). Only the
+single Qty column is replaced by the grid.
+
+### Fill in the quantities
+
+Type the real quantity in each box (blank means none). The line's quantity is the sum of its
+boxes, and everything that reads a quantity (totals, approval, PO check, SO draft, spec sheet)
+uses that sum. To bring numbers over from the customer's spreadsheet, copy the block of quantities
+there, click the first box here and paste: it fills right and down; *-* and blanks paste as blank.
+
+The table adds up for you:
+
+* after each header with two or more columns: that header's **Qty** and **RM** for the line;
+* at the end of the line: **Total qty** and the amount;
+* at the bottom: **Total qty** under every column and **Total (RM)** under every header.
+
+The same product can sit on more than one line (an angle valve for the WC and again for the
+sink); the PO check adds them up.
+
+The PDF and the Excel export print the same two-row header (repeated on every page) with today's
+columns around it; a wide sheet prints its column names upright to fit. The customer's link shows
+the grid when they open the section.
+
+## The customer leaves feedback
+
+Instead of signing, or as well as signing, the customer can leave feedback on the sign page. They
+tap the feedback button beside an item, or tap one box of a grid, to open **Leave a note**: they
+write **Your note** and can add a hint: a suggested quantity, a suggested price, **Remove this
+item**, or another model (**Model name or code**) with its price. They click **Send feedback**.
+They can send feedback as many times as they like, and it never stops them signing.
+
+Nothing the customer sends changes the quotation. You read it and decide what to do.
 
 ### How you hear about it
 
 The project owner (or management, if the project has no owner) gets an in-app notice, an email and
-a WhatsApp: *{project}: changes suggested on {quotation}*. The project's activity log records it
-too.
+a WhatsApp: *{customer} left feedback on {n} lines on {quotation}*. The project's activity log
+records it too.
 
-### Answer the suggestions
+### Read and act on it
 
-1. Open the quotation's **Lines** tab. A summary row at the top shows who suggested, when, how
-   many lines, the total before and after (**RM x -> RM y**) and their note. Tick **Suggested
-   lines only** to hide the rest.
-2. On each suggested cell (Qty, Rate) or removed row, click **Accept** or **Reject**. Reject asks
-   for an optional **Reason**. Click a decision again to undo it.
-3. When every suggestion is decided, click **Apply decisions**.
-   * If you accepted anything, a **new draft revision** opens with those changes: *Decisions
-     applied. The revision is a draft for you to check and send.* It goes through the normal
-     minimum-price approval, then you send it like any revision.
-   * If you rejected everything: *Decisions applied. Nothing was accepted, so no revision was
-     opened.*
-4. The customer's page then shows **Your suggestions** with **Answered**, how many were accepted
-   and not accepted, and *Your salesperson will send the revised quotation for signing.*
-
-**Apply decisions** stays greyed out until every suggestion is decided (*Accept or reject N more
-suggestions to apply.*). If a revision is already open on that scope, you are told to issue that
-revision first. You need edit rights on the project.
+1. Open the quotation's **Customer feedback** tab. The number on the tab is how many notes are
+   still open. Each note shows the item, the section and, for a grid box, the column (*TYPE C - 3
+   BH / KITCHEN*), what the customer wrote and their hint next to today's value (*Suggested
+   quantity 140 (now 133)*).
+2. Click **Show in Lines** to jump to that line. Open notes are marked on the Lines tab: an amber
+   corner on a grid box, a dot on an item.
+3. Change what you see fit in a new revision (revise, edit, send), exactly as for any change.
+4. Tick **Handled** on a note once you have dealt with it. Unticking opens it again.
 
 ## Ask for a missing drawing or photo of a product
 

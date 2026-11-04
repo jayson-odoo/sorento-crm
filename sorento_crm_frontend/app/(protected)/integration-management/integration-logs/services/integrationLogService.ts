@@ -1,6 +1,6 @@
 import { apiFetch } from '@/lib/api';
-import type { IntegrationLog, IntegrationLogResponse } from '../types/integrationLog.types';
-import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { IntegrationLogResponse, IntegrationLogsPage } from '../types/integrationLog.types';
+import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
 export async function getIntegrationLogs(params: DataGridApiFetchParams & {
   status?: string;
@@ -12,7 +12,7 @@ export async function getIntegrationLogs(params: DataGridApiFetchParams & {
   /** Health-dashboard failure drill-down: narrows to one cause. */
   status_code?: string;
   error_contains?: string[];
-}): Promise<DataGridApiResponse<IntegrationLog>> {
+}, signal?: AbortSignal): Promise<IntegrationLogsPage> {
   const { pageIndex, pageSize, sorting, searchQuery, status, integration_channel, business_table, business_id, created_from, created_to, status_code, error_contains } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
@@ -32,7 +32,8 @@ export async function getIntegrationLogs(params: DataGridApiFetchParams & {
   });
   // Repeated key, not comma-joined: each term is a separate LIKE the backend ANDs.
   for (const term of error_contains ?? []) queryParams.append('error_contains', term);
-  const response = await apiFetch(`/api/v1/integrations/logs?${queryParams.toString()}`);
+  // React Query's signal: a reload, filter or page change aborts the request it supersedes.
+  const response = await apiFetch(`/api/v1/integrations/logs?${queryParams.toString()}`, { signal });
   if (!response.ok) throw new Error('Failed to fetch integration logs');
   return response.json();
 }

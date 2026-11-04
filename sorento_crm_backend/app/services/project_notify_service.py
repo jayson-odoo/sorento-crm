@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional
 
@@ -377,17 +378,30 @@ def notify_quotation_approval_requested(
     requester_name: str,
     resubmitted: bool = False,
     below_proposal: int = 0,
+    reasons: Optional[str] = None,
 ) -> int:
-    """A quotation was sent for approval: tell every approver but the sender. One per press."""
-    lines = approval_reason_text(below, below_proposal)
+    """A quotation was sent for approval: tell its routed approver (PS-QUOTE-RULES R4), or every
+    approver but the sender when it was routed to nobody. One per press. ``reasons`` is the
+    approval service's own sentence (every reason); without it, the minimum-price and
+    below-proposal counts are worded here."""
+    lines = (
+        reasons[:1].lower() + reasons[1:]
+        if reasons
+        else approval_reason_text(below, below_proposal)
+    )
     verb = "appealed" if resubmitted else "sent"
     text = (
         f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {requester_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {requester_id})
+        ),
         notif_type="project_quotation_approval_requested",
         title=f"{project_label(project)}: approval needed on {document.document_no}",
         body=text,
@@ -443,14 +457,19 @@ def notify_quotation_approval_withdrawn(
     actor_name: str,
     reason: Optional[str],
 ) -> int:
-    """The creator pulled a pending quotation back to change it: tell the approvers."""
+    """The creator pulled a pending quotation back to change it: tell its approver(s)."""
     text = (
         f"{actor_name} took quotation {document.document_no} ({project_label(project)}) back "
         f"for changes: {reason or ''}"
     ).strip()
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {actor_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {actor_id})
+        ),
         notif_type="project_quotation_approval_withdrawn",
         title=f"{project_label(project)}: {document.document_no} withdrawn",
         body=text,
@@ -524,6 +543,12 @@ def notify_quotation_changes_requested(
     )
 
 
+def _half_hour(request) -> int:
+    """The 30 minute window the request was submitted in (the notification collapse key)."""
+    when = getattr(request, "submitted_at", None) or datetime.utcnow()
+    return int(when.timestamp() // 1800)
+
+
 def notify_quotation_amendment_requested(
     db: Session,
     *,
@@ -533,17 +558,17 @@ def notify_quotation_amendment_requested(
     request,
     line_count: int,
 ) -> int:
-    """The customer suggested quantities or prices on the quotation link (QUOTE-CUSTOMER-AMEND).
+    """The customer left feedback notes on the quotation link (QUOTE-CUSTOMER-AMEND).
 
     Same recipients as a free-text request (the owner, else management), and on WhatsApp as
-    well as in-app and email, the channels the approval alerts use: until somebody answers,
-    the customer cannot sign. One notice per request, so the dedup key is the request.
+    well as in-app and email, the channels the approval alerts use. One notice per request, so
+    the dedup key is the issue plus a 30 minute window, so a flood of submits is one notice.
     """
     reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
     who = (getattr(request, "requester_name", None) or "").strip() or "The customer"
     if line_count:
         lines = f"{line_count} line{'' if line_count == 1 else 's'}"
-        text = f"{who} suggested changes to {lines} on {reference}."
+        text = f"{who} left feedback on {lines} on {reference}."
     else:
         text = f"{who} sent a note on {reference}."
     note = " ".join((getattr(request, "note", None) or "").split())
@@ -560,7 +585,7 @@ def notify_quotation_amendment_requested(
         db,
         user_ids=recipients,
         notif_type="project_quotation_amendment_requested",
-        title=f"{project_label(project)}: changes suggested on {reference}",
+        title=f"{project_label(project)}: feedback on {reference}",
         body=text,
         data={
             **_approval_data(project, document),
@@ -570,7 +595,7 @@ def notify_quotation_amendment_requested(
             "request_id": str(getattr(request, "id", "") or ""),
         },
         project_id=str(project.id),
-        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{getattr(request, 'id', '')}",
+        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{_half_hour(request)}",
         send_whatsapp=True,
         data_for=_whatsapp_for(db, project, document, text),
     )

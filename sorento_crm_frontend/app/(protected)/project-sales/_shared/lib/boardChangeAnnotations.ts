@@ -85,12 +85,6 @@ export interface BoardChangeAnnotation {
   was: BoardChangeSide;
   now: BoardChangeSide;
   /**
-   * CONFIRM-PREVIEW-STALE: the parts `now.decision` is worded from, so a reader can compare a
-   * saved decision with the change's suggestion by kind and qty rather than by words.
-   * Empty on a closed line. Optional: hand-built annotations predate it.
-   */
-  nowParts?: SupplyPart[];
-  /**
    * The composed suggestion, one server-written sentence per component, in the engine's own
    * order: held components first, then new sourcing (AC-C1). Printed verbatim - the board
    * does not re-phrase it, so the words on screen are the words the engine chose.
@@ -426,7 +420,6 @@ export function annotationOf(
     closed,
     was,
     now,
-    nowParts: closed ? [] : proposedParts(row),
     suggestionLines: suggestionLinesOf(row),
     lateDays: row.suggestion?.late_days ?? null,
     shortfallQty: row.suggestion?.shortfall_qty ?? null,

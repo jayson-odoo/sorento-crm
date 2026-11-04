@@ -18,7 +18,9 @@ import {
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
   footerGroupsWithContent,
+  headerRowSpan,
   reorderColumnsOnDragEnd,
+  skipMergedLeafHeader,
   useBodySkeleton,
   skeletonRowCount,
   useReturnedRowId,
@@ -255,14 +257,27 @@ function DataGridTableDndRows<TData>({
         </DataGridTableHeadRow>
       );
     }
+    // Column GROUPS (the quotation grid's column headers over their columns): an ungrouped column
+    // spans both header rows from its placeholder, as `DataGridTable` draws them. On a flat grid
+    // (one header row) nothing is skipped and every span is 1, so this is the header it always was.
+    const rowCount = table.getHeaderGroups().length;
+    const merged = rowCount > 1;
     return (
       <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-        {headerGroup.headers.map((header, index) => {
+        {headerGroup.headers
+          .filter((header) => !merged || !skipMergedLeafHeader(header, rowCount))
+          .map((header, index) => {
           const { column } = header;
 
           return (
-            <DataGridTableHeadRowCell header={header} key={index}>
-              {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+            <DataGridTableHeadRowCell
+              header={header}
+              key={index}
+              rowSpan={merged ? headerRowSpan(header, rowCount) : undefined}
+            >
+              {header.isPlaceholder && !merged
+                ? null
+                : flexRender(header.column.columnDef.header, header.getContext())}
               {props.tableLayout?.columnsResizable && column.getCanResize() && (
                 <DataGridTableHeadRowCellResize header={header} />
               )}

@@ -49,6 +49,7 @@ whichever line the database happened to return first.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from contextlib import contextmanager
 from collections import defaultdict
@@ -71,7 +72,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, null, nullslast, or_, text
+from sqlalchemy import and_, case, func, literal_column, null, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -311,6 +312,9 @@ def _pile_key(code: str, water: bool, per_half: bool) -> str:
 #: The confirmation's one running pools' net, on `_CapacityLedger` beside its bins, as
 #: `_group_budget_key` keeps a group's book. No warehouse id can collide with it.
 _POOLS_NET_BUDGET = "pools-net"
+#: `Session.info` key of the parsed active-decision snapshots, keyed by row version
+#: (`_active_decision_snapshots_reused`).
+_ACTIVE_SNAPSHOT_CACHE = "active_decision_snapshots_by_version"
 
 
 def _group_budget_key(group: str) -> str:
@@ -855,8 +859,8 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
-    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` owes
-    #: nothing back for goods taken from its own bin.
+    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` is
+    #: planned at its own bin (`planned_at_own_bin`).
     doc_type: Optional[str] = None
     #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
     #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
@@ -1973,7 +1977,8 @@ class ProjectSupplyService:
             if planned_at_own_bin(fact.warehouse, fact.doc_type) and fact.open_qty > _ZERO:
                 # CONSIGN-PLAN (owner Q1): the goods are already at the own bin, so the
                 # proposal is a plain Borrow of the whole plan quantity from it - never a
-                # Buy, nothing to purchasing - and it draws on no shared pile.
+                # Buy - and it draws on no shared pile. Confirmed, it is owed back at that
+                # bin like any own-bin Borrow (owner ruling 2 Nov 2026).
                 own = fact.own_code
                 out[key] = (
                     (
@@ -3401,37 +3406,57 @@ class ProjectSupplyService:
         """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
         company, spo_number, placed, received)` for every live order-inquiry SPO placement
         on a line holding one of `refs`. The SPO row must be for the line's own product and
-        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
-        query = (
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN).
+
+        Statement shape matters: the one-join form let the planner drive from `spo_allocations`
+        by product (estimated 11 rows a loop, actual 1,302; 1.45M loops), 2.4-5.4 s on the prod
+        clone. The SO lines are read first in a MATERIALIZED CTE, then their live inquiry rows,
+        links and the SPO rows by id: 15-400 ms, the same rows. An index on
+        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s).
+
+        The CTE gets no company-scope criteria from do_orm_execute on the core lines (the old
+        statement did); rows stay identical because the SPO join pairs company with the line's
+        company and the scoped SPO read filters the rest."""
+        lines = (
             self.db.query(
-                SalesOrderLine.source_ref,
-                SalesOrderLine.product_id,
-                SalesOrderLine.company_id,
-                SPOAllocation.spo_number,
-                OrderInquiryLink.qty,
-                SPOAllocation.quantity_received,
+                SalesOrderLine.source_ref.label("source_ref"),
+                SalesOrderLine.product_id.label("product_id"),
+                SalesOrderLine.company_id.label("company_id"),
+                ProjectSalesOrderLine.id.label("so_line_id"),
             )
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
             )
-            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+            .filter(
+                SalesOrderLine.source_ref.in_(list(refs)),
+                SalesOrderLine.product_id.in_(list(product_ids)),
+            )
+        )
+        if company_id is not None:
+            lines = lines.filter(SalesOrderLine.company_id == company_id)
+        lines = lines.cte("oi_placement_lines").prefix_with("MATERIALIZED")
+        return (
+            self.db.query(
+                lines.c.source_ref,
+                lines.c.product_id,
+                lines.c.company_id,
+                SPOAllocation.spo_number,
+                OrderInquiryLink.qty,
+                SPOAllocation.quantity_received,
+            )
+            .select_from(lines)
+            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == lines.c.so_line_id)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
             .join(
                 SPOAllocation,
                 (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-                & (SPOAllocation.product_id == SalesOrderLine.product_id)
-                & (SPOAllocation.company_id == SalesOrderLine.company_id),
+                & (SPOAllocation.product_id == lines.c.product_id)
+                & (SPOAllocation.company_id == lines.c.company_id),
             )
-            .filter(
-                SalesOrderLine.source_ref.in_(list(refs)),
-                SalesOrderLine.product_id.in_(list(product_ids)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
+            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
         )
-        if company_id is not None:
-            query = query.filter(SalesOrderLine.company_id == company_id)
-        return query.all()
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
@@ -8705,7 +8730,9 @@ class ProjectSupplyService:
         """"Borrow from another order" OFF (D4, B3): every borrow that is not a document is
         owed back on the BORROWING line, at its own date, at the location it left from. The
         line's own location and its own group included (Q3): a project line is demand only
-        through its OI rows, so nothing else would replace what it took. One row per (line,
+        through its OI rows, so nothing else would replace what it took. A consignment's Borrow
+        at its own bin too, like a sales order line's (owner ruling 2 Nov 2026,
+        CONSIGN-OWN-BIN-EMAIL, reversing CONSIGN-PLAN Q1 for it). One row per (line,
         location).
 
         `unnamed_order_borrows_only` is the switch-ON reading: only a later order's stock
@@ -8718,12 +8745,6 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if getattr(item, "supply_key", None):
-                    continue
-                if planned_at_own_bin(fact.warehouse, fact.doc_type) and str(
-                    item.warehouse_id
-                ) == str(fact.warehouse.id):
-                    # CONSIGN-PLAN: the goods ARE the consignment's own bin; nothing was
-                    # lent, so nothing is owed back and purchasing hears nothing.
                     continue
                 if unnamed_order_borrows_only and (
                     not getattr(item, "donor_core_line_id", None)
@@ -10669,15 +10690,43 @@ class ProjectSupplyService:
         rather than two, because the answer cannot change mid-request.
         """
         if self._active_decision_rows is None:
-            self._active_decision_rows = (
-                self.db.query(
-                    SOSupplyDecision.project_sales_order_id,
-                    SOSupplyDecision.line_snapshots,
-                )
-                .filter(SOSupplyDecision.state == DECISION_ACTIVE)
-                .all()
-            )
+            self._active_decision_rows = self._active_decision_snapshots_reused()
         return self._active_decision_rows
+
+    def _active_decision_snapshots_reused(self) -> List[Tuple[Any, Any]]:
+        """The same rows as a plain read, reusing the parsed `line_snapshots` across orders
+        and services on this session (SIMULATE-CONFIRM-SPEED: the JSON is megabytes and was
+        re-read once per order and per Simulate probe).
+
+        Each active row is keyed by `(id, xmin, ctid)`. Any write to a row (an in-place
+        snapshot rewrite, a state change) makes a new tuple version with a new `ctid`, and a
+        rolled-back savepoint brings the old version back, so a key that is still in the table
+        is a row whose content is the cached one. Only rows with a new key are read.
+        Consumers only read the snapshots; nothing may mutate what this returns.
+        """
+        version = (literal_column("xmin::text"), literal_column("ctid::text"))
+        active = SOSupplyDecision.state == DECISION_ACTIVE
+        keys = {
+            (str(row[0]), row[1], row[2])
+            for row in self.db.query(SOSupplyDecision.id, *version).filter(active)
+        }
+        cache: Dict[Tuple[str, str, str], Tuple[Any, Any]] = self.db.info.get(
+            _ACTIVE_SNAPSHOT_CACHE, {}
+        )
+        kept = {key: cache[key] for key in keys if key in cache}
+        missing = [key[0] for key in keys if key not in kept]
+        if missing:
+            # A row a concurrent commit changed between the two reads comes back under its
+            # newer key, and that is the version this read answers with.
+            for row in self.db.query(
+                SOSupplyDecision.id,
+                *version,
+                SOSupplyDecision.project_sales_order_id,
+                SOSupplyDecision.line_snapshots,
+            ).filter(active, SOSupplyDecision.id.in_(missing)):
+                kept[(str(row[0]), row[1], row[2])] = (row[3], row[4])
+        self.db.info[_ACTIVE_SNAPSHOT_CACHE] = kept
+        return list(kept.values())
 
     def _decided_anywhere_cached(self) -> Set[str]:
         """Core lines ANY active decision covers - the lines being replaced INCLUDED.
@@ -12065,6 +12114,7 @@ class ProjectSupplyService:
             held_back: List[Dict[str, Any]] = []
             if preview:
                 self.db.info["confirm_preview"] = True
+            started = time.monotonic()
             try:
                 if preview:
                     self._bound_preview_locks()
@@ -12182,11 +12232,17 @@ class ProjectSupplyService:
                         "error": message,
                         "failing_lines": failing_lines,
                         **({"preview": True} if observe else {}),
+                        # Simulate only (SIMULATE-CONFIRM-SPEED): tells an order-level
+                        # refusal from a line's; the route pops it before replying.
+                        **({"error_class": type(exc).__name__} if raw_errors else {}),
                     }
                 )
             finally:
                 if preview:
                     self.db.info.pop("confirm_preview", None)
+                if raw_errors and results and results[-1].get("pso_id") == pso_id:
+                    # Simulate only: its server log times each order (the route pops it).
+                    results[-1]["elapsed_ms"] = int((time.monotonic() - started) * 1000)
         return results
 
     def _preview_email_lines(self, pso_id: str, queued_before: int) -> List[Dict[str, Any]]:
@@ -12197,7 +12253,7 @@ class ProjectSupplyService:
         from app.services.project_order_inquiry_service import (
             _HANDOVER_PENDING_KEY,
             _build_handover_context,
-            _handover_sort_key,
+            _handover_sorted,
         )
 
         queued = [
@@ -12212,7 +12268,7 @@ class ProjectSupplyService:
             return []
         context, _source = built
         lines = (context.get("handover") or context).get("lines") or []
-        ordered = sorted(queued, key=_handover_sort_key)
+        ordered = _handover_sorted(queued)
         return [
             {
                 "so_line_id": str(item.get("so_line_id") or ""),

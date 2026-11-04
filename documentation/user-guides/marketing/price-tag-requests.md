@@ -8,6 +8,18 @@ design that is already drawn.
 Open **[Dealer Kit → Room Designer → Price Tag Requests](/dealer-kit/price-tag-requests)** and click
 a row to open it.
 
+## Which requests are yours
+
+Salespeople approve their own price tags. A request they submit sits at **Design Ready** with
+nobody assigned and offers you nothing to do: that is the salesperson checking his own tag. A
+request reaches you only when he presses **Escalate to marketing**. It then arrives at **New** with
+his note in the change requests list, and is assigned automatically to the person set up for price
+tags in the form SLA settings, or waits for a **Claim** when nobody is set up. From there the steps
+below apply unchanged.
+
+If the salesperson edits a request you designed after it was approved, it goes back to him and
+leaves your queue.
+
 ## Steps
 
 1. On the list, use the status filter (**All statuses**, **New**, **Designing**, **Design Ready**,

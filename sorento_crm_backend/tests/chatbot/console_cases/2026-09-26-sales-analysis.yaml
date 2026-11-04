@@ -147,7 +147,7 @@ cases:
       - 'Project team: RM '
       - 'Total: RM '
       no_uuid: true
-- name: S1 AC-S1-21 a contact in both companies naming neither is asked, no file
+- name: S1 AC-S1-21 a contact in both companies naming neither is never asked (O-R2), no file
   cold: true
   contact: '437264484'
   turns:
@@ -203,9 +203,8 @@ cases:
         answer: null
     expect:
       branch_kind: business_query
-      reply_contains:
-      - Sorento or Mocha?
       reply_not_contains:
+      - Sorento or Mocha?
       - attached
       - Excel
       no_uuid: true

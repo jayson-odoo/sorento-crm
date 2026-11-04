@@ -82,6 +82,11 @@ const ALLOWLIST: Record<string, string> = {
   // for active ones, which reads as a toggle that does not work.
   'app/(protected)/system-management/mcp-tools/hooks/useMcpAdmin.ts':
     'unpaginated 500-row catalogue whose only key change is a filter toggle',
+  // SPEC-SHEET-V2: a quotation's spec sheets come in one unpaginated call; the key changes only
+  // with the quotation, and keeping the previous answer across prev/next would show the other
+  // quotation's sheets (rows that open someone else's record) until the new list arrives.
+  'app/(protected)/project-sales/_shared/hooks/useSpecSheet.ts':
+    'unpaginated per-quotation list whose only key change is the quotation itself',
 };
 
 function walk(dir: string, out: string[]): string[] {
