@@ -7,6 +7,8 @@
  * pixels via a zoom-dependent scale factor.
  */
 
+import type { TemplateNeeds } from './combo-slots';
+
 // ---------------------------------------------------------------------------
 // Layer types
 // ---------------------------------------------------------------------------
@@ -470,6 +472,8 @@ export interface TagTemplate {
   /** The live pointer (PLAN D7). Absent = never published. */
   published_version_id?: string | null;
   published_version_no?: number | null;
+  /** What the published layers read from a combo (PRICETAG-COMBO-RENDER K4). */
+  needs?: TemplateNeeds | null;
 }
 
 // ---------------------------------------------------------------------------
