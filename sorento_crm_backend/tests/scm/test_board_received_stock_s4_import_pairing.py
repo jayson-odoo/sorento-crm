@@ -42,7 +42,7 @@ handback report for the full list):
 
 * AC-S4-1's "where the line's date or qty differs from the sheet, `Was {qty} on {date}`"
   clause describes a RESTATEMENT (a re-upload correcting an existing row, the same note
-  fragment `_resolve_delivery_date_repairs` / `_settle_row_in_place` already write
+  fragment `_settle_row_in_place` already write
   elsewhere in this file's sibling tests). This AC's own fixture is a FIRST-time raise for
   every row (no prior row exists on any of the four lines before either book runs), so the
   clause never triggers here - both rows on both books get the sheet's own date with no
@@ -500,8 +500,7 @@ def test_ac_s4_7_row_larger_than_its_line_still_pairs_by_date():
 
     Note wording pinned: `f"Was 20 on {d1.isoformat()}"` - the UAC's own literal example
     ('note "Was 20 on d1" style qty difference'), reusing the SAME `f"Was {qty} on {date}"`
-    fragment this file already writes elsewhere (`_resolve_delivery_date_repairs`,
-    `_settle_row_in_place`, grep `"Was "` across this module) rather than inventing a new
+    fragment this file already writes elsewhere (`_settle_row_in_place`, grep `"Was "` across this module) rather than inventing a new
     note shape. Here 20 is line 1's own `qty_ordered` and d1 its `required_date` - the
     fragment records the mismatch between what the LINE was booked for and what this row
     actually states (70), not a prior LIVE row's previous state (this is a first-time raise,
@@ -697,7 +696,10 @@ def test_ac_s4_2_preview_and_apply_land_every_row_on_the_same_line():
                 continue
             for r in w.rows():
                 if str(r.so_line_id) == str(mirror.id):
-                    actual_landing[(r.delivery_date, int(r.qty))] = str(line.id)
+                    # OI-ONE-DELIVERY-DATE: the row stores its LINE's date and keeps the
+                    # sheet's date as its Was, so the sheet row is found by its Was.
+                    sheet_date = r.previous_delivery_date or r.delivery_date
+                    actual_landing[(sheet_date, int(r.qty))] = str(line.id)
 
         assert actual_landing == preview_landing, (
             "preview()'s own plan and apply()'s written rows must land every sheet row on "

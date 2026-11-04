@@ -317,12 +317,28 @@ def _seed(db, company_id: str, user_id: str) -> dict:
         delivery_date=date(2026, 1, 19),
         state=INQUIRY_ACTIONED,
     )
-    # An undated row, so "nulls last in BOTH directions" has something to be about.
+    # An undated row, so "nulls last in BOTH directions" has something to be about. It sits
+    # on its own undated line: OI-ONE-DELIVERY-DATE, a row on a dated line prints that date.
+    undated_line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=adopted.id,
+        line_no=2,
+        product_id=adopted_product.id,
+        description=f"{MARKER} undated",
+        qty=Decimal("6"),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("60.00"),
+        delivery_date=None,
+    )
+    db.add(undated_line)
+    db.flush()
     undated_row = _row(
         db,
         company_id,
         adopted_inquiry,
-        so_line_id=adopted_line.id,
+        so_line_id=undated_line.id,
         item_code=f"ZZT-UNDATED-{_uid()[:6]}",
         qty="6",
         delivery_date=None,

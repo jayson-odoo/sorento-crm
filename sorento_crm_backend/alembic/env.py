@@ -60,6 +60,7 @@ KNOWN_SCHEMAS = {None} | {
 MIGRATION_ONLY_TABLES = {
     "stock_visibility_wa_trim_backup",  # wa_trim_0001_stock_compact
     "promotion_products_selling_price_backup",  # bnsp_0001_brand_no_selling_price
+    "oi_delivery_date_backfill",  # oiod_0001_backfill (projects schema)
 }
 
 

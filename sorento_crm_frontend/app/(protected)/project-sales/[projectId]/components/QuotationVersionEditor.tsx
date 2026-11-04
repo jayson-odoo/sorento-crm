@@ -42,6 +42,7 @@ import { carryFeedback } from '../../_shared/lib/quotationFeedbackMarks';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
 import {
+  PICKED_CODE_KEY,
   cellsPatch,
   completeSetText,
   draftCells,
@@ -378,7 +379,10 @@ export function QuotationVersionEditor({
         const storedSet = stored?.product_set_id === setId;
         return {
           value: `${SET_OPTION_PREFIX}${setId}`,
-          label: picked?.set_code ?? (storedSet ? (stored?.product_code ?? 'Selected set') : 'Selected set'),
+          label:
+            picked?.set_code ??
+            (storedSet ? stored?.product_code : null) ??
+            (draft[PICKED_CODE_KEY] || 'Selected set'),
           description:
             picked?.name ?? (storedSet ? (stored?.description ?? undefined) : undefined),
         };
@@ -395,10 +399,11 @@ export function QuotationVersionEditor({
       }
       return {
         value: productId,
+        // The stored code, else the code carried on the draft since the pick (a line not saved
+        // yet, after a section switch rebuilt this editor and its lookup).
         label:
-          stored?.product_id === productId
-            ? (stored.product_code ?? 'Selected product')
-            : 'Selected product',
+          (stored?.product_id === productId ? stored.product_code : null) ??
+          (draft[PICKED_CODE_KEY] || 'Selected product'),
         description:
           stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
       };

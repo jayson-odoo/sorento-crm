@@ -248,6 +248,8 @@ class OrderInquiryLineSplitOut(BaseModel):
     change: str = ""
     sits_on_line_id: Optional[str] = None
     sits_on_line_no: Optional[int] = None
+    #: The SO line date of the line the part sits on (core first, mirror fallback).
+    sits_on_line_date: Optional[date] = None
     remark: str = ""
 
 
