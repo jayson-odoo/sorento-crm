@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Target commission view mockup</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --line-soft:#f1f2f4;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --red:#dc2626; --red-soft:#fef2f2;
+  --amber:#b45309; --amber-soft:#fffbeb;
+  --green:#15803d; --green-soft:#f0fdf4;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --wa-bg:#efeae2; --wa-in:#ffffff;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none;max-width:100%}.w640{width:640px;flex:none;max-width:100%}
+.notes{flex:1 1 320px;min-width:280px;max-width:520px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5}
+.shell{display:flex;min-height:520px}
+.side{width:170px;border-right:1px solid var(--line);padding:16px 10px;background:#fbfbfc}
+.side .grp{font-size:11px;text-transform:uppercase;color:var(--muted);margin:14px 8px 6px;letter-spacing:.05em}
+.side a{display:block;padding:6px 10px;border-radius:6px;color:var(--fg);text-decoration:none}
+.side a.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.main{flex:1;padding:20px 24px;min-width:0}
+.ph{display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+@media (min-width:640px){.ph{flex-direction:row;justify-content:space-between;align-items:center}}
+.ph h3{margin:0;font-size:20px}
+.ph .meta{color:var(--muted);font-size:13px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:inherit;font-size:13px;cursor:default}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.sm{padding:3px 8px;font-size:12px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.ruling{display:block;color:var(--callout);font-size:12px;font-weight:600;margin-top:4px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--fg);border-bottom:2px solid var(--primary);font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.kpi{border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px}
+.kpi .l{color:var(--muted);font-size:12px}.kpi .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{font-size:12px;color:var(--muted);font-weight:600;background:#fafafa}
+td.wrap{white-space:normal}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:6px;background:var(--grey-soft);border-radius:3px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--primary)}
+.bar.ok i{background:var(--green)}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--grey-soft);color:var(--muted)}
+.badge.ok{background:var(--green-soft);color:var(--green)}
+.badge.warn{background:var(--amber-soft);color:var(--amber)}
+.badge.pri{background:var(--primary-soft);color:var(--primary)}
+.chip{display:inline-block;padding:0 6px;border:1px solid var(--line);border-radius:4px;font-size:11px;color:var(--muted);margin-right:4px}
+.muted{color:var(--muted)}
+.sub2{display:block;font-size:12px;color:var(--muted)}
+tr.grp td{background:#fafafa;font-weight:600}
+tr.unassigned td{background:#fcfcfd;color:var(--muted);font-style:italic}
+.m-head{padding:14px 16px;border-bottom:1px solid var(--line)}
+.m-card{padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+.m-row{display:flex;justify-content:space-between;gap:8px}
+.modal{padding:18px 20px}
+.modal h4{margin:0 0 14px;font-size:16px}
+.modal h5{margin:16px 0 8px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.f{margin-bottom:12px}
+.f label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.inp{border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff;min-height:34px}
+.inp.ro{background:var(--grey-soft)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;flex-wrap:wrap}
+.seg span{padding:6px 12px}.seg span.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.three{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.foot{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.hint{font-size:12px;color:var(--muted);margin-top:4px}
+.pill{display:inline-block;background:var(--primary-soft);color:var(--primary);border-radius:999px;padding:1px 8px;font-size:12px;margin:2px 4px 2px 0}
+.sw{display:inline-block;width:30px;height:17px;border-radius:999px;background:var(--line);position:relative;vertical-align:middle;margin-right:6px}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff}
+.sw.on{background:var(--primary)}.sw.on::after{left:15px}
+.portal-top{background:#0f172a;color:#fff;padding:12px 16px;font-weight:600}
+.wa{background:var(--wa-bg);padding:16px;min-height:300px}
+.wa .top{background:#075e54;color:#fff;padding:10px 14px;font-weight:600}
+.bubble{background:var(--wa-in);border-radius:8px;padding:8px 10px;max-width:92%;box-shadow:0 1px 1px rgba(0,0,0,.1);white-space:pre-line;font-size:13.5px}
+.bubble .t{display:block;text-align:right;font-size:11px;color:var(--muted);margin-top:4px}
+.co.n{width:auto;min-width:22px;padding:0 6px;border-radius:11px}
+.dd{display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:6px;padding:7px 10px;background:#fff;min-height:34px;gap:8px}
+.dd::after{content:"\25BE";color:var(--muted);font-size:12px}
+.dd.clear::after{content:"\00D7  \25BE"}
+.menu{border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.08);margin-top:4px}
+.menu div{padding:7px 10px;border-bottom:1px solid var(--line-soft)}
+.menu div.on{background:var(--primary-soft)}
+.menu div.dis{color:var(--muted);font-style:italic}
+.menu div.add{color:var(--primary);font-weight:600}
+.pill.more{background:var(--grey-soft);color:var(--fg);font-weight:600}
+.pill.n{background:#fff;border:1px solid var(--line);color:var(--fg)}
+.side a.sub{padding-left:22px}
+.side .h{font-size:10px;letter-spacing:.08em;color:var(--muted);margin:12px 8px 4px;font-weight:700}
+.meta-strip{display:flex;flex-wrap:wrap;gap:4px 14px;color:var(--muted);font-size:12px;margin-top:4px}
+.sec{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden}
+.sec>.sh{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:600}
+.sec>.sb{padding:12px 14px}
+.kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.kv .l{font-size:12px;color:var(--muted)}
+.empty{padding:18px;text-align:center;color:var(--muted)}
+.m-line{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+.m-line .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.now td{background:var(--primary-soft)}
+.tabs span.co{padding:0 6px;color:#fff;border:0}
+.gone{text-decoration:line-through;color:var(--muted)}
+.co.r5{background:#0f766e}
+.ruling.r5{color:#0f766e}
+.tier-add td{color:#7c3aed}
+.badge.prov{background:var(--amber-soft);color:var(--amber)}
+.badge.err{background:var(--red-soft);color:var(--red)}
+.calc{font-size:12px;color:var(--muted);white-space:normal;line-height:1.5}
+@media (max-width:700px){.kv{grid-template-columns:1fr}.two,.three{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Target commission view + commission statement (lane TARGET-COMMISSION-VIEW)</h1>
+<p class="sub">Annotated mockup, not shipped code. Real case: TGT-000008 "A CRAFT IDEA SDN BHD 2026 quarterly" (dealer, Amount RM, quarterly, own tiers per period).
+Figures the owner quoted on 4 Nov (Q1, Q2 rows, Q3 39.1%, Q4 2.1%, Q4 sales 1,235.58) are real; the Q3 and Q4 targets, the Q3 achieved figure, the tiers and the documents are
+<b>illustrative</b> (this cloud sandbox has no dev data). Plan: <code>documentation/plans/sales/PLAN-target-commission-view-04nov.md</code>.</p>
+
+<h2 class="frame-title">Frame 1. Target record, Periods tab, 1280px</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+<div class="shell">
+<div class="side"><div class="h">SALES</div><a>Opportunities</a><a>Teams</a><a class="on">Targets</a></div>
+<div class="main">
+ <div class="ph"><div><span class="muted" style="font-size:12px">TGT-000008</span><h3>A CRAFT IDEA SDN BHD 2026 quarterly</h3>
+ <div class="meta-strip"><span>For A CRAFT IDEA SDN BHD [A/C I]</span><span>Created 16/10/2026</span><span>Updated 03/11/2026</span></div></div>
+ <div style="display:flex;gap:8px"><span class="btn">&lsaquo;</span><span class="btn">&rsaquo;</span><span class="btn">&#9881; <span class="co" style="width:18px;height:18px;font-size:11px">4</span></span></div></div>
+
+ <div class="kpis" style="grid-template-columns:repeat(3,1fr)">
+  <div class="kpi"><span class="co" style="float:right">1</span><div class="l">Commission earned to date</div><div class="v">RM 6,918.12</div><span class="sub2">Q1 3,681.10 + Q2 3,237.02 (closed periods)</span></div>
+  <div class="kpi"><div class="l">Current period so far</div><div class="v">RM 0.00</div><span class="sub2">01/10/2026 to 31/12/2026, 2.1% of target, not final</span></div>
+  <div class="kpi"><span class="co" style="float:right">2</span><div class="l">Pays to</div><div class="v" style="font-size:15px">300-A077 A CRAFT IDEA SDN BHD (A/C I)</div><span class="sub2">Payment is not tracked in the CRM</span></div>
+ </div>
+
+ <div class="tabs"><span>Details</span><span class="on">Periods</span><span>Accounts</span><span>Commission</span></div>
+ <table>
+  <colgroup><col style="width:250px"><col style="width:110px"><col style="width:200px"><col style="width:80px"><col style="width:110px"><col style="width:70px"><col style="width:130px"><col></colgroup>
+  <thead><tr><th>Period</th><th class="n">Target (RM)</th><th class="n" title="sales orders, incl. tax">Achieved (RM) <span class="co">3</span><span class="sub2">sales orders, incl. tax</span></th><th class="n">%</th><th>Tier reached</th><th class="n">Rate</th><th class="n">Commission (RM)</th><th>Pays to</th></tr></thead>
+  <tbody>
+  <tr><td>01/01/2026 to 31/03/2026</td><td class="n">60,000.00</td><td class="n">61,351.64</td><td class="n">102.3%</td><td>Tier 1 (100%)</td><td class="n">6.00%</td><td class="n">3,681.10</td><td>300-A077 A CRAFT IDEA SDN BHD (A/C I)</td></tr>
+  <tr><td>01/04/2026 to 30/06/2026</td><td class="n">60,000.00</td><td class="n">64,740.40</td><td class="n">107.9%</td><td>Tier 1 (100%)</td><td class="n">5.00%</td><td class="n">3,237.02</td><td>300-A077 A CRAFT IDEA SDN BHD (A/C I)</td></tr>
+  <tr><td>01/07/2026 to 30/09/2026</td><td class="n">60,000.00</td><td class="n">23,460.00</td><td class="n">39.1%</td><td class="muted">None</td><td class="n">-</td><td class="n">0.00</td><td class="muted">-</td></tr>
+  <tr class="now"><td>01/10/2026 to 31/12/2026 <span class="badge pri">Current</span></td><td class="n">60,000.00</td><td class="n">1,235.58</td><td class="n">2.1%</td><td class="muted">None yet</td><td class="n">-</td><td class="n">0.00</td><td class="muted">-</td></tr>
+  <tr class="grp"><td>Total</td><td class="n">240,000.00</td><td class="n">150,787.62</td><td class="n"></td><td></td><td></td><td class="n">6,918.12</td><td></td></tr>
+  </tbody>
+ </table>
+</div></div></div></div>
+<div class="notes"><ol>
+<li><span class="co">1</span><div><b>Earned to date</b>Sum of the Commission column for periods that have ended. The current period is shown apart, as "so far", because it can still change.<span class="ref">Card Q4. Same numbers as the Commission column: one computation, target_service.target_detail.</span></div></li>
+<li><span class="co">2</span><div><b>Pays to</b>The target's one payout account (<code>sales_targets.payout_customer_id</code>, default the first counted account, target_service.py:277). Repeated on each paying period row. There is no paid / not paid in the system today.<span class="ref">Card Q3.</span></div></li>
+<li><span class="co">3</span><div><b>Achieved label</b>"provisional, incl. tax" becomes a plain statement of what is counted: "sales orders, incl. tax" for Ordered/Delivered; "invoices, excl. tax" once TARGET-INVOICED (#2162) lands for an Invoiced target.</div></li>
+<li><span class="co">4</span><div><b>Gear: Export commission statement</b>New item in the gear menu (after Edit, before Duplicate). Downloads the statement for this target (Frame 4).</div></li>
+</ol></div>
+</div>
+
+<h2 class="frame-title">Frame 2. Accounts tab, 1280px</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280"><div class="main">
+ <div class="tabs"><span>Details</span><span>Periods</span><span class="on">Accounts</span><span>Commission</span></div>
+ <table>
+  <colgroup><col style="width:230px"><col style="width:120px"><col><col style="width:90px"><col style="width:170px"><col style="width:150px"><col style="width:270px"></colgroup>
+  <thead><tr><th>Period</th><th>Code</th><th>Customer</th><th>Account</th><th class="n">Sales (RM, incl. tax) <span class="co">5</span></th><th class="n">Commission (RM)</th><th>Pays to <span class="co">6</span></th></tr></thead>
+  <tbody>
+  <tr><td>01/01/2026 to 31/03/2026</td><td>300-A077</td><td>A CRAFT IDEA SDN BHD</td><td>A/C I</td><td class="n">61,351.64</td><td class="n"></td><td></td></tr>
+  <tr class="grp"><td>Period total</td><td></td><td></td><td></td><td class="n">61,351.64</td><td class="n">3,681.10</td><td>300-A077 A CRAFT IDEA SDN BHD (A/C I)</td></tr>
+  <tr><td>01/04/2026 to 30/06/2026</td><td>300-A077</td><td>A CRAFT IDEA SDN BHD</td><td>A/C I</td><td class="n">64,740.40</td><td class="n"></td><td></td></tr>
+  <tr class="grp"><td>Period total</td><td></td><td></td><td></td><td class="n">64,740.40</td><td class="n">3,237.02</td><td>300-A077 A CRAFT IDEA SDN BHD (A/C I)</td></tr>
+  <tr><td>01/07/2026 to 30/09/2026</td><td>300-A077</td><td>A CRAFT IDEA SDN BHD</td><td>A/C I</td><td class="n">23,460.00</td><td class="n"></td><td></td></tr>
+  <tr class="grp"><td>Period total</td><td></td><td></td><td></td><td class="n">23,460.00</td><td class="n">0.00</td><td class="muted">-</td></tr>
+  <tr class="now"><td>01/10/2026 to 31/12/2026 <span class="badge pri">Current</span></td><td>300-A077</td><td>A CRAFT IDEA SDN BHD</td><td>A/C I</td><td class="n">1,235.58</td><td class="n"></td><td></td></tr>
+  <tr class="grp"><td>Period total (so far)</td><td></td><td></td><td></td><td class="n">1,235.58</td><td class="n">0.00</td><td class="muted">-</td></tr>
+  </tbody>
+ </table>
+ <div class="kv" style="margin-top:14px"><div><span class="l">Pays to (edited under Edit, as today)</span><div>300-A077 - A CRAFT IDEA SDN BHD (A/C I)</div></div></div>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">5</span><div><b>Every period, not only the current one</b>One row per counted account per period, then the period total. The old header "Sales, 1 Oct 2026 to 31 Dec 2026 (provisional, incl. tax)" is gone: the period is its own column, so 1,235.58 now plainly reads as Q4 sales so far.</div></li>
+<li><span class="co">6</span><div><b>Commission sits on the period total, next to the account it pays to</b>Commission is earned on all counted accounts' sales together and paid to one account, so it is shown once per period, not split per selling account (the marginal method has no per-account figure to show). Card Q5.</div></li>
+</ol></div></div>
+
+<h2 class="frame-title">Frame 3. 375px (Periods tab)</h2>
+<div class="layout"><div class="frame w375">
+ <div class="m-head"><span class="muted" style="font-size:12px">TGT-000008</span><div style="font-weight:600">A CRAFT IDEA SDN BHD 2026 quarterly</div></div>
+ <div class="m-card"><div class="m-row"><span class="muted">Earned to date</span><b>RM 6,918.12</b></div><div class="m-row"><span class="muted">Pays to</span><span>300-A077 (A/C I)</span></div></div>
+ <div class="m-card"><div class="m-row"><b>Q1 01/01 to 31/03/2026</b><b>3,681.10</b></div><div class="sub2">61,351.64 of 60,000.00, 102.3%, Tier 1, 6.00%</div></div>
+ <div class="m-card"><div class="m-row"><b>Q2 01/04 to 30/06/2026</b><b>3,237.02</b></div><div class="sub2">64,740.40 of 60,000.00, 107.9%, Tier 1, 5.00%</div></div>
+ <div class="m-card"><div class="m-row"><b>Q3 01/07 to 30/09/2026</b><b>0.00</b></div><div class="sub2">23,460.00 of 60,000.00, 39.1%, no tier</div></div>
+ <div class="m-card now"><div class="m-row"><b>Q4 (current)</b><b>0.00</b></div><div class="sub2">1,235.58 of 60,000.00, 2.1%</div></div>
+</div>
+<div class="notes"><ol><li><span class="co">7</span><div><b>375px</b>The Periods table keeps its horizontal scroll inside the card (as today, <code>overflow-x-auto</code>); the KPI strip stacks one per row. Shown here as cards for readability only; the build keeps the table.</div></li></ol></div></div>
+
+<h2 class="frame-title">Frame 4. Commission statement (export), one target per sheet / section</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280"><div class="modal">
+ <h4>Commission statement: TGT-000008 A CRAFT IDEA SDN BHD 2026 quarterly</h4>
+ <div class="kv"><div><span class="l">Dealer</span><div>A CRAFT IDEA SDN BHD [A/C I]</div></div><div><span class="l">Counts</span><div>Ordered, sales order totals incl. tax</div></div><div><span class="l">Pays to</span><div>300-A077 A CRAFT IDEA SDN BHD (A/C I)</div></div>
+ <div><span class="l">Method</span><div>Highest tier pays (retroactive), own tiers per period</div></div><div><span class="l">Generated</span><div>04/11/2026 14:30</div></div><div><span class="l">Earned to date</span><div><b>RM 6,918.12</b></div></div></div>
+ <h5>Summary <span class="co">8</span></h5>
+ <table><thead><tr><th>Period</th><th class="n">Target</th><th class="n">Achieved</th><th class="n">%</th><th>Tier</th><th class="n">Rate</th><th class="n">Commission</th><th class="n">Bonus</th><th>Pays to</th></tr></thead>
+ <tbody><tr><td>01/01/2026 to 31/03/2026</td><td class="n">60,000.00</td><td class="n">61,351.64</td><td class="n">102.3%</td><td>Tier 1</td><td class="n">6.00%</td><td class="n">3,681.10</td><td class="n">0.00</td><td>300-A077</td></tr>
+ <tr><td>01/04/2026 to 30/06/2026</td><td class="n">60,000.00</td><td class="n">64,740.40</td><td class="n">107.9%</td><td>Tier 1</td><td class="n">5.00%</td><td class="n">3,237.02</td><td class="n">0.00</td><td>300-A077</td></tr>
+ <tr class="grp"><td>Total</td><td></td><td></td><td></td><td></td><td></td><td class="n">6,918.12</td><td class="n">0.00</td><td></td></tr></tbody></table>
+ <h5>Tier table used, 01/01/2026 to 31/03/2026 <span class="co">9</span></h5>
+ <table><thead><tr><th>Tier</th><th class="n">From</th><th class="n">Threshold (RM)</th><th class="n">Rate</th><th class="n">Bonus</th><th>Reached</th></tr></thead>
+ <tbody><tr><td>Tier 1</td><td class="n">100%</td><td class="n">60,000.00</td><td class="n">6.00%</td><td class="n">0.00</td><td><span class="badge ok">Yes</span></td></tr>
+ <tr><td>Tier 2</td><td class="n">120%</td><td class="n">72,000.00</td><td class="n">8.00%</td><td class="n">0.00</td><td><span class="badge">No</span></td></tr></tbody></table>
+ <h5>Documents counted in Achieved, 01/01/2026 to 31/03/2026 <span class="co">10</span></h5>
+ <table><thead><tr><th>Document no.</th><th>Date</th><th>Account</th><th class="n">Amount counted (RM)</th></tr></thead>
+ <tbody><tr><td>SO-26-000412</td><td>08/01/2026</td><td>300-A077</td><td class="n">18,220.50</td></tr>
+ <tr><td>SO-26-000771</td><td>14/02/2026</td><td>300-A077</td><td class="n">25,004.00</td></tr>
+ <tr><td>SO-26-001130</td><td>21/03/2026</td><td>300-A077</td><td class="n">18,127.14</td></tr>
+ <tr class="grp"><td>Total (= Achieved)</td><td></td><td></td><td class="n">61,351.64</td></tr></tbody></table>
+ <p class="hint">... then the same three blocks for 01/04/2026 to 30/06/2026, 01/07/2026 to 30/09/2026 and the current period (marked "not final").</p>
+</div></div></div>
+<div class="notes"><ol>
+<li><span class="co">8</span><div><b>Same numbers as the screen</b>The statement calls the same <code>target_detail</code> computation; a test asserts statement totals == screen totals == period rows.</div></li>
+<li><span class="co">9</span><div><b>Tier table</b>The period's own tiers (tiers per period), threshold in RM at that period's target, which one was reached.</div></li>
+<li><span class="co">10</span><div><b>Documents</b>One row per sales order (Ordered/Delivered) or billing document (Invoiced, after #2162). Amount = what that document added to this period under the target's basis (for Delivered, the DO-dated part), so the rows add up to Achieved to the cent. Card Q2: per document or per line.</div></li>
+<li><span class="co">11</span><div><b>Format</b>xlsx (recommended): one "Summary" sheet listing every exported target, then one sheet per target with these blocks. Card Q1.</div></li>
+</ol></div></div>
+
+<h2 class="frame-title">Frame 5. Targets list (Dealers tab), multi-select export</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280"><div class="main">
+ <div class="toolbar"><span class="inp" style="width:240px">Search targets...</span><span class="btn">Columns</span><span class="btn">Export</span><span class="btn pri">Commission statement (2) <span class="co">12</span></span><span class="btn">Import from Excel</span></div>
+ <table><thead><tr><th style="width:36px">&#9745;</th><th>Number</th><th>Name</th><th>Dealer</th><th>Pays to</th><th class="n">Commission</th></tr></thead>
+ <tbody><tr><td>&#9745;</td><td>TGT-000008</td><td>A CRAFT IDEA SDN BHD 2026 quarterly</td><td>A CRAFT IDEA SDN BHD</td><td>300-A077</td><td class="n">0.00</td></tr>
+ <tr><td>&#9745;</td><td>TGT-000009</td><td>(another dealer) 2026 quarterly</td><td>...</td><td>...</td><td class="n">...</td></tr>
+ <tr><td>&#9744;</td><td>TGT-000010</td><td>...</td><td>...</td><td>...</td><td class="n">...</td></tr></tbody></table>
+</div></div></div>
+<div class="notes"><ol><li><span class="co">12</span><div><b>Bulk export</b>Appears in the toolbar when rows are ticked (the grid already has a select column, SalesTargetsView.tsx:288). One file for all ticked targets. Max 50 targets per file.</div></li></ol></div></div>
+
+<h2 class="frame-title">Element to component map</h2>
+<table style="max-width:1100px"><thead><tr><th>Element</th><th>Component (existing)</th></tr></thead><tbody>
+<tr><td>KPI strip (earned to date, current so far, pays to)</td><td><code>Card</code> + the record's <code>Field</code>, inside <code>TargetRecord</code> above <code>Tabs</code></td></tr>
+<tr><td>Periods table, new Tier / Rate / Pays to columns + Total row</td><td><code>PeriodsTable</code> (TargetRecord.tsx:1273)</td></tr>
+<tr><td>Current period badge</td><td><code>Badge variant="primary" appearance="light"</code></td></tr>
+<tr><td>Accounts tab per-period rows</td><td><code>DealerAccounts</code> (TargetRecord.tsx:1709), plain table as today</td></tr>
+<tr><td>Gear item Export commission statement</td><td><code>RecordAction</code> in <code>useSalesTargetActions</code> (actions.tsx)</td></tr>
+<tr><td>Bulk export button</td><td><code>DataGridListToolbar</code> <code>secondaryActions</code> (SalesTargetsView.tsx) gated on <code>rowSelection</code></td></tr>
+<tr><td>Statement file</td><td>Backend <code>openpyxl</code> (already used by the dealer target import template, targets.py:154)</td></tr>
+</tbody></table>
+</div>
+</body>
+</html>
