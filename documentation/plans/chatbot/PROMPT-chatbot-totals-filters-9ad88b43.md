@@ -1,7 +1,8 @@
 # Parser prompt: the ONE combined candidate for the next production label (CHATBOT-TOTALS-FILTERS + #2120)
 
-Result md5 `dc77a7ac8cb96f046b43f91878615ccb` (111,597 chars). Not published. Only the owner moves the production label.
-Production today is v70, md5 57d7d412.
+Result md5 `9ad88b43128b9135244f15395f8d0fc4` (112,150 chars), 5 Nov, after the owner's hand test 1 failed on v199
+(md5 `dc77a7ac8cb96f046b43f91878615ccb`, 111,597 chars, the 4 Nov candidate: everything below up to edit 8). Not published.
+Only the owner moves the production label. Production today is v70, md5 57d7d412.
 
 The text is built from three parts:
 - Base: #2105's candidate, md5 `e4aa6d43fedd996579b8c1caa2c54556`.
@@ -11,8 +12,11 @@ The text is built from three parts:
 Code that keys on these words:
 - `parser.report_ask_defined_in`: `frame` and `company_or_brand` are in the schema only when the text defines them.
 - `parser.KNOWN_COMPANIES_WORD`: the user block carries a data-built `Known companies:` line only when the text names it.
+- `parser.COMPANY_CANDIDATES_WORD` (9ad88b43): a data-built `Company candidates` block (the contact's companies the message
+  spells, 2+ companies) only when the text names it.
+- `parser.SAID_AS_WORD` (9ad88b43): the entity key `said_as` (company | brand | both | null) only when the text defines it.
 
-So #2105's text alone (e4aa6d43) sees none of this lane's changes.
+So #2105's text alone (e4aa6d43) sees none of this lane's changes, and dc77a7ac sees none of the 5 Nov ones.
 
 Owner rule kept: no gold-message examples and no word lists. Every edit is a slot rule.
 
@@ -39,6 +43,14 @@ Owner rule kept: no gold-message examples and no word lists. Every edit is a slo
 7. BRAND CANDIDATES section, appended: a token also on the `Known companies:` line that the message calls the company is the company, not a brand entity.
 8. ORDER_STATUS section, appended to the CRM-asks-which-document sentence: a reply naming a document answers it, even with no outstanding word (sales order -> so_outstanding, delivery order -> do_outstanding, both -> outstanding_both). The CRM's question itself now reads "Sales order or delivery order?" (code, owner ruling 4 Nov).
 
+9. (5 Nov, entity line) `"said_as"`: what THIS message calls a name that is both a brand and a company: company, brand,
+   both (both words), else null.
+10. (5 Nov, BRAND CANDIDATES) Edit 7's sentence is replaced: the user block may also carry a `Company candidates` block; a
+    name in both blocks is still ONE brand entity (canonical_code as the Brand candidates block lists it), its said_as is
+    what this message calls it, and report_ask puts the name where said_as says.
+11. (5 Nov, one-name bullet of edit 5) "A name on that line, or in the Company candidates block, ... goes where this
+    message's own kind word (its entity's said_as) puts it".
+
 ## Gates (gemini-3.5-flash-lite, x1, sorento_prod_1020 read-only, text swapped in-process; ledger lines 4 Nov)
 
 Gold rows: `sorento_crm_backend/scripts/chatbot_eval/gold/parser_report_totals_filters.jsonl`, graded on the full object.
@@ -59,3 +71,20 @@ TRAIN no-op control (parser-gold TRAIN slices 1+2, same code, BASE e4aa6d43 vs t
 the 112 common rows, 5 wins / 2 losses (G042, G047: intent), p=0.45: not worse. USD 0.73 for both arms.
 
 Saved unlabelled on sorento_prod_1020 as v199, id 6ef0ec26-d7ba-4dc3-b46e-9d631e5c054e (4 Nov).
+
+## Gates on 9ad88b43 (5 Nov, inside crew's USD 0.60 OK; ledger lines 5 Nov 00:41 and 00:47)
+
+| Gate | Text md5 | Code | Gold | USD |
+|---|---|---|---|---|
+| 4 | 9ad88b43 (Company candidates + said_as) | 5156c84ae1 + #2120 (gate head 9bb6bed561) | 23 of 30 | 0.105 |
+
+- The owner's T4 row (tf-27, "sorento company only" over the every-agent list) passes: company Sorento, brands [], said_as company.
+- tf-28 (T5 "company sorento" over Brand SORENTO), tf-29 ("Sorento brand only") and tf-13 (bare name) fill company AND
+  brands; said_as is company / brand / null, so the engine routes by said_as (tests on these exact parses:
+  test_report_totals_filters_ht1.py). tf-06 / tf-24..26 as gate 3.
+
+TRAIN no-op control, CAND arm only (BASE e4aa6d43 from 4 Nov reused: `git diff fd90e61b41 9bb6bed561` on the parser input
+code is 5156c84ae1 only, all gated off for a text without the new words): 82 vs BASE 84 on the 105 common rows, 5 wins /
+7 losses, p=0.77, not worse; vs dc77a7ac 82 vs 87, 2 / 7, p=0.18. Every loss is a non-report row (stock vs product intent,
+picked option, find kind, period: G004, G014, G035, G042, G056, G085, G126), none touches a brand, company or said_as.
+USD 0.366. Score: crew/state/eval/chatbot-totals-filters/runs/control_score_CAND5.md.

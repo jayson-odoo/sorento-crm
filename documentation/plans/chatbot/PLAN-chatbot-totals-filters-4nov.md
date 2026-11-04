@@ -3,7 +3,8 @@
 Status: Build, owner hand test 1 fix round (M track, LEAD pattern). 4 Nov: PR #2156 READY on v199 dc77a7ac; owner hand
 test 1 FAIL on 75a72336 ("sorento company only" read as the brand; a filter follow-up asked "How many?"). 5 Nov round:
 UAC HT1-1..12, red 23a9861fa4, fix in progress; new candidate text md5 9ad88b43 (Company candidates block + entity
-said_as), gate + TRAIN control CAND arm + stability x3 inside crew's USD 0.60 OK. Earlier answers: Q1 (a) new path only;
+said_as): gate 4 23 of 30, TRAIN no-op control not worse (82 vs 84, p=0.77); review round 2 in progress; stability x3
+next. Spend inside crew's USD 0.60 spend OK (0.47 used). Earlier answers: Q1 (a) new path only;
 Q3 (a) held filters survive until the user changes them; Q2 (c) ask once, both must work; Q5 no code.
 
 ## Journey
@@ -90,7 +91,7 @@ Second replay on the new path (copy on sorento_prod_1020, the e4aa6d43 text save
 ## Architecture
 
 Layer: backend chatbot only. Parser report-ask object (`head/parser.py`, marker path), the parser prompt text (a DB row;
-the edits are recorded in `PROMPT-chatbot-totals-filters-dc77a7ac.md`), and `report_ask.from_object`
+the edits are recorded in `PROMPT-chatbot-totals-filters-9ad88b43.md`), and `report_ask.from_object`
 (`lanes/business/report_ask.py:3409-3590` at c1a5da1ee4; :3273-3407 on main before this lane). No FE, no migration, no old-path code (PR B deletes it).
 
 - M1 ask frame. The report-ask object gets `frame`: `total` | `breakdown` | `ranking` | null. `from_object` acts on it:
