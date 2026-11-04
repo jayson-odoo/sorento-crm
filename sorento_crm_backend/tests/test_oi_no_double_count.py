@@ -246,7 +246,9 @@ def test_include_history_returns_cancelled_rows_of_the_header_AC_ND_20(api):
     assert with_history == {live.id, superseded.id, used.id}
 
     without = {row["id"] for row in _lines_tab(client, order.inquiry.id)}
-    assert without == {live.id, used.id}, "without the flag the response is unchanged"
+    # OI-RESERVE-USED-ROW (owner, 4 Nov): without the flag only LIVE rows; a used row is
+    # History, the same as a cancelled one.
+    assert without == {live.id}, "without the flag only live rows"
 
 
 def test_include_history_does_not_override_an_explicit_state_filter_AC_ND_20(api):
@@ -511,7 +513,10 @@ def test_an_unreconciled_sales_order_line_is_one_line_S1_review(api):
     fresh = order.row(mirror, product, "5", ack_state=ACK_CHANGED)
     db.commit()
 
-    by_id = {row["id"]: row for row in _lines_tab(client, order.inquiry.id)}
+    # The used row is History (OI-RESERVE-USED-ROW), read with `include_history`.
+    by_id = {
+        row["id"]: row for row in _lines_tab(client, order.inquiry.id, include_history="true")
+    }
     assert by_id[used.id]["so_line_id"] == by_id[fresh.id]["so_line_id"] == mirror.id
     assert by_id[fresh.id]["core_line_id"] is None
     assert by_id[fresh.id]["so_line_no"] == 1
@@ -582,26 +587,26 @@ def test_a_line_confirmed_before_this_pr_confirms_from_the_line_S2_shape_a(api):
     assert _header_of(client, order.inquiry.id)["status"] == "completed"
 
 
-def test_a_line_whose_only_row_is_used_confirms_by_its_used_row_S2_shape_b(api):
-    """Shape b (O2, "Nothing to buy"): the line has only a used row, still `changed`. The
-    ticked line sends that used row's id, and Confirm takes it on."""
+def test_a_line_whose_only_row_is_used_is_not_listed_and_completes_by_itself_S2_shape_b(api):
+    """Shape b re-pinned (OI-RESERVE-USED-ROW, owner 4 Nov 2026, supersedes the 26 Sep O2/G6
+    Confirm step for this shape): a line whose only row is used is not listed on either tab
+    and not counted, so an OI waiting only on it reads Completed with nothing to press. A
+    Confirm that still names the used row (an open tab from before) is accepted."""
     client, db, company_id = api
     order = _Order(db, company_id)
     product, _core, mirror = order.line(1, "5")
     used = order.row(mirror, product, "5", redirected=True, ack_state=ACK_CHANGED)
     db.commit()
+    assert _lines_tab(client, order.inquiry.id) == []
     header = _header_of(client, order.inquiry.id)
-    assert header["lines_to_confirm"] == 1
-    assert header["status"] == "outstanding"
+    assert header["lines_total"] == 0
+    assert header["lines_to_confirm"] == 0
+    assert header["status"] == "completed"
 
     response = client.post(ACK_URL, json={"row_ids": [used.id]})
     assert response.status_code == 200, response.text
-
     db.expire_all()
     assert db.get(OrderInquiryRow, used.id).ack_state == ACK_ACKNOWLEDGED
-    header = _header_of(client, order.inquiry.id)
-    assert header["lines_to_confirm"] == 0
-    assert header["status"] == "completed"
 
 
 # =============================================================================
