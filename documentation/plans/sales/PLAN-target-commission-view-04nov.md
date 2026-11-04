@@ -1,6 +1,6 @@
 # PLAN: Target commission view + shareable commission statement (TARGET-COMMISSION-VIEW)
 
-Status: Built, in review (standard track: export surface, no migration). PR #2164.
+Status: Built, reviewed (round 1 fixed), browser pass done 1280/375; awaiting owner hand test (standard track: export surface, no migration). PR #2164.
 Mock: `mockups/target-commission-view-04nov.html` (owner approved 4 Nov, "ok").
 UAC: `target-commission-view-04nov-acceptance-criteria.md`.
 
