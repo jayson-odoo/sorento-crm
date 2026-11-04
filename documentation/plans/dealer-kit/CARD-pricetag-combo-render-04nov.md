@@ -59,21 +59,30 @@ R2. **Templates are linked to combos** through the existing combo template link
     (`dealer_kit.combo_tag_template`, `app/models/dealer_kit.py:846-875`). A combo can print with
     every N-tap template up to the size of its option group (a combo with 3 taps to choose from
     links the 1, 2 and 3 tap templates).
-R3. **Salesperson picks the combo, the template, then exactly N taps.** On the request line:
-    pick the combo (saved combos only, as today), pick the template (labelled with its tap
-    count), then a tap picker lists the combo's option group and takes exactly N, any N of them
-    (taps 1, 2, 3 or 2, 3, 4), in the order they should print. The picker refuses an (N+1)th pick;
-    with fewer than N picked the row says "Pick 3 taps (2 picked)" and Approve is off with that
-    reason. Changing the template to one with a smaller N keeps the first picks and drops the rest.
-    Stored as resolved line parts sharing the group's role (`price_tag_request_line_parts`,
-    `app/models/price_tag.py:299-351`, already allows this); no new table.
-R4. **Each tap slot prints that tap's own picture, full code, tag description and price** (its
-    option SP when the combo stores one, see Q-B). A picked tap with no picture shows an empty
+R3. **Salesperson picks the combo, the template, then exactly N taps**, in the existing line row
+    (`components/dealer-kit/PriceTagLinesTable.tsx`): the Package select and the Template select
+    are unchanged (the template's option description adds "3 taps"); the tap group's part row
+    (PartRow :235-331) swaps its single `SearchableSelect` for the existing
+    `SearchableMultiSelect` when N >= 2, with one new prop `max` (hides "Select all", disables
+    the rest once N are picked). Pick order = print order. The hint row under it reads "Pick 1
+    more tap for this template."; Approve's existing reason line (`approveBlockedReason`,
+    `PriceTagRequestForm.tsx:1485`) says the same until N are picked. A smaller template keeps
+    the first picks and drops the rest. Stored as resolved line parts sharing the group's role
+    (`price_tag_request_line_parts`, `app/models/price_tag.py:299-351`); no new table.
+R4. **Each tap slot prints that tap's own picture, full code, tag description and its own LP**
+    from the product master (owner Q-B, 4 Nov). A picked tap with no picture shows an empty
     tile, never the sink's picture (today a missing index falls back to the host,
     `product-block.ts:220-226`; the new subject never does).
-R5. **Combo price.** A combo with no stored SP behaves exactly like a product with no SP: the
-    salesperson types the SP on an SP line (existing typed-price flow, #2158). Never a silent
-    sum of parts on an SP line. LP lines: see Q-A.
+R5. **Combo price, never calculated** (owner Q-A, 4 Nov). The tag's combo price is the combo's
+    stored price or nothing; the sum of parts is never printed, on LP or SP lines.
+    - SP line, combo with no stored SP: behaves like a product with no SP; the salesperson types
+      it in the existing Selling price cell (#2158). Untyped: the cell and the tag stay empty and
+      Approve is off.
+    - LP line, combo with no stored LP: the List price cell and the tag's price stay empty
+      (LP is never typed); Approve is off with "No combo list price for line 1. Escalate it to
+      marketing." beside it; Escalate stays.
+    Today both fall back to the sum (`tag_data_service.py:853-883`, `pricing.py:722-723`); that
+    fallback is removed for combo lines only. Ala carte lines are unchanged.
 R6. **Free items, certificates, logos are template assets** the designer places (existing image
     asset layers). No FOC modelling; `product_combos.free_items` text is left as it is.
 R7. **Top-up.** Unchanged in storage (`is_upgrade`, `topup_amount`). Prints in the reference
@@ -102,7 +111,7 @@ Out of scope (owner): small and DIY tags, tag description and barcode gaps, lead
 ### Examples
 
 E1. SRTKS7061, 3-tap template, salesperson picks SRTKT1862SS, SRTKT1863SS, SRTKT1871SS: sink
-    on the left, three tap tiles each with its own picture, code and description, SP RM 849
+    on the left, three tap tiles each with its own picture, code, description and LP, SP RM 849
     NETT (combo SP once the re-seed sets it; typed by the salesperson until then).
 E2. Same combo, 2-tap template, picks SRTKT1863SS and SRTKT1871SS (taps 2 and 3): two tiles.
 E3. Five-tap sink: 5-tap template, all five picked; tiles in two rows (3 + 2).
@@ -120,11 +129,7 @@ E6. Bathroom furniture SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM: unchanged layo
 - The same tap picked twice: refused by the picker.
 - Cabana combo on an SP line: typed SP only, as for any Cabana product.
 
-### Questions left (each with a recommendation)
+### Questions
 
-Q-A. LP line of a combo with no stored combo LP: (a) print the sum of the component LPs
-     (sink + the picked taps), (b) leave blank for the salesperson? LP is never typed (#2158), so
-     recommend (a): it is what the package lists at, and it is never a discount claim.
-Q-B. The price under each tap tile: (a) the package price with that tap (the option's SP, as the
-     flyer prints "with tap X RM 849, with tap Y RM 899"), blank when not stored, (b) the tap's
-     own LP. Recommend (a), because the shelf price is the package price.
+None open. Q-A and Q-B answered 4 Nov (R4, R5). Mock v4 shows the change inside the existing
+request form and template designer (owner Lavish note: no new components).
