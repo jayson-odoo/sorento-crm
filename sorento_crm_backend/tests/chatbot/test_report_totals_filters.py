@@ -1087,3 +1087,76 @@ def test_ow4_a_contact_that_sees_one_kind_gets_it_with_no_question(ow_do_only) -
     args = _args(calls)
     assert args["basis"] == "pending_delivery", f"OW-4: {args}"
     assert OW_QUESTION not in text, f"OW-4: a question was asked of a one-kind contact: {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ CP: crew console pass on v199 (2156)
+# The parses below are the logged ones (crew/state/handtest/2156 r1 / r2 out.jsonl); only the verdict is a double.
+
+
+def test_cp1_a_basis_answer_that_leaves_the_company_out_keeps_the_held_company(rbot, world) -> None:
+    """S3 -> S4 (r1_S3_S4_parses.json): S3 "Sorento company total sale September 2026" is sales_analysis with flat
+    sales_company "Sorento", no report_ask object, continuation false; it asks the basis. S4 "delivered" is continuation
+    true, entity_op reuse, sales_company null, and a report_ask object with company null and basis delivered. Every held
+    filter the parse leaves out is carried on a clarification answer: Sorento's run, not both companies."""
+    from tests.chatbot.test_sales_account_type_lane import BASIS_Q
+
+    sorento, _m = world
+    v1 = _v("sales_analysis", None, sales_company=sorento, sales_basis=None, continuation=False, entity_op="replace_combine",
+            domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v1, "Sorento company total sale September 2026")
+    assert not _ran(calls) and text.strip() == BASIS_Q, f"setup: want the basis question, got {text!r}"
+    ra = _ra2("total", basis="delivered", company=None, brands=[], **SEP)
+    ra["company_or_brand"] = []
+    v2 = _v("sales_analysis", ra, sales_company=None, sales_basis="delivered", basis="delivered", continuation=True,
+            entity_op="reuse", domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v2, "delivered")
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID, f"CP-1: the held company was dropped by the answer: {args}"
+    assert _frame(rbot).get("company") == DEFAULT_COMPANY_ID, _frame(rbot)
+
+
+@pytest.mark.parametrize("held_measure", ["qty", None], ids=["held_qty", "no_held_measure"])
+def test_cp2_top_5_after_a_split_asks_no_measure_held_or_amount(rbot, world, held_measure) -> None:
+    """S11 (r1, r2): the split ran with Company Sorento by channel; "top 5" parses as frame breakdown, top_n 5, no measure.
+    No question: the held measure if the thread has one, else amount."""
+    sorento, _m = world
+    ra0 = _ra2(None, basis="delivered", group_by="channel", measure=held_measure, company=sorento, **SEP)
+    v0 = _v("sales_analysis", ra0, basis="delivered", group_by="channel", measure=held_measure, sales_company=sorento,
+            domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v0, "sorento company only, show dealer and project")
+    assert _ran(calls), f"setup: the split did not run: {text!r}"
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", top_n=5, company=sorento, **SEP)
+    v = _follow("sales_analysis", ra, group_by="channel", sales_company=sorento, **SEPF)
+    text, calls = rbot.say(v, "top 5")
+    assert MEASURE_Q not in text and TOP_N_Q not in text, f"CP-2: asked a question: {text!r}"
+    args = _args(calls)
+    assert args.get("top_n") == 5 and args.get("group_by") == "channel", args
+    assert args.get("measure") == (held_measure or "amount"), f"CP-2: measure {args.get('measure')!r}, want {held_measure or 'amount'!r}: {args}"
+
+
+def test_cp3_all_sale_agents_is_headed_by_agent_never_top_n(rbot, world) -> None:
+    """S12 -> S13 (r1): the AF-6 shape. The reply was headed "Top 80 sales agents by delivered sales"; the user asked for
+    every agent, so the header names the axis with no "Top N"."""
+    from tests.chatbot.test_sales_account_type_lane import BASIS_Q
+
+    ra = _ra2("ranking", group_by="sales_agent", **SEP)
+    v1 = _v("sales_ranking", ra, group_by="sales_agent", domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v1, AF6_MSG)
+    assert not _ran(calls) and text.strip() == BASIS_Q, f"setup: {text!r}"
+    ra2 = _ra2("breakdown", basis="delivered", group_by="sales_agent", **SEP)
+    v2 = _v("sales_ranking", ra2, basis="delivered", continuation=True, entity_op="reuse", domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v2, "delivered")
+    assert _ran(calls), f"setup: {text!r}"
+    header = text.strip().splitlines()[0]
+    assert not header.startswith("Top "), f"CP-3: headed as a top N: {header!r}"
+    assert "agent" in header.lower(), f"CP-3: the agent axis is not in the header: {header!r}"
+
+
+def test_cp4_the_report_period_line_reads_dd_mm_yyyy_with_a_plain_hyphen(rbot, world) -> None:
+    """S1 (r1): "Total sale deliver for1/10-9/10/26 Sorento brand". The period read "1 Oct 2026 to 9 Oct 2026"."""
+    ra = _ra2("total", basis="delivered", brands=["SORENTO"], **OCT)
+    v = _v("sales_report", ra, basis="delivered", domain_in_message=True, **OCTF)
+    text, calls = rbot.say(v, "Total sale deliver for1/10-9/10/26 Sorento brand")
+    assert _ran(calls), f"setup: {text!r}"
+    period = [ln for ln in text.splitlines() if ln.startswith("Period")]
+    assert period == ["Period: 01/10/2026 - 09/10/2026"], f"CP-4: period line {period!r} in {text!r}"
