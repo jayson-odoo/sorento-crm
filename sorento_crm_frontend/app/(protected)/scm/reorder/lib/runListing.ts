@@ -54,7 +54,7 @@ export function runStatusReading(run: {
  * AC-S4.5: one wording for the sales-order window, so the plan header, the plan page
  * subtitle and the plans list never say it three different ways.
  *
- *   both set   -> "01/01/2025 to 31/10/2026"
+ *   both set   -> "01/01/2025 - 31/10/2026"
  *   end only   -> "up to 31/10/2026"
  *   start only -> "from 01/01/2025"
  *   neither    -> "every open order" - "empty = every open order counts" stays true.

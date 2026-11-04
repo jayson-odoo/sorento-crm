@@ -52,7 +52,9 @@ import {
   SCOPE_LABEL,
   endOfMonth,
   formatFigure,
+  formatMoney,
   formatPct,
+  periodRange,
   scopeSummary,
   dateRange,
   shortDate,
@@ -66,6 +68,7 @@ import type {
   Rounding,
   TargetAccount,
   ThresholdUnit,
+  TierRateEntry,
   SalesTargetCreatePayload,
   SalesTargetDetail,
   SalesTargetOptions,
@@ -602,6 +605,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const figureFromTiers = thresholdUnit !== 'pct';
   const metric = draft?.metric ?? target?.metric ?? 'amount';
   const unit = unitOf(metric);
+  // RM with 2 decimals (owner, 4 Nov); units stay whole numbers or as typed.
+  const figure = metric === 'amount' ? formatMoney : formatFigure;
 
   // Periods the dates make, for the hint and the new target's Periods tab.
   const split = draft ? splitOf(draft) : null;
@@ -802,6 +807,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
           </div>
         </CardHeader>
       </Card>
+
+      {target && !editing && target.commission_method !== 'none' ? <CommissionSummary target={target} /> : null}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
@@ -1070,15 +1077,22 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   commission={target.commission_method !== 'none'}
                   ratio={target.threshold_unit === 'points'}
                   provisional={isDealer && target.basis !== 'invoiced'}
+                  paysTo={isDealer}
+                  footer={
+                    target.commission_method !== 'none' && !editing ? (
+                      <PeriodsTotal target={target} paysTo={isDealer} />
+                    ) : null
+                  }
                 >
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
-                    const periodLabel = dateRange(p.period_start, p.period_end);
+                    const periodLabel = periodRange(p.period_start, p.period_end);
+                    const paid = paidIn(p);
                     return (
                       <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
                         <td className="whitespace-nowrap px-3 py-2">
                           <span className="inline-flex items-center gap-2">
-                            {dateRange(p.period_start, p.period_end)}
+                            {periodLabel}
                             {p.is_current ? (
                               <Badge variant="primary" appearance="light" size="sm">
                                 Current
@@ -1097,11 +1111,11 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                           ) : editing && isTeam ? (
                             formatFigure(teamTotal(p.period_start))
                           ) : (
-                            formatFigure(p.target_value)
+                            figure(p.target_value)
                           )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                          {future ? '-' : formatFigure(p.achieved_value)}
+                          {future ? '-' : figure(p.achieved_value)}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {future ? '-' : formatPct(p.achieved_pct)}
@@ -1112,16 +1126,27 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                           </td>
                         ) : null}
                         {target.commission_method !== 'none' ? (
-                          <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                            {future || p.commission_earned === null || p.commission_earned === undefined
-                              ? '-'
-                              : formatFigure(p.commission_earned + (p.bonus_earned ?? 0))}
-                            {p.replaced ? (
-                              <span className="block text-xs text-muted-foreground">
-                                {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
-                              </span>
+                          <>
+                            <td className="whitespace-nowrap px-3 py-2">
+                              {future ? '-' : p.tier_reached ? `Tier ${p.tier_reached}` : 'None'}
+                            </td>
+                            <td className="max-w-[10rem] truncate px-3 py-2 text-end tabular-nums" title={rateText(p.tier_rates, target.metric)}>
+                              {future ? '-' : rateText(p.tier_rates, target.metric) || '-'}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                              {future || paid === null ? '-' : formatMoney(paid)}
+                              {p.replaced ? (
+                                <span className="block text-xs text-muted-foreground">
+                                  {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
+                                </span>
+                              ) : null}
+                            </td>
+                            {isDealer ? (
+                              <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
+                                {paid ? payoutShort(target) : '-'}
+                              </td>
                             ) : null}
-                          </td>
+                          </>
                         ) : null}
                       </tr>
                     );
@@ -1282,21 +1307,115 @@ function figureSummary(target: SalesTargetDetail): string {
   return `${formatFigure(only)} ${target.periods.length === 1 ? 'for the whole range' : 'per period'}`;
 }
 
+/** Commission + bonus a period pays; null with no commission. */
+function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
+  if (p.commission_earned === null || p.commission_earned === undefined) return null;
+  return p.commission_earned + (p.bonus_earned ?? 0);
+}
+
+/** `6.00%`, or `A/C I 2.00%, A/C III 3.00%`; RM per unit on a quantity target. */
+export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMetric): string {
+  return (entries ?? [])
+    .filter((e) => e.rate !== null && e.rate !== undefined)
+    .map((e) => {
+      const rate = metric === 'quantity' ? `RM ${formatMoney(e.rate)}/unit` : `${formatMoney(e.rate)}%`;
+      return e.label ? `${e.label} ${rate}` : rate;
+    })
+    .join(', ');
+}
+
+/** `300-A077 (A/C I)` for a table cell; the full name sits in the summary and the title. */
+function payoutShort(target: SalesTargetDetail): string {
+  const a = target.payout_account;
+  return a ? `${a.code} (${a.label})` : '-';
+}
+
+/** `300-A077 - A CRAFT IDEA SDN BHD (A/C I)`, or `-`. */
+function payoutText(target: SalesTargetDetail): string {
+  const a = target.payout_account;
+  return a ? `${a.code} - ${a.name} (${a.label})` : '-';
+}
+
+/** Above the tabs: what the target has earned so far and where it is paid (owner, 4 Nov:
+ * "this dealer is eligible for around 6k commission right? how do I see this 6k pay to which
+ * acc?"). Earned to date counts ended periods only; the current period is shown apart. */
+function CommissionSummary({ target }: { target: SalesTargetDetail }) {
+  const current = target.periods.find((p) => p.is_current);
+  const isDealer = target.subject_kind === 'dealer';
+  return (
+    <Card>
+      <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
+        <Field label="Commission earned to date (RM)">
+          <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_to_date ?? 0)}</span>
+          <span className="block text-xs text-muted-foreground">Periods that have ended</span>
+        </Field>
+        <Field label="Current period so far (RM)">
+          {current ? (
+            <>
+              <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_current ?? 0)}</span>
+              <span className="block text-xs text-muted-foreground">
+                {`${periodRange(current.period_start, current.period_end)}, ${formatPct(current.achieved_pct)} of target, not final`}
+              </span>
+            </>
+          ) : (
+            <span className="text-lg font-semibold">-</span>
+          )}
+        </Field>
+        {isDealer ? (
+          <Field label="Pays to">
+            <span className="block truncate font-medium" title={payoutText(target)}>
+              {payoutText(target)}
+            </span>
+            <span className="block text-xs text-muted-foreground">Payment is not tracked in the CRM</span>
+          </Field>
+        ) : null}
+      </section>
+    </Card>
+  );
+}
+
+/** The Periods table's Total row: every period's figures summed (a period not started yet
+ * adds its target and nothing else). */
+function PeriodsTotal({ target, paysTo }: { target: SalesTargetDetail; paysTo: boolean }) {
+  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
+  const sum = (pick: (p: SalesTargetDetail['periods'][number]) => number | null | undefined) =>
+    target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
+  return (
+    <tfoot className="border-t bg-muted/40 font-medium">
+      <tr>
+        <td className="whitespace-nowrap px-3 py-2">Total</td>
+        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.target_value))}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.achieved_value))}</td>
+        <td colSpan={target.threshold_unit === 'points' ? 4 : 3} className="px-3 py-2" aria-hidden="true" />
+        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(sum(paidIn))}</td>
+        {paysTo ? <td className="px-3 py-2" aria-hidden="true" /> : null}
+      </tr>
+    </tfoot>
+  );
+}
+
 /** Until the AutoCount invoice sync, a dealer's sales are the sales orders' totals, tax
- * included (owner ruling 1, crew Q3 (a)): every such figure says so. */
-export const PROVISIONAL = 'provisional, incl. tax';
+ * included (owner ruling 1, crew Q3 (a)): every such figure says so, in words that name what
+ * is counted (TARGET-COMMISSION-VIEW: "provisional" alone left stakeholders asking what the
+ * figure was). */
+export const PROVISIONAL = 'sales orders, incl. tax';
 
 function PeriodsTable({
   unit,
   commission = false,
   ratio = false,
   provisional = false,
+  paysTo = false,
+  footer = null,
   children,
 }: {
   unit: string;
   commission?: boolean;
   ratio?: boolean;
   provisional?: boolean;
+  /** A dealer target: the account each period's commission pays to. */
+  paysTo?: boolean;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -1311,10 +1430,18 @@ function PeriodsTable({
             </th>
             <th className="px-3 py-2 text-end font-medium">%</th>
             {ratio ? <th className="px-3 py-2 text-end font-medium">RM per point</th> : null}
-            {commission ? <th className="px-3 py-2 text-end font-medium">Commission (RM)</th> : null}
+            {commission ? (
+              <>
+                <th className="px-3 py-2 text-start font-medium">Tier reached</th>
+                <th className="px-3 py-2 text-end font-medium">Rate</th>
+                <th className="px-3 py-2 text-end font-medium">Commission (RM)</th>
+                {paysTo ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
+              </>
+            ) : null}
           </tr>
         </thead>
         <tbody className="divide-y">{children}</tbody>
+        {footer}
       </table>
     </div>
   );
@@ -1720,8 +1847,11 @@ function accountColumns(
   return ids.map((id) => ({ id, label: byId.get(id) ?? (labels.get(id) ?? '').split(' - ')[0] ?? '' }));
 }
 
-/** A dealer target's Accounts tab: the counted accounts with this period's sales, and the
- * account paid (owner ruling 16 Oct: it may be one the target does not count). */
+/** A dealer target's Accounts tab: in read mode, each counted account's sales in every period
+ * with the period's total, its commission and the account that commission pays to (owner Q5,
+ * 4 Nov: commission is earned on all the accounts together and paid to one, so it sits on the
+ * period's total, never split per selling account). In Edit, the accounts being picked. The
+ * paid account may be one the target does not count (owner ruling 16 Oct). */
 function DealerAccounts({
   target,
   draft,
@@ -1735,8 +1865,6 @@ function DealerAccounts({
   fetchCustomers: (query: string) => Promise<{ value: string; label: string }[]>;
   set: (patch: Partial<Draft>) => void;
 }) {
-  const current = target?.periods.find((p) => p.is_current) ?? target?.periods[target.periods.length - 1];
-  const achieved = new Map((current?.accounts ?? []).map((a) => [a.customer_id, a.achieved_value]));
   const accounts: TargetAccount[] = draft
     ? draft.accountIds.map((id) => {
         const known = target?.accounts?.find((a) => a.customer_id === id);
@@ -1744,10 +1872,12 @@ function DealerAccounts({
         return known ?? { customer_id: id, code, name: name.join(' - '), label: name.join(' - ') };
       })
     : (target?.accounts ?? []);
-  const period = current ? dateRange(current.period_start, current.period_end) : '';
+  const today = todayMalaysiaYyyyMmDd();
+  const periods = draft || !target ? [] : target.periods.filter((p) => p.period_start <= today);
+  const commission = target?.commission_method !== 'none';
   return (
     <>
-      {accounts.length ? (
+      {accounts.length && draft ? (
         <div className="overflow-x-auto rounded-lg border">
           <table aria-label="Counted accounts" className="w-full min-w-[32rem] text-sm">
             <thead className="bg-muted/40 text-xs text-muted-foreground">
@@ -1755,11 +1885,6 @@ function DealerAccounts({
                 <th className="px-3 py-2 text-start font-medium">Code</th>
                 <th className="px-3 py-2 text-start font-medium">Customer</th>
                 <th className="px-3 py-2 text-start font-medium">Account</th>
-                {current && !draft ? (
-                  <th className="px-3 py-2 text-end font-medium">
-                    {target?.basis === 'invoiced' ? `Sales, ${period}` : `Sales, ${period} (${PROVISIONAL})`}
-                  </th>
-                ) : null}
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -1770,14 +1895,74 @@ function DealerAccounts({
                     {a.name}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2">{a.label}</td>
-                  {current && !draft ? (
-                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                      {formatFigure(achieved.get(a.customer_id) ?? 0)}
-                    </td>
-                  ) : null}
                 </tr>
               ))}
             </tbody>
+          </table>
+        </div>
+      ) : accounts.length && target ? (
+        <div className="overflow-x-auto rounded-lg border">
+          <table aria-label="Counted accounts" className="w-full min-w-[48rem] text-sm">
+            <thead className="bg-muted/40 text-xs text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-start font-medium">Period</th>
+                <th className="px-3 py-2 text-start font-medium">Code</th>
+                <th className="px-3 py-2 text-start font-medium">Customer</th>
+                <th className="px-3 py-2 text-start font-medium">Account</th>
+                <th className="px-3 py-2 text-end font-medium">
+                  {target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`}
+                </th>
+                {commission ? <th className="px-3 py-2 text-end font-medium">Commission (RM)</th> : null}
+                {commission ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
+              </tr>
+            </thead>
+            {periods.map((p) => {
+              const sales = new Map((p.accounts ?? []).map((a) => [a.customer_id, a.achieved_value]));
+              const paid = paidIn(p);
+              return (
+                <tbody key={p.id} className={`divide-y border-b ${p.is_current ? 'bg-primary/5' : ''}`}>
+                  {accounts.map((a, i) => (
+                    <tr key={a.customer_id}>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {i === 0 ? (
+                          <span className="inline-flex items-center gap-2">
+                            {periodRange(p.period_start, p.period_end)}
+                            {p.is_current ? (
+                              <Badge variant="primary" appearance="light" size="sm">
+                                Current
+                              </Badge>
+                            ) : null}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2">{a.code}</td>
+                      <td className="max-w-[16rem] truncate px-3 py-2" title={a.name}>
+                        {a.name}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2">{a.label}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                        {formatMoney(sales.get(a.customer_id) ?? 0)}
+                      </td>
+                      {commission ? <td colSpan={2} className="px-3 py-2" aria-hidden="true" /> : null}
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/40 font-medium">
+                    <td colSpan={4} className="whitespace-nowrap px-3 py-2">
+                      {p.is_current ? 'Period total (so far)' : 'Period total'}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(p.achieved_value)}</td>
+                    {commission ? (
+                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(paid)}</td>
+                    ) : null}
+                    {commission ? (
+                      <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
+                        {paid ? payoutShort(target) : '-'}
+                      </td>
+                    ) : null}
+                  </tr>
+                </tbody>
+              );
+            })}
           </table>
         </div>
       ) : (
