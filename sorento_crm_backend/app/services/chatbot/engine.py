@@ -1973,8 +1973,9 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
       verdict as a supplier entity carrying the row id; the id binds the span's whole group
       (`resolve_gate.bind_span_suppliers`), so a near tie is still asked.
     * Fix round 4 (crew sweep, owner turn 1 repeated 5 times on v194): the parser named it (its raw, as typed) but as a
-      customer, so the turn went to the order report ("Undelivered orders or pending delivery?"), or as a supplier with
-      no row id, so nothing bound it ("couldn't find a supplier"). That entity becomes the supplier with the row id.
+      customer, so the turn went to the order report (its kind question, then "Undelivered orders or pending
+      delivery?"), or as a supplier with no row id, so nothing bound it ("couldn't find a supplier"). That entity
+      becomes the supplier with the row id.
     An entity already carrying an id of the span's group is left as it is."""
     spans = prep.supplier_spans if prep is not None else {}
     kinds_of = (getattr(prep, "span_kinds", None) or {}) if prep is not None else {}

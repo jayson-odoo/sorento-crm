@@ -1309,7 +1309,7 @@ def with_held(
     if (
         # SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): an outstanding ask IS this report ask under its
         # outstanding kind (`as_outstanding` reroutes it after this seam), so the answer to the open kind question
-        # ("Pending delivery", parsed as a fresh outstanding ask naming nothing) keeps the held customer as well.
+        # (the delivery order option, parsed as a fresh outstanding ask naming nothing) keeps the held customer as well.
         not (status == ASK_NAME or (status in OUTSTANDING_STATUSES and replaced is not None))
         or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
@@ -1357,10 +1357,11 @@ def with_held(
 
 
 def _kind_answered_by_position(verdict: dict[str, Any], replaced: dict[str, Any] | None) -> dict[str, Any]:
-    """SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): "Pending delivery" under the open kind question
-    ("Undelivered orders or pending delivery?") parses as a fresh outstanding ask with no `basis` but the position it
-    picked (`reference_positions` [2]). That fresh ask replaces the question, so the position is read against the
-    question it answered: its option there is the basis. Parser fields and the replaced question only."""
+    """SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567, asked then as "Undelivered orders or pending
+    delivery?", now `KIND_QUESTION`): the delivery order option under the open kind question parses as a fresh
+    outstanding ask with no `basis` but the position it picked (`reference_positions` [2]). That fresh ask replaces the
+    question, so the position is read against the question it answered: its option there is the basis. Parser fields
+    and the replaced question only."""
     if verdict.get("basis") or not isinstance(replaced, dict) or replaced.get("asking") != "basis":
         return verdict
     positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
@@ -3486,6 +3487,17 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         axis = None  # M1: one figure; the held axis and count are not carried, so no count or measure is asked
     elif frame == "breakdown" and axis is None:
         axis = held_axis  # M1: a breakdown on the held axis
+    own_count = ask.get("top_n")
+    counted = (
+        frame == "breakdown" and axis is not None
+        and isinstance(own_count, int) and not isinstance(own_count, bool) and own_count > 0
+    )
+    if counted:
+        # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row). It ranks by the
+        # measure the object names, else the held one (AF-4: asked only when neither says one).
+        frame = "ranking"
+        if ask.get("measure") not in METRICS and carrying and (held_ask or {}).get("measure") in METRICS:
+            ask["measure"] = held_ask["measure"]
     # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
     typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
@@ -3521,6 +3533,8 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         status = "sales_report"  # a total
     elif breakdown:
         status = "sales_analysis"  # M1: every row (`by_capability` marks the breakdown), never a top selling ranking
+    elif counted:
+        status = ASK_NAME  # AF-7: the ranking itself, so `by_capability` never reads it as a breakdown (every row)
     elif status not in (ASK_NAME, "top_selling", *SALES_STATUSES):
         status = "sales_report"
     held = _held_names(focus)
@@ -3548,8 +3562,9 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     if frame in ("total", "breakdown"):
         top_n = None  # M1: no count: one figure, or every row
     out = {k: v for k, v in verdict.items() if k != "by_words"}  # the object names the axis, not this message's words
-    if breakdown:
-        # M1: a stray direction or ranked measure beside it never makes it a ranking (the real C5 parse).
+    if breakdown or counted:
+        # M1: a stray direction or ranked measure beside a breakdown frame is not read (the real C5 parse); AF-7's count
+        # is the object's own.
         out.update(rank_direction=None, rank_by=None)
     out.update(
         order_status=status,
