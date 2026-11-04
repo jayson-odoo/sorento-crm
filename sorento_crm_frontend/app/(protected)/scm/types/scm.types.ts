@@ -737,6 +737,20 @@ export interface PurchaseOrderLine {
   spos?: PurchaseOrderLineSpo[];
   /** `po_cancelled` when the line itself brings nothing; the SPO cell draws the red pill. */
   dead_reason?: 'po_cancelled' | null;
+  /** PO-LINK-HISTORY: the line's latest S/O link event (the S/O cell's popover). */
+  book_so_link?: BookSoLinkEvent | null;
+}
+
+/** PO-LINK-HISTORY: when the AutoCount sync last moved a PO line's S/O link. */
+export interface BookSoLinkEvent {
+  /** Naive UTC, as the audit log stores it. On an `estimated` event: an upper bound. */
+  changed_at: string;
+  /** True for the backfill's "first seen" event: history began after the link. */
+  estimated: boolean;
+  /** Whether the line named an S/O before; `null` when unknown (`estimated`). */
+  previous_linked: boolean | null;
+  /** That previous S/O's number, when this system holds it. */
+  previous_so_number: string | null;
 }
 
 /** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
@@ -805,6 +819,11 @@ export interface PurchaseOrderPlacement {
    * mark on the row rather than a filter that hides it.
    */
   location_differs: boolean;
+  /** PO-LINK-HISTORY: when the link was made (naive UTC), by whom, and whether the cascade
+   *  made it. Order-inquiry rows only. */
+  linked_at?: string | null;
+  linked_by_name?: string | null;
+  auto?: boolean | null;
 }
 
 /** One purchase-order line's occupancy: the three figures, then who is on it (AC-G1). */
