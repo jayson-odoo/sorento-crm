@@ -30,7 +30,8 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useSalesTargets } from '../hooks/useSalesTargets';
+import { useDownloadCommissionStatement, useSalesTargets } from '../hooks/useSalesTargets';
+import { MAX_STATEMENT_TARGETS } from '../services/salesTargetService';
 import DealerTargetImportDialog from './DealerTargetImportDialog';
 import PointRatioDialog from './PointRatioDialog';
 import {
@@ -207,6 +208,9 @@ function TargetsGrid({
   } = useDebouncedSearch();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // Row ids are target ids (`getRowId`), so the selection is the statement's target list.
+  const selectedIds = Object.keys(rowSelection).filter((id) => rowSelection[id]);
+  const statement = useDownloadCommissionStatement();
   const canEdit = useHasPermission('sales.targets.edit');
   const [importOpen, setImportOpen] = useState(false);
   const [ratioOpen, setRatioOpen] = useState(false);
@@ -345,8 +349,8 @@ function TargetsGrid({
               tab !== 'dealer' || provisional === 'none'
                 ? 'Achieved'
                 : provisional === 'all'
-                  ? 'Achieved (provisional, incl. tax)'
-                  : 'Achieved (* provisional, incl. tax)'
+                  ? 'Achieved (sales orders, incl. tax)'
+                  : 'Achieved (* sales orders, incl. tax)'
             }
             column={column}
           />
@@ -484,6 +488,19 @@ function TargetsGrid({
                 : undefined
             }
             exportConfig={{ filename: `${tab}_targets.xlsx` }}
+            bulkActions={[
+              {
+                key: 'commission-statement',
+                label: `Commission statement (${selectedIds.length})`,
+                icon: FileSpreadsheet,
+                onClick: () => statement.mutate(selectedIds),
+                disabled: statement.isPending || selectedIds.length > MAX_STATEMENT_TARGETS,
+                disabledReason:
+                  selectedIds.length > MAX_STATEMENT_TARGETS
+                    ? `At most ${MAX_STATEMENT_TARGETS} targets per statement`
+                    : undefined,
+              },
+            ]}
             secondaryActions={
               tab === 'dealer' && canEdit
                 ? [
