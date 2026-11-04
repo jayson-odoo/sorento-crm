@@ -20,6 +20,17 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
   ),
 }));
 
+vi.mock('@/components/dealer-kit/DesignLightbox', () => ({
+  __esModule: true,
+  default: ({ title, payload }: { title: string; payload: unknown }) => (
+    <div data-testid="lightbox">
+      {title}:{payload ? 'drawn' : 'empty'}
+    </div>
+  ),
+}));
+
+vi.mock('@/lib/toast', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagPreviewResponse } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { PriceTagLivePreview, previewLines } from './PriceTagLivePreview';
@@ -72,14 +83,17 @@ describe('PriceTagLivePreview one line (AC-20)', () => {
       <PriceTagLivePreview
         lines={[
           line({ key: 'a', product_id: 'p1', price_type: 'list' }),
-          line({ key: 'b', product_id: 'p2', price_type: 'selling' }),
+          line({ key: 'b', code: 'C-b', product_id: 'p2', price_type: 'selling' }),
         ]}
         priceMode="list"
         lookupTagPreview={lookup}
         {...({ lineKey: 'b' } as object)}
       />,
     );
-    await waitFor(() => expect(screen.getByTestId('viewer')).toHaveTextContent(':drawn'));
+    // The lightbox straight away (no card), headed by the line's code and its type.
+    await waitFor(() => expect(screen.getByTestId('lightbox')).toHaveTextContent(':drawn'));
+    expect(screen.getByTestId('lightbox')).toHaveTextContent('C-b - SP');
+    expect(screen.queryByTestId('viewer')).toBeNull();
     expect(lookup).toHaveBeenCalledTimes(1);
     const [, sent] = lookup.mock.calls[0] as unknown as [string, Array<Record<string, unknown>>];
     expect(sent.map((l) => l.key)).toEqual(['b']);

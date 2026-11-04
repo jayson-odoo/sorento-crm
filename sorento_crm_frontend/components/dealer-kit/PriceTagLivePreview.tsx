@@ -17,6 +17,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import { toast } from '@/lib/toast';
+import { linePriceType } from '@/lib/dealer-kit/price-tag-draft-lines';
 import { buildRequestSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -44,6 +47,8 @@ interface Props {
   onReadyChange?: (state: { missing: string[]; drawn: boolean; failed: boolean }) => void;
   /** PRICETAG-LPSP: draw this one line only (the row's eye icon). */
   lineKey?: string;
+  /** One-line mode: the lightbox was closed. */
+  onClose?: () => void;
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -127,6 +132,7 @@ export function PriceTagLivePreview({
   docNumber,
   onReadyChange,
   lineKey,
+  onClose,
 }: Props) {
   const sent = useMemo(
     () =>
@@ -192,7 +198,35 @@ export function PriceTagLivePreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missingKey, drawn, failed, sent.length, onReadyChange]);
 
+  // One line (the row's eye icon): the DesignViewer's own lightbox, straight away - no card, no
+  // nested modal. Its header reads the line's code and LP/SP.
+  const oneLine = lineKey !== undefined ? lines.find((l) => l.key === lineKey) : undefined;
+  const settled = !loading && (failed || payload !== null || sentRef.current.length === 0);
+  useEffect(() => {
+    if (lineKey === undefined || !settled) return;
+    if (failed || payload === null || missing.length > 0) {
+      toast.error(failed ? 'The tag preview could not be drawn.' : 'No tag template yet.');
+      onClose?.();
+    }
+    // Fires once per settled answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled, failed, payload, missing.length]);
+
   if (sent.length === 0) return null;
+
+  if (lineKey !== undefined) {
+    if (!oneLine || failed || payload === null || missing.length > 0) return null;
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={(next) => {
+          if (!next) onClose?.();
+        }}
+        title={`${oneLine.code || docNumber || 'Preview'} - ${linePriceType(oneLine, priceMode) === 'selling' ? 'SP' : 'LP'}`}
+        payload={payload}
+      />
+    );
+  }
 
   // Shown under the drawn tags; with nothing drawn at all the empty state says it.
   const missingNote =

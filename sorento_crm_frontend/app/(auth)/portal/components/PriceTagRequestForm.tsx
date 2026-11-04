@@ -41,7 +41,6 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { numberFieldError } from '@/lib/number-field';
@@ -2210,28 +2209,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           docNumber={request?.doc_number}
           onReadyChange={setPreviewState}
         />
-        {/* PRICETAG-LPSP: one line's tag, from the row's eye icon. */}
-        <Dialog
-          open={previewLineKey !== null}
-          onOpenChange={(next) => {
-            if (!next) setPreviewLineKey(null);
-          }}
-        >
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Tag preview</DialogTitle>
-            </DialogHeader>
-            {previewLineKey !== null ? (
-              <PriceTagLivePreview
-                lines={lines}
-                priceMode={priceMode}
-                lookupTagPreview={previewLookup}
-                docNumber={request?.doc_number}
-                lineKey={previewLineKey}
-              />
-            ) : null}
-          </DialogContent>
-        </Dialog>
+        {/* PRICETAG-LPSP: one line's tag, from the row's eye icon, in the viewer's lightbox. */}
+        {previewLineKey !== null ? (
+          <PriceTagLivePreview
+            lines={lines}
+            priceMode={priceMode}
+            lookupTagPreview={previewLookup}
+            docNumber={request?.doc_number}
+            lineKey={previewLineKey}
+            onClose={() => setPreviewLineKey(null)}
+          />
+        ) : null}
       </FormSection>
 
       {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
