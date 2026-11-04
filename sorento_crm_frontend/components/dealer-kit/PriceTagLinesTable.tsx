@@ -285,7 +285,9 @@ function PartRow({
                         ? { topup: candidate.topup_amount ?? comboTopup(combos, candidate.product_id) }
                         : undefined,
                     ),
-                    description: candidate.code,
+                    // Owner, 4 Nov: the code is already the option's first line; a second
+                    // line only when the name says something the code does not.
+                    description: distinctName(candidate.code, candidate.name) ?? undefined,
                   }))}
                   placeholder={
                     part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`

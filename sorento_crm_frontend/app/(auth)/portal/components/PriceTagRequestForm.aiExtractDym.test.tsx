@@ -72,7 +72,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       >
         <option value="" />
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} data-description={o.description ?? ''}>
             {o.label}
           </option>
         ))}
@@ -159,7 +159,9 @@ function cell(p: Record<string, unknown>, i = 0) {
 }
 
 describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () => {
-  it('AC-F1: a not-found row with suggestions shows Not found and an empty picker of CODE - name', async () => {
+  // Owner, 4 Nov (PRICETAG-LPSP): one line per option, the code once; the name is the
+  // option's second line, never a repeat of the code.
+  it('AC-F1: a not-found row with suggestions shows Not found and an empty picker of codes, names below', async () => {
     await mountAndExtract([MISREAD]);
 
     const { getByTestId } = render(cell(MISREAD));
@@ -169,12 +171,14 @@ describe('PriceTagRequestForm - AI extract did-you-mean (AI-EXTRACT-DYM)', () =>
     const picker = c.getByLabelText(PICKER) as HTMLSelectElement;
     expect(picker.value).toBe('');
     const labels = Array.from(picker.options).map((o) => o.textContent);
-    expect(labels).toContain(`${REAL.product_code} - ${REAL.product_name}`);
-    expect(labels).toContain(`${OTHER.product_code} - ${OTHER.product_name}`);
+    expect(labels).toContain(REAL.product_code);
+    expect(labels).toContain(OTHER.product_code);
+    const second = (code: string) =>
+      Array.from(picker.options).find((o) => o.textContent === code)?.getAttribute('data-description');
+    expect(second(REAL.product_code)).toBe(REAL.product_name);
+    expect(second(OTHER.product_code)).toBe(OTHER.product_name);
     // Best first, as the server ranked them.
-    expect(labels.indexOf(`${REAL.product_code} - ${REAL.product_name}`)).toBeLessThan(
-      labels.indexOf(`${OTHER.product_code} - ${OTHER.product_name}`),
-    );
+    expect(labels.indexOf(REAL.product_code)).toBeLessThan(labels.indexOf(OTHER.product_code));
   });
 
   it('AC-F2: Apply without a pick adds no line and names the code as not found', async () => {

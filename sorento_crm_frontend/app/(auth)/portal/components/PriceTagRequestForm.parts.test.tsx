@@ -82,7 +82,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       >
         <option value="">{props.placeholder ?? ''}</option>
         {options.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} data-description={o.description ?? ''}>
             {o.label}
           </option>
         ))}
@@ -312,6 +312,22 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
   // -------------------------------------------------------------------------
   // AC-S2-3 - the open row
   // -------------------------------------------------------------------------
+
+  it('lists each option on one line: the code once, the name only as its second line (owner, 4 Nov)', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
+    await startWithALine();
+    await pickTheCabinet();
+    const open = (await screen.findByLabelText('Not sure, any of 2')) as HTMLSelectElement;
+    const options = Array.from(open.querySelectorAll('option')).filter((o) => o.value);
+    expect(options).toHaveLength(2);
+    for (const option of options) {
+      const candidate = [BASIN_WHITE, BASIN_BLACK].find((b) => b.product_id === option.value)!;
+      // The code is the first line, once; the second line never repeats it.
+      expect(option.textContent).toContain(candidate.code);
+      expect(option.getAttribute('data-description')).toBe(candidate.name);
+      expect(option.getAttribute('data-description')).not.toContain(candidate.code);
+    }
+  });
 
   it('an open row resolves to the chosen candidate, and clearing reopens it', async () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });

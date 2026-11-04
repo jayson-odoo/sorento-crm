@@ -112,7 +112,7 @@ import {
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
 import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
-import { codeWithName } from '@/lib/product-display';
+import { distinctName } from '@/lib/product-display';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -2408,7 +2408,8 @@ function AIMatchCell({
         onChange={(v) => onPick(product, v)}
         options={suggestions.map((s) => ({
           value: s.product_id,
-          label: codeWithName(s.product_code, s.product_name),
+          label: s.product_code,
+          description: distinctName(s.product_code, s.product_name) ?? undefined,
         }))}
         placeholder="Did you mean?"
         aria-label={`Did you mean, for ${product.product_code ?? 'this row'}`}
