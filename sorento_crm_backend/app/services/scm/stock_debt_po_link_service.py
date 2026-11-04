@@ -11,6 +11,8 @@ the drill shows the link before the next sync. Nothing is applied on any other o
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 import uuid
 from datetime import date
@@ -28,6 +30,8 @@ from app.models.stock_debt_snapshot import StockDebtSnapshotRow
 from app.services.error_handler import AppException, handle_not_found
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.project_supply_service import ProjectSupplyService
+
+logger = logging.getLogger(__name__)
 
 #: The four actions the drill offers, as `/write-capabilities` names them on purchase orders.
 ACTIONS = ("split_link", "link_row", "unlink_row", "relink_row")
@@ -196,7 +200,7 @@ class StockDebtPoLinkService:
         numbers = _line_numbers(self.db, {po.id for _l, po, _c, _s in rows})
         po_lines = []
         for line, po, code, supplier in rows:
-            free = _num(line.qty_ordered) - _num(line.qty_received)
+            free = float(self._free(line))
             if free <= 0:
                 continue
             po_lines.append(
@@ -230,24 +234,49 @@ class StockDebtPoLinkService:
         return pair
 
     def _po_line(self, row: StockDebtSnapshotRow, po_line_id: str) -> Tuple[PurchaseOrderLine, PurchaseOrder]:
+        """An OPEN AutoCount PO line of the row's product (the same open rule the board reads)."""
         pair = (
             self.db.query(PurchaseOrderLine, PurchaseOrder)
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .filter(PurchaseOrderLine.id == po_line_id)
+            .filter(PurchaseOrderLine.id == po_line_id, *ProjectSupplyService.open_po_line_clauses())
             .first()
         )
         if pair is None or str(pair[0].product_id) != str(row.product_id) or _keys(pair[0].source_ref) is None:
-            raise AppException(status_code=422, message="That PO line is not an AutoCount line for this product.")
+            raise AppException(status_code=422, message="That PO line is not an open AutoCount line for this product.")
         return pair
 
+    def _row_so_refs(self, row: StockDebtSnapshotRow) -> set:
+        ids = sorted(self._row_line_ids(row))
+        if not ids:
+            return set()
+        return {
+            ref.strip()
+            for (ref,) in self.db.query(SalesOrderLine.source_ref)
+            .filter(SalesOrderLine.id.in_(ids), SalesOrderLine.source_ref.isnot(None))
+            .all()
+            if ref and ref.strip()
+        }
+
+    def _linked_po_line(self, row: StockDebtSnapshotRow, po_line_id: str):
+        """A PO line linked to one of THIS row's SO lines, and that SO line (relink / unlink)."""
+        po_line, po = self._po_line(row, po_line_id)
+        current = (po_line.from_so_line_ref or "").strip()
+        if not current or current not in self._row_so_refs(row):
+            raise AppException(
+                status_code=422, message=f"PO {po.po_number} line is not linked to a line of this row."
+            )
+        return po_line, po, current
+
+    @staticmethod
+    def _free(po_line: PurchaseOrderLine) -> Decimal:
+        # `qty_received` is AutoCount's TransferedQty, which already includes what Cancel PO
+        # documents cancelled (model comment on `qty_cancelled`), so this is the open balance.
+        return Decimal(str(po_line.qty_ordered or 0)) - Decimal(str(po_line.qty_received or 0))
+
     def _result(self, answer: Dict[str, Any], *, so_line=None, so=None, po_line=None, po=None,
-                qty=None, company_code: str) -> Dict[str, Any]:
-        po_doc_key = po_dtl_key = None
+                qty=None, company_code: str, linked_line=None) -> Dict[str, Any]:
         doc = answer.get("document") or {}
-        so_keys = _keys(so_line.source_ref) if so_line is not None else None
-        for detail in doc.get("Details") or []:
-            if so_keys and detail.get("FromSODtlKey") == so_keys[2]:
-                po_doc_key, po_dtl_key = doc.get("DocKey"), detail.get("DtlKey")
+        target = linked_line if linked_line is not None else po_line
         return {
             "sales_order_line_id": str(so_line.id) if so_line is not None else None,
             "so_number": so.so_number if so is not None else None,
@@ -260,25 +289,48 @@ class StockDebtPoLinkService:
             "message": answer.get("message") or "",
             "operation_id": answer.get("operationId"),
             "company_code": company_code,
-            "po_doc_key": po_doc_key,
-            "po_dtl_key": po_dtl_key,
+            # The PO line the follow-up (Move location, Resume) acts on: the linked line the
+            # read-back produced, else the line the operation was sent for. Never shown.
+            "po_line_id": str(target.id) if target is not None else None,
         }
 
-    def _send(self, path: str, body: Dict[str, Any], *, idempotent: bool) -> Dict[str, Any]:
+    @staticmethod
+    def _intent_key(path: str, body: Dict[str, Any], po_line: PurchaseOrderLine) -> str:
+        """The same intent on the same PO row state gives the same key, so a retry after a
+        timeout (or a second tab) replays the Shared Service's stored answer instead of
+        writing twice. The row's qty is in it: once AutoCount changed the row, a new link is
+        a new intent."""
+        raw = "|".join(
+            [path, *(f"{k}={body[k]}" for k in sorted(body)), f"rowQty={po_line.qty_ordered}"]
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()[:64]
+
+    def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
-            return FoundryxAutocountClient(self.db).write(
-                path, body, idempotency_key=str(uuid.uuid4()) if idempotent else None
-            )
+            return FoundryxAutocountClient(self.db).write(path, body, idempotency_key=key)
         except FoundryxPullError as exc:
-            return {"outcome": "vendor_error", "errorCode": exc.code, "message": UNREACHABLE}
+            message = UNREACHABLE if exc.code == "UNREACHABLE" else exc.message
+            return {"outcome": "vendor_error", "errorCode": exc.code, "message": message}
+
+    def _apply_safely(self, answer, po_line, so_ref):
+        """`_apply`, never failing the request: AutoCount already changed, so the answer must
+        reach the user; the next sync repairs the CRM's copy."""
+        try:
+            return self._apply(answer, po_line, so_ref)
+        except Exception:  # noqa: BLE001
+            logger.exception("po link: applying the AutoCount read-back failed")
+            # A failed flush leaves the session unusable; what was applied is dropped and the
+            # next sync brings AutoCount's state in.
+            self.db.rollback()
+            return None
 
     def _apply(self, answer: Dict[str, Any], po_line: PurchaseOrderLine, so_ref: Optional[str]) -> None:
         """AutoCount's read-back onto the CRM's PO lines (only on `done` / `recovered`)."""
         if answer.get("outcome") not in ("done", "recovered"):
-            return
+            return None
         base = _keys(po_line.source_ref)
         if base is None:
-            return
+            return None
         db_name, doc_key, _dtl = base
         prefix = f"{db_name}:{doc_key}:"
         siblings = {
@@ -294,6 +346,7 @@ class StockDebtPoLinkService:
                 siblings[old.source_ref] = old
         so_keys = _keys(so_ref)
         doc = answer.get("document") or {}
+        linked_line = None
         for detail in doc.get("Details") or []:
             ref = f"{prefix}{detail.get('DtlKey')}"
             linked = so_keys is not None and detail.get("FromSODtlKey") == so_keys[2]
@@ -322,6 +375,7 @@ class StockDebtPoLinkService:
                 line.qty_ordered = Decimal(str(detail["Qty"]))
             if linked:
                 line.from_so_line_ref = so_ref
+                linked_line = line
             elif detail.get("FromSODtlKey") is None:
                 line.from_so_line_ref = None
             location = detail.get("Location")
@@ -334,19 +388,25 @@ class StockDebtPoLinkService:
                 if warehouse is not None:
                     line.warehouse_id = warehouse.id
         self.db.flush()
+        return linked_line
 
     def link(self, snapshot_id: str, row_id: str, lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         row = self._row(snapshot_id, row_id)
         plan = []
+        asked: Dict[str, Decimal] = {}
         for item in lines:
             so_line, so = self._so_line(row, item["sales_order_line_id"])
             po_line, po = self._po_line(row, item["po_line_id"])
             if po_line.from_so_line_ref or po_line.from_so_external:
                 raise AppException(status_code=422, message=f"PO {po.po_number} line is already linked.")
             qty = Decimal(str(item["qty"]))
-            free = Decimal(str(po_line.qty_ordered or 0)) - Decimal(str(po_line.qty_received or 0))
-            if qty <= 0 or qty > free:
-                raise AppException(status_code=422, message=f"Link between 1 and {free.normalize():f}.")
+            free = self._free(po_line)
+            asked[str(po_line.id)] = asked.get(str(po_line.id), Decimal("0")) + qty
+            if qty <= 0 or asked[str(po_line.id)] > free:
+                raise AppException(
+                    status_code=422,
+                    message=f"PO {po.po_number}: link between 1 and {free.normalize():f} in total.",
+                )
             plan.append((so_line, so, po_line, po, qty))
         results = []
         for so_line, so, po_line, po, qty in plan:
@@ -365,35 +425,40 @@ class StockDebtPoLinkService:
                 body["soDocDate"] = so.order_date.isoformat()
             if po.issue_date:
                 body["docDate"] = po.issue_date.isoformat()
-            answer = self._send("po-links", body, idempotent=True)
-            self._apply(answer, po_line, so_line.source_ref.strip())
+            answer = self._send("po-links", body, key=self._intent_key("po-links", body, po_line))
+            linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                                        qty=_num(qty), company_code=company_code))
+                                        qty=_num(qty), company_code=company_code, linked_line=linked))
         return {"results": results}
 
-    def unlink(self, snapshot_id: str, row_id: str, so_line_ids: List[str]) -> Dict[str, Any]:
+    def _so_line_by_ref(self, ref: str):
+        return (
+            self.db.query(SalesOrderLine, SalesOrder)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(func.btrim(SalesOrderLine.source_ref) == ref)
+            .first()
+        ) or (None, None)
+
+    def unlink(self, snapshot_id: str, row_id: str, po_line_ids: List[str]) -> Dict[str, Any]:
+        """Unlink exactly the PO lines ticked, each linked to a line of this row.
+
+        Unlink is a detach action: the deferred-action countdown (CLAUDE.md CRUD standard)
+        is owed before the Shared Service turns `unlink_row` on; until then the menu item is
+        greyed "Waiting for AutoCount" and this route answers AutoCount's refusal."""
         row = self._row(snapshot_id, row_id)
+        plan = [self._linked_po_line(row, po_line_id) for po_line_id in po_line_ids]
         results = []
-        for so_line_id in so_line_ids:
-            so_line, so = self._so_line(row, so_line_id)
-            ref = so_line.source_ref.strip()
-            for po_line, po in (
-                self.db.query(PurchaseOrderLine, PurchaseOrder)
-                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-                .filter(func.btrim(PurchaseOrderLine.from_so_line_ref) == ref, PurchaseOrderLine.line_status == "open")
-                .all()
-            ):
-                keys = _keys(po_line.source_ref)
-                if keys is None:
-                    continue
-                company_code = self._company_code(po_line.company_id)
-                body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
-                if po.issue_date:
-                    body["docDate"] = po.issue_date.isoformat()
-                answer = self._send("po-links/unlink", body, idempotent=True)
-                self._apply(answer, po_line, None)
-                results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                                            qty=_num(po_line.qty_ordered), company_code=company_code))
+        for po_line, po, current in plan:
+            so_line, so = self._so_line_by_ref(current)
+            keys = _keys(po_line.source_ref)
+            company_code = self._company_code(po_line.company_id)
+            body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
+            if po.issue_date:
+                body["docDate"] = po.issue_date.isoformat()
+            answer = self._send("po-links/unlink", body, key=self._intent_key("po-links/unlink", body, po_line))
+            self._apply_safely(answer, po_line, None)
+            results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
+                                        qty=_num(po_line.qty_ordered), company_code=company_code))
         return {"results": results}
 
     def relink(self, snapshot_id: str, row_id: str, moves: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -401,9 +466,11 @@ class StockDebtPoLinkService:
         plan = []
         for move in moves:
             so_line, so = self._so_line(row, move["to_sales_order_line_id"])
-            po_line, po = self._po_line(row, move["po_line_id"])
-            if not po_line.from_so_line_ref:
-                raise AppException(status_code=422, message=f"PO {po.po_number} line is not linked.")
+            po_line, po, current = self._linked_po_line(row, move["po_line_id"])
+            if current == so_line.source_ref.strip():
+                raise AppException(
+                    status_code=422, message=f"PO {po.po_number} line is already on that sales order line."
+                )
             plan.append((so_line, so, po_line, po))
         results = []
         for so_line, so, po_line, po in plan:
@@ -416,24 +483,62 @@ class StockDebtPoLinkService:
                 body["docDate"] = po.issue_date.isoformat()
             if so.order_date:
                 body["soDocDate"] = so.order_date.isoformat()
-            answer = self._send("po-links/relink", body, idempotent=True)
-            self._apply(answer, po_line, so_line.source_ref.strip())
+            answer = self._send("po-links/relink", body, key=self._intent_key("po-links/relink", body, po_line))
+            linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                                        qty=_num(po_line.qty_ordered), company_code=company_code))
+                                        qty=_num(po_line.qty_ordered), company_code=company_code,
+                                        linked_line=linked))
         return {"results": results}
 
-    def relocate(self, company_code: str, po_doc_key: int, po_dtl_key: int) -> Dict[str, Any]:
+    def _any_po_line(self, po_line_id: str) -> Tuple[PurchaseOrderLine, PurchaseOrder]:
+        """A PO line by id, through the caller's company scope; its company and keys are the
+        server's, never the browser's."""
+        pair = (
+            self.db.query(PurchaseOrderLine, PurchaseOrder)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .filter(PurchaseOrderLine.id == po_line_id)
+            .first()
+        )
+        if pair is None or _keys(pair[0].source_ref) is None:
+            raise handle_not_found("PO line", po_line_id)
+        return pair
+
+    def relocate(self, po_line_id: str) -> Dict[str, Any]:
+        """Move a linked PO line to its SO line's location (after `LOCATION_NOT_MOVED`)."""
+        po_line, po = self._any_po_line(po_line_id)
+        if not po_line.from_so_line_ref:
+            raise AppException(status_code=422, message=f"PO {po.po_number} line is not linked.")
+        so_ref = po_line.from_so_line_ref.strip()
+        so_line, so = self._so_line_by_ref(so_ref)
+        company_code = self._company_code(po_line.company_id)
+        keys = _keys(po_line.source_ref)
         answer = self._send(
             "po-links/relocate",
-            {"companyCode": company_code, "poDocKey": po_doc_key, "poDtlKey": po_dtl_key},
-            idempotent=False,
+            {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]},
         )
-        return self._result(answer, company_code=company_code)
+        linked = self._apply_safely(answer, po_line, so_ref)
+        return self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
+                            qty=_num(po_line.qty_ordered), company_code=company_code, linked_line=linked)
 
-    def resume(self, operation_id: str, company_code: str) -> Dict[str, Any]:
+    def resume(self, operation_id: str, po_line_id: str, sales_order_line_id: Optional[str]) -> Dict[str, Any]:
+        """Ask the Shared Service to finish an operation it stopped; it re-reads AutoCount
+        first. The CRM never re-sends a step. The company is the PO line's."""
         if not _OPERATION_ID.fullmatch(operation_id or ""):
             raise AppException(status_code=422, message="Unknown operation.")
-        answer = self._send(
-            f"write-operations/{operation_id}/resume", {"companyCode": company_code}, idempotent=False
-        )
-        return self._result(answer, company_code=company_code)
+        po_line, po = self._any_po_line(po_line_id)
+        so_line = so = None
+        if sales_order_line_id:
+            pair = (
+                self.db.query(SalesOrderLine, SalesOrder)
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .filter(SalesOrderLine.id == sales_order_line_id)
+                .first()
+            )
+            if pair is not None:
+                so_line, so = pair
+        company_code = self._company_code(po_line.company_id)
+        answer = self._send(f"write-operations/{operation_id}/resume", {"companyCode": company_code})
+        so_ref = so_line.source_ref.strip() if so_line is not None and so_line.source_ref else None
+        linked = self._apply_safely(answer, po_line, so_ref)
+        return self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
+                            qty=_num(po_line.qty_ordered), company_code=company_code, linked_line=linked)

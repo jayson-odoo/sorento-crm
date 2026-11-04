@@ -48,7 +48,7 @@ export function poLinkResultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResul
         tone: 'warn',
         title: `${DONE_TITLE[kind]}, location not moved`,
         text: `${text} AutoCount kept the PO line at its old location.`,
-        action: r.po_doc_key && r.po_dtl_key ? 'relocate' : null,
+        action: r.po_line_id ? 'relocate' : null,
       };
     }
     return { tone: 'ok', title: DONE_TITLE[kind], text, action: null };
@@ -57,8 +57,8 @@ export function poLinkResultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResul
     return {
       tone: 'error',
       title: 'Needs attention',
-      text: `${so}: AutoCount stopped part way. Resume checks AutoCount again and finishes it.`,
-      action: r.operation_id ? 'resume' : null,
+      text: `${so}: AutoCount stopped part way.`,
+      action: r.operation_id && r.po_line_id ? 'resume' : null,
     };
   }
   if (r.outcome === 'recovered') {

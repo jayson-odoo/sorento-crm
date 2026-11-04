@@ -163,14 +163,15 @@ export async function linkPoLines(
   return postJson(poLinkUrl(id, rowId, '/link'), { lines }, 'Failed to link to PO');
 }
 
+/** Unlink exactly these PO lines (each linked to a line of the row). */
 export async function unlinkPoLines(
   id: string,
   rowId: string,
-  salesOrderLineIds: string[],
+  poLineIds: string[],
 ): Promise<{ results: PoLinkResult[] }> {
   return postJson(
     poLinkUrl(id, rowId, '/unlink'),
-    { sales_order_line_ids: salesOrderLineIds },
+    { po_line_ids: poLineIds },
     'Failed to unlink from PO',
   );
 }
@@ -183,18 +184,20 @@ export async function relinkPoLines(
   return postJson(poLinkUrl(id, rowId, '/relink'), { moves }, 'Failed to move the PO');
 }
 
-export async function relocatePoLine(input: {
-  company_code: string;
-  po_doc_key: number;
-  po_dtl_key: number;
-}): Promise<PoLinkResult> {
-  return postJson(`${PO_LINK_BASE}/relocate`, input, 'Failed to move the PO line');
+/** Move a linked PO line to its sales order line's location. */
+export async function relocatePoLine(poLineId: string): Promise<PoLinkResult> {
+  return postJson(`${PO_LINK_BASE}/relocate`, { po_line_id: poLineId }, 'Failed to move the PO line');
 }
 
-export async function resumePoLink(operationId: string, companyCode: string): Promise<PoLinkResult> {
+/** Ask the Shared Service to finish an operation it stopped (it re-reads AutoCount first). */
+export async function resumePoLink(input: {
+  operationId: string;
+  poLineId: string;
+  salesOrderLineId: string | null;
+}): Promise<PoLinkResult> {
   return postJson(
-    `${PO_LINK_BASE}/operations/${encodeURIComponent(operationId)}/resume`,
-    { company_code: companyCode },
+    `${PO_LINK_BASE}/operations/${encodeURIComponent(input.operationId)}/resume`,
+    { po_line_id: input.poLineId, sales_order_line_id: input.salesOrderLineId },
     'Failed to resume',
   );
 }

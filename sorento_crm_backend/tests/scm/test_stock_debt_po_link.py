@@ -332,7 +332,11 @@ def test_location_not_moved_is_a_warning_with_the_new_row_keys(scm_app, fake_ss)
     ]}).json()["results"]
     assert result["outcome"] == "done"
     assert result["warnings"] == ["LOCATION_NOT_MOVED"]
-    assert (result["po_doc_key"], result["po_dtl_key"]) == (12008, 12080)
+    from app.models.procurement import PurchaseOrderLine
+
+    new = w["db"].query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref == f"{DB}:12008:12080").one()
+    # The follow-up (Move location) acts on the new linked line, never the original.
+    assert result["po_line_id"] == new.id
 
 
 def test_vendor_unsupported_is_a_refusal_and_changes_nothing(scm_app, fake_ss):
@@ -363,23 +367,37 @@ def test_needs_attention_carries_the_operation_for_resume(scm_app, fake_ss):
     ]}).json()["results"]
     assert result["outcome"] == "needs_attention"
     assert result["operation_id"] == "op-9"
+    assert result["po_line_id"] == w["po_line"].id
     company_code = result["company_code"]
 
     fake_ss.answers["/api/v1/autocount/write-operations/op-9/resume"] = _done_split
-    resp = w["c"].post(f"{BASE}/po-link/operations/op-9/resume", json={"company_code": company_code})
+    resp = w["c"].post(f"{BASE}/po-link/operations/op-9/resume", json={
+        "po_line_id": result["po_line_id"], "sales_order_line_id": w["so_line"].id,
+    })
     assert resp.status_code == 200, resp.text
     assert resp.json()["outcome"] == "done"
+    # The company is the PO line's, read on the server.
     assert fake_ss.bodies("/api/v1/autocount/write-operations/op-9/resume") == [{"companyCode": company_code}]
+    # A resume that ends done applies AutoCount's read-back like the link itself.
+    from app.models.procurement import PurchaseOrderLine
+
+    w["db"].expire_all()
+    new = w["db"].query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref == f"{DB}:12008:12080").one()
+    assert new.from_so_line_ref == f"{DB}:11988:11990"
 
 
 def test_link_refuses_a_line_that_is_not_in_the_snapshot_row(scm_app, fake_ss):
     w = _world(scm_app, fake_ss)
     _o, stray = _demand(w["db"], w["product"], w["mwh"], qty=5, required_date=_months_ahead(1),
                         so_number=f"{w['marker']}-STRAY")
+    # A real AutoCount line, so only the snapshot-row check can refuse it.
+    stray.source_ref = f"{DB}:11988:11991"
+    w["db"].flush()
     resp = w["c"].post(_url(w, "/link"), json={"lines": [
         {"sales_order_line_id": stray.id, "po_line_id": w["po_line"].id, "qty": 5},
     ]})
     assert resp.status_code == 422
+    assert "not in this snapshot row" in resp.text
     assert fake_ss.bodies("/api/v1/autocount/po-links") == []
 
 
@@ -413,7 +431,7 @@ def test_unlink_sends_each_linked_po_row_of_the_ticked_lines(scm_app, fake_ss):
     fake_ss.answers["/api/v1/autocount/po-links/unlink"] = (409, {
         "operationId": None, "outcome": "refused", "errorCode": "VENDOR_UNSUPPORTED", "message": "",
     })
-    resp = w["c"].post(_url(w, "/unlink"), json={"sales_order_line_ids": [w["so_line"].id]})
+    resp = w["c"].post(_url(w, "/unlink"), json={"po_line_ids": [w["po_line"].id]})
     assert resp.status_code == 200, resp.text
     (result,) = resp.json()["results"]
     assert result["outcome"] == "refused"
@@ -446,18 +464,69 @@ def test_relink_moves_a_po_row_to_another_line_of_the_row(scm_app, fake_ss):
     assert fake_ss.headers("/api/v1/autocount/po-links/relink")[0].get("Idempotency-Key")
 
 
-def test_relocate_sends_the_row_keys(scm_app, fake_ss):
+def test_relocate_sends_the_linked_row_keys_and_the_server_company(scm_app, fake_ss):
     w = _world(scm_app, fake_ss)
+    w["po_line"].from_so_line_ref = w["so_line"].source_ref
+    w["db"].flush()
     fake_ss.answers["/api/v1/autocount/po-links/relocate"] = (200, {
         "actionId": "a-2", "outcome": "done", "errorCode": None, "document": None,
     })
-    resp = w["c"].post(f"{BASE}/po-link/relocate", json={
-        "company_code": "SRT", "po_doc_key": 12008, "po_dtl_key": 12080,
-    })
+    resp = w["c"].post(f"{BASE}/po-link/relocate", json={"po_line_id": w["po_line"].id})
     assert resp.status_code == 200, resp.text
     assert resp.json()["outcome"] == "done"
     (body,) = fake_ss.bodies("/api/v1/autocount/po-links/relocate")
-    assert body == {"companyCode": "SRT", "poDocKey": 12008, "poDtlKey": 12080}
+    assert body["poDocKey"] == 12008 and body["poDtlKey"] == 12009
+    assert body["companyCode"] == resp.json()["company_code"] and body["companyCode"]
+
+
+def test_relocate_refuses_an_unlinked_line(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    resp = w["c"].post(f"{BASE}/po-link/relocate", json={"po_line_id": w["po_line"].id})
+    assert resp.status_code == 422
+    assert fake_ss.bodies("/api/v1/autocount/po-links/relocate") == []
+
+
+def test_the_same_intent_sends_the_same_idempotency_key(scm_app, fake_ss):
+    """A retry after a timeout replays the Shared Service's stored answer, never a 2nd split."""
+    w = _world(scm_app, fake_ss)
+    fake_ss.answers["/api/v1/autocount/po-links"] = (504, {"code": "TIMEOUT", "message": "slow"})
+    item = {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120}
+    w["c"].post(_url(w, "/link"), json={"lines": [item]})
+    w["c"].post(_url(w, "/link"), json={"lines": [item]})
+    keys = [h.get("Idempotency-Key") for h in fake_ss.headers("/api/v1/autocount/po-links")]
+    assert len(keys) == 2 and keys[0] and keys[0] == keys[1]
+    w["c"].post(_url(w, "/link"), json={"lines": [{**item, "qty": 100}]})
+    assert fake_ss.headers("/api/v1/autocount/po-links")[2].get("Idempotency-Key") != keys[0]
+
+
+def test_one_request_cannot_link_more_than_the_po_line_has_free(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    _o, other = _demand(w["db"], w["product"], w["mwh"], qty=400, required_date=_months_ahead(1),
+                        so_number=f"{w['marker']}-SO3")
+    other.source_ref = f"{DB}:11999:12003"
+    w["db"].flush()
+    c = w["c"]
+    sid = c.post(SNAP, json={"name": "three", "filters": {"query": w["marker"], "only_debt": False}}).json()["id"]
+    row_id = next(r["row_id"] for r in c.get(f"{SNAP}/{sid}/rows", params={"limit": 200}).json()["data"]
+                  if r["product_code"] == f"{w['marker']}-A")
+    resp = c.post(f"{SNAP}/{sid}/rows/{row_id}/po-link/link", json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120},
+        {"sales_order_line_id": other.id, "po_line_id": w["po_line"].id, "qty": 400},
+    ]})
+    assert resp.status_code == 422
+    assert fake_ss.bodies("/api/v1/autocount/po-links") == []
+
+
+def test_relink_refuses_a_po_line_linked_outside_the_row(scm_app, fake_ss):
+    w = _world(scm_app, fake_ss)
+    # Linked to some other customer's SO line, not one of this row's.
+    w["po_line"].from_so_line_ref = f"{DB}:5:6"
+    w["db"].flush()
+    resp = w["c"].post(_url(w, "/relink"), json={"moves": [
+        {"po_line_id": w["po_line"].id, "to_sales_order_line_id": w["so_line"].id},
+    ]})
+    assert resp.status_code == 422
+    assert fake_ss.bodies("/api/v1/autocount/po-links/relink") == []
 
 
 def test_the_permission_is_seeded_and_granted_to_admin():

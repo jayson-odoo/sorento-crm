@@ -156,13 +156,12 @@ export function usePoLinkMutations(id: string, rowId: string) {
       onError,
     }),
     relocate: useMutation({
-      mutationFn: (input: Parameters<typeof relocatePoLine>[0]) => relocatePoLine(input),
+      mutationFn: (poLineId: string) => relocatePoLine(poLineId),
       onSuccess: refresh,
       onError,
     }),
     resume: useMutation({
-      mutationFn: (input: { operationId: string; companyCode: string }) =>
-        resumePoLink(input.operationId, input.companyCode),
+      mutationFn: (input: Parameters<typeof resumePoLink>[0]) => resumePoLink(input),
       onSuccess: refresh,
       onError,
     }),

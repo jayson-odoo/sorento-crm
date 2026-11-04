@@ -208,7 +208,7 @@ class PoLinkIn(BaseModel):
 
 
 class PoUnlinkIn(BaseModel):
-    sales_order_line_ids: List[str] = Field(min_length=1, max_length=50)
+    po_line_ids: List[str] = Field(min_length=1, max_length=50)
 
 
 class PoRelinkMoveIn(BaseModel):
@@ -221,13 +221,12 @@ class PoRelinkIn(BaseModel):
 
 
 class PoRelocateIn(BaseModel):
-    company_code: str = Field(min_length=1, max_length=50)
-    po_doc_key: int = Field(ge=1)
-    po_dtl_key: int = Field(ge=1)
+    po_line_id: str
 
 
 class PoResumeIn(BaseModel):
-    company_code: str = Field(min_length=1, max_length=50)
+    po_line_id: str
+    sales_order_line_id: Optional[str] = None
 
 
 class PoLinkResult(BaseModel):
@@ -242,8 +241,7 @@ class PoLinkResult(BaseModel):
     message: str = ""
     operation_id: Optional[str] = None
     company_code: Optional[str] = None
-    po_doc_key: Optional[int] = None
-    po_dtl_key: Optional[int] = None
+    po_line_id: Optional[str] = None
 
 
 class PoLinkResults(BaseModel):

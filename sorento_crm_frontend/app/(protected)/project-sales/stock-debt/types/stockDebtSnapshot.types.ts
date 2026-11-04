@@ -172,6 +172,6 @@ export interface PoLinkResult {
   message: string;
   operation_id: string | null;
   company_code: string | null;
-  po_doc_key: number | null;
-  po_dtl_key: number | null;
+  /** The PO line a follow-up (Move location, Resume) acts on. Never shown. */
+  po_line_id: string | null;
 }

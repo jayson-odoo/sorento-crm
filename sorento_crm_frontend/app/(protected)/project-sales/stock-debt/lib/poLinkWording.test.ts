@@ -19,8 +19,7 @@ function result(over: Partial<PoLinkResult>): PoLinkResult {
     message: '',
     operation_id: null,
     company_code: 'SRT',
-    po_doc_key: 12008,
-    po_dtl_key: 12080,
+    po_line_id: 'pol-new',
     ...over,
   };
 }

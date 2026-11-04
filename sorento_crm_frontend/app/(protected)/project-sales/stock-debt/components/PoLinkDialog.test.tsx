@@ -98,7 +98,7 @@ function result(over: Partial<PoLinkResult>): PoLinkResult {
   return {
     sales_order_line_id: 'sol-1', so_number: 'SO425045', so_line_no: 140, po_number: '202609-S0029',
     qty: 120, outcome: 'done', error_code: null, warnings: [], message: '', operation_id: null,
-    company_code: 'SRT', po_doc_key: 12008, po_dtl_key: 12080, ...over,
+    company_code: 'SRT', po_line_id: 'pol-new', ...over,
   };
 }
 
@@ -198,9 +198,22 @@ describe('Link to PO popup', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 line' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Move to the sales order location' }));
     await waitFor(() =>
-      expect(relocatePoLine).toHaveBeenCalledWith({ company_code: 'SRT', po_doc_key: 12008, po_dtl_key: 12080 }),
+      expect(relocatePoLine).toHaveBeenCalledWith('pol-new'),
     );
     await waitFor(() => expect(screen.getByTestId('po-link-result')).toHaveTextContent(/^Linked/));
+  });
+
+  it('two lines on one PO line cannot take more than it has free', async () => {
+    const lines = [soLine({}), soLine({ sales_order_line_id: 'sol-2', so_number: 'SO425046', line_no: 3, open_qty: 300 })];
+    const { dialog } = renderDialog(lines);
+    for (const id of ['sol-1', 'sol-2']) {
+      fireEvent.change(dialog.querySelector(`#po-link-po-${id}`) as HTMLSelectElement, {
+        target: { value: 'po-3' },
+      });
+    }
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link 2 lines' }));
+    expect(await within(dialog).findAllByText('PO 202609-S0029 has 380 free in total')).not.toHaveLength(0);
+    expect(linkPoLines).not.toHaveBeenCalled();
   });
 
   it('needs attention offers Resume, which asks the Shared Service and never re-sends the link', async () => {
@@ -214,7 +227,11 @@ describe('Link to PO popup', () => {
     });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 line' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Resume' }));
-    await waitFor(() => expect(resumePoLink).toHaveBeenCalledWith('op-9', 'SRT'));
+    await waitFor(() =>
+      expect(resumePoLink).toHaveBeenCalledWith({
+        operationId: 'op-9', poLineId: 'pol-new', salesOrderLineId: 'sol-1',
+      }),
+    );
     expect(linkPoLines).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(screen.getByTestId('po-link-result')).toHaveTextContent('Linked'));
   });

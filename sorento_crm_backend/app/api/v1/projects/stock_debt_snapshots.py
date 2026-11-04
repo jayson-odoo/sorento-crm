@@ -295,7 +295,7 @@ def po_link_unlink(
     validate_uuid_path(snapshot_id, resource="Snapshot")
     validate_uuid_path(row_id, resource="Snapshot row")
     try:
-        out = StockDebtPoLinkService(db).unlink(snapshot_id, row_id, payload.sales_order_line_ids)
+        out = StockDebtPoLinkService(db).unlink(snapshot_id, row_id, payload.po_line_ids)
         db.commit()
         return out
     except Exception as exc:
@@ -330,9 +330,10 @@ def po_link_relocate(
 ):
     """Move a linked PO row to its SO row's location (after `LOCATION_NOT_MOVED`)."""
     try:
-        return StockDebtPoLinkService(db).relocate(
-            payload.company_code, payload.po_doc_key, payload.po_dtl_key
-        )
+        validate_uuid_path(payload.po_line_id, resource="PO line")
+        out = StockDebtPoLinkService(db).relocate(payload.po_line_id)
+        db.commit()
+        return out
     except Exception as exc:
         _guard(exc)
 
@@ -346,6 +347,11 @@ def po_link_resume(
 ):
     """Ask the Shared Service to re-read AutoCount and finish an operation it stopped."""
     try:
-        return StockDebtPoLinkService(db).resume(operation_id, payload.company_code)
+        validate_uuid_path(payload.po_line_id, resource="PO line")
+        out = StockDebtPoLinkService(db).resume(
+            operation_id, payload.po_line_id, payload.sales_order_line_id
+        )
+        db.commit()
+        return out
     except Exception as exc:
         _guard(exc)

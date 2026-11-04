@@ -116,18 +116,14 @@ function ResultCard({
     <div className={cn('space-y-1 rounded-md p-3 text-sm', TONE[text.tone])} data-testid="po-link-result">
       <p className="font-semibold">{text.title}</p>
       <p className="tabular-nums">{text.text}</p>
-      {text.action === 'relocate' && current.company_code && current.po_doc_key && current.po_dtl_key ? (
+      {text.action === 'relocate' && current.po_line_id ? (
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={busy}
           onClick={async () => {
-            const next = await relocate.mutateAsync({
-              company_code: current.company_code as string,
-              po_doc_key: current.po_doc_key as number,
-              po_dtl_key: current.po_dtl_key as number,
-            });
+            const next = await relocate.mutateAsync(current.po_line_id as string);
             setCurrent({
               ...current,
               outcome: next.outcome,
@@ -140,7 +136,7 @@ function ResultCard({
           Move to the sales order location
         </Button>
       ) : null}
-      {text.action === 'resume' && current.operation_id && current.company_code ? (
+      {text.action === 'resume' && current.operation_id && current.po_line_id ? (
         <Button
           type="button"
           size="sm"
@@ -149,7 +145,8 @@ function ResultCard({
           onClick={async () => {
             const next = await resume.mutateAsync({
               operationId: current.operation_id as string,
-              companyCode: current.company_code as string,
+              poLineId: current.po_line_id as string,
+              salesOrderLineId: current.sales_order_line_id,
             });
             setCurrent({ ...current, ...next, so_number: current.so_number, so_line_no: current.so_line_no });
           }}
@@ -230,6 +227,14 @@ export function PoLinkDialog({
     if (Number(typed) === po.po_qty && !capabilities.link_row.enabled) {
       return `Linking the whole PO line: ${capabilities.link_row.reason ?? 'Waiting for AutoCount'}`;
     }
+    // Two ticked lines on one PO line share its free stock.
+    const total = rows
+      .filter((other) => rowSelection[other.id] && picked[other.id] === po.po_line_id)
+      .reduce(
+        (sum, other) => sum + Number(qty[other.id] ?? String(qtyCap(other.line, po))),
+        0,
+      );
+    if (total > po.free_qty) return `PO ${po.po_number} has ${po.free_qty.toLocaleString()} free in total`;
     return undefined;
   }
 
@@ -453,7 +458,7 @@ export function PoLinkDialog({
           }),
         );
       } else if (mode === 'unlink') {
-        out = await unlink.mutateAsync([...new Set(ticked.map((row) => row.line.sales_order_line_id))]);
+        out = await unlink.mutateAsync(ticked.map((row) => row.poLineId as string));
       } else {
         out = await relink.mutateAsync(
           ticked.map((row) => ({
