@@ -700,3 +700,11 @@ def test_resume_saying_not_paused_is_harmless(tmp_path):
 def test_pgbouncer_database_names_must_be_plain_app_databases(tmp_path, names):
     e, _, route = _route_env(tmp_path, PGB_DATABASES=names)
     assert _adapter(e, "route", "local").returncode == 2 and not route.exists()
+
+
+def test_route_refuses_an_empty_database_list(tmp_path):
+    # An empty PGB_DATABASES would confirm a re-point without any KILL: sessions stay pinned.
+    e, log, route = _route_env(tmp_path, PGB_DATABASES="")
+    r = _adapter(e, "route", "local")
+    assert r.returncode == 2 and "PGB_DATABASES" in r.stderr
+    assert not route.exists() and not log.exists()  # nothing touched: not Redis, not the file

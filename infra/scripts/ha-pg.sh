@@ -231,6 +231,10 @@ case "$cmd" in
   route)
     target="${2:-}"
     [ -n "$ROUTE_FILE" ] || { echo "ha-pg: ROUTE_FILE unset (active-active only)" >&2; exit 2; }
+    # Checked before anything changes: without the admin console or a database to KILL +
+    # RESUME, a re-point would leave sessions pinned (review rounds 2 and 3).
+    [ -n "$PGB_ADMIN" ] || { echo "ha-pg: PGB_ADMIN unset" >&2; exit 2; }
+    [ -n "$PGB_DATABASES" ] || { echo "ha-pg: PGB_DATABASES unset" >&2; exit 2; }
     case "$target" in
       local) host=$PGB_LOCAL_HOST; port=5432 ;;
       peer) host=$PEER_HOST; port=$PEER_PORT ;;
@@ -272,7 +276,7 @@ case "$cmd" in
     # which it never does, and a connection pinned to a running standby would stay there
     # (review round 2 blocker 1). A route change never moves away from the writable primary,
     # so the dropped connections were not doing useful writes.
-    [ -n "$PGB_ADMIN" ] || { echo "ha-pg: PGB_ADMIN unset" >&2; exit 2; }
+
     # shellcheck disable=SC2086
     timeout 15 $PGB_ADMIN "RELOAD" >/dev/null || { echo "ha-pg: pgbouncer RELOAD failed; route left unconfirmed" >&2; exit 1; }
     for db in $PGB_DATABASES; do
