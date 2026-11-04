@@ -42,6 +42,8 @@ interface Props {
    * keeps Approve off while either says the tag is not ready.
    */
   onReadyChange?: (state: { missing: string[]; drawn: boolean; failed: boolean }) => void;
+  /** PRICETAG-LPSP: draw this one line only (the row's eye icon). */
+  lineKey?: string;
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -60,8 +62,10 @@ export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
         candidates: part.product_id ? [] : part.candidates.map((c) => c.product_id),
       })),
       promotion_id: l.promotion_id,
-      manual_sell_price: l.manual_sell_price,
+      // A typed price only applies to an SP line (the server refuses it otherwise).
+      manual_sell_price: l.price_type === 'list' ? null : l.manual_sell_price,
       tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
+      price_type: l.price_type ?? null,
     }));
 }
 
@@ -122,8 +126,13 @@ export function PriceTagLivePreview({
   lookupTagPreview,
   docNumber,
   onReadyChange,
+  lineKey,
 }: Props) {
-  const sent = useMemo(() => previewLines(lines), [lines]);
+  const sent = useMemo(
+    () =>
+      previewLines(lineKey === undefined ? lines : lines.filter((l) => l.key === lineKey)),
+    [lines, lineKey],
+  );
   // Only what changes the drawing re-asks: a remark or a quantity does not.
   const signature = useMemo(() => JSON.stringify([priceMode, sent]), [priceMode, sent]);
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);

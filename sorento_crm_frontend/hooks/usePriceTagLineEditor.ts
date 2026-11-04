@@ -36,7 +36,10 @@ export interface PriceTagLineLookups {
   lookupProductCombos: (productId: string) => Promise<ProductCombosLookup>;
   lookupLinePricing: (priceMode: PriceMode, lines: LinePricingLineInput[]) => Promise<LinePricingResult[]>;
   /** PRICETAG-TEMPLATE-PER-PRODUCT: optional so a caller without it simply shows no Template field. */
-  lookupProductTagTemplates?: (productId: string) => Promise<ProductTagTemplateOption[]>;
+  lookupProductTagTemplates?: (
+    productId: string,
+    comboId?: string | null,
+  ) => Promise<ProductTagTemplateOption[]>;
 }
 
 interface Options {
@@ -127,8 +130,10 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
 
   // ---- Line management ----
   const addLine = useCallback(() => {
-    setLines((prev) => [...prev, emptyDraftLine()]);
-  }, [setLines]);
+    // PRICETAG-LPSP: the header is the starting value for a NEW line only; changing it later
+    // leaves lines already added as they are.
+    setLines((prev) => [...prev, { ...emptyDraftLine(), price_type: priceMode }]);
+  }, [setLines, priceMode]);
 
   const removeLine = useCallback(
     (key: string) => {
@@ -234,33 +239,40 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       (l) =>
         l.line_type === 'product' &&
         l.product_id &&
-        l.tag_templates_for !== l.product_id &&
-        !templatesAskedRef.current.has(`${l.key}:${l.product_id}`),
+        (l.tag_templates_for !== l.product_id ||
+          (l.tag_templates_combo ?? null) !== (l.combo_id ?? null)) &&
+        !templatesAskedRef.current.has(`${l.key}:${l.product_id}:${l.combo_id ?? ''}`),
     );
     for (const line of pending) {
       const productId = line.product_id as string;
-      const asked = `${line.key}:${productId}`;
+      const comboId = line.combo_id ?? null;
+      const asked = `${line.key}:${productId}:${comboId ?? ''}`;
       templatesAskedRef.current.add(asked);
       const apply = (options: ProductTagTemplateOption[]) => {
         templatesAskedRef.current.delete(asked);
         setLines((prev) =>
           prev.map((l) => {
+            // An answer for a product or package the row has since left is dropped.
             if (l.key !== line.key || l.product_id !== productId) return l;
-            const kept = options.some((o) => o.id === l.tag_template_id)
-              ? (l.tag_template_id ?? null)
-              : null;
+            if ((l.combo_id ?? null) !== comboId) return l;
+            // PRICETAG-LPSP: a pick that is still offered stays; else the default; else the
+            // only one; else none (several and no default = the salesperson picks).
+            const kept = options.find((o) => o.id === l.tag_template_id);
+            const fallback =
+              options.find((o) => o.is_default) ?? (options.length === 1 ? options[0] : null);
             return {
               ...l,
               tag_templates: options,
               tag_templates_for: productId,
-              tag_template_id: options.length === 1 ? options[0].id : kept,
+              tag_templates_combo: comboId,
+              tag_template_id: (kept ?? fallback)?.id ?? null,
             };
           }),
         );
       };
       // A failed lookup shows no field, which is what a product with no link
       // looks like; the server's own rule still decides at Submit.
-      lookup(productId).then(apply).catch(() => apply([]));
+      (comboId ? lookup(productId, comboId) : lookup(productId)).then(apply).catch(() => apply([]));
     }
   }, [lines, lookups, setLines]);
 

@@ -38,8 +38,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { numberFieldError } from '@/lib/number-field';
@@ -98,6 +100,7 @@ import {
   lineNeedsTemplate,
   lineToDraft,
   MISSING_TAG_TEMPLATE,
+  newPartKey,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
@@ -258,9 +261,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
       // PRICETAG-TEMPLATE-PER-PRODUCT. Read at call time and guarded: a
       // service without it (an older mock) answers "no templates".
-      lookupProductTagTemplates: (productId) => {
+      lookupProductTagTemplates: (productId, comboId) => {
         const fn = optionalCall(() => svc().lookupProductTagTemplates);
-        return fn ? fn(productId) : Promise.resolve([]);
+        return fn ? fn(productId, comboId) : Promise.resolve([]);
       },
     };
   }, [client]);
@@ -325,6 +328,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // Selling requires a promotion, so clearing the promotion while Selling is
   // chosen flips the control back to List price.
   const [priceMode, setPriceMode] = useState<PriceMode>('list');
+  // PRICETAG-LPSP: the line whose tag the eye icon opened.
+  const [previewLineKey, setPreviewLineKey] = useState<string | null>(null);
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -825,18 +830,37 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             ? l.product_id === match.id
             : l.product_set_id === match.id,
         );
+        // PRICETAG-LPSP: the row's own LP/SP, else the header's mode. A typed SP becomes the
+        // manual price only on an SP line with no promotion; a typed LP is never applied.
+        const rowType: PriceMode | null = p.price_type ?? null;
         if (existingIndex >= 0) {
           const existing = merged[existingIndex];
+          // A product listed twice is one line and the later type wins.
+          const nextType = rowType ?? existing.price_type ?? priceMode;
           merged[existingIndex] = {
             ...existing,
             remarks: [existing.remarks, p.notes]
               .filter((v) => v && v.trim())
               .join('; '),
+            price_type: nextType,
+            manual_sell_price:
+              nextType === 'selling' && !existing.promotion_id && p.typed_sell_price
+                ? p.typed_sell_price
+                : existing.manual_sell_price,
           };
           mergedCount += 1;
           return;
         }
+        const lineType: PriceMode = rowType ?? priceMode;
+        // A stored combo the row matched exactly (never for a product the user picked by hand).
+        const comboId =
+          match.kind === 'product' && p.match === 'product' && p.product_id === match.id
+            ? (p.combo_id ?? null)
+            : null;
         merged.push({
+          price_type: lineType,
+          manual_sell_price:
+            lineType === 'selling' && p.typed_sell_price ? p.typed_sell_price : null,
           key: `draft-${Date.now()}-${merged.length}-${Math.random().toString(36).slice(2, 8)}`,
           line_type: match.kind,
           product_id: match.kind === 'product' ? match.id : null,
@@ -847,14 +871,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           included_accessories: '',
           remarks: p.notes ?? '',
           guard_error: null,
-          combo_id: null,
+          combo_id: comboId,
           combos: [],
           combos_loaded: false,
           host_guarded: false,
-          parts: [],
+          // The matched combo's fixed parts, as the stored combo lists them.
+          parts: comboId
+            ? (p.set_parts ?? [])
+                .filter((part) => !!part.product_id)
+                .map((part) => ({
+                  key: newPartKey(),
+                  product_id: part.product_id as string,
+                  code: part.product_code,
+                  name: part.product_code,
+                  role: null,
+                  candidates: [],
+                }))
+            : [],
           promotion_id: null,
           promotion_locked: false,
-          manual_sell_price: null,
           pricing: null,
         });
         addedCount += 1;
@@ -883,7 +918,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPendingFiles((prev) => [...prev, ...payload.files]);
       }
     },
-    [lines],
+    [lines, priceMode],
   );
 
   // ---- What there is to save, and what Submit still needs (D48) ----
@@ -1297,7 +1332,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : !previewState.drawn
           ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
             ? 'Drawing the tag preview...'
-            : 'Add an item to see its tag before approving.'
+            : ''
           : null;
 
   // ---- Approve proof ----
@@ -2033,6 +2068,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               isMobile={isMobile}
               editor={lineEditor}
               showNumberErrors={showNumberErrors}
+              onPreviewLine={setPreviewLineKey}
             />
           )}
           {fieldErrors.lines && (
@@ -2057,6 +2093,28 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           docNumber={request?.doc_number}
           onReadyChange={setPreviewState}
         />
+        {/* PRICETAG-LPSP: one line's tag, from the row's eye icon. */}
+        <Dialog
+          open={previewLineKey !== null}
+          onOpenChange={(next) => {
+            if (!next) setPreviewLineKey(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Tag preview</DialogTitle>
+            </DialogHeader>
+            {previewLineKey !== null ? (
+              <PriceTagLivePreview
+                lines={lines}
+                priceMode={priceMode}
+                lookupTagPreview={previewLookup}
+                docNumber={request?.doc_number}
+                lineKey={previewLineKey}
+              />
+            ) : null}
+          </DialogContent>
+        </Dialog>
       </FormSection>
 
       {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
@@ -2074,9 +2132,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         <div className="space-y-1.5">
           {/* No repeated "Price" label here - the section title already
               says it (review round 1). */}
+          <span id="price-default-label" className="block text-sm text-muted-foreground">
+            Preferred Default
+          </span>
           <PriceModeToggle
             value={priceMode}
-            labelledBy="price-section-title"
+            labelledBy="price-default-label"
             onChange={(mode) => {
               setPriceModeChosen(true);
               setPriceMode(mode);
@@ -2311,12 +2372,37 @@ function AIMatchCell({
   onPick: (product: AIExtractedProductLine, productId: string) => void;
 }) {
   const suggestions = product.suggestions ?? [];
+  // PRICETAG-LPSP: what the model read besides the code, so the review shows what Apply will do.
+  const reading = [
+    product.price_type === 'selling' ? 'SP' : product.price_type === 'list' ? 'LP' : null,
+    product.typed_sell_price ? `SP RM ${product.typed_sell_price.toLocaleString('en-MY')}` : null,
+    product.typed_list_price ? `LP RM ${product.typed_list_price.toLocaleString('en-MY')}` : null,
+  ]
+    .filter(Boolean)
+    .join(' / ');
+  const extra =
+    reading || product.combo_name ? (
+      <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+        {product.combo_name ? (
+          <Badge variant="info" appearance="light" size="sm" title={product.combo_name}>
+            Combo
+          </Badge>
+        ) : null}
+        {reading ? <span>{reading}</span> : null}
+      </div>
+    ) : null;
   if ((status !== 'not_found' && status !== 'picked') || suggestions.length === 0) {
-    return <AIMatchStatusLabel status={status} />;
+    return (
+      <div className="flex flex-col gap-1">
+        <AIMatchStatusLabel status={status} />
+        {extra}
+      </div>
+    );
   }
   return (
     <div className="flex min-w-48 flex-col gap-1">
       <AIMatchStatusLabel status={status} />
+      {extra}
       <SearchableSelect
         value={picked}
         onChange={(v) => onPick(product, v)}

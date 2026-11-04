@@ -11,8 +11,9 @@
  */
 
 import { Fragment } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Eye, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -27,6 +28,7 @@ import {
   formatRM,
   hasOpenGroup,
   itemValue,
+  linePriceType,
   lineTemplateState,
   packageWarningFor,
   partsAtListTitle,
@@ -43,9 +45,21 @@ interface PriceTagLinesTableProps {
   editor: PriceTagLineEditor;
   /** True once a Save / Submit found a bad number: rows then show their message. */
   showNumberErrors: boolean;
+  /** PRICETAG-LPSP: the row's eye icon; the caller owns the lightbox. */
+  onPreviewLine?: (key: string) => void;
 }
 
-export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNumberErrors }: PriceTagLinesTableProps) {
+export function PriceTagLinesTable({
+  lines,
+  priceMode,
+  isMobile,
+  editor,
+  showNumberErrors,
+  onPreviewLine,
+}: PriceTagLinesTableProps) {
+  // PRICETAG-LPSP: LP or SP is per line, so the Promotion / Selling price columns appear as
+  // soon as any line is SP, not only under a Selling header.
+  const anySelling = lines.some((l) => linePriceType(l, priceMode) === 'selling');
   return (
     <div className="overflow-x-auto">
       {/* `table-fixed` on purpose: a product name can run to sixty
@@ -61,10 +75,10 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
             <th
               className={
                 isMobile
-                  ? 'w-[46%] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[31%] px-2 py-2 text-left'
-                    : 'w-[43%] px-2 py-2 text-left'
+                  ? 'w-[40%] px-2 py-2 text-left'
+                  : anySelling
+                    ? 'w-[24%] px-2 py-2 text-left'
+                    : 'w-[36%] px-2 py-2 text-left'
               }
             >
               Item
@@ -77,44 +91,41 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
                 // own Input is never honoured once the column is
                 // narrower than it.
                 isMobile
-                  ? 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[9%] min-w-[3.5rem] px-2 py-2 text-left'
-                    : 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
+                  ? 'w-[13%] min-w-[3.5rem] px-2 py-2 text-left'
+                  : anySelling
+                    ? 'w-[8%] min-w-[3.5rem] px-2 py-2 text-left'
+                    : 'w-[10%] min-w-[3.5rem] px-2 py-2 text-left'
               }
             >
               Qty (tags)
             </th>
+            {!isMobile && <th className="w-[9%] min-w-[5rem] px-2 py-2 text-left">Price</th>}
             {!isMobile && (
               <th
-                className={
-                  priceMode === 'selling'
-                    ? 'w-[13%] px-2 py-2 text-left'
-                    : 'w-[14%] px-2 py-2 text-left'
-                }
+                className={anySelling ? 'w-[11%] px-2 py-2 text-left' : 'w-[14%] px-2 py-2 text-left'}
               >
                 List price
               </th>
             )}
-            {!isMobile && priceMode === 'selling' && (
+            {!isMobile && anySelling && (
               <>
-                <th className="w-[14%] px-2 py-2 text-left">Promotion</th>
-                <th className="w-[12%] px-2 py-2 text-left">Selling price</th>
+                <th className="w-[13%] px-2 py-2 text-left">Promotion</th>
+                <th className="w-[11%] px-2 py-2 text-left">Selling price</th>
               </>
             )}
             <th
               className={
                 isMobile
                   ? 'w-[35%] px-2 py-2 text-left'
-                  : priceMode === 'selling'
-                    ? 'w-[14%] px-2 py-2 text-left'
-                    : 'w-[24%] px-2 py-2 text-left'
+                  : anySelling
+                    ? 'w-[12%] px-2 py-2 text-left'
+                    : 'w-[20%] px-2 py-2 text-left'
               }
             >
               Remarks
             </th>
-            {/* One 28px icon, not a fifth of the row. */}
-            <th className="w-[7%] px-2 py-2"></th>
+            {/* The eye and the trash can: two 28px icons. */}
+            <th className="w-[72px] px-2 py-2"></th>
           </tr>
         </thead>
         <tbody>
@@ -125,6 +136,7 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               index={index}
               priceMode={priceMode}
               isMobile={isMobile}
+              anySelling={anySelling}
               pricing={editor.linePricing[line.key] ?? null}
               fetchItemOptions={editor.fetchItemOptions}
               fetchPartOptions={editor.fetchPartOptions}
@@ -140,6 +152,7 @@ export function PriceTagLinesTable({ lines, priceMode, isMobile, editor, showNum
               onChoosePromotion={editor.choosePromotion}
               onManualSellPriceChange={editor.setManualSellPrice}
               showNumberErrors={showNumberErrors}
+              onPreviewLine={onPreviewLine}
             />
           ))}
         </tbody>
@@ -178,6 +191,9 @@ interface LineRowProps {
   onManualSellPriceChange: (key: string, value: number | null) => void;
   /** True once a Save / Submit found a bad number: rows then show their message. */
   showNumberErrors: boolean;
+  onPreviewLine?: (key: string) => void;
+  /** Any line on the table is SP: the Promotion / Selling price columns exist. */
+  anySelling: boolean;
 }
 
 /** AC-S2-1: "CODE  RM x" - x is the candidate's LIST price in List mode, or
@@ -336,6 +352,8 @@ function LineRow({
   onChoosePromotion,
   onManualSellPriceChange,
   showNumberErrors,
+  onPreviewLine,
+  anySelling,
 }: LineRowProps) {
   const templateState = lineTemplateState(line);
   const isSet = line.line_type === 'product_set';
@@ -364,6 +382,10 @@ function LineRow({
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
   const showPricing = !isSet && !!line.product_id;
+  const isSelling = linePriceType(line, priceMode) === 'selling';
+  // A product with a finished lookup and no published template has nothing to draw.
+  const noTemplate = !isSet && !!line.product_id && templateState.kind === 'none';
+  const canPreview = !!(isSet ? line.product_set_id : line.product_id) && !noTemplate;
   const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
     (option) => ({
       value: option.id,
@@ -385,7 +407,7 @@ function LineRow({
   // columns, since the price fields move into the stack nested under the
   // Item cell instead (AC-S1-11) - the two never render at once, so
   // nothing duplicates in the DOM.
-  const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
+  const subRowSpan = isMobile ? 5 : anySelling ? 9 : 7;
 
   // Owner polish after #948: the desktop `<td>` already sits under a
   // "List price"/"Promotion"/"Selling price" header, so its cell holds only
@@ -393,6 +415,15 @@ function LineRow({
   // no header to read it off. `withLabel` picks between the two; the amount
   // is `whitespace-nowrap` so "RM 1,350" never breaks mid-string, and the
   // "+ option" hint gets its own line rather than fighting it for room.
+  const renderTypeCell = () => (
+    <PriceModeToggle
+      compact
+      ariaLabel={`Price type for line ${index + 1}`}
+      value={linePriceType(line, priceMode)}
+      onChange={(mode) => onUpdate(line.key, { price_type: mode })}
+    />
+  );
+
   const renderListPriceCell = (withLabel: boolean) => (
     <div>
       {withLabel && (
@@ -495,6 +526,9 @@ function LineRow({
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
           />
+          {noTemplate ? (
+            <p className="mt-1 text-xs text-muted-foreground">No tag template yet</p>
+          ) : null}
           {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so
@@ -504,8 +538,9 @@ function LineRow({
               data-testid="line-pricing-stack"
               className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
             >
+              <div className="min-w-[90px]">{renderTypeCell()}</div>
               <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
-              {priceMode === 'selling' && (
+              {isSelling && (
                 <>
                   <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
                     {renderPromotionCell(true)}
@@ -531,17 +566,20 @@ function LineRow({
           />
         </td>
         {!isMobile && (
+          <td className="px-2 py-2">{showPricing ? renderTypeCell() : null}</td>
+        )}
+        {!isMobile && (
           <td className="px-2 py-2">
             {showPricing ? renderListPriceCell(false) : null}
           </td>
         )}
-        {!isMobile && priceMode === 'selling' && (
+        {!isMobile && anySelling && (
           <>
             <td className="px-2 py-2">
-              {showPricing ? renderPromotionCell(false) : null}
+              {showPricing && isSelling ? renderPromotionCell(false) : null}
             </td>
             <td className="px-2 py-2">
-              {showPricing ? renderSellingPriceCell(false) : null}
+              {showPricing && isSelling ? renderSellingPriceCell(false) : null}
             </td>
           </>
         )}
@@ -555,6 +593,17 @@ function LineRow({
         </td>
         <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              disabled={!canPreview}
+              onClick={() => onPreviewLine?.(line.key)}
+              title="Preview tag"
+              aria-label={`Preview tag for line ${index + 1}`}
+            >
+              <Eye className="size-3.5" />
+            </Button>
             {/* No confirm: the row is unsaved form state, not a record. */}
             <Button
               variant="ghost"
@@ -652,7 +701,7 @@ function LineRow({
             lineIndex={index}
             part={part}
             pricing={pricing}
-            priceMode={priceMode}
+            priceMode={linePriceType(line, priceMode)}
             combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
             onResolvePart={onResolvePart}

@@ -1269,6 +1269,15 @@ export interface AIExtractedProductLine {
   // AI-EXTRACT-DYM: on a row with no match only - the resolver's "did you
   // mean" candidates, best first. Never applied until the user picks one.
   suggestions?: AIExtractedProductSuggestion[];
+  // PRICETAG-LPSP (price tag form only): the model's reading of LP/SP, typed figures and a "+"
+  // set. `combo_id` is a STORED combo whose fixed parts equal `set_parts`; a set row without one
+  // comes back unmatched. A typed LP is never applied.
+  price_type?: 'list' | 'selling' | null;
+  typed_list_price?: number | null;
+  typed_sell_price?: number | null;
+  set_parts?: Array<{ product_code: string; product_id?: string | null }>;
+  combo_id?: string | null;
+  combo_name?: string | null;
 }
 
 export interface AIExtractedProductSuggestion {

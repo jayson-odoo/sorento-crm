@@ -164,6 +164,8 @@ export interface PriceTagRequestLine {
   /** Human-readable code resolved from the product/set. */
   code: string;
   show_promo_price: boolean;
+  /** PRICETAG-LPSP: this line's own LP/SP; null on a line saved before it existed. */
+  price_type?: PriceMode | null;
   quantity: number;
   included_accessories: string | null;
   /** Free-text note on the line (D6). Set on the line, not the header, so
@@ -204,6 +206,8 @@ export interface ProductTagTemplateOption {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
+  /** PRICETAG-LPSP: the link preselected on a line. */
+  is_default?: boolean;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -217,6 +221,8 @@ export interface TagPreviewLineInput {
   promotion_id: string | null;
   manual_sell_price: number | null;
   tag_template_id: string | null;
+  /** PRICETAG-LPSP: null = the request's mode. */
+  price_type?: PriceMode | null;
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
@@ -403,6 +409,8 @@ export type PriceTagRequestLineInput = {
   manual_sell_price?: number | null;
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's pick (null = none). */
   tag_template_id?: string | null;
+  /** PRICETAG-LPSP: this line's LP or SP; null/absent = the request's mode. */
+  price_type?: PriceMode | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -600,9 +608,12 @@ export function makePriceTagRequestService(
    */
   async function lookupProductTagTemplates(
     productId: string,
+    comboId?: string | null,
   ): Promise<ProductTagTemplateOption[]> {
+    // PRICETAG-LPSP: with a combo, the combo's own links when it has any.
+    const query = comboId ? `?combo_id=${encodeURIComponent(comboId)}` : '';
     const res = await fetcher(
-      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}`,
+      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}${query}`,
     );
     return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
   }
