@@ -3517,11 +3517,13 @@ export function TagCanvasEditor({
         : undefined;
   // PRICETAG-COMBO-RENDER K7: the previewed combo's positions, for the position picker and the
   // Layers suffix.
+  // In the template editor the previewed combo is the data (`dataOf`), not `boundData`.
+  const slotSource = comboPreview?.data ?? boundData;
   const subjectSlots =
-    boundData?.kind === 'line'
-      ? boundData.line.slots
-      : boundData?.kind === 'product'
-        ? boundData.product.slots
+    slotSource?.kind === 'line'
+      ? slotSource.line.slots
+      : slotSource?.kind === 'product'
+        ? slotSource.product.slots
         : null;
   const subjectParentCode =
     boundData?.kind === 'line'
