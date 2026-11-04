@@ -395,8 +395,12 @@ def _handler_api_call_log_prune(db, task):
     # scheduled task of their own: same kind of telemetry, one fixed 30-day window.
     from app.services.client_error_report_service import prune_client_error_reports
 
-    result["client_error_reports_deleted"] = int(prune_client_error_reports(db))
-    db.commit()
+    try:
+        result["client_error_reports_deleted"] = int(prune_client_error_reports(db))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("client_error_report prune failed")
     return result
 
 

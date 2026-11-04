@@ -79,7 +79,7 @@ export function ClientErrorDetailDrawer({
               <section className="space-y-1.5">
                 <h3 className="text-xs font-medium text-muted-foreground">Stack</h3>
                 {row.stack ? (
-                  <pre className="max-h-96 overflow-auto rounded bg-muted/50 p-3 text-[11px] leading-relaxed">
+                  <pre className="max-h-96 overflow-auto rounded bg-muted/50 p-3 text-2xs leading-relaxed">
                     {row.stack}
                   </pre>
                 ) : (

@@ -39,10 +39,15 @@ BOUNDARIES = ("global", "protected")
 def _cut(value: Optional[object], limit: int) -> Optional[str]:
     if value is None:
         return None
-    text = str(value).strip()
+    # Postgres refuses NUL in text; drop it rather than lose the report to a 500.
+    text = str(value).replace("\x00", "").strip()
     if not text:
         return None
     return text[:limit]
+
+
+def _redact(value: Optional[str]) -> Optional[str]:
+    return redact_url(str(value)) if value is not None else None
 
 
 def clean_path(raw: Optional[str]) -> Optional[str]:
@@ -84,13 +89,17 @@ def record_report(
     client_ts: Optional[datetime],
 ) -> ClientErrorReport:
     if client_ts is not None and client_ts.tzinfo is not None:
-        client_ts = client_ts.replace(tzinfo=None) - (client_ts.utcoffset() or timedelta(0))
+        try:
+            client_ts = client_ts.replace(tzinfo=None) - (client_ts.utcoffset() or timedelta(0))
+        except OverflowError:
+            client_ts = None
     row = ClientErrorReport(
         user_id=user_id,
         boundary=boundary if boundary in BOUNDARIES else "global",
         error_name=_cut(error_name, MAX_NAME),
-        message=_cut(message, MAX_MESSAGE),
-        stack=_cut(stack, MAX_STACK),
+        # A failed-fetch message or a stack line can quote a full URL, link token included.
+        message=_cut(_redact(message), MAX_MESSAGE),
+        stack=_cut(_redact(stack), MAX_STACK),
         digest=_cut(digest, MAX_DIGEST),
         path=clean_path(path),
         build_sha=_cut(build_sha, MAX_BUILD_SHA),

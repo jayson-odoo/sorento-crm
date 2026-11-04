@@ -132,3 +132,37 @@ def test_prune_deletes_rows_past_30_days(db):
     assert svc.prune_client_error_reports(db) == 1
     db.commit()
     assert [r.message for r in db.query(ClientErrorReport).all()] == ["new"]
+
+
+def test_chunked_oversized_body_is_refused_without_content_length(db):
+    def gen():
+        yield b'{"message": "'
+        for _ in range(40):
+            yield b"x" * 1024
+        yield b'"}'
+
+    with api_client(db, []) as client:
+        r = client.post(URL, content=gen(), headers={"Content-Type": "application/json"})
+    assert r.status_code == 413
+    assert db.query(ClientErrorReport).count() == 0
+
+
+def test_link_tokens_in_message_and_stack_are_redacted(db):
+    body = _report(
+        message="Failed to fetch https://x.my/api/v1/public/file-links/sekrit1?token=sekrit2",
+        stack="at load (https://x.my/view?token=sekrit3)",
+    )
+    with api_client(db, []) as client:
+        assert client.post(URL, json=body).status_code == 204
+    row = db.query(ClientErrorReport).one()
+    for secret in ("sekrit1", "sekrit2", "sekrit3"):
+        assert secret not in (row.message or "") + (row.stack or "")
+
+
+def test_nul_and_extreme_timestamp_do_not_lose_the_report(db):
+    body = _report(message="a\u0000b", timestamp="0001-01-01T00:00:00+01:00")
+    with api_client(db, []) as client:
+        assert client.post(URL, json=body).status_code == 204
+    row = db.query(ClientErrorReport).one()
+    assert row.message == "ab"
+    assert row.client_ts is None

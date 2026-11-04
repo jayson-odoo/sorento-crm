@@ -2,7 +2,7 @@
 
 POST: any signed-in principal reports one error that reached a React error boundary.
 The body is parsed by hand after a size check, so an oversized payload is refused
-before pydantic (or the database) ever sees it. 204 on success; 413 when too large;
+while it streams in, before it is buffered in full, parsed or stored. 204 on success; 413 when too large;
 429 once the user's hourly allowance is spent.
 
 GET: the System Management list, gated on its own view slug.
@@ -81,9 +81,14 @@ async def report_client_error(
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > svc.MAX_BODY_BYTES:
         return _error(413, "payload_too_large", "Report too large")
-    body = await request.body()
-    if len(body) > svc.MAX_BODY_BYTES:
-        return _error(413, "payload_too_large", "Report too large")
+    # Read in chunks and stop at the cap: a chunked request has no content-length,
+    # and request.body() would buffer whatever the client cares to send.
+    received = bytearray()
+    async for chunk in request.stream():
+        received.extend(chunk)
+        if len(received) > svc.MAX_BODY_BYTES:
+            return _error(413, "payload_too_large", "Report too large")
+    body = bytes(received)
     try:
         payload = ClientErrorIn.model_validate_json(body or b"{}")
     except ValidationError:
