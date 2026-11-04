@@ -1187,7 +1187,8 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
     );
     fireEvent.contextMenu(screen.getByRole('tab', { name: 'Scope 1' }));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByRole('menuitem')).toBeNull();
+    expect(screen.queryByRole('menuitem')).toBeNull();    // Nor the touch trigger: the read page has no scope actions at all.
+    expect(screen.queryByRole('button', { name: 'Scope actions on Scope 1' })).toBeNull();
   });
 
   it('right-clicking a scope tab that is not the active one selects it before the menu opens', async () => {

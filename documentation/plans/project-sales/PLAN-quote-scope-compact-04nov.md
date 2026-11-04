@@ -1,6 +1,6 @@
 # PLAN: quotation Lines tab, drop the duplicate scope header (QUOTE-SCOPE-COMPACT)
 
-Status: in progress. Small fix track (frontend only, no migration, no RBAC change).
+Status: built, in review (PR #2159). Small fix track (frontend only, no migration, no RBAC change).
 
 ## Journey
 Owner, 4 Nov: "why do I need a section for the scope where my scope is already at the top?,
@@ -31,3 +31,10 @@ the delete button we can jsut put it under the right click of the scope right?"
 - AC-3 The active tab has a "Scope actions" trigger opening the same Rename / Remove scope.
 - AC-4 An issued saved scope offers Remove scope disabled.
 - AC-5 Usable at 375 and 1280, no horizontal page scroll.
+
+## Evidence
+Browser pass on a sandbox stack (seeded project, New proposal, scopes "Scope 1" and "b"):
+`evidence/quote-scope-compact/` holds before/after at 1280 and 375, the right-click menu at
+1280 and the touch menu at 375. scrollWidth equals the viewport at both widths; the ⋯ trigger is
+hidden at 1280 with a mouse and visible at 375 with touch; Rename from the touch menu opens the
+Edit scope dialog.
