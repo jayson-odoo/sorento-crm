@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import type { DevLoginUser } from '@/services/devLoginService';
 import { useDevLoginUsers } from '../hooks/useDevLoginUsers';
+import { sessionStore } from '@/lib/storage';
 
 /**
  * DEV-LOGIN-BYPASS (PLAN-dev-login-bypass-03oct.md): on a local test copy with the flag on,
@@ -19,7 +20,7 @@ export const DEV_LOGIN_AUTO_KEY = 'sorento.devLogin.autoDone';
 
 function autoAlreadyRan(): boolean {
   try {
-    return window.sessionStorage.getItem(DEV_LOGIN_AUTO_KEY) === '1';
+    return sessionStore.getItem(DEV_LOGIN_AUTO_KEY) === '1';
   } catch {
     return true; // storage blocked: never loop, just show the picker
   }
@@ -27,7 +28,7 @@ function autoAlreadyRan(): boolean {
 
 function markAutoRan(): void {
   try {
-    window.sessionStorage.setItem(DEV_LOGIN_AUTO_KEY, '1');
+    sessionStore.setItem(DEV_LOGIN_AUTO_KEY, '1');
   } catch {
     // ignore: autoAlreadyRan() already reads blocked storage as "ran"
   }

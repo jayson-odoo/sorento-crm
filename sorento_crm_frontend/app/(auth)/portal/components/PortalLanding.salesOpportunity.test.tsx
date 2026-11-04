@@ -175,7 +175,7 @@ describe('PortalLanding - Sales Opportunity is one kind in the selector (F1)', (
       .map((el) => el.closest('[role="link"]'))
       .find(Boolean) as HTMLElement;
     expect(within(card).getByText(/15,000/)).toBeInTheDocument();
-    expect(within(card).getByText(/18 Oct 2026/)).toBeInTheDocument();
+    expect(within(card).getByText(/18\/10\/2026/)).toBeInTheDocument();
   });
 
   it('has the New button for the kind, pointing at the slug tree', async () => {
@@ -221,7 +221,7 @@ describe('PortalLanding - My target panel at the top of the Sales Opportunity ki
 
     const panel = await screen.findByRole('region', { name: 'My target' });
     expect(within(panel).getByText('Q4 sales')).toBeInTheDocument();
-    expect(within(panel).getByText('By 31 Oct 2026')).toBeInTheDocument();
+    expect(within(panel).getByText('By 31/10/2026')).toBeInTheDocument();
     const stat = (label: string) => within(panel).getByTestId(`target-stat-${label}`).textContent;
     expect(stat('target')).toBe('TargetRM 100,000');
     expect(stat('achieved')).toBe('AchievedRM 40,000');

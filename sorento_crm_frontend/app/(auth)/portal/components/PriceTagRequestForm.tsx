@@ -38,6 +38,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -66,6 +67,8 @@ import type {
   PriceTagRequestLineInput,
   DebtorOption,
   PriceMode,
+  ProductComboOption,
+  ProductCombosLookup,
   TagItemOption,
   TagPreviewLineInput,
 } from '../lib/price-tag-request-service';
@@ -98,6 +101,8 @@ import {
   lineNeedsTemplate,
   lineToDraft,
   MISSING_TAG_TEMPLATE,
+  linePriceType,
+  partsFromCombo,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
@@ -109,7 +114,8 @@ import {
 } from './AIExtractDialog';
 import type { AIExtractedProductLine } from '../lib/portal-client';
 import type { PortalAttachment, PortalSubmissionNeighbours } from '../lib/portal-client';
-import { codeWithName } from '@/lib/product-display';
+import { distinctName } from '@/lib/product-display';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
  *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
@@ -258,9 +264,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
       // PRICETAG-TEMPLATE-PER-PRODUCT. Read at call time and guarded: a
       // service without it (an older mock) answers "no templates".
-      lookupProductTagTemplates: (productId) => {
+      lookupProductTagTemplates: (productId, comboId) => {
         const fn = optionalCall(() => svc().lookupProductTagTemplates);
-        return fn ? fn(productId) : Promise.resolve([]);
+        return fn ? fn(productId, comboId) : Promise.resolve([]);
       },
     };
   }, [client]);
@@ -325,9 +331,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // Selling requires a promotion, so clearing the promotion while Selling is
   // chosen flips the control back to List price.
   const [priceMode, setPriceMode] = useState<PriceMode>('list');
+  // PRICETAG-LPSP: the line whose tag the eye icon opened.
+  const [previewLineKey, setPreviewLineKey] = useState<string | null>(null);
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
+  /** The latest committed lines, for a callback that resumes after an await. */
+  const linesRef = useRef<DraftLine[]>(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   // The Sales Order box's accept list, off `/me` (see the /me effect below).
@@ -354,7 +367,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // AI-EXTRACT-DYM: the "did you mean" suggestion the user picked per code
   // (product id), keyed like `aiMatchStatuses`. Empty after every extraction:
   // nothing is picked for the user.
-  const [aiPicks, setAiPicks] = useState<Record<string, string>>({});
+  const [aiPicks, setAiPicks] = useState<Record<string, SearchableSelectOption>>({});
+  // PRICETAG-LPSP: the stored combos of the host the user picked for a "+" row, and the one
+  // chosen. A set row is a combo line or it is a bare host; nothing is created from here.
+  const [aiHostCombos, setAiHostCombos] = useState<Record<string, ProductComboOption[]>>({});
+  const [aiComboPicks, setAiComboPicks] = useState<Record<string, string>>({});
+  const aiComboPicksRef = useRef<Record<string, string>>({});
   const normalizeAiCode = (raw: string | null | undefined) => (raw ?? '').trim().toLowerCase();
 
 
@@ -542,7 +560,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       lines.length > 0 || fileCount > 0
         ? `${lines.length} line${lines.length === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'}`
         : null,
-    price: !priceModeChosen ? null : priceMode === 'selling' ? 'Selling price' : 'List price',
+    price: !priceModeChosen
+      ? null
+      : new Set(
+            lines
+              .filter((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
+              .map((l) => linePriceType(l, priceMode)),
+          ).size > 1
+        ? 'Mixed'
+        : priceMode === 'selling'
+          ? 'Selling price'
+          : 'List price',
     need_by:
       neededByDate || notes.trim()
         ? [neededByDate || null, notes.trim() ? 'notes' : null]
@@ -560,7 +588,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
-    setLines(data.lines.map(lineToDraft));
+    setLines(data.lines.map((l) => lineToDraft(l, data.price_mode ?? 'list')));
     setAttachments(data.attachments ?? []);
   }, []);
 
@@ -692,7 +720,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         // line ids have no business surviving as this draft's React keys.
         setLines(
           data.lines.map((l) => ({
-            ...lineToDraft(l),
+            ...lineToDraft(l, data.price_mode ?? 'list'),
             key: `dup-${Math.random().toString(36).slice(2, 10)}`,
           })),
         );
@@ -762,36 +790,106 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
       setAiMatchStatuses(statuses);
       setAiPicks({});
+      setAiHostCombos({});
+      setAiComboPicks({});
+      aiComboPicksRef.current = {};
     },
     [],
   );
 
-  /** AI-EXTRACT-DYM: the user confirms (or clears) one suggestion for a row
-   *  with no match. A pick reads exactly like a matched product from here on,
-   *  so Apply needs no branch of its own; a clear puts the row back to
-   *  not found. */
+  /** The picker of an unmatched row (mock C2): the server's did-you-mean suggestions first, then
+   *  the catalogue search the Item picker uses. One option per product, the code once and the
+   *  name only as a distinct second line. */
+  const aiFetchOptions = useCallback(
+    async (p: AIExtractedProductLine, query: string): Promise<SearchableSelectOption[]> => {
+      const needle = query.trim().toLowerCase();
+      const toOption = (id: string, code: string, name?: string | null): SearchableSelectOption => ({
+        value: id,
+        label: code,
+        description: distinctName(code, name) ?? undefined,
+        code,
+        name: name || code,
+      });
+      const suggested = (p.suggestions ?? [])
+        .filter(
+          (sug) =>
+            !needle ||
+            sug.product_code.toLowerCase().includes(needle) ||
+            (sug.product_name ?? '').toLowerCase().includes(needle),
+        )
+        .map((sug) => toOption(sug.product_id, sug.product_code, sug.product_name));
+      const seen = new Set(suggested.map((option) => option.value));
+      let items: TagItemOption[] = [];
+      try {
+        items = await lineLookups.lookupTagItems(query);
+      } catch {
+        items = [];
+      }
+      const rest = items
+        .filter((item) => item.kind === 'product' && !seen.has(item.id))
+        .map((item) => toOption(item.id, item.code, item.name));
+      return [...suggested, ...rest];
+    },
+    [lineLookups],
+  );
+
+  /** The user picks (or clears) a product for a row with no match. A pick reads exactly like a
+   *  matched product from here on; a clear puts the row back to not found. For a "+" row the
+   *  host's stored combos are then offered in the same cell. */
   const handleAIPick = useCallback(
-    (p: AIExtractedProductLine, productId: string) => {
+    (p: AIExtractedProductLine, option: SearchableSelectOption | null) => {
       const code = normalizeAiCode(p.product_code);
-      const pick = (p.suggestions ?? []).find((s) => s.product_id === productId);
-      aiMatchesRef.current[code] = pick
+      aiMatchesRef.current[code] = option
         ? {
             kind: 'product',
-            id: pick.product_id,
-            code: pick.product_code,
-            name: pick.product_name || pick.product_code,
+            id: option.value,
+            code: option.code ?? option.label,
+            name: option.name ?? option.label,
           }
         : null;
-      setAiMatchStatuses((prev) => ({ ...prev, [code]: pick ? 'picked' : 'not_found' }));
+      setAiMatchStatuses((prev) => ({ ...prev, [code]: option ? 'picked' : 'not_found' }));
       setAiPicks((prev) => {
         const next = { ...prev };
-        if (pick) next[code] = pick.product_id;
+        if (option) next[code] = option;
         else delete next[code];
         return next;
       });
+      delete aiComboPicksRef.current[code];
+      setAiComboPicks((prev) => {
+        const next = { ...prev };
+        delete next[code];
+        return next;
+      });
+      setAiHostCombos((prev) => {
+        const next = { ...prev };
+        delete next[code];
+        return next;
+      });
+      if (option && (p.set_parts?.length ?? 0) > 0) {
+        lineLookups
+          .lookupProductCombos(option.value)
+          .then((lookup) => {
+            // Still the pick the user has now.
+            if (aiMatchesRef.current[code]?.id !== option.value) return;
+            setAiHostCombos((prev) => ({ ...prev, [code]: lookup.combos }));
+          })
+          .catch(() => undefined);
+      }
     },
-    [],
+    [lineLookups],
   );
+
+  const handleAIComboPick = useCallback((p: AIExtractedProductLine, comboId: string) => {
+    const code = normalizeAiCode(p.product_code);
+    if (comboId) aiComboPicksRef.current[code] = comboId;
+    else delete aiComboPicksRef.current[code];
+    setAiComboPicks((prev) => {
+      const next = { ...prev };
+      if (comboId) next[code] = comboId;
+      else delete next[code];
+      return next;
+    });
+  }, []);
 
   /** Apply = append one line per matched row (D7). unit_price is shown in the
    *  dialog only and is never stored (ADR 0008) - no field in `DraftLine`
@@ -800,90 +898,186 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const handleAIExtractApply = useCallback(
     (payload: AIExtractApplyPayload) => {
       const matches = aiMatchesRef.current;
-      const notFoundCodes: string[] = [];
-      // R3-7: a matched row whose product/set is already on the request -
-      // an existing line, or an earlier row in this SAME batch - merges
-      // into it (quantity summed, remarks joined) instead of adding a
-      // second line the server would refuse (DUPLICATE_LINE).
-      const merged: DraftLine[] = lines.map((l) => ({ ...l }));
-      let addedCount = 0;
-      let mergedCount = 0;
-      payload.productLines.forEach((p) => {
-        const code = (p.product_code ?? '').trim();
-        const match = matches[normalizeAiCode(code)];
-        if (!match) {
-          if (code) notFoundCodes.push(code);
-          return;
-        }
-        // r10 S2 (owner: "qty ignore"): quantity is how many TAGS the
-        // salesperson wants, which the document never says - the extract
-        // never sets it, and a second sighting of the same code merging in
-        // is not a second tag either.
-        const qty = 1;
-        const existingIndex = merged.findIndex((l) =>
-          match.kind === 'product'
-            ? l.product_id === match.id
-            : l.product_set_id === match.id,
-        );
-        if (existingIndex >= 0) {
-          const existing = merged[existingIndex];
-          merged[existingIndex] = {
-            ...existing,
-            remarks: [existing.remarks, p.notes]
-              .filter((v) => v && v.trim())
-              .join('; '),
-          };
-          mergedCount += 1;
-          return;
-        }
-        merged.push({
-          key: `draft-${Date.now()}-${merged.length}-${Math.random().toString(36).slice(2, 8)}`,
-          line_type: match.kind,
-          product_id: match.kind === 'product' ? match.id : null,
-          product_set_id: match.kind === 'product_set' ? match.id : null,
-          name: match.name || match.code,
-          code: match.code,
-          quantity: qty,
-          included_accessories: '',
-          remarks: p.notes ?? '',
-          guard_error: null,
-          combo_id: null,
-          combos: [],
-          combos_loaded: false,
-          host_guarded: false,
-          parts: [],
-          promotion_id: null,
-          promotion_locked: false,
-          manual_sell_price: null,
-          pricing: null,
-        });
-        addedCount += 1;
-      });
-      if (addedCount > 0 || mergedCount > 0) {
-        setLines(merged);
-        const parts: string[] = [];
-        if (addedCount > 0) {
-          parts.push(`${addedCount} line${addedCount === 1 ? '' : 's'}`);
-        }
-        if (mergedCount > 0) {
-          parts.push(
-            `${mergedCount} merged into existing line${mergedCount === 1 ? '' : 's'}`,
+
+      /** The stored combo a row ends up with: the one the server matched exactly (never for a
+       *  product the user picked by hand), else the one the user chose for the picked host. */
+      const comboIdFor = (p: AIExtractedProductLine, match: TagItemOption): string | null => {
+        if (match.kind !== 'product') return null;
+        if (p.match === 'product' && p.product_id === match.id && p.combo_id) return p.combo_id;
+        return aiComboPicksRef.current[normalizeAiCode(p.product_code)] ?? null;
+      };
+
+      /** The rows applied onto `base`. Pure, so it can run on the latest lines inside the
+       *  state updater: the combos lookup below is async, and an answer the line editor
+       *  writes meanwhile (a lone combo, an auto promotion) must not be overwritten by
+       *  the lines this callback closed over. */
+      const applyRows = (
+        base: DraftLine[],
+        hostCombos: Record<string, ProductCombosLookup | null>,
+      ) => {
+        const notFoundCodes: string[] = [];
+        // R3-7: a matched row whose product/set is already on the request -
+        // an existing line, or an earlier row in this SAME batch - merges
+        // into it (quantity summed, remarks joined) instead of adding a
+        // second line the server would refuse (DUPLICATE_LINE).
+        const merged: DraftLine[] = base.map((l) => ({ ...l }));
+        let addedCount = 0;
+        let mergedCount = 0;
+        payload.productLines.forEach((p) => {
+          const code = (p.product_code ?? '').trim();
+          const match = matches[normalizeAiCode(code)];
+          if (!match) {
+            if (code) notFoundCodes.push(code);
+            return;
+          }
+          // r10 S2 (owner: "qty ignore"): quantity is how many TAGS the
+          // salesperson wants, which the document never says - the extract
+          // never sets it, and a second sighting of the same code merging in
+          // is not a second tag either.
+          const qty = 1;
+          const existingIndex = merged.findIndex((l) =>
+            match.kind === 'product'
+              ? l.product_id === match.id
+              : l.product_set_id === match.id,
           );
+          // PRICETAG-LPSP: the row's own LP/SP when the paste gave one. A row without one stays
+          // untyped and follows Preferred Default, including later changes of it.
+          const rowType: PriceMode | null = p.price_type ?? null;
+          // A "+" row is a combo line or a bare host. A typed SP is the set's price, so it is
+          // applied only when the row ends up as a stored combo line.
+          const isSetRow = (p.set_parts?.length ?? 0) > 0;
+          const lookup = match.kind === 'product' ? (hostCombos[match.id] ?? null) : null;
+          const wantedComboId = comboIdFor(p, match);
+          const combo = wantedComboId
+            ? lookup?.combos.find((c) => c.combo_id === wantedComboId)
+            : undefined;
+          const comboId = combo ? combo.combo_id : null;
+          // The stored combo, built exactly like a hand pick of the package (choice groups
+          // included).
+          const comboFields =
+            combo && lookup
+              ? {
+                  combo_id: combo.combo_id,
+                  combos: lookup.combos,
+                  combos_loaded: true,
+                  host_guarded: lookup.host_guarded,
+                  parts: partsFromCombo(combo),
+                }
+              : null;
+          if (existingIndex >= 0) {
+            const existing = merged[existingIndex];
+            // A product listed twice is one line and the later type wins.
+            const nextType: PriceMode | null = rowType ?? existing.price_type ?? null;
+            const typedSp =
+              (nextType ?? priceMode) === 'selling' &&
+              p.typed_sell_price &&
+              (!isSetRow || comboId)
+                ? p.typed_sell_price
+                : null;
+            // Owner Q4: SP is typed only on a line with no promotion. An auto-filled one
+            // (`promotion_locked` false) was never the user's choice, so it yields to the
+            // typed price exactly as on a new line; one the user picked is kept.
+            const takesTypedSp =
+              typedSp != null && (!existing.promotion_id || !existing.promotion_locked);
+            merged[existingIndex] = {
+              ...existing,
+              remarks: [existing.remarks, p.notes]
+                .filter((v) => v && v.trim())
+                .join('; '),
+              price_type: nextType,
+              ...(comboFields ?? {}),
+              ...(takesTypedSp ? { promotion_id: null, manual_sell_price: typedSp } : {}),
+            };
+            mergedCount += 1;
+            return;
+          }
+          const effectiveType: PriceMode = rowType ?? priceMode;
+          merged.push({
+            price_type: rowType,
+            manual_sell_price:
+              effectiveType === 'selling' && p.typed_sell_price && (!isSetRow || comboId)
+                ? p.typed_sell_price
+                : null,
+            key: `draft-${Date.now()}-${merged.length}-${Math.random().toString(36).slice(2, 8)}`,
+            line_type: match.kind,
+            product_id: match.kind === 'product' ? match.id : null,
+            product_set_id: match.kind === 'product_set' ? match.id : null,
+            name: match.name || match.code,
+            code: match.code,
+            quantity: qty,
+            included_accessories: '',
+            remarks: p.notes ?? '',
+            guard_error: null,
+            combo_id: null,
+            combos: [],
+            combos_loaded: false,
+            host_guarded: false,
+            parts: [],
+            ...(comboFields ?? {}),
+            promotion_id: null,
+            promotion_locked: false,
+            pricing: null,
+          });
+          addedCount += 1;
+        });
+        return { merged, addedCount, mergedCount, notFoundCodes };
+      };
+
+      const build = (hostCombos: Record<string, ProductCombosLookup | null>) => {
+        // The counts for the toast from the latest committed lines; the lines themselves
+        // from whatever state is current when React applies the update.
+        const { addedCount, mergedCount, notFoundCodes } = applyRows(
+          linesRef.current,
+          hostCombos,
+        );
+        if (addedCount > 0 || mergedCount > 0) {
+          setLines((prev) => applyRows(prev, hostCombos).merged);
+          const parts: string[] = [];
+          if (addedCount > 0) {
+            parts.push(`${addedCount} line${addedCount === 1 ? '' : 's'}`);
+          }
+          if (mergedCount > 0) {
+            parts.push(
+              `${mergedCount} merged into existing line${mergedCount === 1 ? '' : 's'}`,
+            );
+          }
+          toast.success(`Added ${parts.join(', ')} from the sales order.`);
         }
-        toast.success(`Added ${parts.join(', ')} from the sales order.`);
+        if (notFoundCodes.length > 0) {
+          toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+        }
+        // The dialog's own alsoAttach checkbox (checked by default): the file(s)
+        // read for extraction join the SAME pending/flush path a Sales Order
+        // drop uses, so Save Draft/Submit upload them once - not here, and not
+        // twice.
+        if (payload.alsoAttach && payload.files.length > 0) {
+          setPendingFiles((prev) => [...prev, ...payload.files]);
+        }
+      };
+
+      // The package lookup only for hosts that end up as a combo line.
+      const hostIds = Array.from(
+        new Set(
+          payload.productLines.flatMap((p) => {
+            const match = matches[normalizeAiCode(p.product_code)];
+            return match && match.kind === 'product' && comboIdFor(p, match) ? [match.id] : [];
+          }),
+        ),
+      );
+      if (hostIds.length === 0) {
+        build({});
+        return;
       }
-      if (notFoundCodes.length > 0) {
-        toast.error(`Not found: ${notFoundCodes.join(', ')}`);
-      }
-      // The dialog's own alsoAttach checkbox (checked by default): the file(s)
-      // read for extraction join the SAME pending/flush path a Sales Order
-      // drop uses, so Save Draft/Submit upload them once - not here, and not
-      // twice.
-      if (payload.alsoAttach && payload.files.length > 0) {
-        setPendingFiles((prev) => [...prev, ...payload.files]);
-      }
+      return Promise.all(
+        hostIds.map((id) =>
+          lineLookups.lookupProductCombos(id).then(
+            (lookup) => [id, lookup] as const,
+            () => [id, null] as const,
+          ),
+        ),
+      ).then((pairs) => build(Object.fromEntries(pairs)));
     },
-    [lines],
+    [priceMode, lineLookups],
   );
 
   // ---- What there is to save, and what Submit still needs (D48) ----
@@ -901,7 +1095,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   /** AC-S2-8: the shared payload builder, so the portal and the CRM request
   *  page send the same line shape (`draftLinesPayload`). */
-  const payloadLines = (): PriceTagRequestLineInput[] => draftLinesPayload(lines);
+  const payloadLines = (): PriceTagRequestLineInput[] => draftLinesPayload(lines, priceMode);
 
   // AC-P10: a failed Submit opens the first offending section, top to bottom,
   // so the inline error it just set is visible rather than sitting inside a
@@ -1297,7 +1491,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : !previewState.drawn
           ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
             ? 'Drawing the tag preview...'
-            : 'Add an item to see its tag before approving.'
+            : ''
           : null;
 
   // ---- Approve proof ----
@@ -1537,7 +1731,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {/* Read-only metadata, never a form field: created is derived, not
               something the salesperson typed. */}
           <p className="text-xs text-muted-foreground">
-            Created {new Date(request.created_at).toLocaleDateString()}
+            Created {formatDateInMalaysia(request.created_at)}
           </p>
         </div>
 
@@ -1547,7 +1741,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
               {request.ready_for_collection_at
-                ? `Ready to collect since ${new Date(request.ready_for_collection_at).toLocaleDateString()}`
+                ? `Ready to collect since ${formatDateInMalaysia(request.ready_for_collection_at)}`
                 : 'Ready to collect'}
             </p>
             <Button
@@ -2033,6 +2227,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               isMobile={isMobile}
               editor={lineEditor}
               showNumberErrors={showNumberErrors}
+              onPreviewLine={setPreviewLineKey}
             />
           )}
           {fieldErrors.lines && (
@@ -2057,6 +2252,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           docNumber={request?.doc_number}
           onReadyChange={setPreviewState}
         />
+        {/* PRICETAG-LPSP: one line's tag, from the row's eye icon, in the viewer's lightbox. */}
+        {previewLineKey !== null ? (
+          <PriceTagLivePreview
+            lines={lines}
+            priceMode={priceMode}
+            lookupTagPreview={previewLookup}
+            docNumber={request?.doc_number}
+            lineKey={previewLineKey}
+            onClose={() => setPreviewLineKey(null)}
+          />
+        ) : null}
       </FormSection>
 
       {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
@@ -2074,9 +2280,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         <div className="space-y-1.5">
           {/* No repeated "Price" label here - the section title already
               says it (review round 1). */}
+          <span id="price-default-label" className="block text-sm text-muted-foreground">
+            Preferred Default
+          </span>
           <PriceModeToggle
             value={priceMode}
-            labelledBy="price-section-title"
+            labelledBy="price-default-label"
             onChange={(mode) => {
               setPriceModeChosen(true);
               setPriceMode(mode);
@@ -2151,8 +2360,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <AIMatchCell
             product={p}
             status={aiMatchStatuses[normalizeAiCode(p.product_code)]}
-            picked={aiPicks[normalizeAiCode(p.product_code)] ?? ''}
+            picked={aiPicks[normalizeAiCode(p.product_code)] ?? null}
             onPick={handleAIPick}
+            fetchOptions={aiFetchOptions}
+            hostCombos={aiHostCombos[normalizeAiCode(p.product_code)] ?? []}
+            comboPick={aiComboPicks[normalizeAiCode(p.product_code)] ?? ''}
+            onComboPick={handleAIComboPick}
           />
         )}
         initialFiles={aiExtractFiles}
@@ -2304,32 +2517,82 @@ function AIMatchCell({
   status,
   picked,
   onPick,
+  fetchOptions,
+  hostCombos,
+  comboPick,
+  onComboPick,
 }: {
   product: AIExtractedProductLine;
   status: AIMatchStatus | undefined;
-  picked: string;
-  onPick: (product: AIExtractedProductLine, productId: string) => void;
+  picked: SearchableSelectOption | null;
+  onPick: (product: AIExtractedProductLine, option: SearchableSelectOption | null) => void;
+  fetchOptions: (product: AIExtractedProductLine, query: string) => Promise<SearchableSelectOption[]>;
+  hostCombos: ProductComboOption[];
+  comboPick: string;
+  onComboPick: (product: AIExtractedProductLine, comboId: string) => void;
 }) {
-  const suggestions = product.suggestions ?? [];
-  if ((status !== 'not_found' && status !== 'picked') || suggestions.length === 0) {
-    return <AIMatchStatusLabel status={status} />;
+  const fetchForRow = useCallback(
+    (query: string) => fetchOptions(product, query),
+    [fetchOptions, product],
+  );
+  // PRICETAG-LPSP: what the model read besides the code, so the review shows what Apply will do.
+  const reading = [
+    product.price_type === 'selling' ? 'SP' : product.price_type === 'list' ? 'LP' : null,
+    product.typed_sell_price ? `SP RM ${product.typed_sell_price.toLocaleString('en-MY')}` : null,
+    product.typed_list_price ? `LP RM ${product.typed_list_price.toLocaleString('en-MY')}` : null,
+  ]
+    .filter(Boolean)
+    .join(' / ');
+  const extra =
+    reading || product.combo_name ? (
+      <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+        {product.combo_name ? (
+          <Badge variant="info" appearance="light" size="sm" title={product.combo_name}>
+            Combo
+          </Badge>
+        ) : null}
+        {reading ? <span>{reading}</span> : null}
+      </div>
+    ) : null;
+  if (status !== 'not_found' && status !== 'picked') {
+    return (
+      <div className="flex flex-col gap-1">
+        <AIMatchStatusLabel status={status} />
+        {extra}
+      </div>
+    );
   }
+  // Every row with no match gets the picker (mock C2), suggestions first.
   return (
     <div className="flex min-w-48 flex-col gap-1">
       <AIMatchStatusLabel status={status} />
+      {extra}
       <SearchableSelect
-        value={picked}
-        onChange={(v) => onPick(product, v)}
-        options={suggestions.map((s) => ({
-          value: s.product_id,
-          label: codeWithName(s.product_code, s.product_name),
-        }))}
-        placeholder="Did you mean?"
-        aria-label={`Did you mean, for ${product.product_code ?? 'this row'}`}
+        value={picked?.value ?? ''}
+        onChange={() => {
+          /* the whole option is what carries the product; see onOptionChange */
+        }}
+        onOptionChange={(option) => onPick(product, option)}
+        fetchOptions={fetchForRow}
+        selectedOption={picked ?? undefined}
+        placeholder="Pick a combo or product..."
+        aria-label={`Pick a product, for ${product.product_code ?? 'this row'}`}
         size="sm"
         wrapOptions
         clearable
       />
+      {picked && hostCombos.length > 0 ? (
+        <SearchableSelect
+          value={comboPick}
+          onChange={(value) => onComboPick(product, value)}
+          options={hostCombos.map((combo) => ({ value: combo.combo_id, label: combo.name }))}
+          placeholder="Combo"
+          aria-label={`Combo, for ${product.product_code ?? 'this row'}`}
+          size="sm"
+          wrapOptions
+          clearable
+        />
+      ) : null}
     </div>
   );
 }

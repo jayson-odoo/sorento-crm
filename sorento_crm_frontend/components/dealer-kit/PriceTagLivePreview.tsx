@@ -17,7 +17,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
-import { buildRequestSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import { toast } from '@/lib/toast';
+import { buildRequestSheet, buildSingleTagSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
@@ -42,10 +44,14 @@ interface Props {
    * keeps Approve off while either says the tag is not ready.
    */
   onReadyChange?: (state: { missing: string[]; drawn: boolean; failed: boolean }) => void;
+  /** PRICETAG-LPSP: draw this one line only (the row's eye icon). */
+  lineKey?: string;
+  /** One-line mode: the lightbox was closed. */
+  onClose?: () => void;
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
-export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
+export function previewLines(lines: DraftLine[], priceMode?: PriceMode): TagPreviewLineInput[] {
   return lines
     .filter((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
     .map((l) => ({
@@ -60,8 +66,10 @@ export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
         candidates: part.product_id ? [] : part.candidates.map((c) => c.product_id),
       })),
       promotion_id: l.promotion_id,
-      manual_sell_price: l.manual_sell_price,
+      // A typed price only applies to an SP line (the server refuses it otherwise).
+      manual_sell_price: (l.price_type ?? priceMode) === 'list' ? null : l.manual_sell_price,
       tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
+      price_type: l.price_type ?? null,
     }));
 }
 
@@ -87,6 +95,8 @@ export function linesWithoutTemplate(
 export function previewPayload(
   sent: TagPreviewLineInput[],
   response: TagPreviewResponse,
+  /** One-line mode: the tag alone on a page of its own size, upright. */
+  single = false,
 ): TagSheetDesignPayload | null {
   const tags: TagRequestTag[] = sent.map((line) => ({
     id: line.key,
@@ -101,11 +111,13 @@ export function previewPayload(
     },
   }));
   let seq = 0;
-  const doc = buildRequestSheet(
-    tags,
-    response.templates as Record<string, TagTemplate>,
-    () => `preview-${(seq += 1)}`,
-  );
+  const templates = response.templates as Record<string, TagTemplate>;
+  const newId = () => `preview-${(seq += 1)}`;
+  const only = single ? tags[0] : undefined;
+  const doc =
+    only && templates[only.line.id]
+      ? buildSingleTagSheet(only, templates[only.line.id] as TagTemplate, newId)
+      : buildRequestSheet(tags, templates, newId);
   if (doc.sheets.every((sheet) => sheet.tags.length === 0)) return null;
   return designPayloadFromResponse({
     doc,
@@ -122,14 +134,25 @@ export function PriceTagLivePreview({
   lookupTagPreview,
   docNumber,
   onReadyChange,
+  lineKey,
+  onClose,
 }: Props) {
-  const sent = useMemo(() => previewLines(lines), [lines]);
+  const sent = useMemo(
+    () =>
+      previewLines(
+        lineKey === undefined ? lines : lines.filter((l) => l.key === lineKey),
+        priceMode,
+      ),
+    [lines, lineKey, priceMode],
+  );
   // Only what changes the drawing re-asks: a remark or a quantity does not.
   const signature = useMemo(() => JSON.stringify([priceMode, sent]), [priceMode, sent]);
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
+  // One-line mode: what the resolved tag prints (SP only when it has a selling figure to show).
+  const [printsSp, setPrintsSp] = useState(false);
   const codeByKey = useMemo(
     () => Object.fromEntries(lines.map((line) => [line.key, line.code])),
     [lines],
@@ -139,6 +162,8 @@ export function PriceTagLivePreview({
   const askSeq = useRef(0);
   const sentRef = useRef(sent);
   sentRef.current = sent;
+  const lineKeyRef = useRef(lineKey);
+  lineKeyRef.current = lineKey;
 
   useEffect(() => {
     if (sentRef.current.length === 0) {
@@ -155,7 +180,9 @@ export function PriceTagLivePreview({
       lookupTagPreview(priceMode, lines)
         .then((response) => {
           if (ask !== askSeq.current) return; // a newer edit is on its way
-          setPayload(previewPayload(lines, response));
+          setPayload(previewPayload(lines, response, lineKeyRef.current !== undefined));
+          const row = response.lines.find((r) => r.line_id === lineKeyRef.current);
+          setPrintsSp(!!row && !!row.show_promo_price && row.sell_price != null);
           setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
           setFailed(false);
         })
@@ -180,7 +207,35 @@ export function PriceTagLivePreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missingKey, drawn, failed, sent.length, onReadyChange]);
 
+  // One line (the row's eye icon): the DesignViewer's own lightbox, straight away - no card, no
+  // nested modal. Its header reads the line's code and LP/SP.
+  const oneLine = lineKey !== undefined ? lines.find((l) => l.key === lineKey) : undefined;
+  const settled = !loading && (failed || payload !== null || sentRef.current.length === 0);
+  useEffect(() => {
+    if (lineKey === undefined || !settled) return;
+    if (failed || payload === null || missing.length > 0) {
+      toast.error(failed ? 'The tag preview could not be drawn.' : 'No tag template yet.');
+      onClose?.();
+    }
+    // Fires once per settled answer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled, failed, payload, missing.length]);
+
   if (sent.length === 0) return null;
+
+  if (lineKey !== undefined) {
+    if (!oneLine || failed || payload === null || missing.length > 0) return null;
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={(next) => {
+          if (!next) onClose?.();
+        }}
+        title={`${oneLine.code || docNumber || 'Preview'} - ${printsSp ? 'SP' : 'LP'}`}
+        payload={payload}
+      />
+    );
+  }
 
   // Shown under the drawn tags; with nothing drawn at all the empty state says it.
   const missingNote =

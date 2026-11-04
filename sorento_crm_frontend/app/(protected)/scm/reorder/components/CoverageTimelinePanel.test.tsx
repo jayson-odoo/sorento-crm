@@ -299,6 +299,6 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
   it('renders computed_at as written, without shifting it out of Malaysia time', () => {
     withData(SHORTFALL);
     // The fixture is 2026-08-03T09:12:00, already Malaysia wall-clock.
-    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03/08/2026, 09:12');
+    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03/08/2026, 9:12 am');
   });
 });

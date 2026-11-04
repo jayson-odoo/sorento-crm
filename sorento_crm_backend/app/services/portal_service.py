@@ -15,6 +15,7 @@ Editing rules:
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import hashlib
 import hmac
 import logging
@@ -403,7 +404,7 @@ class PortalService:
     ) -> str:
         name = (contact.name or contact.first_name or "").strip()
         greeting = f"Hi {name}," if name else "Hi,"
-        expires_human = expires_at.strftime("%b %d, %Y")
+        expires_human = fmt_date(expires_at)
         return (
             f"{greeting} here is your secure portal link:\n"
             f"{portal_url}\n\n"

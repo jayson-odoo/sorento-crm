@@ -30,7 +30,7 @@ describe('buildContainerRequestMatrix - bucketing', () => {
   it('day granularity buckets on the exact required_date', () => {
     const matrix = buildContainerRequestMatrix([soLine({ required_date: '2026-08-19' })], 'product', 'day');
     expect(matrix.buckets).toHaveLength(1);
-    expect(matrix.buckets[0]).toMatchObject({ key: '2026-08-19', kind: 'dated', label: '19 Aug 2026' });
+    expect(matrix.buckets[0]).toMatchObject({ key: '2026-08-19', kind: 'dated', label: '19/08/2026' });
   });
 
   it('week granularity buckets to the Monday of that week', () => {

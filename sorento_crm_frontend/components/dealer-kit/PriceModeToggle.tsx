@@ -17,14 +17,31 @@ interface PriceModeToggleProps {
   value: PriceMode;
   onChange: (mode: PriceMode) => void;
   /** The id of the element that names the group. */
-  labelledBy: string;
+  labelledBy?: string;
+  /** The group's name when no element carries it (a per-line toggle). */
+  ariaLabel?: string;
+  /** PRICETAG-LPSP: the compact per-line form, "LP" / "SP". */
+  compact?: boolean;
+  /** Tooltip on the group (a per-line toggle that follows the default says so). */
+  title?: string;
 }
 
-export function PriceModeToggle({ value, onChange, labelledBy }: PriceModeToggleProps) {
+export function PriceModeToggle({
+  value,
+  onChange,
+  labelledBy,
+  ariaLabel,
+  compact = false,
+  title,
+}: PriceModeToggleProps) {
+  const labels = compact ? { list: 'LP', selling: 'SP' } : { list: 'List price', selling: 'Selling price' };
+  const pad = compact ? 'rounded px-2 py-1 text-xs transition-colors' : 'rounded px-3 py-1.5 text-sm transition-colors';
   return (
     <div
       role="radiogroup"
       aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : ariaLabel}
+      title={title}
       className="inline-flex items-center rounded-md border p-0.5"
     >
       <button
@@ -32,28 +49,28 @@ export function PriceModeToggle({ value, onChange, labelledBy }: PriceModeToggle
         role="radio"
         aria-checked={value === 'list'}
         className={cn(
-          'rounded px-3 py-1.5 text-sm transition-colors',
+          pad,
           value === 'list'
             ? 'bg-primary text-primary-foreground'
             : 'text-muted-foreground hover:bg-muted',
         )}
         onClick={() => onChange('list')}
       >
-        List price
+        {labels.list}
       </button>
       <button
         type="button"
         role="radio"
         aria-checked={value === 'selling'}
         className={cn(
-          'rounded px-3 py-1.5 text-sm transition-colors',
+          pad,
           value === 'selling'
             ? 'bg-primary text-primary-foreground'
             : 'text-muted-foreground hover:bg-muted',
         )}
         onClick={() => onChange('selling')}
       >
-        Selling price
+        {labels.selling}
       </button>
     </div>
   );

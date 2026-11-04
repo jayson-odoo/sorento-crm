@@ -257,10 +257,21 @@ def achieved_by_period_and_account(
     return _achieved(db, specs, company_id, split=True)
 
 
+def achieved_by_period_and_line(
+    db: Session, specs: List[PeriodSpec], company_id: str
+) -> Dict[str, Dict[Tuple[Optional[str], str], Decimal]]:
+    """`{period_id: {(customer_id, line_or_document_id): achieved}}`: what each sales order
+    line (Ordered / Delivered) or billing document (Invoiced) added to each period, on the very statement `achieved_by_period` sums, so the lines of
+    a period add up to its achievement to the cent (the commission statement's documents,
+    lane TARGET-COMMISSION-VIEW). Only the statement export reads it."""
+    return _achieved(db, specs, company_id, split=True, by_line=True)
+
+
 def _achieved(
-    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool
+    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool, by_line: bool = False
 ) -> Dict[str, Dict[Optional[str], Decimal]]:
-    """`{period_id: {customer_id or None: achieved}}`, split by customer only when `split`.
+    """`{period_id: {customer_id or None: achieved}}`, split by customer only when `split`;
+    keyed `(customer_id, sales_order_line_id)` when `by_line`.
 
     Steps (review round 2, B1; #1319), each reading a small VALUES, one earlier step once, or an
     index: `period_days` (every day of every period), `agent_lines` (the credited agents' live
@@ -274,10 +285,10 @@ def _achieved(
     if invoiced:
         # Invoiced periods count billing documents, not sales order lines: their own statement
         # (TARGET-INVOICED), so the order query below never changes shape for them.
-        out = _achieved_invoiced(db, invoiced, company_id, split=split)
+        out = _achieved_invoiced(db, invoiced, company_id, split=split, by_line=by_line)
         rest = [s for s in specs if s.basis != INVOICED]
         if rest:
-            out.update(_achieved(db, rest, company_id, split=split))
+            out.update(_achieved(db, rest, company_id, split=split, by_line=by_line))
         return out
     out: Dict[str, Dict[Optional[str], Decimal]] = {s.period_id: {} for s in specs}
     group_of, credit_rows = _credit_groups(specs)
@@ -603,9 +614,8 @@ def _achieved(
         else_=0,
     )
 
-    stmt = select(pairs.c.period_id, pairs.c.customer_id, func.sum(value)).group_by(
-        pairs.c.period_id, pairs.c.customer_id
-    )
+    group = [pairs.c.period_id, pairs.c.customer_id] + ([pairs.c.sol_id] if by_line else [])
+    stmt = select(*group, func.sum(value)).group_by(*group)
     scoped = sorted({s.target_id for s in specs if s.product_scope != "all"})
     if scoped:
         # An all-products target reads no scope at all.
@@ -617,14 +627,19 @@ def _achieved(
                 ),
             )
         )
-    for period_id, customer_id, total in db.execute(stmt).all():
+    for row in db.execute(stmt).all():
+        period_id, customer_id, total = row[0], row[1], row[-1]
         key = None if customer_id is None else str(customer_id)
+        if by_line:
+            if not total:
+                continue
+            key = (key, str(row[2]))
         out[str(period_id)][key] = Decimal(total or 0)
     return out
 
 
 def _achieved_invoiced(
-    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool
+    db: Session, specs: List[PeriodSpec], company_id: str, *, split: bool, by_line: bool = False
 ) -> Dict[str, Dict[Optional[str], Decimal]]:
     """`{period_id: {customer_id or None: achieved}}` for Invoiced periods (TARGET-INVOICED).
 
@@ -738,7 +753,8 @@ def _achieved_invoiced(
     )
     # Amount over all products: the document's own figure.
     header = select(
-        docs_credited.c.period_id, docs_credited.c.customer_id, docs_credited.c.amount.label("value")
+        docs_credited.c.period_id, docs_credited.c.customer_id, docs_credited.c.doc_id,
+        docs_credited.c.amount.label("value"),
     ).where(docs_credited.c.metric == "amount", docs_credited.c.product_scope == "all")
     # Everything else: the lines (a line's sign and rate are the shared service's).
     line_value = case(
@@ -746,7 +762,10 @@ def _achieved_invoiced(
         else_=invoiced_sales.signed_line_quantity(),
     )
     lines = (
-        select(docs_credited.c.period_id, docs_credited.c.customer_id, line_value.label("value"))
+        select(
+            docs_credited.c.period_id, docs_credited.c.customer_id, docs_credited.c.doc_id,
+            line_value.label("value"),
+        )
         .select_from(docs_credited)
         .join(BillingDocument, BillingDocument.id == docs_credited.c.doc_id)
         .join(BillingDocumentLine, BillingDocumentLine.document_id == BillingDocument.id)
@@ -768,11 +787,17 @@ def _achieved_invoiced(
             )
         )
     rows = union_all(header, lines).subquery("inv_rows")
-    stmt = select(rows.c.period_id, rows.c.customer_id, func.sum(rows.c.value)).group_by(
-        rows.c.period_id, rows.c.customer_id
-    )
-    for period_id, customer_id, total in db.execute(stmt).all():
+    # `by_line` (the commission statement): one row per billing document, keyed
+    # (customer, document id), on the same statement, so the documents add up to Achieved.
+    group = [rows.c.period_id, rows.c.customer_id] + ([rows.c.doc_id] if by_line else [])
+    stmt = select(*group, func.sum(rows.c.value)).group_by(*group)
+    for row in db.execute(stmt).all():
+        period_id, customer_id, total = row[0], row[1], row[-1]
         key = None if customer_id is None else str(customer_id)
+        if by_line:
+            if not total:
+                continue
+            key = (key, str(row[2]))
         out[str(period_id)][key] = Decimal(total or 0)
     return out
 

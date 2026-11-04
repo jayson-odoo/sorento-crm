@@ -44,7 +44,6 @@ import {
 } from '../utils/exportStockInquiryToExcel';
 import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
 import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
-import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
   InquiryFormTableRow,
@@ -69,7 +68,7 @@ import {
   getStockInquiryRevisions,
 } from '../services/stockInquiryService';
 import { toast } from '@/lib/toast';
-import { formatDate } from '@/lib/helpers';
+import { formatDate, formatDateInMalaysia } from '@/lib/helpers';
 import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
@@ -1128,7 +1127,7 @@ function StaffStockInquiryDetail({
         <InquiryFormTableRow label="Date">
           <InquiryReadValue empty=" - ">
             {inquiry.created_at
-              ? format(new Date(inquiry.created_at), 'dd/MM/yy')
+              ? formatDateInMalaysia(inquiry.created_at)
               : ''}
           </InquiryReadValue>
         </InquiryFormTableRow>
@@ -1154,7 +1153,7 @@ function StaffStockInquiryDetail({
           <InquiryReadValue>{inquiry.quantity != null ? String(inquiry.quantity) : ''}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Delivery date">
-          <InquiryReadValue>{inquiry.delivery_date}</InquiryReadValue>
+          <InquiryReadValue>{(inquiry.delivery_date && formatDateInMalaysia(inquiry.delivery_date)) || inquiry.delivery_date}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
           <InquiryReadValue>{inquiry.remark}</InquiryReadValue>

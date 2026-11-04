@@ -193,7 +193,7 @@ def _so_turn(session_factory, monkeypatch, *numbers: str, attributes=(OUTSTANDIN
     return ((result.reply or {}).get("text") or ""), captured
 
 
-def _card(number: str, status_words: str, delivery: str | None, *, name="ZZT HANLIM TRADING [A/C I]", date="15 Sep 2026") -> str:
+def _card(number: str, status_words: str, delivery: str | None, *, name="ZZT HANLIM TRADING [A/C I]", date="15/09/2026") -> str:
     lines = [f"*{number}* - {name}", f"Ordered {date} - {status_words}"]
     if delivery is not None:
         lines.append(f"Delivery: {delivery}")
@@ -219,7 +219,7 @@ class TestSoCardInScope:
         own = self._own(session_factory)
         _seed_so(session_factory, "SO422057", customer_id=own, lines=[(2, 0)], order_date="2026-09-21")
         reply, _ = _so_turn(session_factory, monkeypatch, "SO422057")
-        assert reply.strip() == _card("SO422057", "Open", "not delivered yet", date="21 Sep 2026"), reply
+        assert reply.strip() == _card("SO422057", "Open", "not delivered yet", date="21/09/2026"), reply
 
     def test_closed_fully_delivered(self, session_factory, monkeypatch) -> None:
         """AC-SO-05. A cancelled line does not count against "fully"."""
@@ -229,7 +229,7 @@ class TestSoCardInScope:
             lines=[(3, 3)], cancelled_lines=[(5, 0)], order_date="2026-09-21",
         )
         reply, _ = _so_turn(session_factory, monkeypatch, "SO422095")
-        assert reply.strip() == _card("SO422095", "Closed", "fully delivered", date="21 Sep 2026"), reply
+        assert reply.strip() == _card("SO422095", "Closed", "fully delivered", date="21/09/2026"), reply
 
     def test_closed_short_reads_partly(self, session_factory, monkeypatch) -> None:
         """AC-SO-06."""

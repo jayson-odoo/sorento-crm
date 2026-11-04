@@ -1,5 +1,6 @@
 'use client';
 
+import { formatMaybeDate } from '@/lib/helpers';
 import { useState } from 'react';
 import { Check, Loader2, Undo2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -325,7 +326,7 @@ export function ActionsBlock({
                 ) : null}
                 {(step.changes ?? []).map((change, i) => (
                   <p key={i} className="break-words text-muted-foreground">
-                    {change.field}: {change.before} -&gt; {change.after}
+                    {change.field}: {formatMaybeDate(change.before)} -&gt; {formatMaybeDate(change.after)}
                   </p>
                 ))}
                 {step.waiting ? (

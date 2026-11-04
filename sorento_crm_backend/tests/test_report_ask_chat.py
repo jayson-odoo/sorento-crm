@@ -200,7 +200,7 @@ def expected_coverage_line(db, percent, version, date_from=date(2026, 9, 5), dat
     params = {"date_basis": "asked_at",
               "period": {"kind": "custom", "from": date_from.isoformat(), "to": date_to.isoformat()}}
     ctx = engine.resolve(db, CATALOGUE["chat"]["asks"]["definition"], params)
-    base = f"Topics labelled: {percent}% of asks (taxonomy v{version}). From bot traces, 5 Sep 2026 on."
+    base = f"Topics labelled: {percent}% of asks (taxonomy v{version}). From bot traces, 05/09/2026 on."
     return base, chat_asks.history_lines(ctx)
 
 

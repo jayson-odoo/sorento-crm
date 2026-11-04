@@ -1,4 +1,5 @@
 """SLA service for business logic."""
+from app.utils.date_format import fmt_datetime
 import logging
 import re
 from sqlalchemy.orm import Session
@@ -429,7 +430,7 @@ def format_myt(dt: Optional[datetime]) -> Optional[str]:
         return None
     local = aware.astimezone(MALAYSIA_TZ)
     # `local.day` rather than %-d: the no-pad strftime flag is platform-specific.
-    return f"{local:%a} {local.day} {local:%b} {local:%H:%M} MYT"
+    return fmt_datetime(local)
 
 
 # A clock recomputed from `now` a few microseconds after `initiated_at` is the

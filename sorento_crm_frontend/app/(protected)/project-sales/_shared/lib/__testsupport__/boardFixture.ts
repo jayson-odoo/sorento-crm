@@ -201,7 +201,7 @@ function bucketLabel(key: string, granularity: BoardGranularity): string {
   // S1 (AC-B1-7): `date` granularity's own label is `DD/MM/YYYY`, not the "4 Sep 2026" the
   // other three granularities share.
   if (granularity === 'date') return `${day}/${month}/${year}`;
-  const MONTHS = [
+  const MONTHS = [ // date-format-ok: test fixture mirroring the server-composed bucket label, which the backend owns
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
   ];

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { getSession } from 'next-auth/react';
 import { recordQuotationView } from '../services/quotationSignService';
+import { localStore } from '@/lib/storage';
 
 export const VISITOR_KEY = 'sorento.quotationSign.visitor';
 
@@ -13,10 +14,10 @@ export function visitorId(): string {
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   try {
-    const kept = window.localStorage.getItem(VISITOR_KEY);
+    const kept = localStore.getItem(VISITOR_KEY);
     if (kept && kept.length >= 8 && kept.length <= 128) return kept;
     const made = fresh();
-    window.localStorage.setItem(VISITOR_KEY, made);
+    localStore.setItem(VISITOR_KEY, made);
     return made;
   } catch {
     // Private mode or blocked storage: a fresh id per load; the count may run one high.

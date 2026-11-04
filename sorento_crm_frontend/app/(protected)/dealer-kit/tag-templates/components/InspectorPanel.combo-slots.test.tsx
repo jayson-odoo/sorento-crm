@@ -83,6 +83,9 @@ const EXISTING = [
   ['included_accessories', 'Accessories'],
   ['list_price', 'List Price'],
   ['sell_price', 'Sell Price'],
+  // PRICETAG-LPSP: the two price slots added after Sell Price.
+  ['price', 'Price (LP or SP)'],
+  ['price_label', 'Price label'],
   ['badges', 'Badges'],
   ['alternatives', 'Alternatives'],
   ['set_members', 'Set Members'],

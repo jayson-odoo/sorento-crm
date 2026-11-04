@@ -1,4 +1,5 @@
 import type { SalesTeamAgentOption } from '../types/salesTeam.types';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * Picked agents who are in ANOTHER team now, so a save moves them (owner ruling
@@ -21,10 +22,7 @@ export function agentOptionLabel(option: SalesTeamAgentOption, teamId: string | 
   return `${option.label} (now in ${option.team_name})`;
 }
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** `2026-10-14` -> `Left 14 Oct`. A calendar date, so no timezone conversion applies. */
+/** `2026-10-14` -> `Left 14/10/2026`. A calendar date, so no timezone conversion applies. */
 export function leftLabel(validTo: string): string {
-  const [, month, day] = validTo.split('-').map(Number);
-  return `Left ${day} ${MONTHS[month - 1]}`;
+  return `Left ${formatDateInMalaysia(validTo.slice(0, 10)) || validTo}`;
 }

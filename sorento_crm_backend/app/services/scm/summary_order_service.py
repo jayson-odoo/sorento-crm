@@ -1328,6 +1328,7 @@ _EXPORT_COLUMNS = (
     "Last in date", "Remarks",
 )
 
+# date-format-ok: month bucket label, no day to show
 _MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
               "Nov", "Dec")
 

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 
 def month(d: date) -> str:
-    return d.strftime("%b %Y")
+    return d.strftime("%b %Y")  # date-format-ok: month bucket label, no day to show
 
 
 def ddmmyyyy(d: date) -> str:

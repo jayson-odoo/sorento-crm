@@ -205,7 +205,7 @@ def test_delay_past_the_window_suggests_release_and_buy():
         assert release["label"] == f"Release 134, free at {world['own'].warehouse_code}"
         assert buy["action"] == "buy"
         assert buy["qty_now"] == "134"
-        assert buy["label"] == f"Buy 134 for {new_date.strftime('%-d %b')}"
+        assert buy["label"] == f"Buy 134 for {new_date.strftime('%d/%m/%Y')}"
 
         composition = planning_change_service.composition_from_proposal(row.proposal_json)
         assert composition.get("buy_qty") == "134", composition
@@ -464,7 +464,7 @@ def test_product_change_releases_held_and_sources_the_new_product(api):
         f"Release 134 {old_product.product_code}, free at {world.own_wh.warehouse_code}"
     ), release
     assert sourced["label"] == (
-        f"Buy 134 {new_product.product_code} for {date(2027, 3, 1).strftime('%-d %b')}"
+        f"Buy 134 {new_product.product_code} for {date(2027, 3, 1).strftime('%d/%m/%Y')}"
     ), sourced
 
 
@@ -666,7 +666,7 @@ def test_advance_inside_the_window_the_ladder_cannot_cover_shows_it_short():
         # Review round C4: label order and exact wording.
         assert components.index(pool_component) < components.index(buy_component), components
         assert buy_component["label"] == (
-            f"Short 84 by {IMMEDIATE.strftime('%-d %b')} (was Buy 134)"
+            f"Short 84 by {IMMEDIATE.strftime('%d/%m/%Y')} (was Buy 134)"
         ), buy_component
 
 
@@ -762,7 +762,7 @@ def test_delay_past_the_window_with_a_placed_po_reallocates_it_and_buys_again(ap
     buy = next((c for c in components if c["action"] == "buy"), None)
     assert buy is not None, components
     assert buy["qty_now"] == "134", buy
-    assert buy["label"] == f"Buy 134 for {new_date.strftime('%-d %b')}", buy
+    assert buy["label"] == f"Buy 134 for {new_date.strftime('%d/%m/%Y')}", buy
 
     composition = planning_change_service.composition_from_proposal(row.proposal_json)
     assert composition.get("buy_qty") == "134", composition

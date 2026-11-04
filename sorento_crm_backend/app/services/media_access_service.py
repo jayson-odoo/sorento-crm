@@ -20,12 +20,12 @@ next call, which is what "without a deploy" has to mean.
 """
 from __future__ import annotations
 
-import calendar
+from app.utils.date_format import fmt_date
 import logging
 import math
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional, cast
 from zoneinfo import ZoneInfo
 
@@ -104,18 +104,16 @@ def period_key_for(moment: Optional[datetime] = None) -> str:
 
 
 def resets_on_label(moment: Optional[datetime] = None) -> str:
-    """The reset date already rendered for a human: "1 September".
+    """The reset date already rendered for a human: "01/09/2026".
 
     Returned rendered, never as an ISO date, because every consumer of this - the
     operator card, the customer notice, n8n - would otherwise have to format it,
     and three formatters is three ways to disagree.
     """
     local = _as_malaysia(moment or _now_utc())
-    # The year is not rendered: "1 January" is unambiguous next to a reset that is
-    # always within a month, and a year would read as a due date rather than a
-    # rollover.
-    month = 1 if local.month == 12 else local.month + 1
-    return f"1 {calendar.month_name[month]}"
+    # dd/mm/yyyy like every other date (DATE-FORMAT-UNIFY, owner 4 Nov 2026).
+    year, month = (local.year + 1, 1) if local.month == 12 else (local.year, local.month + 1)
+    return fmt_date(date(year, month, 1))
 
 
 @dataclass

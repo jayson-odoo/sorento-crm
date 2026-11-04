@@ -18,6 +18,7 @@ shared `required_fields` helper. A ranking never defaults the metric or the basi
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date, fmt_date_range
 from datetime import date
 from typing import Any
 
@@ -172,7 +173,7 @@ def _day(value: Any) -> date | None:
 
 
 def _label(d: date) -> str:
-    return f"{d.day} {d.strftime('%b %Y')}"
+    return fmt_date(d)
 
 
 #: REPORT-SMART-1021 step 5: said when the parser wrote the period in words ("SEP 2026"), not
@@ -201,7 +202,7 @@ def period_from(start: Any, end: Any) -> rf.Resolved | None:
     if first > last:
         first, last = last, first
     return rf.Resolved(
-        "ok", value={"from": first.isoformat(), "to": last.isoformat()}, label=f"{_label(first)} to {_label(last)}"
+        "ok", value={"from": first.isoformat(), "to": last.isoformat()}, label=fmt_date_range(first, last)
     )
 
 

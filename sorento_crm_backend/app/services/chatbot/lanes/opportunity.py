@@ -21,6 +21,7 @@ read-only allow-list (`fetch.call_tool`, LESSONS-LEARNT 155): the write is not a
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import json
 import logging
 from dataclasses import dataclass
@@ -208,7 +209,7 @@ def _rm(value: Any) -> str:
 
 
 def _day(value: date, *, year: bool = True) -> str:
-    return f"{value.day} {value.strftime('%b')}" + (f" {value.year}" if year else "")
+    return fmt_date(value)
 
 
 def _customer_label(item: Mapping[str, Any]) -> str:
