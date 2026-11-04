@@ -125,8 +125,39 @@ release candidate (main's head to be released; about 56k backend tests, 56,489 c
 
 It posts `crew-tests: <candidate sha> backend N passed/F failed, vitest N/F` on the release PR
 or issue it fixes from. A red sweep is fixed (a test-only fix PR, as #2157) and swept again on
-the new candidate. Only a green sweep on that exact sha is dispatched with the default
-`skip_tests=true`; anything else goes out with `-f full_suite=true` or not at all.
+the new candidate.
+
+### Release runbook: the `release-sweep` status (machine-checked, owner 4 Nov 2026)
+
+A release with `skip_tests=true` (the default) ships only a sha that carries a `success`
+commit status with context `release-sweep`: the first step of `Changed areas`
+("Release sweep passed on this sha") reads it and fails the run otherwise, so nothing builds or
+deploys. Cloud sessions cannot set commit statuses; **crew does, from the Mac**, and only after
+reading a green `crew-tests: <sha> backend N passed/0 failed, vitest N/0` sweep comment whose
+sha is exactly the release candidate (main's head to be dispatched):
+
+```
+gh api -X POST repos/foundryx-sdn-bhd/sorento-crm/statuses/<sha> \
+  -f state=success \
+  -f context=release-sweep \
+  -f description='crew-tests: backend N passed/0 failed, vitest N/0' \
+  -f target_url='<URL of the crew-tests comment>'
+```
+
+`description` is at most 140 characters. Check it took:
+`gh api repos/foundryx-sdn-bhd/sorento-crm/commits/<sha>/status --jq '.statuses[] | select(.context=="release-sweep") | .state'`
+prints `success`. Then dispatch on main as usual:
+`gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main`. If main moved after
+the sweep, the new head has no status and the release is refused: sweep the new head.
+
+A red or failed sweep never gets the status (crew does not post `failure` or `pending` either:
+the check reads anything but `success` as missing). The ways out are all explicit dispatch
+inputs, visible in the run:
+
+- `-f full_suite=true`: the full sharded suite on GitHub first (about 470 billed minutes).
+- `-f skip_tests=false`: the lean release tests on GitHub first.
+- `-f allow_unswept=true`: EMERGENCY, ships the sha untested; the run summary says
+  `UNSWEPT RELEASE` and the step logs a warning. Owner's call only.
 
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
 `*.md` or the PR template) runs only `Changed areas` and the `PR gate` fast-gate steps (alembic

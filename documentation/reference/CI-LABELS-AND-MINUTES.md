@@ -17,7 +17,7 @@ mechanics; this page is the operator's view. The design and its measurements:
 | --- | --- | --- |
 | PR labelled `ci` | Two jobs: `Changed areas`, then `PR gate`, fast checks only (CI-CLOUD-GATE): main's head merged in, alembic single head, PII, Outline guides, gitleaks; the app and worker import chains plus `pytest --collect-only` when the backend changed; the MCP import check when MCP changed; `tsc` plus ESLint over the changed files when the frontend changed. No test executes and no Postgres/Redis container starts: the lane posted `crew-tests:` from its sandbox. A merge tree whose PR gate already passed is not checked again. | ~2 docs-only or re-label, ~5 one area, ~9 backend + frontend (see the budget) |
 | PR labelled `ci-full` | REFUSED (owner, 9 Oct 2026: no full suite per PR). One job removes the label and fails with the reason; nothing else runs. | 1 |
-| `workflow_dispatch` on main (the release) | Default (`skip_tests` true since CI-CLOUD-GATE): the alembic head check, build only the images whose service tree changed (an unchanged one is retagged), the owner-approved deploy. Dispatched only after a green full-suite cloud sweep on that sha. `-f skip_tests=false`: the lean release tests first (core tier plus what the batch since the last release reaches, one `Release tests` job, ~25-50). `-f full_suite=true` (emergency, wins over `skip_tests`): the full shards. | ~25 default (build-images median 7 + build-and-deploy median 18); ~470 full (38099410256) |
+| `workflow_dispatch` on main (the release) | Default (`skip_tests` true since CI-CLOUD-GATE): the alembic head check, build only the images whose service tree changed (an unchanged one is retagged), the owner-approved deploy. `Changed areas` refuses it unless the sha carries a `success` `release-sweep` commit status, which crew sets after a green full-suite cloud sweep on that sha (runbook: `documentation/agents/cloud-lanes.md`); `-f allow_unswept=true` overrides that as a visible emergency (the run summary says UNSWEPT RELEASE). `-f skip_tests=false`: the lean release tests first (core tier plus what the batch since the last release reaches, one `Release tests` job, ~25-50). `-f full_suite=true` (emergency, wins over `skip_tests`): the full shards. | ~25 default (build-images median 7 + build-and-deploy median 18); ~470 full (38099410256) |
 | Push to main | The alembic single-head gate only (PII and gitleaks ran on the same commits in the PR gate). No tests, no deploy. | 1 |
 | Any other label | Nothing (every job skips). | under 1 |
 
@@ -74,6 +74,45 @@ has drained (or to run fewer runs at once, or to add runners). Read the annotati
 job before blaming a cap.
 
 ## The budget
+
+### CI-CLOUD-GATE (4 Nov 2026): 3,000 minutes a month
+
+PR gate step times. The sandbox figures are from a 4 vCPU / 15 GB cloud VM on 4 Nov 2026 (npm
+install running alongside for part of it). GitHub's private-repo `ubuntu-latest` has about half
+that CPU, so the GitHub column roughly doubles the CPU-bound steps.
+
+| Step (runs when) | Sandbox | GitHub, estimated |
+| --- | ---: | ---: |
+| `Changed areas` (always; its own job) | seconds | 1 billed |
+| Label removal, full-history checkout, merge main, alembic head, PII, Outline guides, gitleaks (always) | under 1 min | ~1 |
+| Python setup (pip cache) + `pip install -r requirements.txt` (backend) | not timed (warm venv) | ~1-2 |
+| app + worker import smoke (backend) | 44 s | ~1 |
+| `pytest --collect-only`, 56,489 tests, no DB reachable (backend) | 3 min 19 s | 1.8 (38074897990) to ~3 |
+| Node setup + `npm ci --force` (frontend) | not timed (warm) | ~2 |
+| `next typegen` + `tsc` (frontend) | 1 min 57 s | ~3-4 |
+| ESLint over the changed files (frontend; 40 files) | 4 s | under 1 |
+
+So a PR gate bills about 2 minutes docs-only, about 5-6 for one area and about 9-11 with backend
+and frontend both changed: at the ~10 minute target, slightly over when both areas change.
+ESLint lints changed files only: the whole tree has 195 errors on main today (1 min 43 s).
+
+**`next build` does not fit the PR gate.** On the same VM it compiled in 5 min 30 s and then
+failed its type-check phase after 8 min 49 s (`app/(auth)/signin/page.tsx` exports
+`isSafeCallbackUrl`, which Next.js rejects as a page export; not investigated in CI-CLOUD-GATE,
+possibly an artefact of the earlier `next typegen` in that checkout). A full build is therefore
+10+ min there and about 15-20 on a GitHub runner. It stays in the release's `build-images`.
+
+| Item | Count a month | Each | Month |
+| --- | ---: | ---: | ---: |
+| Releases, default (build-images median 7 + build-and-deploy median 18) | 60 (2 a day) | ~25 | ~1,500 |
+| PR gate runs (`Changed areas` + `PR gate`) | ~7 a day | ~7 | ~1,500 |
+| **Total** | | | **~3,000** |
+
+Fewer releases buy PR gates at about 3.5 per release. A `full_suite=true` emergency
+release (~470) or a `skip_tests=false` release (~25-50 more) comes out of the same pool. The
+tests themselves (each lane's `crew-tests.sh`, the ~2 h release sweep) bill no GitHub minutes.
+
+### CI-LEAN (10 Oct 2026, superseded)
 
 CI-LEAN (owner, 10 Oct 2026, GitHub Enterprise: 50,000 minutes a month, 2-3 releases a day,
 release <= ~60 billed minutes, PR gate ~10-15, no nightly, no `ci-full` on PRs):

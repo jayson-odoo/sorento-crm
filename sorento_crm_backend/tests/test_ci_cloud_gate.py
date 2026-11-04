@@ -18,6 +18,7 @@ Plan: documentation/plans/ci/PLAN-ci-cloud-gate-04nov.md.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -214,3 +215,89 @@ def test_crew_tests_never_inherits_a_database_from_the_shell():
     assert "unset DATABASE_URL DIRECT_URL REDIS_URL" in run_part
     assert run_part.index("unset DATABASE_URL") < run_part.index("pytest_pass backend")
     assert ".env.ci-tests is missing" in run_part
+
+
+# --- the release-sweep check (owner answer b, 4 Nov 2026) ---------------------------------------
+
+SWEEP_STEP = "Release sweep passed on this sha"
+SHA = "a" * 40
+GH_STUB = """#!/usr/bin/env bash
+echo "$@" >> "$GH_CALLS"
+if [ "${GH_STUB_FAIL:-0}" = "1" ]; then echo "stub gh: failing" >&2; exit 1; fi
+expr=""
+while [ $# -gt 0 ]; do case "$1" in --jq) expr="$2"; shift ;; esac; shift; done
+exec jq -r "$expr" "$GH_STUB_FILE"
+"""
+
+
+def _sweep(tmp_path: Path, *, statuses=(), skip_tests="true", full_suite="false", allow="false", gh_fails=False):
+    if shutil.which("jq") is None:
+        pytest.skip("jq is not installed (the runner has it)")
+    step = next(s for s in _deploy_jobs()["changes"]["steps"] if s.get("name") == SWEEP_STEP)
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "gh").write_text(GH_STUB)
+    (bindir / "gh").chmod(0o755)
+    payload = tmp_path / "status.json"
+    payload.write_text(json.dumps({"state": "pending", "statuses": [{"context": c, "state": s} for c, s in statuses]}))
+    summary = tmp_path / "summary.md"
+    summary.write_text("")
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    env = {
+        "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "GITHUB_REPOSITORY": "jayson-odoo/sorento-crm", "GITHUB_STEP_SUMMARY": str(summary),
+        "SHA": SHA, "SKIP_TESTS": skip_tests, "FULL_SUITE": full_suite, "ALLOW_UNSWEPT": allow,
+        "GH_STUB_FILE": str(payload), "GH_STUB_FAIL": "1" if gh_fails else "0", "GH_CALLS": str(calls),
+    }
+    result = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+                            env=env, capture_output=True, text=True)
+    return result.returncode, result.stdout + result.stderr, summary.read_text(), calls.read_text()
+
+
+def test_a_swept_sha_releases(tmp_path):
+    rc, out, summary, calls = _sweep(tmp_path, statuses=[("release-sweep", "success"), ("other", "failure")])
+    assert rc == 0, out
+    assert f"commits/{SHA}/status" in calls
+    assert "Release sweep: success" in summary
+
+
+@pytest.mark.parametrize("statuses", [[], [("release-sweep", "failure")], [("release-sweep", "pending")], [("other", "success")]])
+def test_an_unswept_sha_is_refused(tmp_path, statuses):
+    rc, out, summary, _ = _sweep(tmp_path, statuses=statuses)
+    assert rc == 1, out
+    assert "No release sweep" in out and "Release refused" in summary
+
+
+def test_a_failed_status_lookup_is_refused(tmp_path):
+    rc, out, _, _ = _sweep(tmp_path, gh_fails=True)
+    assert rc == 1 and "lookup failed" in out, out
+
+
+def test_allow_unswept_releases_and_says_so_in_the_summary(tmp_path):
+    rc, out, summary, _ = _sweep(tmp_path, allow="true")
+    assert rc == 0, out
+    assert "UNSWEPT RELEASE" in out and "UNSWEPT RELEASE" in summary and "allow_unswept=true" in summary
+
+
+@pytest.mark.parametrize("skip_tests,full_suite", [("false", "false"), ("true", "true"), ("false", "true")])
+def test_a_release_that_tests_on_github_needs_no_sweep(tmp_path, skip_tests, full_suite):
+    rc, out, _, calls = _sweep(tmp_path, skip_tests=skip_tests, full_suite=full_suite)
+    assert rc == 0, out
+    assert calls == "", "no status lookup when GitHub runs the tests"
+
+
+def test_the_sweep_check_is_wired_first_with_a_read_only_status_scope():
+    wf = _load(DEPLOY)
+    inputs = wf[True]["workflow_dispatch"]["inputs"]
+    assert inputs["allow_unswept"]["type"] == "boolean" and inputs["allow_unswept"]["default"] is False
+    changes = wf["jobs"]["changes"]
+    step = changes["steps"][0]
+    assert step["name"] == SWEEP_STEP and step["if"] == "github.event_name == 'workflow_dispatch'"
+    assert step["env"]["SHA"] == "${{ github.sha }}"
+    assert step["env"]["ALLOW_UNSWEPT"] == "${{ inputs.allow_unswept }}"
+    assert changes["permissions"]["statuses"] == "read"
+    # A failed `changes` reaches the deploy job as a failure: it never deploys.
+    deploy = wf["jobs"]["build-and-deploy"]
+    assert "changes" in deploy["needs"] and "!contains(needs.*.result, 'failure')" in deploy["if"]
+    assert wf["jobs"]["build-images"]["needs"] == ["changes"] or "changes" in wf["jobs"]["build-images"]["needs"]

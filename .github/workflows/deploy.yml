@@ -63,6 +63,10 @@ on:
   #   ... -f skip_tests=false  the LEAN release tests on GitHub first (below)
   #   ... -f full_suite=true   EMERGENCY: the full sharded suite on GitHub
   #                            (~470 billed); wins over skip_tests
+  #   ... -f allow_unswept=true  EMERGENCY: skip_tests on a sha with no
+  #                            successful `release-sweep` commit status (the
+  #                            run summary says UNSWEPT RELEASE); without it
+  #                            `Changed areas` refuses such a release
   #   ... -f rebuild_all=true  build every image even if its tree is in the registry
   # The LEAN release (CI-LEAN, 10 Oct 2026; since CI-CLOUD-GATE only with
   # skip_tests=false): `changes` diffs main's
@@ -92,6 +96,11 @@ on:
         type: boolean
       full_suite:
         description: "EMERGENCY full suite on GitHub: the full sharded suite, whatever skip_tests says; about 470 billed minutes (release 38099410256). Off by default: the cloud sweep runs the full suite"
+        required: false
+        default: false
+        type: boolean
+      allow_unswept:
+        description: "EMERGENCY: release with skip_tests although this sha has no successful release-sweep commit status (no full-suite cloud sweep passed on it). Off by default; the run summary names it"
         required: false
         default: false
         type: boolean
@@ -373,6 +382,8 @@ jobs:
       contents: read
       pull-requests: read
       actions: read
+      # The release-sweep commit status (step "Release sweep passed on this sha").
+      statuses: read
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -399,6 +410,46 @@ jobs:
       # A PR whose merge tree already passed a PR gate (CI-COST round 2).
       validated: ${{ steps.filter.outputs.validated }}
     steps:
+      # A release that runs no tests on GitHub (skip_tests, the default) ships
+      # only a sha the full-suite cloud sweep passed on (owner, 4 Nov 2026,
+      # CI-CLOUD-GATE answer b). Crew sets the `release-sweep` commit status to
+      # success on the swept sha after reading the sweep's green `crew-tests:`
+      # comment (documentation/agents/cloud-lanes.md "Release sweep"). Without
+      # it this step fails `Changed areas`, so nothing builds or deploys.
+      # `allow_unswept` is the visible emergency override; `full_suite` and
+      # skip_tests=false test on GitHub instead and need no sweep. A failed
+      # lookup fails too.
+      - name: Release sweep passed on this sha
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          SKIP_TESTS: ${{ inputs.skip_tests }}
+          FULL_SUITE: ${{ inputs.full_suite }}
+          ALLOW_UNSWEPT: ${{ inputs.allow_unswept }}
+        run: |
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if [ "$FULL_SUITE" = "true" ] || [ "$SKIP_TESTS" != "true" ]; then
+            echo "this release runs its tests on GitHub (full_suite=$FULL_SUITE, skip_tests=$SKIP_TESTS): no sweep needed"
+            exit 0
+          fi
+          state=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/status" \
+                    --jq '[.statuses[] | select(.context == "release-sweep")][0].state // "missing"') \
+            || state="lookup failed"
+          if [ "$state" = "success" ]; then
+            echo "::notice title=Release sweep::release-sweep is success on $SHA"
+            echo "Release sweep: success on \`$SHA\`." >> "$summary"
+            exit 0
+          fi
+          if [ "$ALLOW_UNSWEPT" = "true" ]; then
+            echo "::warning title=UNSWEPT RELEASE::allow_unswept=true: $SHA ships without a passed cloud sweep (release-sweep: $state)"
+            echo "## UNSWEPT RELEASE: allow_unswept=true, release-sweep on \`$SHA\` is $state. No test suite ran on this sha." >> "$summary"
+            exit 0
+          fi
+          echo "::error title=No release sweep::release-sweep on $SHA is $state. Run the full-suite cloud sweep on this sha (crew then sets the status), or dispatch with -f full_suite=true, or with -f allow_unswept=true as a visible emergency"
+          echo "Release refused: release-sweep on \`$SHA\` is $state." >> "$summary"
+          exit 1
+
       - name: Detect changed areas
         id: filter
         env:

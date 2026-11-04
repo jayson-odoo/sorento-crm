@@ -28,6 +28,12 @@ joins.
    candidate's tests already ran in the cloud sweep. `full_suite=true` (the emergency "full
    suite on GitHub", off by default) wins over `skip_tests` and runs the full shards;
    `skip_tests=false` alone keeps the lean release tests job.
+   **Machine-checked sweep (owner answer (b), 4 Nov 2026):** a `skip_tests` release's first
+   step in `Changed areas` requires a `success` commit status with context `release-sweep` on
+   the dispatched sha, which crew sets from the Mac (`gh api .../statuses/<sha>`, runbook in
+   `cloud-lanes.md`) after reading the sweep's green `crew-tests:` comment. Without it the run
+   fails before anything builds. `allow_unswept=true` (default false) is the visible emergency
+   override: the run summary says `UNSWEPT RELEASE`.
 3. **No job on the Mac runner.** The `runner` dispatch input, the runner picker step and its
    `RUNNERS_READ_TOKEN` read are gone; every job is `ubuntu-latest`. The owner can delete the
    `RUNNERS_READ_TOKEN` secret and stop the runner (`scripts/ci-runner/`), which this PR leaves
@@ -52,4 +58,8 @@ times. Target: PR gate under about 10 min.
   or a self-hosted runner; the service containers do not start on a PR; skip_tests defaults to
   true and full_suite wins over it; `scripts/crew-tests.sh --plan` picks the same tests the old
   PR gate did (selection, forms chains, guards, vitest).
+- the release-sweep step executed with a stub `gh`: swept sha passes, missing / failed /
+  pending / lookup failure refused, `allow_unswept` passes and is named in the summary, a
+  release that tests on GitHub needs no sweep; security fixes (no persisted token in the PR
+  gate checkout, eslint `--`, crew-tests.sh ignores an exported database URL).
 - `test_ci_docs_only_filter.py` and `test_ci_runner_routing.py` follow the new contract.
