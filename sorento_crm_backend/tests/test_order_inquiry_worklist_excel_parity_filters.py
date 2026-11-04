@@ -589,10 +589,20 @@ def test_export_honours_the_location_filter(api):
     item_codes = {
         cell[2].value
         for sheet in book.worksheets
-        for cell in sheet.iter_rows(min_row=3)
+        for cell in sheet.iter_rows(min_row=2)
     }
     assert seeded["row_agent_x_loc_a"].item_code in item_codes
     assert seeded["row_agent_y_loc_b"].item_code not in item_codes
+
+
+def _figures_sheet(response_content, item_code):
+    """`(headers, row)` of the item's line in the export, header on row 1."""
+    sheet = openpyxl.load_workbook(io.BytesIO(response_content)).worksheets[0]
+    headers = [cell.value for cell in sheet[1]]
+    for values in sheet.iter_rows(min_row=2, values_only=True):
+        if values[2] == item_code:
+            return headers, values
+    return headers, None
 
 
 def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
@@ -603,26 +613,11 @@ def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
     `ORDER` row, qty 10, with one PO link for the full 10 - fully taken, nothing left."""
     client, _db, _company_id, seeded = api
 
-    response = client.get(EXPORT)
-    book = openpyxl.load_workbook(io.BytesIO(response.content))
+    headers, target_row = _figures_sheet(
+        client.get(EXPORT).content, seeded["row_po_match"].item_code
+    )
 
-    headers = None
-    target_row = None
-    for sheet in book.worksheets:
-        sheet_headers = next(
-            sheet.iter_rows(min_row=2, max_row=2, values_only=True), None
-        )
-        if sheet_headers is None:
-            continue
-        for values in sheet.iter_rows(min_row=3, values_only=True):
-            if values[2] == seeded["row_po_match"].item_code:
-                headers = sheet_headers
-                target_row = values
-                break
-        if target_row is not None:
-            break
-
-    assert target_row is not None, "row_po_match not found in any export sheet"
+    assert target_row is not None, "row_po_match not found in the export"
     # Review round (22 Sep): APPENDED after ACKNOWLEDGED. OI-RESERVE-PILL-QTY round 2 (owner,
     # 21 Oct 2026) put REQUESTED RESERVE / RESERVED beside QTY, so the three are read by
     # heading; their order relative to each other is unchanged.
@@ -651,20 +646,9 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
     _reserve_link(db, company_id, row_reserved, qty="50")
     db.commit()
 
-    response = client.get(EXPORT)
-    book = openpyxl.load_workbook(io.BytesIO(response.content))
+    headers, target_row = _figures_sheet(client.get(EXPORT).content, row_reserved.item_code)
 
-    target_row = None
-    for sheet in book.worksheets:
-        headers = [cell.value for cell in sheet[2]]
-        for values in sheet.iter_rows(min_row=3, values_only=True):
-            if values[2] == row_reserved.item_code:
-                target_row = values
-                break
-        if target_row is not None:
-            break
-
-    assert target_row is not None, "row_reserved not found in any export sheet"
+    assert target_row is not None, "row_reserved not found in the export"
     assert target_row[headers.index("TAKEN")] == "90", target_row
     assert target_row[headers.index("REMAINING")] == "49", target_row
 

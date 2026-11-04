@@ -785,7 +785,7 @@ def test_the_export_accepts_to_confirm(api):
     assert book.sheetnames
     numbers: set[str] = set()
     for name in book.sheetnames:
-        for row in book[name].iter_rows(min_row=3, values_only=True):
+        for row in book[name].iter_rows(min_row=2, values_only=True):
             if row and row[1]:
                 numbers.add(str(row[1]))
     assert to_confirm["core_so"].so_number in numbers

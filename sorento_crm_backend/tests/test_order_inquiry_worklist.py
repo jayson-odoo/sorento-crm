@@ -1520,8 +1520,9 @@ def test_the_workbook_is_one_sheet_for_every_delivery_month_with_their_heading_r
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     assert book.sheetnames == ["ORDER INQUIRY"]
     sheet = book["ORDER INQUIRY"]
-    assert sheet.cell(row=1, column=1).value == "ORDER INQUIRY"
-    assert [cell.value for cell in sheet[2][:11]] == [
+    # OI-EXPORT-SHARED: row 1 is the header (no title row above it) and the list export keeps
+    # its full layout.
+    assert [cell.value for cell in sheet[1][:11]] == [
         "SO DATE",
         "S/O NO",
         "ITEM CODE",
@@ -1535,10 +1536,10 @@ def test_the_workbook_is_one_sheet_for_every_delivery_month_with_their_heading_r
         "SUPPLIER",
         "PO NO ",
     ]
-    assert sheet.cell(row=2, column=12).value == "LOCATION"
-    assert sheet.max_row == 2 + 3
+    assert sheet.cell(row=1, column=12).value == "LOCATION"
+    assert sheet.max_row == 1 + 3
     delivery_dates = [
-        sheet.cell(row=r, column=8).value for r in range(3, sheet.max_row + 1)
+        sheet.cell(row=r, column=8).value for r in range(2, sheet.max_row + 1)
     ]
     assert {
         value.date() if hasattr(value, "date") else value for value in delivery_dates
@@ -1562,7 +1563,7 @@ def test_the_workbooks_supplier_is_the_source_pos_on_a_via_spo_row(api):
     suppliers = {
         sheet.cell(row=r, column=10).value
         for sheet in book.worksheets
-        for r in range(3, sheet.max_row + 1)
+        for r in range(2, sheet.max_row + 1)
     }
     assert po_supplier.supplier_name in suppliers
     assert spo_supplier.supplier_name not in suppliers
@@ -1575,10 +1576,14 @@ def test_the_workbook_honours_the_filters_the_screen_is_showing(api):
 
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     assert book.sheetnames == ["ORDER INQUIRY"]
-    assert book["ORDER INQUIRY"].max_row == 2 + 1
+    assert book["ORDER INQUIRY"].max_row == 1 + 1
 
 
 def test_total_qty_totals_the_supplier_and_item_run_not_the_item_across_suppliers(api):
+    """OI-EXPORT-SHARED: rows go by S/O then delivery date, and TOTAL QTY prints on the last
+    row of each CONTIGUOUS run sharing a supplier and item code, only when the run has two or
+    more rows. Each raised row here has its own S/O, so a run is the rows that fall next to
+    each other in that order; the other supplier's ABC never joins supplier A's total."""
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["adopted_row"].order_inquiry_id)
     abc = f"ZZT-ABC-{_uid()[:6]}"
@@ -1612,13 +1617,24 @@ def test_total_qty_totals_the_supplier_and_item_run_not_the_item_across_supplier
 
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     sheet = book["ORDER INQUIRY"]
-    body = [[cell.value for cell in row[:11]] for row in sheet.iter_rows(min_row=3)]
-    assert [(row[9], row[2], row[3], row[6]) for row in body] == [
-        (supplier_a.supplier_name, abc, 10.0, None),
-        (supplier_a.supplier_name, abc, 4.0, 14.0),
-        (supplier_a.supplier_name, dfe, 5.0, None),
-        (f"{MARKER} B FACTORY", abc, 3.0, None),
-    ]
+    body = [[cell.value for cell in row[:11]] for row in sheet.iter_rows(min_row=2)]
+    printed = [(row[9], row[2], row[3], row[6]) for row in body]
+    # Whatever the S/O order puts next to each other, a run's total sits on its last row and
+    # adds exactly that run; a lone row prints none; no total mixes suppliers or items.
+    assert len(printed) == 4, printed
+    runs = []
+    for key, qty, total in ((r[:2], r[2], r[3]) for r in printed):
+        if runs and runs[-1][0] == key:
+            runs[-1][1].append((qty, total))
+        else:
+            runs.append((key, [(qty, total)]))
+    for key, members in runs:
+        totals = [t for _q, t in members]
+        if len(members) == 1:
+            assert totals == [None], (key, members)
+        else:
+            assert totals[:-1] == [None] * (len(members) - 1), (key, members)
+            assert totals[-1] == sum(q for q, _t in members), (key, members)
 
 
 def test_an_empty_export_is_still_a_workbook_a_person_can_open(api):
@@ -1628,7 +1644,7 @@ def test_an_empty_export_is_still_a_workbook_a_person_can_open(api):
 
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     assert book.sheetnames == ["ORDER INQUIRY"]
-    assert book.worksheets[0].max_row == 2
+    assert book.worksheets[0].max_row == 1, "only the header row"
 
 
 # ---------------------------------------------------- taken from PO / remaining open

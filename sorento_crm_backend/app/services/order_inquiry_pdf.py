@@ -2,10 +2,11 @@
 `documentation/plans/scm/PLAN-oi-download-21oct.md`).
 
 Owner, 21 Oct 2026: "the pdf needs to be like Excel la, just in pdf format, so I expect 1 table
-just like the excel only". So this prints exactly what the workbook holds: the ORDER INQUIRY
-title, then ONE table whose header is the sheet's header row and whose rows are the sheet's
-rows, both handed over by `OrderInquiryWorklistService` from the same `_sheet_values` the
-workbook is written from (no second column list). The look is the house style
+just like the excel only". So this prints exactly what the workbook holds: ONE table whose
+header is the sheet's header row and whose rows are the sheet's rows, both handed over by the
+shared exporter (`app/services/order_inquiry_export.py`), the same values the workbook is
+written from. No title above the table (OI-EXPORT-SHARED, owner 3 Nov 2026: the first row is
+the column header). The look is the house style
 (`app/services/excel_style.py`: dark header with white bold text, thin borders, wrapped cells,
 dd/mm/yyyy dates) on A4 landscape, with the header row repeated on every page.
 
@@ -48,7 +49,6 @@ def _widths(columns: Sequence[str]) -> list[float]:
 
 def build_html(columns: Sequence[str], values: Sequence[Sequence[Any]]) -> str:
     """The document HTML, without WeasyPrint - what the tests assert on."""
-    from app.services.order_inquiry_worklist_service import EXPORT_TITLE
     colgroup = "".join(f'<col style="width:{w}%"/>' for w in _widths(columns))
     head = "".join(f"<th>{escape(str(column))}</th>" for column in columns)
     body = "".join(
@@ -61,7 +61,6 @@ def build_html(columns: Sequence[str], values: Sequence[Sequence[Any]]) -> str:
 <style>
   @page {{ size: A4 landscape; margin: 10mm; }}
   body {{ font-family: 'Helvetica Neue', Arial, sans-serif; color: #000; }}
-  h1 {{ font-size: 12px; font-weight: bold; margin: 0 0 6px; }}
   table {{ width: 100%; table-layout: fixed; border-collapse: collapse; }}
   thead {{ display: table-header-group; }}
   tr {{ page-break-inside: avoid; }}
@@ -71,7 +70,6 @@ def build_html(columns: Sequence[str], values: Sequence[Sequence[Any]]) -> str:
   th {{ background: {fill}; color: {font}; font-weight: bold; font-size: 6px;
         overflow-wrap: normal; word-break: keep-all; }}
 </style></head><body>
-<h1>{escape(EXPORT_TITLE)}</h1>
 <table><colgroup>{colgroup}</colgroup><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>
 </body></html>"""
 

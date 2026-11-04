@@ -279,8 +279,9 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
     assert response.status_code == 200, response.text
     book = openpyxl.load_workbook(io.BytesIO(response.content))
     sheet = book[book.sheetnames[0]]
-    headings = [cell.value for cell in sheet[2] if cell.value]
+    headings = [cell.value for cell in sheet[1] if cell.value]
     assert not any("history" in str(value).lower() for value in headings)
+    # OI-EXPORT-SHARED: row 1 is the header (no title row); the list export keeps its layout.
     assert headings == [
         "SO DATE",
         "S/O NO",

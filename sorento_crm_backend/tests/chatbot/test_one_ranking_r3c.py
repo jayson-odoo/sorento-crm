@@ -20,6 +20,7 @@ OLD_TOOL = "crm_top_selling_report"
 YEAR_2026 = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 P1, P2, P3 = ("aaaaaaaa-0000-4000-8000-00000000000%d" % i for i in (1, 2, 3))
 C1, C2 = "bbbbbbbb-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
+CU1, CU2 = "cccccccc-0000-4000-8000-000000000001", "cccccccc-0000-4000-8000-000000000002"
 OFFER_ITEM = "Reply with a rank number to see that item's customers and months."
 OFFER_CATEGORY = "Reply with a rank number to see that category's top items."
 
@@ -28,8 +29,8 @@ ROWS = {
                 for i, k in ((1, P1), (2, P2), (3, P3))],
     "category": [{"rank": i, "name": f"ZZT CAT {i}", "qty": 40 - i, "amount": 400.0 - i, "keys": [k]}
                  for i, k in ((1, C1), (2, C2))],
-    "customer": [{"rank": 1, "name": "ZZT CUSTOMER ONE", "qty": 9, "amount": 90.0, "keys": ["cust-1"]},
-                 {"rank": 2, "name": "ZZT CUSTOMER TWO", "qty": 8, "amount": 80.0, "keys": ["cust-2"]}],
+    "customer": [{"rank": 1, "name": "ZZT CUSTOMER ONE", "qty": 9, "amount": 90.0, "keys": [CU1]},
+                 {"rank": 2, "name": "ZZT CUSTOMER TWO", "qty": 8, "amount": 80.0, "keys": [CU2]}],
     "month": [{"rank": 1, "name": "2026-09", "qty": 5, "amount": 50.0, "keys": []}],
 }
 
