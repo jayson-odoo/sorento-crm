@@ -489,10 +489,10 @@ Built for DNS-only. Switching to proxied is a Cloudflare setting (orange cloud o
 hostname), with no code change. It also hides the origin addresses; per-node certificates remain
 valid (Cloudflare to origin: Full (strict)).
 
-### 12e. Drill (`python3 infra/rehearsal/cf_drill.py --mode aa`, 4 Nov)
+### 12e. Drill (`python3 infra/rehearsal/cf_drill.py --mode aa`, 4 Nov, after review round 1)
 
-Each node: Postgres 17, pgbouncer (route include), Redis, HAProxy for Redis, all on the node's
-own network. The link is a separate network. The fake Cloudflare checks each node's APP PATH
+Each node: Postgres 17, pgbouncer (route include), Redis (the template's config + ACL users, no
+persisted replicaof), HAProxy for Redis (checks as `hacheck`), all on the node's own network. The link is a separate network. The fake Cloudflare checks each node's APP PATH
 (through its pgbouncer) as two origins of one pool. Real controller + adapter on each node,
 scaled timings.
 
@@ -502,10 +502,10 @@ scaled timings.
 | app down on A only | PASS: A out of the pool and back; no fence, no promotion; B kept serving writes |
 | app down on B only | PASS: same, mirrored |
 | link cut only | PASS: B left the pool (no route to the primary), no failover; back after the link returned |
-| primary box dies | PASS: B primary 24 s after A died, serving at 26 s; B routes local and its Redis is master; A came back read-only and serves again through B |
-| primary isolated | PASS: the isolated primary fenced (10 s) before the other promoted (27 s); both serving again |
-| both nodes reboot | PASS: one writer, both serving |
-| never two writers / acknowledged writes | PASS: 0 bad Postgres samples; 0 of 284 acknowledged writes lost. "Never two writers" is the Postgres check; Redis two-master samples are reported separately (expected for up to one tick after a restart, 12b) |
+| primary box dies | PASS: B primary 19 s after A died, serving at 21 s; B routes local and its Redis is master; A came back read-only and serves again through B |
+| primary isolated | PASS: the isolated primary fenced (11 s) before the other promoted (20 s); both serving again |
+| both nodes reboot | PASS: one writer, both serving; both Redis restarted as masters and R1 repaired the standby's from its real role |
+| never two writers / acknowledged writes | PASS: 0 bad Postgres samples; 0 of 270 acknowledged writes lost; 14 samples (0.3 s each, about 4 s in all) with two Redis masters, all right after a Redis restart, each repaired within a tick. "Never two writers" is the Postgres check; Redis two-master samples are reported separately (expected for up to one tick after a restart, 12b) |
 
 Drill findings fixed in the build:
 - pgbouncer `RECONNECT` after `RELOAD`.
