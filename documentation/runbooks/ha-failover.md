@@ -54,12 +54,16 @@ and no load balancer its lease would expire and it would fence the only database
    docker run --rm -v <POSTGRES_VOLUME>:/v <SAME_PG_IMAGE> sh -c \
      'cd /v && mkdir pgdata && find . -mindepth 1 -maxdepth 1 ! -name pgdata -exec mv {} pgdata/ \; && chown postgres:postgres pgdata && chmod 700 pgdata'
    # stage compose.ha.yml (templates/compose.ha.yml, image built from templates/postgres/Dockerfile),
-   # walg.env, and in .deploy.env: COMPOSE_FILE=docker-compose.yml:compose.ha.yml
+   # postgres/pg_hba.conf (templates/postgres/pg_hba.conf: copy the app/pgbouncer lines from
+   # today's pg_hba first, pin <COMPOSE_SUBNET> in docker-compose.yml), walg.env,
+   # and in .deploy.env: COMPOSE_FILE=docker-compose.yml:compose.ha.yml
    # PHASE 1 ONLY: in compose.ha.yml set db `restart: unless-stopped` (no controller yet to start it)
    docker compose up -d db
    docker compose exec -T -u postgres db psql -U postgres -Atc "show data_directory; show wal_log_hints; show archive_mode"
    ```
-   Expect `/var/lib/postgresql/data/pgdata`, `on`, `on`. Then `docker compose up -d worker worker_fast`
+   Expect `/var/lib/postgresql/data/pgdata`, `on`, `on`, and `show hba_file` =
+   `/etc/postgresql/pg_hba.conf`. Check the app signs in (pg_hba allows it) and that
+   `psql -h <A_WG_IP> -U postgres` from another host is REJECTED. Then `docker compose up -d worker worker_fast`
    and check the app.
 5. Install the role watcher and checks: `infra/scripts/` to `/opt/sorento-crm2/infra/scripts/`,
    `/etc/sorento-ha/ha-pg.env` from `infra/templates/ha-pg.env.example`, the role watcher unit,
@@ -76,8 +80,9 @@ data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
 
 1. Fresh OS, Docker, edge rules, WireGuard (`infra/templates/wireguard/`), host psql client
    (`postgresql-client-17`), the same `/opt/sorento-crm2` files as node A (compose, `.env`,
-   `.deploy.env`, nginx), its own `/etc/sorento-ha/ha-pg.env` (NODE_NAME=crm-b, PEER_HOST = A's
-   private address), `pgpass` files (mode 600). `pg_hba.ha.conf` lines on both nodes.
+   `.deploy.env`, nginx, `postgres/pg_hba.conf`: byte-identical), its own
+   `/etc/sorento-ha/ha-pg.env` (NODE_NAME=crm-b, PEER_HOST = A's private address), `pgpass` files
+   and `/etc/sorento-ha/alert.curl` (mode 600).
 2. On node A: `SELECT pg_create_physical_replication_slot('crm_b', true);` and
    `ALTER SYSTEM SET primary_conninfo = 'host=<B_WG_IP> user=replicator application_name=crm-a';`
    `ALTER SYSTEM SET primary_slot_name = 'crm_a';` (both ignored while A is primary; used if it
@@ -96,8 +101,11 @@ data directory stays in `pgdata/`, so set `PGDATA` in the plain compose too).
    TLS for the public host on B by DNS-01 (Cloudflare token: Zone, DNS: Edit, this zone only).
    Role watcher on B (it keeps the workers stopped there).
 5. Allowlists for B's egress address (OpenAI and any provider with one).
-6. GitHub: add secret `SSH_HOST_B` (and B's deploy key). From the next release on, `deploy.yml`
-   runs `scripts/ha_release.sh`: primary first, then the standby.
+6. GitHub: add secrets `SSH_HOST_B` (and B's deploy key) and `SSH_KNOWN_HOSTS` (both hosts'
+   public keys: `ssh-keyscan <host>` output, compared with `ssh-keygen -lf
+   /etc/ssh/ssh_host_ed25519_key.pub` run on each box). From the next release on, `deploy.yml`
+   runs `scripts/ha_release.sh`: primary first, then the standby; it refuses a host whose key
+   does not match.
 
 ## Phase 3: Cloudflare and the controllers
 
