@@ -1,6 +1,6 @@
 # PLAN: Stock Debt snapshot, link a PO line to an SO line via AutoCount (AC-LINK-CRM-UI)
 
-Status: Build (mock v4 approved 4 Nov; Q1 snapshot only, Q3 SS infers whole row vs split; BE + FE built, review next). Track: full (SIZE M, new action on an existing screen).
+Status: PR+CI (mock v4 approved 4 Nov; Q1 snapshot only, Q3 SS infers whole row vs split; built, reviewer READY; unlink countdown owed before SS enables unlink_row). Track: full (SIZE M, new action on an existing screen).
 
 Lane: AC-LINK-CRM-UI. Mock: `ac-link-crm-ui-04nov-mockup.html` (this folder).
 
