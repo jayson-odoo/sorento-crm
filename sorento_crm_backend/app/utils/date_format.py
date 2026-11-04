@@ -11,6 +11,7 @@ Wire values (ISO in JSON, ``%Y%m%d`` filenames, ``%Y-%m`` bucket keys) do not us
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -76,3 +77,27 @@ def fmt_date_range(start: Any, end: Any, fallback: str = "", *, naive_is_utc: bo
     if a and b:
         return f"{a} - {b}"
     return a or b or fallback
+
+
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+
+
+def fmt_maybe_date(value: Any) -> Any:
+    """A stored value that MAY be a date, in the one shape (the FE's ``formatMaybeDate``).
+
+    A bare ``YYYY-MM-DD`` -> ``20/06/2027``; an ISO timestamp (naive UTC, zoned, with
+    microseconds) -> ``04/11/2026, 7:11 pm`` in Malaysia; anything else unchanged. For audit
+    change values, whose type is only known as "whatever the snapshot stored".
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if _ISO_DAY.match(text):
+        return fmt_date(text)
+    if _ISO_INSTANT.match(text):
+        try:
+            return fmt_datetime(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            return value
+    return value

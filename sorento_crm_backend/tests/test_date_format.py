@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from app.utils.date_format import fmt_date, fmt_date_range, fmt_datetime
+from app.utils.date_format import fmt_date, fmt_date_range, fmt_datetime, fmt_maybe_date
 
 MYT = timezone(timedelta(hours=8))
 
@@ -82,6 +82,35 @@ def test_fmt_date_range_one_end_or_none():
     assert fmt_date_range(None, None, fallback="-") == "-"
 
 
+# --- fmt_maybe_date: a stored value that may be a date (audit summaries) --------------------
+
+def test_fmt_maybe_date_formats_iso_days_and_instants_and_leaves_the_rest():
+    assert fmt_maybe_date("2027-06-20") == "20/06/2027"
+    # Audit snapshots store naive UTC with microseconds: shown in Malaysia, the chips' shape.
+    assert fmt_maybe_date("2026-11-04T11:11:55.686071") == "04/11/2026, 7:11 pm"
+    assert fmt_maybe_date("2026-11-04T11:11:55+00:00") == "04/11/2026, 7:11 pm"
+    assert fmt_maybe_date("Open") == "Open"
+    assert fmt_maybe_date("12") == "12"
+    assert fmt_maybe_date(None) is None
+
+
+def test_activity_summary_line_shows_dates_in_the_one_shape():
+    """Crew re-check on 094acba9 (item 4): the grey summary line read
+    'Data checked at: 2026-11-04T11:11:55.686071 -> 2026-11-04T11:11:55.796621'."""
+    from app.services.activity_service import _summary
+
+    changes = [
+        {"field": "Data checked at", "from": "2026-11-04T11:11:55.686071", "to": "2026-11-04T11:11:55.796621"},
+        {"field": "Status", "from": "Open", "to": "Closed"},
+    ]
+    assert _summary("UPDATE", None, changes) == (
+        "Data checked at: 04/11/2026, 7:11 pm → 04/11/2026, 7:11 pm (+1 more)"
+    )
+    assert _summary("UPDATE", None, [{"field": "Due", "from": None, "to": "2026-12-01"}]) == (
+        "Due: - → 01/12/2026"
+    )
+
+
 # --- guard ----------------------------------------------------------------------------------
 
 APP = Path(__file__).resolve().parents[1] / "app"
@@ -143,6 +172,22 @@ def test_no_24_hour_dd_mm_yyyy_stamp_or_to_range_outside_the_helper():
                 continue
             writes = "strftime" in line or _FSTRING_SPEC.search(line)  # parse lists (strptime) are input
             if writes and (_DMY_24H.search(line) or _DMY_TO_RANGE.search(line)):
+                offenders.append(f"{path.relative_to(APP.parent)}:{n}")
+    assert offenders == []
+
+
+# A change chip's from / to is whatever the audit snapshot stored (ISO for any date column):
+# text built from it goes through fmt_maybe_date, never `{c['from']}` raw.
+_RAW_CHANGE_VALUE = re.compile(r"""\{\s*\w+\[['"](from|to)['"]\]""")
+
+
+def test_no_raw_change_value_in_built_text():
+    offenders = []
+    for path in sorted(APP.rglob("*.py")):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "date-format-ok:" in line or line.lstrip().startswith("#"):
+                continue
+            if _RAW_CHANGE_VALUE.search(line):
                 offenders.append(f"{path.relative_to(APP.parent)}:{n}")
     assert offenders == []
 
