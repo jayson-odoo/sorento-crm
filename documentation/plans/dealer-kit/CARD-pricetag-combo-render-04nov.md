@@ -6,6 +6,10 @@ tap's own picture and description, not one combo-level picture and paragraph.
 
 Out of scope (owner): submit/approve lead times, deadlines, SOP checks.
 
+Existing rulings this card keeps: no Submit (Approve / Escalate / Save Draft, #2101); LP or SP
+per line, LP never typed, SP typed only with no promotion, no minimum price on tags (#2158);
+Cabana has no selling price (#2104); combos are saved catalogue records, never made on the fly.
+
 ## 1. Render-coverage table (today, on main)
 
 Verdicts: **OK** renders correctly, **PARTLY** renders with something wrong, **CANNOT** no
@@ -61,10 +65,17 @@ R4. **FOC and upgrades are catalogue products, not text.** A FOC is a combo part
     must resolve to a product.
 R5. **Prices.** Combo SP ("RM 949 NETT"), per-option SP and top-up amount are stored on the
     combo (columns exist: `product_combos.sell_price`, `product_combo_parts.sell_price`,
-    `topup_amount`). A combo line never prints a sum of its parts: with no combo SP, no picked
-    option SP and no typed line price, the price slot prints nothing and Submit refuses the line
-    ("No combo price. Enter the selling price or set it on the combo."). An ala carte line is
-    unchanged. Top-up prints "TOP UP RM 150, UPGRADE TO SRTKT71SS".
+    `topup_amount`). Existing rulings hold: a line is LP or SP (#2158, "Preferred Default" per
+    request, overridable per line); LP is never typed; SP is typed only when there is no
+    promotion or after unlinking it; no minimum price on tags; there is no Submit (create screen
+    = Approve, Escalate to marketing, Save Draft; #2101).
+    - **SP-mode combo line** never prints a sum of its parts: with no combo SP, no picked option
+      SP and no typed SP, the price slot prints nothing, **Approve is disabled with the reason
+      beside it** ("No combo selling price. Type the selling price, or escalate to marketing to
+      set it on the combo.") and Escalate stays available.
+    - **LP-mode combo line** prints the combo's stored LP when set; with none it prints the sum of
+      the component LPs (owner to confirm, Q2).
+    - An ala carte line is unchanged. Top-up prints "TOP UP RM 150, UPGRADE TO SRTKT71SS".
 R6. **Combo info line.** A new slot "Combo codes" prints the full codes joined with "+", the
     open group as "(A / B / C)": `SRTKS7061+SRTKT1862SS`.
 R7. **Re-seed combos from the current flyers, Cabana included.** A script reads each current
@@ -75,7 +86,14 @@ R7. **Re-seed combos from the current flyers, Cabana included.** A script reads 
     `matches`, `differs` (what differs), `unsure` (why) and the flyer page. Nothing is written
     until the owner approves the report; then `--apply` loads it through `ProductComboService`,
     prices included. Existing combos are updated in place; a combo the flyer no longer shows is
-    reported, never deleted.
+    reported, never deleted. **Cabana (no selling price brand, `no_promo_selling_price`, #2104):
+    the re-seed never writes a combo SP, option SP or top-up for a Cabana combo**; a flyer price
+    read for one is listed in the report as "not loaded: Cabana has no selling price". A Cabana
+    line goes to SP only by a typed price, as today.
+R7b. **Combos are saved catalogue records only.** A "+" line pasted into a request must match an
+    existing saved combo (host + parts); a paste with no match is flagged on the line and is
+    never turned into a combo on the fly. Salespeople never define combos; the re-seed and the
+    product page Combos card are the only ways a combo is created.
 R8. **Templates.** Ship three combo templates built on the component list: Big 105 x 148 sink
     combo (1..5 taps), Big 105 x 148 basin combo (basin + tap + FOC), and the bathroom furniture
     set; plus a Small 59 x 29 single-product template. The seeded `sink-combo` template's three
@@ -107,7 +125,8 @@ E5. Bathroom furniture set: SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM, SP RM 209
 - More than 5 items in one list: cells keep shrinking to the floor; past 8 the layer prints the
   first 7 and "+N more" and the request flags the line.
 - A choice group the salesperson picked: the list shows only the pick (as `combo_choices` does).
-- Cabana (no system SP): combo SP comes only from the flyer or a typed price (R5 refusal applies).
+- Cabana (no selling price brand): the re-seed never writes an SP; an SP-mode Cabana combo line
+  needs a typed SP, otherwise Approve is disabled (R5).
 - An expired flyer: combos stay; their prices are not changed by the re-seed of a newer flyer
   unless that flyer shows the same combo.
 
@@ -116,8 +135,12 @@ E5. Bathroom furniture set: SRTBF11829 + SRTMCB8083-BL + SRTWT6203-GM, SP RM 209
 Q1. A sink with 2..5 tap choices: one tag showing all taps side by side, or one tag per tap
     (today's auto-split)? Recommend: one tag with all taps, because that is how the reference
     PDF and the flyer print it.
-Q2. A combo line with no combo price: refuse Submit (R5), or print the summed LP with no NETT?
-    Recommend: refuse Submit, because a wrong figure on a shelf tag is the worst failure.
+Q2. Combo price gaps. (a) SP-mode combo line with no combo SP and no typed SP: Approve disabled
+    with the reason beside it, Escalate only (R5). (b) LP-mode combo line: print the combo's
+    stored LP, and with none print the sum of the component LPs, or require a stored combo LP?
+    Recommend: (a) as written, because a wrong SP on a shelf tag is the worst failure; for LP,
+    the sum of component LPs when no combo LP is stored, because that is what the LP of a
+    package means and it is never a discount claim.
 Q3. FOC: store as combo parts marked free (R4) and retire the free-text field once the re-seed
     has linked them? Recommend: yes, because FOC needs a picture and a catalogue code.
 Q4. Re-seed when a flyer's combo differs from the stored one (SRTKS2432's tap group): update the

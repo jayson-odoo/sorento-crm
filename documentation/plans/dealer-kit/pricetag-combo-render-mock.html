@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combo price tags</title>
+<!--
+  PRICETAG-COMBO-RENDER mock v1 (CARD-pricetag-combo-render-04nov.md, on the recommended answers Q1 a, Q2 a,
+  Q3 a, Q4 a, Q5 a). Static, no data fetch. Codes from the reference PDF; pictures are placeholders; the
+  descriptions are placeholders until the dev data request returns the real price_tag_description text.
+
+  Element -> component map (reuse first; NEW only where named):
+  A. Tag previews (105 x 148)
+       drawn by the existing renderers: canvas app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer.tsx,
+       PDF app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx, preview
+       components/dealer-kit/PriceTagLivePreview.tsx (DesignViewer). NEW layer kind `component_list` in
+       lib/dealer-kit/tag-template-types.ts; NEW pure layout lib/dealer-kit/component-list.ts (cells + text lines,
+       reusing textLayerLines from lib/dealer-kit/text-layout.ts) called by all three surfaces (R2).
+       Block contents reuse: picture = slotImageAttachmentId / primaryImageOf (product-block.ts:485-520),
+       code / description = resolveSlotText on a per-item subject (product-block.ts:351), price = formatTagPrice.
+  B. Inspector for a Component list layer
+       app/(protected)/dealer-kit/tag-templates/components/InspectorPanel.tsx (same section pattern as the
+       subject picker, InspectorPanel.subject.test.tsx); checkboxes = components/ui/checkbox; direction =
+       components/ui/toggle-group (as PriceModeToggle.tsx). Add via CanvasToolbar.tsx "Add" menu.
+  C. Combo modal: kind per part (Part / Option / FOC / Upgrade) + prices
+       app/(protected)/master-data-management/products/[id]/components/AddComboModal.tsx (parts table) ;
+       product pick = components/common/SearchableSelect (clearable) over the existing product lookup.
+       BE: new column product_combo_parts.is_free; sell_price / topup_amount / is_upgrade exist
+       (app/models/product_combo.py:131-133).
+  D. Request line with no combo price (R5 refusal)
+       components/dealer-kit/PriceTagLinesTable.tsx row pill (Badge, as the LPSP "No system selling price")
+       + Approve disabled with the reason (create screen buttons: Save draft / Escalate / Approve, #2101).
+  E. Re-seed review report
+       script output CSV (scripts/import_product_combos.py gains a flyer-read front end); shown here as the
+       table the owner approves. Not an app screen.
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --dangerbg:#fef2f2; --warn:#b45309; --warnbg:#fffbeb; --ok:#047857; --okbg:#ecfdf5; --sel:#eef4ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2b1414; --okbg:#0f2a20; --sel:#1b2540; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2b1414; --okbg:#0f2a20; --sel:#1b2540; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1000px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { border:0; background:transparent; color:var(--muted); padding:4px 10px; font-size:12px; cursor:pointer; }
+  .seg button.on { background:var(--primary); color:#fff; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .tablewrap { overflow-x:auto; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; white-space:nowrap; }
+  .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.err { background:var(--dangerbg); color:var(--danger); }
+  .pill.ok { background:var(--okbg); color:var(--ok); } .pill.info { background:var(--sel); color:var(--primary); }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  label.chk { display:flex; gap:6px; align-items:center; font-size:13px; padding:2px 0; }
+  input, select { font:inherit; color:var(--fg); background:var(--card); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+
+  /* The printed tag: always white paper, 105 x 148 mm at 2.4 px/mm. */
+  .tag { width:252px; height:355px; background:#fff; color:#111; border:1px solid #d1d5db; border-radius:2px; padding:10px; display:flex; flex-direction:column; gap:6px; font-family: "DM Sans", system-ui, sans-serif; flex:none; }
+  .tag .brand { height:14px; background:#231f20; color:#fff; font-size:8px; letter-spacing:.2em; display:flex; align-items:center; padding:0 6px; }
+  .tag .title { font-size:11px; font-weight:700; }
+  .tag .codes { font-size:7px; color:#444; word-break:break-all; }
+  .clist { display:flex; gap:3px; align-items:stretch; flex:1; min-height:0; outline:1px dashed #93c5fd; outline-offset:2px; }
+  .clist.col { flex-direction:column; }
+  .cell { flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:2px; position:relative; }
+  .cell .pic { aspect-ratio:1; background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); border-radius:2px; display:flex; align-items:center; justify-content:center; font-size:6px; color:#6b7280; }
+  .cell .pic.none { background:#fff; border:1px dashed #cbd5e1; }
+  .cell .cc { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cell .cd { color:#555; overflow:hidden; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; }
+  .cell .cp { font-weight:700; }
+  .conn { flex:none; align-self:center; font-size:8px; font-weight:800; color:#8c7355; }
+  .cell .lab { font-size:6px; font-weight:800; color:#fff; background:#8c7355; align-self:flex-start; padding:0 3px; border-radius:2px; }
+  .price { display:flex; justify-content:space-between; align-items:flex-end; border-top:1px solid #e5e7eb; padding-top:4px; }
+  .price .lp { font-size:8px; color:#555; text-decoration:line-through; }
+  .price .sp { font-size:22px; font-weight:800; color:#8c7355; line-height:1; }
+  .price .sp small { font-size:9px; font-weight:700; }
+  .topup { font-size:8px; font-weight:700; background:#fef3c7; padding:2px 4px; }
+  .foc { display:flex; gap:3px; height:52px; }
+  .note { font-size:12px; color:var(--muted); max-width:300px; }
+</style>
+</head>
+<body>
+<h1>Combo price tags: per-component template</h1>
+<p class="muted">Mock v1, 04/11/2026. Static. Recommended answers Q1 a to Q5 a. The dashed blue outline is the Component list layer; everything inside it is drawn per item.</p>
+
+<h2>A. Tags (Big 105 x 148)</h2>
+<div class="card">
+  <div class="row" style="align-items:center; margin-bottom:12px">
+    <span class="muted">Taps in the SRTKS7061 group:</span>
+    <div class="seg" id="tapCount">
+      <button>1</button><button>2</button><button class="on">3</button><button>4</button><button>5</button>
+    </div>
+    <span class="muted">Same template, the list re-flows; type shrinks to a 6 pt floor.</span>
+  </div>
+  <div class="row">
+    <div>
+      <div class="tag" aria-label="Sink combo tag">
+        <div class="brand">SORENTO</div>
+        <div class="title">Kitchen sink combo</div>
+        <div class="codes" id="sinkCodes"></div>
+        <div class="clist" id="sinkList"></div>
+        <div class="foc" id="sinkFoc"></div>
+        <div class="price"><span class="lp" id="sinkLp">RM 1,288</span><span class="sp">RM 849 <small>NETT</small></span></div>
+      </div>
+      <p class="note">E1: SRTKS7061 + one of the taps. Each tap has its own picture, full code and its own tag description. Price is the combo SP, never the sum.</p>
+    </div>
+    <div>
+      <div class="tag" aria-label="Basin combo tag">
+        <div class="brand">SORENTO</div>
+        <div class="title">Wash basin combo</div>
+        <div class="codes">SRTWB1419-BL+(SRTWT7449-BL / SRTWT7449-RG)</div>
+        <div class="clist">
+          <div class="cell"><div class="pic">basin</div><div class="cc" style="font-size:7px">SRTWB1419-BL</div><div class="cd" style="font-size:6px">Art basin, matt black, 410 x 410</div></div>
+          <span class="conn">+</span>
+          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:7px">SRTWT7449-BL</div><div class="cd" style="font-size:6px">Basin mixer, matt black</div></div>
+          <span class="conn">OR</span>
+          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:7px">SRTWT7449-RG</div><div class="cd" style="font-size:6px">Basin mixer, rose gold</div></div>
+        </div>
+        <div class="foc">
+          <div class="cell" style="flex-direction:row; gap:4px"><div class="pic" style="width:46px">waste</div><div><span class="lab">FOC</span><div class="cc" style="font-size:7px">SRTW5102-BL</div><div class="cd" style="font-size:6px">Pop-up waste, black</div></div></div>
+        </div>
+        <div class="price"><span class="lp">RM 1,069</span><span class="sp">RM 699 <small>NETT</small></span></div>
+      </div>
+      <p class="note">E2: basin + tap (two finishes) + FOC. The FOC is a catalogue product with its own picture, drawn by a second Component list set to "FOC only". Prices here are placeholders.</p>
+    </div>
+    <div>
+      <div class="tag" aria-label="Top-up tag">
+        <div class="brand">SORENTO</div>
+        <div class="title">Kitchen sink combo</div>
+        <div class="codes">SRTKS7061+SRTKT1862SS</div>
+        <div class="clist">
+          <div class="cell"><div class="pic">sink</div><div class="cc" style="font-size:8px">SRTKS7061</div><div class="cd" style="font-size:6.5px">Undermount sink, 700 x 450</div></div>
+          <span class="conn">+</span>
+          <div class="cell"><div class="pic">tap</div><div class="cc" style="font-size:8px">SRTKT1862SS</div><div class="cd" style="font-size:6.5px">Pull-out kitchen tap</div></div>
+          <span class="conn">TOP UP</span>
+          <div class="cell"><span class="lab">RM 150</span><div class="pic">tap</div><div class="cc" style="font-size:8px">SRTKT71SS</div><div class="cd" style="font-size:6.5px">Sensor kitchen tap</div></div>
+        </div>
+        <div class="topup">TOP UP RM 150, UPGRADE TO SRTKT71SS</div>
+        <div class="price"><span class="lp">RM 1,288</span><span class="sp">RM 849 <small>NETT</small></span></div>
+      </div>
+      <p class="note">E4: a top-up is its own block with the upgrade's picture, plus the reference PDF's wording as a line.</p>
+    </div>
+    <div>
+      <div class="tag" aria-label="Bathroom furniture tag">
+        <div class="brand">SORENTO</div>
+        <div class="title">Bathroom furniture set</div>
+        <div class="codes">SRTBF11829+SRTMCB8083-BL+SRTWT6203-GM</div>
+        <div class="pic" style="flex:1; background:repeating-linear-gradient(45deg,#eef0f3 0 6px,#e4e7eb 6px 12px); display:flex; align-items:center; justify-content:center; font-size:8px; color:#6b7280">combo picture (as today)</div>
+        <div style="font-size:7px; color:#444">Combo description (as today, combo level).</div>
+        <div class="price"><span class="lp">RM 3,120</span><span class="sp">RM 2,099 <small>NETT</small></span></div>
+      </div>
+      <p class="note">E5: bathroom furniture keeps the combo-level picture and description. Only the price changes: combo SP, never the sum.</p>
+    </div>
+  </div>
+</div>
+
+<h2>B. Template editor: Component list layer</h2>
+<div class="card" style="max-width:420px">
+  <div style="font-weight:600; margin-bottom:6px">Component list</div>
+  <div class="muted" style="margin-bottom:4px">Show</div>
+  <label class="chk"><input type="checkbox" checked> Host</label>
+  <label class="chk"><input type="checkbox" checked> Parts</label>
+  <label class="chk"><input type="checkbox" checked> Options</label>
+  <label class="chk"><input type="checkbox"> Free items (FOC)</label>
+  <label class="chk"><input type="checkbox" checked> Upgrades</label>
+  <div class="muted" style="margin:10px 0 4px">Each item prints</div>
+  <label class="chk"><input type="checkbox" checked> Picture</label>
+  <label class="chk"><input type="checkbox" checked> Code</label>
+  <label class="chk"><input type="checkbox" checked> Tag description</label>
+  <label class="chk"><input type="checkbox"> List price</label>
+  <label class="chk"><input type="checkbox" checked> Option price</label>
+  <label class="chk"><input type="checkbox" checked> Connector (+, OR, FOC, TOP UP)</label>
+  <div class="muted" style="margin:10px 0 4px">Direction</div>
+  <div class="seg"><button class="on">Row</button><button>Column</button></div>
+  <div class="muted" style="margin:10px 0 4px">Smallest type</div>
+  <input type="number" value="6" style="width:70px"> pt
+</div>
+
+<h2>C. Combo (product page, Combos card): part kinds and prices</h2>
+<div class="card">
+  <div class="row" style="gap:24px; margin-bottom:10px">
+    <div><div class="muted">Combo</div><div>Kitchen sink combo</div></div>
+    <div><div class="muted">List price</div><input value="1,288" style="width:90px"></div>
+    <div><div class="muted">Selling price (NETT)</div><input value="849" style="width:90px"></div>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Product</th><th>Kind</th><th>Choice group</th><th>Option price</th><th>Top up</th></tr></thead>
+    <tbody>
+      <tr><td>SRTKT1862SS</td><td><select><option selected>Option</option><option>Part</option><option>FOC</option><option>Upgrade</option></select></td><td>Kitchen tap</td><td><input style="width:80px" placeholder="blank"></td><td class="muted">-</td></tr>
+      <tr><td>SRTKT1863SS</td><td><select><option selected>Option</option></select></td><td>Kitchen tap</td><td><input style="width:80px" value="899"></td><td class="muted">-</td></tr>
+      <tr><td>SRTKT71SS</td><td><select><option selected>Upgrade</option></select></td><td class="muted">-</td><td class="muted">-</td><td><input style="width:80px" value="150"></td></tr>
+      <tr><td>SRTW5102-BL</td><td><select><option selected>FOC</option></select></td><td class="muted">-</td><td class="muted">-</td><td class="muted">-</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Old free text (not linked): <span class="pill warn">FOC (text, not linked): "Free sink accessories set"</span> stays readable until a FOC product replaces it.</p>
+</div>
+
+<h2>D. Request line: combo with no price</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Item</th><th>Template</th><th>Price</th><th></th></tr></thead>
+    <tbody><tr>
+      <td><b>SRTKS2432</b> Kitchen sink combo<br><span class="muted">+ SRTKT1862SS</span></td>
+      <td>Big sink combo 105 x 148</td>
+      <td><span class="pill info">SP</span> <span class="pill err">No combo selling price. Type the selling price, or escalate to marketing to set it on the combo.</span><br><input placeholder="Selling price" style="width:120px; margin-top:4px"></td>
+      <td><span class="pill warn">No tag description: SRTKT1862SS</span></td>
+    </tr></tbody>
+  </table></div>
+  <div class="row" style="margin-top:8px"><button class="btn">Save draft</button><button class="btn">Escalate to marketing</button><button class="btn primary" disabled style="opacity:.5">Approve</button><span class="muted" style="align-self:center">Approve is off: 1 combo line has no selling price.</span></div>
+  <p class="muted">An LP line prints the combo LP (or the sum of component LPs, Q2). Ala carte lines are unchanged.</p>
+</div>
+
+<h2>E. Re-seed review report (from the current flyers)</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Flyer, page</th><th>Combo read</th><th>Status</th><th>What differs / why unsure</th></tr></thead>
+    <tbody>
+      <tr><td>Kitchen flyer, p 4</td><td>SRTKS7061+SRTKT1862SS, FOC as listed, RM 849 NETT, TOP UP RM 150 SRTKT71SS</td><td><span class="pill warn">differs</span></td><td>SP 849 not stored; SRTKT71SS stored as an option, flyer says top-up</td></tr>
+      <tr><td>Kitchen flyer, p 5</td><td>SRTKS2432+SRTKT1862SS, RM 949 NETT</td><td><span class="pill warn">differs</span></td><td>Stored tap group has other taps</td></tr>
+      <tr><td>Bathroom flyer, p 2</td><td>SRTWB1419-BL+(SRTWT7449-BL / -RG), FOC SRTW5102-BL</td><td><span class="pill info">new</span></td><td>No combo on this host yet</td></tr>
+      <tr><td>Cabana flyer, p 3</td><td>CKS7306+CB1520SS-DIY</td><td><span class="pill info">new</span></td><td>Cabana host, first import; flyer price not loaded (Cabana has no selling price)</td></tr>
+      <tr><td>Bathroom flyer, p 7</td><td>SRTBF11829+SRTMCB8083-BL+SRTWT6203-GM, RM 2,099 NETT</td><td><span class="pill ok">matches</span></td><td>Parts match; SP will be set</td></tr>
+      <tr><td>Kitchen flyer, p 9</td><td>KS6645-NL+CB1530SS-BL</td><td><span class="pill err">unsure</span></td><td>Price block shared by two sinks on the page</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Nothing is written until you approve this report. Rows here are illustrative; the real report comes from the flyer read.</p>
+</div>
+
+<script>
+  var taps = [
+    ['SRTKT1862SS', 'Pull-out kitchen tap, stainless'],
+    ['SRTKT1863SS', 'Kitchen tap with side spray'],
+    ['SRTKT1871SS', 'Gooseneck kitchen tap, brushed'],
+    ['SRTKT1880SS', 'Dual-function kitchen tap'],
+    ['SRTKT1892SS', 'Filter kitchen tap, 3-way']
+  ];
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
+  function cell(code, desc, pic, size) {
+    var c = el('div', 'cell');
+    c.appendChild(el('div', 'pic', pic));
+    var cc = el('div', 'cc', code); cc.style.fontSize = size + 'px'; c.appendChild(cc);
+    var cd = el('div', 'cd', desc); cd.style.fontSize = Math.max(6, size - 1.5) + 'px'; c.appendChild(cd);
+    return c;
+  }
+  function render(n) {
+    var list = document.getElementById('sinkList'); list.innerHTML = '';
+    var size = Math.max(6, 9 - (n - 1) * 0.75);
+    list.appendChild(cell('SRTKS7061', 'Undermount sink, 700 x 450', 'sink', size));
+    list.appendChild(el('span', 'conn', '+'));
+    for (var i = 0; i < n; i++) {
+      if (i > 0) list.appendChild(el('span', 'conn', 'OR'));
+      list.appendChild(cell(taps[i][0], taps[i][1], 'tap', size));
+    }
+    var codes = taps.slice(0, n).map(function (t) { return t[0]; });
+    document.getElementById('sinkCodes').textContent = 'SRTKS7061+' + (n === 1 ? codes[0] : '(' + codes.join(' / ') + ')');
+    var foc = document.getElementById('sinkFoc'); foc.innerHTML = '';
+    var f = el('div', 'cell'); f.style.flexDirection = 'row'; f.style.gap = '4px';
+    var p = el('div', 'pic', 'basket'); p.style.width = '46px'; f.appendChild(p);
+    var t = el('div'); t.appendChild(el('span', 'lab', 'FOC'));
+    var fc = el('div', 'cc', 'SRTKA101SS'); fc.style.fontSize = '7px'; t.appendChild(fc);
+    var fd = el('div', 'cd', 'Basket strainer'); fd.style.fontSize = '6px'; t.appendChild(fd);
+    f.appendChild(t); foc.appendChild(f);
+  }
+  var seg = document.getElementById('tapCount');
+  seg.addEventListener('click', function (e) {
+    if (e.target.tagName !== 'BUTTON') return;
+    Array.prototype.forEach.call(seg.children, function (b) { b.classList.toggle('on', b === e.target); });
+    render(+e.target.textContent);
+  });
+  render(3);
+</script>
+</body>
+</html>
