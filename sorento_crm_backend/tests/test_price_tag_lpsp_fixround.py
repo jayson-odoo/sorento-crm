@@ -57,16 +57,17 @@ def _sp_request(db):
         },
     )
     req.status = "proof_ready"
+    req.portal_draft_at = None
     req.print_by = "office"
     req.revision_no = 0
     db.commit()
     return contact, product_id, req
 
 
-def _revise(db, contact, req, products):
+def _revise(db, contact, req, products, expected=0):
     PortalRevisionService(db).revise(
         _seed_token(contact), "price_tag_request", str(req.id),
-        {"debtor_name": "ZZT Dealer", "products": products}, "Changed", 0,
+        {"debtor_name": "ZZT Dealer", "products": products}, "Changed", expected,
     )
     db.expire_all()
     return PriceTagRequestService.get_request(db, str(req.id))
@@ -95,6 +96,7 @@ def test_a_revise_can_set_the_type_and_a_typed_price_on_a_line(db):
         db, contact, fresh,
         [{"product_id": product_id, "quantity": 1, "price_type": "selling",
           "manual_sell_price": "480.00"}],
+        expected=1,
     )
     assert again.lines[0].price_type == "selling"
     assert again.lines[0].manual_sell_price == Decimal("480.00")
