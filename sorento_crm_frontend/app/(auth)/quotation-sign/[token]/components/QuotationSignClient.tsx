@@ -13,24 +13,15 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
 import { SignaturePad } from '@/components/common/SignaturePad';
 import { signatureValueFrom } from '@/components/common/signatureValue';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
-import { TERMS_HTML_CLASS } from '@/lib/terms-html';
+import { CoverPageCard, SenderRow } from '@/components/quotation/CoverPageCard';
 import {
   useQuotationSignMutations,
   useQuotationSignPage,
@@ -38,19 +29,14 @@ import {
 import { useQuotationViewBeacon } from '../../hooks/useQuotationViewBeacon';
 import {
   QuotationSignError,
-  type QuotationCoverRow,
   type QuotationSignPage,
 } from '../../services/quotationSignService';
+import { QuotationSignScopes } from './QuotationSignScopes';
+import { FeedbackDialog, NoteDialog } from './QuotationSignFeedback';
 import {
-  QuotationSignScopes,
-  type QuotationSignSuggest,
-} from './QuotationSignScopes';
-import {
-  changedLineCount,
-  editOf,
-  hasErrors,
-  suggestionBody,
-  type LineEdits,
+  feedbackBody,
+  feedbackItem,
+  type FeedbackTarget,
 } from './quotationSuggest';
 
 /** "Proposal" or "Quotation": what the customer is holding (PS-PROPOSAL-QUOTATION). */
@@ -85,68 +71,6 @@ function firstName(...names: Array<string | null | undefined>): string | null {
   return null;
 }
 
-function SenderRow({ page }: { page: QuotationSignPage }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3">
-      {page.sender_logo_url && (
-        <img
-          src={page.sender_logo_url}
-          alt={`${page.sender_name ?? 'Company'} logo`}
-          referrerPolicy="no-referrer"
-          className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
-        />
-      )}
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          {`${noun(page)} from`}
-        </p>
-        <p className="min-w-0 break-words text-base font-semibold">
-          {text(page.sender_name)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/** The cover page first: the same rows, in the same order, as the PDF's first page. */
-function CoverCard({
-  page,
-  rows,
-}: {
-  page: QuotationSignPage;
-  rows: QuotationCoverRow[];
-}) {
-  return (
-    <Card data-testid="quotation-sign-cover">
-      <CardContent className="space-y-4 py-5">
-        <SenderRow page={page} />
-        <div className="space-y-3 border-t border-border pt-4">
-          {rows.map((row) => (
-            <div
-              key={row.key}
-              className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:gap-2"
-            >
-              <span className="shrink-0 text-muted-foreground sm:w-40">
-                {row.label}
-              </span>
-              {row.html ? (
-                <div
-                  className={cn(TERMS_HTML_CLASS, 'font-medium')}
-                  dangerouslySetInnerHTML={sanitizedHtml(row.html)}
-                />
-              ) : (
-                <span className="min-w-0 whitespace-pre-line break-words font-medium">
-                  {row.text}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** The refs and the parties, in the order they sit on the printed quotation. */
 function Letterhead({
   page,
@@ -165,7 +89,9 @@ function Letterhead({
   return (
     <Card>
       <CardContent className="space-y-5 py-5">
-        {withSender && <SenderRow page={page} />}
+        {withSender && (
+          <SenderRow name={page.sender_name} logoUrl={page.sender_logo_url} noun={noun(page)} />
+        )}
 
         <div
           className={cn(
@@ -357,7 +283,7 @@ function CustomerSignature({
     );
   }
 
-  // A newer revision replaced this one: nothing here can be signed or suggested any more.
+  // A newer revision replaced this one: nothing here can be signed or given feedback any more.
   if (page.sign_blocked_reason === 'superseded' && page.superseded_by_ref) {
     return (
       <Card>
@@ -373,57 +299,6 @@ function CustomerSignature({
         <CardContent className="py-5">
           <p className="min-w-0 break-words text-sm">
             {`This ${noun(page).toLowerCase()} has been replaced by ${quotationLabel(page.superseded_by_ref, noun(page))}.`}
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  // A request is open (owner, hand test round 2): the sign block goes away entirely and the
-  // waiting banner stands in its place, until Sorento answers.
-  if (page.sign_blocked_reason === 'amendment_open') {
-    return (
-      <div className="rounded-lg border border-warning/40 bg-warning/10 p-4 text-sm">
-        <p className="font-medium">Your suggestions are with Sorento</p>
-        {page.amendment_request?.submitted_at && (
-          <p className="text-muted-foreground">
-            {`Sent ${formatDateTimeInMalaysia(page.amendment_request.submitted_at)}.`}
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  // Answered: the outcome is in the table's cells; this says so once, and what happens next.
-  if (
-    page.sign_blocked_reason === 'amendment_applied' &&
-    page.amendment_request
-  ) {
-    // Counted by LINE, as the customer changed them: a line counts as accepted when any of its
-    // suggestions was.
-    const rows = page.amendment_request.rows;
-    const lineIds = Array.from(new Set(rows.map((row) => row.line_id)));
-    const yes = lineIds.filter((id) =>
-      rows.some((row) => row.line_id === id && row.decision === 'accepted'),
-    ).length;
-    const no = lineIds.length - yes;
-    return (
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="min-w-0 break-words text-sm">
-            Your suggestions
-          </CardTitle>
-          <Badge variant="info" appearance="light">
-            <MessageSquareText className="size-3.5" aria-hidden />
-            Answered
-          </Badge>
-        </CardHeader>
-        <CardContent className="space-y-2 py-5">
-          <p className="min-w-0 break-words text-sm font-medium">
-            {`Sorento answered: ${yes} accepted, ${no} not accepted.`}
-          </p>
-          <p className="min-w-0 break-words text-sm text-muted-foreground">
-            Your salesperson will send the revised quotation for signing.
           </p>
         </CardContent>
       </Card>
@@ -592,93 +467,6 @@ function CustomerSignature({
   );
 }
 
-/** Suggest mode's bar: Discard and Send suggestions, right-aligned, and nothing else. */
-function SuggestBar({
-  canSend,
-  sending,
-  onSend,
-  onDiscard,
-}: {
-  canSend: boolean;
-  sending: boolean;
-  onSend: () => void;
-  onDiscard: () => void;
-}) {
-  return (
-    <div className="flex justify-end gap-2">
-      <Button
-        type="button"
-        variant="ghost"
-        disabled={sending}
-        onClick={onDiscard}
-      >
-        Discard
-      </Button>
-      <Button type="button" disabled={!canSend || sending} onClick={onSend}>
-        Send suggestions
-      </Button>
-    </div>
-  );
-}
-
-/**
- * The confirm step: the optional note, and the one Send that actually sends. Cancel closes it and
- * keeps every edit (and the note) where it was.
- */
-function SuggestConfirm({
-  open,
-  note,
-  canSend,
-  sending,
-  onNote,
-  onSend,
-  onCancel,
-}: {
-  open: boolean;
-  note: string;
-  canSend: boolean;
-  sending: boolean;
-  onNote: (note: string) => void;
-  onSend: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <DialogContent className="w-[calc(100vw-2rem)] max-w-md">
-        <DialogHeader>
-          <DialogTitle>Send your suggestions</DialogTitle>
-        </DialogHeader>
-        <DialogBody className="space-y-1.5">
-          <Label htmlFor="quotation-suggest-note">
-            Anything else (optional)
-          </Label>
-          <Textarea
-            id="quotation-suggest-note"
-            rows={3}
-            value={note}
-            maxLength={4000}
-            disabled={sending}
-            onChange={(event) => onNote(event.target.value)}
-          />
-        </DialogBody>
-        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={sending}
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-          <Button type="button" disabled={!canSend || sending} onClick={onSend}>
-            Send
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /**
  * The page's own width, because the (auth) shell hands this route the raw viewport.
  *
@@ -775,8 +563,8 @@ export function QuotationSignClient({ token }: { token: string }) {
 }
 
 /**
- * The loaded page. Its own component so the name and the suggest-mode state can start from the
- * page itself: the name the customer types travels with a signature and with suggestions alike.
+ * The loaded page. Its own component so the name and the feedback state can start from the
+ * page itself: the name the customer types travels with a signature and with feedback alike.
  */
 function SignPageBody({
   page,
@@ -785,55 +573,25 @@ function SignPageBody({
   page: QuotationSignPage;
   token: string;
 }) {
-  const { submitAmendment } = useQuotationSignMutations(token);
+  const { submitFeedback } = useQuotationSignMutations(token);
   const [signerName, setSignerName] = React.useState(page.attn_name ?? '');
-  const [suggesting, setSuggesting] = React.useState(false);
-  const [edits, setEdits] = React.useState<LineEdits>({});
-  const [note, setNote] = React.useState('');
-  const [confirming, setConfirming] = React.useState(false);
-
-  const discard = React.useCallback(() => {
-    setSuggesting(false);
-    setConfirming(false);
-    setEdits({});
-    setNote('');
-  }, []);
-
-  const sending = submitAmendment.isPending;
-  const suggest = React.useMemo<QuotationSignSuggest>(
-    () => ({
-      edits,
-      disabled: sending,
-      onEdit: (line, patch) =>
-        setEdits((previous) => ({
-          ...previous,
-          [line.id]: { ...editOf(previous, line), ...patch },
-        })),
-      onToggleRemove: (line) =>
-        setEdits((previous) => {
-          const current = editOf(previous, line);
-          return {
-            ...previous,
-            [line.id]: { ...current, remove: !current.remove },
-          };
-        }),
-    }),
-    [edits, sending],
-  );
-  const valid = !hasErrors(page.scopes, edits);
-  // The bar opens the confirm step once every value can be sent; the final Send needs a change
-  // or a note, the same rule the server applies.
-  const canSend =
-    valid && (changedLineCount(page.scopes, edits) > 0 || note.trim() !== '');
-  // Offered only where a suggestion can be taken: unsigned, current, nothing waiting or applied
-  // with a revision, and no older free-text request settled on this page.
-  const canSuggest =
-    !suggesting &&
+  // The item or cell the feedback form is open on, and the free-note form (PS-QUOTE-MATRIX R19).
+  const [target, setTarget] = React.useState<FeedbackTarget | null>(null);
+  const [noting, setNoting] = React.useState(false);
+  const sending = submitFeedback.isPending;
+  // Feedback never blocks signing and may be sent more than once; it ends once the quotation is
+  // signed or replaced by a newer revision, and an older free-text request settled here keeps
+  // its own resting state.
+  const canFeedback =
     !page.is_accepted &&
-    page.sign_blocked_reason === null &&
+    page.sign_blocked_reason !== 'superseded' &&
     !(page.is_changes_requested && !page.amendment_request);
 
   const coverRows = page.cover_rows?.length ? page.cover_rows : null;
+  // Layout 3 (a designed cover) names its title; layouts 1 and 2 do not.
+  const designed = page.cover_title != null;
+  // The terms print inside the cover while their row is shown; below the prices otherwise.
+  const termsOnCover = coverRows?.some((row) => row.key === 'terms') ?? false;
   const preparedBy = firstName(
     page.sorento_signature?.signer_name,
     page.signatory_name,
@@ -842,62 +600,68 @@ function SignPageBody({
 
   return (
     <PageShell testId="quotation-sign-page">
-      {coverRows && <CoverCard page={page} rows={coverRows} />}
-      <Letterhead page={page} withSender={!coverRows} />
+      {(coverRows || designed) && (
+        <CoverPageCard
+          cover={{ ...page, cover_rows: coverRows ?? [] }}
+          testId="quotation-sign-cover"
+          noun={noun(page)}
+        />
+      )}
+      <Letterhead page={page} withSender={!coverRows && !designed} />
 
-      <ProsePanel
-        title="Cover letter"
-        html={page.cover_letter}
-        empty="No cover letter was included with this quotation."
-      />
-
-      {suggesting && (
-        <SuggestBar
-          canSend={valid}
-          sending={sending}
-          onDiscard={discard}
-          onSend={() => valid && setConfirming(true)}
+      {/* A designed cover carries the letter as its intro. */}
+      {!designed && (
+        <ProsePanel
+          title="Cover letter"
+          html={page.cover_letter}
+          empty="No cover letter was included with this quotation."
         />
       )}
 
       <QuotationSignScopes
         scopes={page.scopes}
         grandTotal={page.grand_total}
-        suggest={suggesting ? suggest : undefined}
-        amendment={page.amendment_request}
+        sent={page.amendment_request ?? null}
+        onFeedback={canFeedback ? setTarget : undefined}
         action={
-          canSuggest ? (
+          canFeedback ? (
             <Button
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => setSuggesting(true)}
+              onClick={() => setNoting(true)}
             >
-              Suggest changes
+              Leave a note
             </Button>
           ) : null
         }
       />
 
-      <SuggestConfirm
-        open={suggesting && confirming}
-        note={note}
-        canSend={canSend}
+      <FeedbackDialog
+        target={target}
         sending={sending}
-        onNote={setNote}
-        onCancel={() => setConfirming(false)}
-        onSend={() => {
-          if (!canSend) return;
-          submitAmendment.mutate(
-            suggestionBody(page.scopes, edits, note, signerName),
-            {
-              onSuccess: discard,
-            },
+        onClose={() => setTarget(null)}
+        onSend={(draft) => {
+          if (!target) return;
+          submitFeedback.mutate(
+            feedbackBody([feedbackItem(target, draft)], '', signerName),
+            { onSuccess: () => setTarget(null) },
           );
         }}
       />
 
-      {!coverRows && (
+      <NoteDialog
+        open={noting}
+        sending={sending}
+        onClose={() => setNoting(false)}
+        onSend={(note) =>
+          submitFeedback.mutate(feedbackBody([], note, signerName), {
+            onSuccess: () => setNoting(false),
+          })
+        }
+      />
+
+      {((!coverRows && !designed) || (designed && !termsOnCover)) && (
         <ProsePanel
           title="Terms and conditions"
           html={page.terms}

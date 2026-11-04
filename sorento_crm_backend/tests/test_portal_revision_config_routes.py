@@ -49,12 +49,13 @@ CONFIG_KEYS = {
 # own REVISABLE_PORTAL_FORM_TYPES (GRANTABLE_PORTAL_FORM_TYPES minus this kind).
 # sample_request (SR-CORE #1718) is excluded for the same reason: the revise route
 # refuses it (no RevisionAdapter in portal_revision_service.ADAPTERS).
+# PRICETAG-SELF-APPROVAL (owner Q3): price_tag_request left the list - price tags
+# have no cap and are always revisable by the salesperson.
 PORTAL_TYPES = {
     "complaint",
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
-    "price_tag_request",
 }
 
 

@@ -12,6 +12,8 @@
  *   legitimate. Render the list from `blocks`, never from a similarity threshold.
  */
 
+import type { MatrixCells, MatrixHeader } from '../lib/quotationMatrix';
+
 export type ProjectOutcome = 'open' | 'won' | 'lost' | 'dormant';
 
 export type PartyType =
@@ -218,6 +220,9 @@ export interface Project {
   critical_at?: string | null;
   management_support?: string | null;
   management_notes?: string | null;
+  /** PS-QUOTE-RULES: this project's discounts go to this person; null = owner's superior. */
+  discount_approver_user_id?: string | null;
+  discount_approver_name?: string | null;
 
   registered_company_name?: string | null;
   location?: string | null;
@@ -329,6 +334,7 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   is_critical?: boolean;
   management_support?: string | null;
   management_notes?: string | null;
+  discount_approver_user_id?: string | null;
   loss_reason?: string | null;
 }
 
@@ -730,6 +736,11 @@ export interface QuotationVersion {
   total_amount: string;
   notes?: string | null;
   created_at?: string | null;
+  /**
+   * PS-QUOTE-MATRIX: column headers over columns, frozen with the version. `[]` (or absent, on a
+   * payload from before the grid) is today's single Qty column.
+   */
+  matrix_columns?: MatrixHeader[];
 }
 
 /**
@@ -874,6 +885,8 @@ export interface QuotationLine {
 
   sort_order: number;
   notes?: string | null;
+  /** PS-QUOTE-MATRIX: quantity per leaf key; `{}` on a scope without columns. */
+  qty_cells?: MatrixCells;
 }
 
 export interface QuotationLineBody {
@@ -896,6 +909,8 @@ export interface QuotationLineBody {
   complete_set?: string | null;
   band_label?: string | null;
   is_rate_only?: boolean;
+  /** Sent only on a version with columns; the server derives `quantity` from it. */
+  qty_cells?: MatrixCells | null;
 }
 
 /**
@@ -929,50 +944,48 @@ export interface StagedQuotationLine {
   removed: boolean;
 }
 
-export type QuotationAmendmentField = 'quantity' | 'unit_price' | 'remove';
-export type QuotationAmendmentDecision = 'pending' | 'accepted' | 'rejected';
+/** What one piece of customer feedback carries as its hint (PS-QUOTE-MATRIX R19-R22). */
+export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
 
 /**
- * One customer suggestion on one ISSUED line (QUOTE-CUSTOMER-AMEND): one field, decided on its
- * own, so a quantity can be accepted and a price on the same line rejected. Money and quantities
- * are decimal strings; `value_to` is null for a removal. The floor fields are staff-only.
+ * One feedback note on an item or a cell. Nothing is accepted or applied: the only state is
+ * Handled (`handled_at`), ticked by staff. Money and quantities are decimal strings.
  */
-export interface QuotationAmendmentRow {
+export interface QuotationFeedbackRow {
   id: string;
   line_id: string;
-  field: QuotationAmendmentField;
+  /** The scope (quotation) the note's line sits in. Absent on a payload from before it. */
+  scope_id?: string | null;
+  scope_label: string;
+  line_description: string | null;
+  /** The cell it points at, or null for the whole item. */
+  cell_key: string | null;
+  /** "<header> / <column>" or the header label; null for an item note. */
+  cell_label: string | null;
+  kind: QuotationFeedbackKind;
   value_from: string | null;
   value_to: string | null;
-  decision: QuotationAmendmentDecision;
-  decision_reason: string | null;
-  below_floor?: boolean;
-  floor_value?: string | null;
+  /** Model swap: the model as the customer typed it. */
+  model: string | null;
+  note: string | null;
+  handled_at: string | null;
+  handled_by_name: string | null;
 }
 
-/** The request as the staff routes answer it. */
-export interface QuotationAmendmentRequest {
+export interface QuotationFeedbackRequest {
   id: string;
-  status: 'open' | 'applied' | 'superseded';
+  issue_label: string | null;
   submitted_at: string | null;
   requester_name: string | null;
+  /** The free note sent with the items. */
   note: string | null;
-  applied_at: string | null;
-  rows: QuotationAmendmentRow[];
-  /** The issue's total, and the total with the accepted rows applied. */
-  total_issued: string;
-  total_after: string;
-  /**
-   * Touched scopes that already carry a hand-made draft. `version_id` is the ISSUED version the
-   * rows name (the review is decided there); `has_accepted` says whether Apply refuses today.
-   */
-  blocked_scopes: {
-    quotation_id: string;
-    scope_label: string;
-    version_id: string;
-    has_accepted: boolean;
-  }[];
-  /** Apply drafted a revision. */
-  revised: boolean;
+  rows: QuotationFeedbackRow[];
+}
+
+export interface QuotationFeedback {
+  open_count: number;
+  /** Newest first; rows in line order. */
+  requests: QuotationFeedbackRequest[];
 }
 
 export interface QuotationOutcomeBody {

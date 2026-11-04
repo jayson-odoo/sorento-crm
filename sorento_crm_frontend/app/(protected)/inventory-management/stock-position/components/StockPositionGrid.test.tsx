@@ -17,7 +17,7 @@ class ResizeObserverStub {
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/inventory-management/stock-position',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 const prefs = vi.hoisted(() => ({ useListingColumnPreferences: vi.fn() }));

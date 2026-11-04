@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
 import type { Project } from '../../../../_shared/types/project.types';
@@ -30,17 +30,47 @@ if (!window.matchMedia) {
 
 const BASE = '/project-sales/p1/quotation-documents/d1';
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
+const previewOk = (intro = '<p>Dear Kelly</p>') =>
+  new Response(
+    JSON.stringify({
+      cover_title: 'QUOTATION',
+      cover_show_letterhead: true,
+      cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+      cover_intro_html: intro,
+      cover_closing_html: '',
+      sender_name: 'Sorento Sdn Bhd',
+      sender_logo_url: null,
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const getProject = vi.fn();
 const listQuotations = vi.fn();
+const getQuotationFeedback = vi.fn();
+const setQuotationFeedbackHandled = vi.fn();
+const push = vi.fn();
 
 // The tab strip reads the pathname to decide what is open, so each test sets the route it is
 // making a claim about.
 let pathname = BASE;
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -72,6 +102,8 @@ vi.mock('../../../../_shared/services/quotationDocumentService', async (importOr
     ...actual,
     getQuotationDocument: (...args: unknown[]) => getQuotationDocument(...args),
     listQuotationIssues: (...args: unknown[]) => listQuotationIssues(...args),
+    getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
+    setQuotationFeedbackHandled: (...args: unknown[]) => setQuotationFeedbackHandled(...args),
   };
 });
 
@@ -94,6 +126,7 @@ vi.mock('../../../components/QuotationVersionEditor', () => ({
 
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationScopesTab } from './QuotationScopesTab';
+import { QuotationFeedbackPanel } from './QuotationFeedbackPanel';
 import {
   QuotationCoverLetterTab,
   QuotationHeaderTab,
@@ -192,6 +225,9 @@ beforeEach(() => {
   listQuotations.mockResolvedValue([]);
   listQuotationIssues.mockResolvedValue([]);
   getQuotationDocument.mockResolvedValue(quotationDocument());
+  coverPreview.mockImplementation(async () => previewOk());
+  getQuotationFeedback.mockResolvedValue({ open_count: 0, requests: [] });
+  setQuotationFeedbackHandled.mockResolvedValue(undefined);
 });
 
 describe('the quotation document tab strip', () => {
@@ -205,6 +241,7 @@ describe('the quotation document tab strip', () => {
       'Cover letter',
       'Terms',
       'Signatures',
+      'Customer feedback',
       // PS-SPEC-SHEET: the project catalogue, last.
       'Spec sheet',
     ]);
@@ -218,6 +255,10 @@ describe('the quotation document tab strip', () => {
     expect(screen.getByRole('tab', { name: 'Signatures' })).toHaveAttribute(
       'href',
       `${BASE}/signatures`,
+    );
+    expect(screen.getByRole('tab', { name: 'Customer feedback' })).toHaveAttribute(
+      'href',
+      `${BASE}/feedback`,
     );
     expect(screen.getByRole('tab', { name: 'Spec sheet' })).toHaveAttribute(
       'href',
@@ -285,15 +326,34 @@ describe('what each quotation document tab renders', () => {
     await expectIdentityOnScreen();
   });
 
-  it('renders the cover letter tab, and the identity above it', async () => {
+  it('renders the cover letter tab as the preview card with the intro, and the identity above it', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>Dear Kelly</p>' }),
     );
     renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
 
     expect(await screen.findByText('Dear Kelly')).toBeInTheDocument();
-    expect(panelTitle('Cover letter')).toBeInTheDocument();
+    expect(screen.getByText('SRT/Q/2026/0141-R1 Menara Test')).toBeInTheDocument();
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
     await expectIdentityOnScreen();
+  });
+
+  it('M1: a proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'proposal' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
+  it('M1: a quotation prints QUOTATION FROM on the cover letter tab', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'quotation' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Quotation from')).toBeInTheDocument();
+    expect(screen.queryByText('Proposal from')).toBeNull();
   });
 
   it('renders the terms tab, and the identity above it', async () => {
@@ -319,12 +379,188 @@ describe('what each quotation document tab renders', () => {
     await expectIdentityOnScreen();
   });
 
-  it('still renders an empty cover letter and an empty terms tab, with their empty states', async () => {
+  it('an empty intro still renders the preview card, and the terms tab keeps its empty state', async () => {
+    coverPreview.mockImplementation(async () => previewOk(''));
     renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
-    // Exact: no explanation of when the template is applied, and no "issued" wording (AC-QF057).
-    expect(await screen.findByText('No cover letter on this quotation yet.')).toBeInTheDocument();
+    expect(await screen.findByText('Reference No.')).toBeInTheDocument();
+    expect(screen.queryByText('No cover letter on this quotation yet.')).toBeNull();
 
     renderTab(`${BASE}/terms`, <QuotationTermsTab />);
     expect(await screen.findByText('No terms on this quotation yet.')).toBeInTheDocument();
+  });
+
+  it('when the preview call fails the cover letter tab shows an error line, not the old panel', async () => {
+    coverPreview.mockImplementation(
+      async () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
+    );
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>Dear Kelly</p>' }),
+    );
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText(/could not|couldn.t|failed|unable|error/i)).toBeInTheDocument();
+    expect(screen.queryByText('Dear Kelly')).toBeNull();
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
+  });
+});
+
+// PS-QUOTE-MATRIX R20 (mock v3 frame 5): the Customer feedback tab replaces Accept / Reject / Apply.
+// Values invented.
+const FEEDBACK = {
+  open_count: 2,
+  requests: [
+    {
+      id: 'req-2',
+      issue_label: 'Rev A',
+      submitted_at: '2026-11-02T10:40:00',
+      requester_name: 'Buyer A',
+      note: 'Please call me about the sinks.',
+      rows: [
+        {
+          id: 'fb-1',
+          line_id: 'l5',
+          scope_label: 'UNIT',
+          line_description: 'KS903 kitchen sink',
+          cell_key: 'c-kit',
+          cell_label: 'Type C - 3 BH / Kitchen',
+          kind: 'quantity',
+          value_from: '133.00',
+          value_to: '140.00',
+          model: null,
+          note: 'Type C needs 140.',
+          handled_at: null,
+          handled_by_name: null,
+        },
+        {
+          id: 'fb-2',
+          line_id: 'l3',
+          scope_label: 'UNIT',
+          line_description: 'Floor trap 100mm',
+          cell_key: null,
+          cell_label: null,
+          kind: 'note',
+          value_from: null,
+          value_to: null,
+          model: null,
+          note: 'Balcony traps not needed.',
+          handled_at: null,
+          handled_by_name: null,
+        },
+        {
+          id: 'fb-3',
+          line_id: 'l9',
+          scope_label: 'LEVEL 9',
+          line_description: 'Urinal c/w flush valve',
+          cell_key: null,
+          cell_label: null,
+          kind: 'unit_price',
+          value_from: '420.00',
+          value_to: '380.00',
+          model: null,
+          note: 'Our budget is 380.',
+          handled_at: '2026-11-02T13:05:00',
+          handled_by_name: 'Sales A',
+        },
+        {
+          id: 'fb-4',
+          line_id: 'l9',
+          scope_label: 'LEVEL 9',
+          line_description: 'Urinal c/w flush valve',
+          cell_key: 'gone',
+          cell_label: null,
+          kind: 'model_swap',
+          value_from: null,
+          value_to: '300.00',
+          model: 'UR-200',
+          note: null,
+          handled_at: '2026-11-02T13:06:00',
+          handled_by_name: 'Sales A',
+        },
+      ],
+    },
+  ],
+};
+
+describe('the Customer feedback tab (PS-QUOTE-MATRIX)', () => {
+  it('badges the tab with the open count', async () => {
+    getQuotationFeedback.mockResolvedValue(FEEDBACK);
+    renderTab(BASE, <QuotationHeaderTab />);
+
+    const badge = await screen.findByTestId('quotation-feedback-badge');
+    expect(badge).toHaveTextContent('2');
+    expect(within(screen.getByRole('tab', { name: /Customer feedback/ })).getByTestId('quotation-feedback-badge')).toBe(badge);
+  });
+
+  it('shows no badge when nothing is open', async () => {
+    renderTab(BASE, <QuotationHeaderTab />);
+    await screen.findByRole('tab', { name: 'Customer feedback' });
+    expect(screen.queryByTestId('quotation-feedback-badge')).toBeNull();
+  });
+
+  it('lists each note with where it points, the hint beside today\'s value, and Handled', async () => {
+    getQuotationFeedback.mockResolvedValue(FEEDBACK);
+    renderTab(`${BASE}/feedback`, <QuotationFeedbackPanel />);
+
+    const rows = await screen.findAllByTestId('quotation-feedback-row');
+    expect(rows).toHaveLength(4);
+    expect(within(rows[0]).getByText('UNIT · Type C - 3 BH / Kitchen')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('"Type C needs 140."')).toBeInTheDocument();
+    expect(within(rows[0]).getByText('Suggested quantity 140 (now 133)')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('UNIT · whole item')).toBeInTheDocument();
+    expect(within(rows[2]).getByText('Suggested price RM 380.00 (now 420.00)')).toBeInTheDocument();
+    expect(within(rows[2]).getByText(/^Handled by Sales A, /)).toBeInTheDocument();
+    expect(rows[2]).toHaveAttribute('data-handled', 'true');
+    expect(within(rows[3]).getByText('LEVEL 9 · (column removed)')).toBeInTheDocument();
+    expect(within(rows[3]).getByText('Another model: UR-200 at RM 300.00')).toBeInTheDocument();
+    expect(screen.getByText('Please call me about the sinks.')).toBeInTheDocument();
+    expect(screen.getByText(/From Buyer A on Rev A/)).toBeInTheDocument();
+    // Nothing to accept, reject or apply, anywhere.
+    expect(screen.queryByRole('button', { name: /accept|reject|apply/i })).toBeNull();
+  });
+
+  it('ticks a note handled, and the badge moves with it', async () => {
+    getQuotationFeedback.mockResolvedValue(FEEDBACK);
+    renderTab(`${BASE}/feedback`, <QuotationFeedbackPanel />);
+
+    const rows = await screen.findAllByTestId('quotation-feedback-row');
+    // What the server answers once the tick has landed.
+    getQuotationFeedback.mockResolvedValue({
+      ...FEEDBACK,
+      open_count: 1,
+      requests: [
+        {
+          ...FEEDBACK.requests[0],
+          rows: FEEDBACK.requests[0].rows.map((row) =>
+            row.id === 'fb-1'
+              ? { ...row, handled_at: '2026-11-02T14:00:00', handled_by_name: 'Sales A' }
+              : row,
+          ),
+        },
+      ],
+    });
+    fireEvent.click(within(rows[0]).getByRole('checkbox'));
+    await waitFor(() =>
+      expect(setQuotationFeedbackHandled).toHaveBeenCalledWith('p1', 'd1', 'fb-1', true),
+    );
+    await waitFor(() => expect(screen.getByTestId('quotation-feedback-badge')).toHaveTextContent('1'));
+
+    fireEvent.click(within(rows[2]).getByRole('checkbox'));
+    await waitFor(() =>
+      expect(setQuotationFeedbackHandled).toHaveBeenCalledWith('p1', 'd1', 'fb-3', false),
+    );
+  });
+
+  it('Show in Lines opens the Lines tab', async () => {
+    getQuotationFeedback.mockResolvedValue(FEEDBACK);
+    renderTab(`${BASE}/feedback`, <QuotationFeedbackPanel />);
+
+    const rows = await screen.findAllByTestId('quotation-feedback-row');
+    fireEvent.click(within(rows[0]).getByRole('button', { name: 'Show in Lines' }));
+    expect(push).toHaveBeenCalledWith(`${BASE}/lines`);
+  });
+
+  it('renders its empty state when nothing came in', async () => {
+    renderTab(`${BASE}/feedback`, <QuotationFeedbackPanel />);
+    expect(await screen.findByText('No customer feedback yet')).toBeInTheDocument();
   });
 });

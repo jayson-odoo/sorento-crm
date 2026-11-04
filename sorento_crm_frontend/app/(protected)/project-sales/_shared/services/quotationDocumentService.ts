@@ -1,10 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import type {
-  QuotationAmendmentDecision,
-  QuotationAmendmentRequest,
-  QuotationLineBulkItem,
-} from '../types/project.types';
+import type { CoverPageData } from '@/lib/quotation-cover';
+import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -38,17 +36,16 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   POST   /projects/{projectId}/quotation-documents/{id}/approve          -> QuotationDocument
  *   POST   /projects/{projectId}/quotation-documents/{id}/reject           -> QuotationDocument
  *
- * The customer's suggested changes (QUOTE-CUSTOMER-AMEND) add three:
+ * The customer's feedback (PS-QUOTE-MATRIX R19-R22, replacing Accept / Reject / Apply) adds two:
  *
- *   GET    /projects/{projectId}/quotation-documents/{id}/amendment-request
- *                                                                         -> QuotationAmendmentRequest | null
- *   PUT    /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/rows/{rowId}
- *                                                                         -> QuotationAmendmentRequest
- *   POST   /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/apply
- *                                                                         -> QuotationAmendmentApplied
+ *   GET    /projects/{projectId}/quotation-documents/{id}/feedback         -> QuotationFeedback
+ *   PATCH  /projects/{projectId}/quotation-documents/{id}/feedback/{rowId} -> 200 (body {handled})
  *
- * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
- * carries a line priced below its floor and is not `approved`.
+ * `/issue` refuses with 422 `quotation_below_floor_pending_approval` (a line below its minimum
+ * price), `quotation_discount_pending_approval` (below its default price) or
+ * `quotation_off_series_pending_approval` (outside the series) while the document is not
+ * `approved`. Send for approval refuses with 422 `quotation_approver_not_configured` when nobody
+ * is set up to approve it.
  *
  * The two exports are QUEUED, not rendered in the response: a 50-page quotation held the
  * browser long enough to read as a broken button. The route answers with a `user_downloads`
@@ -115,6 +112,8 @@ export type QuotationDocument = {
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  /** The cover page's closing text (the letter above is its intro). */
+  cover_closing_html?: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -158,6 +157,17 @@ export type QuotationDocument = {
   requires_approval?: boolean;
   /** How many such lines, so the block can say how much there is to look at. */
   below_floor_line_count?: number;
+  /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
+  discounted_line_count?: number;
+  /** Lines outside the project's series. */
+  off_series_line_count?: number;
+  /** The server's sentence naming every reason, e.g. "One line is outside the project's series". */
+  approval_reasons?: string | null;
+  /** Who the current request was routed to, frozen when it was sent. */
+  approver_user_id?: string | null;
+  approver_name?: string | null;
+  /** Whether the signed-in viewer may approve or reject the current request. */
+  viewer_may_decide?: boolean | null;
   /** Quotation lines priced below the proposal revision it was made from (a further discount). */
   below_proposal_count?: number;
 
@@ -241,6 +251,7 @@ export type QuotationDocumentBody = Partial<{
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  cover_closing_html: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -276,6 +287,7 @@ export type QuotationDocumentBody = Partial<{
 /** The company's letter and terms as written, for the create form's own tabs (#1341). */
 export type QuotationLetterTemplates = {
   cover_letter_html: string | null;
+  cover_closing_html?: string | null;
   terms_html: string | null;
   /** Defaults of the active terms template. */
   payment_terms?: string | null;
@@ -289,6 +301,8 @@ export type QuotationLetterTemplates = {
  */
 export type QuotationFormScopeBody = {
   id?: string;
+  /** PS-QUOTE-MATRIX: a NEW scope's column headers (no id), set before its lines. */
+  matrix_columns?: MatrixHeader[];
   scope_label?: string;
   series_id?: string | null;
   notes?: string | null;
@@ -675,53 +689,65 @@ export async function queueQuotationIssueXlsx(
   return response.json();
 }
 
-// ------------------------------------------------------- customer suggested changes
+// ------------------------------------------------------------------ customer feedback
 
-/** What Apply answers: the request, now applied, and the draft versions it opened. */
-export type QuotationAmendmentApplied = {
-  request: QuotationAmendmentRequest;
-  version_ids: string[];
-};
-
-/** The open (or latest) request on the document's latest issue, or null when nobody asked. */
-export async function getQuotationAmendmentRequest(
+/** Every feedback note the customer left on this document, newest request first. */
+export async function getQuotationFeedback(
   projectId: string,
   documentId: string,
-): Promise<QuotationAmendmentRequest | null> {
+): Promise<QuotationFeedback> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-request`,
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/feedback`,
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, "Failed to load the customer's suggestions"));
+    throw new Error(await extractApiError(response, "Failed to load the customer's feedback"));
   return response.json();
 }
 
-export async function decideQuotationAmendmentRow(
+/** Ticks (or unticks) one note as handled. The only action feedback has. */
+export async function setQuotationFeedbackHandled(
   projectId: string,
   documentId: string,
-  requestId: string,
   rowId: string,
-  body: { decision: QuotationAmendmentDecision; reason?: string | null },
-): Promise<QuotationAmendmentRequest> {
+  handled: boolean,
+): Promise<void> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/rows/${rowId}`,
-    { method: 'PUT', body: JSON.stringify({ decision: body.decision, reason: body.reason ?? null }) },
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/feedback/${rowId}`,
+    { method: 'PATCH', body: JSON.stringify({ handled }) },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the decision'));
+    throw new Error(await extractApiError(response, 'Failed to save that'));
+}
+
+/**
+ * The cover page as it would print from the form's unsaved values. Stores nothing. With
+ * `document_id` the saved quotation supplies every field the body leaves out.
+ */
+export async function previewQuotationCover(
+  projectId: string,
+  body: QuotationCoverPreviewBody,
+): Promise<CoverPageData> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/cover-preview`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to preview the cover page'));
   return response.json();
 }
 
-export async function applyQuotationAmendmentRequest(
-  projectId: string,
-  documentId: string,
-  requestId: string,
-): Promise<QuotationAmendmentApplied> {
-  const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/apply`,
-    { method: 'POST' },
-  );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to apply the decisions'));
-  return response.json();
-}
+export type QuotationCoverPreviewBody = Partial<{
+  document_id: string;
+  doc_date: string | null;
+  attn_name: string | null;
+  recipient_name_snapshot: string | null;
+  recipient_address_snapshot: string | null;
+  recipient_phone_snapshot: string | null;
+  recipient_email_snapshot: string | null;
+  quotation_purpose: string | null;
+  payment_terms: string | null;
+  validity: string | null;
+  terms_html: string | null;
+  cover_letter_html: string | null;
+  cover_closing_html: string | null;
+}>;

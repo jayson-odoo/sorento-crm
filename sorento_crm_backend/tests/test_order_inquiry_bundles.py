@@ -978,9 +978,10 @@ def test_d8_the_export_documents_column_names_the_host_for_a_bundled_row(world):
     world.svc.derive_bundles(world.inquiry)
     world.db.flush()
 
-    _filename, content = _worklist(world).export_xlsx()
+    # The default export no longer prints the document column (OI-EXPORT-SHARED), so name it.
+    _filename, content = _worklist(world).export_xlsx(columns=("ITEM CODE", "PO NO "))
     workbook = openpyxl.load_workbook(io.BytesIO(content))
-    header_row = 2
+    header_row = 1
     headers = [cell.value for cell in workbook.worksheets[0][header_row]]
     po_col = headers.index("PO NO ") + 1
     code_col = headers.index("ITEM CODE") + 1

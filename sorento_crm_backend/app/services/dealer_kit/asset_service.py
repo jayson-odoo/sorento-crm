@@ -258,6 +258,39 @@ def urls_for(
     return urls
 
 
+def screen_urls_for(db: Session, asset_ids: Iterable[str]) -> dict[str, str]:
+    """``{asset_id: url}`` of a rendition fit for a SCREEN, never the original.
+
+    The attachment's thumbnail when it has one, else a stored medium rendition (made once from the
+    original, then reused). An asset with neither is left out. A font is not a picture and is
+    skipped. This is what the picker grid and the spec sheet payloads draw; ``urls_for`` keeps the
+    original for print.
+    """
+    from app.services import product_image_service as images
+
+    ids = {value for value in asset_ids if value}
+    if not ids:
+        return {}
+    rows = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id.in_(ids), Asset.kind != FONT)
+        .filter(Attachment.is_deleted.is_(False))
+        .all()
+    )
+    with_thumb = {a.id: att for a, att in rows if att.thumbnail_path}
+    thumbs = images.preview_urls(db, [att.id for att in with_thumb.values()], full=False)
+    without = [att.id for a, att in rows if a.id not in with_thumb]
+    renditions = images.medium_urls(db, without) if without else {}
+    out: dict[str, str] = {}
+    for asset, attachment in rows:
+        source = thumbs if asset.id in with_thumb else renditions
+        url = source.get(str(attachment.id))
+        if url:
+            out[asset.id] = url
+    return out
+
+
 def mime_for_upload(filename: str, kind: str) -> str:
     """The mime a library upload is stored under, or a refusal.
 
@@ -924,4 +957,5 @@ __all__ = [
     "purge_objects",
     "referenced_asset_ids",
     "urls_for",
+    "screen_urls_for",
 ]

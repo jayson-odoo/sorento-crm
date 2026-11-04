@@ -362,6 +362,11 @@ class Project(Base, CompanyScopedMixin):
     # negotiation does not drag the card backwards and corrupt stage durations.
     is_critical = Column(Boolean, nullable=False, server_default="false", default=False)
     critical_at = Column(DateTime(timezone=False), nullable=True)
+    # "This project's discounts go straight to <user>" (PS-QUOTE-RULES R4.2). NULL routes by
+    # the owner's superior.
+    discount_approver_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     management_support = Column(Text, nullable=True)
     management_notes = Column(Text, nullable=True)
 
@@ -914,7 +919,13 @@ QUOTATION_LOSS_REASON_SET_KEY = "project_quotation_loss_reason"
 # nothing ever prints while looking perfectly configured in Setup.
 TEMPLATE_KIND_COVER_LETTER = "cover_letter"
 TEMPLATE_KIND_TERMS = "terms"
-QUOTATION_TEMPLATE_KINDS = (TEMPLATE_KIND_COVER_LETTER, TEMPLATE_KIND_TERMS)
+# QUOTE-COVER-DESIGN: the cover page design. Its intro is body_html, the rest is ``design``.
+TEMPLATE_KIND_COVER_PAGE = "cover_page"
+QUOTATION_TEMPLATE_KINDS = (
+    TEMPLATE_KIND_COVER_LETTER,
+    TEMPLATE_KIND_TERMS,
+    TEMPLATE_KIND_COVER_PAGE,
+)
 
 # What a line is priced per. Sorento quotes a development by repeating unit, not by
 # one flat bill of quantities: 300 house units at one basin each is a different
@@ -1207,6 +1218,8 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # The document's OWN editable copy, rendered from the company template at create. Editing it
     # never touches the template, and editing the template never rewrites a document (AC-E2).
     cover_letter_html = Column(Text, nullable=True)
+    # The cover page's closing text (QUOTE-COVER-DESIGN); the letter above is its intro.
+    cover_closing_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
     # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
@@ -1242,6 +1255,11 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # cleared the moment it leaves `rejected` so the screen cannot quote a rejection that has
     # already been answered.
     approval_rejected_reason = Column(Text, nullable=True)
+    # Who this request was routed to (PS-QUOTE-RULES R4), frozen when Send for approval is
+    # pressed so a later change of superior or override does not move a request already waiting.
+    approver_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # PS-PROPOSAL-QUOTATION. Every document is a PROPOSAL until a won project converts one issued
     # proposal revision into the project's QUOTATION: the same row shape, so the editor, issue,
@@ -1313,6 +1331,8 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     # Defaults beside the terms template, copied onto a new quotation (kind terms only).
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # kind cover_page only: {show_letterhead, title, rows: [{key, shown, label}], closing_html}.
+    design = Column(JSONB, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1375,7 +1395,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
-    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # Layout 3: the cover design and closing text frozen at send (QUOTE-COVER-DESIGN).
+    cover_design = Column(JSONB, nullable=True)
+    cover_closing_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first, 3 = designed cover page. No python default on purpose:
     # only issue() opts in, so every other path keeps layout 1.
     layout_version = Column(SmallInteger, nullable=False, server_default="1")
     # Frozen with the terms at issue.
@@ -1436,6 +1459,75 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     )
 
 
+class ProjectQuotationSpecSheet(Base, CompanyScopedMixin):
+    """One saved spec sheet of a quotation document (SPEC-SHEET-V2): SS1, SS2, ...
+
+    Frozen on purpose: the items snapshot, the pinned template VERSIONS and the per-page layer
+    edits live on the row, so a later line edit or a re-published template never moves a sheet the
+    customer may already hold. ``issue_id`` NULL means it was built from the draft.
+    """
+
+    __tablename__ = "quotation_spec_sheets"
+    __audit_entity_type__ = "project_quotation_spec_sheets"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    based_on_issue_no = Column(Integer, nullable=True)
+    sheet_no = Column(Integer, nullable=False)
+    cover_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    page_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    single_page_template_id = Column(
+        UUID(as_uuid=False), ForeignKey("dealer_kit.tag_template.id", ondelete="SET NULL"), nullable=True
+    )
+    cover_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    page_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    single_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("dealer_kit.tag_template_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    items = Column(JSONB, nullable=False)
+    rows = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list)
+    page_edits = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
+    items_taken_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    page_count = Column(Integer, nullable=False, default=0)
+    last_exported_at = Column(DateTime(timezone=False), nullable=True)
+    created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("document_id", "sheet_no", name="uq_project_quotation_spec_sheets_no"),
+        Index("ix_project_quotation_spec_sheets_document", "document_id"),
+        {"schema": "projects"},
+    )
+
+
 class QuotationIssueView(Base, CompanyScopedMixin):
     """One counted open of an issue's sign link by the customer (PS-QUOTE-VIEWS).
 
@@ -1466,7 +1558,7 @@ class QuotationIssueView(Base, CompanyScopedMixin):
 
 
 AMENDMENT_STATUSES = ("open", "applied", "superseded")
-AMENDMENT_FIELDS = ("quantity", "unit_price", "remove")
+AMENDMENT_FIELDS = ("quantity", "unit_price", "remove", "model_swap", "note")
 AMENDMENT_DECISIONS = ("pending", "accepted", "rejected")
 
 
@@ -1506,12 +1598,6 @@ class QuotationAmendmentRequest(Base, CompanyScopedMixin):
     )
 
     __table_args__ = (
-        Index(
-            "uq_quotation_amendment_requests_open",
-            "issue_id",
-            unique=True,
-            postgresql_where=text("status = 'open'"),
-        ),
         CheckConstraint(
             "status IN ('open', 'applied', 'superseded')",
             name="ck_quotation_amendment_requests_status",
@@ -1548,15 +1634,28 @@ class QuotationAmendmentRequestRow(Base, CompanyScopedMixin):
     decision_reason = Column(String(500), nullable=True)
     decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     decided_at = Column(DateTime(timezone=False), nullable=True)
+    # PS-QUOTE-MATRIX: a row is a feedback note. cell_key points at one quantity cell, hint_text
+    # carries a model-swap name, and staff only tick it handled (nothing is ever applied).
+    cell_key = Column(String(40), nullable=True)
+    note = Column(Text, nullable=True)
+    hint_text = Column(String(200), nullable=True)
+    handled_at = Column(DateTime(timezone=False), nullable=True)
+    handled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "request_id", "line_id", "field", name="uq_quotation_amendment_rows_line_field"
+        # One cell note per (line, field, cell); COALESCE so the item-level row (no cell) is unique too.
+        Index(
+            "uq_quotation_amendment_rows_line_field",
+            "request_id",
+            "line_id",
+            "field",
+            text("(COALESCE(cell_key, ''))"),
+            unique=True,
         ),
         CheckConstraint(
-            "field IN ('quantity', 'unit_price', 'remove')",
+            "field IN ('quantity', 'unit_price', 'remove', 'model_swap', 'note')",
             name="ck_quotation_amendment_rows_field",
         ),
         CheckConstraint(
@@ -1745,6 +1844,8 @@ class ProjectQuotationVersion(Base, CompanyScopedMixin):
     )
     issued_on = Column(Date, nullable=True)
     total_amount = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+    # PS-QUOTE-MATRIX: [{"key","label","cols":[{"key","label"}]}]; NULL or [] = a plain scope.
+    matrix_columns = Column(JSONB(none_as_null=True), nullable=True)
     notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -1822,6 +1923,8 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
 
     unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
     quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
+    # PS-QUOTE-MATRIX: {leaf_key: "<2dp decimal>"}; NULL on a plain scope. `quantity` is its sum.
+    qty_cells = Column(JSONB(none_as_null=True), nullable=True)
     uom = Column(String(50), nullable=True)
     unit_type = Column(String(24), nullable=True)
     line_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
@@ -1835,6 +1938,9 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     floor_value_applied = Column(Numeric(12, 2), nullable=True)
     floor_level_applied = Column(String(24), nullable=True)
     is_below_floor = Column(Boolean, nullable=False, server_default="false", default=False)
+    # Priced below its default price (series selling price, else list price) when saved
+    # (PS-QUOTE-RULES R1). Any discount needs approval, so this, not the floor, gates Issue.
+    is_discounted = Column(Boolean, nullable=False, server_default="false", default=False)
 
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     notes = Column(Text, nullable=True)

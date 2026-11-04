@@ -2,8 +2,8 @@
 
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { getIntegrationLogs, getIntegrationLog, retryIntegrationLog, updateIntegrationLog } from '../services/integrationLogService';
-import type { IntegrationLog, IntegrationLogResponse } from '../types/integrationLog.types';
-import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import type { IntegrationLogResponse, IntegrationLogsPage } from '../types/integrationLog.types';
+import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -57,10 +57,10 @@ export const integrationLogsPagerQuery = {
 };
 
 export function useIntegrationLogs(params: IntegrationLogsListParams) {
-  return useQuery<DataGridApiResponse<IntegrationLog>>({
+  return useQuery<IntegrationLogsPage>({
     ...LIST_QUERY_OPTIONS,
     queryKey: integrationLogsListQueryKey(params),
-    queryFn: () => getIntegrationLogs(params),
+    queryFn: ({ signal }) => getIntegrationLogs(params, signal),
   });
 }
 

@@ -83,6 +83,8 @@ export const GeneralSettingsSchema = z.object({
   priceTagGuardedClasses: z.array(z.string()),
   purchaseRequestDefaultApproverUserId: z.string(),
   sponsorshipFormDefaultApproverUserId: z.string(),
+  offSeriesApproverUserId: z.string(),
+  defaultQuotationApproverUserId: z.string(),
 });
 
 export type GeneralSettingsSchemaType = z.infer<typeof GeneralSettingsSchema>;

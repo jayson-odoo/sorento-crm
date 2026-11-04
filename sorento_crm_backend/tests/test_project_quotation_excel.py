@@ -42,6 +42,7 @@ from app.models.user import User
 from app.services import project_seed_service
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 
 MARKER = "zzt-qxlsx"
 
@@ -105,7 +106,7 @@ def _product(db, category_id: str, uom_id: str, *, description: str) -> Product:
         description=description,
         category_id=category_id,
         base_uom_id=uom_id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(UNDISCOUNTED_LIST_PRICE),
     )
     db.add(row)
     db.flush()

@@ -106,8 +106,8 @@ def _sheet(context, uploads):
     workbook = openpyxl.load_workbook(io.BytesIO(uploads[excel[0]["storage_key"]]))
     assert len(workbook.sheetnames) == 1, workbook.sheetnames
     rows = list(workbook.active.iter_rows(values_only=True))
-    headings = [h for h in rows[1] if h is not None]
-    body = [dict(zip(headings, row)) for row in rows[2:] if any(v is not None for v in row)]
+    headings = [h for h in rows[0] if h is not None]
+    body = [dict(zip(headings, row)) for row in rows[1:] if any(v is not None for v in row)]
     return headings, body
 
 
@@ -253,6 +253,7 @@ def _render_current(lines):
 def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_rows():
     from scripts.compare_oi_handover_email_excel import email_rows, excel_rows
 
+    from app.services import order_inquiry_export
     from app.services.order_inquiry_worklist_service import handover_xlsx
 
     from .test_oi_saved_line_email import _line
@@ -268,6 +269,14 @@ def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_r
         _line(item_code="ZZT-S", qty="6", was={"qty": "10", "delivery_date": "01/12/2026"},
               remark="ORDER 6", continued=True),
     ]
+    # The email's lines arrive in the export's order (S/O, then the printed delivery date,
+    # a split line's later rows under its first), exactly as the attachment sorts them.
+    lines = order_inquiry_export.in_export_order(
+        lines,
+        so=lambda line: line.get("so_number"),
+        when=lambda line: (line.get("was") or {}).get("delivery_date") or line.get("delivery_date"),
+        continued=lambda line: bool(line.get("continued")),
+    )
     rendered = _render_current(lines)
 
     head, emailed = email_rows(rendered["body_html"])

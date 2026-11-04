@@ -4877,12 +4877,18 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    // CONFIRM-PREVIEW-STALE round 3: the guide runs the dry run as it opens (popup = email); a
-    // failed one blocks the guide behind a Retry, so nothing can be posted from it.
+    // CONFIRM-PREVIEW-STALE round 3: the guide runs the dry run as it opens (popup = email).
+    // CONFIRM-DIALOG-SPEED review B2: a failed one keeps the sheet and holds Confirm behind
+    // its own Retry, so nothing can be posted from it.
     await openConfirmGuide();
     await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
-    expect(await screen.findByTestId('confirm-guide-refresh-failed')).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(await screen.findByTestId('confirm-guide-words-failed')).toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
     expect(confirmMany).not.toHaveBeenCalled();
   });
 

@@ -165,6 +165,10 @@ class ParserConfig:
     # ends with its row id and the parser may answer with it. False for a bare config; `resolve_config` turns it
     # on only for a version that carries the sentence: every other version is unchanged.
     row_ids: bool = False
+    # SALES-ACCOUNT-TYPE semantic carry: the prompt in use carries `REPORT_ASK_LINE`, so the schema offers the
+    # `report_ask` object (`with_report_ask`), the user turn carries the `Held report:` line and the report lane builds
+    # the ask from the object. False for a bare config and for every text without the line: all of it unchanged.
+    report_ask: bool = False
     # SUPPLIER-ASK: the prompt in use carries `SUPPLIER_ID_ASK`, so a Supplier candidate line ends with its row id
     # and the parser answers with it; the id binds the supplier (and every supplier the span pass scored as close).
     supplier_ids: bool = False
@@ -954,6 +958,48 @@ def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: SALES-ACCOUNT-TYPE semantic carry (PLAN-report-semantic-carry-2nov.md A1): the heading line of the prompt section
+#: that turns the `report_ask` key on and the `Held report:` line of the user turn (the `OPPORTUNITY_LINE` pattern).
+REPORT_ASK_LINE = "== REPORT_ASK: the whole sales or outstanding report after this message, one object =="
+#: The `report_ask` keys, in the order the schema, the `Held report:` line and the gold rows share.
+REPORT_ASK_KEYS = (
+    "kind", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company", "sales_agents",
+    "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+)
+#: The keys that hold a list of names.
+REPORT_ASK_LISTS = ("sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type")
+
+
+def with_report_ask(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the flag-gated `report_ask` object last in `properties` and `required` (required and
+    nullable, as strict mode needs): the whole report the user wants after this message. `basis`, `group_by` and
+    `measure` take the enums of `schema`'s own top-level keys, so the account type axis and the old measures follow
+    the text exactly as those keys do."""
+    out = copy.deepcopy(schema)
+    props = out["properties"]
+    strings = {"type": "array", "items": {"type": "string"}}
+    shape: dict[str, Any] = {
+        "kind": {"type": ["string", "null"], "enum": ["sales", "outstanding", None]},
+        "basis": copy.deepcopy(props["basis"]),
+        "date_from": {"type": ["string", "null"]},
+        "date_to": {"type": ["string", "null"]},
+        "group_by": copy.deepcopy(props["group_by"]),
+        "top_n": {"type": ["integer", "null"]},
+        "measure": copy.deepcopy(props["measure"]),
+        "channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
+        "company": {"type": ["string", "null"]},
+        **{key: copy.deepcopy(strings) for key in REPORT_ASK_LISTS},
+    }
+    props["report_ask"] = {
+        "type": ["object", "null"],
+        "additionalProperties": False,
+        "properties": {key: shape[key] for key in REPORT_ASK_KEYS},
+        "required": list(REPORT_ASK_KEYS),
+    }
+    out["required"] = [*[k for k in out["required"] if k != "report_ask"], "report_ask"]
+    return out
+
+
 #: EEM-CATEGORY-PICK: the raw template sentences that turn the two flags on (the `MEANING_ASK` pattern).
 CATEGORY_PICK_ASK = "For a category entity, canonical_code is the label before the colon of the Category candidates line the message means."
 #: REPORT-UNIFY slice 3: the raw template sentence that turns `row_ids` on (the `CATEGORY_PICK_ASK` pattern). A
@@ -1125,6 +1171,8 @@ def resolve_config(
             json_schema = with_opportunity(json_schema)
         if LANGUAGE_ASK in (raw_template or ""):
             json_schema = with_message_language(json_schema)
+        if REPORT_ASK_LINE in (raw_template or ""):
+            json_schema = with_report_ask(json_schema)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1147,6 +1195,7 @@ def resolve_config(
         row_ids=ROW_ID_ASK in (raw_template or ""),
         supplier_ids=SUPPLIER_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
+        report_ask=REPORT_ASK_LINE in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         max_output_tokens=max_output_tokens_setting(db),
@@ -1421,7 +1470,8 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = with_kind_said(schema) if config.kind_said else schema
     schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
-    return with_message_language(schema) if config.message_language else schema
+    schema = with_message_language(schema) if config.message_language else schema
+    return with_report_ask(schema) if config.report_ask else schema
 
 
 def _usage(config: ParserConfig, result: Any, effort: str, started: float) -> dict[str, Any]:

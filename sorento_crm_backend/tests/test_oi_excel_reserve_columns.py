@@ -1,9 +1,11 @@
 """OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more visibility"):
-the OI Excel - the list export and the file the handover email attaches, both printed by
-`OrderInquiryWorklistService.export_xlsx` - carries REQUESTED RESERVE and RESERVED right
-after QTY, so a 170 line with a 70 reserve request reads as two numbers side by side
-(real case: OI-2609-0165, CB315 qty 170, request 70). The planning-board worksheet keeps
-its own ten columns, unchanged.
+the list-page OI Excel, printed by `OrderInquiryWorklistService.export_xlsx`, carries
+REQUESTED RESERVE and RESERVED right after QTY, so a 170 line with a 70 reserve request reads
+as two numbers side by side (real case: OI-2609-0165, CB315 qty 170, request 70). The
+planning-board worksheet keeps its own ten columns, unchanged.
+
+OI-EXPORT-SHARED (owner answer (b), 3 Nov 2026): the list export keeps this full layout, header
+row first and no title row; emails and attachments print the eight-column layout.
 
 Postgres only (`tests/_pg_fixture.py`), seeded through the reserve suite's own fixtures.
 """
@@ -28,8 +30,9 @@ def _sheet(world, columns=EXPORT_HEADINGS):
     )
     sheet = openpyxl.load_workbook(io.BytesIO(data)).active
     values = [list(r) for r in sheet.iter_rows(values_only=True)]
-    heads = values[1]
-    return heads, {r[heads.index("ITEM CODE")]: r for r in values[2:]}
+    heads = values[0]
+    assert tuple(heads) == tuple(columns), "row 1 is the header, no title row above it"
+    return heads, {r[heads.index("ITEM CODE")]: r for r in values[1:]}
 
 
 def test_requested_reserve_and_reserved_sit_right_after_qty():

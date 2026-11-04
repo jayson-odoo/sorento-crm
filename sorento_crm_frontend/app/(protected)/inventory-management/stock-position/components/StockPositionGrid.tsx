@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -21,10 +21,13 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect, type SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { toast } from '@/lib/toast';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { idFilterLabels, joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useUserListColumnConfigQuery } from '@/lib/listing-column-preferences/useUserListColumnConfigQuery';
@@ -74,22 +77,35 @@ export function totalTooltip(shownParts: string[]): string {
 /** A row opens Stock status for its item, with its documents behind every figure. */
 const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-status?product_id=${row.product_id}`;
 
+const DEFAULT_SORTING: SortingState = [{ id: 'item_code', desc: false }];
+
+/** A multi-select filter's trigger: the first two names and a count, never an id. */
+function filterTrigger(chosen: SearchableMultiSelectOption[], none: string) {
+  return chosen.length ? (
+    <span className="block truncate">{multiValueSummary(idFilterLabels(chosen))}</span>
+  ) : (
+    <span className="text-muted-foreground">{none}</span>
+  );
+}
+
 function numberCell(value: number) {
   return <span className={`block text-right tabular-nums ${value < 0 ? 'text-destructive' : ''}`}>{formatQty(value)}</span>;
 }
 
 export default function StockPositionGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'item_code', desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>(DEFAULT_SORTING);
   const {
     value: searchInput,
     setValue: setSearchInput,
     debouncedValue: searchQuery,
     isSettling: searchSettling,
+    reset: resetSearch,
   } = useDebouncedSearch();
-  const [supplier, setSupplier] = useState<{ value: string; label: string } | null>(null);
-  const [brandId, setBrandId] = useState('');
-  const [warehouseId, setWarehouseId] = useState('');
+  // FILTER-MULTISELECT: each filter holds several ids, comma-joined (the URL's and the API's shape).
+  const [supplierIds, setSupplierIds] = useState('');
+  const [brandIds, setBrandIds] = useState('');
+  const [warehouseIds, setWarehouseIds] = useState('');
   const [exporting, setExporting] = useState(false);
   // Controlled so the hidden columns reach the query: the saved layout and saved views apply
   // through `table.setColumnVisibility`, which writes here.
@@ -103,9 +119,11 @@ export default function StockPositionGrid() {
   // applies it from (the page path is the listing key), so the first stock request already
   // carries its hidden columns: no total briefly counts a column the user hid. Seeded once, during
   // render; the hook's later apply sets the same visibility, so it changes no total.
-  const savedLayout = useUserListColumnConfigQuery(usePathname());
+  const pathname = usePathname();
+  const savedLayout = useUserListColumnConfigQuery(pathname);
   const layoutSettled = savedLayout.isSuccess || savedLayout.isError;
   const [seeded, setSeeded] = useState(false);
+  const [pagedFor, setPagedFor] = useState(hiddenKey);
   if (layoutSettled && !seeded) {
     setSeeded(true);
     const saved = (savedLayout.data?.config as { columnVisibility?: Record<string, unknown> } | null | undefined)
@@ -113,32 +131,76 @@ export default function StockPositionGrid() {
     if (saved && typeof saved === 'object') {
       const fromSaved: VisibilityState = {};
       for (const [id, visible] of Object.entries(saved)) if (typeof visible === 'boolean') fromSaved[id] = visible;
-      setColumnVisibility((prev) => ({ ...fromSaved, ...prev }));
+      const next = { ...fromSaved, ...columnVisibility };
+      setColumnVisibility(next);
+      // The saved layout is where the list STARTS, not a change: it keeps the page restored from
+      // the URL (Back from Stock status) instead of resetting it.
+      setPagedFor(JSON.stringify(hiddenParts(next)));
     }
   }
 
   // A total changes on every row with its parts, so the server re-sorts: back to page 1, in the
   // SAME render the hidden set changes, so no request goes out for the old page with the new set.
-  const [pagedFor, setPagedFor] = useState(hiddenKey);
   const pageIndex = pagedFor === hiddenKey ? pagination.pageIndex : 0;
   if (pagedFor !== hiddenKey) {
     setPagedFor(hiddenKey);
     if (pagination.pageIndex !== 0) setPagination((p) => ({ ...p, pageIndex: 0 }));
   }
 
+  // Supplier names by id from the picker's own pages, for the chosen chips (rows add theirs below).
+  const pickedSupplierNames = useRef<Record<string, string>>({});
+
   const { data: brands } = useBrandSelectQuery();
 
-  const filters = {
-    supplierId: supplier?.value,
-    brandId: brandId || undefined,
-    warehouseId: warehouseId || undefined,
-    hiddenColumns,
-  };
+  // The list state rides the page URL, so Back from Stock status lands on the same view.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const searchKey = searchParams.toString();
+  // Every query string this list has written itself: one arriving late (two writes in flight) is
+  // still its own and must not re-apply over what the user has typed or picked since.
+  const writtenSearches = useRef<Set<string>>(new Set());
+  useListStateFromUrl((state) => {
+    if (writtenSearches.current.has(searchKey)) return; // this list's own write
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting.length ? state.sorting : DEFAULT_SORTING);
+    resetSearch(state.searchQuery);
+    setSupplierIds(joinMulti(splitMulti(state.filters.supplier_id)));
+    setBrandIds(joinMulti(splitMulti(state.filters.brand_id)));
+    setWarehouseIds(joinMulti(splitMulti(state.filters.warehouse_id)));
+  });
+
+  const filters = useMemo(
+    () => ({
+      supplierIds: splitMulti(supplierIds),
+      brandIds: splitMulti(brandIds),
+      warehouseIds: splitMulti(warehouseIds),
+      hiddenColumns,
+    }),
+    [supplierIds, brandIds, warehouseIds, hiddenColumns],
+  );
   const params = { pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters, {
     enabled: layoutSettled && seeded,
   });
   const rows = data?.data ?? [];
+  const rowSupplierNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const r of data?.data ?? []) if (r.supplier_id && r.supplier_name) names[r.supplier_id] = r.supplier_name;
+    return names;
+  }, [data?.data]);
+
+  const urlSearch = buildDetailSearch(params, {
+    supplier_id: supplierIds,
+    brand_id: brandIds,
+    warehouse_id: warehouseIds,
+  });
+  useEffect(() => {
+    // Also when the URL goes bare under an unchanged state (the sidebar link to this page), so
+    // the address always names what the grid shows and Back restores it.
+    if (urlSearch === searchKey) return;
+    writtenSearches.current.add(urlSearch);
+    router.replace(`${pathname}?${urlSearch}`, { scroll: false });
+  }, [urlSearch, searchKey, pathname, router]);
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
   const tooltips = useMemo(() => {
@@ -249,7 +311,13 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
-  const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0);
+  // The badge counts filters, not values (FILTER-MULTISELECT).
+  const activeCount = (supplierIds ? 1 : 0) + (brandIds ? 1 : 0) + (warehouseIds ? 1 : 0);
+  const fetchSuppliers = async (q: string, pageIndex: number) => {
+    const options = await getSuppliersSelect(q, pageIndex);
+    for (const o of options) pickedSupplierNames.current[o.value] = o.label;
+    return options;
+  };
 
   const onExport = async () => {
     setExporting(true);
@@ -329,15 +397,18 @@ export default function StockPositionGrid() {
                 <div className="space-y-4">
                   <div>
                     <Label>Supplier</Label>
-                    <SearchableSelect
-                      value={supplier?.value ?? ''}
-                      selectedOption={supplier ?? undefined}
-                      fetchOptions={(q, pageIndex) => getSuppliersSelect(q, pageIndex)}
+                    <SearchableMultiSelect
+                      value={filters.supplierIds}
                       onChange={(v) => {
-                        if (!v) setSupplier(null);
+                        setSupplierIds(joinMulti(v));
                         resetPage();
                       }}
-                      onOptionChange={(option) => setSupplier(option ? { value: option.value, label: option.label } : null)}
+                      fetchOptions={fetchSuppliers}
+                      selectedOptions={filters.supplierIds.map((id) => ({
+                        value: id,
+                        label: pickedSupplierNames.current[id] ?? rowSupplierNames[id] ?? 'Selected supplier',
+                      }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All suppliers')}
                       placeholder="All suppliers"
                       clearable
                       triggerClassName="mt-1"
@@ -345,13 +416,14 @@ export default function StockPositionGrid() {
                   </div>
                   <div>
                     <Label>Brand</Label>
-                    <SearchableSelect
-                      value={brandId}
+                    <SearchableMultiSelect
+                      value={filters.brandIds}
                       onChange={(v) => {
-                        setBrandId(v);
+                        setBrandIds(joinMulti(v));
                         resetPage();
                       }}
                       options={(brands ?? []).map((b) => ({ value: b.id, label: b.brand_name }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All brands')}
                       placeholder="All brands"
                       clearable
                       triggerClassName="mt-1"
@@ -359,14 +431,15 @@ export default function StockPositionGrid() {
                   </div>
                   <div>
                     <Label>Warehouse</Label>
-                    <SearchableSelect
-                      value={warehouseId}
+                    <SearchableMultiSelect
+                      value={filters.warehouseIds}
                       onChange={(v) => {
-                        setWarehouseId(v);
+                        setWarehouseIds(joinMulti(v));
                         resetPage();
                       }}
                       // The report's own warehouse columns: any other location could never match.
                       options={(data?.warehouses ?? []).map((w) => ({ value: w.id, label: w.code }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All warehouses')}
                       placeholder="All warehouses"
                       clearable
                       triggerClassName="mt-1"
@@ -378,9 +451,9 @@ export default function StockPositionGrid() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setSupplier(null);
-                          setBrandId('');
-                          setWarehouseId('');
+                          setSupplierIds('');
+                          setBrandIds('');
+                          setWarehouseIds('');
                           resetPage();
                         }}
                       >
