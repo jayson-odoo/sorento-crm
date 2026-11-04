@@ -211,14 +211,17 @@ def test_af7_bottom_5_with_a_breakdown_frame_keeps_the_parsers_direction(rbot, w
     assert not text.lstrip().lower().startswith("top"), f"AF-7 bottom: the reply is a Top list: {text!r}"
 
 
-def test_af5_top_10_products_asks_only_the_measure(rbot, world) -> None:
+def test_af5_top_10_products_asks_nothing_and_ranks_by_amount(rbot, world) -> None:
+    """Crew ruling (2156 re-pass): a top-N ranking never asks the measure. Fresh frame ranking, top_n 10, no measure."""
     sorento, _m = world
     ra = _ra2("ranking", basis="delivered", group_by="product", top_n=10, company=sorento, **SEP)
     v = _v("sales_ranking", ra, basis="delivered", group_by="product", top_n=10, rank_direction="top", sales_company=sorento,
            domain_in_message=True, **SEPF)
     text, calls = rbot.say(v, "top 10 products September delivered")
-    assert not _ran(calls), f"AF-5: ran before the measure was asked: {calls}"
-    assert MEASURE_Q in text and TOP_N_Q not in text, f"AF-5: want only the measure question, got {text!r}"
+    assert MEASURE_Q not in text and TOP_N_Q not in text, f"AF-5: asked a question: {text!r}"
+    args = _args(calls)
+    assert args.get("top_n") == 10 and args.get("group_by") == "product", args
+    assert args.get("measure") == "amount", f"AF-5: want amount, got {args.get('measure')!r}: {args}"
 
 
 def test_af_guard_no_frame_a_ranking_without_a_count_still_asks_the_count(rbot, world) -> None:
@@ -1160,3 +1163,50 @@ def test_cp4_the_report_period_line_reads_dd_mm_yyyy_with_a_plain_hyphen(rbot, w
     assert _ran(calls), f"setup: {text!r}"
     period = [ln for ln in text.splitlines() if ln.startswith("Period")]
     assert period == ["Period: 01/10/2026 - 09/10/2026"], f"CP-4: period line {period!r} in {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ CP-5 / CP-6: console re-pass (p2 parses)
+
+
+def test_cp5_a_held_company_plus_a_new_same_name_brand_asks_nothing_and_adds_the_brand(rbot, world) -> None:
+    """S5 -> S6 (p2/parses_S5_S6_S10_S11.json). S5 "break down project and retail": frame breakdown, group_by channel,
+    company Sorento. S6 "Sorento brand only": company Sorento (the HELD one, carried) and brands ["SORENTO"], entity
+    kind_said null. The object's company is just the held company, so the same-name brand is this message's new filter:
+    no question, company kept, Brand added, the split kept."""
+    sorento, _m = world
+    _hold(rbot, sorento, group_by=None)
+    ra5 = _ra2("breakdown", basis="delivered", group_by="channel", company=sorento, brands=[], **SEP)
+    v5 = _v("sales_analysis", ra5, basis="delivered", sales_basis="delivered", group_by="channel", continuation=True,
+            entity_op="reuse", sales_company=sorento, domain_in_message=False)
+    text, calls = rbot.say(v5, "break down project and retail")
+    assert _ran(calls) and _args(calls).get("company") == DEFAULT_COMPANY_ID, f"setup: {text!r}"
+    ra6 = _ra2("breakdown", basis="delivered", group_by="channel", company=sorento, brands=["SORENTO"], **SEP)
+    v6 = _v("sales_analysis", ra6, _ent("Sorento", "brand", "SORENTO", None), basis="delivered", sales_basis="delivered",
+            group_by="channel", continuation=True, entity_op="replace_combine", scope_intent="specific", sales_company=sorento,
+            domain_in_message=False, **SEPF)
+    text, calls = rbot.say(v6, "Sorento brand only")
+    assert _kind_slot(rbot).get("asking") != "kind" and "company or brand" not in text.lower(), f"CP-5: asked: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID, f"CP-5: the held company was lost: {args}"
+    assert args.get("brand_ids"), f"CP-5: the brand was not added: {args}"
+    assert args.get("group_by") == "channel", f"CP-5: the split was lost: {args}"
+
+
+@pytest.mark.parametrize("held_measure", ["qty", None], ids=["held_qty", "no_held_measure"])
+def test_cp6_top_5_ranking_never_asks_the_measure(rbot, world, held_measure) -> None:
+    """S11 (p2): "top 5" after the channel split parses as frame ranking, top_n 5, measure null, company Sorento,
+    continuation false, ranking_refine true. No question: the held measure, else amount."""
+    sorento, _m = world
+    ra0 = _ra2(None, basis="delivered", group_by="channel", measure=held_measure, company=sorento, **SEP)
+    v0 = _v("sales_analysis", ra0, basis="delivered", group_by="channel", measure=held_measure, sales_company=sorento,
+            domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v0, "sorento company only, show dealer and project")
+    assert _ran(calls), f"setup: {text!r}"
+    ra = _ra2("ranking", basis="delivered", group_by="channel", top_n=5, measure=None, company=sorento, **SEP)
+    v = _v("sales_analysis", ra, basis="delivered", sales_basis="delivered", group_by="channel", top_n=5, continuation=False,
+           entity_op="reuse", ranking_refine=True, sales_company=sorento, domain_in_message=False)
+    text, calls = rbot.say(v, "top 5")
+    assert MEASURE_Q not in text and TOP_N_Q not in text, f"CP-6: asked a question: {text!r}"
+    args = _args(calls)
+    assert args.get("top_n") == 5 and args.get("group_by") == "channel", args
+    assert args.get("measure") == (held_measure or "amount"), f"CP-6: measure {args.get('measure')!r}: {args}"
