@@ -29,7 +29,7 @@ import { draftLinesPayload, emptyDraftLine, lineToDraft, type DraftLine } from '
 const api = draft as unknown as {
   linePickProblems: (
     lines: DraftLine[],
-    pricingByKey: Record<string, unknown>,
+    pricingByKey: Record<string, { list_price?: number | null; sell_price?: number | null } | null | undefined>,
     priceMode?: 'list' | 'selling',
   ) => string[];
   trimPicksToTemplate: (line: DraftLine) => DraftLine;
@@ -321,9 +321,22 @@ describe('linePickProblems', () => {
     expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
-  it('an SP line with no combo SP is not blocked (the typed price box is the way out)', () => {
+  it('an SP combo line with no selling price blocks, the typed price being the way out (round 3)', () => {
     const l = line({ price_type: 'selling' });
-    expect(api.linePickProblems([l], { l1: { list_price: null, sell_price: null } })).toEqual([]);
+    const reason = 'No combo selling price for line 1. Type the selling price or escalate it to marketing.';
+    expect(api.linePickProblems([l], { l1: { list_price: null, sell_price: null } })).toEqual([reason]);
+    expect(api.linePickProblems([l], { l1: { list_price: 2500, sell_price: null } })).toEqual([reason]);
+    expect(api.linePickProblems([line({ price_type: 'selling', manual_sell_price: 1234 })], { l1: { sell_price: null } })).toEqual([]);
+    expect(api.linePickProblems([l], { l1: { list_price: null, sell_price: 1800 } })).toEqual([]);
+    expect(api.linePickProblems([l], {})).toEqual([]);
+  });
+
+  it('follows the request mode for SP too, and a line with no combo is never blocked', () => {
+    const l = line();
+    expect(api.linePickProblems([l], { l1: { sell_price: null } }, 'selling')).toHaveLength(1);
+    expect(api.linePickProblems([l], { l1: { list_price: 2500, sell_price: null } }, 'list')).toEqual([]);
+    const plain = line({ combo_id: null, combos: [], parts: [], price_type: 'selling' });
+    expect(api.linePickProblems([plain], { l1: { sell_price: null } })).toEqual([]);
   });
 
   it('a line with no combo is never blocked for a combo list price', () => {

@@ -524,7 +524,7 @@ export function trimPicksToTemplate(line: DraftLine): DraftLine {
  */
 export function linePickProblems(
   lines: DraftLine[],
-  pricingByKey: Record<string, Pick<LinePricingResult, 'list_price'> | null | undefined>,
+  pricingByKey: Record<string, Partial<Pick<LinePricingResult, 'list_price' | 'sell_price'>> | null | undefined>,
   priceMode: PriceMode = 'list',
 ): string[] {
   const out: string[] = [];
@@ -543,8 +543,13 @@ export function linePickProblems(
       }
     }
     const pricing = pricingByKey[line.key];
-    if (line.combo_id && pricing && pricing.list_price == null && linePriceType(line, priceMode) === 'list') {
-      out.push(`No combo list price for line ${n}. Escalate it to marketing.`);
+    if (line.combo_id && pricing) {
+      if (linePriceType(line, priceMode) === 'list') {
+        if (pricing.list_price == null) out.push(`No combo list price for line ${n}. Escalate it to marketing.`);
+      } else if (pricing.sell_price === null && line.manual_sell_price == null) {
+        // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
+        out.push(`No combo selling price for line ${n}. Type the selling price or escalate it to marketing.`);
+      }
     }
   });
   return out;
