@@ -144,6 +144,7 @@ vi.mock('./AIExtractDialog', () => ({
 import {
   createRequest,
   lookupDebtors,
+  lookupLinePricing,
   lookupPromotions,
   lookupTagItems,
   lookupProductCombos,
@@ -569,5 +570,141 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     const payload = await lastCreatePayload();
     expect(payload.lines).toHaveLength(1);
     expect(payload.lines[0].price_type).toBe('selling');
+  });
+});
+
+// --------------------------------------------------------------------------- fix round 2, bug 20
+describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', () => {
+  const part = (product: { id: string; code: string; name: string }) => ({
+    product_id: product.id,
+    code: product.code,
+    name: product.name,
+    choice_group: null,
+    is_upgrade: false,
+    topup_amount: null,
+  });
+
+  /** Every priced line is covered by two promotions; the auto pick is the cheaper one. */
+  function pricingWithPromotions() {
+    asMock(lookupLinePricing).mockImplementation(
+      async (_mode: string, lines: { key: string }[]) =>
+        lines.map((l) => ({
+          key: l.key,
+          list_price: 3500,
+          promotion_options: [
+            { id: 'promo-auto', description: 'Auto Promo', sell_price: 3193 },
+            { id: 'promo-other', description: 'Other Promo', sell_price: 3300 },
+          ],
+          auto_promotion_id: 'promo-auto',
+          sell_price: 3193,
+          sell_price_basis: 'promotion',
+          parts_at_list: [],
+          candidates: [],
+        })),
+    );
+  }
+
+  const COMBO_ROW = {
+    product_code: P1.code,
+    price_type: 'selling',
+    typed_sell_price: 2299,
+    combo_id: 'combo-b',
+    combo_name: 'CBF-1234 + CBF-5678',
+    set_parts: [{ product_id: P2.id, product_code: P2.code }],
+  };
+
+  async function lineWithAutoPromotion() {
+    pricingWithPromotions();
+    // Two combos on the host, so no lone combo is auto-picked onto the line.
+    asMock(lookupProductCombos).mockResolvedValue({
+      host_guarded: false,
+      combos: [
+        { combo_id: 'combo-a', name: 'Combo A', parts: [part(P3)] },
+        { combo_id: 'combo-b', name: 'Combo B', parts: [part(P2)] },
+      ],
+    });
+    render(<PriceTagRequestForm />);
+    await pickCustomerAndAddLine();
+    // The line is SP, so its Promotion select shows (and the auto pick lands on it).
+    fireEvent.click(screen.getByRole('radio', { name: 'SP' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('No covering promotion') as HTMLSelectElement).value).toBe(
+        'promo-auto',
+      ),
+    );
+  }
+
+  it('a "+" row merging into a line with an AUTO promotion applies its combo and typed SP', async () => {
+    await lineWithAutoPromotion();
+    await applyExtract([COMBO_ROW]);
+    expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines[0].combo_id).toBe('combo-b');
+    expect(payload.lines[0].parts).toEqual([{ product_id: P2.id, role: null, candidates: [] }]);
+    expect(payload.lines[0].price_type).toBe('selling');
+    expect(payload.lines[0].manual_sell_price).toBe(2299);
+    expect(payload.lines[0].promotion_id == null).toBe(true);
+  });
+
+  it('a promotion the user picked is kept, and the typed SP is not applied', async () => {
+    await lineWithAutoPromotion();
+    await selectOption('No covering promotion', 'promo-other');
+    await applyExtract([COMBO_ROW]);
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.lines).toHaveLength(1);
+    expect(payload.lines[0].combo_id).toBe('combo-b');
+    expect(payload.lines[0].promotion_id).toBe('promo-other');
+    expect(payload.lines[0].manual_sell_price == null).toBe(true);
+  });
+
+  it('a line answer that lands while Apply waits on its combos lookup is not overwritten', async () => {
+    // The race: Apply builds its lines after an async combos lookup. An answer for a line already
+    // on the form (here its lone combo, auto-applied) that lands during that wait must survive.
+    const waiting: Record<string, (value: unknown) => void> = {};
+    asMock(lookupProductCombos).mockImplementation(
+      (id: string) => new Promise((resolve) => (waiting[id] = resolve)),
+    );
+    render(<PriceTagRequestForm />);
+    await pickCustomerAndAddLine();
+    await waitFor(() => expect(waiting[P1.id]).toBeDefined());
+
+    await applyExtract([
+      {
+        product_code: P2.code,
+        price_type: 'selling',
+        combo_id: 'combo-p2',
+        combo_name: 'CBF-5678 + CBF-9999',
+        set_parts: [{ product_id: P3.id, product_code: P3.code }],
+      },
+    ]);
+    await waitFor(() => expect(waiting[P2.id]).toBeDefined());
+
+    // The existing line's answer lands first (one combo: applied on the spot)...
+    await act(async () => {
+      waiting[P1.id]({
+        host_guarded: false,
+        combos: [{ combo_id: 'combo-p1', name: 'P1 combo', parts: [part(P3)] }],
+      });
+    });
+    // ...then Apply's own lookup, which builds the new line.
+    await act(async () => {
+      waiting[P2.id]({
+        host_guarded: false,
+        combos: [
+          { combo_id: 'combo-p2', name: 'P2 combo', parts: [part(P3)] },
+          { combo_id: 'combo-p2-alt', name: 'P2 alt', parts: [] },
+        ],
+      });
+    });
+    await screen.findByLabelText('Quantity for line 2');
+    sendToMarketing();
+    const payload = await lastCreatePayload();
+    expect(payload.lines.map((l: { combo_id: string | null }) => l.combo_id)).toEqual([
+      'combo-p1',
+      'combo-p2',
+    ]);
   });
 });

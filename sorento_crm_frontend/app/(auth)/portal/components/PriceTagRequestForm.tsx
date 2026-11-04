@@ -335,6 +335,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
+  /** The latest committed lines, for a callback that resumes after an await. */
+  const linesRef = useRef<DraftLine[]>(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   // The Sales Order box's accept list, off `/me` (see the /me effect below).
@@ -901,13 +906,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         return aiComboPicksRef.current[normalizeAiCode(p.product_code)] ?? null;
       };
 
-      const build = (hostCombos: Record<string, ProductCombosLookup | null>) => {
+      /** The rows applied onto `base`. Pure, so it can run on the latest lines inside the
+       *  state updater: the combos lookup below is async, and an answer the line editor
+       *  writes meanwhile (a lone combo, an auto promotion) must not be overwritten by
+       *  the lines this callback closed over. */
+      const applyRows = (
+        base: DraftLine[],
+        hostCombos: Record<string, ProductCombosLookup | null>,
+      ) => {
         const notFoundCodes: string[] = [];
         // R3-7: a matched row whose product/set is already on the request -
         // an existing line, or an earlier row in this SAME batch - merges
         // into it (quantity summed, remarks joined) instead of adding a
         // second line the server would refuse (DUPLICATE_LINE).
-        const merged: DraftLine[] = lines.map((l) => ({ ...l }));
+        const merged: DraftLine[] = base.map((l) => ({ ...l }));
         let addedCount = 0;
         let mergedCount = 0;
         payload.productLines.forEach((p) => {
@@ -933,33 +945,51 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           // A "+" row is a combo line or a bare host. A typed SP is the set's price, so it is
           // applied only when the row ends up as a stored combo line.
           const isSetRow = (p.set_parts?.length ?? 0) > 0;
-          if (existingIndex >= 0) {
-            const existing = merged[existingIndex];
-            // A product listed twice is one line and the later type wins.
-            const nextType: PriceMode | null = rowType ?? existing.price_type ?? null;
-            merged[existingIndex] = {
-              ...existing,
-              remarks: [existing.remarks, p.notes]
-                .filter((v) => v && v.trim())
-                .join('; '),
-              price_type: nextType,
-              manual_sell_price:
-                (nextType ?? priceMode) === 'selling' &&
-                !existing.promotion_id &&
-                !isSetRow &&
-                p.typed_sell_price
-                  ? p.typed_sell_price
-                  : existing.manual_sell_price,
-            };
-            mergedCount += 1;
-            return;
-          }
           const lookup = match.kind === 'product' ? (hostCombos[match.id] ?? null) : null;
           const wantedComboId = comboIdFor(p, match);
           const combo = wantedComboId
             ? lookup?.combos.find((c) => c.combo_id === wantedComboId)
             : undefined;
           const comboId = combo ? combo.combo_id : null;
+          // The stored combo, built exactly like a hand pick of the package (choice groups
+          // included).
+          const comboFields =
+            combo && lookup
+              ? {
+                  combo_id: combo.combo_id,
+                  combos: lookup.combos,
+                  combos_loaded: true,
+                  host_guarded: lookup.host_guarded,
+                  parts: partsFromCombo(combo),
+                }
+              : null;
+          if (existingIndex >= 0) {
+            const existing = merged[existingIndex];
+            // A product listed twice is one line and the later type wins.
+            const nextType: PriceMode | null = rowType ?? existing.price_type ?? null;
+            const typedSp =
+              (nextType ?? priceMode) === 'selling' &&
+              p.typed_sell_price &&
+              (!isSetRow || comboId)
+                ? p.typed_sell_price
+                : null;
+            // Owner Q4: SP is typed only on a line with no promotion. An auto-filled one
+            // (`promotion_locked` false) was never the user's choice, so it yields to the
+            // typed price exactly as on a new line; one the user picked is kept.
+            const takesTypedSp =
+              typedSp != null && (!existing.promotion_id || !existing.promotion_locked);
+            merged[existingIndex] = {
+              ...existing,
+              remarks: [existing.remarks, p.notes]
+                .filter((v) => v && v.trim())
+                .join('; '),
+              price_type: nextType,
+              ...(comboFields ?? {}),
+              ...(takesTypedSp ? { promotion_id: null, manual_sell_price: typedSp } : {}),
+            };
+            mergedCount += 1;
+            return;
+          }
           const effectiveType: PriceMode = rowType ?? priceMode;
           merged.push({
             price_type: rowType,
@@ -977,20 +1007,30 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             included_accessories: '',
             remarks: p.notes ?? '',
             guard_error: null,
-            combo_id: comboId,
-            // Built exactly like a hand pick of the package (choice groups included).
-            combos: combo && lookup ? lookup.combos : [],
-            combos_loaded: !!(combo && lookup),
-            host_guarded: combo && lookup ? lookup.host_guarded : false,
-            parts: combo ? partsFromCombo(combo) : [],
+            combo_id: null,
+            combos: [],
+            combos_loaded: false,
+            host_guarded: false,
+            parts: [],
+            ...(comboFields ?? {}),
             promotion_id: null,
             promotion_locked: false,
             pricing: null,
           });
           addedCount += 1;
         });
+        return { merged, addedCount, mergedCount, notFoundCodes };
+      };
+
+      const build = (hostCombos: Record<string, ProductCombosLookup | null>) => {
+        // The counts for the toast from the latest committed lines; the lines themselves
+        // from whatever state is current when React applies the update.
+        const { addedCount, mergedCount, notFoundCodes } = applyRows(
+          linesRef.current,
+          hostCombos,
+        );
         if (addedCount > 0 || mergedCount > 0) {
-          setLines(merged);
+          setLines((prev) => applyRows(prev, hostCombos).merged);
           const parts: string[] = [];
           if (addedCount > 0) {
             parts.push(`${addedCount} line${addedCount === 1 ? '' : 's'}`);
@@ -1036,7 +1076,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         ),
       ).then((pairs) => build(Object.fromEntries(pairs)));
     },
-    [lines, priceMode, lineLookups],
+    [priceMode, lineLookups],
   );
 
   // ---- What there is to save, and what Submit still needs (D48) ----
