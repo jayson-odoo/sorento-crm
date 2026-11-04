@@ -1051,7 +1051,7 @@ jobs:
             -m serial_ddl $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist (`-n auto`,
-  # 2 workers on the Mac runner: see XDIST_WORKERS on the xdist step).
+  # see XDIST_WORKERS on the xdist step).
   #
   # It replaced a serial job of the same name because that job was the whole
   # workflow's critical path: the same suite took about 21.5 minutes serially and
@@ -1143,7 +1143,7 @@ jobs:
     # standard runner has 4 vCPUs, so one job takes ~29 min no matter how the
     # database is tuned. Ten runners in parallel (six until 11 Oct 2026, when
     # six shards ran 29-59 min each on the private-repo runners), each still
-    # xdist across its own cores (2 workers on the Mac). pytest-split assigns
+    # xdist across its own cores. pytest-split assigns
     # every collected test to exactly one group, so the ten groups together
     # are the full suite and no test runs twice or is dropped.
     #
@@ -1266,11 +1266,10 @@ jobs:
       # documentation/reference/PR-CHECKLIST.md ("Test cost") to justify a new
       # slow test rather than discovering it three weeks later as wall clock.
       #
-      # XDIST_WORKERS: two workers on the Mac runner, `auto` elsewhere
-      # (CI-MAC-CAP, 18 Oct 2026). The Mac's VM is 4 CPU, 6 GiB, no swap
-      # (scripts/ci-runner/up.sh), so `auto` is 4 workers at about 1.4 GB each
-      # beside Postgres and Redis: release run 39126899668 lost four workers of
-      # shard 5 to the OOM killer and shard 7 hung to the 90 min cap.
+      # XDIST_WORKERS: `auto` (every job is GitHub-hosted since CI-CLOUD-GATE;
+      # the Mac's 2-worker cap, CI-MAC-CAP, went with the Mac routing). Release
+      # run 39126899668 lost four workers of shard 5 to the OOM killer on a
+      # 6 GiB VM and shard 7 hung to the 90 min cap, so
       # `--max-worker-restart 0` ends the session on the first crashed worker
       # instead of xdist's default 4 x workers respawns into the same
       # pressure, and `-p tests._xdist_crash_guard` makes that exit non-zero even

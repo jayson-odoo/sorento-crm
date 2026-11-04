@@ -64,16 +64,69 @@ The `[skip ci]` convention for intermediate commits (a commit message containing
 a run for that push) stays in place as belt and braces - it costs nothing now that pushes to a PR
 do not trigger runs on their own, and it still matters for pushes to `main`.
 
-A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job: the alembic head, PII and
-gitleaks gates, the import chains, the import-selected backend tests, and tsc plus related vitest
-when the frontend changed. No shard runs on a PR; the full shards run on a release only when
-`full_suite=true` or the diff is unknown (`documentation/reference/CI-LABELS-AND-MINUTES.md`). **A merge does not deploy**: a push to main runs
-only the alembic head gate. The release is `gh workflow run deploy.yml --repo jayson-odoo/sorento-crm
---ref main` (add `-f skip_tests=true` when main's head was already validated by a green queue run),
-dispatched by the orchestrator after a batch has merged; it runs the full suite, builds the images,
+A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job, **fast checks only**
+(CI-CLOUD-GATE, owner 4 Nov 2026): main's head merged in, the alembic head, PII, Outline-guide
+and gitleaks gates, the backend import chains and `pytest --collect-only`, the MCP import check,
+and `tsc` plus ESLint over the changed frontend files. No pytest test and no vitest executes on
+GitHub for a PR, and no job runs on the Mac runner: the tests run in the lane's own sandbox
+(next section). **A merge does not deploy**: a push to main runs only the alembic head gate. The
+release is `gh workflow run deploy.yml --repo foundryx-sdn-bhd/sorento-crm --ref main`,
+dispatched by the orchestrator after a batch has merged AND the release sweep below passed on
+that exact head; by default it runs no tests (`skip_tests` defaults to true), builds the images,
 and its deploy job then waits for the owner's approval in the GitHub `production` environment
-(owner decision 29 Sep 2026; `documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`, which also
-lists the ruleset changes that turn the label into the real merge gate).
+(owner decision 29 Sep 2026; `documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`).
+`-f full_suite=true` is the emergency full suite on GitHub (about 470 billed minutes, off by
+default); `-f skip_tests=false` runs the lean release tests on GitHub
+(`documentation/reference/CI-LABELS-AND-MINUTES.md`).
+
+## Tests before crew-done (CI-CLOUD-GATE, mandatory)
+
+Every lane, cloud or local, runs its changed-area tests itself, on the exact head it hands over:
+
+1. Commit everything, then from the repo root (after `bash scripts/cloud-env-setup.sh`):
+
+   ```
+   scripts/crew-tests.sh
+   ```
+
+   It diffs the head against `merge-base(origin/main, HEAD)` and runs what the PR gate used to:
+   the changed backend test files plus every test file that imports a changed module
+   (`sorento_crm_backend/scripts/ci_select_tests.py`), the forms lifecycle chains when forms code
+   changed (FORMS-REGRESSION), the regression guards (`tests/test_lessons_learnt_regressions.py`),
+   the MCP suite when `sorento_crm_mcp/` changed, and `vitest run --changed <base>` plus the
+   source-scanning guards when the frontend changed. Postgres only, through
+   `SORENTO_ENV_FILE=.env.ci-tests`. It refuses a dirty tree, and `--plan` prints the selection
+   without running it.
+2. Post its last line on the PR **before** `crew-done`, with the commands it printed:
+
+   ```
+   crew-tests: <head sha> backend N passed/0 failed, vitest N/0
+   commands:
+     (cd sorento_crm_backend && SORENTO_ENV_FILE=.env.ci-tests venv/bin/python -m pytest ...)
+     (cd sorento_crm_frontend && npx vitest run --changed <base> --passWithNoTests)
+   ```
+
+   The sha must be the PR's head at the time of `crew-done`; any later push needs a new run and
+   a new `crew-tests:` comment. A failure is fixed, not posted as done. A test that fails on main
+   too is named with its main run as evidence, never skipped or quarantined.
+3. A lane may add tests the script does not pick (a module it knows is coupled) and lists them
+   under `commands:`. It never drops what the script picked.
+
+## Release sweep (CI-CLOUD-GATE, mandatory before each release)
+
+Before the orchestrator dispatches a release, one cloud session runs the **full** suite on the
+release candidate (main's head to be released; about 56k backend tests, 56,489 collected on
+4 Nov 2026, and 21k vitest, about 2 h), as RELEASE-SWEEP-4NOV did (#2157):
+
+- backend: `cd sorento_crm_backend && SORENTO_ENV_FILE=.env.ci-tests venv/bin/python -m pytest -n auto --dist loadfile -m "not serial_ddl"`,
+  then `-p no:xdist -m serial_ddl`, with `tests/scm/` as its own session and the
+  `tests/ci_excluded.txt` entries left out (the shards' split, `deploy.yml` `test-backend`);
+- frontend: `cd sorento_crm_frontend && npx vitest run`.
+
+It posts `crew-tests: <candidate sha> backend N passed/F failed, vitest N/F` on the release PR
+or issue it fixes from. A red sweep is fixed (a test-only fix PR, as #2157) and swept again on
+the new candidate. Only a green sweep on that exact sha is dispatched with the default
+`skip_tests=true`; anything else goes out with `-f full_suite=true` or not at all.
 
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
 `*.md` or the PR template) runs only `Changed areas` and the `PR gate` fast-gate steps (alembic
