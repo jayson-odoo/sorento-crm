@@ -28,7 +28,7 @@ function ComboTemplatesEditor({ comboId }: { comboId: string }) {
   );
   const unlinking = useDeferredAction({
     actionKey: 'combo.unlink_tag_templates',
-    entityType: 'product_combo',
+    entityType: 'combo',
     entityId: unlink ? comboId : null,
     verb: 'Unlinking',
     subject: unlink?.subject ?? '',

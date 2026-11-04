@@ -139,7 +139,7 @@ describe('ComboTemplatesField (existing combo)', () => {
     expect(start).toHaveBeenCalled();
     const last = deferredInputs[deferredInputs.length - 1];
     expect(last.actionKey).toBe('combo.unlink_tag_templates');
-    expect(last.entityType).toBe('product_combo');
+    expect(last.entityType).toBe('combo');
     expect(last.entityId).toBe('cb1');
     expect(last.payload).toEqual({ template_ids: ['a'] });
     // Nothing is committed until the window lapses: Cancel leaves the links as they were.

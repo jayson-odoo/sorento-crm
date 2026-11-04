@@ -1770,7 +1770,7 @@ def _unlink_combo_tag_templates(db: Session, payload: dict):
 register(
     FormAction(
         key="combo.unlink_tag_templates",
-        entity_types=("product_combo",),
+        entity_types=("combo",),
         execute=_unlink_combo_tag_templates,
         window=WINDOW_REVERSIBLE,
         permission="dealer_kit.tag_templates.manage",
