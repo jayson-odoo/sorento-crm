@@ -1427,6 +1427,15 @@ def _known_companies(db: Session, parser_config: Any, contact_respond_id: Any) -
     return _guarded(db, read, [])
 
 
+def _candidate_companies(parser_config: Any, known: list[str] | None) -> list[str] | None:
+    """CHATBOT-TOTALS-FILTERS HT1-1: the companies the lookup lists offer as Company rows: the `Known companies` names
+    (`_known_companies`, read once per turn), only for a prompt that names the block (`ParserConfig.company_candidates`)
+    and a contact holding two or more. None otherwise: the rows and the blocks are today's."""
+    if not getattr(parser_config, "company_candidates", False) or len(known or ()) < 2:
+        return None
+    return list(known or ())
+
+
 def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
@@ -1532,13 +1541,14 @@ def _lookup_visibility(
 def _lookup_lines(
     db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
+    companies: list[str] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
     (`held`, CHAT-V66-REGRESSIONS), plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
-    database error in one drops only that block (fail closed)."""
+    database error in one drops only that block (fail closed). `companies` (`_candidate_companies`): the Company rows."""
     group = bool(getattr(config, "category_pick", False))
     try:
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
@@ -1551,7 +1561,7 @@ def _lookup_lines(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
-                include_suppliers=include_suppliers,
+                include_suppliers=include_suppliers, companies=companies,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1647,10 +1657,11 @@ def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
     group_categories: bool = False, row_ids: bool = False, span_override: str | None = None,
-    supplier_ids: bool = False,
+    supplier_ids: bool = False, companies: list[str] | None = None,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
-    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails.
+    `companies` (`_candidate_companies`): the Company rows, offered by the near-exact spelling pass only."""
     try:
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
@@ -1662,7 +1673,7 @@ def _span_prep(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
-                include_suppliers=include_suppliers,
+                include_suppliers=include_suppliers, companies=companies,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -2060,7 +2071,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
             try:
-                all_rows = [*prep.rows, *prep.spec_key_rows]
+                # HT1-1: a Company row is parser input only, never a span's match (the near-exact pass below offers it).
+                all_rows = [*(r for r in prep.rows if r.list_name != "company"), *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
                 event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
                 # Fix round 7: how many row texts the vector cache held for this turn (a share under 100% reads the
@@ -5980,13 +5992,14 @@ def _run_stages_body(  # noqa: PLR0915
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
                 group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
                 span_override=_span_override(db, envelope, dry_run=dry_run),
-                supplier_ids=parser_config.supplier_ids,
+                supplier_ids=parser_config.supplier_ids, companies=_candidate_companies(parser_config, known_companies),
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
             lookup_lines, lookup_event = _lookup_lines(
                 db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)),
+                companies=_candidate_companies(parser_config, known_companies),
             )
         index_matches: list[dict] = []
         index_failed: list[bool] = []

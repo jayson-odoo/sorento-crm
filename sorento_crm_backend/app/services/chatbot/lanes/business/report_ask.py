@@ -144,6 +144,10 @@ _AXIS_FILTERS = {
 _FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale", "names")
 
 
+#: CHATBOT-TOTALS-FILTERS HT1-11: the values of the parser's entity key `said_as` (`parser.with_said_as`).
+SAID_AS = ("company", "brand", "both")
+
+
 def kind_was_said(value: Any) -> bool:
     """`kind_said` is the word of the message that says the kind: a non-blank string means said; null, blank or absent
     do not. (A bare true is still read as said.)"""
@@ -792,7 +796,12 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if raw and e.get("current_message") is not False and raw not in words.setdefault(hint, []):
             words[hint].append(raw)
             if hint in ("brand", "account_type") and "kind_said" in e:
-                kinds.append({"hint": hint, "word": raw, "raw": typed, "said": kind_was_said(e.get("kind_said"))})
+                kind = {"hint": hint, "word": raw, "raw": typed, "said": kind_was_said(e.get("kind_said"))}
+                if "said_as" in e:
+                    # CHATBOT-TOTALS-FILTERS HT1: the parser's read of a name as a company, a brand or both (null: not
+                    # said); `_company_or_brand` reads it. No key (a text that does not define it): no entry.
+                    kind["as"] = e.get("said_as") if e.get("said_as") in SAID_AS else None
+                kinds.append(kind)
     return {
         **verdict, "entities": kept, "report_ask_words": words, "report_ask_spec": specs, "report_ask_kind": kinds,
     }
@@ -1749,7 +1758,13 @@ def _company_or_brand(db: Any, parse_output: dict[str, Any], plan: dict[str, Any
     object also names, is read against the brand catalogue and the contact's companies (its name or code, as `_kind_ask`
     reads it): one of those companies AND a brand is asked (`ask`), company or brand or both; a company and no brand is
     that company; a contact who sees one company gets the brand. None for any other word, and for one the account type
-    plan already took."""
+    plan already took.
+
+    HT1 (`said_as`, the parser's own read of the name, `take_words` keeps it as `as`): one of the contact's companies read
+    as the company is that company (no brand), as both is that company AND the brand (`brand`), as the brand is the
+    brand; none of them asks. Read as none (the key present, null) with no company named or held, a brand that is one of
+    the companies of a contact holding two or more is in doubt too (asked), never a silent brand filter. An entry with no
+    `as` (a text that does not define the key) keeps the rules above exactly."""
     own = _own_companies(companies)
     if db is None or not own:
         return None
@@ -1769,12 +1784,21 @@ def _company_or_brand(db: Any, parse_output: dict[str, Any], plan: dict[str, Any
             continue
         forms = {_squash(word), _squash(typed)}
         hits = [c for c in own if forms & {_squash(c[1] or ""), _squash(c[2] or "")}]
-        if len(hits) != 1 or not (forms & either or (named is not None and str(named[0]) == str(hits[0][0]))):
+        if len(hits) != 1:
+            continue
+        company = [str(hits[0][0]), str(hits[0][1])]
+        said_as = entry.get("as")
+        if said_as in ("company", "both"):
+            return {"word": word, "raw": typed, "company": company, "ask": False, "brand": said_as == "both"}
+        if said_as == "brand":
+            continue  # the parser read it as the brand: the brand filter, nothing to ask
+        unsaid = "as" in entry and named is None and not held_company  # HT1-5: the key present, nothing settles it
+        if not (forms & either or (named is not None and str(named[0]) == str(hits[0][0])) or unsaid):
             continue
         brand = _is_brand(db, word, typed)
         if brand and len(own) < 2:
             continue  # one company: the brand, nothing to ask
-        return {"word": word, "raw": typed, "company": [str(hits[0][0]), str(hits[0][1])], "ask": brand}
+        return {"word": word, "raw": typed, "company": company, "ask": brand}
     return None
 
 
@@ -1896,13 +1920,13 @@ def _fresh_args(
     scope = _object_scope(parse_output, companies)
     # M2 (owner Q2 c), the object path: a name in doubt (`_company_or_brand`) that is a brand and one of the contact's
     # companies is asked once, company, brand or both; one that is only a company is that company. Neither is a brand
-    # filter.
+    # filter, except a name the parser read as both (HT1-4).
     either = (
         _company_or_brand(db, parse_output, plan, companies)
         if scope is not None and ask_kind and not dealer and not plan["ask"] else None
     )
-    if either is not None:
-        plan["drop"].add(either["word"])
+    if either is not None and not either.get("brand"):
+        plan["drop"].add(either["word"])  # HT1-4: read as both, the word stays the brand beside the company
     read = {**parse_output, "report_ask_words": {**words, "brand": _brand_words(words, plan)}}
     filters, line = _word_filters(db, read, agent_filter=agent_filter, lenient=True, scope=scope)
     if filters is None:
@@ -3405,6 +3429,8 @@ def _word_kinds(
             how = picked
         elif key in either:
             how = "unsure"  # M2: a `company_or_brand` name is the data's to settle (`_company_or_brand`), asked when both
+        elif entity is not None and entity.get("said_as") in ("company", "both"):
+            how = "unsure"  # HT1: read as a company (or both): the data settles which company (`_company_or_brand`)
         elif entity is not None and "kind_said" in entity and kind_was_said(entity.get("kind_said")):
             how = jsc.js_string(entity.get("hint")).strip().lower()
         elif entity is not None and "kind_said" in entity:
@@ -3513,6 +3539,15 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     if counted:
         # AF-7: the object's own count makes a breakdown a ranking cut to that count (never every row).
         frame = "ranking"
+    elif (
+        frame == "ranking" and axis is not None and axis == held_axis
+        and (held_ask or {}).get("frame") == "breakdown" and (held_ask or {}).get("top_n") is None
+        and not (isinstance(own_count, int) and not isinstance(own_count, bool) and own_count > 0)
+        and verdict.get("rank_direction") != "bottom"
+    ):
+        # HT1-8: a ranking on the held every-row list's own axis with no count of its own (only a filter changed) is that
+        # list again, every row; never "How many?". Its own count ranks (AF-7, CP-6); a bottom ranking is asked its count.
+        frame = "breakdown"
     # This message types an axis: the parser's own `by_words`, or a count, direction or ranked measure (main's `_typed`).
     typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
@@ -3565,6 +3600,16 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
+    # HT1: the parser's `said_as` per word of a brand / account type entity that carries the key (read as `_word_kinds`
+    # reads the entities), for the unsure word's entity below.
+    said_as: dict[str, Any] = {}
+    for e in jsc.array(verdict.get("entities")):
+        if isinstance(e, dict) and "said_as" in e and e.get("current_message") is not False and jsc.js_string(
+            e.get("hint") or ""
+        ).strip().lower() in ("brand", "account_type"):
+            for key in ("raw", "canonical_code"):
+                if " ".join(jsc.js_string(e.get(key)).split()):
+                    said_as.setdefault(" ".join(jsc.js_string(e.get(key)).split()).casefold(), e.get("said_as"))
     for word, how in _word_kinds(ask, verdict, focus, picked, company=own_company):
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
@@ -3572,7 +3617,9 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
             entities.append(_entity(word, "account_type"))
         elif how != "company":  # a word that is the ask's company is no brand or account type filter (C6-1)
             # Unsure: the brand-or-account-type plan reads it against the tables (`_account_plan`), asked when in both.
-            entities.append(_entity(word, "brand", kind_said=None))
+            folded = " ".join(word.split()).casefold()
+            more = {"said_as": said_as[folded]} if folded in said_as else {}
+            entities.append(_entity(word, "brand", kind_said=None, **more))
     # A held customer is never looked up again (the lane takes its id, `_fresh_args`); any other goes to the resolver.
     entities.extend(_entity(name, "customer") for name in names("customers") if not _held_ids(held, "customer_ids", name))
     entities.extend(_entity(code, "product") for code in names("products"))

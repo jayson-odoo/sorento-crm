@@ -128,9 +128,15 @@ class ParserConfig:
     # neither the key in its schema nor the line in its user turn.
     kind_said: bool = False
     account_types: bool = False
+    # CHATBOT-TOTALS-FILTERS HT1-11: the prompt in use defines `said_as` (`SAID_AS_WORD`, an entity key: the message read
+    # a name as a company, a brand or both). False for a bare config: a text that does not define it gets no such key.
+    said_as: bool = False
     # CHATBOT-TOTALS-FILTERS: the prompt in use names the `Known companies` line (`KNOWN_COMPANIES_WORD`), so the user
     # turn prints the companies the contact holds. False for a bare config: the user turn is unchanged.
     known_companies: bool = False
+    # CHATBOT-TOTALS-FILTERS HT1-1: the prompt in use names the `Company candidates` block (`COMPANY_CANDIDATES_WORD`), so
+    # the lookup lists offer the contact's own companies a span of the message matches. False for a bare config.
+    company_candidates: bool = False
     # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
     # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
     # that names it; production v63 names none). True keeps the line for a bare config.
@@ -920,6 +926,10 @@ KIND_SAID_WORD = "kind_said"
 KNOWN_ACCOUNT_TYPES_WORD = "Known account types"
 #: CHATBOT-TOTALS-FILTERS: the raw template words that turn the `Known companies:` user-turn line on.
 KNOWN_COMPANIES_WORD = "Known companies"
+#: CHATBOT-TOTALS-FILTERS HT1-1 / HT1-11: the raw template words that turn the `Company candidates` lookup block and the
+#: entity key `said_as` on.
+COMPANY_CANDIDATES_WORD = "Company candidates"
+SAID_AS_WORD = "said_as"
 
 
 def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
@@ -929,6 +939,17 @@ def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
     entity = out["properties"]["entities"]["items"]
     entity["properties"]["kind_said"] = {"type": ["string", "null"]}
     entity["required"] = [*[k for k in entity["required"] if k != "kind_said"], "kind_said"]
+    return out
+
+
+def with_said_as(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the entity key `said_as` (how the message reads a name that is a brand and one of the
+    contact's companies: company, brand or both; null: it does not say), last in the entity's `properties` and
+    `required` (required and nullable, as strict mode needs)."""
+    out = copy.deepcopy(schema)
+    entity = out["properties"]["entities"]["items"]
+    entity["properties"]["said_as"] = {"type": ["string", "null"], "enum": ["company", "brand", "both", None]}
+    entity["required"] = [*[k for k in entity["required"] if k != "said_as"], "said_as"]
     return out
 
 
@@ -1057,7 +1078,7 @@ def with_message_language(schema: dict[str, Any]) -> dict[str, Any]:
 
 def closed_lists_schema(
     items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True, kind_said: bool = False,
-    account_types: bool = False,
+    account_types: bool = False, said_as: bool = False,
 ) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
@@ -1078,6 +1099,7 @@ def closed_lists_schema(
     schema = schema if report_fields else without_report_fields(schema)
     schema = schema if by_words else without_by_words(schema)
     schema = with_kind_said(schema) if kind_said else schema
+    schema = with_said_as(schema) if said_as else schema
     return with_account_type_axis(schema) if account_types else schema
 
 
@@ -1190,6 +1212,7 @@ def resolve_config(
     report_fields = "compare_to" in (raw_template or "")
     by_words = "by_words" in (raw_template or "")
     kind_said = KIND_SAID_WORD in (raw_template or "")
+    said_as = SAID_AS_WORD in (raw_template or "")
     sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
     json_schema = None
     if closed_lists:
@@ -1197,7 +1220,7 @@ def resolve_config(
 
         json_schema = closed_lists_schema(
             closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words,
-            kind_said=kind_said, account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
+            kind_said=kind_said, account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""), said_as=said_as,
         )
         if OPPORTUNITY_LINE in (raw_template or ""):
             json_schema = with_opportunity(json_schema)
@@ -1220,8 +1243,10 @@ def resolve_config(
         report_fields=report_fields,
         by_words=by_words,
         kind_said=kind_said,
+        said_as=said_as,
         account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
         known_companies=KNOWN_COMPANIES_WORD in (raw_template or ""),
+        company_candidates=COMPANY_CANDIDATES_WORD in (raw_template or ""),
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
@@ -1502,6 +1527,7 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = schema if config.report_fields else without_report_fields(schema)
     schema = schema if config.by_words else without_by_words(schema)
     schema = with_kind_said(schema) if config.kind_said else schema
+    schema = with_said_as(schema) if config.said_as else schema
     schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
     schema = with_message_language(schema) if config.message_language else schema
