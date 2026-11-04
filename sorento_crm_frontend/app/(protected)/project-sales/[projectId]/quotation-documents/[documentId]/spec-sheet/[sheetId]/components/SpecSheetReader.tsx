@@ -843,20 +843,12 @@ export function SpecSheetReader({
                 >
                   <Redo2 className="size-4" />
                 </Button>
-                {selectedLayer?.props.kind === 'text' ? (
-                  <FormatBar
-                    layer={selectedLayer}
-                    onProps={changeSelectedProps}
-                  />
-                ) : (
-                  // Holds the format bar's room, so picking a text layer never re-wraps the
-                  // toolbar and slides the pages out from under the pointer mid-click.
-                  <div
-                    className="invisible h-[34px] w-[25rem] max-w-full"
-                    aria-hidden
-                    data-testid="spec-sheet-format-slot"
-                  />
-                )}
+                {/* Always the same bar (hidden unless a text layer is picked): the toolbar keeps
+                    one height whatever is selected, so the pages never slide under the pointer. */}
+                <FormatBar
+                  layer={selectedLayer}
+                  onProps={changeSelectedProps}
+                />
                 <span
                   // Fixed width, one line: "Saving..." is wider than "Saved", and a toolbar that
                   // rewraps on every autosave moves every page down and back.

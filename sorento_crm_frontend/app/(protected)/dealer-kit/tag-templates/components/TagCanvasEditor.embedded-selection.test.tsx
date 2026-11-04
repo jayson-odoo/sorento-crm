@@ -151,6 +151,7 @@ const doc = {
     textLayer('title'),
     textLayer('area'),
     { ...textLayer('area-field'), props: { ...defaultTextProps(), text: 'AREA : {{line.area}}' } },
+    { ...textLayer('spec'), props: { ...defaultTextProps(), text: '{{product.spec_lines}}' } },
   ],
 } satisfies TagTemplateDoc;
 
@@ -220,7 +221,7 @@ describe('TagCanvasEditor embedded selection', () => {
   });
 
   it('a double-click on a data-bound text (AREA) asks the host for its field box, not inline edit', async () => {
-    const onEditField = vi.fn();
+    const onEditField = vi.fn(() => true);
     render(
       <TagCanvasEditor
         doc={doc}
@@ -248,5 +249,38 @@ describe('TagCanvasEditor embedded selection', () => {
       fireEvent.doubleClick(screen.getByTestId('layer-area-field'));
     });
     expect(onEditField).not.toHaveBeenCalled();
+  });
+
+  it('a double-click on any other text, a data-bound one included, opens in-place typing on the page', async () => {
+    const onEditField = vi.fn(() => false);
+    render(
+      <TagCanvasEditor
+        doc={doc}
+        onChange={vi.fn()}
+        embedded={{ ...embedded(null, vi.fn()), onEditField }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('layer-spec'));
+      fireEvent.doubleClick(screen.getByTestId('layer-spec'));
+    });
+    const box = await screen.findByTestId('inline-text-editor');
+    expect(box).not.toHaveAttribute('readonly');
+    expect(box).not.toHaveAttribute('aria-readonly', 'true');
+  });
+
+  it('the field box (AREA) opens instead of in-place typing when the host takes the double-click', async () => {
+    const onEditField = vi.fn(() => true);
+    render(
+      <TagCanvasEditor
+        doc={doc}
+        onChange={vi.fn()}
+        embedded={{ ...embedded(null, vi.fn()), onEditField }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.doubleClick(screen.getByTestId('layer-area-field'));
+    });
+    expect(screen.queryByTestId('inline-text-editor')).toBeNull();
   });
 });

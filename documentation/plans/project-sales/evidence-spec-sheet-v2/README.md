@@ -110,3 +110,12 @@ apply-all. On a live page the AREA / COMMENT / marker buttons stay in the tab or
   autosave). The save state has a fixed width and does not wrap; the font picker is 112 px so it fits on the first row.
 - Spec sheets list: `SS1` / `SS2` show whole in the No. column (72 px); the table stays 950 px in its card.
 - Forty wheel steps over the rail at its end: the page behind does not scroll (rail and stack are `overscroll-contain`).
+
+## Crew re-check r8 fixes
+
+- Toolbar at 1280x900: 52 px with nothing selected, with an image, and with text (the real format bar is always there,
+  hidden unless a text layer is picked; the 400 px placeholder is gone).
+- A 20 px sideways drag that starts on an UNSELECTED text: dx 20, dy 0 (was dy 8 mm when the toolbar re-wrapped mid-press).
+- Double-click on any text opens in-place typing: the cover title and the bound `{{product.code}}` line on page 2 both
+  open an editable box (a data field starts from what it prints and is typed over on that page only). AREA / COMMENT /
+  marker still open their page field box.

@@ -1078,9 +1078,26 @@ describe('a page that does not move under the pointer', () => {
     fireEvent.mouseLeave(wrap);
   });
 
-  it('holds the format bar room in the toolbar when no text layer is picked', async () => {
+  it('the toolbar holds the SAME format bar in every selection state (only hidden), so its height never changes', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
-    expect(screen.getByTestId('spec-sheet-format-slot').className).toContain('invisible');
+    // Nothing selected: the real bar, invisible and out of the accessibility tree.
+    const hidden = document.querySelector(
+      '[role="group"][aria-label="Text formatting"]',
+    ) as HTMLElement;
+    expect(hidden).not.toBeNull();
+    expect(hidden.className).toContain('invisible');
+    const shape = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll('*')).map((n) => n.tagName).join(',');
+    const before = shape(hidden);
+
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    const shown = await screen.findByRole('group', { name: 'Text formatting' });
+    expect(shown.className).not.toContain('invisible');
+    expect(shape(shown)).toBe(before);
   });
 });

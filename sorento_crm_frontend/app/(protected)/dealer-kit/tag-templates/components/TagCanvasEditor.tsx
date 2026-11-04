@@ -434,10 +434,10 @@ export interface EmbeddedMode {
   /** A view-only canvas: nothing can be dragged or typed. */
   readOnly?: boolean;
   /**
-   * A double-click on a text layer bound to the quotation's data (AREA, COMMENT, marker...): the
-   * host opens its own box for that page field. A single click selects it like any layer.
+   * A double-click on a text layer: the host may take it (AREA, COMMENT, marker open the page
+   * field box) and answers true; otherwise the canvas opens in-place typing on that layer.
    */
-  onEditField?: (layerId: string) => void;
+  onEditField?: (layerId: string) => boolean;
 }
 
 interface TagCanvasEditorProps {
@@ -1542,15 +1542,10 @@ export function TagCanvasEditor({
       // steps a level in, exactly as before.
       if (target.props.kind === 'text') {
         setSelectedIds(new Set([target.id]));
-        // Embedded in the spec sheet: only text the designer wrote can be typed over. A layer
-        // bound to the quotation's data (a slot, a {{merge field}}) stays data; AREA / COMMENT /
-        // marker are typed through the reader's own spots.
-        const bound = target.slot_binding || /\{\{[^}]+\}\}/.test(target.text_override ?? target.props.text ?? '');
-        if (embedded && embedded.readOnly) return;
-        if (embedded && bound) {
-          embedded.onEditField?.(target.id);
-          return;
-        }
+        // Embedded in the spec sheet: AREA / COMMENT / marker open the reader's page field box;
+        // every other text, data-bound included, is typed over in place on this page only.
+        if (embedded?.readOnly) return;
+        if (embedded?.onEditField?.(target.id)) return;
         setEditingLayerId(target.id);
         return;
       }
@@ -4453,7 +4448,9 @@ export function TagCanvasEditor({
                   key={editingLayer.id}
                   layer={editingLayer}
                   value={editingResolvedValue ?? editingContent}
-                  readOnly={editingResolvedValue != null}
+                  // The template editor shows a data field's value read-only; a spec sheet page
+                  // types over it (that page only), starting from what it prints.
+                  readOnly={editingResolvedValue != null && !embedded}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}

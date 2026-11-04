@@ -11,6 +11,8 @@ import type {
   TagLayer,
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
+import { defaultTextProps } from '@/lib/dealer-kit/tag-template-types';
+import { cn } from '@/lib/utils';
 
 /**
  * The designer's text formatting (font, size, bold, italic, align) in the reader's toolbar, for
@@ -21,18 +23,27 @@ export function FormatBar({
   layer,
   onProps,
 }: {
-  layer: TagLayer;
+  /** The selected layer. Anything but text draws the same bar, hidden, so the toolbar keeps its size. */
+  layer: TagLayer | null;
   onProps: (id: string, changes: Partial<TagLayerProps>) => void;
 }) {
   const library = useKitLibrary();
-  if (layer.props.kind !== 'text') return null;
-  const text = layer.props;
-  const set = (changes: Partial<TagLayerProps>) => onProps(layer.id, changes);
+  const active = layer?.props.kind === 'text' ? layer : null;
+  const text =
+    active && active.props.kind === 'text' ? active.props : defaultTextProps();
+  const set = (changes: Partial<TagLayerProps>) => {
+    if (active) onProps(active.id, changes);
+  };
   return (
     <div
-      className="flex flex-wrap items-center gap-1"
+      className={cn(
+        'flex flex-wrap items-center gap-1',
+        !active && 'invisible',
+      )}
       role="group"
       aria-label="Text formatting"
+      aria-hidden={!active || undefined}
+      inert={!active || undefined}
     >
       <div className="w-28">
         <SearchableSelect

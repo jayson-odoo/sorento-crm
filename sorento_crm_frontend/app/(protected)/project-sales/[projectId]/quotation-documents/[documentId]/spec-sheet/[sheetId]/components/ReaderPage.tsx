@@ -294,7 +294,9 @@ export const ReaderPage = React.memo(function ReaderPage({
       onEditField: (layerId: string) => {
         const layer = layersRef.current?.find((l) => l.id === layerId);
         const field = layer ? editableField(layer) : null;
-        if (field && !isCover) startRef.current(field);
+        if (!field || isCover) return false;
+        startRef.current(field);
+        return true;
       },
     }),
     [
