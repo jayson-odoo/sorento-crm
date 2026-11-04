@@ -302,3 +302,68 @@ describe('useListPager', () => {
     expect(push).toHaveBeenLastCalledWith('/things/a2?page=1&limit=3&from=a2');
   });
 });
+
+describe('OI-RESERVE-ROUND: the walk survives an action that drops the record from the page', () => {
+  const WITHOUT_A2: ListPagerPage = {
+    data: [{ id: 'a1' }, { id: 'a3' }],
+    pagination: { total: TOTAL - 1 },
+  };
+
+  async function dropRecordFromList() {
+    fetchPage.mockImplementation(async () => WITHOUT_A2);
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['test-list'] });
+    });
+  }
+
+  it('keeps the pager, position and neighbours after the refetched page lacks the record', async () => {
+    seed(0);
+    const { result } = renderPager('a2');
+    expect(result.current.index).toBe(2);
+
+    await dropRecordFromList();
+
+    await waitFor(() => expect(fetchPage).toHaveBeenCalled());
+    expect(result.current.visible).toBe(true);
+    expect(result.current.index).toBe(2);
+    expect(result.current.total).toBe(3);
+    expect(result.current.hasPrevious).toBe(true);
+    expect(result.current.hasNext).toBe(true);
+    act(() => result.current.goNext());
+    expect(push.mock.calls.at(-1)?.[0]).toContain('/things/a3');
+  });
+
+  it('keeps it across an unmount and remount with the same QueryClient', async () => {
+    seed(0);
+    const first = renderPager('a2');
+    expect(first.result.current.visible).toBe(true);
+    await dropRecordFromList();
+    first.unmount();
+
+    const { result } = renderPager('a2');
+    expect(result.current.visible).toBe(true);
+    expect(result.current.index).toBe(2);
+    expect(result.current.total).toBe(3);
+  });
+
+  it('a neighbour that is in the walked page but not the refetched one still shows the pager', async () => {
+    seed(0);
+    const first = renderPager('a2');
+    expect(first.result.current.visible).toBe(true);
+    await dropRecordFromList();
+    first.unmount();
+
+    const { result } = renderPager('a3');
+    expect(result.current.visible).toBe(true);
+  });
+
+  it('a deep link to a record never on the page stays hidden', async () => {
+    seed(0);
+    const first = renderPager('a2');
+    await dropRecordFromList();
+    first.unmount();
+
+    const { result } = renderPager('never-here');
+    await waitFor(() => expect(result.current.visible).toBe(false));
+  });
+});
