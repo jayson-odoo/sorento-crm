@@ -99,7 +99,7 @@ tr.ticked td { background: var(--blue-bg); }
 
 <div class="wrap">
   <header class="stack">
-    <span class="eyebrow">Mock v1 · lane AC-QTSO-CRM · not wired · only the dashed outlines are new; everything else is today's screen</span>
+    <span class="eyebrow">Mock v2 · lane AC-QTSO-CRM · not wired · only the dashed outlines are new; everything else is today's screen</span>
     <h1>Project sales: quotations and sales orders into AutoCount</h1>
     <p class="muted" style="max-width:78ch">The data is an example. The lines follow the real document SO397450 that the worksheet is built from (one area-group section, Your Ref = the customer's PO). Product code SRTWB242 and locations come from the repo's test data. This cloud sandbox has no copy of dev data, so crew swaps in a real project QT and SO on the hand-test copy.</p>
   </header>
@@ -235,8 +235,23 @@ tr.ticked td { background: var(--blue-bg); }
       </div>
     </div>
     <div class="dlg-body">
-      <p class="ann">Shows only once the customer has accepted (R5). Before that it is greyed "The customer has not accepted this quotation yet". Proposals never show it. Once the quotation is in AutoCount, a newly accepted revision shows <b>Update in AutoCount</b> instead, and Decide holds Cancel in AutoCount (greyed "Waiting for AutoCount" today). Rate-only lines and product sets wait on Q6.</p>
-      <div class="callout ok"><b>Created: QT26-00412</b>AutoCount read back 3 lines. They match the accepted revision R2.</div>
+      <p class="ann">Shows only once the customer has accepted (R5). Before that it is greyed "The customer has not accepted this quotation yet". Proposals never show it. Once the quotation is in AutoCount, a newly accepted revision shows <b>Update in AutoCount</b> instead, and Decide holds Cancel in AutoCount (greyed "Waiting for AutoCount" today). Rate-only lines are not sent and a product set goes as its components (ruling R6); the result says which.</p>
+      <div class="callout ok"><b>Created: QT26-00412</b>AutoCount read back 5 lines. They match the accepted revision R2.</div>
+      <div class="callout new"><b>What changed on the way</b>
+        <ul class="steps">
+          <li>Not sent (rate only): SRTWB250 Alternate basin.</li>
+          <li>Sent as its parts: SET-WC01 Water closet set x 2 = SRTWC100 x 2, SRTAV020 x 4, SRTFH030 x 4. The set's price is on SRTWC100; the other parts are at zero.</li>
+        </ul>
+      </div>
+      <div class="scroll"><table style="min-width:520px"><colgroup><col style="width:48px"><col style="width:110px"><col style="width:180px"><col style="width:70px"><col style="width:110px"></colgroup>
+        <thead><tr><th class="num">Line</th><th>Item</th><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th></tr></thead>
+        <tbody>
+          <tr><td class="num">1</td><td>SRTWB242</td><td>Wash basin 242</td><td class="num">10</td><td class="num">180.00</td></tr>
+          <tr><td class="num">2</td><td>SRTWC100</td><td>Water closet</td><td class="num">2</td><td class="num">950.00</td></tr>
+          <tr><td class="num">3</td><td>SRTAV020</td><td>Angle valve</td><td class="num">4</td><td class="num">0.00</td></tr>
+          <tr><td class="num">4</td><td>SRTFH030</td><td>Flexible hose</td><td class="num">4</td><td class="num">0.00</td></tr>
+          <tr><td class="num">5</td><td>SRTBS110</td><td>Bath spout</td><td class="num">40</td><td class="num">180.00</td></tr>
+        </tbody></table></div>
     </div>
   </section>
 

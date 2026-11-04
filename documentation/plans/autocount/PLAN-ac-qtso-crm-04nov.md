@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q5 5 Nov ~07:20 MYT; Q6 asked; mock v1 `ac-qtso-crm-04nov-mockup.html` posted for review).
+Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q6 5 Nov; mock v2 `ac-qtso-crm-04nov-mockup.html` with the R6 result note; first red tests in).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -93,8 +93,7 @@ Create lines (`lines[]`): itemCode = product code; uom; qty (> 0); unitPrice (>=
 `stock_location`, else `derived_stock_location` (`project_so_draft_service.py:3323`), else refused in the CRM "No location on line N";
 description; deliveryDate (SO); discount blank. SO line made from a quotation line that is already in AutoCount: send
 `fromQuotation{docNo, dtlKey}`; AutoCount then copies price and location from it (warning QT_ROW_VALUES_INHERITED, shown amber).
-Quotation lines: rate-only lines and product sets (`is_rate_only`, `product_set_id`) cannot be one AutoCount row; refused in the CRM
-by name until the owner says how (see question 6).
+Quotation lines: rate-only lines are skipped and product sets go as their components (ruling R6).
 
 Edit (`PATCH`): header ref, description, remark1-4, displayTerm, salesAgent, yourPONo; lines qty, unitPrice, discount, location,
 description, deliveryDate. Anything else answers 422 FIELD_NOT_EDITABLE. Always sends `docDate` (DOC_DATE_REQUIRED) and
@@ -130,4 +129,10 @@ Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount
 - R3: only a published amendment updates the AutoCount document; no direct edits of a published order.
 - R4: Cancel in AutoCount = cancel the remaining (undelivered) balance. Greyed "Waiting for AutoCount" until SS ships cancel (SS gaps 1-2).
 - R5: a quotation is created in AutoCount only after the customer accepted it (issue `accepted_at` set); a later accepted revision goes as Update.
-- Q6 (rate-only lines and product sets): asked separately, not yet answered.
+- R6 (Q6, 5 Nov ~07:25 MYT, "For read-only line should be skip. Then for product set, then it should be like exploded to the component under the set."): option (b).
+  Rate-only lines (`is_rate_only`) are not sent. A product set line goes as its components from `set_parts_snapshot`, qty = part qty x set qty,
+  priced as the SO draft already splits a set (`project_so_draft_service.py:1229`: driver at the set's quoted rate, other parts zero, so the
+  set's money is counted once). The result note names every skipped line and every exploded set with its components, so CS sees it.
+  Red tests: `sorento_crm_backend/tests/test_project_autocount_qt_payload.py` (rate-only skipped, set exploded codes + qty x set qty,
+  mixed quotation, only-rate-only quotation sends nothing). The builder is pure: `build_quotation_lines(lines, *, location)` in
+  `app/services/project_autocount_write_service.py`.
