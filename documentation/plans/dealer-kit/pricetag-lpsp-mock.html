@@ -16,9 +16,9 @@
        gains LP/SP and Typed price columns; unresolved rows keep the existing did-you-mean suggestion picker
        BE: app/services/ai_extract/extract_service.py (_build_messages :989, _extract_products :1364),
            app/services/ai_prompt_registry.py (_ai_extract_price_tag_fallback :1174)
-  C. Line row: LP/SP per line + typed price hints + minimum price pill
+  C. Line row: LP/SP per line + typed price hints + eye icon (D)
        components/dealer-kit/PriceTagLinesTable.tsx (line row) + components/ui/toggle-group (same as PriceModeToggle)
-       + components/ui/badge for "Below the minimum price RM x" (wording from QuotationLineFlags.tsx:131-147)
+       (no minimum price on tags, Q5 b)
   C2. Unmatched row: manual product pick (owner note 1)
        components/common/SearchableSelect over the form's existing product lookup (lookupTagItems), did-you-mean
        options first; same control the line row already uses to add a product
@@ -141,11 +141,11 @@ Cabana item under SP (example E4)</textarea>
             <div class="sub">Combo for this request only.</div>
             <button class="btn" style="margin-top:4px">Save as combo</button> <span class="sub">(staff with product edit only)</span></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
-          <td>RM 1,729<div class="sub">Typed. No system SP for this combo.</div><div class="sub">LP RM 2,155 (1,150 + 610 + 395)</div></td><td class="hide-sm">Furniture set A5</td>
+          <td>RM 1,729<div class="sub">Typed. No system SP for this combo.</div><div class="sub">LP RM 2,155 (1,150 + 610 + 395)</div></td><td class="hide-sm"><div class="select">Furniture set A5 <span class="sub">(default)</span></div></td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
       <tr><td><div class="code">SRTWC8066-S-UF</div><div class="sub">Wall-hung WC</div></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
-          <td>RM 599<div class="sub">Typed. System SP RM 649</div><span class="pill warn">Below the minimum price RM 620</span></td><td class="hide-sm">Small tag</td>
+          <td>RM 599<div class="sub">Typed. System SP RM 649</div></td><td class="hide-sm">Small tag</td>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag">&#128065;</button></td></tr>
       <tr><td><div class="code">(Cabana code)</div><div class="sub">Cabana basin</div></td>
           <td><span class="seg"><span class="off">LP</span><span class="on">SP</span></span></td>
@@ -156,7 +156,7 @@ Cabana item under SP (example E4)</textarea>
           <td><button class="icon" aria-label="Preview tag" title="Preview tag" disabled>&#128065;</button></td></tr>
     </tbody>
   </table>
-  <div class="muted" style="margin-top:6px">SRTSH2626-GY and SRTBF11850 prices are dev catalogue values; SRTWC8066's system SP, SRTW1200-BL's LP and the minimum price are placeholders; the build reads them live. The whole-sheet preview and PDF stay where they are.</div>
+  <div class="muted" style="margin-top:6px">SRTSH2626-GY and SRTBF11850 prices are dev catalogue values; SRTWC8066's system SP and SRTW1200-BL's LP are placeholders; the build reads them live. The whole-sheet preview and PDF stay where they are.</div>
 </div>
 
 <h2>D. Eye icon: the line's tag in a lightbox</h2>
@@ -178,7 +178,7 @@ Cabana item under SP (example E4)</textarea>
       <tr><td>Parts</td><td>SRTMCB8083-BL, SRTWT6204-MBL (fixed)</td></tr>
       <tr><td>List price / Selling price</td><td>blank (= sum 2,155) / 1,729 <span class="sub">prefilled from the request, editable</span></td></tr>
       <tr><td>Description</td><td>blank, to fill</td></tr>
-      <tr><td>Price tag templates <span class="sub">new</span></td><td><span class="seg"><span class="on">Furniture set A5</span></span> <span class="sub">Empty = the host product's templates.</span></td></tr>
+      <tr><td>Price tag templates <span class="sub">new</span></td><td><span class="seg"><span class="on">Furniture set A5 &#9733; default</span></span> <span class="seg"><span class="off">Furniture set A4</span></span> <span class="sub">Empty = the host product's templates. With 2+, the default is preselected on the line.</span></td></tr>
     </tbody>
   </table>
   <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end"><button class="btn">Cancel</button><button class="btn primary">Save combo</button></div>
