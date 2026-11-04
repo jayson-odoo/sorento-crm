@@ -3533,8 +3533,6 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
         status = "sales_report"  # a total
     elif breakdown:
         status = "sales_analysis"  # M1: every row (`by_capability` marks the breakdown), never a top selling ranking
-    elif counted:
-        status = ASK_NAME  # AF-7: the ranking itself, so `by_capability` never reads it as a breakdown (every row)
     elif status not in (ASK_NAME, "top_selling", *SALES_STATUSES):
         status = "sales_report"
     held = _held_names(focus)
@@ -3562,9 +3560,9 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     if frame in ("total", "breakdown"):
         top_n = None  # M1: no count: one figure, or every row
     out = {k: v for k, v in verdict.items() if k != "by_words"}  # the object names the axis, not this message's words
-    if breakdown or counted:
-        # M1: a stray direction or ranked measure beside a breakdown frame is not read (the real C5 parse); AF-7's count
-        # is the object's own.
+    if breakdown:
+        # M1: a stray direction or ranked measure beside a breakdown frame is not read (the real C5 parse). A counted
+        # ranking (AF-7) keeps the parser's own direction ("bottom 5").
         out.update(rank_direction=None, rank_by=None)
     out.update(
         order_status=status,
