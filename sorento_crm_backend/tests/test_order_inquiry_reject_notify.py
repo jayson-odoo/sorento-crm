@@ -170,13 +170,13 @@ def test_single_reject_dispatches_one_email_and_one_in_app(api, monkeypatch):
     assert line["item_code"] == row.item_code
     assert line["qty"] == "10"
     assert line["delivery_date"] == row.delivery_date.strftime("%d/%m/%Y")
-    # Rejected by + when: the buyer, in Malaysia time, dd/mm/yyyy HH:MM.
+    # Rejected by + when: the buyer, in Malaysia time, in the house date-time shape
+    # `dd/mm/yyyy, h:mm am/pm` (DATE-FORMAT-UNIFY, app/utils/date_format.fmt_datetime).
     assert ctx["actor"]["email"].startswith(str(world.buyer))
     world.db.refresh(row)
+    local = row.rejected_at.replace(tzinfo=timezone.utc).astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
     assert rej["rejected_at"] == (
-        row.rejected_at.replace(tzinfo=timezone.utc)
-        .astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
-        .strftime("%d/%m/%Y %H:%M")
+        f"{local:%d/%m/%Y}, {local.hour % 12 or 12}:{local:%M} {'pm' if local.hour >= 12 else 'am'}"
     ), "the stored UTC stamp, shown in Malaysia time"
     # Recipient: the raiser.
     assert ctx["raiser"]["email"].startswith(str(world.cs_user))
