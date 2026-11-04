@@ -139,17 +139,22 @@ def test_a_line_with_only_used_rows_is_not_counted_and_does_not_hold_the_oi_open
     assert header["status"] == "completed"
 
 
-def test_a_waiting_used_row_still_makes_its_listed_line_to_confirm_G6(api):
+def test_only_a_waiting_live_row_makes_a_line_to_confirm_so_the_tabs_tally(api):
+    """Review nit: a used row still waiting beside a confirmed live row no longer holds the
+    OI open; Lines lists nothing to confirm for it, and Documents agrees."""
     client, db, company_id = api
     order = _Order(db, company_id)
     p1, _c1, m1 = order.line(1, "5")
     order.row(m1, p1, "2", redirected=True, ack_state=ACK_CHANGED)
     order.row(m1, p1, "5", ack_state=ACK_ACKNOWLEDGED)
+    p2, _c2, m2 = order.line(2, "4")
+    order.row(m2, p2, "4", ack_state=ACK_CHANGED)
     db.commit()
 
     header = _header_of(client, order.inquiry.id)
-    assert header["lines_total"] == 1
-    assert header["lines_to_confirm"] == 1
+    assert header["lines_total"] == 2
+    to_confirm = _lines_tab(client, order.inquiry.id, ack="to_confirm")
+    assert header["lines_to_confirm"] == len({r["so_line_id"] for r in to_confirm}) == 1
 
 
 def test_documents_search_does_not_match_an_item_only_on_a_used_row(api):
@@ -211,6 +216,23 @@ def test_snapshot_links_only_the_live_row_of_a_line(api):
     _order, _p, core, _m, used, live = _split_line(db, company_id)
     linked = StockDebtSnapshotService(db)._linked_oi_rows([core.id])
     assert [oi_row.id for oi_row, _inq in linked[str(core.id)]] == [live.id]
+
+
+def test_snapshot_reads_a_rejected_answer_as_no_reserve(api):
+    """Review should-fix 3: CS answering 0 is a rejection, never "Reserved 0"."""
+    _client, db, company_id = api
+    order, *_rest, _used, live = _split_line(db, company_id)
+    request, rr = _request(db, order, live, "33")
+    rr.qty_reserved = Decimal("0")
+    db.flush()
+    now = StockDebtSnapshotService(db)._oi_now([live.id])
+    assert now[live.id]["reserve_state"] is None
+    assert now[live.id]["reserve_qty"] is None
+
+    rr.qty_reserved = Decimal("20")
+    db.flush()
+    now = StockDebtSnapshotService(db)._oi_now([live.id])
+    assert (now[live.id]["reserve_state"], now[live.id]["reserve_qty"]) == ("reserved", 20.0)
 
 
 def test_snapshot_reads_a_used_row_as_not_live_and_not_requestable(api):
@@ -295,6 +317,25 @@ def test_repair_leaves_an_answered_request_row_alone(api):
     assert repair.run(db, apply=False, expect=None, inquiry_id=order.inquiry.id)["found"] == 0
 
 
+def test_repair_never_sends_two_stuck_requests_to_one_live_row(api):
+    """Review should-fix 1: two used rows on one line, both with open requests, one live row:
+    the first (oldest) moves, the second is held for a person."""
+    _client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "33")
+    used_a = order.row(mirror, product, "55", redirected=True)
+    used_b = order.row(mirror, product, "20", redirected=True)
+    live = order.row(mirror, product, "33")
+    _req_a, rr_a = _request(db, order, used_a, "10")
+    _req_b, rr_b = _request(db, order, used_b, "10")
+
+    out = repair.run(db, apply=True, expect=1, inquiry_id=order.inquiry.id)
+    assert (out["found"], out["move"], out["held"], out["moved"]) == (2, 1, 1, 1)
+    rows = {db.get(OrderInquiryReserveRequestRow, rr_a.id).row_id, db.get(OrderInquiryReserveRequestRow, rr_b.id).row_id}
+    assert live.id in rows
+    assert rows & {used_a.id, used_b.id}
+
+
 @pytest.mark.parametrize("shape", ["no_live", "two_live", "live_has_request", "qty_too_big"])
 def test_repair_holds_what_it_cannot_place(api, shape):
     _client, db, company_id = api
@@ -316,3 +357,20 @@ def test_repair_holds_what_it_cannot_place(api, shape):
     out = repair.run(db, apply=True, expect=0, inquiry_id=order.inquiry.id)
     assert (out["found"], out["move"], out["held"], out["moved"]) == (1, 0, 1, 0)
     assert db.get(OrderInquiryReserveRequestRow, rr.id).row_id == used.id
+
+
+def test_the_cancelled_state_count_matches_the_cancelled_list(api):
+    """Review should-fix 2: the State facet's Cancelled (n) leaves out used rows, as the list does."""
+    client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "5")
+    order.row(mirror, product, "5")
+    order.row(mirror, product, "2", state=INQUIRY_CANCELLED)
+    order.row(mirror, product, "3", state=INQUIRY_CANCELLED, redirected=True)
+    db.commit()
+    listed = _lines_tab(client, order.inquiry.id, state="cancelled")
+    summary = client.get(
+        "/api/v1/project-sales/order-inquiries/summary", params={"inquiry_id": order.inquiry.id}
+    )
+    assert summary.status_code == 200, summary.text
+    assert summary.json()["by_state"]["cancelled"] == len(listed) == 1

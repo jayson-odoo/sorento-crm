@@ -142,7 +142,12 @@ def find_stuck(db: Session, *, inquiry_id: Optional[str] = None) -> List[Stuck]:
     if inquiry_id is not None:
         query = query.filter(OrderInquiry.id == inquiry_id)
     found: List[Stuck] = []
-    for rr, request, row, inquiry in query.all():
+    # Review should-fix 1: one live row takes at most ONE stuck request per run, so two used
+    # rows on one line never both land on it (unique (request_id, row_id), or two open requests).
+    claimed: set = set()
+    for rr, request, row, inquiry in query.order_by(
+        OrderInquiryReserveRequest.requested_at, OrderInquiryReserveRequestRow.id
+    ).all():
         siblings = _live_siblings(db, row)
         target = siblings[0] if len(siblings) == 1 else None
         verdict = MOVE
@@ -150,6 +155,8 @@ def find_stuck(db: Session, *, inquiry_id: Optional[str] = None) -> List[Stuck]:
             verdict = "no live row on the line"
         elif len(siblings) > 1:
             verdict = f"{len(siblings)} live rows on the line"
+        elif target.id in claimed:
+            verdict = "live row already claimed in this run"
         elif target.id in _open_request_row_ids(db, [target.id]):
             verdict = "live row has its own open request"
         elif (
@@ -163,6 +170,8 @@ def find_stuck(db: Session, *, inquiry_id: Optional[str] = None) -> List[Stuck]:
             verdict = "live row already on this request"
         elif _requestable(db, target) < Decimal(rr.qty_requested):
             verdict = f"live row has only {_num(_requestable(db, target))} to request"
+        if verdict == MOVE:
+            claimed.add(target.id)
         found.append(
             Stuck(
                 request_row_id=str(rr.id),

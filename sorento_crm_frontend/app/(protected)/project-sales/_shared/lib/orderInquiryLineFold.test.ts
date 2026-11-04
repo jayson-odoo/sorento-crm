@@ -488,12 +488,13 @@ describe('Review S1 (PR #1266 at a98e01cf): a line AutoCount has not reconciled 
 describe('Review S2 (PR #1266): a line whose only waiting row is a used row reads To confirm', () => {
   // One rule, shared with the header's `lines_to_confirm` and the Confirm sweep: a used
   // row waits while it is not cancelled and its ack is awaiting or changed.
-  it('shape a: live rows already confirmed, the used row still changed', () => {
+  it('shape a re-pinned: live rows confirmed, the used row still changed, reads its live state', () => {
+    // OI-RESERVE-USED-ROW: only a live row holds a line To confirm (the tabs tally).
     const [line] = foldInquiryLines([
       row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'changed' }),
       row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'acknowledged' }),
     ]);
-    expect(line.state).toBe('to_confirm');
+    expect(line.state).toBe('placed');
     expect(line.waitingUsedRows.map((r) => r.id)).toEqual(['used']);
   });
 
@@ -509,10 +510,10 @@ describe('Review S2 (PR #1266): a line whose only waiting row is a used row read
     }
   });
 
-  it('a used row still awaiting beside a confirmed live row waits too', () => {
+  it('a live row CS changed still reads To confirm', () => {
     const [line] = foldInquiryLines([
       row({ id: 'used', core_line_id: 'cl-1', qty: '2', redirected_to_pool: true, ack_state: 'awaiting' }),
-      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'acknowledged' }),
+      row({ id: 'fresh', core_line_id: 'cl-1', qty: '5', state: 'placed', ack_state: 'changed' }),
     ]);
     expect(line.state).toBe('to_confirm');
   });

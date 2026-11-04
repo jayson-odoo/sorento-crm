@@ -543,7 +543,9 @@ class StockDebtSnapshotService:
             # OI-RESERVE-USED-ROW (Now, one pill): a row CS already answered reads reserved
             # with the answered qty, even while the request stays open for its siblings.
             if qty_reserved is not None:
-                reading = (RESERVE_RESERVED, qty_reserved)
+                # An answer of 0 is a rejection (`_status_of`), not a reserve: it reads as
+                # nothing, so the line falls back to Open.
+                reading = (RESERVE_RESERVED, qty_reserved) if qty_reserved > 0 else (None, None)
             elif state == RESERVE_REQUESTED and parked_at is not None:
                 reading = ("parked", qty_requested)
             else:
@@ -558,7 +560,11 @@ class StockDebtSnapshotService:
                 "live": is_live_row(row),
                 "now_state": row.state,
                 "reserve_state": latest[row_id][0] if row_id in latest else None,
-                "reserve_qty": float(latest[row_id][1]) if row_id in latest else None,
+                "reserve_qty": (
+                    float(latest[row_id][1])
+                    if row_id in latest and latest[row_id][1] is not None
+                    else None
+                ),
                 "remaining": float(remaining),
                 "requestable": (
                     is_live_row(row)

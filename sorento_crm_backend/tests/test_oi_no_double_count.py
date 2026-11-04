@@ -432,7 +432,9 @@ def test_confirming_an_already_confirmed_line_sweeps_its_used_row_AC_ND_24(api):
     used = order.row(mirror, product, "2", redirected=True, ack_state=ACK_CHANGED)
     fresh = order.row(mirror, product, "5", ack_state=ACK_ACKNOWLEDGED)
     db.commit()
-    assert _header_of(client, order.inquiry.id)["lines_to_confirm"] == 1
+    # OI-RESERVE-USED-ROW (owner, 4 Nov): only a waiting LIVE row counts, so the Documents
+    # tab tallies with Lines; the sweep below still takes the used row on.
+    assert _header_of(client, order.inquiry.id)["lines_to_confirm"] == 0
 
     response = client.post(ACK_URL, json={"row_ids": [fresh.id]})
     assert response.status_code == 200, response.text

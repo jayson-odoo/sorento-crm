@@ -3231,7 +3231,11 @@ class OrderInquiryWorklistService:
         # it regardless - a second grouped count, `total_rows`/`total_qty` untouched.
         cancelled_count = (
             self._base(**filters, include_cancelled=True)
-            .filter(OrderInquiryRow.state == INQUIRY_CANCELLED)
+            .filter(
+                OrderInquiryRow.state == INQUIRY_CANCELLED,
+                # OI-RESERVE-USED-ROW: the State=cancelled list never shows a used row.
+                OrderInquiryRow.redirected_to_pool.isnot(True),
+            )
             .with_entities(func.count(OrderInquiryRow.id))
             .scalar()
             or 0

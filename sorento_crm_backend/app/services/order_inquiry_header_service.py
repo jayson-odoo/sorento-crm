@@ -198,8 +198,8 @@ class OrderInquiryHeaderService:
           rows are all superseded or used is not one; a cancelled sales order line's live
           row still is (the tab shows it grey).
         * `lines_total` = distinct lines. `lines_to_confirm` = distinct lines with a
-          non-cancelled row in awaiting / changed, used rows included (G6), counted only on
-          a line that renders.
+          LIVE row in awaiting / changed (OI-RESERVE-USED-ROW: the rows Lines lists; a waiting
+          used row is still swept by Confirm, G6, but no longer counts).
         * `qty_total` = the tab's Requested footer: `qty` of the live buy rows (a buy
           verb, not cancelled, not `redirected_to_pool`) on lines not cancelled on the SO.
           The two line joins below are for that last test (`line_status`) only.
@@ -222,15 +222,16 @@ class OrderInquiryHeaderService:
         )
         # OI-RESERVE-USED-ROW (owner, 4 Nov): a line is listed only when it has a LIVE row
         # (`oi_row_visibility`), the rule the Lines tab lists by, so the two tabs tally. A
-        # line left with only used rows is no longer one; a waiting used row still makes a
-        # listed line To confirm (G6, Confirm sweeps it with the live row).
+        # line left with only used rows is no longer one, and only a waiting LIVE row makes a
+        # listed line To confirm: the rows Lines lists and Select-all Confirm takes. A used row
+        # still waiting is swept by that Confirm (G6, `_acknowledge_used_rows_of`).
         per_line = (
             self.db.query(
                 OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
                 func.bool_or(live_row_clause()).label("has_live"),
-                func.bool_or(OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED))).label(
-                    "waiting"
-                ),
+                func.bool_or(
+                    and_(live_row_clause(), OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)))
+                ).label("waiting"),
                 func.sum(live_buy_qty).label("qty"),
             )
             .select_from(OrderInquiryRow)

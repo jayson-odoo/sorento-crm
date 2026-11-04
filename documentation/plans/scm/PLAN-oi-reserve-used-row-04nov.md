@@ -1,7 +1,7 @@
 # PLAN: OI-RESERVE-USED-ROW (reserve request on a used OI row; snapshot drill "Now" too long)
 
-Status: Diagnose (Step 1, no code yet; waiting on the owner's 4 answers). Track: small fix
-expected (no migration, no auth change; FE + BE guard + one repair script), confirmed after answers.
+Status: Review (built; reviewer + browser pass running). Track: standard (no migration, no auth
+change; shared row-visibility rule across two tabs, a repair script, stock debt view change).
 
 Lane: OI-RESERVE-USED-ROW. Prod case: OI-2609-0257 / SO396347 / SRTSA830-PJ. The request to reserve 33
 was stored on the used 55 row (31/12/2026) instead of the live 33 row (04/05/2027) on the same SO line.
@@ -125,3 +125,23 @@ repair script dry run / apply / expect mismatch / idempotent / hold when 0 or 2 
 does not fit. vitest: `reserveIneligibleReason` used row; drill tick list without the used row;
 NowCell one pill per precedence case; Covered by lent collapse at 1 vs 2+ receivers with popover list;
 worklist used rows hidden by default and shown with the filter.
+
+## 9. Owner rulings (4 Nov 2026) and what was built
+
+- Q1 = (a): repair script `sorento_crm_backend/scripts/repair_oi_reserve_used_rows.py` (dry run,
+  then `--apply --expect N`; dev first, prod run by the owner).
+- Q2 = (a), widened: ONE visibility rule for Order Inquiries > Lines and the Documents tab, "we show
+  what in document tab, we hide what in document tab". A row is listed and counted when it is not
+  cancelled and not used: `app/services/oi_row_visibility.py`, FE twin `isLiveInquiryRow`. Wired into
+  the worklist `_base`, the header `_rows_agg` counts and search, the OI page fold, the reserve
+  guard and the snapshot drill.
+- Used-only line (crew answer (a)): hidden on both tabs, not counted; an OI waiting only on such a
+  line reads Completed by itself. Supersedes the 26 Sep O2/G6 Confirm step for that shape (old
+  tests re-pinned). A waiting used row beside a live row still makes the line To confirm.
+- Q3: Now kept, ONE pill per line (SO cancelled > Reserved N > Reserve requested / parked N > Open N).
+  The OI row state and "after the snapshot" badge left the cell.
+- Q4: one line per row in the drill; "Covered by" collapses 2+ lent receivers to "Lent to N SOs (sum)"
+  with a popover; customer / project ride in hover titles.
+- Lending (owner (a)): the Stock Debt view lends only while "Borrow from another order"
+  (`system_settings.borrow_from_order_enabled`) is on; off (today) there is no "Lent to" and no
+  order back from a lend. A snapshot saved earlier keeps what it froze.

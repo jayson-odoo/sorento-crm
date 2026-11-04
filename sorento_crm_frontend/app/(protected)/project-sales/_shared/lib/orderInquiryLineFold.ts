@@ -143,9 +143,10 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   // AC-ND-7 (review B1): a live buy row CS amended after purchasing took it on waits on
   // purchasing again, and the approved mockup reads that line "To confirm". Only an
   // explicit `changed`: every fresh row is born `awaiting`, and AC-ND-8's fresh 4 still
-  // reads To buy. Review S2: a waiting used row makes it To confirm too, whether the
-  // line's live rows are already confirmed or it has none at all.
-  else if (liveBuy.some((row) => row.ack_state === 'changed') || waitingUsedRows.length > 0) {
+  // reads To buy. OI-RESERVE-USED-ROW (owner, 4 Nov): only a LIVE row makes it To confirm,
+  // the rule the Documents counts and Lines filter read; a waiting used row is still swept
+  // by the line's Confirm (G6, server side) but no longer holds the line open.
+  else if (liveBuy.some((row) => row.ack_state === 'changed')) {
     state = 'to_confirm';
   } else if (liveRows.length === 0) state = 'nothing_to_buy';
   else state = pickPrimary(
