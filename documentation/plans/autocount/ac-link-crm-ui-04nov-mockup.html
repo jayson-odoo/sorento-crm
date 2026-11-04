@@ -82,16 +82,20 @@ a, .link { color: var(--primary); text-decoration: none; font-weight: 500; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--muted); padding: 1px 4px; border-radius: 4px; }
 input[type=radio] { accent-color: var(--primary); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.strip { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.cb { width:16px; height:16px; accent-color: var(--primary); }
+tr.ticked td { background: var(--blue-bg); }
+.ver { font-size:11px; font-weight:600; padding:1px 6px; border-radius:4px; background: var(--muted); color: var(--muted-fg); }
 </style>
 
 <div class="wrap">
   <header class="stack">
-    <span class="eyebrow">Mock · lane AC-LINK-CRM-UI · not wired · SO, PO and product codes from the repo test fixtures; quantities, parties and suppliers are examples</span>
-    <h1>Stock Debt snapshot: link a PO line to an SO line through AutoCount</h1>
-    <p class="muted" style="max-width:70ch">Where it lives: <b>Project sales &gt; Stock Debt &gt; Snapshots &gt; a snapshot &gt; press a month cell</b>. The frozen drill gains one row action per SO line, beside the existing "Request CS to reserve". Every action reads its enabled state from the Shared Service capability feed at the moment the menu opens.</p>
+    <span class="eyebrow">Mock v2 · lane AC-LINK-CRM-UI · not wired · SO, PO and product codes from the repo test fixtures; quantities, parties and suppliers are examples</span>
+    <h1>Stock Debt snapshot: Decide on ticked lines, then Link to PO</h1>
+    <p class="muted" style="max-width:72ch">Project sales &gt; Stock Debt &gt; Snapshots &gt; a snapshot &gt; press a month cell. Tick the sales order lines first, then press <b>Decide (N)</b> and choose <b>Request CS to reserve</b> or <b>Link to PO</b>. This is the same order Fulfilment Planning and the Order Inquiry Reserve already use.</p>
   </header>
 
-  <!-- 1. The drill as it is today, plus the new row action -->
+  <!-- 1. Drill: tick rows, then Decide -->
   <section class="dialog" aria-labelledby="d1">
     <div class="dlg-head">
       <h2 id="d1">SRTWB242 · Nov 2026</h2>
@@ -99,8 +103,8 @@ input[type=radio] { accent-color: var(--primary); }
       <div class="row tab" style="font-size:13px">
         <span><span class="muted">Total</span> <b>-220</b></span>
         <span><span class="muted">BRW on hand</span> <b>0</b></span>
-        <span><span class="muted">Lines</span> <b>3</b></span>
-        <span><span class="muted">Short</span> <b>120</b></span>
+        <span><span class="muted">Lines</span> <b>4</b></span>
+        <span><span class="muted">Short</span> <b>200</b></span>
         <span><span class="muted">Decision</span> <b>Buy</b></span>
       </div>
     </div>
@@ -108,92 +112,64 @@ input[type=radio] { accent-color: var(--primary); }
       <div class="panel">
         <div class="panel-head">
           <a href="#">OI-2026-0412</a>
-          <button class="btn sm primary" type="button">Request CS to reserve</button>
+          <div class="strip">
+            <span class="muted" style="font-size:13px">2 selected</span>
+            <button class="btn sm primary" type="button" aria-haspopup="menu">Decide (2) ▾</button>
+          </div>
         </div>
         <div class="scroll">
           <table>
-            <colgroup><col style="width:150px"><col style="width:80px"><col style="width:100px"><col style="width:80px"><col style="width:100px"><col style="width:220px"><col style="width:70px"><col style="width:130px"><col style="width:90px"></colgroup>
+            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:80px"><col style="width:100px"><col style="width:180px"><col style="width:70px"><col style="width:130px"></colgroup>
             <thead><tr>
-              <th>Sales order<span class="sort">⇅</span></th><th>Bin<span class="sort">⇅</span></th><th>Required<span class="sort">⇅</span></th><th class="num">Ordered<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>Covered by<span class="sort">⇅</span></th><th class="num">Short<span class="sort">⇅</span></th><th>Now<span class="sort">⇅</span></th><th>PO link</th>
+              <th><input class="cb" type="checkbox" id="all" aria-label="Select all lines"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Ordered<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>Covered by<span class="sort">⇅</span></th><th class="num">Short<span class="sort">⇅</span></th><th>Now<span class="sort">⇅</span></th>
             </tr></thead>
             <tbody>
-              <tr>
-                <td><a href="#">SO419208</a> line 2</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td class="num">120</td><td class="muted">-</td><td class="num">120</td><td><span class="pill p-neutral">Open 120</span></td>
-                <td><button class="btn sm" type="button" aria-haspopup="menu">Link ▾</button></td>
-              </tr>
-              <tr>
-                <td><a href="#">SO407114</a> line 1</td><td>BRW-BB</td><td class="tab">25/11/2026</td><td class="num">60</td><td class="num">60</td><td><a href="#">PO 202609-S0029 line 4</a> (60)</td><td class="num">0</td><td><span class="pill p-neutral">Open 60</span></td>
-                <td><button class="btn sm" type="button" aria-haspopup="menu">Link ▾</button></td>
-              </tr>
-              <tr>
-                <td><a href="#">SO396071</a> line 4</td><td>BRW-BB</td><td class="tab">30/11/2026</td><td class="num">40</td><td class="num">40</td><td><a href="#">On hand BRW-BB</a> (40)</td><td class="num">0</td><td><span class="pill p-green">Reserved 40</span></td>
-                <td class="muted" title="Covered from on hand, no PO line to link">-</td>
-              </tr>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r1" checked aria-label="SO425045 line 140"></td><td><a href="#">SO425045</a></td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td class="num">120</td><td class="muted">-</td><td class="num">120</td><td><span class="pill p-neutral">Open 120</span></td></tr>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r2" checked aria-label="SO419208 line 2"></td><td><a href="#">SO419208</a></td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td class="num">80</td><td class="muted">-</td><td class="num">80</td><td><span class="pill p-neutral">Open 80</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r3" aria-label="SO407114 line 1"></td><td><a href="#">SO407114</a></td><td class="num">1</td><td>BRW-BB</td><td class="tab">25/11/2026</td><td class="num">60</td><td class="num">60</td><td><a href="#">PO 202609-S0029</a> (60)</td><td class="num">0</td><td><span class="pill p-neutral">Open 60</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r4" disabled aria-label="SO396071 line 4, reserved"></td><td><a href="#">SO396071</a></td><td class="num">4</td><td>BRW-BB</td><td class="tab">30/11/2026</td><td class="num">40</td><td class="num">40</td><td><a href="#">On hand BRW-BB</a> (40)</td><td class="num">0</td><td><span class="pill p-green">Reserved 40</span></td></tr>
             </tbody>
-            <tfoot><tr><td>3 lines</td><td></td><td></td><td class="num">220</td><td class="num">220</td><td></td><td class="num">120</td><td></td><td></td></tr></tfoot>
+            <tfoot><tr><td></td><td>4 lines</td><td></td><td></td><td></td><td class="num">300</td><td class="num">300</td><td></td><td class="num">200</td><td></td></tr></tfoot>
           </table>
         </div>
       </div>
 
       <div class="grid2">
         <div class="stack">
-          <span class="eyebrow">Link ▾ on SO419208 line 2 (no PO yet)</span>
+          <span class="eyebrow">Decide (2) ▾</span>
           <div class="menu" role="menu">
-            <div class="menu-item on"><b>Link a PO line…</b><span class="why">Opens the picker. Whole row or split is chosen from the PO line you pick.</span></div>
-            <div class="menu-item off"><b>Unlink</b><span class="why">Nothing linked to this line.</span></div>
-            <div class="menu-item off"><b>Relink to another SO…</b><span class="why">Nothing linked to this line.</span></div>
+            <div class="menu-item on"><b>Request CS to reserve…</b><span class="why">Opens today's Request CS to reserve with the 2 lines ticked.</span></div>
+            <div class="menu-item on"><b>Link to PO…</b><span class="why">Choose a PO for each ticked line.</span></div>
+            <div class="menu-item off"><b>Unlink from PO</b><span class="why">Waiting for AutoCount</span></div>
+            <div class="menu-item off"><b>Move PO to another sales order…</b><span class="why">Waiting for AutoCount</span></div>
           </div>
         </div>
         <div class="stack">
-          <span class="eyebrow">Link ▾ on SO407114 line 1 (already on PO 202609-S0029 line 4)</span>
-          <div class="menu" role="menu">
-            <div class="menu-item on"><b>Link a PO line…</b><span class="why">Adds a second PO line (split-link only).</span></div>
-            <div class="menu-item off"><b>Unlink PO 202609-S0029 line 4</b><span class="why">Waiting for AutoCount: unlink is not available yet.</span></div>
-            <div class="menu-item off"><b>Relink to another SO…</b><span class="why">Waiting for AutoCount: relink is not available yet.</span></div>
-          </div>
-          <p class="ann">Disabled reasons come from the capability feed (<code>reason</code> text per operation), never from a list in the CRM. The day SS flips unlink to available, the item enables with no CRM deploy.</p>
+          <span class="eyebrow">How it reads off</span>
+          <p class="ann">Nothing ticked: Decide (0) is greyed with "Tick the lines to decide on". A greyed item always says why: "Waiting for AutoCount" while AutoCount cannot do it yet, "Changes to AutoCount are switched off here" on an environment where writing is off. The day AutoCount can do it, the item turns on by itself.</p>
+          <p class="ann">Lines already reserved or delivered cannot be ticked.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 2. The Link dialog -->
+  <!-- 2. Link to PO popup -->
   <section class="dialog" aria-labelledby="d2">
     <div class="dlg-head">
-      <h2 id="d2">Link a PO line to SO419208 line 2</h2>
-      <p class="muted" style="font-size:13px">SRTWB242 · Outstanding 120 · Bin MWH-BB · Required 18/11/2026 · Customer (example) · Project (example)</p>
-      <div class="cap" aria-label="What AutoCount can do today">
-        <span class="pill p-green">Split-link available</span>
-        <span class="pill p-neutral" title="Waiting for AutoCount: link of an existing row is not available yet">Link whole row: waiting for AutoCount</span>
-        <span class="pill p-neutral" title="Waiting for AutoCount">Unlink: waiting for AutoCount</span>
-        <span class="pill p-neutral" title="Waiting for AutoCount">Relink: waiting for AutoCount</span>
-      </div>
+      <h2 id="d2">Link to PO · 2 of 2 lines</h2>
+      <p class="muted" style="font-size:13px">SRTWB242 · PO lines with stock still free for this product</p>
     </div>
     <div class="dlg-body">
-      <div class="row">
-        <div class="field" style="min-width:0;flex:1 1 220px"><label for="f-loc">Location</label><span class="select" id="f-loc">HQ, MWH-BB <span class="muted">▾</span></span></div>
-        <div class="field" style="min-width:0;flex:1 1 220px"><label for="f-sup">Supplier</label><span class="select" id="f-sup">All suppliers <span class="muted">▾</span></span></div>
-        <div class="field" style="min-width:0;flex:1 1 220px"><label for="f-q">Search</label><input class="input" id="f-q" style="width:100%;max-width:260px" placeholder="PO number"></div>
-      </div>
-
       <div class="panel">
-        <div class="panel-head"><h3>Open PO lines for SRTWB242</h3><span class="muted" style="font-size:12px">Only lines with free qty. Lines AutoCount says are used are never listed.</span></div>
         <div class="scroll">
           <table>
-            <colgroup><col style="width:44px"><col style="width:190px"><col style="width:90px"><col style="width:120px"><col style="width:90px"><col style="width:90px"><col style="width:200px"><col style="width:150px"></colgroup>
+            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:90px"><col style="width:220px"><col style="width:110px"></colgroup>
             <thead><tr>
-              <th></th><th>PO line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th class="num">Free<span class="sort">⇅</span></th><th>Supplier<span class="sort">⇅</span></th><th>Would be<span class="sort">⇅</span></th>
+              <th><input class="cb" type="checkbox" id="pa" checked aria-label="Select all"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>PO<span class="sort">⇅</span></th><th class="num">Qty<span class="sort">⇅</span></th>
             </tr></thead>
             <tbody>
-              <tr class="selected">
-                <td><input type="radio" name="po" id="po1" checked aria-label="PO 202609-S0029 line 3"></td><td><a href="#">PO 202609-S0029</a> line 3</td><td>HQ</td><td class="tab">12/11/2026</td><td class="num">500</td><td class="num">380</td><td>Supplier A (example)</td><td><span class="pill p-green">Split-link</span></td>
-              </tr>
-              <tr>
-                <td><input type="radio" name="po" id="po2" aria-label="PO 202610-S0007 line 1"></td><td><a href="#">PO 202610-S0007</a> line 1</td><td>MWH-BB</td><td class="tab">20/11/2026</td><td class="num">120</td><td class="num">120</td><td>Supplier A (example)</td><td><span class="pill p-neutral" title="Waiting for AutoCount: link of an existing row is not available yet">Whole row: waiting</span></td>
-              </tr>
-              <tr>
-                <td><input type="radio" name="po" id="po3" aria-label="PO 202610-S0011 line 2"></td><td><a href="#">PO 202610-S0011</a> line 2</td><td>HQ</td><td class="tab">02/12/2026</td><td class="num">200</td><td class="num">200</td><td>Supplier B (example)</td><td><span class="pill p-amber" title="Delivery is after the SO line's required date">Split-link · late</span></td>
-              </tr>
+              <tr><td><input class="cb" type="checkbox" id="p1" checked aria-label="SO425045 line 140"></td><td>SO425045</td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td><span class="select" style="max-width:220px">202609-S0029 · line 3 · HQ · 380 free <span class="muted">▾</span></span></td><td class="num"><input class="input tab" id="q1" value="120" style="width:80px;text-align:right" aria-label="Qty for SO425045 line 140"></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="p2" checked aria-label="SO419208 line 2"></td><td>SO419208</td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td><span class="select" style="max-width:220px">202610-S0011 · line 2 · HQ · 200 free <span class="muted">▾</span></span></td><td class="num"><input class="input tab" id="q2" value="80" style="width:80px;text-align:right" aria-label="Qty for SO419208 line 2"></td></tr>
             </tbody>
           </table>
         </div>
@@ -201,55 +177,54 @@ input[type=radio] { accent-color: var(--primary); }
 
       <div class="grid2">
         <div class="stack">
-          <div class="field"><label for="f-qty">Quantity to link</label><input class="input tab" id="f-qty" value="120" inputmode="numeric"><span class="muted" style="font-size:12px">Defaults to the SO line's outstanding (120), never above the PO line's free (380).</span></div>
+          <span class="eyebrow">PO dropdown on SO425045 line 140</span>
+          <div class="menu" role="listbox">
+            <div class="menu-item on"><b>202609-S0029 · line 3</b><span class="why">HQ · arrives 12/11/2026 · 380 free · Supplier A (example)</span></div>
+            <div class="menu-item on"><b>202610-S0011 · line 2</b><span class="why">HQ · arrives 02/12/2026, after the delivery date · 200 free · Supplier B (example)</span></div>
+            <div class="menu-item off"><b>202610-S0007 · line 1</b><span class="why">MWH-BB · 120 free · whole line: waiting for AutoCount</span></div>
+          </div>
+          <p class="ann">Only PO lines with stock still free are listed. A PO line already fully given to other orders is not shown.</p>
         </div>
         <div class="callout">
-          <b>What AutoCount will be asked to do</b>
-          <ol class="steps tab">
-            <li>PO 202609-S0029 line 3 at HQ: 500 → 380.</li>
-            <li>New line on PO 202609-S0029: 120 at MWH-BB, linked to SO419208 line 2.</li>
-          </ol>
-          <span class="muted" style="font-size:12px">Then the CRM reads both lines back from AutoCount and shows what AutoCount says.</span>
+          <b>What will happen</b>
+          <ul class="steps tab" style="list-style:disc">
+            <li>SO425045 line 140: 120 from PO 202609-S0029, delivered to MWH-BB. The PO keeps 260 at HQ.</li>
+            <li>SO419208 line 2: 80 from PO 202610-S0011 at HQ. The PO keeps 120 at HQ.</li>
+          </ul>
         </div>
       </div>
     </div>
     <div class="dlg-foot">
-      <span class="muted" style="font-size:12px;margin-right:auto">Writes to AutoCount test company (db3)</span>
+      <span class="muted" style="font-size:12px;margin-right:auto">Saved to AutoCount (test company)</span>
       <button class="btn" type="button">Cancel</button>
-      <button class="btn primary" type="button">Send to AutoCount</button>
+      <button class="btn primary" type="button">Link 2 lines</button>
     </div>
   </section>
 
-  <!-- 3. Outcomes -->
+  <!-- 3. Results -->
   <section class="stack" aria-labelledby="d3">
-    <h2 id="d3">After Send: the dialog shows what AutoCount returned</h2>
+    <h2 id="d3">After Link: one result per line</h2>
     <div class="grid2">
       <div class="callout ok">
-        <b>Linked in AutoCount</b>
-        <span class="tab">PO 202609-S0029 line 3 · HQ · 380 · not linked</span>
-        <span class="tab">PO 202609-S0029 line 7 · MWH-BB · 120 · SO419208 line 2</span>
-        <span style="font-size:12px">Read back 04/11/2026 17:52. The snapshot line now points at line 7. Covered by reads "PO 202609-S0029 line 7 (120)", Short 0.</span>
+        <b>Linked</b>
+        <span class="tab">SO425045 line 140 now covered by PO 202609-S0029 (120, MWH-BB).</span>
       </div>
       <div class="callout warn">
-        <b>Linked, but the location did not move</b>
-        <span class="tab">PO 202609-S0029 line 7 · <b>HQ</b> · 120 · SO419208 line 2</span>
-        <span style="font-size:12px">AutoCount created the line at HQ, not MWH-BB.</span>
-        <div><button class="btn sm" type="button">Retry location</button></div>
+        <b>Linked, still at HQ</b>
+        <span class="tab">SO419208 line 2 now covered by PO 202610-S0011 (80), but AutoCount kept it at HQ, not MWH-BB.</span>
+        <div><button class="btn sm" type="button">Move to MWH-BB</button></div>
       </div>
       <div class="callout err">
-        <b>AutoCount refused: link of an existing row is not available yet</b>
-        <span style="font-size:12px">Nothing was changed. Code VENDOR_UNSUPPORTED.</span>
+        <b>Not linked</b>
+        <span class="tab">SO419208 line 2: AutoCount cannot do this yet. Nothing was changed.</span>
       </div>
       <div class="callout err">
-        <b>Step 2 of 2 failed: the new line was not created</b>
-        <span class="tab" style="font-size:12px">AutoCount now says PO 202609-S0029 line 3 is 380 at HQ. 120 is unassigned.</span>
-        <div><button class="btn sm" type="button">Retry step 2</button></div>
+        <b>Needs attention</b>
+        <span class="tab">SO425045 line 140: AutoCount stopped half way. The team has been emailed.</span>
+        <div><button class="btn sm" type="button">Resume</button></div>
       </div>
     </div>
-    <div class="callout">
-      <b>On an environment where writes are off</b>
-      <span class="muted">The Link button stays visible but disabled with the reason the feed gives, for example "AutoCount writes are switched off on this environment". Never hidden.</span>
-    </div>
+    <p class="ann">Resume asks the Shared Service to look at AutoCount again and finish the job. The CRM never repeats a step on its own.</p>
   </section>
 
   <!-- 4. Component map -->
@@ -258,16 +233,15 @@ input[type=radio] { accent-color: var(--primary); }
     <div class="panel scroll">
       <table>
         <colgroup><col style="width:30%"><col style="width:70%"></colgroup>
-        <thead><tr><th>Element</th><th>Reused component (repo path, under sorento_crm_frontend/)</th></tr></thead>
+        <thead><tr><th>Element</th><th>Reused component (paths under sorento_crm_frontend/)</th></tr></thead>
         <tbody>
-          <tr><td>Drill dialog, summary, OI group grid</td><td><code>app/(protected)/project-sales/stock-debt/components/SnapshotDrillDialog.tsx</code> + <code>components/common/PanelDataGrid</code>; columns from <code>stock-debt/lib/stockDebtDemandColumns.tsx</code> (Covered by already links PO lines, R42)</td></tr>
-          <tr><td>"PO link" column + menu</td><td>New column in <code>buildColumns</code> of SnapshotDrillDialog; menu is the app's <code>components/ui/dropdown-menu</code> with disabled items + reason line</td></tr>
-          <tr><td>Link dialog shell</td><td>Same shape as <code>project-sales/_shared/components/RequestReserveDialog.tsx</code>: <code>components/ui/dialog</code>, one <code>DataGrid</code> body, <code>NumberInput</code> + <code>lib/number-field</code> <code>numberFieldError</code> for the qty</td></tr>
-          <tr><td>Location / Supplier filters</td><td><code>components/common/SearchableMultiSelect</code> (multi-select rule)</td></tr>
-          <tr><td>Status pills</td><td><code>lib/status-pill</code> <code>STATUS_PILL_BASE</code> tones, as nowPill uses</td></tr>
-          <tr><td>Party line in header</td><td><code>components/common/SoCustomerProject</code></td></tr>
+          <tr><td>Drill dialog and OI group grid</td><td><code>app/(protected)/project-sales/stock-debt/components/SnapshotDrillDialog.tsx</code>, <code>components/common/PanelDataGrid</code>, columns from <code>stock-debt/lib/stockDebtDemandColumns.tsx</code> (Bin header renamed Location; Delivery date already on the wire as <code>required_date</code>)</td></tr>
+          <tr><td>Row ticks</td><td><code>components/ui/data-grid-select-column</code> <code>buildSelectColumn</code>, as <code>order-inquiries/[id]/components/OrderInquiryLinesTab.tsx:378</code> (<code>enableRowSelection</code> per row) and <code>fulfilment-planning/components/FulfilmentPlanningClient.tsx:132</code></td></tr>
+          <tr><td>Decide (N) dropdown</td><td>Shape of <code>order-inquiries/[id]/components/ReserveDecideControl.tsx</code> (greyed at 0 with a title, <code>components/ui/dropdown-menu</code>); replaces the "Request CS to reserve" toolbar button</td></tr>
+          <tr><td>Link to PO popup</td><td>Same shell as <code>project-sales/_shared/components/RequestReserveDialog.tsx</code>: one <code>DataGrid</code>, select column, every line opens ticked, per-row <code>SearchableSelect</code> + <code>NumberInput</code> with <code>lib/number-field</code> <code>numberFieldError</code></td></tr>
+          <tr><td>Pills and results</td><td><code>lib/status-pill</code> tones, as <code>nowPill</code> uses</td></tr>
           <tr><td>Dates</td><td><code>lib/helpers</code> <code>formatDateInMalaysia</code> (dd/mm/yyyy)</td></tr>
-          <tr><td>Write + read-back</td><td>hook <code>useLinkPoLine</code> → <code>stockDebtSnapshotService</code> → <code>lib/api-client</code> → new BE route → <code>app/services/foundryx_autocount_client.py</code> (X-API-Key) → SS gateway</td></tr>
+          <tr><td>Save path</td><td>hook → <code>stockDebtSnapshotService</code> → <code>lib/api-client</code> → new BE route → <code>app/services/foundryx_autocount_client.py</code> (X-API-Key) → SS <code>/po-links</code>, <code>/po-links/unlink</code>, <code>/po-links/relink</code>, <code>/write-operations/{id}/resume</code>, <code>/write-capabilities</code> (SS PR #191)</td></tr>
         </tbody>
       </table>
     </div>

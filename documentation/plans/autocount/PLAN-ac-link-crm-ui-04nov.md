@@ -1,6 +1,6 @@
 # PLAN: Stock Debt snapshot, link a PO line to an SO line via AutoCount (AC-LINK-CRM-UI)
 
-Status: Plan (behaviour card + mock posted for owner answers, 4 Nov; no code yet). Track: full (SIZE M, new action on an existing screen).
+Status: Plan (mock v2 posted 4 Nov; Q2/Q4/Q5 answered, Q1/Q3 with owner; no code yet). Track: full (SIZE M, new action on an existing screen).
 
 Lane: AC-LINK-CRM-UI. Mock: `ac-link-crm-ui-04nov-mockup.html` (this folder).
 
@@ -81,3 +81,36 @@ Later CRM lanes (not this lane), project-sales QT / SO triggers:
 `POST` link / split / unlink / relink -> steps + read-back rows with new DtlKeys; warning code
 `LOCATION_NOT_MOVED`; refusal code `VENDOR_UNSUPPORTED`. To be pinned against SS PR #183 and the
 AC-WRITE-QTSO lane before Phase 2.
+
+## Rulings (4 Nov) and mock v2
+
+- Q2: new slug `projects.stock_debt.link_po` + Admin grant sweep.
+- Q4: SS owns steps and recovery (SS PR #191). The CRM shows SS's outcome and offers Resume
+  (`POST /write-operations/{id}/resume`); it never re-sends a step.
+- Q5: contract pinned to SS PR #191 `documentation/plans/sprint-5/57-autocount-write-qtso-contract.md`.
+- Owner Lavish feedback on v1, applied in v2: tick rows first, then one "Decide (N)" dropdown
+  (Request CS to reserve, Link to PO, Unlink from PO, Move PO to another sales order); popup with
+  checkboxes like Request CS to reserve; PO number and line shown separately; Bin renamed
+  Location; Delivery date shown; "Would be" column dropped; plain wording, no system terms.
+
+## SS contract (PR #191, pinned)
+
+- Link: `POST /api/v1/autocount/po-links` `{companyCode, poDocKey, poDtlKey, soDocKey, soDtlKey, qty, soDocDate?}`
+  + `Idempotency-Key`. SS decides whole row (qty = PO row qty: delete + add, `replacedLines`) vs part
+  (split). So the CRM sends intent only; it does not pick the mode (this also answers Q3 in practice:
+  the user never chooses).
+- Unlink: `POST /po-links/unlink` `{companyCode, poDocKey, poDtlKey}`. Move: `POST /po-links/relink`
+  `{companyCode, poDocKey, poDtlKey, soDocKey, soDtlKey, docDate?, soDocDate?}` (Idempotency-Key required).
+- Answer: `{operationId, outcome, errorCode, message, warnings, docKey, docNo, replacedLines, document}`.
+  outcome: done (200) / refused (403/409/422) / pending_verification (202) / vendor_error, mismatch,
+  recovered, needs_attention (502). Resume: `POST /write-operations/{id}/resume {companyCode}`.
+- `replacedLines` [{oldDtlKey, newDtlKey}]: the CRM moves the snapshot line's PO link to the new row.
+- Capabilities: `GET /write-capabilities?companyCode=` -> `{capabilities:[{op, kind, enabled, reasonCode}]}`.
+  Whole-row link = `link_row/PO`, unlink = `unlink_row/PO`, move = `relink_row/PO`. Part-row link has no
+  own entry: the CRM reads it as PO `add_line` and `edit_doc` both enabled (gap raised with AC-WRITE-QTSO).
+  reasonCode -> wording: VENDOR_UNSUPPORTED "Waiting for AutoCount"; WRITE_DISABLED / WRITE_NOT_ALLOWED
+  "Changes to AutoCount are switched off here" (this is the per-environment gate; db3-only today).
+- Result wording (UI): done "Linked: SO425045 line 140 now covered by PO 202609-S0029";
+  LOCATION_NOT_MOVED "Linked, still at HQ" + "Move to <location>" (SS `/po-links/relocate`);
+  refused VENDOR_UNSUPPORTED "Not linked: AutoCount cannot do this yet. Nothing was changed.";
+  needs_attention "Needs attention" + Resume.
