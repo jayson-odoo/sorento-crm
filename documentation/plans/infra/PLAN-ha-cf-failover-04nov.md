@@ -331,20 +331,20 @@ saving is paused". Trigger-free: it helps from the day node B exists. Separate l
 
 `python3 infra/rehearsal/cf_drill.py`: two throwaway Postgres 17 containers, a fake Cloudflare API,
 the real controller and adapter on each node, windows scaled to seconds (tick 1 s, check 2 s,
-fence 8 s, promote 14 s, app-sick 20 s). Result on this branch:
+fence 8 s, promote 14 s, app-sick 20 s). Result on this branch after review round 1:
 
 | Scenario | Result |
 |---|---|
 | steady state + sync standby | PASS: A primary, B streaming, `synchronous_standby_names` = crm-b |
 | link cut only | PASS: no failover; sync standby dropped within `wal_sender_timeout`, writes kept working |
 | Cloudflare API down | PASS: no failover |
-| node A dies | PASS: B primary 17 s after A died; A came back read-only and follows B |
-| primary isolated | PASS: B fenced itself at 11 s, A promoted at 19 s (fence first), B rewound and follows |
-| app sick + damaged data | PASS: A fenced at 23 s, B primary at 38 s, rewind failed, A re-seeded, old data kept aside |
+| node A dies | PASS: B primary 18 s after A died; A came back read-only and follows B |
+| primary isolated | PASS: B fenced itself at 11 s, A promoted at 18 s (fence first), B rewound and follows |
+| app sick + damaged data | PASS: A fenced at 25 s, B primary at 40 s, rewind failed, A re-seeded, old data kept aside |
 | both nodes reboot | PASS: one writer back, the other follows |
 | both reboot, link down | PASS: only the former standby took over; the other rejoined |
 | never two writers | PASS: 0 of about 1000 samples |
-| acknowledged writes | NOTE: 15 of 309 lost, all written to the ISOLATED primary in the drill (its writer reaches the box through Docker, not the network) during the seconds before it fenced; a real isolated box has no users, only its own workers |
+| acknowledged writes | NOTE: 14 of 304 lost, all written to the ISOLATED primary in the drill (its writer reaches the box through Docker, not the network) during the seconds before it fenced; a real isolated box has no users, only its own workers |
 
 Finding for prod: with `SYNC_MODE=remote_write`, a cut link sends no reset, so the primary keeps
 waiting on the dead standby until `wal_sender_timeout` (default 60 s): writes stall that long before
