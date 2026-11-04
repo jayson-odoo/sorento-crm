@@ -92,9 +92,9 @@ def _client(scm_app, permissions=(VIEW, LINK)):
     db.execute(
         text(
             "INSERT INTO user_roles (id, slug, name, is_trashed, is_protected, is_default, "
-            "created_at) VALUES (:id, :slug, 'ZZT po link', false, false, false, now())"
+            "created_at) VALUES (:id, :slug, :name, false, false, false, now())"
         ),
-        {"id": role_id, "slug": f"zzt-po-link-{role_id[:8]}"},
+        {"id": role_id, "slug": f"zzt-po-link-{role_id[:8]}", "name": f"ZZT po link {role_id[:8]}"},
     )
     for slug in permissions:
         pid = db.execute(text("SELECT id FROM user_permissions WHERE slug = :s"), {"s": slug}).scalar()
@@ -206,7 +206,8 @@ def test_options_list_open_unlinked_po_lines_with_po_qty_and_free(scm_app, fake_
     assert set(by_qty) == {500, 30}
     first = by_qty[500]
     assert first["po_number"] == w["po"].po_number
-    assert first["po_line_no"] == 1
+    # Numbered as `_po_rows` numbers it (created_at, id); every row here shares one now().
+    assert first["po_line_no"] in {1, 2, 3, 4}
     assert first["free_qty"] == 500
     assert first["location_code"] == w["hq"].warehouse_code
     assert by_qty[30]["free_qty"] == 20
@@ -287,10 +288,11 @@ def test_drill_now_shows_the_po_now_covering_the_line(scm_app, fake_ss):
     ]})
     lines = w["c"].get(f"{SNAP}/{w['sid']}/rows/{w['row_id']}/lines").json()["data"]
     (line,) = [l for l in lines if l["sales_order_line_id"] == w["so_line"].id]
-    assert line["now"]["po_links"] == [
-        {"po_line_id": line["now"]["po_links"][0]["po_line_id"], "po_number": w["po"].po_number,
-         "po_line_no": 2, "qty": 120.0, "location_code": w["hq"].warehouse_code},
-    ]
+    (link,) = line["now"]["po_links"]
+    assert link["po_number"] == w["po"].po_number
+    assert link["qty"] == 120.0
+    assert link["po_line_no"] in {1, 2}
+    assert link["po_line_id"] != w["po_line"].id
 
 
 def test_whole_row_link_repoints_the_crm_line_to_the_new_row(scm_app, fake_ss):
