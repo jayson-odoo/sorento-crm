@@ -185,12 +185,12 @@ def test_ht1_4_said_as_both_applies_both_filters(rbot, world) -> None:
 
 
 def test_ht1_5_said_as_null_with_no_company_held_asks_one_company_brand_both_question(rbot, world) -> None:
-    before = _hold_agents(rbot, None)
+    _hold_agents(rbot, None)
     text, calls = rbot.say(_t4(None), "sorento company only")
     slot = _kind_slot(rbot)
     assert slot.get("asking") == "kind", f"HT1-5: no kind question: {slot} / {text!r}"
     assert "company" in text.lower() and "brand" in text.lower(), text
-    assert len(_ran(calls)) == before, f"HT1-5: a report ran: {_ran(calls)[before:]}"
+    assert not _ran(calls), f"HT1-5: a report ran: {_ran(calls)}"
 
 
 def test_ht1_6_lock_cp5_a_held_company_with_said_as_null_adds_the_brand_and_asks_nothing(rbot, world) -> None:
