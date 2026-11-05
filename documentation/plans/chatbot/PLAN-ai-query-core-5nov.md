@@ -1,6 +1,7 @@
 # PLAN: AI-QUERY-CORE (phase 1 of the AI tools standard)
 
-Status: in progress 5 Nov 2026 (Build). Track: full (multi-company reads, RBAC). Lane AI-QUERY-CORE.
+Status: in review 5 Nov 2026 (fix round 1 done, security re-review running). Track: full (multi-company reads, RBAC).
+Lane AI-QUERY-CORE, PR #2188.
 
 Parent plan: `PLAN-ai-tools-standard-5nov.md` section 4 "QUERY-CORE" (branch `claude/ai-tools-scout-mcp-vea9ka`,
 PR #2185). UAC: `ai-tools-standard-acceptance-criteria.md` AC-1, AC-2, AC-3, AC-6, AC-9.
@@ -68,3 +69,28 @@ Out: actions, `tools_search`, CI gate. No change to who holds the agent slug; `c
 `writes.USER_READS` (user slug `""`: the entity's own slug is checked inside, per entity), each run under
 `run_as_user`; `QueryRefused` becomes `ToolResult("denied"|"invalid"|"timeout", message=...)`. Linked-only: not
 offered when a console operator acts for someone else (an aggregate cannot be intersected across two people).
+
+## Decisions made in review (5 Nov)
+
+- **Relations join plain table aliases**, each carrying its own company predicate in the ON clause, and the root's
+  company predicate is stated in the WHERE clause. The session's automatic criterion is not adapted to an ORM alias
+  inside a join (Postgres refused `supplier.name`), and is not attached when only relation columns are selected.
+- **Brand scope (WhatsApp linked user):** `order` repeats the screen's rule (only orders with a line of an in-scope
+  product, `order_service.scope_product_filter`). The header money fields (`subtotal_amount`, `total_amount`) carry
+  `FieldDef.whole_document`: refused while a brand scope is set, because the screen recomputes them from the
+  in-scope lines and the header total counts the others. Complaints repeat `complaint_in_scope_clauses`.
+- **Customer-scoped WhatsApp contact** (linked customers, no office access type): today every WhatsApp read of it is
+  narrowed to those customers; these tools run as the linked user and cannot narrow by customer, so they are not
+  offered off the panel (`UserRead.available`). Owner can relax this.
+- **Offer rule:** the tools are offered to a user holding at least one registered entity's view or own slug
+  (`query_tools.ANY_ENTITY`), and not when a console operator acts for someone else (`linked_only`).
+- **Lookup module:** a relation's target module is checked; a lookup carries the module of the screen showing it.
+- `crm_query`'s schema is kept small (shapes in the description, items left open) for the token budget.
+
+## Token measurement (AC-6)
+
+OpenAI `responses/input_tokens`, gpt-4.1 tokenizer, the same request with the in-process tool block (USER_READS,
+WRITES, plan and answer schemas) before and after: 2039 before, 2293 after, **+254 input tokens per model call** for
+a user offered the tools. The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
+is not met by this lane alone; the parent plan's lever is the module waves replacing per-module tools with
+registry entities.
