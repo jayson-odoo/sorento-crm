@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { RequestReserveDialog } from '../../_shared/components/RequestReserveDialog';
 import { useOrderInquiryHeaderLines } from '../../_shared/hooks/useOrderInquiry';
 import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
+import { reserveRowsOfLines } from '../../_shared/lib/orderInquiryLineFold';
 import {
   SNAPSHOTS_KEY,
   usePoLinkOptions,
@@ -201,10 +202,12 @@ function OiRequestDialog({
   onSent: () => void;
 }) {
   const live = useOrderInquiryHeaderLines(oiId);
+  // OI-RESERVE-ANY-ROW (crew, 5 Nov): one request per line, on the line's primary row, even
+  // when its ORDER and DELAY rows are both live.
   const rows = React.useMemo(
     () =>
-      (live.data ?? []).filter(
-        (row) => drillRowIds.has(row.id) && reserveIneligibleReason(row) === null,
+      reserveRowsOfLines(live.data ?? [], (row) => drillRowIds.has(row.id)).filter(
+        (row) => reserveIneligibleReason(row) === null,
       ),
     [live.data, drillRowIds],
   );
