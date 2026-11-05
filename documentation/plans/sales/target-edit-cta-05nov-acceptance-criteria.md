@@ -12,3 +12,12 @@ Plan: `PLAN-target-edit-cta-05nov.md`.
   shown. Test: "gives the primary slot back to the delete countdown".
 - **AC4** At 375px the pager, gear and Edit fit without clipping or horizontal scroll (browser
   pass).
+- **AC5** Back to targets and the Targets crumb on a dealer target open the list on the Dealers
+  tab, with the list state from the row click. Test: `TargetPageHeader.test.tsx` "a dealer
+  target opened from the list returns to the Dealers tab with the list state".
+- **AC6** The same on an agent target opens the Agents tab, Team filter kept. Test: "an agent
+  target returns to the Agents tab".
+- **AC7** A dealer target opened straight from a link still returns to the Dealers tab. Test:
+  "a dealer target opened straight from a link still returns to the Dealers tab".
+- **AC8** The prev/next pager walks only the record's own kind (existing behaviour, browser
+  pass: 1 / 2 on a dealer target, 1 / 4 on an agent target in the seeded data).
