@@ -203,6 +203,45 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
   return out;
 }
 
+/** Whether a line row is the one the combo row `row` describes: a group or the upgrade by role, a fixed part by product. */
+function isSameComboRow(held: DraftPart, row: DraftPart): boolean {
+  return row.role ? held.role === row.role : !held.role && held.product_id === row.product_id;
+}
+
+/**
+ * The combo's own rows the line does not hold (P2), each with a stable id and the label the Add
+ * part select shows: a choice group or "Upgrade" by name, a fixed part by code. The rows are the
+ * ones `partsFromCombo` builds, in combo order.
+ */
+export function missingComboRows(line: DraftLine): { id: string; label: string; row: DraftPart }[] {
+  const combo = comboOfLine(line);
+  if (!combo) return [];
+  return partsFromCombo(combo)
+    .filter((row) => !line.parts.some((held) => isSameComboRow(held, row)))
+    .map((row) => ({
+      id: row.role ? `role:${row.role}` : `part:${row.product_id}`,
+      label: row.role ?? row.code,
+      row,
+    }));
+}
+
+/** The line's parts with the missing combo row `id` back at its combo position (an a la carte part stays after). */
+export function insertComboRow(line: DraftLine, id: string): DraftPart[] {
+  const combo = comboOfLine(line);
+  const missing = missingComboRows(line).find((m) => m.id === id);
+  if (!combo || !missing) return line.parts;
+  const order = partsFromCombo(combo);
+  const placeOf = (part: DraftPart) => {
+    const at = order.findIndex((row) => isSameComboRow(part, row));
+    return at < 0 ? Infinity : at;
+  };
+  const mine = order.findIndex((row) => isSameComboRow(missing.row, row));
+  const before = line.parts.findIndex((held) => placeOf(held) > mine);
+  const parts = [...line.parts];
+  parts.splice(before < 0 ? parts.length : before, 0, missing.row);
+  return parts;
+}
+
 /**
  * The package warning, computed exactly as the server computes it at submit
  * (D2) so the row says the same thing before and after. Submit is never refused
@@ -521,75 +560,47 @@ export function trimPicksToTemplate(line: DraftLine): DraftLine {
   };
 }
 
-/** One reason a line blocks Approve: `text` as the line itself shows it, `full` as Approve's tooltip. */
-export interface LineProblem {
-  text: string;
-  full: string;
-}
-
 type PricingByKey = Record<
   string,
   Partial<Pick<LinePricingResult, 'list_price' | 'sell_price'>> | null | undefined
 >;
 
-/** The reasons one line blocks Approve (AC-C5, AC-C6, AC-D2); `index` is its 0-based place in the request. */
+/**
+ * The facts that block Approve for one line (AC-C5, AC-C6, AC-D2), worded as facts only: nothing
+ * here tells the user what to do. Shown on the line when Approve is clicked, not before.
+ */
 export function lineProblemsOf(
   line: DraftLine,
-  index: number,
   pricing: PricingByKey[string],
   priceMode: PriceMode = 'list',
-): LineProblem[] {
-  const out: LineProblem[] = [];
-  const n = index + 1;
+): string[] {
+  const out: string[] = [];
   const combo = comboOfLine(line);
   for (const part of line.parts) {
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
     const k = picksNeeded(line, part.role);
-    if (k >= 2 && picked.length < k) {
-      const text = `${part.role}: pick ${k - picked.length} more.`;
-      out.push({ text, full: `Line ${n}: ${text}` });
-    }
+    if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
     for (const id of picked) {
       const option = combo?.parts.find((p) => p.product_id === id);
-      if (option?.is_discontinued) {
-        // A fixed part has nothing to pick instead.
-        const text = part.role
-          ? `${option.code} is discontinued. Pick another or escalate it to marketing.`
-          : `${option.code} is discontinued. Escalate it to marketing.`;
-        out.push({ text, full: text });
-      }
+      if (option?.is_discontinued) out.push(`${option.code} is discontinued.`);
     }
   }
   if (line.combo_id && pricing) {
     if (linePriceType(line, priceMode) === 'list') {
-      if (pricing.list_price == null) {
-        out.push({
-          text: 'No combo list price. Escalate it to marketing.',
-          full: `No combo list price for line ${n}. Escalate it to marketing.`,
-        });
-      }
+      if (pricing.list_price == null) out.push('No combo list price.');
     } else if (pricing.sell_price === null && line.manual_sell_price == null) {
       // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
-      // No price box shows while a promotion is picked, so the way out starts by clearing it.
-      const way = line.promotion_id
-        ? 'Clear the promotion and type the selling price, or escalate it to marketing.'
-        : 'Type the selling price or escalate it to marketing.';
-      out.push({ text: `No combo selling price. ${way}`, full: `No combo selling price for line ${n}. ${way}` });
+      out.push('No combo selling price.');
     }
   }
   return out;
 }
 
-/**
- * Why Approve is blocked on the picks and the combo price, in line order. `priceMode` is the
- * request's mode, used when a line has no price type of its own.
- */
+/** `lineProblemsOf` for every line, flattened in line order. */
 export function linePickProblems(
   lines: DraftLine[],
   pricingByKey: PricingByKey,
   priceMode: PriceMode = 'list',
 ): string[] {
-  return lines.flatMap((line, index) =>
-    lineProblemsOf(line, index, pricingByKey[line.key], priceMode).map((problem) => problem.full),
-  );
+  return lines.flatMap((line) => lineProblemsOf(line, pricingByKey[line.key], priceMode));
 }

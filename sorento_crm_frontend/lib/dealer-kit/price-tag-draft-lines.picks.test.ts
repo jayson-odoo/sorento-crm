@@ -242,12 +242,12 @@ describe('switching to a template that needs fewer', () => {
 describe('linePickProblems', () => {
   it('a group short of picks says how many more', () => {
     const l = line({ parts: [picksPart([id(OPTIONS[0])])] });
-    expect(api.linePickProblems([l], {})).toEqual(['Line 1: Kitchen tap: pick 2 more.']);
+    expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 2 more.']);
   });
 
   it('no picks at all asks for all k', () => {
     const l = line({ parts: [picksPart([])] });
-    expect(api.linePickProblems([l], {})).toEqual(['Line 1: Kitchen tap: pick 3 more.']);
+    expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 3 more.']);
   });
 
   it('a full group is fine', () => {
@@ -261,16 +261,16 @@ describe('linePickProblems', () => {
 
   it('works off the lone template when the line has only one', () => {
     const l = line({ tag_templates: [tpl('t3', [3])], tag_template_id: null, parts: [picksPart([id(OPTIONS[0])])] });
-    expect(api.linePickProblems([l], {})).toEqual(['Line 1: Kitchen tap: pick 2 more.']);
+    expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 2 more.']);
   });
 
-  it('numbers lines by position and keeps line order', () => {
+  it('keeps line order', () => {
     const ok = line({ key: 'a' });
     const short = line({ key: 'b', parts: [picksPart([id(OPTIONS[0]), id(OPTIONS[1])])] });
     const none = line({ key: 'c', parts: [picksPart([])] });
     expect(api.linePickProblems([ok, short, none], {})).toEqual([
-      'Line 2: Kitchen tap: pick 1 more.',
-      'Line 3: Kitchen tap: pick 3 more.',
+      'Kitchen tap: pick 1 more.',
+      'Kitchen tap: pick 3 more.',
     ]);
   });
 
@@ -281,7 +281,7 @@ describe('linePickProblems', () => {
     };
     const l = line({ combos: [combo] });
     expect(api.linePickProblems([l], {})).toEqual([
-      'SRTKT1871SS is discontinued. Pick another or escalate it to marketing.',
+      'SRTKT1871SS is discontinued.',
     ]);
   });
 
@@ -297,16 +297,15 @@ describe('linePickProblems', () => {
     const fixed = { key: 'f', product_id: 'fx', code: 'SRTMCB8083-BL', name: 'Mirror', role: null, candidates: [] };
     const l = line({ combos: [combo], tag_template_id: 't1', parts: [fixed, single] });
     expect(api.linePickProblems([l], {})).toEqual([
-      // A fixed part has nothing to pick instead (round 3): only escalate.
-      'SRTMCB8083-BL is discontinued. Escalate it to marketing.',
-      'SRTKT1862SS is discontinued. Pick another or escalate it to marketing.',
+      'SRTMCB8083-BL is discontinued.',
+      'SRTKT1862SS is discontinued.',
     ]);
   });
 
-  it('an LP combo line with no combo list price blocks; escalate stays the way out', () => {
+  it('an LP combo line with no combo list price blocks', () => {
     const l = line({ price_type: 'list' });
     expect(api.linePickProblems([l], { l1: { list_price: null, sell_price: null } })).toEqual([
-      'No combo list price for line 1. Escalate it to marketing.',
+      'No combo list price.',
     ]);
   });
 
@@ -324,7 +323,7 @@ describe('linePickProblems', () => {
 
   it('an SP combo line with no selling price blocks, the typed price being the way out (round 3)', () => {
     const l = line({ price_type: 'selling' });
-    const reason = 'No combo selling price for line 1. Type the selling price or escalate it to marketing.';
+    const reason = 'No combo selling price.';
     expect(api.linePickProblems([l], { l1: { list_price: null, sell_price: null } })).toEqual([reason]);
     expect(api.linePickProblems([l], { l1: { list_price: 2500, sell_price: null } })).toEqual([reason]);
     expect(api.linePickProblems([line({ price_type: 'selling', manual_sell_price: 1234 })], { l1: { sell_price: null } })).toEqual([]);
@@ -332,10 +331,10 @@ describe('linePickProblems', () => {
     expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
-  it('M2: with a promotion picked the reason says to clear it, since no price can be typed', () => {
+  it('M2: with a promotion picked the reason is the same fact (the cell carries the hint)', () => {
     const l = line({ price_type: 'selling', promotion_id: 'promo-1' });
     expect(api.linePickProblems([l], { l1: { list_price: 2500, sell_price: null } })).toEqual([
-      'No combo selling price for line 1. Clear the promotion and type the selling price, or escalate it to marketing.',
+      'No combo selling price.',
     ]);
   });
 

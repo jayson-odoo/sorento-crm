@@ -28,6 +28,7 @@ import {
   MISSING_TAG_TEMPLATE,
   newPartKey,
   comboOfLine,
+  insertComboRow,
   partsFromCombo,
   pickedProductIds,
   restoreGroupCandidates,
@@ -424,6 +425,14 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [setLines],
   );
 
+  /** P2: put one missing combo row back (a group, the upgrade or a fixed part), at its combo position. */
+  const restorePart = useCallback(
+    (key: string, rowId: string) => {
+      setLines((prev) => prev.map((l) => (l.key === key ? { ...l, parts: insertComboRow(l, rowId) } : l)));
+    },
+    [setLines],
+  );
+
   /** An open row's candidate select (AC-S2-3): picking resolves the row, clearing
    *  reopens it, which is why `candidates` stays on the row either way. */
   const resolvePart = useCallback(
@@ -615,6 +624,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     setManualSellPrice,
     removePart,
     restoreParts,
+    restorePart,
     resolvePart,
     resolvePicks,
     addPart,
