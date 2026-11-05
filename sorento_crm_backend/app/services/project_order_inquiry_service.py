@@ -50,7 +50,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import event, func, or_, tuple_
+from sqlalchemy import String, cast, event, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope, get_company_scope
@@ -8739,7 +8739,11 @@ class ProjectOrderInquiryService:
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
                 PurchaseOrderLine.expected_date,
-                PurchaseOrderLine.source_ref,
+                # The PO line's own number first (`line_no`); `source_ref` only when the book
+                # numbered nothing (`_line_label` drops it unless it is a plain number).
+                func.coalesce(
+                    cast(PurchaseOrderLine.line_no, String), PurchaseOrderLine.source_ref
+                ),
                 Warehouse.warehouse_code,
                 SPOAllocation.spo_number,
                 SPOAllocation.spo_line_number,
@@ -11329,7 +11333,9 @@ class ProjectOrderInquiryService:
                     kind="po",
                     target_id=target_id,
                     document=po.po_number,
-                    line_label=self._line_label(line.source_ref),
+                    line_label=self._line_label(
+                        line.line_no if line.line_no is not None else line.source_ref
+                    ),
                     location=location,
                     issue_date=po.issue_date,
                     expected_date=line.expected_date,
@@ -11519,7 +11525,9 @@ class ProjectOrderInquiryService:
                     kind="po",
                     target_id=target_id,
                     document=po.po_number,
-                    line_label=self._line_label(line.source_ref),
+                    line_label=self._line_label(
+                        line.line_no if line.line_no is not None else line.source_ref
+                    ),
                     location=warehouse.warehouse_code if warehouse else None,
                     issue_date=po.issue_date,
                     expected_date=line.expected_date,
@@ -11805,9 +11813,13 @@ class ProjectOrderInquiryService:
         if raw is None:
             return None
         text_value = str(raw).strip()
-        if not text_value:
+        # SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): a line NUMBER only. A purchase
+        # line's `source_ref` is AutoCount's `"{database}:{DocKey}:{DtlKey}"` key, which
+        # printed as "LAED_SORENTO:45836908:45884936" beside the PO; a raw key is never
+        # shown, so anything that is not a plain number reads as no label.
+        if not text_value.isdigit():
             return None
-        return f"L{text_value}"
+        return f"L{int(text_value)}"
 
     def _candidate(
         self,
