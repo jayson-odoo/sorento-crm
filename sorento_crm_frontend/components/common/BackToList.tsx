@@ -48,7 +48,11 @@ export function useHrefWithListState(path: string, appendListState = true): stri
     for (const key of [...params.keys()]) if (isDetailViewKey(key)) params.delete(key);
     return params.toString();
   }, [appendListState, searchParams]);
-  return search ? `${path}?${search}` : path;
+  if (!search) return path;
+  // A path that names its own query (a tabbed list's `?tab=dealer`) keeps it first; the list
+  // state rides after it.
+  const [base, own] = path.split('?');
+  return own ? `${base}?${own}&${search}` : `${path}?${search}`;
 }
 
 /** The href this page's Back button points at. */
