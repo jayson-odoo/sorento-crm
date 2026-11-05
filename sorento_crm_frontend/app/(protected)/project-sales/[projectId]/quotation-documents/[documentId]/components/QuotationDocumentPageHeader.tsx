@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import { Badge } from '@/components/ui/badge';
-import { AUTOCOUNT_NOT_ACCEPTED_TEXT } from '@/lib/autocountWriteWording';
+import { AUTOCOUNT_ALREADY_CANCELLED_TEXT, AUTOCOUNT_NOT_ACCEPTED_TEXT } from '@/lib/autocountWriteWording';
 import { AutocountDecideMenu } from '../../../../_shared/components/AutocountDecideMenu';
 import { AutocountWriteButton } from '../../../../_shared/components/AutocountWriteButton';
 import { AutocountWriteDialog } from '../../../../_shared/components/AutocountWriteDialog';
@@ -130,8 +130,12 @@ function QuotationAutocountActions({
             {
               key: 'cancel',
               label: 'Cancel in AutoCount',
-              enabled: Boolean(cancelCap?.enabled),
-              reason: cancelCap ? cancelCap.reason : 'Checking AutoCount…',
+              enabled: !doc.autocount_cancelled && Boolean(cancelCap?.enabled),
+              reason: doc.autocount_cancelled
+                ? AUTOCOUNT_ALREADY_CANCELLED_TEXT
+                : cancelCap
+                  ? cancelCap.reason
+                  : 'Checking AutoCount…',
               onSelect: () =>
                 cancel
                   .mutateAsync(documentId)

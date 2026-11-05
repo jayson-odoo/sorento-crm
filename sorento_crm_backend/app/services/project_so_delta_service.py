@@ -1091,6 +1091,11 @@ class ProjectSODeltaService:
         accepted, declined = self._decided_rows(amendment, delta)
         so_ref = order.autocount_doc_no or order.provisional_ref
         rows = [self._autocount_row(order, so_ref, row) for row in accepted]
+        # What Update in AutoCount will send is decided in one place (the write service).
+        from app.services.project_autocount_write_service import ProjectAutocountWriteService
+
+        for out, sendable in zip(rows, ProjectAutocountWriteService(self.db).sendable_flags(order, accepted)):
+            out["autocount_sendable"] = sendable
         return {
             "amendment_id": amendment.id,
             "ocn_number": ocn.ocn_number if ocn else None,

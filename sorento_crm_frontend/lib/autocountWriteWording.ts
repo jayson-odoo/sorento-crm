@@ -10,3 +10,4 @@ export const AUTOCOUNT_PENDING_TEXT =
   'Sent; AutoCount has not confirmed yet. It will show after the next sync.';
 export const AUTOCOUNT_NOT_ACCEPTED_TEXT = 'The customer has not accepted this quotation yet';
 export const AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT = 'Not in AutoCount yet';
+export const AUTOCOUNT_ALREADY_CANCELLED_TEXT = 'Already cancelled in AutoCount';

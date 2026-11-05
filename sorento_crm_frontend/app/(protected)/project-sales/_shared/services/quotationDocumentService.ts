@@ -204,6 +204,7 @@ export type QuotationDocument = {
   customer_decision?: 'accepted' | 'changes_requested' | null;
   /** AC-QTSO-CRM: where the document stands in AutoCount. */
   in_autocount?: boolean;
+  autocount_cancelled?: boolean;
   autocount_doc_no?: string | null;
   latest_issue_accepted?: boolean;
   autocount_needs_update?: boolean;

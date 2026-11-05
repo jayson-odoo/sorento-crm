@@ -15,14 +15,6 @@ import { formatQty } from './SalesOrderMoney';
 import { distinctName } from '@/lib/product-display';
 import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 
-/**
- * The verbs the CRM sends to AutoCount today (the delta service's own, R3, U11): qty up on an
- * existing line (ORDER, RESERVE & ORDER) and the date moves. CHANGE SO NO and CANCEL BALANCE
- * wait (CANCEL BALANCE joins once the owner rules it goes as a quantity edit).
- */
-const SENDABLE_VERBS = new Set(['ORDER', 'RESERVE & ORDER', 'ADVANCE', 'DELAY']);
-export const isAutocountSendableVerb = (verb: string): boolean => SENDABLE_VERBS.has(verb);
-
 /** "Update in AutoCount (N)": shown by the caller only when the switch, permission and order allow. */
 export interface AmendmentAutocountUpdate {
   pending: boolean;
@@ -51,7 +43,8 @@ export function AmendmentAutocountChangeList({
   exporting: boolean;
   update?: AmendmentAutocountUpdate;
 }) {
-  const sendable = rows.filter((row) => isAutocountSendableVerb(row.verb)).length;
+  // The server decides which rows Update sends (verb, one-line items, core line known).
+  const sendable = rows.filter((row) => row.autocount_sendable).length;
   const showAutocount = update !== undefined;
   const columns = React.useMemo<ColumnDef<AutocountChangeListRow>[]>(
     () => [
@@ -170,7 +163,7 @@ export function AmendmentAutocountChangeList({
               id: 'autocount',
               header: ({ column }) => <DataGridColumnHeader title="AUTOCOUNT" column={column} />,
               cell: ({ row }) => {
-                const text = isAutocountSendableVerb(row.original.verb)
+                const text = row.original.autocount_sendable
                   ? 'Will be sent'
                   : AUTOCOUNT_WAITING_TEXT;
                 return (

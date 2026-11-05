@@ -1241,6 +1241,7 @@ def serialize_document(
         # server; the screen reads presence, the number, and whether a newer accepted
         # revision is waiting to go as an update.
         "in_autocount": bool(document.autocount_doc_key),
+        "autocount_cancelled": document.autocount_cancelled_at is not None,
         "autocount_doc_no": document.autocount_doc_no,
         "latest_issue_accepted": bool(latest is not None and latest.accepted_at is not None),
         "autocount_needs_update": bool(

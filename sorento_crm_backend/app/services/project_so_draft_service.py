@@ -3572,6 +3572,7 @@ class ProjectSODraftService:
             "autocount_doc_no": order.autocount_doc_no,
             # AC-QTSO-CRM: presence only; the AutoCount key never leaves the server.
             "in_autocount": bool(self.autocount_doc_key(order)),
+            "autocount_cancelled": order.autocount_cancelled_at is not None,
             "area_group": order.area_group,
             "status": order.status,
             "grouping_origin": order.grouping_origin,

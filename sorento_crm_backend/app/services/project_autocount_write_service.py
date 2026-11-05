@@ -80,6 +80,8 @@ _DONE = ("done",)
 #: Longest SS message or warning text the CRM relays to a screen.
 _MAX_TEXT = 500
 WAITING_SYNC = "Waiting for the next AutoCount sync"
+SPLIT_ITEM = "This item is on more than one line; change it in AutoCount by hand"
+ALREADY_CANCELLED = "Already cancelled in AutoCount."
 
 #: Owner decision pending (fix round 1): does CANCEL BALANCE go to AutoCount as a quantity edit
 #: down to `to_value`? Off, it waits like CHANGE SO NO. One switch, both paths are built.
@@ -264,7 +266,7 @@ class ProjectAutocountWriteService:
         try:
             body = self._gateway().write_capabilities(self.company_code(company_id))
         except FoundryxPullError as exc:
-            reason = UNREACHABLE if exc.code == "UNREACHABLE" else exc.message
+            reason = UNREACHABLE if exc.code == "UNREACHABLE" else (exc.message or "")[:_MAX_TEXT]
             return {
                 group: {op: {"enabled": False, "reason": reason} for op in OPS} for group in _KINDS
             }
@@ -552,34 +554,7 @@ class ProjectAutocountWriteService:
         )
 
         # Classify first (no gateway): what is sent, and what waits.
-        edits: Dict[int, Dict[str, Any]] = {}
-        edit_rows: List[dict] = []
-        waiting: List[dict] = []
-        for row in accepted:
-            verb = str(row.get("verb") or "")
-            as_qty = verb in _QTY_VERBS or (
-                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
-            )
-            if not (as_qty or verb in _DATE_VERBS):
-                waiting.append(self._waiting(row, WAITING))
-                continue
-            line = (
-                self.db.query(ProjectSalesOrderLine)
-                .filter(ProjectSalesOrderLine.id == row.get("so_line_id"))
-                .first()
-                if row.get("so_line_id")
-                else None
-            )
-            dtl = self._dtl_key(line)
-            if dtl is None:
-                waiting.append(self._waiting(row, WAITING_SYNC))
-                continue
-            entry = edits.setdefault(dtl, {"dtlKey": dtl})
-            if as_qty:
-                entry["qty"] = _num(row.get("to_value"))
-            else:
-                entry["deliveryDate"] = _iso_date(row.get("to_value"))
-            edit_rows.append(row)
+        _flags, edits, edit_rows, waiting = self._classify(order, accepted)
 
         result = self._blank("waiting", WAITING, order.autocount_doc_no)
         result["waiting"] = waiting
@@ -634,6 +609,59 @@ class ProjectAutocountWriteService:
         self.db.flush()
         return final
 
+    def sendable_flags(self, order: ProjectSalesOrder, accepted: List[dict]) -> List[bool]:
+        """Per accepted row: will Update in AutoCount send it? (the change list shows this)"""
+        return self._classify(order, accepted)[0]
+
+    def _classify(self, order: ProjectSalesOrder, accepted: List[dict]):
+        """Split an amendment's accepted rows into the PATCH edits and the rows that wait.
+
+        Returns (per-row sendable flags, edits by dtlKey, the rows that ride the PATCH, waiting).
+        A quantity row for an item that sits on more than one line waits: AutoCount's lines
+        cannot be told apart from the row, so a person changes it by hand. Date rows act per
+        line and still go.
+        """
+        lines_of_product: Dict[Any, int] = {}
+        for line in self._order_lines(order):
+            lines_of_product[line.product_id] = lines_of_product.get(line.product_id, 0) + 1
+        flags: List[bool] = []
+        edits: Dict[int, Dict[str, Any]] = {}
+        edit_rows: List[dict] = []
+        waiting: List[dict] = []
+        for row in accepted:
+            verb = str(row.get("verb") or "")
+            as_qty = verb in _QTY_VERBS or (
+                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
+            )
+            if not (as_qty or verb in _DATE_VERBS):
+                waiting.append(self._waiting(row, WAITING))
+                flags.append(False)
+                continue
+            if as_qty and lines_of_product.get(row.get("product_id"), 0) > 1:
+                waiting.append(self._waiting(row, SPLIT_ITEM))
+                flags.append(False)
+                continue
+            line = (
+                self.db.query(ProjectSalesOrderLine)
+                .filter(ProjectSalesOrderLine.id == row.get("so_line_id"))
+                .first()
+                if row.get("so_line_id")
+                else None
+            )
+            dtl = self._dtl_key(line)
+            if dtl is None:
+                waiting.append(self._waiting(row, WAITING_SYNC))
+                flags.append(False)
+                continue
+            entry = edits.setdefault(dtl, {"dtlKey": dtl})
+            if as_qty:
+                entry["qty"] = _num(row.get("to_value"))
+            else:
+                entry["deliveryDate"] = _iso_date(row.get("to_value"))
+            edit_rows.append(row)
+            flags.append(True)
+        return flags, edits, edit_rows, waiting
+
     @staticmethod
     def _waiting(row: dict, reason: str) -> dict:
         return {
@@ -654,6 +682,8 @@ class ProjectAutocountWriteService:
                 message=f"{order.provisional_ref} is not in AutoCount.",
                 code="ac_not_in_autocount",
             )
+        if order.autocount_cancelled_at is not None:
+            raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
         doc_key = _safe_key(doc_key)
         cap = self.capabilities(order.company_id)["sales_orders"]["cancel_doc"]
         if not cap["enabled"]:
@@ -954,6 +984,8 @@ class ProjectAutocountWriteService:
             raise AppException(
                 status_code=409, message="This quotation is not in AutoCount.", code="ac_not_in_autocount"
             )
+        if document.autocount_cancelled_at is not None:
+            raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
         key = _safe_key(document.autocount_doc_key)
         cap = self.capabilities(document.company_id)["quotations"]["cancel_doc"]
         if not cap["enabled"]:

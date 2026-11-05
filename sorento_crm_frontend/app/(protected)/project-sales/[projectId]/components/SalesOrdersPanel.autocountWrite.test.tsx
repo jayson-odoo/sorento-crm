@@ -207,6 +207,17 @@ describe('Decide > Cancel in AutoCount on the sales order list', () => {
     expect(document.body.textContent).toContain('Waiting for AutoCount');
   });
 
+  it('greys it with "Already cancelled in AutoCount" for a cancelled order', async () => {
+    renderPanel([row({ ...IN_AUTOCOUNT, autocount_cancelled: true })]);
+    await tick('Select SO397450');
+
+    openDecide();
+
+    const item = await screen.findByRole('menuitem', { name: /Cancel in AutoCount/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(document.body.textContent).toContain('Already cancelled in AutoCount');
+  });
+
   it('greys it with "Not in AutoCount yet" when the ticked order is not in AutoCount', async () => {
     renderPanel([row()]);
     await tick('Select PSO-000123');

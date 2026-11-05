@@ -182,6 +182,9 @@ Check order: permission -> switch (403 `ac_write_switched_off` "AutoCount quotat
 
 ### Assumed, to confirm on the hand-test SS (8114)
 PATCH body field names (`lines[].dtlKey`, `expectedLastModified`) and `document.LastModified` / `document.Details[]` key casing. The tests pin the CRM side; a mismatch is a one-line mapping fix.
+- `LastModified` time zone. `_since` reads a stamp with no zone as UTC and shows dd/mm/yyyy in Malaysia time; the AutoCount ingest reads a naive stamp as +08:00 (`autocount_doc_ingest_service.py`, ruling V1), so confirm which one SS sends and flip the one line if it is +08:00.
+- Whether SS stores a REFUSED answer under an Idempotency-Key, so that a retry with the same key and body replays the refusal (the CRM relies on a stable key and body per step; if SS does not store refusals, a retry simply sends again).
+- Adopted orders: the doc key is read from the core order's `source_ref` (`{database}:{DocKey}`) without checking `{database}` against the book the company writes to, because no per-company book mapping exists in the code (the book arrives with each pulled snapshot). Owner to say where that mapping lives before the check is added.
 
 ## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
 

@@ -65,10 +65,14 @@ def _third_line(db, world):
     """A third project line, already in AutoCount as dtl 12011 (the one a REMOVE_LINE names)."""
     from app.models.order import SalesOrder
 
+    from tests.test_project_so_draft import _product
+
+    # Its own product: one item on two lines would (rightly) wait for a hand change.
+    product3 = _product(db, f"ZZT-P3-{uuid.uuid4().hex[:6]}")
     line = ProjectSalesOrderLine(
         id=str(uuid.uuid4()), company_id=world.company_id,
         project_sales_order_id=world.order.id, line_no=world.line2.line_no + 1,
-        product_id=world.product2.id, description="Third line", qty=Decimal("7"), uom="UNIT",
+        product_id=product3.id, description="Third line", qty=Decimal("7"), uom="UNIT",
         unit_price=Decimal("5.00"), amount=Decimal("35.00"), delivery_date=date(2026, 9, 1),
         stock_location="MWH-BB",
     )
@@ -76,7 +80,7 @@ def _third_line(db, world):
     db.flush()
     core_order = db.query(SalesOrder).filter(SalesOrder.id == world.order.so_id).one()
     core = SalesOrderLine(
-        id=str(uuid.uuid4()), sales_order_id=core_order.id, product_id=world.product2.id,
+        id=str(uuid.uuid4()), sales_order_id=core_order.id, product_id=product3.id,
         qty_ordered=Decimal("7"), qty_delivered=Decimal("0"), required_date=date(2026, 9, 1),
         source_system="autocount", source_ref=f"AED_SRT:{DOC_KEY}:{DTL_3}",
     )
@@ -491,3 +495,96 @@ def test_the_dtl_key_is_resolved_on_the_server_never_taken_from_the_request(api,
     body = fake_ss.body(patch)
     assert body["companyCode"] == "SRT"
     assert body["expectedLastModified"] == LAST_MODIFIED
+
+
+# --------------------------------------------------------------------------- fix round 2: one item on several lines
+
+
+def _second_line_of_the_same_product(db, world):
+    """A set split can leave one product on two lines: line 1's product again, as dtl 12011."""
+    line = ProjectSalesOrderLine(
+        id=str(uuid.uuid4()), company_id=world.company_id,
+        project_sales_order_id=world.order.id, line_no=world.line2.line_no + 1,
+        product_id=world.product.id, description="Same product again", qty=Decimal("7"), uom="UNIT",
+        unit_price=Decimal("5.00"), amount=Decimal("35.00"), delivery_date=date(2026, 9, 1),
+        stock_location="MWH-BB",
+    )
+    db.add(line)
+    db.flush()
+    core_order = db.query(SalesOrder).filter(SalesOrder.id == world.order.so_id).one()
+    core = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=core_order.id, product_id=world.product.id,
+        qty_ordered=Decimal("7"), qty_delivered=Decimal("0"), required_date=date(2026, 9, 1),
+        source_system="autocount", source_ref=f"AED_SRT:{DOC_KEY}:{DTL_3}",
+    )
+    core.company_id = world.company_id
+    db.add(core)
+    db.flush()
+    line.core_sales_order_line_id = core.id
+    db.flush()
+    return line
+
+
+SPLIT_REASON = "This item is on more than one line; change it in AutoCount by hand"
+
+
+def test_a_qty_row_for_an_item_on_several_lines_waits_but_its_date_row_still_goes(api, fake_ss):
+    client, db, world = api
+    put_in_autocount(db, world)
+    _second_line_of_the_same_product(db, world)
+    amendment = add_amendment(
+        db,
+        world,
+        [order_row(world, world.line1, "120"), delay_row(world, world.line1, "2027-01-07")],
+    )
+    db.commit()
+    _answer_edits(fake_ss)
+
+    body = client.post(_url(amendment)).json()
+
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    [line] = fake_ss.body(patch)["lines"]
+    assert str(line["dtlKey"]) == str(DTL_1) and "qty" not in line
+    assert line["deliveryDate"] == "2027-01-07"
+    assert [(w["verb"], w["reason"]) for w in body["waiting"]] == [("ORDER", SPLIT_REASON)]
+
+
+def test_cancel_balance_for_an_item_on_several_lines_waits_when_the_switch_is_on(api, fake_ss, monkeypatch):
+    from app.services import project_autocount_write_service as svc
+
+    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", True)
+    client, db, world = api
+    put_in_autocount(db, world)
+    _second_line_of_the_same_product(db, world)
+    amendment = add_amendment(db, world, [cancel_balance_row(world, world.line1, "0")])
+    db.commit()
+
+    body = client.post(_url(amendment)).json()
+
+    assert fake_ss.writes() == []
+    assert [w["reason"] for w in body["waiting"]] == [SPLIT_REASON]
+
+
+def test_the_change_list_marks_which_rows_the_crm_can_send(api, fake_ss):
+    client, db, world = api
+    put_in_autocount(db, world)
+    _second_line_of_the_same_product(db, world)
+    amendment = add_amendment(
+        db,
+        world,
+        [
+            order_row(world, world.line1, "120"),                 # item on two lines: no
+            delay_row(world, world.line1, "2027-01-07"),          # yes
+            order_row(world, world.line2, "30"),                  # yes
+            change_so_no_row(world, world.line2),                 # no
+            cancel_balance_row(world, world.line2, "0"),          # no (owner switch off)
+        ],
+    )
+    db.commit()
+
+    response = client.get(f"{BASE}/amendments/{amendment.id}/autocount-change-list")
+
+    assert response.status_code == 200, response.text
+    assert [(r["verb"], r["autocount_sendable"]) for r in response.json()["rows"]] == [
+        ("ORDER", False), ("DELAY", True), ("ORDER", True), ("CHANGE SO NO", False), ("CANCEL BALANCE", False),
+    ]

@@ -134,11 +134,13 @@ function salesOrder(inAutocount: boolean) {
 }
 
 const ROWS = [
-  { so_number: 'SO397450', line_no: 1, item_code: 'A1', verb: 'ORDER', old_qty: '10', new_qty: '12' },
-  { so_number: 'SO397450', line_no: 2, item_code: 'A2', verb: 'DELAY', old_date: '2026-07-01', new_date: '2027-01-07' },
-  { so_number: 'SO397450', line_no: 3, item_code: 'A3', verb: 'RESERVE & ORDER', old_qty: '5', new_qty: '9' },
-  { so_number: 'SO397450', line_no: 4, item_code: 'A4', verb: 'CHANGE SO NO', new_so_number: 'SO397451' },
-  { so_number: 'SO397450', line_no: 5, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '4' },
+  { so_number: 'SO397450', line_no: 1, item_code: 'A1', verb: 'ORDER', old_qty: '10', new_qty: '12', autocount_sendable: true },
+  { so_number: 'SO397450', line_no: 2, item_code: 'A2', verb: 'DELAY', old_date: '2026-07-01', new_date: '2027-01-07', autocount_sendable: true },
+  { so_number: 'SO397450', line_no: 3, item_code: 'A3', verb: 'RESERVE & ORDER', old_qty: '5', new_qty: '9', autocount_sendable: true },
+  // On more than one line: the server says it cannot be sent, so it is not counted.
+  { so_number: 'SO397450', line_no: 4, item_code: 'A1', verb: 'ORDER', old_qty: '3', new_qty: '4', autocount_sendable: false },
+  { so_number: 'SO397450', line_no: 5, item_code: 'A4', verb: 'CHANGE SO NO', new_so_number: 'SO397451', autocount_sendable: false },
+  { so_number: 'SO397450', line_no: 6, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '4', autocount_sendable: false },
 ];
 
 async function openAmendment({ status = 'published', inAutocount = true } = {}) {
@@ -236,7 +238,7 @@ beforeEach(() => {
 });
 
 describe('Update in AutoCount on a published amendment', () => {
-  it('counts only the rows the CRM can send: ORDER, RESERVE & ORDER, ADVANCE, DELAY', async () => {
+  it('counts only the rows the server marks autocount_sendable', async () => {
     await openAmendment();
 
     expect(await screen.findByRole('button', { name: 'Update in AutoCount (3)' })).toBeEnabled();

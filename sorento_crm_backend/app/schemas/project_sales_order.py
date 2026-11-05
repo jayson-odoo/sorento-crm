@@ -92,6 +92,7 @@ class ProjectSalesOrderRow(BaseModel):
     autocount_doc_no: Optional[str] = None
     # AC-QTSO-CRM: the order lives in AutoCount (its key is set); the key itself is never sent.
     in_autocount: bool = False
+    autocount_cancelled: bool = False
     area_group: Optional[str] = None
     status: str
     grouping_origin: Optional[str] = None
@@ -583,6 +584,8 @@ class AutocountChangeListRow(BaseModel):
     new_so_number: Optional[str] = Field(
         None, description="Set only for a CHANGE SO NO row."
     )
+    # AC-QTSO-CRM: whether Update in AutoCount sends this row (decided server-side).
+    autocount_sendable: bool = False
 
 
 class AutocountChangeListResponse(BaseModel):

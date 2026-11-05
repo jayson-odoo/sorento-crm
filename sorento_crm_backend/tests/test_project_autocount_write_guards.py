@@ -301,3 +301,81 @@ def test_the_stale_date_is_in_malaysia_time(stamp, expected):
     from app.services.project_autocount_write_service import _since
 
     assert _since(stamp) == expected
+
+
+# --------------------------------------------------------------------------- fix round 2: cancel once, capped reason
+
+
+def _cancel_on(fake_ss):
+    fake_ss.answers[("GET", CAPS)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+
+
+def test_a_second_so_cancel_is_409_already_cancelled_with_no_call(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    db.commit()
+    _cancel_on(fake_ss)
+    fake_ss.answers[("POST", f"{SO_CREATE_PATH}/{DOC_KEY}/cancel")] = (200, done_body())
+    url = f"{BASE}/sales-orders/{world.order.id}/autocount/cancel"
+    assert client.post(url).status_code == 200
+    calls = len(fake_ss.calls)
+
+    again = client.post(url)
+
+    assert again.status_code == 409 and again.json()["message"] == "Already cancelled in AutoCount."
+    assert len(fake_ss.calls) == calls
+
+
+def test_a_second_quotation_cancel_is_409_already_cancelled_with_no_call(qt_api, fake_ss):
+    client, db, world = qt_api
+    world.document.autocount_doc_no, world.document.autocount_doc_key = "QT000777", "5001"
+    db.commit()
+    _cancel_on(fake_ss)
+    fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations/5001/cancel")] = (
+        200, done_body(doc_no="QT000777", doc_key=5001)
+    )
+    assert client.post(_qt_urls(world)["cancel"]).status_code == 200
+    calls = len(fake_ss.calls)
+
+    again = client.post(_qt_urls(world)["cancel"])
+
+    assert again.status_code == 409 and again.json()["message"] == "Already cancelled in AutoCount."
+    assert len(fake_ss.calls) == calls
+
+
+def test_the_payloads_say_when_a_document_is_cancelled(so_api, fake_ss):
+    client, db, world = so_api
+    put_in_autocount(db, world)
+    db.commit()
+
+    def flag():
+        return client.get(f"{BASE}/sales-orders/{world.order.id}").json()
+
+    before = flag()
+    world.order.autocount_cancelled_at = __import__("datetime").datetime.utcnow()
+    db.commit()
+    after = flag()
+
+    assert (before.get("data", before)["autocount_cancelled"], after.get("data", after)["autocount_cancelled"]) == (False, True)
+
+
+def test_the_quotation_payload_says_when_it_is_cancelled(qt_api, fake_ss):
+    client, db, world = qt_api
+    url = f"{BASE}/projects/{world.project.id}/quotation-documents/{world.document.id}"
+
+    before = client.get(url).json()
+    world.document.autocount_cancelled_at = __import__("datetime").datetime.utcnow()
+    db.commit()
+    after = client.get(url).json()
+
+    assert (before.get("data", before)["autocount_cancelled"], after.get("data", after)["autocount_cancelled"]) == (False, True)
+
+
+def test_a_capability_reason_from_a_gateway_error_is_capped(so_api, fake_ss):
+    client, _db, _world = so_api
+    fake_ss.answers[("GET", CAPS)] = (400, {"code": "BAD_REQUEST", "message": "z" * 900})
+
+    body = client.get(f"{BASE}/autocount-write/capabilities").json()
+
+    reason = body["sales_orders"]["create_doc"]["reason"]
+    assert len(reason) == 500

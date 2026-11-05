@@ -47,7 +47,7 @@ import { GROUPING_ORIGIN_LABEL, SalesOrderStatusPill } from './SalesOrderStatusP
 import { FINDING_SEVERITY_BADGE_VARIANT, FINDING_SEVERITY_LABEL } from '../../_shared/lib/findings';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
-import { AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT } from '@/lib/autocountWriteWording';
+import { AUTOCOUNT_ALREADY_CANCELLED_TEXT, AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT } from '@/lib/autocountWriteWording';
 import { AutocountDecideMenu } from '../../_shared/components/AutocountDecideMenu';
 import { AutocountWriteDialog } from '../../_shared/components/AutocountWriteDialog';
 import {
@@ -450,9 +450,12 @@ export function SalesOrdersPanel({
   // Decide > Cancel in AutoCount: greyed with the feed's reason (R4), never hard-coded off.
   const cancelCap = capabilities.data?.sales_orders?.cancel_doc;
   const notInAutocount = selectedRows.some((row) => !row.in_autocount);
+  const alreadyCancelled = selectedRows.some((row) => row.autocount_cancelled);
   const cancelReason = notInAutocount
     ? AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT
-    : cancelCap
+    : alreadyCancelled
+      ? AUTOCOUNT_ALREADY_CANCELLED_TEXT
+      : cancelCap
       ? cancelCap.reason
       : 'Checking AutoCount…';
   const cancelSelected = async () => {
@@ -551,7 +554,7 @@ export function SalesOrdersPanel({
                       {
                         key: 'cancel',
                         label: 'Cancel in AutoCount',
-                        enabled: !notInAutocount && Boolean(cancelCap?.enabled),
+                        enabled: !notInAutocount && !alreadyCancelled && Boolean(cancelCap?.enabled),
                         reason: cancelReason,
                         onSelect: cancelSelected,
                       },

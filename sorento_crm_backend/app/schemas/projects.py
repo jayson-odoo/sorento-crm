@@ -2176,6 +2176,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     # AC-QTSO-CRM: declared here as well as in `serialize_document`; the response model drops
     # what it does not know.
     in_autocount: bool = False
+    autocount_cancelled: bool = False
     autocount_doc_no: Optional[str] = None
     latest_issue_accepted: bool = False
     autocount_needs_update: bool = False
