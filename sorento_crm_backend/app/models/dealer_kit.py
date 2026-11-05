@@ -749,6 +749,10 @@ class TagTemplate(Base, CompanyScopedMixin):
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
+    # TAG-TEMPLATE-DELETE-CONFIRM: Delete stamps this instead of removing the row, so versions,
+    # product/combo links and request lines survive and a restore is `archived_at = NULL`.
+    # Archived templates are hidden from every list and picker.
+    archived_at = Column(DateTime(timezone=False), nullable=True)
 
     published_version = relationship(
         "TagTemplateVersion", foreign_keys=[published_version_id]
