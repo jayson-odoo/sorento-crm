@@ -135,6 +135,13 @@ def known_account_types_line(types: list[str] | None) -> str | None:
     return f"Known account types: {', '.join(names)}" if names else None
 
 
+def known_companies_line(names: list[str] | None) -> str | None:
+    """CHATBOT-TOTALS-FILTERS: the `Known companies:` line, the companies the contact holds (sorted, deduped), `None`
+    when there is none to name."""
+    shown = sorted({str(n).strip() for n in names or [] if n and str(n).strip()}, key=lambda n: (n.casefold(), n))
+    return f"Known companies: {', '.join(shown)}" if shown else None
+
+
 def promotion_kinds_line(kinds: list[dict[str, Any]] | None) -> str | None:
     """PROMO-SUBJECT-FILTER R5: the `Promotion kinds:` line, `type_code (name)` pairs read from
     `promotion_types` every turn, so a kind added as a row is heard on the next message."""
@@ -182,6 +189,7 @@ def _brands_and_kinds(layers: "ContextLayers") -> str | None:
         for p in (
             known_brands_line(layers.brands),
             known_account_types_line(layers.account_types),
+            known_companies_line(layers.companies),
             product_types_line(layers.product_types),
             product_details_line(layers.product_details),
             promotion_kinds_line(layers.promotion_kinds),
@@ -298,6 +306,9 @@ class ContextLayers:
     #: SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company, one `Known account types:` line
     #: (set only for a prompt that defines it and a contact that is not customer-scoped).
     account_types: list[str] | None = None
+    #: CHATBOT-TOTALS-FILTERS: the companies the contact holds, one `Known companies:` line (set only for a prompt that
+    #: names it and a contact who holds two or more).
+    companies: list[str] | None = None
     #: PROMO-SUBJECT-FILTER R5: the live `promotion_types` rows (`{type_code, type_name}`),
     #: one `Promotion kinds:` line, so the parser fills `promotion_kind` from the table.
     promotion_kinds: list[dict[str, Any]] | None = None

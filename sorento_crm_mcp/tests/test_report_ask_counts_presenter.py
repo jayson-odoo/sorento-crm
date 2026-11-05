@@ -26,7 +26,7 @@ def test_a_count_total_says_the_count_first():
     text = _report_ask(_body())
     lines = text.splitlines()
     assert lines[-1] == "Total 2 customers, RM 1,700.00, 17 pcs", text
-    assert "Product: ZZTCNT-1" in lines and "Period: 1 Jan 2026 to 30 Sep 2026" in lines, text
+    assert "Product: ZZTCNT-1" in lines and "Period: 01/01/2026 - 30/09/2026" in lines, text
 
 
 def test_one_reads_singular():
