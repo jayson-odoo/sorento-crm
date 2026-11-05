@@ -480,8 +480,8 @@ def make_quotation_from_proposal(
     db: Session = Depends(get_db),
 ):
     """PS-PROPOSAL-QUOTATION: the project's salesperson turns one issued proposal revision into
-    the project's quotation (any project not marked Lost). 409 ``project_lost`` /
-    ``project_has_quotation``, 422
+    the project's quotation (any project not Lost or Dormant). 409 ``project_lost`` /
+    ``project_dormant`` / ``project_has_quotation``, 422
     ``quotation_source_not_proposal``, 404 ``quotation_issue_not_found``."""
     try:
         validate_uuid_path(document_id, resource="Quotation")
