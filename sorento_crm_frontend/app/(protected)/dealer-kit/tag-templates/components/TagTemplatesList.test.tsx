@@ -315,6 +315,17 @@ describe('TagTemplatesList - the per-row Delete asks first (TAG-TEMPLATE-DELETE-
     expect(createPendingAction).not.toHaveBeenCalled();
   });
 
+  it('says it could not check, never "not used", when the usage call fails', async () => {
+    getTemplateUsage.mockRejectedValue(new Error('network'));
+    await renderList();
+
+    fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
+
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog.textContent).toContain('could not check what uses it'));
+    expect(dialog.textContent).not.toContain('not used by');
+  });
+
   it('Cancel closes the confirm and deletes nothing', async () => {
     await renderList();
 

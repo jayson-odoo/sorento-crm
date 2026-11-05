@@ -388,7 +388,9 @@ export function TagTemplatesList() {
             <span className="font-medium">{deleteTarget?.name}</span>
             {usageQuery.isLoading
               ? ' - checking what uses it.'
-              : usedBy
+              : usageQuery.isError
+                ? ' - could not check what uses it.'
+                : usedBy
                 ? ` is used by ${usedBy}.`
                 : ' is not used by any product, combo or request.'}
           </>

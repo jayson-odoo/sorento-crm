@@ -176,3 +176,36 @@ def test_usage_counts_products_combos_and_requests(api):
     assert used.json() == {"products": 2, "combos": 1, "requests": 1}
     assert none.json() == {"products": 0, "combos": 0, "requests": 0}
     assert missing.status_code == 404
+
+
+def test_saving_a_products_template_set_keeps_the_link_to_an_archived_template(api):
+    """The product page only sees live templates, so its save must not drop (or keep the default
+    on) a link to an archived one: that link is what a restore brings back."""
+    db, _as, _scope = api
+    with TestClient(app) as client:
+        archived, live, added = (_create_template(client) for _ in range(3))
+        for template_id in (archived, live, added):
+            _publish(client, template_id)
+    product = _product(db, "TTD3")
+    db.add_all(
+        [
+            ProductTagTemplate(product_id=product.id, template_id=archived, is_default=True),
+            ProductTagTemplate(product_id=product.id, template_id=live),
+        ]
+    )
+    db.commit()
+    tag_template_service.delete_template(db, archived)
+
+    product_tag_template_service.set_product_templates(
+        db, product.id, [live, added], user_id=None, default_template_id=added
+    )
+    db.commit()
+    db.expire_all()
+
+    links = {
+        link.template_id: link.is_default
+        for link in db.query(ProductTagTemplate).filter(ProductTagTemplate.product_id == product.id)
+    }
+    assert links == {archived: False, live: False, added: True}
+    items = product_tag_template_service.linked_items(db, product.id)
+    assert {i["id"]: i["is_default"] for i in items} == {live: False, added: True}
