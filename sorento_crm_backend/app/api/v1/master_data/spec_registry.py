@@ -92,6 +92,29 @@ def _also_on(row, owners: dict) -> dict[str, list[str]]:
     return out
 
 
+def _icon_names(row) -> dict[str, str]:
+    """``{asset id: name}`` for the icons this key's values carry (none: no query)."""
+    import uuid as _uuid
+
+    ids = set()
+    for listed in (row.value_icons or {}).values():
+        for value in listed or []:
+            try:
+                ids.add(str(_uuid.UUID(str(value))))
+            except ValueError:
+                continue  # not an asset id at all: nothing to name
+    if not ids:
+        return {}
+    from sqlalchemy.orm import object_session
+
+    from app.models.dealer_kit import Asset
+
+    session = object_session(row)
+    if session is None:
+        return {}
+    return {asset.id: asset.name for asset in session.query(Asset).filter(Asset.id.in_(ids)).all()}
+
+
 def _serialise(row, owners: Optional[dict] = None) -> dict:
     if owners is None:
         from sqlalchemy.orm import object_session
@@ -154,6 +177,9 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         "value_labels": row.value_labels or {},
         # value -> [Dealer Kit icon asset id, ...], in the admin's order (feature icons).
         "value_icons": row.value_icons or {},
+        # asset id -> name, so the screen names an icon rather than showing its id, without
+        # the reader holding the Dealer Kit library permission.
+        "value_icon_names": _icon_names(row),
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),

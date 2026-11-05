@@ -104,6 +104,19 @@ def test_value_icons_are_saved_in_order_and_read_back_on_the_list(reg):
     assert listed[key]["value_icons"] == {"mixer": [hot.id, cold.id], "cold_only": [cold.id]}
 
 
+def test_the_list_read_names_each_icon_so_no_id_is_shown(reg):
+    """The spec screen shows an icon by NAME (no UUIDs in the UI), and a master-data user
+    need not hold the Dealer Kit library permission to read it."""
+    db, _as, client = reg
+    key = _spec_key()
+    icon = _icon(db, "ZZT named")
+    _key(db, key, data_type="enum", allowed_values=["a"], value_icons={"a": [icon.id]})
+    db.commit()
+    _as(_MERCHANDISER)
+    listed = {k["spec_key"]: k for k in client.get(_BASE).json()["keys"]}
+    assert listed[key]["value_icon_names"] == {icon.id: "ZZT named"}
+
+
 def test_a_new_key_reads_an_empty_value_icons_dict(reg):
     db, _as, client = reg
     key = _spec_key()
