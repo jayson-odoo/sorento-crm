@@ -448,23 +448,6 @@ function groupOf(dialog: HTMLElement, inquiryNo: string): HTMLElement {
 
 /** The FIRST row carrying `text`: a group can hold several lines of one SO (OI-2609-0417
  * holds two SO383872 lines), and the first is the one these tests read. */
-/** AC-LINK-CRM-UI (owner, 4 Nov): tick the group's lines, then Decide > Request CS to reserve. */
-async function requestThroughDecide(group: HTMLElement) {
-  fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
-  const decide = within(group).getByTestId('snapshot-decide-button');
-  await waitFor(() => expect(decide).not.toBeDisabled());
-  fireEvent.keyDown(decide, { key: 'Enter' });
-  fireEvent.click(await screen.findByRole('menuitem', { name: /request cs to reserve/i }));
-}
-
-/** The Decide menu of a group, opened (without ticking). */
-async function decideItems(group: HTMLElement) {
-  fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
-  const decide = within(group).getByTestId('snapshot-decide-button');
-  fireEvent.keyDown(decide, { key: 'Enter' });
-  return screen.findAllByRole('menuitem');
-}
-
 function rowWith(scope: HTMLElement, text: string): HTMLElement {
   return within(scope).getAllByText(text)[0].closest('tr') as HTMLElement;
 }
@@ -684,20 +667,20 @@ describe('AC-F5 Now, one pill per line', () => {
   });
 });
 
-describe('AC-F6 Request CS to reserve, through Decide (AC-LINK-CRM-UI: tick, then Decide)', () => {
-  it('Decide shows on the group with a requestable row for an acknowledge holder, and only there', async () => {
+describe('AC-F6 Request CS to reserve button', () => {
+  it('shows on the group with a requestable row for an acknowledge holder, and only there', async () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    const decide = within(groupOf(dialog, 'OI-2609-0417')).getByTestId('snapshot-decide-button');
-    expect(decide).toHaveTextContent('Decide (0)');
-    expect(decide).toBeDisabled();
+    expect(
+      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
+    ).toBeInTheDocument();
     for (const no of ['OI-2609-0271', 'OI-2609-0733', 'OI-2609-0501', 'OI-2609-0637']) {
-      expect(within(groupOf(dialog, no)).queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
+      expect(
+        within(groupOf(dialog, no)).queryByRole('button', { name: /request cs to reserve/i }),
+      ).not.toBeInTheDocument();
     }
-    expect(screen.getAllByTestId('snapshot-decide-button')).toHaveLength(1);
-    const items = await decideItems(groupOf(dialog, 'OI-2609-0417'));
-    expect(items.map((item) => item.textContent)).toEqual(['Request CS to reserve…']);
+    expect(screen.getAllByRole('button', { name: /request cs to reserve/i })).toHaveLength(1);
   });
 
   it('is absent without the acknowledge permission, even with a requestable row', async () => {
@@ -705,8 +688,7 @@ describe('AC-F6 Request CS to reserve, through Decide (AC-LINK-CRM-UI: tick, the
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
-    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /request cs to reserve/i })).not.toBeInTheDocument();
   });
 });
 
@@ -715,7 +697,9 @@ describe('AC-F6 the shared RequestReserveDialog opened from a group', () => {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    await requestThroughDecide(groupOf(dialog, 'OI-2609-0417'));
+    fireEvent.click(
+      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
+    );
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -802,7 +786,9 @@ describe('RESERVE-REQ-PICK AC-RP-6: a frozen line already covered (Short 0) open
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    await requestThroughDecide(groupOf(dialog, 'OI-2609-0417'));
+    fireEvent.click(
+      within(groupOf(dialog, 'OI-2609-0417')).getByRole('button', { name: /request cs to reserve/i }),
+    );
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -910,7 +896,9 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    await requestThroughDecide(groupOf(dialog, inquiryNo));
+    fireEvent.click(
+      within(groupOf(dialog, inquiryNo)).getByRole('button', { name: /request cs to reserve/i }),
+    );
     const heading = await screen.findByRole('heading', { name: /request cs to reserve/i });
     return heading.closest('[role="dialog"]') as HTMLElement;
   }
@@ -919,7 +907,9 @@ describe('RESERVE-REQ-PICK AC-RP-8: an OI raised after the snapshot can be reque
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    expect(within(groupOf(dialog, 'OI-2610-0901')).getByTestId('snapshot-decide-button')).toBeInTheDocument();
+    expect(
+      within(groupOf(dialog, 'OI-2610-0901')).getByRole('button', { name: /request cs to reserve/i }),
+    ).toBeInTheDocument();
   });
 
   it('lists the late row ticked ("1 of 1 lines") and sends it', async () => {
@@ -975,41 +965,54 @@ describe('AC-LINK-CRM-UI the "AutoCount links from Stock Debt" switch (owner, 5 
     unlink_row: { enabled: false, reason: 'Waiting for AutoCount' },
     relink_row: { enabled: false, reason: 'Waiting for AutoCount' },
   };
+  const LINK = 'projects.stock_debt.link_po';
 
-  async function menuOf(group: string) {
+  async function open() {
     renderPage();
     const dialog = await openAllMonths();
     await within(dialog).findAllByText('SO383872');
-    return (await decideItems(groupOf(dialog, group))).map((item) => item.textContent);
+    return dialog;
   }
 
-  it('switch OFF: Decide shows no PO actions at all, and the PO options are never read', async () => {
-    permissions = new Set([...permissions, 'projects.stock_debt.link_po']);
+  it('switch OFF: exactly today\'s UI - the single Request CS to reserve button, no ticks, no Decide', async () => {
+    permissions = new Set([...permissions, LINK]);
     getPoLinkSwitch.mockResolvedValue(false);
-    getPoLinkOptions.mockResolvedValue({ capabilities: CAPS_ON, po_lines: [], so_books: {} });
-    const items = await menuOf('OI-2609-0417');
-    expect(items).toEqual(['Request CS to reserve…']);
+    const dialog = await open();
+    await waitFor(() => expect(getPoLinkSwitch).toHaveBeenCalled());
+    const group = groupOf(dialog, 'OI-2609-0417');
+    expect(within(group).getByRole('button', { name: 'Request CS to reserve' })).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
+    expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0);
     expect(getPoLinkOptions).not.toHaveBeenCalled();
+    // The button opens the shared dialog straight away, as today.
+    fireEvent.click(within(group).getByRole('button', { name: 'Request CS to reserve' }));
+    expect(await screen.findByRole('heading', { name: /request cs to reserve/i })).toBeInTheDocument();
   });
 
-  it('switch ON: Link to PO, Unlink and Move show beside Request CS to reserve', async () => {
-    permissions = new Set([...permissions, 'projects.stock_debt.link_po']);
+  it('switch ON: Decide replaces the button, with Request CS to reserve inside it beside the PO actions', async () => {
+    permissions = new Set([...permissions, LINK]);
     getPoLinkSwitch.mockResolvedValue(true);
     getPoLinkOptions.mockResolvedValue({ capabilities: CAPS_ON, po_lines: [], so_books: {} });
-    const items = await menuOf('OI-2609-0417');
-    expect(items.map((t) => (t ?? '').split('…')[0])).toEqual([
+    const dialog = await open();
+    const group = groupOf(dialog, 'OI-2609-0417');
+    const decide = await within(group).findByTestId('snapshot-decide-button');
+    expect(within(group).queryByRole('button', { name: 'Request CS to reserve' })).not.toBeInTheDocument();
+    fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
+    await waitFor(() => expect(decide).not.toBeDisabled());
+    expect(group).not.toHaveTextContent(/\d+ selected/);
+    fireEvent.keyDown(decide, { key: 'Enter' });
+    const items = (await screen.findAllByRole('menuitem')).map((item) => (item.textContent ?? '').split('…')[0]);
+    expect(items).toEqual([
       'Request CS to reserve', 'Link to PO', 'Unlink from PO', 'Move PO to another sales order',
     ]);
   });
 
-  it('no "N selected" text beside Decide: Decide (N) already says it', async () => {
-    renderPage();
-    const dialog = await openAllMonths();
-    await within(dialog).findAllByText('SO383872');
+  it('switch ON without the link permission: still today\'s single button', async () => {
+    getPoLinkSwitch.mockResolvedValue(true);
+    const dialog = await open();
     const group = groupOf(dialog, 'OI-2609-0417');
-    fireEvent.click(within(group).getByRole('checkbox', { name: /select all/i }));
-    await waitFor(() => expect(within(group).getByTestId('snapshot-decide-button')).not.toBeDisabled());
-    expect(group).not.toHaveTextContent(/\d+ selected/);
+    expect(within(group).getByRole('button', { name: 'Request CS to reserve' })).toBeInTheDocument();
+    expect(screen.queryByTestId('snapshot-decide-button')).not.toBeInTheDocument();
   });
 });
 

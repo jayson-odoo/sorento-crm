@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -91,9 +92,9 @@ export function poLinksText(line: GroupLine): string {
     .join(', ');
 }
 
-function NowCell({ line }: { line: GroupLine }) {
+function NowCell({ line, showPoLinks }: { line: GroupLine; showPoLinks: boolean }) {
   const pill = nowPill(line);
-  const links = poLinksText(line);
+  const links = showPoLinks ? poLinksText(line) : '';
   return (
     <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
       <span className={cn(STATUS_PILL_BASE, 'normal-case whitespace-nowrap', pill.tone)} title={pill.text}>
@@ -117,7 +118,12 @@ const LINE_COLUMN: ColumnDef<GroupLine> = {
   cell: ({ row }) => <span className="tabular-nums">{row.original.line_no ?? '-'}</span>,
 };
 
-function buildColumns(totals: ReturnType<typeof sumDemand>, selectable: boolean): ColumnDef<GroupLine>[] {
+function buildColumns(
+  totals: ReturnType<typeof sumDemand>,
+  /** Switch ON: row ticks + Decide, and Now names the PO covering each line. */
+  poMode: boolean,
+): ColumnDef<GroupLine>[] {
+  const selectable = poMode;
   const [salesOrder, ...demand] = buildDemandColumns<GroupLine>(totals);
   return [
     ...(selectable
@@ -169,7 +175,7 @@ function buildColumns(totals: ReturnType<typeof sumDemand>, selectable: boolean)
       id: 'now',
       header: ({ column }) => <DataGridColumnHeader title="Now" column={column} />,
       size: 260,
-      cell: ({ row }) => <NowCell line={row.original} />,
+      cell: ({ row }) => <NowCell line={row.original} showPoLinks={poMode} />,
     },
   ];
 }
@@ -257,7 +263,10 @@ function OiGroupGrid({
     line.group_oi_rows.some((oi) => oi.requestable),
   );
   const showRequest = Boolean(group.oiId) && canRequest && requestable;
-  const selectable = showRequest || canLinkPo;
+  // Owner, 5 Nov ("minimise the change management"): with the switch OFF the drill is
+  // exactly today's - one Request CS to reserve button, no ticks, no Decide. Decide (with
+  // Request CS to reserve inside it, beside the PO actions) only exists while it is ON.
+  const selectable = canLinkPo;
   const columns = React.useMemo(() => buildColumns(totals, selectable), [totals, selectable]);
 
   // OWNER (Lavish v1, 4 Nov): tick the lines first, then Decide.
@@ -333,6 +342,10 @@ function OiGroupGrid({
         toolbar={
           selectable ? (
             <SnapshotDecideControl count={tickedLines.length} items={items} onOpenChange={setMenuOpen} />
+          ) : showRequest ? (
+            <Button type="button" size="sm" onClick={() => setRequestOpen(true)}>
+              Request CS to reserve
+            </Button>
           ) : undefined
         }
         columns={columns}
@@ -349,7 +362,7 @@ function OiGroupGrid({
         <OiRequestDialog
           oiId={group.oiId}
           drillRowIds={drillRowIds}
-          coveredRowIds={untickedRowIds}
+          coveredRowIds={selectable ? untickedRowIds : coveredRowIds}
           defaultWarehouseId={defaultWarehouseId}
           onOpenChange={setRequestOpen}
           onSent={onRequested}

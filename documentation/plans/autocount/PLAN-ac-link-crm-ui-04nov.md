@@ -150,3 +150,12 @@ AC-WRITE-QTSO lane before Phase 2.
   answers 403 "AutoCount links from Stock Debt are switched off in Settings." with no Shared
   Service call. Read by the drill from `/settings/app-config`.
 - Guide: `documentation/user-guides/supply-chain/stock-debt-link-to-po.md`.
+
+## Owner, 5 Nov ~09:50 MYT: minimise change management
+
+With "AutoCount links from Stock Debt" OFF the drill is today's: the single **Request CS to
+reserve** button (same label, place, behaviour; covered lines open unticked as before), no row
+ticks, no Decide, no PO names in Now. Decide, with Request CS to reserve inside it beside the
+PO actions, exists only while the switch is ON and the user holds `link_po`
+(`SnapshotClient.drill.test.tsx`, the switch block). The Line / Location / Delivery date column
+changes from the owner's Lavish rounds stay in both states.
