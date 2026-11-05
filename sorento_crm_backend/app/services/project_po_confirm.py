@@ -25,9 +25,6 @@ from app.models.project_so import (
     ProjectPOVersion,
 )
 from app.models.projects import (
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_OPEN,
-    QUOTATION_OUTCOME_WON,
     Project,
     ProjectPurchaseOrder,
     ProjectPurchaseOrderLine,
@@ -65,8 +62,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     _CANCEL_WORDS,
     _SIGNATURE_WORDS,
     _AMEND_WORDS,
-    _OUTCOME_RANK,
-    _OUTCOME_RANK_DEFAULT,
     _to_decimal,
     _money,
     _payload_value,
@@ -330,15 +325,10 @@ class POConfirmationMixin:
         if not quotations:
             return None
 
-        best_rank = min(_OUTCOME_RANK.get(q.outcome, _OUTCOME_RANK_DEFAULT) for q in quotations)
-        candidates = [
-            q
-            for q in quotations
-            if _OUTCOME_RANK.get(q.outcome, _OUTCOME_RANK_DEFAULT) == best_rank
-        ]
+        candidates = quotations
         if len(candidates) != 1:
             logger.info(
-                "PO %s left unbound: %s quotation scopes on project %s are equally good "
+                "PO %s left unbound: %s quotation scopes on project %s are "
                 "candidates, so the scope is a person's call",
                 po.id,
                 len(candidates),

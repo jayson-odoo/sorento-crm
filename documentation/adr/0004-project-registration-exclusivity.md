@@ -19,9 +19,12 @@ blocks. The verdict is "sameness cannot be ruled out", not "these are the same":
 different developer clears it immediately, so the block is self-correcting as the form is
 filled in, and the panel says so rather than only offering join / dispute.
 
-Only projects whose derived outcome is **open** block a new registration. A lost or dormant
-match is surfaced as context - "previously pursued by Ali, lost on price, Mar 2024" - and the
-registration proceeds. A re-tender three years later must not be blocked by an old loss.
+A strong match blocks **whatever its outcome** - open, won, lost or dormant (amended 5 Nov
+2026, PROJECT-CLASH-LOST, owner: "if got match then should follow the same clash path"). It
+originally said only an open project blocks, so a lost or dormant match was context and the
+registration proceeded; in practice that let a salesperson register a second copy of a Won
+project with no warning. A re-tender of a lost project now goes through the same recourse
+below, so a sales manager decides it.
 
 On collision the second salesperson is **blocked** - but never dead-ended. They see the
 incumbent's owner, current stage, last activity date and brands, and get two actions:

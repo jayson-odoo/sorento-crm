@@ -213,78 +213,75 @@ def test_the_counter_sign_link_only_opens_the_issue_it_was_minted_for():
         assert expired.value.detail["message"] == unknown.value.detail["message"]
 
 
-def test_the_customer_counter_signing_wins_the_quotation():
-    """The client's decision, and the reason this slice exists.
+def _accept(db, record, mode="draw"):
+    qdocs.accept_issue(
+        db,
+        terms_accepted=True,
+        record=record,
+        signer_name=f"{MARKER} Kelly",
+        mode=mode,
+        image_data_uri=A_SIGNATURE,
+        ip_address="203.0.113.9",
+        user_agent="zzt-customer",
+    )
 
-    A counter-signature is the commitment, so every scope the issue carried becomes won and the
-    project's outcome derives to won. Written the other way round first (evidence only); the
-    client overruled that on 2026-08-04.
-    """
+
+def test_the_customer_counter_signing_wins_an_open_project():
+    """BE4. A counter-signature is the commitment: an open project becomes won. No area
+    outcome is written."""
     with blank_session() as db:
         project, document, owner, scopes = _setup(
             db, scopes=("Townhouse", "Guard house")
         )
         _sign_draft(db, document, owner)
         record = qdocs.issue(db, document=document, actor_user_id=owner)
+        assert project.outcome == "open"
 
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        qdocs.accept_issue(
-            db,
-            terms_accepted=True,
-            record=record,
-            signer_name=f"{MARKER} Kelly",
-            mode="draw",
-            image_data_uri=A_SIGNATURE,
-            ip_address="203.0.113.9",
-            user_agent="zzt-customer",
-        )
+        _accept(db, record)
 
         assert record.accepted_at is not None
-        for scope in scopes:
-            db.refresh(scope)
-            assert scope.outcome == "won"
-            # Recorded, so "why is this won" is answerable without opening a signature blob.
-            assert scope.decided_at is not None
-        assert quotes.derive_project_outcome(db, project) == "won"
         db.refresh(project)
         assert project.outcome == "won"
+        assert project.loss_reason is None
+        for scope in scopes:
+            db.refresh(scope)
+            assert scope.outcome == "open"
+            assert scope.decided_at is None
 
 
-def test_a_scope_already_lost_is_not_flipped_by_a_signature():
-    """Somebody decided that deliberately, and a signature must not overrule a person silently.
-
-    The acceptance is still recorded, and the other scopes still win. Pinned because the naive
-    implementation - set every scope on the issue to won - loses that decision without a trace.
-    """
+def test_a_signature_on_a_lost_project_is_recorded_but_leaves_it_lost():
+    """BE4. A person decided Lost; a signature must not overrule it silently."""
     with blank_session() as db:
-        project, document, owner, scopes = _setup(
+        project, document, owner, _scopes = _setup(
             db, scopes=("Townhouse", "Guard house")
         )
-        townhouse, guard_house = scopes
-        quotes.set_outcome(
-            db, quotation=townhouse, outcome="lost", loss_reason="price"
-        )
+        project.outcome = "lost"
+        project.loss_reason = "price"
         db.flush()
 
         _sign_draft(db, document, owner)
         record = qdocs.issue(db, document=document, actor_user_id=owner)
-        qdocs.accept_issue(
-            db,
-            terms_accepted=True,
-            record=record,
-            signer_name=f"{MARKER} Kelly",
-            mode="type",
-            image_data_uri=A_SIGNATURE,
-        )
+        _accept(db, record, mode="type")
 
-        db.refresh(townhouse)
-        db.refresh(guard_house)
-        assert townhouse.outcome == "lost"
-        assert guard_house.outcome == "won"
         assert record.accepted_at is not None
-        # Any-won wins, so the project is won even with one scope lost.
-        assert quotes.derive_project_outcome(db, project) == "won"
+        db.refresh(project)
+        assert project.outcome == "lost"
+        assert project.loss_reason == "price"
+
+
+def test_a_signature_on_a_won_project_changes_nothing():
+    with blank_session() as db:
+        project, document, owner, _scopes = _setup(db)
+        project.outcome = "won"
+        db.flush()
+
+        _sign_draft(db, document, owner)
+        record = qdocs.issue(db, document=document, actor_user_id=owner)
+        _accept(db, record)
+
+        assert record.accepted_at is not None
+        db.refresh(project)
+        assert project.outcome == "won"
 
 
 def test_signing_twice_keeps_the_first_signature_and_the_first_timestamp():

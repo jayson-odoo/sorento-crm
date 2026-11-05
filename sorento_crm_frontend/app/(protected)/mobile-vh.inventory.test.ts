@@ -105,7 +105,6 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/project-sales/[projectId]/components/ProjectDocumentsPanel.tsx',
   'app/(protected)/project-sales/[projectId]/components/PurchaseOrderDialog.tsx',
   'app/(protected)/project-sales/[projectId]/components/QuotationDialog.tsx',
-  'app/(protected)/project-sales/[projectId]/components/QuotationOutcomeDialog.tsx',
   'app/(protected)/project-sales/[projectId]/components/SalesOrderBuildDialog.tsx',
   'app/(protected)/project-sales/[projectId]/components/SalesOrderPublishDialog.tsx',
   'app/(protected)/project-sales/[projectId]/components/SalesOrderRegroupDialog.tsx',
@@ -281,13 +280,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches its baseline (205 lines, 142 files)', () => {
+  it('the allowlist matches its baseline (203 lines, 141 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(142);
-    expect(matchingLines).toBe(205);
+    expect(ALLOWLIST.size).toBe(141);
+    expect(matchingLines).toBe(203);
   });
 });

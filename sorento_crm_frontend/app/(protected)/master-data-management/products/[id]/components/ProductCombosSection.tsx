@@ -515,7 +515,7 @@ function ComboBlock({
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
       {/* PRICETAG-LPSP: the combo's own price tag templates (manage permission only). */}
-      <ComboTemplatesField comboId={combo.id} />
+      <ComboTemplatesField comboId={combo.id} parts={combo.parts} />
       {/* The combo's own text and prices, printed on the tag (PRICETAG-COMBO).
           Same fields read-only and editing; edits save on blur. */}
       {canEdit ? (

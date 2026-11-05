@@ -460,9 +460,8 @@ def delete_po(db: Session, *, po: ProjectPurchaseOrder) -> None:
 def _advance_to_po_received(db: Session, project: Project) -> bool:
     """AC-F10. Returns whether the status actually moved.
 
-    Outcome is deliberately untouched: it is derived from quotations (AC-E10), and a PO
-    against a lost scope is a data problem somebody should see rather than something to
-    paper over by flipping the outcome.
+    When it moves, the project is Won (a PO is the commercial yes). When it does not move,
+    the outcome is untouched.
     """
     from app.models.status import Status
     from app.services import status_service
@@ -508,6 +507,8 @@ def _advance_to_po_received(db: Session, project: Project) -> bool:
                 db, entity_type, project.status_id, target.id, scope_id=scope_id
             )
         project.status_id = target.id
+        project.outcome = "won"
+        project.loss_reason = None
         db.flush()
         return True
     except AppException:

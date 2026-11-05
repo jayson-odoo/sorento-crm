@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -610,12 +611,40 @@ class CropRect(_StrictProps):
     height: float
 
 
+class SlotMain(_StrictProps):
+    kind: Literal["main"]
+
+
+class SlotFixed(_StrictProps):
+    kind: Literal["fixed"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotPick(_StrictProps):
+    kind: Literal["pick"]
+    group: int = Field(ge=0, lt=32)
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotUpgrade(_StrictProps):
+    kind: Literal["upgrade"]
+    index: int = Field(ge=0, lt=64)
+
+
+#: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade]
+
+
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    #: PRICETAG-DESIGNER-GAPS item 1: mirror about the layer box. Absent = not flipped.
+    flipX: Optional[bool] = None
+    flipY: Optional[bool] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class LayerPaddingDoc(_StrictProps):
@@ -639,6 +668,8 @@ class TextLayerPropsDoc(_StrictProps):
     lineHeight: float
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+    showCurrency: Optional[bool] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -664,6 +695,7 @@ class ShapeLayerPropsDoc(_StrictProps):
 class ProductSlotLayerPropsDoc(_StrictProps):
     kind: Literal["product_slot"]
     fieldKey: str
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PriceBadgeLayerPropsDoc(_StrictProps):
@@ -701,6 +733,7 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     # used to do both jobs at once - `priceBadgeInsets` in the frontend's
     # `price-badge.ts` is the one place that resolves the legacy rule.
     margin: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
@@ -808,11 +841,25 @@ class TagTemplateCreate(BaseModel):
     print_size: dict = Field(default_factory=dict)
 
 
+#: A template setting that is trimmed and must not be blank (item 4).
+_SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+_SettingText50 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
 class TagTemplateUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=255)
-    family: Optional[str] = Field(default=None, max_length=50)
+    #: PRICETAG-DESIGNER-GAPS item 4: editable after create, never blank.
+    name: Optional[_SettingText255] = None
+    family: Optional[_SettingText50] = None
     doc: Optional[dict] = None
     print_size: Optional[dict] = None
+
+
+class TemplateNeeds(BaseModel):
+    """PRICETAG-COMBO-RENDER K4: what a template reads from a combo, from its PUBLISHED document."""
+
+    fixed: int = 0
+    groups: list[int] = []
+    upgrades: int = 0
 
 
 class TagTemplateResponse(BaseModel):
@@ -834,6 +881,7 @@ class TagTemplateResponse(BaseModel):
     # route substitutes a VERSION's doc/print_size for the draft above.
     published_version_id: Optional[str] = None
     published_version_no: Optional[int] = None
+    needs: Optional[TemplateNeeds] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1152,7 +1200,8 @@ class LinePricingRequest(BaseModel):
 class LinePricingPromotionOption(BaseModel):
     id: str
     description: str
-    sell_price: float
+    #: None on a combo line whose combo stores no selling price (never a part sum).
+    sell_price: Optional[float] = None
     # PRICE-TAG-A3-EXPIRED: the end date of an ended A3 flyer still pricing
     # tags inside its type's bound; null for a live promotion. The dropdown
     # labels the option "(expired <date>)" from it.
@@ -1178,7 +1227,7 @@ class LinePricingRow(BaseModel):
     """
 
     key: str
-    list_price: float
+    list_price: Optional[float] = None
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
     sell_price: Optional[float] = None
@@ -1275,6 +1324,7 @@ class ProductTagData(BaseModel):
     currency: str = "MYR"
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1408,6 +1458,23 @@ class TagPartData(BaseModel):
     chosen: Optional[bool] = None
 
 
+class TagSlotGroup(BaseModel):
+    role: str
+    size: int
+    picks: list[TagPartData] = []
+
+
+class TagSlots(BaseModel):
+    """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
+    choice groups with their picks in pick order, upgrades with `chosen`)."""
+
+    #: The main product's own data (its picture and list price, never the combo's).
+    main: Optional[TagPartData] = None
+    fixed: list[TagPartData] = []
+    groups: list[TagSlotGroup] = []
+    upgrades: list[TagPartData] = []
+
+
 class ResolvedLineData(BaseModel):
     """Display data for one TAG, for the designer and the print page (D3).
 
@@ -1447,6 +1514,7 @@ class ResolvedLineData(BaseModel):
     included_accessories: str = ""
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1645,6 +1713,7 @@ class ProductTagTemplateItem(BaseModel):
     height_mm: Optional[float] = None
     #: PRICETAG-LPSP: the link preselected on a line (a lone link counts).
     is_default: bool = False
+    needs: Optional[TemplateNeeds] = None
 
 
 class ProductTagTemplatesUpdate(BaseModel):

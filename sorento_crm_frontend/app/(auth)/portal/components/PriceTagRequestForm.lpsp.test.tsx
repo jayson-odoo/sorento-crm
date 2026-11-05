@@ -199,6 +199,7 @@ async function addPickedLine() {
 
 async function pickCustomerAndAddLine() {
   await selectOption('Customer', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   await addPickedLine();
 }
 
@@ -247,6 +248,7 @@ describe('PriceTagRequestForm copy (AC-23)', () => {
   it('does not bring the text back once an item has been removed again', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await addPickedLine();
     fireEvent.click(screen.getByRole('button', { name: 'Remove line 1' }));
     expect(screen.queryByText(/Add an item to see its tag/)).toBeNull();
@@ -266,6 +268,7 @@ describe('PriceTagRequestForm per-line price type (AC-19)', () => {
   it('a line added under Selling posts selling', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await openPriceSection();
     fireEvent.click(await screen.findByRole('radio', { name: 'Selling price' }));
     await addPickedLine();
@@ -335,6 +338,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       { product_code: P3.code },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 3');
     await openPriceSection();
     fireEvent.click(await screen.findByRole('radio', { name: 'Selling price' }));
@@ -355,6 +359,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       { product_code: P2.code },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 2');
     await openPriceSection();
     fireEvent.click(await screen.findByRole('radio', { name: 'Selling price' }));
@@ -375,6 +380,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       { product_code: P3.code, price_type: null },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 3');
     sendToMarketing();
     const payload = await lastCreatePayload();
@@ -390,6 +396,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     await screen.findByLabelText('Customer');
     await applyExtract([{ product_code: P1.code, price_type: 'selling', typed_sell_price: 1729 }]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     const input = (await screen.findByLabelText('Selling price for line 1')) as HTMLInputElement;
     expect(input.value).toBe('1729');
     sendToMarketing();
@@ -406,6 +413,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       { product_code: P2.code, price_type: 'selling', typed_list_price: 2155 },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 2');
     sendToMarketing();
     const payload = await lastCreatePayload();
@@ -452,6 +460,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 1');
     sendToMarketing();
     const payload = await lastCreatePayload();
@@ -508,6 +517,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
         captured.onApply?.({ productLines: [SET_ROW] });
       });
       await selectOption('Customer', 'ZZTD01');
+      fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
       await screen.findByLabelText('Quantity for line 1');
       sendToMarketing();
       const payload = await lastCreatePayload();
@@ -532,6 +542,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
         captured.onApply?.({ productLines: [SET_ROW] });
       });
       await selectOption('Customer', 'ZZTD01');
+      fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
       await screen.findByLabelText('Quantity for line 1');
       sendToMarketing();
       const payload = await lastCreatePayload();
@@ -564,6 +575,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
       { product_code: P1.code, price_type: 'selling' },
     ]);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await screen.findByLabelText('Quantity for line 1');
     expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
     sendToMarketing();

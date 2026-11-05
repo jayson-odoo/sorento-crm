@@ -48,6 +48,7 @@ import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -340,6 +341,23 @@ function renderImageLayer(
 
   const url = imageUrlFor(layer, media, resolved);
   const circle = props.maskShape === 'circle';
+  // No photo prints nothing: the grey box is an editor placeholder, not part of a tag.
+  if (!url) return null;
+  const mirror = cssFlipTransform(props);
+  const picture = isCropped(props.cropRect) ? (
+    <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
+  ) : (
+    <img
+      src={url}
+      alt=""
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit:
+          props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+      }}
+    />
+  );
 
   return (
     <div
@@ -356,24 +374,28 @@ function renderImageLayer(
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: url ? 'transparent' : '#f5f5f5',
       }}
     >
-      {url &&
-        (isCropped(props.cropRect) ? (
-          <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
-        ) : (
-          <img
-            src={url}
-            alt=""
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit:
-                props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
-            }}
-          />
-        ))}
+      {mirror ? (
+        // Mirror the whole fitted picture about the layer box, the same thing
+        // the canvas does (`konvaFlip`). A wrapper only when flipped, so an
+        // old document prints the exact tree it always did.
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            transform: mirror,
+          }}
+        >
+          {picture}
+        </div>
+      ) : (
+        picture
+      )}
     </div>
   );
 }

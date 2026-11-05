@@ -22,7 +22,8 @@ export type SellPriceBasis = 'manual' | 'promotion' | 'list';
 export interface LinePricingPromotionOption {
   id: string;
   description: string;
-  sell_price: number;
+  /** Null on a combo line whose combo stores no selling price (never a part sum). */
+  sell_price: number | null;
   /** `YYYY-MM-DD` when the promotion has ended but still prices inside its
    * type's grace (PRICE-TAG-A3-EXPIRED); null while it is live. */
   expired_on?: string | null;
@@ -42,6 +43,14 @@ export function promotionOptionName(
   return `${option.description} (expired ${formatDateInMalaysia(match[0])})`;
 }
 
+/** The dropdown label: the name, and the figure only when the option has one. */
+export function promotionOptionLabel(
+  option: Pick<LinePricingPromotionOption, 'description' | 'expired_on' | 'sell_price'>,
+): string {
+  const name = promotionOptionName(option);
+  return option.sell_price == null ? name : `${name} - RM ${option.sell_price.toLocaleString('en-MY')}`;
+}
+
 export interface LinePricingCandidate {
   product_id: string;
   list_price: number;
@@ -50,7 +59,8 @@ export interface LinePricingCandidate {
 
 export interface LinePricingResult {
   key: string;
-  list_price: number;
+  /** Null on a combo line whose combo stores no list price (never a part sum). */
+  list_price: number | null;
   promotion_options: LinePricingPromotionOption[];
   auto_promotion_id: string | null;
   sell_price: number | null;
