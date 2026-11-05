@@ -134,10 +134,10 @@ describe('fitReason', () => {
     const m = await mod();
     const shape = m.comboShape(S4_PARTS);
     expect(m.fitReason({ fixed: 1, groups: [], upgrades: 0 }, shape)).toBe(
-      'Needs 1 fixed part; this combo has 2',
+      "Prints 1 of this combo's 2 fixed parts",
     );
     expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, shape)).toBe(
-      'Needs 0 fixed parts; this combo has 2',
+      "Prints 0 of this combo's 2 fixed parts",
     );
   });
   it('S5: the upgrade need fits one upgrade, two do not, none on a combo without', async () => {
