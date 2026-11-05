@@ -1,7 +1,8 @@
-# CARD: price tag combo format (rich description, LP/SP templates, designer preview picture)
+# CARD v2: price tag combo format (rich description, LP/SP templates, combo photo preview)
 
 Lane PRICETAG-COMBO-FORMAT, 5 Nov 2026. Read of `origin/main` e25d9b65 (PRICETAG-LPSP #2158 merged) plus
-the PRICETAG-COMBO-RENDER branch (#2172, open). Build waits for the owner's mock approval and #2172's merge.
+the PRICETAG-COMBO-RENDER branch (#2172, open). Build waits for the owner's approval of mock v2 and #2172's
+merge.
 
 Owner, 5 Nov ~09:35 MYT: "in the description I think need to be able to do formatting so it can look close
 to their existing price tag, and the wording I think need to be able to toggle between LP and SP depending
@@ -9,167 +10,186 @@ on the selection, or we can tie 1 template to LP or 1 to SP then it is more flex
 combo can tie to 1 or more LP or SP template, cause for LP, there is no LP or SP wording like the SP
 template, think we need to use our existing preview function for the pic here"
 
+## Owner answers to card v1 (5 Nov ~10:00 MYT, verbatim)
+
+"Q1 we should reuse our existing rich text formatting engine la, not just bold, Q2 again, should reuse our
+rich text formatting engine which should have colour also, we need to have a complete rich text editor, Q3
+all by hand, Q4 should be hand selected la the LP or SP or LP & SP, Q5 hmm I actually mean like I cna
+preview the photo of the combo, not the price tag of the combo"
+
+Mock v1 notes (09:46): "should reuse our formatting engine in the system, not just bold la"; "should be
+LP & SP"; "the rest all good".
+
+So: A = the app's rich text editor, made complete (colour included) in the shared engine; no bold script;
+B = price type picked by hand; C = the combo photo opens full size in the app's image preview. The v1
+designer changes (eye on combo templates, one picker) are dropped; the designer's "Preview combo" select
+stays as today.
+
 ## What exists today (measured)
 
 - **Description is plain text, one style per layer.** `product_combos.description` (Text,
   `app/models/product_combo.py:73`) and `products.price_tag_description` (`app/models/product.py:325`).
   The combo editor saves it from a plain `Textarea` on blur (`ProductCombosSection.tsx:152`, `:537-544`).
-  The tag prints it through the `combo_description` slot (`lib/dealer-kit/product-block.ts:324-330`,
-  falls back to the product's `price_tag_description`). A text layer has ONE face: bold, colour,
-  underline apply to the whole layer (`KonvaTagLayer.tsx:593-614`, one Konva `Text` node; line breaks from
-  the shared `textLayerLines`). The print page draws the same lines as DOM (`TagSheetRenderer.tsx`, "not
-  Konva" by design). So "code bold, part name normal" is impossible today.
-- **Rich text pieces already in the app:** `components/ui/rich-text-editor.tsx` (tiptap, emits HTML) and
-  `lib/sanitize.ts` (DOMPurify, frontend only). There is NO backend HTML sanitiser.
-- **Other readers of the description:** `tag_data_service.py:1092` (tag data), `product_combo_service.py:139`
-  (combo API), `price_tag_request_service.py:2224` (blank check), `project_spec_sheet_service.py`
-  (spec sheet PDF reads `price_tag_description`).
+  The tag prints it through the `combo_description` slot (`lib/dealer-kit/product-block.ts:324-330`).
+  A text layer has ONE face (`KonvaTagLayer.tsx:593-614`, one Konva `Text`; lines from `textLayerLines`);
+  the print page mirrors it as DOM (`TagSheetRenderer.tsx`).
+- **The rich text engine:** `components/ui/rich-text-editor.tsx` (tiptap 3 `StarterKit` + `Link`, plus
+  `Mention` when asked), used by 8 screens (tickets, email templates, quotation letters / templates / cover).
+  Toolbar (`:185-300`): Bold, Italic, Strikethrough, Inline code, H1-H3, Bullet list, Numbered list,
+  Blockquote, Link, Undo, Redo. **No colour, no underline button, no alignment.** It emits HTML
+  (`editor.getHTML()`, `:558`; empty = "", `:559`). Display elsewhere goes through `lib/sanitize.ts`
+  (DOMPurify, frontend only). **The backend has no HTML sanitiser.**
+- **A colour control exists:** the tag designer's `ColorPicker`
+  (`app/(protected)/dealer-kit/tag-templates/components/ColorPicker.tsx`: spectrum, hex, eyedropper, brand
+  swatches), no dependency.
 - **LP/SP today (PRICETAG-LPSP, merged):** each request line has `price_type` (`list` | `selling`,
-  `price_tag.py:218`). A template is NOT typed: `dealer_kit.tag_template` has name, family, doc, print_size
-  only (`dealer_kit.py:705-761`). A product / combo links 0..n templates with ONE default
-  (`product_tag_template`, `combo_tag_template`, partial unique index on `is_default`, `dealer_kit.py:799-877`);
-  `pick_template` takes the sent pick, else the default, else a lone link (`product_tag_template_service.py:104-118`).
-  Today's LP vs SP difference lives only in the layers: a `price_badge` `list_only` / `promo` variant, or a
-  text layer bound to `list_price` / `sell_price`, or LPSP's dual slots `price` + `price_label`
-  (`product-block.ts:366-385`). Names such as "Small Price Tag LP" / "Bathroom Furniture SP" are only names.
-- **Designer picture.** The "No image" box is `ImageContent` (`KonvaTagLayer.tsx:460-502`); its URL comes from
-  `layerDisplay` -> `boundImageUrl` (`product-block.ts:1175`, `:1290-1298`). The eye on the frame appears only
-  when a loose layer is bound to a slot in `PRODUCT_SLOTS` (`lib/dealer-kit/preview.ts:54-67`, `:154`), and
-  that list has no `combo_*` slot. The eye opens `ProductPickDialog` (products / sets only,
-  `TagCanvasEditor.tsx:1208-1262`). Combos are previewed through a SEPARATE "Preview combo" select above the
-  canvas (`TagCanvasEditor.tsx:4671-4690`) which loads `GET /dealer-kit/products/{host}/tag-data?combo_id=`
-  (`tag_data.py:72-91`); the combo photo leads the image list via `_lead_with_cover`
-  (`tag_data_service.py:1216-1223`), signed by `gallery_images` (`product_images.py:139-199`). That is the
-  one image pipeline: request preview, PDF and designer all read `images[].url` from tag-data.
-  So a combo-only template like screenshot 3 shows "No image" until someone finds the separate select.
+  `price_tag.py:218`). A template has no type (`dealer_kit.py:705-761`). A product / combo links 0..n
+  templates with ONE default (`product_tag_template`, `combo_tag_template`, partial unique index on
+  `is_default`, `dealer_kit.py:799-877`); `pick_template` = sent pick, else default, else a lone link
+  (`product_tag_template_service.py:104-118`).
+- **Combo photo:** a 56 px thumbnail with Replace / Clear (`ProductCombosSection.tsx:362-390`), no click
+  action. Its URL is already the full-size signed original (`product_combo_service.py:112-130`,
+  `{attachment_id, url}`). The app's image preview is `components/common/AttachmentPreviewModal.tsx`
+  (zoom, download; used by price tag requests, packing lists, stock inquiries, purchase requests, loading
+  plan, chat history, chatbot console).
 
 ## Rules (proposed)
 
-### A. Description formatting
+### A. Description = the app's rich text editor, complete
 
-A1. **Stored as text with one marker, never HTML.** `**bold**` inside the same Text columns
-    (`product_combos.description`, `products.price_tag_description`); line breaks stay newlines. No schema
-    change, no HTML stored, nothing to sanitise server-side: it is plain text with two asterisks. Every
-    existing description stays valid and prints exactly as today.
-A2. **Editor:** the existing Description box gains a Bold button (and Ctrl/Cmd+B) that wraps the selection in
-    `**`; beside it, a live tag preview of this combo with its default template (same renderer as the PDF),
-    so the user sees bold, not asterisks, before saving (Q1).
-A3. **One parser, two renderers.** One function turns the text into lines of runs
-    (`{text, bold}`); the canvas draws runs (Konva text per run) and the print page draws runs (`<span>`
-    text nodes, never `innerHTML`). Line wrapping measures each run in its own face, so canvas, request
-    preview and PDF break at the same place. Anything typed that looks like HTML (`<b>`) prints literally.
-A4. **Colour comes from the template, not the description.** A text layer gains "Bold text colour"
-    (default = the layer's colour). The flyer look (code black/green bold, part name and dimensions grey)
-    is: layer colour grey, bold colour black. No per-word colour picker (Q2).
-A5. **Bold is manual.** MIRROR and SHELF are bold on the flyer and are not codes, so auto-bold of catalogue
-    codes cannot produce the flyer by itself. Existing combo descriptions get a one-time, dry-run-first
-    script that bolds the first token of each line that resolves to a catalogue product code; owner approves
-    the report before `--apply` (Q3).
-A6. **Every other reader strips the marker.** One `plain_text()` helper (backend) used by the spec sheet,
-    chatbot/MCP reads and any export, so no `**` ever reaches a customer outside the tag.
-A7. **Never silent loss** (standing rule). Unpaired `**` prints literally. A bold run that crosses a newline
-    closes at the line end. Overflow keeps today's layer fit rule; the live preview shows it before saving.
+A1. **One engine, made complete for everyone.** `RichTextEditor` gains, in the shared component (not a
+    tag-only fork): **Text colour** (the designer's `ColorPicker`, moved to `components/common/ColorPicker.tsx`
+    so there is one colour control; swatches = brand colours + "Remove colour"), **Highlight** (same picker),
+    an **Underline** button, and **Align left / centre / right**. New tiptap packages:
+    `@tiptap/extension-text-style` (TextStyle, Color, BackgroundColor), `@tiptap/extension-text-align`, and
+    `@tiptap/extension-underline` only if StarterKit 3 does not already carry the mark (checked at build),
+    same 3.22 line as the installed tiptap. All 8 existing screens get the new buttons (owner: "complete
+    rich text editor").
+A2. **Where it is used here:** the combo Description (`ProductCombosSection.tsx:537-544`) and the product's
+    price tag description (`ProductSpecificationsTab.tsx:179`). Beside it, a live tag preview of this item
+    with its default template (`DesignViewer`, the renderer the request preview uses). Save on blur as today.
+A3. **Storage = sanitised HTML in the same Text columns.** No schema change for text. **Server-side
+    allow-list on every write** (combo API, product API, importer, flyer re-seed, AI extract): elements
+    `p br strong em s u code h1 h2 h3 ul ol li blockquote a span mark`; every attribute dropped except
+    `style` holding ONLY `color` / `background-color` with a hex or `rgb()` value, and `text-align` with
+    `left|center|right` on blocks; `a` keeps no `href` on tag fields. `script` / `style` / `iframe` / `object`
+    are dropped with their content; any other tag is removed and its text kept. One helper,
+    `app/utils/tag_rich_text.py` (`sanitise_tag_html()`, `plain_text()`), built on the standard library's
+    `html.parser` (no new backend dependency).
+A4. **One parser, every renderer, no innerHTML.** One FE function (`lib/dealer-kit/rich-text.ts`) turns the
+    stored value into blocks of runs (`{text, bold, italic, underline, strike, code, color, highlight}`;
+    block = paragraph / heading 1-3 / list item with bullet or number / quote, each with its alignment).
+    The canvas (`KonvaTagLayer.tsx` `TextContent`), the request preview (`DesignViewer`) and the print/PDF
+    page (`TagSheetRenderer.tsx`: React text nodes and `<span>`s, never `innerHTML` /
+    `dangerouslySetInnerHTML`) all draw that model; `textLayerLines` wrapping becomes run-aware so all three
+    break lines at the same place. Colours are re-validated by the parser (hex / rgb only) before drawing.
+A5. **What each item prints on a tag** (face and base size from the template layer): bold, italic,
+    underline, strikethrough, colour, highlight as marked; inline code in a monospace face; Heading 1 / 2 / 3
+    bold at 1.4x / 1.2x / 1.1x; bullet "•" and numbered "1." with a hanging indent; quote indented; alignment
+    per paragraph (unset = the layer's alignment); a link prints its text. Nothing is dropped.
+A6. **Font and base size stay the template's** (Q1), so every combo on one template keeps the same layout;
+    headings give the bigger sizes.
+A7. **Legacy plain text stays valid.** A stored value that does not start with an allowed block tag is plain
+    text: each line is a paragraph. It prints exactly as today; opening it in the editor shows the same lines;
+    saving writes HTML. No data migration, no script: existing descriptions are formatted by hand (Q3 b).
+A8. **Every non-tag reader gets plain text** via `plain_text()` (keeps line breaks, "• " and "1. "; drops all
+    markup): spec sheet (`project_spec_sheet_service.py`), chatbot / MCP reads, importer dry-run report, any
+    xlsx export.
+A9. **Merge fields stay safe.** `price_tag_description` holds merge fields (`{{...}}`); they resolve on TEXT
+    runs after parsing, so a spec value containing `<` prints as `<` and never becomes markup.
+A10. **Never silent loss.** Overflow keeps today's layer fit rule; the live preview shows it before saving.
 
-### B. LP / SP per template
+### B. LP / SP per template, picked by hand
 
-B1. **A template has a price type:** `LP`, `SP` or `LP or SP`. New column `dealer_kit.tag_template.price_type`
-    (`list` | `selling` | NULL = either). Set in the template's settings next to Family. An `LP or SP`
-    template is one that uses LPSP's `price` / `price_label` slots and serves both (owner's Q1 a of 4 Nov keeps
-    working).
-B2. **Links are unchanged in shape:** a product or combo still links 1..n templates; now it can link several
-    LP and several SP templates. **One default per price type** (one default LP, one default SP); the DB partial
-    unique index on `is_default` becomes a service check per (owner, price type) (Q4).
-B3. **The request line offers only matching templates.** LP line: LP templates + `LP or SP` templates.
-    SP line: SP + `LP or SP`. Flipping the line's LP/SP switches to that type's default; if the current pick
-    still matches it is kept.
-B4. **No matching template = visible, not silent.** An SP line whose item has no SP (or either) template
-    shows "No SP template linked" in the row, the eye is disabled, and Submit/Approve refuse the line with
-    that reason. Never fall back to the other type's template (that is how an LP tag would print with SP
-    wording or vice versa).
-B5. **What prints:** unchanged renderer. An LP template prints only what its layers bind (typically
-    `list_price` or a `list_only` badge: "RM 730", no "LP"/"SP" word unless designed in). An SP template prints
-    what the flyer shows: a `list_price` text layer "LP: RM 730" plus the `promo` badge "SP RM 459".
-B6. **Existing templates are classified from their layers, not their names:** `promo` badge or `sell_price`
-    binding -> SP; only `list_only` badge / `list_price` binding -> LP; `price`/`price_label` or no price at all
-    -> LP or SP. Dry-run report listing every template, its type and the name check (name says LP but layers
-    say SP is flagged), owner approves before write. Existing request lines keep their stored template
-    (approved tags keep their pinned data); only new picks are filtered.
-B7. Cabana (no selling price brand): an SP line still needs a typed SP (LPSP R2); with it, SP templates are
+B1. **A template has a price type, chosen by hand** in the template settings next to Family:
+    `LP`, `SP` or `LP & SP` (owner Q4). New nullable column `dealer_kit.tag_template.price_type`
+    (`list` | `selling` | `both`). No classification from layers, no name parsing.
+B2. **Existing templates start unset.** The template list shows a "Set price type" badge on them. Until set,
+    an unset template is offered on both LP and SP lines, exactly like today, so nothing changes on release.
+    The template list can be filtered to "Price type: not set" so the owner can work through them.
+B3. **Links:** a product or combo links 1..n templates (several LP, several SP). **One default LP and one
+    default SP** per product / combo; an `LP & SP` or unset template can be the default for either. The DB
+    partial unique index on `is_default` becomes `default_for` (`list` | `selling`) on the link, unique per
+    (owner, default_for); today's default becomes the default for both on migration.
+B4. **The request line offers only matching templates.** LP line: LP + LP & SP + unset. SP line: SP +
+    LP & SP + unset. Flipping the line's LP/SP switches to that type's default; a current pick that still
+    matches is kept.
+B5. **No matching template = visible, not silent.** An SP line whose item has no SP-capable template shows
+    "No SP template linked" in the row, the line's preview eye is disabled, and Submit / Approve refuse the
+    line with that reason. Never fall back to an LP-only template (or the reverse).
+B6. **What prints:** the renderer is unchanged. An LP template prints what its layers bind (e.g. "RM 730",
+    no "LP"/"SP" word unless designed in). An SP template prints the flyer: "LP: RM 730" and the big
+    "SP RM 459". An LP & SP template uses LPSP's `price` / `price_label` slots and prints whichever the
+    line is.
+B7. Changing a template's price type never rewrites existing request lines; approved tags keep their pinned
+    data. Only new picks are filtered.
+B8. Cabana (no selling price brand): an SP line still needs a typed SP (LPSP R2); with it, SP templates are
     offered as for any item.
 
-### C. Designer picture through the existing preview
+### C. Combo photo opens full size (owner Q5)
 
-C1. **The eye shows for combo templates too.** `combo_*` slots join `PRODUCT_SLOTS`, so a tag built from
-    `{{combo.name}}`, `{{combo.description}}` and a combo photo layer gets the frame's eye.
-C2. **One picker.** The eye's `ProductPickDialog` searches products AND combos (combos labelled "Combo",
-    e.g. "SRTBF11416 Bathroom Furniture"). Picking a combo runs today's `handlePreviewCombo`
-    (`tag-data?combo_id=`), so the picture is the combo photo from the same `gallery_images` signed URL that
-    the request preview and the PDF use, drawn by the same `ImageContent`. The separate "Preview combo"
-    select is removed (one entry point, Q5).
-C3. **Preview data is never saved** (as today: `previews` is editor-only state).
-C4. Edge: a combo with no photo shows its host product's primary photo (today's `_lead_with_cover` rule);
-    a combo whose host has no photo at all shows "No image" plus the combo code, never a stale picture.
-    An image layer with no binding stays a placeholder: the inspector's Product/Combo photo binding is how
-    a layer gets a picture.
+C1. In the product page's Combos section, clicking the combo photo thumbnail (beside Replace / Clear) opens
+    `AttachmentPreviewModal` with that photo full size (zoom, download), the same component used for photos
+    on the price tag request and elsewhere. Item = `{id: image.attachment_id, name: combo name, url:
+    image.url}`; the URL is already the signed original, so there is no new endpoint.
+C2. The thumbnail is a button labelled "Preview photo of <combo name>" (keyboard and screen reader).
+    Read-only users can preview too; Replace / Clear stay edit-only.
+C3. No photo: no thumbnail (as today), so nothing to click. A URL that fails to load shows the modal's
+    existing "could not load" state, never a blank box.
+C4. The tag designer is unchanged (its "Preview combo" select stays as today).
 
-## Examples (real codes, from the owner's 4 screenshots and repo fixtures)
+## Examples (real codes, from the owner's screenshots and repo fixtures)
 
 The dev database is not reachable from this cloud sandbox (crew contract: no shared DB), so the figures are
 the owner's screenshots; the read-only SQL at the bottom lets crew confirm them on dev.
 
-- **E1 SRTBF11416 (Bathroom Furniture combo, white), SP line, template "Bathroom Furniture SP".** Stored
-  description: `**SRTBF11416** (CABINET)\nL400xW345xH390mm\n**SRTWB248** (BASIN)\nL430xW360xH150mm\n**MIRROR**\nL400xH500mm\n**SHELF**\nL400xH120mm\n**SRTWT5837**\n(BASIN COLD TAP)\n**SRTW2600**\n(POP UP WASTE)`.
-  Prints: codes, MIRROR, SHELF bold in the bold colour; part names and dimensions normal in grey; "LP: RM 730";
-  big "SP RM 459". Canvas, request preview and PDF identical.
-- **E2 same combo, LP line.** The template list offers only LP / either templates (e.g. "Small Price Tag LP").
-  Prints "RM 730" and the description; no SP block, no "LP"/"SP" word unless the template has one.
-- **E3 SRTBF11415 (black sibling).** Same description shape with its own code; the dry-run bold script
-  (A5) bolds SRTBF11415, SRTWB248, SRTWT5837, SRTW2600 (resolve in catalogue) and leaves MIRROR / SHELF for
-  manual bold, listing them in the report.
-- **E4 combo "SRTBF11829 + SRTMCB8083-BL" (LP 2,715, SP 2,099), no templates linked.** SP line row shows
-  "No SP template linked"; eye disabled; Submit refuses with that reason. Linking "Bathroom Furniture SP" to
-  it makes the line printable.
-- **E5 Designer, template "Bathroom Furniture SP".** Eye top right -> picker -> type "SRTBF11416" -> pick the
-  Combo row -> image box shows the combo photo, `{{combo.name}}` -> the combo name, description bold per E1,
-  badge SP RM 459. Close the template without saving: nothing about SRTBF11416 is stored on it.
+- **E1 SRTBF11416 (Bathroom Furniture combo, white), SP line, template "Bathroom Furniture SP".** Formatted
+  by hand in the editor: codes, MIRROR, SHELF bold black; part names and dimensions grey (text colour).
+  Stored: `<p><strong>SRTBF11416</strong> <span style="color: #6b7280">(CABINET)</span></p><p><span
+  style="color: #6b7280">L400xW345xH390mm</span></p>...`. Prints the same on canvas, request preview and PDF,
+  then "LP: RM 730" and the big "SP RM 459". Plain-text readers get `SRTBF11416 (CABINET)\nL400xW345xH390mm\n...`.
+- **E2 same combo, LP line.** Offered: LP, LP & SP and still-unset templates (e.g. "Small Price Tag LP").
+  Prints "RM 730" and the description; no SP block, no "LP"/"SP" word.
+- **E3 combo "SRTBF11829 + SRTMCB8083-BL" (LP 2,715, SP 2,099), no templates linked.** SP line row shows
+  "No SP template linked"; preview eye disabled; Submit refuses with that reason.
+- **E4 template "Bathroom Furniture SP" on release day.** Price type unset, badge "Set price type", still
+  offered on LP and SP lines. The owner sets it to SP; from then on LP lines stop offering it.
+- **E5 SRTBF11829 + SRTMCB8083-BL combo photo.** Click the thumbnail -> the app's image preview opens the
+  photo full size with zoom; Escape closes it.
+- **E6 a ticket (existing screen).** The same editor now also has Colour, Highlight, Underline and alignment;
+  a red sentence is saved and shown red on the ticket.
 
-## Questions (each with a recommendation)
+## Open question (v2)
 
-- **Q1 Description editor.** (a) the existing text box + a Bold button, stored as `**bold**`, with a live tag
-  preview beside it; (b) a WYSIWYG box (our `RichTextEditor`, bold only) that shows bold directly and saves the
-  same `**` text. **Recommend (a)**: no new editor surface, the live preview is exactly what prints, and the
-  box stays pasteable from Excel / AI extract.
-- **Q2 Colour.** (a) bold only, plus a "Bold text colour" on the template's text layer (normal text grey, bold
-  black, as the flyer); (b) per-word colour from the template palette inside the description. **Recommend (a)**:
-  matches the flyer with one template setting, and every combo using the template stays consistent.
-- **Q3 Existing descriptions.** (a) manual bold, plus a one-time dry-run script that bolds catalogue codes at
-  line starts (owner approves the report); (b) manual only. **Recommend (a)**: most of the effort is bolding
-  codes, and MIRROR/SHELF-style words are reported for a quick manual pass.
-- **Q4 Template price type and defaults.** (a) each template is LP, SP or "LP or SP", classified from its
-  layers with a report before writing; each product/combo has one default LP and one default SP template;
-  (b) classify by the name suffix "LP"/"SP". **Recommend (a)**: names are free text and can lie; the layers are
-  what actually print.
-- **Q5 Designer preview entry.** (a) the eye's picker finds products and combos, and the separate "Preview
-  combo" box goes; (b) keep both: eye for products, the box for combos, and only make the eye appear on combo
-  templates. **Recommend (a)**: one way to preview, the eye you already pointed at.
+- **Q1 Font face and size inside the description.** (a) not in the editor: face and base size come from the
+  template layer, headings H1-H3 give the bigger sizes; (b) add Font size (and font) to the shared editor
+  too. **Recommend (a)**: every combo on one template keeps the same layout and fits its box, and the
+  owner's flyer uses one face with bold and colour, which (a) covers.
+
+## Edge cases
+
+- `<script>alert(1)</script>` posted straight to the API: stored as nothing; `<img src=x onerror=...>`:
+  removed; `<span style="color: red; background: url(javascript:...)">x</span>`: keeps only a valid colour
+  value; `<a href="javascript:...">x</a>`: stored `<a>x</a>`, prints "x".
+- Typed `<b>` in the editor is text (tiptap escapes it) and prints as `<b>`.
+- Nested lists: indent per level, numbering restarts per list.
+- Empty editor: stored NULL (the engine returns "" for an empty doc, `rich-text-editor.tsx:559`).
+- 5000 character limit as today, counted on the stored (sanitised) value.
+- White text on the white tag: allowed, visible in the live preview before saving.
 
 ## Crew read-only check on dev (optional)
 
 ```sql
--- templates and what their layers say (price type evidence)
-SELECT t.name,
-       t.doc::text LIKE '%"variant": "promo"%' OR t.doc::text LIKE '%"sell_price"%' AS has_sp,
-       t.doc::text LIKE '%"list_only"%' OR t.doc::text LIKE '%"list_price"%' AS has_lp,
-       t.doc::text LIKE '%"price_label"%' AS has_dual,
-       t.published_version_id IS NOT NULL AS published
+SELECT t.name, t.published_version_id IS NOT NULL AS published
 FROM dealer_kit.tag_template t ORDER BY t.name;
--- the real case
-SELECT c.name, c.list_price, c.sell_price, c.description
+SELECT c.name, c.list_price, c.sell_price, c.description, c.image_attachment_id IS NOT NULL AS has_photo
 FROM product_combos c JOIN products p ON p.id = c.host_product_id
 WHERE p.product_code IN ('SRTBF11416','SRTBF11415','SRTBF11829');
 ```
 
 ## Track
 
-Full track (migration: `tag_template.price_type`, index change on the two link tables; rendering change in
-both renderers; security review for the text-to-runs path even though no HTML is stored).
+Full track: migration (`tag_template.price_type`; `default_for` on the two link tables replacing the
+`is_default` unique index), shared-engine change (8 screens), all three renderers. **security-reviewer is
+mandatory**: stored HTML from several write paths, the allow-list sanitiser (style values included), the
+no-innerHTML render on the public print page (`app/(public)/c/print/...`), and merge fields inside rich text.
