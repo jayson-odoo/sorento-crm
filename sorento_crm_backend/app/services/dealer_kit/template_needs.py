@@ -7,6 +7,7 @@ highest position it reads, per kind. The same words are built on the frontend
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 
@@ -23,31 +24,63 @@ def _position(value, limit: int) -> Optional[int]:
     return value
 
 
+_TOKEN = re.compile(r"\{\{\s*([A-Za-z0-9_.]+)\s*\}\}")
+
+
+def _token_slot(path: str) -> Optional[dict]:
+    """The 0-based position a ``slot.<kind>.<n>[.<k>].<field>`` token names (1-based in the text),
+    or None for any other token or a malformed one. The same grammar as ``parseSlotToken`` in
+    ``lib/dealer-kit/merge-fields.ts``."""
+    parts = path.split(".")
+    if len(parts) < 4 or parts[0] != "slot" or parts[1] not in ("fixed", "upgrade", "pick"):
+        return None  # `slot.main.<field>` is the main product, which is never counted
+    kind, numbers = parts[1], parts[2:-1]
+    if not all(re.fullmatch(r"[1-9][0-9]*", n) for n in numbers):
+        return None
+    n = [int(x) - 1 for x in numbers]
+    if kind in ("fixed", "upgrade") and len(n) == 1:
+        return {"kind": kind, "index": n[0]}
+    if kind == "pick" and len(n) == 2:
+        return {"kind": "pick", "group": n[0], "index": n[1]}
+    return None
+
+
+def _slots_of(layer) -> list:
+    """Every position a layer reads: its ``subjectSlot`` and any ``{{slot.*}}`` token in its text."""
+    props = layer.get("props") if isinstance(layer, dict) else None
+    found = []
+    slot = props.get("subjectSlot") if isinstance(props, dict) else None
+    if isinstance(slot, dict):
+        found.append(slot)
+    if isinstance(layer, dict):
+        for text in (layer.get("text_override"), props.get("text") if isinstance(props, dict) else None):
+            if isinstance(text, str):
+                found += [s for s in (_token_slot(m) for m in _TOKEN.findall(text)) if s]
+    return found
+
+
 def template_needs(doc) -> dict:
     fixed = 0
     upgrades = 0
     groups: list[int] = []
     layers = doc.get("layers") if isinstance(doc, dict) else None
     for layer in layers if isinstance(layers, list) else []:
-        props = layer.get("props") if isinstance(layer, dict) else None
-        slot = props.get("subjectSlot") if isinstance(props, dict) else None
-        if not isinstance(slot, dict):
-            continue
-        kind = slot.get("kind")
-        index = _position(slot.get("index"), MAX_INDEX)
-        if index is None:
-            continue
-        if kind == "fixed":
-            fixed = max(fixed, index + 1)
-        elif kind == "upgrade":
-            upgrades = max(upgrades, index + 1)
-        elif kind == "pick":
-            group = _position(slot.get("group"), MAX_GROUP)
-            if group is None:
+        for slot in _slots_of(layer):
+            kind = slot.get("kind")
+            index = _position(slot.get("index"), MAX_INDEX)
+            if index is None:
                 continue
-            while len(groups) <= group:
-                groups.append(0)
-            groups[group] = max(groups[group], index + 1)
+            if kind == "fixed":
+                fixed = max(fixed, index + 1)
+            elif kind == "upgrade":
+                upgrades = max(upgrades, index + 1)
+            elif kind == "pick":
+                group = _position(slot.get("group"), MAX_GROUP)
+                if group is None:
+                    continue
+                while len(groups) <= group:
+                    groups.append(0)
+                groups[group] = max(groups[group], index + 1)
     return {"fixed": fixed, "groups": groups, "upgrades": upgrades}
 
 

@@ -195,3 +195,21 @@ describe('an empty price or picture prints nothing (AC-A3)', () => {
     expect(container.innerHTML).not.toContain('rgb(245, 245, 245)');
   });
 });
+
+describe('a per-position merge field prints what the preview draws (O1)', () => {
+  it('prints {{slot.fixed.2.code}} and is empty for a position the line lacks', () => {
+    const base = codeLayer(undefined);
+    const textLayer = (text: string): TagLayer =>
+      ({
+        ...base,
+        slot_binding: null,
+        props: { ...(base.props as object), text },
+      }) as unknown as TagLayer;
+    const layer = textLayer('A {{slot.fixed.1.code}} B {{slot.fixed.2.code}} C {{slot.fixed.3.code}}');
+    const data = { kind: 'line' as const, line: resolved(S4) as unknown as LineTagData };
+    expect(layerText(layer, data)).toBe('A SRTMCB8083-BL B SRTWT6203-GM C ');
+    const { container } = render(<TagSheetRenderer doc={docWith(layer)} resolvedData={{ [TAG_ID]: resolved(S4) }} />);
+    expect(container.textContent?.replace(/\s+/g, ' ')).toContain('A SRTMCB8083-BL B SRTWT6203-GM C');
+    expect(container.textContent).not.toContain('{{');
+  });
+});

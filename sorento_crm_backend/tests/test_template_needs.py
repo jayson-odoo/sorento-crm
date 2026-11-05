@@ -308,3 +308,21 @@ def test_r2_a_picks_template_on_a_combo_with_fixed_parts_and_no_group_names_the_
         _mod().fit_reason({"fixed": 0, "groups": [2], "upgrades": 0}, shape)
         == "Needs a choice group; this combo has none"
     )
+
+
+def _text_layer(**props):
+    return {"id": "t", "type": "text", "x_mm": 0, "y_mm": 0, "width_mm": 5, "height_mm": 5, "z_index": 1,
+            "props": {"kind": "text", **props}}
+
+
+def test_o1_per_position_merge_fields_count_as_positions():
+    doc = {"layers": [
+        _text_layer(text="{{slot.fixed.2.code}} and {{ slot.pick.2.3.name }}"),
+        {**_text_layer(text=""), "text_override": "{{slot.upgrade.1.list_price}}"},
+    ]}
+    assert _mod().template_needs(doc) == {"fixed": 2, "groups": [0, 3], "upgrades": 1}
+
+
+def test_o1_main_zero_and_malformed_tokens_need_nothing():
+    doc = {"layers": [_text_layer(text="{{slot.main.code}} {{slot.fixed.0.code}} {{slot.fixed.x.code}} {{product.code}} slot.fixed.5.code")]}
+    assert _mod().template_needs(doc) == {"fixed": 0, "groups": [], "upgrades": 0}
