@@ -24,6 +24,15 @@ if (typeof (globalThis as { ClipboardEvent?: unknown }).ClipboardEvent === 'unde
   (globalThis as unknown as { ClipboardEvent: unknown }).ClipboardEvent = ClipboardEventStub;
 }
 
+// ProseMirror scrolls the caret into view after a paste, and jsdom lacks the geometry it asks for.
+const emptyRects = { length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] };
+for (const proto of [Range.prototype, Text.prototype, Element.prototype] as Array<Record<string, unknown>>) {
+  if (typeof proto.getClientRects !== 'function') proto.getClientRects = () => emptyRects;
+}
+if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+  Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+}
+
 async function mount(initial = '<p>start</p>') {
   const onChange = vi.fn();
   let editor: Editor | null = null;
@@ -87,5 +96,38 @@ describe('the normaliser never rewrites text (R9)', () => {
     });
     await waitFor(() => expect(html()).toContain('style='));
     expect(html()).toBe('<p>style="a;b" and style="color: red;"</p>');
+  });
+});
+
+describe('pasted HTML from a word processor (R15)', () => {
+  it('R15: a Google Docs paste keeps its real bold / italic / underline and not a whole-paste bold', async () => {
+    const { editor, html } = await mount('<p></p>');
+    act(() => {
+      editor.commands.focus('end');
+      editor.view.pasteHTML(
+        '<b style="font-weight:normal" id="docs-internal-guid-x">' +
+          '<span style="font-weight:400">plain </span>' +
+          '<span style="font-weight:700">bold</span>' +
+          '<span style="font-style:italic"> ital</span>' +
+          '<span style="text-decoration:underline"> under</span></b>',
+      );
+    });
+    await waitFor(() => expect(html()).toContain('plain'));
+    expect(html()).toBe('<p>plain <strong>bold</strong><em> ital</em><u> under</u></p>');
+  });
+
+  it('R15: colour, background-color, background and text-align are still stripped from the same kind of paste', async () => {
+    const { editor, html } = await mount('<p></p>');
+    act(() => {
+      editor.commands.focus('end');
+      editor.view.pasteHTML(
+        '<p style="text-align:center;color:white;background:black"><span style="font-weight:700;color:red;background-color:yellow">loud</span></p>',
+      );
+    });
+    await waitFor(() => expect(html()).toContain('loud'));
+    for (const gone of ['color', 'background', 'text-align', 'white', 'yellow']) {
+      expect(html(), gone).not.toContain(gone);
+    }
+    expect(html()).toContain('<strong>loud</strong>');
   });
 });
