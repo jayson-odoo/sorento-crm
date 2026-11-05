@@ -88,12 +88,14 @@ offered when a console operator acts for someone else (an aggregate cannot be in
 - **Complaint product codes:** the header lists every line's code and the screen cuts it to the contact's brands,
   so `product_code` is `whole_document` too.
 - **Lookup module:** a relation's target module is checked; a lookup carries the module of the screen showing it.
-- `crm_query`'s schema is kept small (shapes in the description, items left open) for the token budget.
+- `crm_query`'s schema is kept small for the token budget, but every array names its `items` and every object its
+  `properties`: Gemini refuses anything less with a 400 and the whole turn fails (crew browser pass, 5 Nov).
+  `tests/chatbot/agent/test_agent_tool_schemas_gemini.py` checks every agent tool's converted declaration.
 
 ## Token measurement (AC-6)
 
 OpenAI `responses/input_tokens`, gpt-4.1 tokenizer, the same request with the in-process tool block (USER_READS,
-WRITES, plan and answer schemas) before and after: 2039 before, 2293 after, **+254 input tokens per model call** for
-a user offered the tools. The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
+WRITES, plan and answer schemas) before and after: 2039 before, 2344 after, **+305 input tokens per model call** for
+a user offered the tools (2293 before the Gemini fix below, which spells out every array's items). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
 is not met by this lane alone; the parent plan's lever is the module waves replacing per-module tools with
 registry entities.

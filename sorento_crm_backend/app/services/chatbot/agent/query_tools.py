@@ -77,6 +77,11 @@ def _describe(db, ctx, args: dict) -> ToolResult:
     return _as_user(db, ctx, DESCRIBE, lambda user_id: describe(db, user_id, entity))
 
 
+# Every array names its items and every object its properties: Gemini refuses a schema that does not (400),
+# and the turn then fails as a whole (`tests/chatbot/agent/test_agent_tool_schemas_gemini.py`).
+_TEXT = {"type": "string"}
+_SCALARS = [_TEXT, {"type": "number"}, {"type": "boolean"}]
+
 QUERY_SCHEMA = {
     "type": "function",
     "function": {
@@ -93,12 +98,22 @@ QUERY_SCHEMA = {
         "parameters": {
             "type": "object",
             "properties": {
-                "entity": {"type": "string"},
-                "fields": {"type": "array", "items": {"type": "string"}},
-                "filters": {"type": "array", "items": {"type": "object"}},
-                "group_by": {"type": "array"},
-                "aggregates": {"type": "array", "items": {"type": "object"}},
-                "sort": {"type": "array", "items": {"type": "object"}},
+                "entity": _TEXT,
+                "fields": {"type": "array", "items": _TEXT},
+                "filters": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"field": _TEXT, "op": _TEXT, "value": {"anyOf": [*_SCALARS, {"type": "array", "items": {"anyOf": _SCALARS}}]}},
+                    "required": ["field", "op"],
+                }},
+                "group_by": {"type": "array", "items": {"anyOf": [
+                    _TEXT, {"type": "object", "properties": {"field": _TEXT, "bucket": _TEXT}, "required": ["field"]},
+                ]}},
+                "aggregates": {"type": "array", "items": {
+                    "type": "object", "properties": {"fn": _TEXT, "field": _TEXT}, "required": ["fn"],
+                }},
+                "sort": {"type": "array", "items": {
+                    "type": "object", "properties": {"field": _TEXT, "dir": _TEXT}, "required": ["field"],
+                }},
                 "limit": {"type": "integer"},
             },
             "required": ["entity"],
