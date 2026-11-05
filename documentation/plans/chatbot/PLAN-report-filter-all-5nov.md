@@ -59,6 +59,13 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
 | `_carry`'s `answering` channel rule (CP-1: the channel carried only while a question is open) | the held channel kept on a reply | `_keep_held` for every turn (owner 3 Nov: a full new ask keeps the channel), FA-6, SC-8 updated |
 | HT1-18 echo rule (`report_ask.py:3589-3605` on main, keyed on top-level `sales_company`) | v202 "Sorenth" echo over a held Sorento | `_held_spelling`, FA-5c (now also with `sales_company` null, which the old rule refused) |
 
+Keyword rules (owner 5 Nov: "clear all" is never hard-coded; the parser reads the meaning, code applies the object).
+`report_ask.py` reads no message text: no regex, and `take_words` takes its text argument for the seam's shape only. One
+keyword rule did reach report turns: `order_list.clears_the_brand` ("all brands", "clear the brand", "no brand") and the
+raw-text `brand_word_alone` switch. Both ran at `engine.py:6895`, after `from_object`, whenever an order or outstanding
+list was open, so an outstanding report turn could be read by its words. Both now stand down on any turn whose parse
+carries a report object (`order_list.py:164`, K1). They stay for the plain order list, another lane's feature (K1 lock).
+
 `broaden_axis`, `scope_intent` and `entity_op: "clear"` are no longer read for reports on an ALL prompt (FA-2).
 `widened_kinds` stays for the which-one customer pick. `topic_reset` still means "no held report" (CL-7).
 
@@ -80,5 +87,5 @@ updated to the 3 Nov ruling.
 ## Prompt and gold
 
 Prompt candidate 698e137b, on the v72 base d29c1983: `PROMPT-report-filter-all-698e137b.md`. The gold rows are in
-`scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (12 rows). Crew runs the eval gate (cap USD 0.70, ORG key,
+`scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (28 rows, 16 of them EN / BM / ZH mixes of clear all and of one slot). Crew runs the eval gate (cap USD 0.70, ORG key,
 ledgered) and the #2156 replays on the Mac (crew Q5). Never published by the lane; only the owner moves the label.

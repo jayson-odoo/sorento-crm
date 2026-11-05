@@ -29,7 +29,7 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
 
 ## Gate (crew runs it on the Mac; this sandbox has no Gemini key and no prod-copy DB)
 
-- Gold: `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl`, 12 rows: clear brand, all brands, any agent, clear
+- Gold: `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl`, 28 rows. 16 of them are EN / BM / ZH mixes in the owner's style (clear every filter with no keyword, one slot to ALL). The other 12: clear brand, all brands, any agent, clear
   company, all companies, clear all, remove one of two brands, all customers, all channels, two forgotten-echo
   controls, and "all brands" with nothing held.
 - Regression controls: re-run `parser_report_totals_filters.jsonl` and `parser_report_semantic_carry.jsonl` on the

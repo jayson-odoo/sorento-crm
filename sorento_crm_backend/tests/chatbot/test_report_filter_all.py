@@ -338,3 +338,37 @@ def test_p2_the_committed_filter_all_gold_file_loads_whole() -> None:
     with open(path, encoding="utf-8") as fh:
         want = sum(1 for ln in fh if ln.strip())
     assert want >= 10 and len(pg.load_gold(path)) == want
+
+
+# ------------------------------------------------------------------------------------------ K: no keyword rule on the path
+
+
+@pytest.mark.parametrize("text", ["all brands", "clear the brand", "no brand", "sorento"])
+def test_k1_an_open_outstanding_list_never_reads_the_words_of_a_report_object_turn(text) -> None:
+    """Owner 5 Nov: no keyword or regex decides a report's filters; the parser's object does. `order_list.clears_the_brand`
+    and `brand_word_alone` stand down when the parse carries a report object."""
+    from app.services.chatbot.order_list import order_list_verdict
+    from app.services.chatbot.turn.state import Focus, State
+
+    focus = Focus(domains=["order"], status="do_outstanding", outstanding_brand_ids=["b1"])
+    verdict = {"order_status": "do_outstanding", "report_ask": _ra2(None, kind="outstanding", brands=[ALL]), "entities": []}
+    out, state, rule = order_list_verdict(None, verdict, State(focus=focus), text)
+    assert rule is None and out is verdict and state.focus.outstanding_brand_ids == ["b1"], rule
+
+
+def test_k1_lock_a_plain_order_list_turn_keeps_its_own_clear() -> None:
+    """The order list (no report object) is another lane's: its clear is untouched here."""
+    from app.services.chatbot.order_list import order_list_verdict
+    from app.services.chatbot.turn.state import Focus, State
+
+    focus = Focus(domains=["order"], status="do_outstanding", outstanding_brand_ids=["b1"])
+    _out, state, rule = order_list_verdict(None, {"report_ask": None, "entities": []}, State(focus=focus), "all brands")
+    assert rule == "order_list_brand_cleared" and state.focus.outstanding_brand_ids == []
+
+
+def test_k2_the_report_lane_reads_no_message_text() -> None:
+    """No regex and no text read in the report lane: `take_words` takes the text for its seam's shape only."""
+    import inspect
+
+    src = inspect.getsource(report_ask)
+    assert "import re\n" not in src and "re.compile" not in src and "re.search" not in src

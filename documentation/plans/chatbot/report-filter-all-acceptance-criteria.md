@@ -20,5 +20,7 @@ unless it names another file.
 | SC-8 (test_report_semantic_carry) | Dealer channel held | A restated product ask that leaves channel null | Channel dealer kept (owner 3 Nov) |
 | CL-1..CL-7 (test_report_totals_filters) | | Legacy-prompt clears | Unchanged |
 | HT1-18..20 (test_report_totals_filters_ht1) | | Company echo, switch, forbidden | Unchanged |
+| K1 | An outstanding list open | A report object turn saying "all brands" / "clear the brand" / "no brand" / a bare brand word | No keyword rule fires; the object decides (the plain order list keeps its own clear) |
+| K2 | | | The report lane imports no regex |
 | P1 | | | The candidate text is the v72 base (d29c1983) plus the ALL edits, md5 698e137b, and defines ALL; v72 does not |
-| G-1..12 (gold, crew-run) | `parser_report_filter_all.jsonl` | clear brand, all brands, any agent, clear company, all companies, clear all, remove one of two brands, all customers, all channels, two forgotten-echo controls, an ALL no-op | The parser writes ALL exactly there and keeps every other held slot |
+| G-1..28 (gold, crew-run) | `parser_report_filter_all.jsonl` | clear brand, all brands, any agent, clear company, all companies, clear all, remove one of two brands, all customers, all channels, two forgotten-echo controls, an ALL no-op; 16 EN / BM / ZH mixes ("buang semua filter", "清除所有筛选", "全部 la, 不要 filter", "semua brand", "所有公司", "any agent pun boleh" ...) | The parser writes ALL exactly there and keeps every other held slot |
