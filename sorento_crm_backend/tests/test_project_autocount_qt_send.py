@@ -1,0 +1,294 @@
+"""AC-QTSO-CRM Phase 2, RED: send a project quotation to AutoCount (create, then update).
+
+UAC U15, U16, U17, R5, R6. Route: `POST /api/v1/project-sales/quotation-documents/{document_id}/autocount`.
+
+Plan, "Routes": the document must be `kind = quotation` and its LATEST issue must carry
+`accepted_at`, else 409 "The customer has not accepted this quotation yet."; nothing new to send
+(the latest accepted issue is the one last sent) -> 409 "Already in AutoCount.".
+`send_quotation` creates when the document has no `autocount_doc_key`, else updates.
+Idempotency-Key: `crm-qt-{document_id}-{issue_id}-create|update`.
+
+R6 lines (rate-only skipped, sets exploded) are pinned at builder level by
+`tests/test_project_autocount_qt_payload.py`; here they are pinned on the wire and in the result
+note. The quotation has no order to derive a location from, so the location is the recipient
+customer's derived one (agent group BB -> BRW-BB); that reading of the plan is flagged in the report.
+"""
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+
+from tests._ac_write_support import (
+    BASE,
+    QT_CREATE_PATH,
+    EDIT,
+    VIEW,
+    WRITE,
+    add_issue,
+    api_fixture,
+    detail,
+    done_body,
+    fake_ss,  # noqa: F401  (fixture)
+    myt_today_candidates,
+    refused_body,
+)
+
+QT_KEY = 5001
+QT_DOC_PATH = f"{QT_CREATE_PATH}/{QT_KEY}"
+NOT_ACCEPTED = "The customer has not accepted this quotation yet."
+ALREADY = "Already in AutoCount."
+
+
+def D(value) -> Decimal:
+    return Decimal(str(value))
+
+
+@pytest.fixture
+def api(fake_ss):
+    yield from api_fixture("qt", [VIEW, EDIT, WRITE], switch=True)
+
+
+@pytest.fixture
+def api_unaccepted(fake_ss):
+    yield from api_fixture("qt", [VIEW, EDIT, WRITE], switch=True, accepted=False)
+
+
+@pytest.fixture
+def api_proposal(fake_ss):
+    yield from api_fixture("qt", [VIEW, EDIT, WRITE], switch=True, kind="proposal")
+
+
+@pytest.fixture
+def api_blank_debtor(fake_ss):
+    yield from api_fixture("qt", [VIEW, EDIT, WRITE], switch=True, debtor_code="  ")
+
+
+def _url(world) -> str:
+    return f"{BASE}/quotation-documents/{world.document.id}/autocount"
+
+
+def _read_back(world):
+    return [
+        detail(1, world.p1.product_code, "10", "180.00", "BRW-BB", None, 1),
+        detail(2, world.p_wc.product_code, "2", "950.00", "BRW-BB", None, 2),
+        detail(3, world.p_av.product_code, "4", "0.00", "BRW-BB", None, 3),
+    ]
+
+
+def _created(world, **kw):
+    return done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world), **kw)
+
+
+def _mark_sent(db, world, issue=None):
+    world.document.autocount_doc_no = "QT000777"
+    world.document.autocount_doc_key = str(QT_KEY)
+    world.document.autocount_last_modified = "2026-10-21T08:00:00"
+    world.document.autocount_issue_id = (issue or world.issue).id
+    db.commit()
+
+
+# --------------------------------------------------------------------------- U15: only an accepted quotation
+
+
+def test_a_quotation_not_yet_accepted_gets_409_with_the_exact_message_and_no_call(api_unaccepted, fake_ss):
+    client, _db, world = api_unaccepted
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 409, response.text
+    assert response.json()["message"] == NOT_ACCEPTED
+    assert fake_ss.calls == []
+
+
+def test_a_proposal_never_goes_even_when_its_issue_is_accepted(api_proposal, fake_ss):
+    client, _db, world = api_proposal
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 409, response.text
+    assert fake_ss.calls == []
+
+
+def test_a_newer_unaccepted_revision_blocks_the_send(api, fake_ss):
+    """The LATEST issue decides: R1 accepted, R2 issued but not yet accepted -> not accepted yet."""
+    client, db, world = api
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=False)
+    db.commit()
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 409, response.text
+    assert response.json()["message"] == NOT_ACCEPTED
+    assert fake_ss.calls == []
+
+
+def test_an_unknown_document_is_an_application_404(api, fake_ss):
+    import uuid
+
+    client, _db, _world = api
+
+    response = client.post(f"{BASE}/quotation-documents/{uuid.uuid4()}/autocount")
+
+    assert response.status_code == 404
+    assert response.json().get("code"), response.text
+    assert fake_ss.calls == []
+
+
+def test_a_missing_debtor_code_is_refused_naming_the_customer_with_no_call(api_blank_debtor, fake_ss):
+    client, _db, world = api_blank_debtor
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "ac_missing_debtor"
+    assert response.json()["message"] == f"No debtor code on {world.customer.customer_name}."
+    assert fake_ss.calls == []
+
+
+# --------------------------------------------------------------------------- create
+
+
+def test_an_accepted_quotation_creates_with_the_header_and_the_r6_lines(api, fake_ss):
+    client, _db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, _created(world))
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 200, response.text
+    [request] = fake_ss.to("POST", QT_CREATE_PATH)
+    body = fake_ss.body(request)
+    header = body["header"]
+    assert body["companyCode"] == "SRT"
+    assert header["debtorCode"] == world.customer.customer_code == "ZZT-DEBT-QT"
+    assert header["docDate"] in myt_today_candidates()
+    assert header["currencyCode"] == "MYR" and D(header["currencyRate"]) == 1
+    assert header["yourPONo"] == "YR-QT-77"
+    assert header["ref"] == world.project.title
+    assert header["salesAgent"] == world.agent.sales_agent
+    assert header["remark1"] == f"{world.document.document_no} (R1)"
+    # Free-text payment terms cannot become "Net N days": the quotation sends none.
+    assert not header.get("displayTerm")
+
+    lines = body["lines"]
+    assert [l["itemCode"] for l in lines] == [
+        world.p1.product_code, world.p_wc.product_code, world.p_av.product_code,
+    ]
+    assert [D(l["qty"]) for l in lines] == [D(10), D(2), D(4)]
+    assert [D(l["unitPrice"]) for l in lines] == [D("180.00"), D("950.00"), D(0)]
+    assert {l["location"] for l in lines} == {"BRW-BB"}
+    assert world.pset.set_code not in [l["itemCode"] for l in lines]
+    assert world.p_alt.product_code not in [l["itemCode"] for l in lines]
+
+
+def test_the_idempotency_key_names_the_document_and_the_issue(api, fake_ss):
+    client, _db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, _created(world))
+
+    client.post(_url(world))
+
+    [request] = fake_ss.to("POST", QT_CREATE_PATH)
+    assert request.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{world.issue.id}-create"
+
+
+def test_the_result_note_names_the_skipped_line_and_the_exploded_set(api, fake_ss):
+    client, _db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, _created(world))
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "done"
+    assert body["doc_no"] == "QT000777"
+    assert [s["code"] for s in body["skipped"]] == [world.p_alt.product_code]
+    [exploded] = body["exploded"]
+    assert exploded["code"] == world.pset.set_code
+    assert [(c["code"], D(c["qty"])) for c in exploded["components"]] == [
+        (world.p_wc.product_code, D(2)),
+        (world.p_av.product_code, D(4)),
+    ]
+    assert [l["item_code"] for l in body["lines"]] == [
+        world.p1.product_code, world.p_wc.product_code, world.p_av.product_code,
+    ]
+
+
+def test_done_writes_the_number_key_last_modified_and_the_issue_sent(api, fake_ss):
+    client, db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, _created(world, last_modified="2026-11-05T12:00:00"))
+
+    client.post(_url(world))
+
+    db.refresh(world.document)
+    assert world.document.autocount_doc_no == "QT000777"
+    assert world.document.autocount_doc_key == str(QT_KEY)
+    assert world.document.autocount_last_modified == "2026-11-05T12:00:00"
+    assert world.document.autocount_issue_id == world.issue.id
+
+
+def test_a_refusal_writes_nothing_to_the_quotation(api, fake_ss):
+    client, db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (422, refused_body("ITEM_NOT_FOUND", "Item ZZT is not in AutoCount"))
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == "AutoCount refused: Item ZZT is not in AutoCount. Nothing was changed."
+    db.refresh(world.document)
+    assert world.document.autocount_doc_no is None
+    assert world.document.autocount_doc_key is None
+    assert world.document.autocount_issue_id is None
+
+
+# --------------------------------------------------------------------------- U17: a later revision updates
+
+
+def test_the_same_issue_again_is_409_already_in_autocount_with_no_call(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 409, response.text
+    assert response.json()["message"] == ALREADY
+    assert fake_ss.calls == []
+
+
+def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    issue2 = add_issue(
+        db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True
+    )
+    db.commit()
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (
+        200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world),
+                       last_modified="2026-11-06T09:00:00")
+    )
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 200, response.text
+    assert fake_ss.to("POST", QT_CREATE_PATH) == [], "an existing document is updated, never created twice"
+    [patch] = fake_ss.to("PATCH", QT_DOC_PATH)
+    body = fake_ss.body(patch)
+    assert body["companyCode"] == "SRT"
+    assert body["header"]["docDate"] in myt_today_candidates()
+    assert body["expectedLastModified"] == "2026-10-21T08:00:00"
+    assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update"
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+    assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
+
+
+def test_a_stale_quotation_update_says_open_compare_first(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (409, refused_body("DOC_STALE", "changed"))
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == "Changed in AutoCount since 21/10/2026, open Compare first."
+    db.refresh(world.document)
+    assert world.document.autocount_last_modified == "2026-10-21T08:00:00"
