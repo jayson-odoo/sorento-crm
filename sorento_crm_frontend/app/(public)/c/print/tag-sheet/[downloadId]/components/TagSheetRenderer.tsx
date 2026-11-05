@@ -19,6 +19,7 @@ import type {
   SlotBinding,
   SpecSheetDocFields,
   TagBindingData,
+  TagCombo,
   TagImage,
   TagLayer,
   TagOpenGroup,
@@ -108,6 +109,8 @@ export interface ResolvedLineData {
   /** Staff-authored tag copy (r10 S4), what `{{product.price_tag_description}}`
    *  draws. Null for a set line. */
   price_tag_description?: string | null;
+  /** The combo this line prints (PRICETAG-COMBO). */
+  combo?: TagCombo | null;
   /** PS-SPEC-SHEET: a project spec sheet page's own fields (absent on a price tag). */
   brand?: string;
   drawing?: TagImage | null;
@@ -280,7 +283,7 @@ function RichLineView({ line, props }: { line: RichLine; props: TextLayerProps }
           .filter(Boolean)
           .join(' ');
         const style: CSSProperties = {
-          ...(bold ? { fontWeight: 700 } : {}),
+          ...(bold ? { fontWeight: Math.max(700, props.fontWeight || 400) } : {}),
           ...(run.italic ? { fontStyle: 'italic' } : {}),
           ...(run.code ? { fontFamily: runFaceOf.fontFamily } : {}),
           ...(run.sizeFactor !== 1 ? { fontSize: `${runFaceOf.fontSize_mm}mm` } : {}),

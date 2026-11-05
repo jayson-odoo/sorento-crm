@@ -51,11 +51,21 @@ export function ComboTagPreview({
   const payload = useMemo<TagSheetDesignPayload | null>(() => {
     if (!template) return null;
     const doc = buildSingleTagSheet(
-      { id: TAG_ID, line: { line_type: 'product', product_id: combo.host_product_id } } as never,
+      {
+        id: TAG_ID,
+        quantity: 1,
+        line: {
+          id: TAG_ID,
+          line_type: 'product',
+          product_id: combo.host_product_id,
+          product_set_id: null,
+          quantity: 1,
+        },
+      },
       template,
       () => 'combo-preview-tag',
     );
-    const resolved = {
+    const resolved: ResolvedLineData = {
       tag_id: TAG_ID,
       tag_label: '1',
       line_id: TAG_ID,
@@ -78,7 +88,7 @@ export function ComboTagPreview({
         choices: [],
         upgrades: [],
       },
-    } as unknown as ResolvedLineData;
+    };
     return {
       page_id: TAG_ID,
       version: 0,
@@ -95,7 +105,9 @@ export function ComboTagPreview({
   if (!payload) {
     return (
       <div className="rounded-lg border border-dashed p-4 text-center">
-        <p className="text-sm text-muted-foreground">No price tag template linked</p>
+        <p className="text-sm text-muted-foreground">
+          {link ? 'No published price tag template' : 'No price tag template linked'}
+        </p>
       </div>
     );
   }

@@ -209,7 +209,7 @@ class ProductBase(BaseModel):
     # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag - CRM-owned,
     # never sent by the AutoCount masters push (AC-S4-9, `CanonicalProduct`
     # deliberately has no field of this name).
-    price_tag_description: Optional[str] = None
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -268,7 +268,7 @@ class ProductUpdate(BaseModel):
     # S5: None means "not sent", same convention as the other planning flags on this schema.
     exclude_from_planning: Optional[bool] = None
     # PLAN-price-tag-r10.md S4: None = untouched by this PUT (AC-S4-2/S4-9).
-    price_tag_description: Optional[str] = None
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
     @field_validator("currency", mode="before")
     @classmethod

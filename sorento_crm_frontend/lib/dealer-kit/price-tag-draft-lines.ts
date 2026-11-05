@@ -475,6 +475,28 @@ export function lineTemplateState(line: DraftLine, priceMode?: PriceMode | null)
   };
 }
 
+/**
+ * The line's type when the item has linked templates but none fits it ("No SP template linked").
+ * Unlike `lineTemplateState` this ignores a kept saved pick (R6): the saved template still shows
+ * and prints, but the gap is still worth saying.
+ */
+export function unfittedPriceType(line: DraftLine, priceMode?: PriceMode | null): 'list' | 'selling' | null {
+  if (line.line_type !== 'product' || !line.product_id) return null;
+  if (
+    line.tag_templates_for !== line.product_id ||
+    (line.tag_templates_combo ?? null) !== (line.combo_id ?? null)
+  ) {
+    return null;
+  }
+  const shape = comboShapeOf(line);
+  const options = (line.tag_templates ?? []).filter(
+    (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
+  );
+  const lineType = line.price_type ?? priceMode ?? null;
+  if (options.length === 0 || !lineType) return null;
+  return fittingOptions(options, lineType).length === 0 ? lineType : null;
+}
+
 /** "SRTBF11416: No SP template linked" (a combo line is named by the combo). */
 export function noTemplateForTypeMessage(line: DraftLine, priceType: 'list' | 'selling'): string {
   const label = comboOfLine(line)?.name || line.code || line.name;
@@ -599,9 +621,8 @@ export function lineProblemsOf(
   const out: string[] = [];
   const combo = comboOfLine(line);
   const templateState = lineTemplateState(line, priceMode);
-  if (templateState.kind === 'mismatch') {
-    out.push(noTemplateForTypeMessage(line, templateState.priceType));
-  }
+  const unfitted = unfittedPriceType(line, priceMode);
+  if (unfitted) out.push(noTemplateForTypeMessage(line, unfitted));
   const needs = chosenTemplate(line, priceMode)?.needs;
   const heldPicks = (role: string) =>
     line.parts

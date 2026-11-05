@@ -93,8 +93,12 @@ const RGB = /rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/gi;
  * stored value depend on where it was typed.
  */
 export function normaliseEditorHtml(html: string): string {
-  return html.replace(/ style="([^"]*)"/g, (_all, css: string) => {
-    const declarations = css
+  // Text is never touched: with no style attribute there is nothing to normalise, and with one the
+  // work is on the parsed elements' attributes, not on the string.
+  if (!html.includes('style=') || typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.body.querySelectorAll('[style]').forEach((el) => {
+    const declarations = (el.getAttribute('style') ?? '')
       .split(';')
       .map((part) => part.trim())
       .filter(Boolean)
@@ -105,8 +109,18 @@ export function normaliseEditorHtml(html: string): string {
             .join('')}`,
         ),
       );
-    return declarations.length ? ` style="${declarations.join('; ')}"` : '';
+    if (declarations.length) el.setAttribute('style', declarations.join('; '));
+    else el.removeAttribute('style');
   });
+  return doc.body.innerHTML;
+}
+
+/** Pasted HTML keeps no inline style: colour and alignment come only from the toolbar. */
+export function stripPastedStyles(html: string): string {
+  if (typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.body.querySelectorAll('[style]').forEach((el) => el.removeAttribute('style'));
+  return doc.body.innerHTML;
 }
 
 const ToolbarButton = ({
@@ -650,6 +664,7 @@ export function RichTextEditor({
     content: value || '',
     editable,
     editorProps: {
+      transformPastedHTML: stripPastedStyles,
       attributes: {
         ...(id ? { id } : {}),
         ...(labelledBy ? { 'aria-labelledby': labelledBy } : {}),

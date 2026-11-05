@@ -36,7 +36,8 @@ import {
 } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
-import { listTemplates, setTemplatePriceType } from '../../services/tagTemplateService';
+import { listTemplates } from '../../services/tagTemplateService';
+import { useSetTemplatePriceType } from '../../hooks/useSetTemplatePriceType';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   DropdownMenu,
@@ -170,17 +171,19 @@ export function TagTemplatesList() {
     fetchData();
   }, [fetchData]);
 
+  const setPriceType = useSetTemplatePriceType();
+  const { mutateAsync: savePriceType } = setPriceType;
   const changePriceType = useCallback(
     async (template: TagTemplate, next: TemplatePriceType | null) => {
       try {
-        await setTemplatePriceType(template.id, next);
+        await savePriceType({ id: template.id, priceType: next });
         toast.success(next ? `${template.name}: ${TEMPLATE_PRICE_TYPE_LABEL[next]}` : `${template.name}: price type cleared`);
         await fetchData();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not save the price type.');
       }
     },
-    [fetchData],
+    [fetchData, savePriceType],
   );
 
   // Delete selected (D26, S11): the backend validates and deletes the whole

@@ -689,7 +689,7 @@ function RichTextContent({
                       x={x}
                       y={y}
                       width={mm2px(run.width_mm, scale)}
-                      height={mm2px(run.lineHeight_mm, scale)}
+                      height={mm2px(face.fontSize_mm, scale)}
                       fill={run.highlight}
                     />,
                   ]

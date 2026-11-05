@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from html.parser import HTMLParser
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 ALLOWED_TAGS = {
     "p", "br", "strong", "em", "s", "u", "code", "h1", "h2", "h3",
@@ -32,6 +32,10 @@ _COLOUR_RE = re.compile(
     r"^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$|^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$"
 )
 _RICH_RE = re.compile(r"^\s*<(?:p|h1|h2|h3|ul|ol|blockquote)(?=[\s>])", re.IGNORECASE)
+
+
+#: C0 controls except tab and newline: a NUL breaks the database driver, the rest print as nothing.
+_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f]")
 
 
 def is_rich(value: Optional[str]) -> bool:
@@ -98,6 +102,8 @@ class _RichSanitiser(_DropTracker):
         self.out: List[str] = []
         self.text_seen = False
         self._stack: List[str] = []
+        #: Open count per tag, so an end tag with no open match is O(1) (no stack scan).
+        self._open: Dict[str, int] = {}
 
     def handle_starttag(self, tag, attrs):
         if self._enter_drop(tag) or self._dropping:
@@ -111,6 +117,7 @@ class _RichSanitiser(_DropTracker):
             return
         self.out.append(f"<{tag}{attr}>")
         self._stack.append(tag)
+        self._open[tag] = self._open.get(tag, 0) + 1
 
     def handle_startendtag(self, tag, attrs):
         # `<p/>` style self-closing: treat as a start followed by an end.
@@ -121,10 +128,11 @@ class _RichSanitiser(_DropTracker):
     def handle_endtag(self, tag):
         if self._leave_drop(tag) or self._dropping:
             return
-        if tag not in self._stack:
+        if not self._open.get(tag):
             return
         while self._stack:
             top = self._stack.pop()
+            self._open[top] -= 1
             self.out.append(f"</{top}>")
             if top == tag:
                 break
@@ -173,22 +181,45 @@ class _TextModeSanitiser(_DropTracker):
             self.out.append(f"&#{name};")
 
 
-def sanitise_tag_html(value: Optional[str]) -> Optional[str]:
-    if value is None or not value.strip():
-        return None
-    if is_rich(value):
-        parser = _RichSanitiser()
-        parser.feed(value)
-        parser.close()
-        out = parser.result()
-        return out if parser.text_seen else None
-    if "<" not in value:
-        return value
+def _rich_pass(value: str) -> Optional[str]:
+    parser = _RichSanitiser()
+    parser.feed(value)
+    parser.close()
+    out = parser.result()
+    return out if parser.text_seen else None
+
+
+def _text_pass(value: str) -> str:
     parser = _TextModeSanitiser()
     parser.feed(value)
     parser.close()
-    out = "".join(parser.out)
-    return out if out.strip() else None
+    return "".join(parser.out)
+
+
+def sanitise_tag_html(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = _CONTROLS.sub("", value)
+    if not value.strip():
+        return None
+    if is_rich(value):
+        return _rich_pass(value)
+    if "<" not in value:
+        return value
+    # Plain-text mode removes tags, and removing one can leave another behind (`<<b>p>`): repeat
+    # until nothing changes. A value that has become rich goes through the rich pass; one that
+    # will not settle loses its `<` outright, so no tag outside the allow-list is ever stored.
+    current = value
+    for _ in range(5):
+        nxt = _text_pass(current)
+        if nxt == current:
+            break
+        current = nxt
+    else:
+        current = current.replace("<", "")
+    if is_rich(current):
+        return _rich_pass(current)
+    return current if current.strip() else None
 
 
 class _PlainText(HTMLParser):

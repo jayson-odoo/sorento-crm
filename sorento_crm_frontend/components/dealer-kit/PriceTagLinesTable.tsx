@@ -41,6 +41,7 @@ import {
   partsAtListTitle,
   picksNeeded,
   templateAfterFlip,
+  unfittedPriceType,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -419,6 +420,7 @@ function LineRow({
   anySelling,
 }: LineRowProps) {
   const templateState = lineTemplateState(line, priceMode);
+  const unfitted = unfittedPriceType(line, priceMode);
   // P2: Add part lists the combo's own rows the line lacks first, then the catalogue search.
   const missingRows = useMemo(() => missingComboRows(line), [line]);
   const fetchAddPartOptions = useCallback(
@@ -462,7 +464,7 @@ function LineRow({
   const noTemplate =
     !isSet &&
     !!line.product_id &&
-    (templateState.kind === 'none' || templateState.kind === 'mismatch');
+    (templateState.kind === 'none' || templateState.kind === 'mismatch' || !!unfitted);
   const canPreview = !!(isSet ? line.product_set_id : line.product_id) && !noTemplate;
   // What the last click found wrong with this line, one message per line of text (set by the form).
   const reasons = line.guard_error ? line.guard_error.split('\n') : [];
@@ -706,12 +708,12 @@ function LineRow({
           </div>
         </td>
       </tr>
-      {templateState.kind === 'mismatch' && (
+      {unfitted && (
         <tr className="align-top">
           <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="sticky left-0 max-w-[calc(100vw-9rem)] border-l-2 border-border pl-3 sm:max-w-none">
               <Badge variant="warning" className="font-normal">
-                No {lineTypeLabel(templateState.priceType)} template linked
+                No {lineTypeLabel(unfitted)} template linked
               </Badge>
             </div>
           </td>

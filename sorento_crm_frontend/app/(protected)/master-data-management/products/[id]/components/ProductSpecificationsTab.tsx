@@ -292,7 +292,14 @@ function PriceTagDescriptionBlock({
         <div
           className="flex flex-col gap-2"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') cancelEdit();
+            // R10: an Escape from a toolbar popover (a portal, so outside this element in the
+            // DOM though React bubbles it here) closes that popover only.
+            const inPopover = (e.target as HTMLElement).closest?.(
+              '[data-radix-popper-content-wrapper], [role="dialog"]',
+            );
+            if (e.key === 'Escape' && !inPopover && e.currentTarget.contains(e.target as Node)) {
+              cancelEdit();
+            }
           }}
         >
           <RichTextEditor

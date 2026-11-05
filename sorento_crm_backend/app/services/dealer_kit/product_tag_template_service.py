@@ -119,7 +119,8 @@ def _flag(link: Link, price_type: str) -> bool:
 
 def _defaults_for(links: list[Link], price_type: str) -> set[str]:
     """Ids that count as the default for one type: the stored one, else a lone fitting link."""
-    stored = {link[0].id for link in links if _flag(link, price_type)}
+    # R1: a saved flag counts only while its template still fits that type.
+    stored = {link[0].id for link in links if _flag(link, price_type) and fits(link[0], price_type)}
     if stored:
         return stored
     fitting = [link[0].id for link in links if fits(link[0], price_type)]
@@ -350,7 +351,8 @@ def _check_templates(
         if any(not is_price_tag_family(row.family) for row in found.values()):
             raise _not_a_price_tag()
 
-    if default_list_template_id in (None, "") and default_selling_template_id in (None, ""):
+    legacy = default_list_template_id in (None, "") and default_selling_template_id in (None, "")
+    if legacy:
         default_list_template_id = default_selling_template_id = default_template_id
 
     def resolve(raw, price_type: str) -> Optional[str]:
@@ -364,6 +366,9 @@ def _check_templates(
                 code="INVALID_DEFAULT_TEMPLATE",
             )
         if not fits(found[default_id], price_type):
+            # R12: the legacy single default sets only the types it fits; an explicit one is 422.
+            if legacy:
+                return None
             raise _mismatch(found[default_id], price_type)
         return default_id
 
@@ -773,7 +778,10 @@ def require_line_templates(db: Session, request) -> None:
         allowed = links_for(links, line.product_id, line.combo_id)
         price_type = line.price_type if line.price_type in PRICE_TYPES else None
         fitting = [link for link in allowed if fits(link[0], price_type)]
-        if allowed and not fitting:
+        # R5 (AC-37 wins over AC-36): a line keeping its stored template, which is still linked,
+        # passes even if that template no longer fits and nothing fitting is linked.
+        kept = bool(line.tag_template_id) and any(link[0].id == line.tag_template_id for link in allowed)
+        if allowed and not fitting and not kept:
             raise AppException(
                 status_code=422,
                 message=f"{_line_item_label(db, line)}: No {line_label(price_type)} template linked",
@@ -1064,3 +1072,15 @@ def preview_for_request(db: Session, request) -> dict:
 
     rows = list(tag_data_service.resolve_request_line_data(db, request))
     return _with_templates(db, rows, [(line.id, line) for line in request.lines or []])
+
+
+def clear_unfit_defaults(db: Session, template: TagTemplate) -> None:
+    """R1: after a template's price type changes, the default flags it no longer fits go, on every
+    product and combo link (the flag would otherwise sit unseen and come back with the type)."""
+    for model in (ProductTagTemplate, ComboTagTemplate):
+        for link in db.query(model).filter(model.template_id == template.id).all():
+            if link.default_list and not fits(template, "list"):
+                link.default_list = False
+            if link.default_selling and not fits(template, "selling"):
+                link.default_selling = False
+    db.flush()

@@ -417,7 +417,8 @@ export function richLayerLines(
           ...markerRun,
           marker: true,
           sizeFactor: factor,
-          x_mm: (indent - LIST_INDENT_MM * px) / px,
+          // Hangs just left of the line's text, wherever alignment puts it (as on print).
+          x_mm: (x - LIST_INDENT_MM * px) / px,
           y_mm: top / px,
           width_mm: markerWidth / px,
           lineHeight_mm: lineHeight / px,

@@ -36,7 +36,7 @@ from app.schemas.price_tag import (
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
-from app.services.dealer_kit import tag_data_service, tag_template_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service, tag_template_service
 from app.services.dealer_kit.template_needs import template_needs
 from app.services.error_handler import AppException
 
@@ -238,6 +238,8 @@ def update_tag_template(
         setattr(t, key, value)
 
     db.flush()
+    if "price_type" in update_data:
+        product_tag_template_service.clear_unfit_defaults(db, t)
     db.commit()
     return _response_for(t)
 
