@@ -112,3 +112,19 @@ def test_r1_the_read_path_and_the_save_path_share_one_shape(env):  # noqa: F811
     from app.models.product_combo import ProductCombo
 
     assert combo_shape(db.get(ProductCombo, combo_id))["fixed"] == 2
+
+
+def test_hotfix_a_plain_template_links_and_draws_on_a_combo_with_fixed_parts(env):  # noqa: F811
+    """PRICETAG-COMBO-FIT-HOTFIX: a template with no combo position field saves as a combo link,
+    is offered on the line and draws the combo as one product; a partial one is still refused."""
+    db, c, _ = env
+    s, short, _fits = _world(db)
+    plain = _published(db, "ZZT plain", _doc({"kind": "main"}))
+    ok = c.put(f"{DK}/combos/{s['combo'].id}/tag-templates", json={"template_ids": [plain]})
+    assert ok.status_code == 200, ok.text
+    assert _preview(c, s)["templates"]["k"]["id"] == plain
+    res = c.get(f"{PORTAL}/lookups/product-tag-templates/{s['host'].id}", params={"combo_id": s["combo"].id})
+    assert [row["id"] for row in res.json()] == [plain]
+    refused = c.put(f"{DK}/combos/{s['combo'].id}/tag-templates", json={"template_ids": [plain, short]})
+    assert refused.status_code == 422, refused.text
+    assert "Prints 1 of this combo's 2 fixed parts" in refused.text

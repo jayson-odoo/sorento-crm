@@ -1,6 +1,6 @@
 # PLAN: PRICETAG-COMBO-FIT-HOTFIX (5 Nov 2026)
 
-Status: in progress (small fix track: no migration, no auth change, diff well under 300 lines)
+Status: implemented, awaiting merge (small fix track: no migration, no auth change, diff well under 300 lines)
 
 ## Problem
 

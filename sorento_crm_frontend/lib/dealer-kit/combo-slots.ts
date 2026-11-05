@@ -42,6 +42,8 @@ const plural = (count: number, noun: string) => (count === 1 ? `${count} ${noun}
 export function fitReason(needs: TemplateNeeds, shape: ComboShape): string | null {
   // Choice groups, then fixed parts, then upgrades. A group and the upgrades are at most what the
   // combo has; fixed parts are always in the box, so a template must print every one.
+  // A plain template (no position read) prints the combo as one product and fits every combo.
+  if (!needs.fixed && !needs.upgrades && !needs.groups.some((n) => n > 0)) return null;
   for (let index = 0; index < needs.groups.length; index += 1) {
     const need = needs.groups[index];
     if (need <= 0) continue;

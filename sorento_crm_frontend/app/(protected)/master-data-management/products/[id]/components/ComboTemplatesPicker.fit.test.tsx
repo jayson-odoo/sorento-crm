@@ -133,6 +133,20 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     expect(row('a').dataset.disabled).toBe('true');
   });
 
+  it('HOTFIX: a plain template fits a combo with fixed parts and prints it as one product', () => {
+    templates.mockReturnValue([
+      tpl('plain', { fixed: 0, groups: [], upgrades: 0 }),
+      tpl('partial', { fixed: 2, groups: [], upgrades: 0 }),
+    ]);
+    draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
+    expect(row('plain').dataset.disabled).toBe('false');
+    expect(row('plain').dataset.badge).toBe('');
+    expect(description('plain')).toBe('105 x 148 mm. Needs the main product only');
+    expect(row('partial').dataset.disabled).toBe('true');
+    expect(row('partial').dataset.badge).toBe('Does not fit');
+    expect(description('partial')).toBe("Prints 2 of this combo's 4 fixed parts");
+  });
+
   it('keeps the template name as the label', () => {
     templates.mockReturnValue([tpl('a', { fixed: 9, groups: [], upgrades: 0 })]);
     draw(S4);
