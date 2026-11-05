@@ -7,7 +7,13 @@ of the message for it.
 
 The first line of the section is the marker (`parser.PARTY_SIDE_LINE`). It turns on the `party_side` schema key
 (`parser.with_party_side`: "customer" | "supplier" | "unclear" | null, required and nullable). A text without the line
-keeps today's schema, and a both-sides name is asked, as on main. Not published, no label moves: crew applies the edit,
+keeps today's schema, and a both-sides name is asked, as on main.
+
+Update 5 Nov 2026: the section is LIVE in production text. The owner published parser v202 (md5
+`d29c19830b22aa47403a88ddcb8e817d`, production label v71, `PROMPT-chatbot-totals-filters-d29c1983.md`), which carries
+this Edit 1 verbatim, while this PR's code was not on main, so prod still asked "hanlim (customer) / hanlim
+(supplier)" on "delivery to hanlim". Merging this PR turns the side logic on in production at the next deploy, with
+no further label move. The paragraph below is the original 3 Nov plan: crew applies the edit,
 runs the eval gate and pins the md5; the owner moves the production label. Section rules are abstract (owner rule kept:
 no gold-message examples, no word lists).
 

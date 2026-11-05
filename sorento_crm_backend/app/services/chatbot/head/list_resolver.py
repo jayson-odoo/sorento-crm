@@ -477,14 +477,16 @@ def _weak_alone(span: Span, c: Candidate, floors_by_list: dict[str, dict[str, fl
     name = c.row.list_name
     floor = floors_by_list[name]["meaning"]
     index = indexes[name]
-    close = sorted(
+    ranked = sorted(
         (
             Candidate(index.rows[i], cell[span.text], "meaning")
             for (n, i), cell in meaning.items()
             if n == name and cell.get(span.text, 0.0) >= floor - WEAK_WIDEN
         ),
         key=lambda x: -x.score,
-    )[:WEAK_SHOWN]
-    if len({x.row.key for x in close}) < 2:
+    )
+    # One option per row: a supplier with several texts near the span is offered once, at its best score.
+    close = list({x.row.key: x for x in reversed(ranked)}.values())[::-1][:WEAK_SHOWN]
+    if len(close) < 2:
         return Resolution(span, "unresolved")
     return Resolution(span, "ambiguous", tuple(close))

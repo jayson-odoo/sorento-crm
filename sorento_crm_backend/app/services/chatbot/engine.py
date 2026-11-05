@@ -1902,7 +1902,9 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
             held = jsc.nullish_str(e.get("canonical_code")).strip()
             if verdict.get("party_side") == "customer":
                 # Owner ruling 3 Nov: a sales question's both-sides name is the customer, never asked.
-                out.append({**e, "hint": "customer", "canonical_code": held if e.get("hint") == "customer" else None})
+                # A supplier's row id never binds the customer, whatever hint the parser put on it.
+                own = e.get("hint") == "customer" and held not in groups and held not in both.values()
+                out.append({**e, "hint": "customer", "canonical_code": held if own else None})
                 changed = True
                 continue
             bound = held if e.get("hint") == "supplier" and held in groups else key
@@ -6724,6 +6726,16 @@ def _run_stages_body(  # noqa: PLR0915
                 db, remembered_before.get("_contact_pk"), contact_respond_id, default_space_id(db)
             )
         )
+        # Owner ruling 3 Nov 2026 (prod, after #2066): the side of a name that is both a customer and a supplier
+        # is the parser's semantic `party_side` (`parser.PARTY_SIDE_LINE`), read from the whole turn; code reads
+        # no word of the message for it. "unclear", null, or a prompt without the line: the name is asked.
+        # Read for every asker, so a stray key never decides whoever asks.
+        said = verdict.get("party_side") if getattr(parser_config, "party_side", False) else None
+        party_side = said if said in ("customer", "supplier") else None
+        if party_side is not None:
+            turn_trace.add("party_side", {"side": party_side})
+        elif "party_side" in verdict:
+            verdict = {k: v for k, v in verdict.items() if k != "party_side"}
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
@@ -6731,15 +6743,6 @@ def _run_stages_body(  # noqa: PLR0915
             if picked_side is not verdict:
                 turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
                 verdict = picked_side
-            # Owner ruling 3 Nov 2026 (prod, after #2066): the side of a name that is both a customer and a supplier
-            # is the parser's semantic `party_side` (`parser.PARTY_SIDE_LINE`), read from the whole turn; code reads
-            # no word of the message for it. "unclear", null, or a prompt without the line: the name is asked.
-            said = verdict.get("party_side") if getattr(parser_config, "party_side", False) else None
-            party_side = said if said in ("customer", "supplier") else None
-            if party_side is not None:
-                turn_trace.add("party_side", {"side": party_side})
-            elif "party_side" in verdict:
-                verdict = {k: v for k, v in verdict.items() if k != "party_side"}
             _with_party_readings(verdict, span_prep)
             with_spans = _with_span_suppliers(verdict, span_prep)
             if with_spans is not verdict:

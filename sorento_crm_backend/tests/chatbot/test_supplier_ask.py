@@ -2436,3 +2436,46 @@ def test_hanlim_alone_is_still_asked(session_factory, monkeypatch, hint, said):
     )
     assert "(customer)" in reply and "(supplier)" in reply, reply
     assert not _fetch_calls(captured), (reply, captured)
+
+
+def test_a_customer_side_never_keeps_a_supplier_row_id_the_parser_put_on_a_customer_hint():
+    """Review nit (#2120): the model put a Supplier candidate's id on a customer-hinted both-sides entity."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _both_side_words
+
+    prep = SimpleNamespace(
+        party_suppliers={"hanlim": "sup-1"}, supplier_groups={"sup-1": [("sup-1", "HANLIM")]}, message=None,
+    )
+    verdict = {"party_side": "customer", "entities": [
+        {"raw": "hanlim", "hint": "customer", "canonical_code": "sup-1", "current_message": True},
+    ]}
+    out = _both_side_words(verdict, prep)["entities"][0]
+    assert out["hint"] == "customer" and out["canonical_code"] is None, out
+    kept = _both_side_words({**verdict, "entities": [{**verdict["entities"][0], "canonical_code": "cus-9"}]}, prep)
+    assert kept["entities"][0]["canonical_code"] == "cus-9", kept
+
+
+def test_a_weak_lone_supplier_offers_each_row_once():
+    """Review nit (#2120): one supplier with two texts near the span is one option, never two."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    rows = [
+        LookupRow("supplier", "s1", "S1", ("kim pak",)), LookupRow("supplier", "s1", "S1", ("kim pak chuan",)),
+        LookupRow("supplier", "s2", "S2", ("kim hoh",)),
+    ]
+    span = list_resolver.Span("kim pak chuan", "supplier")
+    meaning = {("supplier", 0): {span.text: 0.66}, ("supplier", 1): {span.text: 0.64}, ("supplier", 2): {span.text: 0.62}}
+    best = list_resolver.Candidate(rows[0], 0.66, "meaning")
+    res = list_resolver._weak_alone(
+        span, best, {"supplier": {"meaning": 0.65}}, {"supplier": SimpleNamespace(rows=rows)}, meaning,
+    )
+    assert res.status == "ambiguous" and [c.row.key for c in res.candidates] == ["s1", "s2"], res
+    assert res.candidates[0].score == 0.66, res
+    alone = list_resolver._weak_alone(
+        span, best, {"supplier": {"meaning": 0.65}}, {"supplier": SimpleNamespace(rows=rows[:2])},
+        {k: v for k, v in meaning.items() if k[1] < 2},
+    )
+    assert alone.status == "unresolved", alone
