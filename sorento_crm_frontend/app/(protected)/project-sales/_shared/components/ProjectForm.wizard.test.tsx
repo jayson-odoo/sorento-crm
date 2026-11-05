@@ -474,7 +474,7 @@ describe('AC-W2 / AC-W3 no blocking clash', () => {
     await waitFor(() => expect(linesWithText('Existing: PPF2611001 test')).toHaveLength(1));
     expect(linesWithText('Existing: PPF2611002 test')).toHaveLength(1);
     expect(screen.getByText('Sponsorship Form · Won · Teh Jayson')).toBeInTheDocument();
-    expect(screen.getByText('Lost · Lost · Sales B')).toBeInTheDocument();
+    expect(screen.getByText('Lost · Sales B')).toBeInTheDocument();
     expect(screen.queryByText('No clash')).toBeNull();
     expect(screen.getByRole('link', { name: 'PPF2611001' })).toHaveAttribute(
       'href',

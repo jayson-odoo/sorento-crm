@@ -1,6 +1,6 @@
 # PLAN: project clash check shows every match; Lost stage and outcome agree
 
-Status: in progress (small fix track, lane PROJECT-CLASH-LOST)
+Status: in review (small fix track, lane PROJECT-CLASH-LOST; pytest + vitest run in the lane sandbox)
 
 ## Journey
 
@@ -26,7 +26,10 @@ never touched outcome, so moving to Lost left Outcome Won.
    rule unchanged: only an open project of the same/unknown developer blocks.
 2. A terminal Lost / Dormant stage is authoritative for outcome: `derive_project_outcome`
    returns lost/dormant when the project's status key is lost/dormant; leaving that stage
-   re-derives from quotations. `change_status` re-syncs outcome after every move.
+   re-derives from quotations. `change_status`, the PO auto-advance and the admin bulk status
+   migration re-sync outcome after every move. With the seeded funnel Lost and Dormant are
+   terminal, so a project cannot leave them; a won quotation on a Lost-stage project leaves
+   the outcome Lost, and "make quotation" names the stage that stops it.
 3. Data fix: read-only count query + dry-run/apply script for existing rows.
 
 ## Tests

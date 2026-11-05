@@ -909,6 +909,15 @@ def make_quotation(
             status_code=404, message="Revision not found.", code="quotation_issue_not_found"
         )
     project = db.query(Project).filter(Project.id == proposal.project_id).first()
+    stage_outcome = scope_service.terminal_status_outcome(db, project) if project else None
+    if stage_outcome is not None:
+        # A won scope on a project since moved to Lost / Dormant: the stage decides the
+        # outcome (PROJECT-CLASH-LOST), so say which stage stops it, not "mark it Won".
+        raise AppException(
+            status_code=409,
+            message=f"This project is on the {stage_outcome.capitalize()} stage, so it cannot get a quotation.",
+            code="project_not_won",
+        )
     if project is None or scope_service.derive_project_outcome(db, project) != "won":
         raise AppException(
             status_code=409,

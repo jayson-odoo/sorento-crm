@@ -54,6 +54,7 @@ import type {
 } from '../types/project.types';
 import { isProjectApproved } from '../lib/projectApproval';
 import { isAwaitingDecision } from './ApprovalStatePill';
+import { OUTCOME_LABEL } from './OutcomePill';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
 import { PartyContactsPicker } from './PartyContactsPicker';
 
@@ -1282,13 +1283,6 @@ function TypedHint({ typed, picked }: { typed?: string | null; picked: string })
   return <p className="text-xs text-muted-foreground">Typed: {typed.trim()}</p>;
 }
 
-const OUTCOME_LABEL: Record<string, string> = {
-  open: 'Open',
-  won: 'Won',
-  lost: 'Lost',
-  dormant: 'Dormant',
-};
-
 /**
  * One matched project in the Check result: "<label> <code> <title>", then its stage, outcome
  * and owner, so the user can tell a live pursuit from a closed one (PROJECT-CLASH-LOST). A
@@ -1304,9 +1298,11 @@ function ClashMatchLine({
   label: string;
   blocking?: boolean;
 }) {
+  const outcome = candidate.outcome ? (OUTCOME_LABEL[candidate.outcome] ?? candidate.outcome) : null;
+  // A project on the Lost stage is also outcome Lost: say it once.
   const facts = [
     candidate.status_label,
-    candidate.outcome ? (OUTCOME_LABEL[candidate.outcome] ?? candidate.outcome) : null,
+    outcome === candidate.status_label ? null : outcome,
     candidate.owner_name,
   ].filter((fact): fact is string => Boolean(fact));
   return (

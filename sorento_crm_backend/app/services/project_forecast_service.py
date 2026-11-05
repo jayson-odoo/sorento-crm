@@ -252,8 +252,9 @@ def _lost_projects_with_committed_money(db: Session, company_id: str) -> List[Pr
     when a different scope was lost. Orders do not un-happen.
 
     Narrow on purpose: only lost projects that actually carry a PO come back, and they come
-    back for Committed only. Their Pipeline and Weighted stay zero because `_open_quotation_
-    totals` finds no open quotation and the estimate is suppressed once anything was priced.
+    back for Committed only. Their Pipeline and Weighted stay zero: a project lost through its
+    quotations has no open quotation, and one moved onto the Lost stage by hand (whose open
+    quotations may remain) sits on a 0% rung; the estimate is suppressed once anything was priced.
 
     No "not already in the live set" clause: the live set excludes lost projects by definition,
     so it could never overlap, and expressing the redundancy meant handing a bare Python

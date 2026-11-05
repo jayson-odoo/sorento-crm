@@ -89,7 +89,7 @@ def _won_quotation(db, company_id, project) -> ProjectQuotation:
 
 
 def _funnel(db):
-    """Sponsorship Form -> Lost, and Lost -> Sponsorship Form (a reopened pursuit)."""
+    """Sponsorship Form -> Lost. Lost is terminal: the engine refuses any move off it."""
     live = Status(
         id=_uid(), entity_type="project", key="sponsorship_form", label="Sponsorship Form",
         is_initial=True, sort_order=0,
@@ -105,10 +105,6 @@ def _funnel(db):
                 id=_uid(), entity_type="project", from_status_id=live.id,
                 to_status_id=lost.id, label="Mark lost", trigger_mode="manual",
             ),
-            StatusTransition(
-                id=_uid(), entity_type="project", from_status_id=lost.id,
-                to_status_id=live.id, label="Reopen", trigger_mode="manual",
-            ),
         ]
     )
     db.flush()
@@ -122,10 +118,10 @@ def test_a_won_and_a_lost_project_of_the_same_title_are_both_returned_with_no_de
     """The owner's case: title "test", Developer empty, PPF2611001 "test" is Won."""
     with blank_session() as db:
         company_id = _sorento(db)
-        developer = _developer(db, company_id)
-        won = _project(db, company_id, outcome="won", developer=developer)
-        lost = _project(db, company_id, outcome="lost", developer=developer)
-        dormant = _project(db, company_id, outcome="dormant", developer=developer)
+        # One developer each: (company, developer, title) is unique.
+        won = _project(db, company_id, outcome="won", developer=_developer(db, company_id))
+        lost = _project(db, company_id, outcome="lost", developer=_developer(db, company_id))
+        dormant = _project(db, company_id, outcome="dormant")
 
         clashes = find_clashes(
             db,
@@ -183,25 +179,6 @@ def test_moving_a_won_project_to_lost_makes_its_outcome_lost():
         assert project.outcome == "lost"
 
 
-def test_reopening_a_lost_project_re_derives_its_outcome_from_the_quotations():
-    with blank_session() as db:
-        company_id = _sorento(db)
-        live, lost_rung = _funnel(db)
-        owner = _user(db)
-        project = _project(db, company_id, outcome="won", owner=owner, status_id=live.id)
-        _won_quotation(db, company_id, project)
-        project_service.change_status(
-            db, project, to_status_id=lost_rung.id, actor_user_id=owner, permissions=set()
-        )
-
-        project_service.change_status(
-            db, project, to_status_id=live.id, actor_user_id=owner, permissions=set()
-        )
-
-        db.refresh(project)
-        assert project.outcome == "won"
-
-
 def test_a_won_quotation_does_not_turn_a_lost_stage_back_into_won():
     """A project cannot be Lost and Won at once: the decided stage wins the derivation."""
     with blank_session() as db:
@@ -221,3 +198,21 @@ def test_a_live_stage_still_derives_outcome_from_quotations():
         _won_quotation(db, company_id, project)
 
         assert derive_project_outcome(db, project) == "won"
+
+
+def test_an_admin_bulk_migration_onto_lost_syncs_outcome_too():
+    """The status editor's 'move records off this status' writes status_id in bulk; it must
+    leave outcome agreeing with the stage just like a single move does."""
+    from app.modules.projects.status_entities import _migrate_projects
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        live, lost_rung = _funnel(db)
+        project = _project(db, company_id, outcome="won", status_id=live.id)
+        _won_quotation(db, company_id, project)
+
+        _migrate_projects(db, live.id, lost_rung.id)
+
+        db.refresh(project)
+        assert project.status_id == lost_rung.id
+        assert project.outcome == "lost"

@@ -21,7 +21,7 @@ const PALETTE_KEY: Record<string, string> = {
   dormant: 'closed',
 };
 
-const LABEL: Record<string, string> = {
+export const OUTCOME_LABEL: Record<string, string> = {
   open: 'Open',
   won: 'Won',
   lost: 'Lost',
@@ -33,7 +33,7 @@ export function OutcomePill({ outcome }: { outcome?: string | null }) {
   if (!key) return <span className="text-muted-foreground">-</span>;
   return (
     <span className={`${STATUS_PILL_BASE} ${statusPillClass(PALETTE_KEY[key] ?? key)}`}>
-      {LABEL[key] ?? outcome}
+      {OUTCOME_LABEL[key] ?? outcome}
     </span>
   );
 }

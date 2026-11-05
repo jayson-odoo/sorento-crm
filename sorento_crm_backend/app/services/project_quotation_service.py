@@ -1466,7 +1466,7 @@ def set_outcome(
 _OUTCOME_BY_TERMINAL_STATUS_KEY = {"lost": OUTCOME_LOST, "dormant": OUTCOME_DORMANT}
 
 
-def _terminal_status_outcome(db: Session, project: Project) -> Optional[str]:
+def terminal_status_outcome(db: Session, project: Project) -> Optional[str]:
     if not project.status_id:
         return None
     from app.models.status import Status
@@ -1482,7 +1482,7 @@ def derive_project_outcome(db: Session, project: Project) -> str:
     No quotations at all is OPEN, not lost: nothing has been decided yet, and a project
     registered this morning is not a loss.
     """
-    decided = _terminal_status_outcome(db, project)
+    decided = terminal_status_outcome(db, project)
     if decided is not None:
         return decided
     rows = (
