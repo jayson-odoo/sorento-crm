@@ -8,7 +8,7 @@ date with "Nothing open" last, Flags by Critical. Blanks sort last in both direc
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -47,6 +47,9 @@ def seeded():
             uid = _uid()
             db.add(User(id=uid, email=f"{uid}@zzt.test", name=name))
             users[name] = uid
+        # Blank name: the grid shows the email, so the sort reads the email too.
+        users["blank"] = _uid()
+        db.add(User(id=users["blank"], email="aaa-first@zzt.test", name=""))
         devs = {}
         for name in ["Beta Dev", "alpha dev", "Gamma Dev"]:
             party = ProjectParty(id=_uid(), company_id=company, party_type="developer", name=name)
@@ -54,9 +57,14 @@ def seeded():
             devs[name] = party.id
         db.flush()
 
+        created = iter(datetime(2026, 1, day) for day in range(1, 28))
+
         def project(title, **kw):
+            # Distinct, increasing created_at (A oldest), so the created_at-desc tiebreak
+            # is deterministic and a missing ordering rule fails every run, not by chance.
             p = Project(
-                id=_uid(), company_id=company, title=title, normalised_title=title.lower(), **kw
+                id=_uid(), company_id=company, title=title, normalised_title=title.lower(),
+                created_at=next(created), **kw
             )
             db.add(p)
             db.flush()
@@ -67,8 +75,11 @@ def seeded():
         b = project("B", developer_party_id=devs["alpha dev"], owner_user_id=users["Alice"],
                     status_id=stages["zz_identified"])
         c = project("C", developer_party_id=devs["Gamma Dev"], owner_user_id=users["bob"],
-                    status_id=stages["zz_quoted"])
-        d = project("D")  # blanks everywhere, nothing open
+                    status_id=stages["zz_quoted"],
+                    last_meaningful_activity_at=datetime(2026, 4, 1))
+        d = project("D")  # blanks everywhere, nothing open, newest
+        a.last_meaningful_activity_at = datetime(2026, 5, 1)
+        b.last_meaningful_activity_at = datetime(2026, 3, 1)
         for p, amount in [(a, "300"), (b, "1000"), (c, "20")]:
             db.add(ProjectSalesProfile(project_id=p.id, estimated_sales_value=Decimal(amount)))
         # Next action: B due earliest, A later, C open but undated, D nothing open.
@@ -77,7 +88,7 @@ def seeded():
         db.add(ProjectTask(project_id=a.id, name="t", status_id=open_task.id, due_date=date(2026, 2, 1)))
         db.add(ProjectTask(project_id=c.id, name="t", status_id=open_task.id))
         db.flush()
-        yield db, company, [a.id, b.id, c.id, d.id]
+        yield db, company, [a.id, b.id, c.id, d.id], users, devs
 
 
 def _titles(db, company, ids, sort, direction):
@@ -97,25 +108,27 @@ def _titles(db, company, ids, sort, direction):
         # Graph order (Zebra start < Middle < Alpha end), not alphabetical.
         ("status_label", ["B", "C", "A", "D"], ["A", "C", "B", "D"]),
         # Amount, numerically (1000 > 300 > 20, not string order).
+        # No activity last in both directions.
+        ("last_meaningful_activity_at", ["B", "C", "A", "D"], ["A", "C", "B", "D"]),
         ("estimated_sales_value", ["C", "A", "B", "D"], ["B", "A", "C", "D"]),
         # Dated by earliest due date, then open-undated, then nothing open, both ways.
         ("next_action", ["B", "A", "C", "D"], ["A", "B", "C", "D"]),
     ],
 )
 def test_derived_column_sorts_server_side(seeded, sort, asc, desc):
-    db, company, ids = seeded
+    db, company, ids, _users, _devs = seeded
     assert _titles(db, company, ids, sort, "asc") == asc
     assert _titles(db, company, ids, sort, "desc") == desc
 
 
 def test_flags_sort_puts_critical_first_descending(seeded):
-    db, company, ids = seeded
+    db, company, ids, _users, _devs = seeded
     assert _titles(db, company, ids, "flags", "desc")[0] == "A"
     assert _titles(db, company, ids, "flags", "asc")[-1] == "A"
 
 
 def test_sorted_pages_do_not_overlap(seeded):
-    db, company, ids = seeded
+    db, company, ids, _users, _devs = seeded
     seen = []
     for page in (1, 2):
         rows, _ = project_service.list_projects(
@@ -124,3 +137,21 @@ def test_sorted_pages_do_not_overlap(seeded):
         )
         seen += [r.id for r in rows]
     assert sorted(seen) == sorted(ids)
+
+
+def test_developer_sort_reads_the_typed_name_when_no_party(seeded):
+    """A portal registration shows "Typed: <name>" until a party is linked."""
+    db, company, ids, _users, _devs = seeded
+    d = db.get(Project, ids[3])
+    db.add(ProjectSalesProfile(project_id=d.id, developer_name="Aardvark Typed"))
+    db.flush()
+    assert _titles(db, company, ids, "developer_name", "asc")[0] == "D"
+
+
+def test_owner_sort_falls_back_to_email_for_a_blank_name(seeded):
+    db, company, ids, users, _devs = seeded
+    d = db.get(Project, ids[3])
+    d.owner_user_id = users["blank"]
+    db.flush()
+    # "aaa-first@zzt.test" sorts before alice.
+    assert _titles(db, company, ids, "owner_name", "asc")[0] == "D"

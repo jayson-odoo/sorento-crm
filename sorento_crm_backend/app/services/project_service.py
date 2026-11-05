@@ -1203,27 +1203,37 @@ def _list_order_by(db: Session, sort: str, direction: str) -> list:
         "updated_at": Project.updated_at,
         "title": Project.title,
         "outcome": Project.outcome,
-        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
         "flags": Project.is_critical,
     }
     tiebreak = [Project.created_at.desc(), Project.id.asc()]
 
     if sort in plain:
         return [directed(plain[sort])] + tiebreak
+    if sort == "last_meaningful_activity_at":
+        return [directed(Project.last_meaningful_activity_at).nulls_last()] + tiebreak
     if sort == "project_code":
         # A project with no code yet sorts after every coded one, whichever the direction.
         return [directed(Project.project_code).nulls_last()] + tiebreak
     if sort == "developer_name":
-        expr = (
+        party = (
             db.query(func.lower(ProjectParty.name))
             .filter(ProjectParty.id == Project.developer_party_id)
             .correlate(Project)
             .scalar_subquery()
         )
+        # A portal registration with no party linked shows the developer as typed
+        # ("Typed: ..." in the grid), so it sorts on that name too.
+        typed = (
+            db.query(func.lower(func.nullif(func.trim(ProjectSalesProfile.developer_name), "")))
+            .filter(ProjectSalesProfile.project_id == Project.id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        expr = func.coalesce(party, typed)
         return [directed(expr).nulls_last()] + tiebreak
     if sort == "owner_name":
         expr = (
-            db.query(func.lower(func.coalesce(User.name, User.email)))
+            db.query(func.lower(func.coalesce(func.nullif(User.name, ""), User.email)))
             .filter(User.id == Project.owner_user_id)
             .correlate(Project)
             .scalar_subquery()

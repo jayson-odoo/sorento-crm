@@ -23,3 +23,11 @@ board/list choice per user so Projects opens in list view for the owner.
    `{ view }` on toggle. Default for a user with nothing stored stays Board. The old localStorage
    value is used only as a fallback when the server has nothing (so nobody loses their pick).
 3. Board card code + title: drop `hover:underline`, use the grid's link hover style.
+
+## Owner fix round (hand test, 5 Nov): every grid column sortable, server-side
+`_list_order_by` in `sorento_crm_backend/app/services/project_service.py` (used by `list_projects`):
+Developer by name (party, else the typed portal name), Stage by status-graph `sort_order`,
+Estimated by amount, Owner by name (email when the name is blank), Next action by the earliest
+open task's due date (open-undated after it, Nothing open last), Flags by Critical (desc = Critical
+first), Last activity with blanks last. Blanks sort last both ways; ties newest first, then id.
+FE: `ProjectsGrid.tsx` drops every `enableSorting: false`.
