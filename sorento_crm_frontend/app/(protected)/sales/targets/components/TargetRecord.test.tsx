@@ -932,9 +932,14 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     render(<TargetRecord id="t1" />);
     const summary = screen.getByRole('region', { name: 'Commission summary' });
     expect(within(summary).getByText('6,918.12')).toBeTruthy();
-    expect(within(summary).getByText('01/10/2026 - 31/12/2026, 2.1% of target, not final')).toBeTruthy();
+    // Owner markup 5 Nov 11:40: the period's dates only, no subtexts.
+    expect(within(summary).getByText('Current period commission (RM)')).toBeTruthy();
+    expect(within(summary).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
-    expect(within(summary).getByText('Payment is not tracked in the CRM')).toBeTruthy();
+    expect(within(summary).queryByText(/not final/)).toBeNull();
+    expect(within(summary).queryByText('Periods that have ended')).toBeNull();
+    expect(within(summary).queryByText('Payment is not tracked in the CRM')).toBeNull();
+    expect(within(summary).queryByText('Current period so far (RM)')).toBeNull();
   });
 
   it('Periods shows the tier reached, its rate, the commission in RM with 2 decimals, where it pays and a total', () => {
@@ -1139,5 +1144,17 @@ describe('TargetRecord: standard grids and the tier lightbox (lane TARGET-TIER-A
     fireEvent.click(within(accounts).getByRole('button', { name: '01/01/2026 - 31/03/2026' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Tiers, 01/01/2026 - 31/03/2026')).toBeTruthy();
+  });
+});
+
+describe('TargetRecord: owner markup 5 Nov 11:40 (lane TARGET-TIER-ADDITIONAL)', () => {
+  it('a dealer target has no "For" subtitle and Details shows the Customer, not the target name', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: tgt8({ subject_label: 'BEAUFORT HOMES SDN BHD', name: 'BEAUFORT HOMES SDN BHD 2026 quarterly' }), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    expect(screen.queryByText(/^For /)).toBeNull();
+    expect(screen.getByText('Customer')).toBeTruthy();
+    const customer = screen.getByText('Customer').parentElement as HTMLElement;
+    expect(within(customer).getByText('BEAUFORT HOMES SDN BHD')).toBeTruthy();
+    expect(within(customer).queryByText('BEAUFORT HOMES SDN BHD 2026 quarterly')).toBeNull();
   });
 });

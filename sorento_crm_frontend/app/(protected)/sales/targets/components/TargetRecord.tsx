@@ -922,7 +922,10 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   </span>
                 )}
               </Field>
-              <Field label="Name" htmlFor={editing ? 'target-name' : undefined}>
+              <Field
+                label={isDealer && !editing ? 'Customer' : 'Name'}
+                htmlFor={editing ? 'target-name' : undefined}
+              >
                 {editing ? (
                   <Input
                     id="target-name"
@@ -931,6 +934,11 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     onChange={(e) => set({ name: e.target.value })}
                     className="h-8"
                   />
+                ) : isDealer ? (
+                  // The dealer, not the target's own name (that is the page title).
+                  <span className="block truncate" title={target?.subject_label}>
+                    {target?.subject_label}
+                  </span>
                 ) : (
                   <span className="block truncate" title={target?.name}>
                     {target?.name}
@@ -1098,11 +1106,6 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   ratio={target.threshold_unit === 'points'}
                   provisional={isDealer && target.basis !== 'invoiced'}
                   paysTo={isDealer}
-                  footer={
-                    target.commission_method !== 'none' && !editing ? (
-                      <PeriodsTotal target={target} paysTo={isDealer} />
-                    ) : null
-                  }
                 >
                   {target.periods.map((p) => {
                     const future = p.period_start > today;
@@ -1300,16 +1303,20 @@ function RecordIdentity({
         {target.name}
       </h2>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="min-w-0 truncate">
-          {'For '}
-          {subjectHref ? (
-            <Link href={subjectHref} className="text-primary hover:underline">
-              {target.subject_label}
-            </Link>
-          ) : (
-            target.subject_label
-          )}
-        </span>
+        {/* A dealer's name is the Customer under Details (owner markup, 5 Nov 11:40); an agent or
+            team keeps its link here. */}
+        {target.subject_kind !== 'dealer' ? (
+          <span className="min-w-0 truncate">
+            {'For '}
+            {subjectHref ? (
+              <Link href={subjectHref} className="text-primary hover:underline">
+                {target.subject_label}
+              </Link>
+            ) : (
+              target.subject_label
+            )}
+          </span>
+        ) : null}
         {target.parent ? (
           <span className="min-w-0 truncate">
             {'Agent target, part of '}
@@ -1390,14 +1397,13 @@ function CommissionSummary({ target }: { target: SalesTargetDetail }) {
       <section aria-label="Commission summary" className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-3">
         <Field label="Commission earned to date (RM)">
           <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_to_date ?? 0)}</span>
-          <span className="block text-xs text-muted-foreground">Periods that have ended</span>
         </Field>
-        <Field label="Current period so far (RM)">
+        <Field label="Current period commission (RM)">
           {current ? (
             <>
               <span className="text-lg font-semibold tabular-nums">{formatMoney(target.commission_current ?? 0)}</span>
               <span className="block text-xs text-muted-foreground">
-                {`${periodRange(current.period_start, current.period_end)}, ${formatPct(current.achieved_pct)} of target, not final`}
+                {periodRange(current.period_start, current.period_end)}
               </span>
             </>
           ) : (
@@ -1409,31 +1415,10 @@ function CommissionSummary({ target }: { target: SalesTargetDetail }) {
             <span className="block truncate font-medium" title={payoutText(target)}>
               {payoutText(target)}
             </span>
-            <span className="block text-xs text-muted-foreground">Payment is not tracked in the CRM</span>
           </Field>
         ) : null}
       </section>
     </Card>
-  );
-}
-
-/** The Periods table's Total row: every period's figures summed (a period not started yet
- * adds its target and nothing else). */
-function PeriodsTotal({ target, paysTo }: { target: SalesTargetDetail; paysTo: boolean }) {
-  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
-  const sum = (pick: (p: SalesTargetDetail['periods'][number]) => number | null | undefined) =>
-    target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
-  return (
-    <tfoot className="border-t bg-muted/40 font-medium">
-      <tr>
-        <td className="whitespace-nowrap px-3 py-2">Total</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.target_value))}</td>
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{figure(sum((p) => p.achieved_value))}</td>
-        <td colSpan={target.threshold_unit === 'points' ? 4 : 3} className="px-3 py-2" aria-hidden="true" />
-        <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(sum(paidIn))}</td>
-        {paysTo ? <td className="px-3 py-2" aria-hidden="true" /> : null}
-      </tr>
-    </tfoot>
   );
 }
 
@@ -1919,7 +1904,6 @@ function DealerAccounts({
     : (target?.accounts ?? []);
   const today = todayMalaysiaYyyyMmDd();
   const periods = draft || !target ? [] : target.periods.filter((p) => p.period_start <= today);
-  const commission = target?.commission_method !== 'none';
   return (
     <>
       {accounts.length && draft ? (
@@ -2038,11 +2022,6 @@ function CommissionTiers({
     }
     const unit = target?.threshold_unit ?? 'pct';
     const perPeriod = !!target?.tiers_per_period;
-    const rateOf = (t: CommissionTier, accountId?: string) => {
-      if (!t.account_rates) return formatFigure(t.rate);
-      const r = t.account_rates.find((x) => x.customer_id === accountId);
-      return r ? formatFigure(r.rate) : '-';
-    };
     return (
       <>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
