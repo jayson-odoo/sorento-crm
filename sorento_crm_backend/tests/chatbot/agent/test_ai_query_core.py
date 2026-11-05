@@ -522,7 +522,11 @@ def test_Q12_the_registry_is_consistent_with_the_models_and_the_permission_regis
         columns = {c.key for c in sa_inspect(ent.model).columns}
         for name, field in ent.fields.items():
             col = field.column or name
-            assert col in columns, f"{key}.{name}: no column {col} on {ent.model.__name__}"
+            if ent.compute is not None:
+                # AI-TOOLS-WAVE2: a computed entity's field has no column; its kind says its type.
+                assert field.kind in ("text", "number", "date", "boolean"), f"{key}.{name}: computed field needs a kind"
+            elif field.expr is None:
+                assert col in columns, f"{key}.{name}: no column {col} on {ent.model.__name__}"
             if field.permission:
                 assert field.permission in slugs, f"{key}.{name}: unknown slug {field.permission}"
         for slug in (ent.view_permission, ent.own_permission):
