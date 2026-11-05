@@ -107,7 +107,7 @@ describe('fitReason', () => {
       'Needs 2 fixed parts; this combo has 1',
     );
     expect(m.fitReason({ fixed: 1, groups: [1], upgrades: 0 }, shape)).toBe(
-      'Needs choice group 1; this combo has 0',
+      'Needs a choice group; this combo has none',
     );
   });
   it('S3: needs 3 of 2 names the shortfall; 1 and 2 fit', async () => {
@@ -138,6 +138,12 @@ describe('fitReason', () => {
     );
     expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, shape)).toBe(
       "Prints 0 of this combo's 2 fixed parts",
+    );
+  });
+  it('R2: a picks template on a combo with fixed parts and no group names the group first', async () => {
+    const m = await mod();
+    expect(m.fitReason({ fixed: 0, groups: [2], upgrades: 0 }, m.comboShape(S4_PARTS))).toBe(
+      'Needs a choice group; this combo has none',
     );
   });
   it('S5: the upgrade need fits one upgrade, two do not, none on a combo without', async () => {

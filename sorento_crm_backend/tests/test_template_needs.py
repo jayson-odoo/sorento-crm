@@ -230,7 +230,7 @@ def test_s2_has_no_choice_group(db):
     shape = _shape(db, shapes.s2)
     assert (
         _mod().fit_reason({"fixed": 1, "groups": [1], "upgrades": 0}, shape)
-        == "Needs choice group 1; this combo has 0"
+        == "Needs a choice group; this combo has none"
     )
 
 
@@ -298,4 +298,13 @@ def test_m1_a_template_must_print_every_fixed_part(db):
     assert (
         _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape)
         == "Prints 0 of this combo's 2 fixed parts"
+    )
+
+
+def test_r2_a_picks_template_on_a_combo_with_fixed_parts_and_no_group_names_the_group(db):
+    """Choice groups are checked before fixed parts, so the gap shown is the group, not '0 of N'."""
+    shape = _shape(db, shapes.s4)
+    assert (
+        _mod().fit_reason({"fixed": 0, "groups": [2], "upgrades": 0}, shape)
+        == "Needs a choice group; this combo has none"
     )

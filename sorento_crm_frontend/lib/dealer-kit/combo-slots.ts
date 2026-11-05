@@ -39,22 +39,24 @@ export function comboShape(parts: ShapePart[]): ComboShape {
 const plural = (count: number, noun: string) => (count === 1 ? `${count} ${noun}` : `${count} ${noun}s`);
 
 export function fitReason(needs: TemplateNeeds, shape: ComboShape): string | null {
-  // Fixed parts are always in the box, so a template must print every one; a choice group and
-  // the upgrades are at most what the combo has.
+  // Choice groups, then fixed parts, then upgrades. A group and the upgrades are at most what the
+  // combo has; fixed parts are always in the box, so a template must print every one.
+  for (let index = 0; index < needs.groups.length; index += 1) {
+    const need = needs.groups[index];
+    if (need <= 0) continue;
+    const group = shape.groups[index];
+    if (!group) {
+      return shape.groups.length === 0
+        ? 'Needs a choice group; this combo has none'
+        : `Needs choice group ${index + 1}; this combo has ${shape.groups.length}`;
+    }
+    if (need > group.size) return `Needs ${need} from ${group.role}; this combo has ${group.size}`;
+  }
   if (needs.fixed < shape.fixed) {
     return `Prints ${needs.fixed} of this combo's ${plural(shape.fixed, 'fixed part')}`;
   }
   if (needs.fixed > shape.fixed) {
     return `Needs ${plural(needs.fixed, 'fixed part')}; this combo has ${shape.fixed}`;
-  }
-  for (let index = 0; index < needs.groups.length; index += 1) {
-    const need = needs.groups[index];
-    if (need <= 0) continue;
-    const group = shape.groups[index];
-    if (!group) return `Needs choice group ${index + 1}; this combo has ${shape.groups.length}`;
-    if (need > group.size) {
-      return `Needs ${need} from ${group.role}; this combo has ${group.size}`;
-    }
   }
   if (needs.upgrades > shape.upgrades) {
     return `Needs ${plural(needs.upgrades, 'upgrade')}; this combo has ${shape.upgrades}`;

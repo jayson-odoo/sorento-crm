@@ -56,9 +56,11 @@ def combo_shape(combo) -> dict:
     fixed = 0
     upgrades = 0
     sizes: dict[str, int] = {}
+    # Counted by the part ROWS, never through the joined `part_product`: the company-scope loader
+    # criteria on a scoped session reach that join and return None for a product the session
+    # cannot see, which used to drop every part. `part_product_id` is NOT NULL with a RESTRICT
+    # foreign key, so a row always has its product.
     for part in combo.parts or []:
-        if part.part_product is None:
-            continue
         if part.is_upgrade:
             upgrades += 1
         elif part.choice_group:
@@ -79,20 +81,23 @@ def _plural(count: int, noun: str) -> str:
 def fit_reason(needs: dict, shape: dict) -> Optional[str]:
     """None when the combo fits, else the first shortfall in the combo's words.
 
-    Fixed parts are always in the box, so a template must print every one (`==`); a choice group
-    and the upgrades are at most what the combo has (a pick of k from n, an offer)."""
-    if needs["fixed"] < shape["fixed"]:
-        return f"Prints {needs['fixed']} of this combo's {_plural(shape['fixed'], 'fixed part')}"
-    if needs["fixed"] > shape["fixed"]:
-        return f"Needs {_plural(needs['fixed'], 'fixed part')}; this combo has {shape['fixed']}"
+    Checked in this order: choice groups, fixed parts, upgrades. A choice group and the upgrades
+    are at most what the combo has (a pick of k from n, an offer); fixed parts are always in the
+    box, so a template must print every one."""
     for index, need in enumerate(needs["groups"]):
         if need <= 0:
             continue
         if index >= len(shape["groups"]):
+            if not shape["groups"]:
+                return "Needs a choice group; this combo has none"
             return f"Needs choice group {index + 1}; this combo has {len(shape['groups'])}"
         group = shape["groups"][index]
         if need > group["size"]:
             return f"Needs {need} from {group['role']}; this combo has {group['size']}"
+    if needs["fixed"] < shape["fixed"]:
+        return f"Prints {needs['fixed']} of this combo's {_plural(shape['fixed'], 'fixed part')}"
+    if needs["fixed"] > shape["fixed"]:
+        return f"Needs {_plural(needs['fixed'], 'fixed part')}; this combo has {shape['fixed']}"
     if needs["upgrades"] > shape["upgrades"]:
         return f"Needs {_plural(needs['upgrades'], 'upgrade')}; this combo has {shape['upgrades']}"
     return None

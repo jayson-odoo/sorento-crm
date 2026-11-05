@@ -77,8 +77,8 @@ def _hide_part_products_from_the_staff_scope(db, combo):
     from app.models.base import company_scope
     from app.models.company import Company
     from app.models.product import Product
-    from tests.test_product_tag_templates import MOCHA
-    from tests.conftest import unique_code
+    from tests.test_price_tag_lpsp_templates import MOCHA
+    from tests._pg_fixture import unique_code
 
     if db.get(Company, MOCHA) is None:
         db.add(Company(id=MOCHA, name="ZZT Mocha", code=unique_code("MCH")[:20], is_active=True))
@@ -87,15 +87,16 @@ def _hide_part_products_from_the_staff_scope(db, combo):
         for part in combo.parts:
             db.get(Product, part.part_product_id).company_id = MOCHA
     db.commit()
-    db.expire_all()
+    db.expunge_all()  # the route loads the combo fresh, as a request session does
 
 
 def test_r1_the_save_refusal_counts_the_combos_fixed_parts_by_rows(env):  # noqa: F811
     db, c, _ = env
     s = shapes.s4(db)  # two fixed parts
     short = _published(db, "ZZT one fixed r1", _doc(*ONE_FIXED))
+    combo_id = s["combo"].id
     _hide_part_products_from_the_staff_scope(db, s["combo"])
-    res = c.put(f"{DK}/combos/{s['combo'].id}/tag-templates", json={"template_ids": [short]})
+    res = c.put(f"{DK}/combos/{combo_id}/tag-templates", json={"template_ids": [short]})
     assert res.status_code == 422, res.text
     assert "Prints 1 of this combo's 2 fixed parts" in res.text, res.text
     assert "this combo has 0" not in res.text
@@ -106,5 +107,8 @@ def test_r1_the_read_path_and_the_save_path_share_one_shape(env):  # noqa: F811
 
     db, c, _ = env
     s = shapes.s4(db)
+    combo_id = s["combo"].id
     _hide_part_products_from_the_staff_scope(db, s["combo"])
-    assert combo_shape(db.get(type(s["combo"]), s["combo"].id))["fixed"] == 2
+    from app.models.product_combo import ProductCombo
+
+    assert combo_shape(db.get(ProductCombo, combo_id))["fixed"] == 2
