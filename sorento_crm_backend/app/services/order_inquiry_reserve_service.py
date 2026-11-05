@@ -40,11 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.project_so import (
-    INQUIRY_PARTLY_LINKED,
-    INQUIRY_PLACED,
-    INQUIRY_RAISED,
-    IV_ORDER,
-    IV_ORDER_BACK,
+    INQUIRY_LINK_STATES,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryReleasedLink,
@@ -66,8 +62,8 @@ from app.services.oi_delivery_date import OiDate, resolve as resolve_oi_date
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
-_REQUESTABLE_VERBS = (IV_ORDER, IV_ORDER_BACK)
-_REQUESTABLE_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+#: OI-RESERVE-ANY-ROW: not Done, any verb (`oi_row_visibility.is_reservable_row`).
+_REQUESTABLE_STATES = INQUIRY_LINK_STATES
 
 
 def _dec(value: Any) -> Decimal:
@@ -704,13 +700,8 @@ class OrderInquiryReserveService:
                     f"Row {row_id} does not belong to this order inquiry.",
                     code="reserve_request_wrong_inquiry",
                 )
-            if row.verb not in _REQUESTABLE_VERBS:
-                raise AppException(
-                    409,
-                    f"{_row_label(row)} is not an ORDER / ORDER BACK row and cannot be "
-                    "requested for reserve.",
-                    code="reserve_request_wrong_verb",
-                )
+            # OI-RESERVE-ANY-ROW (owner, 5 Nov): any verb; the two checks below are
+            # `oi_row_visibility.is_reservable_row`, split so each says why.
             if row.state not in _REQUESTABLE_STATES:
                 raise AppException(
                     409,

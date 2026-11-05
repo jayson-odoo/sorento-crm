@@ -34,10 +34,8 @@ from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
 from app.services.oi_delivery_date import resolve as resolve_oi_date
-from app.services.oi_row_visibility import is_live_row, live_row_clause
+from app.services.oi_row_visibility import is_live_row, is_reservable_row, live_row_clause
 from app.services.order_inquiry_reserve_service import (
-    _REQUESTABLE_STATES,
-    _REQUESTABLE_VERBS,
     _open_request_row_ids,
     _requestable,
 )
@@ -567,9 +565,8 @@ class StockDebtSnapshotService:
                 ),
                 "remaining": float(remaining),
                 "requestable": (
-                    is_live_row(row)
-                    and row.verb in _REQUESTABLE_VERBS
-                    and row.state in _REQUESTABLE_STATES
+                    # OI-RESERVE-ANY-ROW: live and not Done, any verb (the request guard's rule).
+                    is_reservable_row(row)
                     and row_id not in open_requests
                     and remaining > 0
                 ),

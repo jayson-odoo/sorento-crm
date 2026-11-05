@@ -73,6 +73,16 @@ export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
 }
 
 /**
+ * OI-RESERVE-ANY-ROW (owner, 5 Nov 2026): a row may be requested for reserve and reserved
+ * when it is live and not Done, whatever its verb. "Done" is the supply state `actioned`
+ * (`STATE_LABEL.actioned`); the states left are the ones links decide. Twin of the backend's
+ * `oi_row_visibility.is_reservable_row`.
+ */
+export function isReservableInquiryRow(row: OrderInquiryWorklistRow): boolean {
+  return isLiveInquiryRow(row) && ['raised', 'partly_linked', 'placed'].includes(row.state);
+}
+
+/**
  * PR #1266 review S2 (G6 rationale: the header never sits Outstanding on a row nobody can
  * see or confirm): a used row waits on Confirm while it is not cancelled and its ack is
  * awaiting or changed. ONE rule, shared by the header's `lines_to_confirm`, the line's
@@ -102,7 +112,9 @@ export function foldKeyOf(row: OrderInquiryWorklistRow): string {
 
 function pickPrimary(live: OrderInquiryWorklistRow[], all: OrderInquiryWorklistRow[]) {
   const buy = live.filter((row) => isInquiryBuyRow(row.verb));
-  const byReserve = [...buy].sort(
+  // OI-RESERVE-ANY-ROW: a reserve sits on any live row (a DELAY row included), so the
+  // reserve-bearing row of ANY verb addresses the line's pill and reserve actions.
+  const byReserve = [...live].sort(
     (a, b) => rank(RESERVE_URGENCY, a.reserve_state) - rank(RESERVE_URGENCY, b.reserve_state),
   );
   if (byReserve[0]?.reserve_state && RESERVE_URGENCY.includes(byReserve[0].reserve_state)) {
@@ -123,10 +135,11 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   const lineCancelled = rows.some((row) => row.line_cancelled);
 
   const asked = liveBuy.reduce((total, row) => total + num(row.qty), 0);
-  const taken = liveBuy.reduce(
-    (total, row) => total + num(row.linked_qty) + num(row.reserved_qty),
-    0,
-  );
+  // OI-RESERVE-ANY-ROW: a reserve on a live non-buy row (DELAY, ADVANCE, ...) is taken too;
+  // only a buy row carries document links of its own.
+  const taken =
+    liveBuy.reduce((total, row) => total + num(row.linked_qty), 0) +
+    liveRows.reduce((total, row) => total + num(row.reserved_qty), 0);
   const bundled = liveBuy.reduce((total, row) => total + num(row.bundled_qty), 0);
   // G7: a cancelled line's quantity is called off, not owed.
   const requested = lineCancelled ? 0 : asked;

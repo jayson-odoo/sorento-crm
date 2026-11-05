@@ -19,7 +19,7 @@ whose OI row is not live (used, or cancelled: `oi_row_visibility`).
 WHAT IT WRITES (`--apply`)
 ---------------------------
 `row_id` of the request row moves to the ONE live row of the same OI on the same sales order
-line, when that row has no open request of its own, is not already on this request, and its
+line that is not Done (any verb, `oi_row_visibility.is_reservable_row`, OI-RESERVE-ANY-ROW), when that row has no open request of its own, is not already on this request, and its
 requestable qty (`_requestable`) covers the qty asked. Qty, location, requester, request date and
 park state are untouched. One audit EVENT per moved row. Anything else is printed with the
 reason it is held and left for a person.
@@ -58,7 +58,7 @@ from app.models.project_so import (  # noqa: E402
     ProjectSalesOrderLine,
 )
 from app.services.audit_service import log_audit  # noqa: E402
-from app.services.oi_row_visibility import live_row_clause  # noqa: E402
+from app.services.oi_row_visibility import live_row_clause, reservable_row_clause  # noqa: E402
 from app.services.order_inquiry_reserve_service import (  # noqa: E402
     _open_request_row_ids,
     _requestable,
@@ -93,8 +93,10 @@ def _num(value) -> str:
 
 
 def _live_siblings(db: Session, row: OrderInquiryRow) -> List[OrderInquiryRow]:
-    """Live rows of the same OI on the same sales order line: the mirror line itself, or any
-    mirror of the same core line (a revision may re-mirror it)."""
+    """Reservable rows of the same OI on the same sales order line: the mirror line itself, or
+    any mirror of the same core line (a revision may re-mirror it). OI-RESERVE-ANY-ROW: the
+    target obeys the request guard's own rule (`oi_row_visibility.is_reservable_row`: live,
+    not Done, any verb), so a Done live row is never a target and a DELAY row is one."""
     if row.so_line_id is None:
         return []
     core_id = (
@@ -117,7 +119,7 @@ def _live_siblings(db: Session, row: OrderInquiryRow) -> List[OrderInquiryRow]:
             OrderInquiryRow.order_inquiry_id == row.order_inquiry_id,
             OrderInquiryRow.id != row.id,
             or_(*same_line),
-            live_row_clause(),
+            reservable_row_clause(),
         )
         .order_by(OrderInquiryRow.created_at, OrderInquiryRow.id)
         .all()
@@ -152,9 +154,9 @@ def find_stuck(db: Session, *, inquiry_id: Optional[str] = None) -> List[Stuck]:
         target = siblings[0] if len(siblings) == 1 else None
         verdict = MOVE
         if not siblings:
-            verdict = "no live row on the line"
+            verdict = "no live row on the line that is not Done"
         elif len(siblings) > 1:
-            verdict = f"{len(siblings)} live rows on the line"
+            verdict = f"{len(siblings)} live rows on the line that are not Done"
         elif target.id in claimed:
             verdict = "live row already claimed in this run"
         elif target.id in _open_request_row_ids(db, [target.id]):
