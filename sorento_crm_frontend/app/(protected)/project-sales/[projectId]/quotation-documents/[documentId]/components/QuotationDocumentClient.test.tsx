@@ -688,9 +688,9 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     );
     renderScreen();
 
-    expect(
-      await screen.findByText(/The customer holds this version\. Edit opens the next one\./i),
-    ).toBeInTheDocument();
+    // The hint that used to say this is gone (owner, 5 Nov 2026); the prompt below says it.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
 
     await pressEdit();
 
@@ -1134,12 +1134,14 @@ describe('QuotationDocumentClient standing badge', () => {
  * user starts.
  */
 describe('QuotationDocumentClient scope series', () => {
-  it('AC-QF004: offers no per-scope Edit scope; Record outcome stays', async () => {
+  it('AC-QF004: offers no per-scope Edit scope, and no Record outcome (owner, 5 Nov 2026)', async () => {
     // The owner: "editing of scope should be done by 'Edit Quotation', not a separate button".
+    // Record outcome left the page too: "we only need per project outcome" (its own lane).
     seedOneScope();
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Record outcome' })).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record outcome' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
@@ -1161,7 +1163,9 @@ describe('QuotationDocumentClient scope series', () => {
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
 
-  it('says which series the scope is quoted from', async () => {
+  // The area header row that named the series is gone in view (owner, 5 Nov 2026: "in view i
+  // don't even need this"); the series still shows on the form page.
+  it('names no series above the lines in view, even when one is bound', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ grand_total: '9000.00', scopes: [scope()] }),
     );
@@ -1172,16 +1176,9 @@ describe('QuotationDocumentClient scope series', () => {
     listQuotationLines.mockResolvedValue([line()]);
     renderScreen();
 
-    expect(await screen.findByText('Sanitaryware template')).toBeInTheDocument();
-  });
-
-  it('says NO series when none is bound, rather than looking identically clean', async () => {
-    // The state the whole database was in. A scope checking nothing and a scope whose lines
-    // are all standard render the same lines; only this tells them apart.
-    seedOneScope();
-    renderScreen();
-
-    expect(await screen.findByText('No series')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText('Sanitaryware template')).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
   });
 });
 
@@ -1265,25 +1262,25 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
 });
 
 describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
-  it('does not repeat the document number under the breadcrumb', async () => {
+  // Superseded by PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026: "it should be like order
+  // inquiry"): the record card leads with the number, as Order Inquiry does, and the title is
+  // its subtitle line.
+  it('leads the record card with the document number, the title under it', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
     renderScreen(<QuotationHeaderTab />);
 
     expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
-    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
+    const card = screen.getByTestId('record-header-card');
+    expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
+    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).getByText('Draft')).toBeInTheDocument();
   });
 
   it('says the project title once, in the record header, not again in the Header tab card', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen(<QuotationHeaderTab />);
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
     expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
   });
 });
@@ -1743,22 +1740,18 @@ describe('QuotationDocumentClient: locked while Pending or Approved, explicit Re
     expect(reviseQuotationApproval).not.toHaveBeenCalled();
   });
 
-  it('D6: the Lines tab offers a per-scope Revise to vN on a draft but not while locked', async () => {
+  // Revise to vN moved into the gear (PROPOSAL-HEADER-LAYOUT); the locked half is H10.
+  it('D6: the gear offers Revise to vN on a draft', async () => {
     seedOneScope();
     getQuotationDocument.mockResolvedValue(
       belowFloor('draft', { grand_total: '9000.00', scopes: [scope()] }),
     );
-    const { unmount } = renderScreen();
-    expect(await screen.findByRole('button', { name: /Revise to v3/i })).toBeInTheDocument();
-    unmount();
-
-    seedOneScope();
-    getQuotationDocument.mockResolvedValue(
-      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
-    );
     renderScreen();
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Revise to v/i })).toBeNull();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
   });
 
   it('D7: after Revise the chip reads Draft and the primary button reads Send for approval', async () => {
@@ -1864,7 +1857,12 @@ describe('QuotationDocumentClient: fix round 2', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: /Recheck alerts/i })).toBeInTheDocument();
+    // A gear item now (PROPOSAL-HEADER-LAYOUT), no longer a button above the lines.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
   });
 
   it('6: gear Delete shows the countdown INLINE in the header, not only a toast', async () => {
@@ -2231,8 +2229,8 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     expect(screen.getByText('Our Ref')).toBeInTheDocument();
     const strip = screen.getByTestId('quotation-document-tab-strip');
-    expect(within(strip).getByRole('link', { name: /Header/ })).toBeInTheDocument();
-    expect(within(strip).queryByRole('link', { name: /^Lines$/ })).toBeNull();
+    expect(within(strip).getByRole('tab', { name: /Header/ })).toBeInTheDocument();
+    expect(within(strip).queryByRole('tab', { name: /^Lines$/ })).toBeNull();
   });
 
   it('H6: no area header row and no Record outcome anywhere on the page (owner 12:20, 12:28)', async () => {

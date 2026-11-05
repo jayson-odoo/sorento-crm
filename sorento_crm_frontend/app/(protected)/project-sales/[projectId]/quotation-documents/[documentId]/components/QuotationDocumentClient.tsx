@@ -5,7 +5,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronDown, Mail, MessageCircle, PenLine } from 'lucide-react';
+import { ChevronDown, GitBranch, Mail, MessageCircle, PenLine, RefreshCw } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
+import type { RecordAction } from '@/components/common/recordActions';
 import DetailActions from '@/components/common/DetailActions';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import {
@@ -33,8 +35,11 @@ import {
   useProject,
   useProjectQuotationVersions,
   useQuotationMutations,
+  useQuotationRecomputeMutation,
   useQuotations,
 } from '../../../../_shared/hooks/useProjects';
+import type { QuotationRecomputeResult } from '../../../../_shared/types/project.types';
+import { ReviseQuotationDialog } from '../../../components/ReviseQuotationDialog';
 import {
   isLockedForApproval,
   nextAction,
@@ -116,6 +121,26 @@ export function QuotationDocumentClient({
   const [approvalRevisePrompt, setApprovalRevisePrompt] = React.useState(false);
   const [rejecting, setRejecting] = React.useState(false);
   const canApprove = useHasPermission(APPROVE_PERMISSION);
+  /**
+   * The version the header chip shows (PROPOSAL-HEADER-LAYOUT, owner: "should just be v1,
+   * version is per quotation / proposal"). Null is the current one. Versions are stored per
+   * area, so the number picked here is applied to every area below.
+   */
+  const [versionNo, setVersionNo] = React.useState<number | null>(null);
+  const [revisingAll, setRevisingAll] = React.useState(false);
+  const [recheckResults, setRecheckResults] = React.useState<
+    Record<string, QuotationRecomputeResult>
+  >({});
+  const recompute = useQuotationRecomputeMutation(projectId);
+  const dismissRecheck = React.useCallback(
+    (versionId: string) =>
+      setRecheckResults((prev) => {
+        const next = { ...prev };
+        delete next[versionId];
+        return next;
+      }),
+    [],
+  );
 
   const selectScope = React.useCallback((scopeId: string) => setActiveScopeId(scopeId), []);
 
@@ -147,6 +172,36 @@ export function QuotationDocumentClient({
       }))
       .filter((pair) => pair.current && !(pair.current.is_editable ?? pair.current.is_current));
   }, [quotations.data, scopeVersions.rows, scopes]);
+
+  /** Every area of THIS document with its current version, for the gear's Recheck and Revise. */
+  const currentScopes = React.useMemo(() => {
+    const mine = new Set(scopes.map((scope) => scope.id));
+    return (quotations.data ?? [])
+      .filter((quotation) => mine.has(quotation.id))
+      .map((quotation) => ({
+        quotation,
+        current: scopeVersions.rows.find(
+          (row) => row.quotation.id === quotation.id && row.version.is_current,
+        )?.version,
+      }))
+      .filter(
+        (pair): pair is { quotation: (typeof pair)['quotation']; current: NonNullable<(typeof pair)['current']> } =>
+          Boolean(pair.current),
+      );
+  }, [quotations.data, scopeVersions.rows, scopes]);
+  /** The proposal's version numbers, newest first, across its areas. */
+  const documentVersionNos = React.useMemo(() => {
+    const mine = new Set(scopes.map((scope) => scope.id));
+    const numbers = new Set(
+      scopeVersions.rows
+        .filter((row) => mine.has(row.quotation.id))
+        .map((row) => row.version.version_no),
+    );
+    return [...numbers].sort((a, b) => b - a);
+  }, [scopeVersions.rows, scopes]);
+  const currentVersionNo = currentScopes.length
+    ? Math.max(...currentScopes.map((pair) => pair.current.version_no))
+    : null;
 
   const canEditProject = project.data?.can_edit ?? false;
   // The customer's feedback notes (PS-QUOTE-MATRIX): the open count is the tab's badge. The same
@@ -218,6 +273,54 @@ export function QuotationDocumentClient({
       : canApprove && record.viewer_may_decide;
   const action = nextAction(record, { canEdit, canApprove: mayDecide, isSigned });
   const locked = isLockedForApproval(record);
+
+  /**
+   * Recheck alerts and Revise to vN, moved up from the row above the lines into the gear
+   * (owner, 5 Nov 2026: "the version should be shown at the header tab"). Same rules as the
+   * buttons they replace: a user who can edit, a quotation not locked for approval, and for the
+   * recheck only versions that are still open. They act on every area, the version being the
+   * proposal's.
+   */
+  const openScopes = currentScopes.filter(
+    (pair) => pair.current.is_editable ?? pair.current.is_current,
+  );
+  const versionActions: RecordAction[] = [];
+  if (canEdit && !locked && openScopes.length > 0) {
+    versionActions.push({
+      key: 'quotation_document.recheck_alerts',
+      label: recompute.isPending ? 'Rechecking...' : 'Recheck alerts',
+      icon: RefreshCw,
+      disabled: recompute.isPending,
+      run: async () => {
+        setVersionNo(null);
+        for (const pair of openScopes) {
+          try {
+            const result = await recompute.mutateAsync(pair.current.id);
+            setRecheckResults((prev) => ({ ...prev, [pair.current.id]: result }));
+          } catch {
+            // The mutation toasted the reason; the other areas still get their recheck.
+          }
+        }
+      },
+    });
+  }
+  if (canEdit && !locked && currentScopes.length > 0 && currentVersionNo !== null) {
+    versionActions.push({
+      key: 'quotation_document.revise_version',
+      label: `Revise to v${currentVersionNo + 1}`,
+      icon: GitBranch,
+      run: () => setRevisingAll(true),
+    });
+  }
+  const gearActions = (() => {
+    const at = gear.actions.findIndex((item) => item.key === 'quotation_document.edit');
+    if (at < 0) return [...versionActions, ...gear.actions];
+    return [...gear.actions.slice(0, at + 1), ...versionActions, ...gear.actions.slice(at + 1)];
+  })();
+  const shownVersionNo = versionNo ?? currentVersionNo;
+  const versionFrozen = versionNo !== null && versionNo !== currentVersionNo;
+  const versionLabel =
+    shownVersionNo === null ? null : `v${shownVersionNo}${versionFrozen ? ' (frozen)' : ''}`;
   /**
    * The "Send for approval" label comes off the graph's own draft -> pending edge, so a renamed
    * edge reads the way the admin named it; with no graph it falls back to the plain words. The
@@ -262,12 +365,10 @@ export function QuotationDocumentClient({
    * lines cannot be changed"), and the client read it and still asked why they could not edit.
    * Every line here names the way forward as well as the reason.
    */
+  // No "The customer holds this version. Edit opens the next one." (owner, 5 Nov 2026): Edit's
+  // own prompt (ReviseToEditDialog) says it when it matters.
   const headerHints: string[] = [];
-  if (!canEdit) {
-    headerHints.push('You can read this quotation but not change it.');
-  } else if (lockedScopes.length > 0) {
-    headerHints.push('The customer holds this version. Edit opens the next one.');
-  }
+  if (!canEdit) headerHints.push('You can read this quotation but not change it.');
   if (action.hint) headerHints.push(action.hint);
 
   /**
@@ -312,35 +413,67 @@ export function QuotationDocumentClient({
 
   return (
     <div className="space-y-5">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          {/* No document number here: the page title above already is that number, and a
-              second copy under the breadcrumb is repeated information (#1335). */}
-          <div className="flex flex-wrap items-center gap-2">
-            {/* The SAME reading as the project's quotation list. This badge used to be its own
-                `is_issued ? Issued : Draft`, which is why a quotation the customer had accepted
-                read "Accepted" in the list and "Issued" here - the two surfaces answered the same
-                question differently, which is exactly what `quotationStanding` exists to stop. */}
+      {/* The Order Inquiry record card (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026: "it should be
+          like order inquiry"): number + status inline, muted lines under it, actions right. No
+          customer line (the letterhead's To says it) and nothing hangs under the buttons. */}
+      <RecordHeaderCard
+        title={record.document_no}
+        badges={
+          <>
+            {/* The SAME reading as the project's quotation list (`quotationStanding`), so the two
+                surfaces never answer the same question differently. */}
             <span className={`${STATUS_PILL_BASE} ${statusPillClass(standing.label)}`}>
               {standing.label}
             </span>
-          </div>
-          <h2 className="mt-1 text-xl font-semibold">
-            <TruncatedTextCell text={record.subject_title} lines={2} dialogTitle="Title" />
-          </h2>
-          <p className="break-words text-sm text-muted-foreground">
-            {record.recipient_name_snapshot ?? '-'}
-          </p>
-          <QuotationViewCount projectId={projectId} document={record} />
-        </div>
-
-        {/* One CTA, then the gear. Issuing is the move; exports and the delete live behind the
-            gear so the header states one intent. Sign sits beside it as an outline button only
-            while it is the thing standing in the way. */}
-        <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
-          {/* Pager, gear, primary (D6), through the shared group rather than a
-              hand-rolled row: the order is the same rule on all 39 detail pages,
-              and a copy of it here is a copy that can drift. */}
+            {versionLabel &&
+              (documentVersionNos.length > 1 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs"
+                      aria-label={`Version ${versionLabel}`}
+                    >
+                      {versionLabel}
+                      <ChevronDown className="size-3.5" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {documentVersionNos.map((no) => (
+                      <DropdownMenuItem
+                        key={no}
+                        onSelect={() => setVersionNo(no === currentVersionNo ? null : no)}
+                      >
+                        {`v${no} (${no === currentVersionNo ? 'current' : 'frozen'})`}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <span className="inline-flex h-6 items-center rounded-md border border-border px-2 text-xs font-medium">
+                  {versionLabel}
+                </span>
+              ))}
+          </>
+        }
+        subtitle={[
+          <TruncatedTextCell
+            key="title"
+            text={record.subject_title}
+            lines={2}
+            dialogTitle="Title"
+          />,
+          record.is_issued ? (
+            <QuotationViewCount key="views" projectId={projectId} document={record} />
+          ) : null,
+          // Why the screen is in the state it is in, each on its own line (owner: no "·").
+          // Visible, not a tooltip: a hover is unreadable on the phone this page works on.
+          ...headerHints.map((hint) => <span key={hint}>{hint}</span>),
+        ]}
+        actions={
+          /* Pager, gear, printer, primary (D6, owner 5 Nov: the printer sits beside the gear). */
           <DetailActions
             pagerNode={
               /* Step between this project's quotation documents without going back to the
@@ -382,10 +515,31 @@ export function QuotationDocumentClient({
             }
             pendingAction={gear.pending}
             gear={
-              <DetailActionsMenu
-                actions={gear.actions}
-                ariaLabel={`${documentNoun(document.data)} actions`}
-              />
+              <>
+                <DetailActionsMenu
+                  actions={gearActions}
+                  ariaLabel={`${documentNoun(document.data)} actions`}
+                />
+                {/* Where a queued export is actually collected. Rendered only once something has
+                    been issued, because a download of a revision that does not exist yet cannot: the
+                    gear already says "Send it to the customer first", and a chip that can only ever read 0 is a
+                    control with nothing behind it.
+
+                    Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
+                    Earlier revisions' files are still in the My Downloads drawer. */}
+                {latestIssue && (
+                  <EntityDownloadsButton
+                    entityType="quotation_issue"
+                    entityId={latestIssue.id}
+                    label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
+                    // The complaint header's own three classes, verbatim. It was always the same
+                    // component; passing no className rendered it borderless beside two bordered
+                    // buttons, which is why the client read it as not clickable ("the download
+                    // should have border just like complaint").
+                    className="h-8 border border-border"
+                  />
+                )}
+              </>
             }
             primary={
               <>
@@ -464,41 +618,11 @@ export function QuotationDocumentClient({
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
-              {/* Where a queued export is actually collected. Rendered only once something has
-                  been issued, because a download of a revision that does not exist yet cannot: the
-                  gear already says "Send it to the customer first", and a chip that can only ever read 0 is a
-                  control with nothing behind it.
-
-                  Keyed to the LATEST revision, which is the one whose exports anybody is chasing.
-                  Earlier revisions' files are still in the My Downloads drawer. */}
-              {latestIssue && (
-                <EntityDownloadsButton
-                  entityType="quotation_issue"
-                  entityId={latestIssue.id}
-                  label={latestIssue.our_ref_text ?? `${record.document_no} R${latestIssue.issue_no}`}
-                  // The complaint header's own three classes, verbatim. It was always the same
-                  // component; passing no className rendered it borderless beside two bordered
-                  // buttons, which is why the client read it as not clickable ("the download
-                  // should have border just like complaint").
-                  className="h-8 border border-border"
-                />
-              )}
               </>
             }
           />
-          {/* Why the screen is in the state it is in, and what to do about it, in one sentence.
-              The old copy stated a fact and offered no move, which is what the client read and
-              still could not act on: "i don't know when can i edit and when i cannot ... this
-              line is confusing". Reason and next action, always together. */}
-          {/* Visible, not only a tooltip: a disabled button with the reason hidden behind a
-              hover is unreadable on the phone this page also has to work on. */}
-          {headerHints.map((hint) => (
-            <p key={hint} className="text-xs text-muted-foreground sm:text-right">
-              {hint}
-            </p>
-          ))}
-        </div>
-      </header>
+        }
+      />
 
       {/* What the CUSTOMER said, on the document rather than behind the Signatures tab. Renders
           nothing unless they have actually asked for something, and stands down the moment they
@@ -519,8 +643,8 @@ export function QuotationDocumentClient({
           priced below its floor, so the ordinary quotation gains no chrome and no extra step. */}
       <QuotationApprovalPanel document={record} />
 
-      {/* The letterhead card lives in the Header tab now, first of the tabs (#1341): "i need this
-          to be under 'Header' tab to align with our system design". */}
+      {/* The letterhead card and, under it, the lines are the Header tab (#1341; lines moved there
+          by PROPOSAL-HEADER-LAYOUT, 5 Nov 2026). */}
       <QuotationDocumentTabs
         projectId={projectId}
         documentId={documentId}
@@ -538,6 +662,9 @@ export function QuotationDocumentClient({
           sorentoSignature,
           activeScopeId,
           selectScope,
+          versionNo,
+          recheckResults,
+          dismissRecheck,
         }}
       >
         {children}
@@ -553,6 +680,22 @@ export function QuotationDocumentClient({
         isRevising={quotationMutations.revise.isPending}
         onConfirm={reviseThenEdit}
       />
+
+      {revisingAll && (
+        <ReviseQuotationDialog
+          projectId={projectId}
+          scopes={currentScopes.map((pair) => ({
+            quotation: pair.quotation,
+            currentVersionNo: pair.current.version_no,
+            lineCount: pair.quotation.line_count ?? 0,
+          }))}
+          onDone={() => {
+            setRevisingAll(false);
+            // Land on the version just opened, not on one picked a moment ago.
+            setVersionNo(null);
+          }}
+        />
+      )}
 
       <ReviseApprovalDialog
         open={approvalRevisePrompt}

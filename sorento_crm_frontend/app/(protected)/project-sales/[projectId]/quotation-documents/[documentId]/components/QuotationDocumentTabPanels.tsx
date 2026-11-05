@@ -5,6 +5,7 @@ import { documentNoun } from '../../../../_shared/services/quotationDocumentServ
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
 import { QuotationDocumentHeader, useQuotationHeaderDetails } from './QuotationDocumentHeader';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
+import { QuotationScopesTab } from './QuotationScopesTab';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { useQuotationCoverPreview } from '../../../../_shared/hooks/useQuotationDocuments';
 
@@ -16,14 +17,20 @@ import { useQuotationCoverPreview } from '../../../../_shared/hooks/useQuotation
  * past fifty priced lines to reach the terms, not for the terms to read differently.
  */
 /**
- * The Header tab, first of the five (#1341): the letterhead card the customer reads (To, Attn,
- * Our Ref, Your Ref, Date, Total) and who issued and opened each scope's current version. The
- * owner on that strip: "this one should be in header details".
+ * The Header tab, first of the tabs (#1341): the letterhead card the customer reads (To, Attn,
+ * Our Ref, Your Ref, Date, Total) and who issued and opened each scope's current version, then
+ * the lines under it (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026: "for quotation I think the lines
+ * better be same page with Header for easy view"; the Lines tab is gone).
  */
 export function QuotationHeaderTab() {
   const { projectId, document } = useQuotationDocumentScreen();
   const details = useQuotationHeaderDetails(projectId, document.scopes ?? []);
-  return <QuotationDocumentHeader document={document} details={details} />;
+  return (
+    <div className="space-y-5">
+      <QuotationDocumentHeader document={document} details={details} />
+      <QuotationScopesTab />
+    </div>
+  );
 }
 
 export function QuotationCoverLetterTab() {
