@@ -105,7 +105,7 @@ export function AmendmentReviewClient({
       ? {
           pending: updateInAutocount.isPending,
           disabledReason:
-            !capabilities.data?.sales_orders_book?.trim()
+            !capabilities.data?.book?.trim()
               ? AUTOCOUNT_WAITING_TEXT
               : editCap && !editCap.enabled
                 ? editCap.reason

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
+import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 import {
   ColumnDef,
   PaginationState,
@@ -409,15 +410,17 @@ function WorksheetView({
               pendingLabel="Creating…"
               variant="primary"
               run={() => createInAutocount.mutateAsync(psoId)}
-              disabled={!createCap?.enabled}
+              disabled={!createCap?.enabled || !capabilities.data?.book?.trim()}
               title={
                 capabilities.isLoading
                   ? 'Checking AutoCount…'
                   : !createCap
                     ? 'Could not reach AutoCount'
-                    : !createCap.enabled
-                      ? (createCap.reason ?? undefined)
-                      : undefined
+                    : !capabilities.data?.book?.trim()
+                      ? AUTOCOUNT_WAITING_TEXT
+                      : !createCap.enabled
+                        ? (createCap.reason ?? undefined)
+                        : undefined
               }
             />
           )}

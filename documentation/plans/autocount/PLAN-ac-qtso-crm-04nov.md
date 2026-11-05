@@ -193,7 +193,7 @@ An ADOPTED order is one whose AutoCount doc key comes from the core order's `sou
 equal (trimmed, case-insensitive) to that `{book}`. Missing, null or empty is "not named". Until then both answer 409 `ac_waiting`,
 "Waiting for AutoCount", with no write call, and the FE greys them with that reason. CRM-created orders are unaffected.
 `in_autocount` stays true for an adopted order; `autocount_adopted` (SO row and detail) says why it waits; the capabilities route returns
-`sales_orders_book`. The FE greys when the book is missing; a different book is refused by the server (the row carries no book to compare).
+`book`. The FE greys when the book is missing; a different book is refused by the server (the row carries no book to compare).
 
 ## Owner ruling R8 (5 Nov): every stored key also stores its book; every Update / Cancel is gated on it
 
@@ -203,8 +203,16 @@ none); an adopted order's first done update stores its `source_ref` book segment
 for EVERY SO and QT are allowed only when the record's book (stored, or for an adopted order with no stored key the `source_ref` segment)
 equals the book SS names now, trimmed and case-insensitive. A NULL on either side or a mismatch answers 409 `ac_waiting` "Waiting for
 AutoCount" with no write call. Create has no key yet and is not gated. The gate sits after the "already sent" shortcuts, so a repeat press
-that sends nothing makes no call. The FE greys Update and Cancel with "Waiting for AutoCount" while the capabilities' `sales_orders_book` is
+that sends nothing makes no call. The FE greys Update and Cancel with "Waiting for AutoCount" while the capabilities' `book` is
 empty; the server enforces a mismatch. The stored book is never on a payload.
+
+## Owner ruling R9 (5 Nov): no AutoCount write of any kind without a book
+
+Extends R8 to create. SO create and QT create answer 409 `ac_waiting` "Waiting for AutoCount" with no write call while `/write-capabilities`
+names no book (missing, null, empty or blank); when a book is named, create proceeds and stores it (R8). Eligibility and validation errors
+(not accepted, missing debtor or location) still come first and make no call. The FE greys Create in AutoCount on the worksheet and the
+quotation header with "Waiting for AutoCount" while the capabilities' `book` is empty. The capabilities route's field is `book` (SS names one
+book per company), renamed from `sales_orders_book`.
 
 ## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
 

@@ -65,5 +65,5 @@ export interface AutocountWriteCapabilities {
   sales_orders: AutocountCapabilityMap;
   quotations: AutocountCapabilityMap;
   /** The book SS names; an adopted order waits until it equals its own. */
-  sales_orders_book?: string | null;
+  book?: string | null;
 }

@@ -457,7 +457,7 @@ export function SalesOrdersPanel({
   const alreadyCancelled = selectedRows.some((row) => row.autocount_cancelled);
   // R8: any record in AutoCount waits until SS names a book (the server also checks it matches).
   const waitingForBook =
-    selectedRows.some((row) => row.in_autocount) && !capabilities.data?.sales_orders_book?.trim();
+    selectedRows.some((row) => row.in_autocount) && !capabilities.data?.book?.trim();
   const cancelReason = notInAutocount
     ? AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT
     : alreadyCancelled

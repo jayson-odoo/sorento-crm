@@ -104,13 +104,23 @@ beforeEach(() => {
     if (path.includes('autocount-write/capabilities')) {
       const open = { enabled: true, reason: null };
       const ops = { create_doc: open, edit_doc: open, add_line: open };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, book: bookNamed });
     }
     return json({});
   });
 });
 
 describe('Quotation page header, AutoCount write actions', () => {
+  it.each([null, '', '   '])('greys Create with "Waiting for AutoCount" while SS names no book (%j)', async (named) => {
+    bookNamed = named;
+    renderHeader(doc());
+
+    const create = await screen.findByRole('button', { name: /Create in AutoCount/ });
+    await settled();
+    expect(create).toBeDisabled();
+    expect(create).toHaveAttribute('title', 'Waiting for AutoCount');
+  });
+
   it('greys Update with "Waiting for AutoCount" while SS names no book (R8)', async () => {
     bookNamed = null;
     renderHeader(doc({ in_autocount: true, autocount_doc_no: 'QT000777', autocount_needs_update: true }));
@@ -124,7 +134,9 @@ describe('Quotation page header, AutoCount write actions', () => {
   it('offers Create in AutoCount on an accepted quotation not yet in AutoCount', async () => {
     renderHeader(doc());
 
-    expect(await screen.findByRole('button', { name: /Create in AutoCount/ })).toBeEnabled();
+    const create = await screen.findByRole('button', { name: /Create in AutoCount/ });
+    // Greyed until SS names the book (R9), then enabled.
+    await waitFor(() => expect(create).toBeEnabled());
     expect(screen.queryByRole('button', { name: /Update in AutoCount/ })).not.toBeInTheDocument();
   });
 

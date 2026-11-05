@@ -1,4 +1,4 @@
-"""AC-QTSO-CRM round 4 (owner ruling R8): every stored AutoCount key also stores its book.
+"""AC-QTSO-CRM round 4 (owner ruling R8; R9 gates create too): every stored AutoCount key also stores its book.
 
 * `autocount_book VARCHAR(40)` on `projects.sales_orders` and `projects.quotation_documents`, added
   in migration `acqs_0001_project_ac_write` (edited in place, not merged yet).
@@ -194,11 +194,9 @@ def test_qt_update_and_cancel_go_when_the_books_match(qt_api, fake_ss, stored, n
 # --------------------------------------------------------------------------- 5: a done create stores the book
 
 
-@pytest.mark.parametrize(
-    "named,stored",
-    [(" db3 ", "db3"), (MISSING, None), (None, None), ("  ", None)],
-    ids=["named-trimmed", "missing", "null", "blank"],
-)
+# R9: a create with no book named now WAITS (tests/test_project_autocount_create_needs_book.py),
+# so the stores-NULL cases are gone; the trimmed named book is still stored.
+@pytest.mark.parametrize("named,stored", [(" db3 ", "db3")], ids=["named-trimmed"])
 def test_a_done_so_create_stores_the_book_ss_names(so_api, fake_ss, named, stored):
     client, db, world = so_api
     _feed(fake_ss, named)
@@ -212,11 +210,9 @@ def test_a_done_so_create_stores_the_book_ss_names(so_api, fake_ss, named, store
     assert world.order.autocount_book == stored
 
 
-@pytest.mark.parametrize(
-    "named,stored",
-    [(" db3 ", "db3"), (MISSING, None), (None, None), ("  ", None)],
-    ids=["named-trimmed", "missing", "null", "blank"],
-)
+# R9: a create with no book named now WAITS (tests/test_project_autocount_create_needs_book.py),
+# so the stores-NULL cases are gone; the trimmed named book is still stored.
+@pytest.mark.parametrize("named,stored", [(" db3 ", "db3")], ids=["named-trimmed"])
 def test_a_done_qt_create_stores_the_book_ss_names(qt_api, fake_ss, named, stored):
     client, db, world = qt_api
     _feed(fake_ss, named)

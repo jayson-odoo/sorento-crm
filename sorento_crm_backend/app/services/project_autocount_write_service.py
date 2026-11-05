@@ -310,6 +310,16 @@ class ProjectAutocountWriteService:
         if not own or not named or own.strip().lower() != named.strip().lower():
             raise AppException(status_code=409, message=WAITING, code="ac_waiting")
 
+    def _no_book_answer(self, company_id: Optional[str]) -> Dict[str, Any]:
+        """Owner ruling R9: no AutoCount write of any kind, create included, without a book.
+
+        A gateway that cannot be reached is told as such (the screen shows it); one that answers
+        without a book makes the action wait (409)."""
+        caps = self.read_capabilities(company_id)[0]
+        if caps["sales_orders"]["create_doc"]["reason"] == UNREACHABLE:
+            return self._blank("unreachable", UNREACHABLE)
+        raise AppException(status_code=409, message=WAITING, code="ac_waiting")
+
     def _order_book(self, order: ProjectSalesOrder) -> Optional[str]:
         """The book an order's key belongs to: stored at create, else the adopted source_ref's."""
         if order.autocount_doc_key:
@@ -540,6 +550,8 @@ class ProjectAutocountWriteService:
         body = self.build_sales_order_body(order)
         # The book SS names at write time is the book the document lands in (R8).
         book = self.read_capabilities(order.company_id)[1]
+        if not book:
+            return self._no_book_answer(order.company_id)
         answer = self._call(
             lambda c: c.write(
                 "documents/sales-orders", body, idempotency_key=f"crm-pso-{order.id}-create"
@@ -847,6 +859,8 @@ class ProjectAutocountWriteService:
             "lines": [_wire_line(l) for l in payload.lines],
         }
         book = self.read_capabilities(document.company_id)[1]
+        if not book:
+            return self._no_book_answer(document.company_id)
         answer = self._call(
             lambda c: c.write(
                 "documents/quotations",

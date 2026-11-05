@@ -193,7 +193,7 @@ beforeEach(() => {
       const open = { enabled: true, reason: null };
       const waiting = { enabled: false, reason: 'Waiting for AutoCount' };
       const ops = { create_doc: open, edit_doc: open, add_line: open, delete_line: waiting, cancel_doc: cancelOn ? open : waiting };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, book: bookNamed });
     }
     return json({});
   });

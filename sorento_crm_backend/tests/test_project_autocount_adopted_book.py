@@ -126,9 +126,9 @@ def test_the_capabilities_route_passes_the_book_through(api, fake_ss):
     client, _db, _world = api
     _feed(fake_ss, BOOK)
 
-    assert client.get(f"{BASE}/autocount-write/capabilities").json()["sales_orders_book"] == BOOK
+    assert client.get(f"{BASE}/autocount-write/capabilities").json()["book"] == BOOK
     _feed(fake_ss, False)
-    assert client.get(f"{BASE}/autocount-write/capabilities").json()["sales_orders_book"] is None
+    assert client.get(f"{BASE}/autocount-write/capabilities").json()["book"] is None
 
 
 def test_the_payload_says_adopted_and_still_in_autocount(api, fake_ss):

@@ -21,6 +21,7 @@ import type { SalesOrderWorksheet } from '../../../../../_shared/types/projectSa
 const apiFetch = vi.fn();
 let permissions = new Set<string>();
 let switchOn = true;
+let bookNamed: string | null = 'db3';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -103,7 +104,7 @@ function capabilityFeed() {
     delete_line: waiting,
     cancel_doc: waiting,
   };
-  return { enabled: switchOn, sales_orders: ops, quotations: ops };
+  return { enabled: switchOn, sales_orders: ops, quotations: ops, book: bookNamed };
 }
 
 function worksheet(overrides: Partial<SalesOrderWorksheet> = {}): SalesOrderWorksheet {
@@ -181,6 +182,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissions = new Set([WRITE]);
   switchOn = true;
+  bookNamed = 'db3';
   apiFetch.mockImplementation(async (url: string) => {
     const path = String(url);
     if (path.includes('settings/app-config')) {
@@ -193,6 +195,16 @@ beforeEach(() => {
 });
 
 describe('Create in AutoCount on the worksheet', () => {
+  it.each([null, '', '   '])('is greyed "Waiting for AutoCount" while SS names no book (%j)', async (named) => {
+    bookNamed = named;
+    await renderWorksheet();
+
+    const create = await screen.findByRole('button', { name: /Create in AutoCount/ });
+    await settled();
+    expect(create).toBeDisabled();
+    expect(create).toHaveAttribute('title', 'Waiting for AutoCount');
+  });
+
   it('shows beside Download CSV when the switch is on, the permission is held, it can export and the order is not in AutoCount', async () => {
     await renderWorksheet();
 

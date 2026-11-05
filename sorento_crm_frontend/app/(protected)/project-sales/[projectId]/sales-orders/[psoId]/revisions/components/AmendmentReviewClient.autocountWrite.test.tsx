@@ -234,7 +234,7 @@ beforeEach(() => {
     if (path.includes('autocount-write/capabilities')) {
       const open = { enabled: true, reason: null };
       const ops = { create_doc: open, edit_doc: open, add_line: open };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, book: bookNamed });
     }
     return json({});
   });

@@ -65,7 +65,7 @@ class Capabilities(BaseModel):
     sales_orders: Dict[str, Dict[str, Any]] = {}
     quotations: Dict[str, Dict[str, Any]] = {}
     # The AutoCount book SS names for this company; an adopted order waits until it matches.
-    sales_orders_book: Optional[str] = None
+    book: Optional[str] = None
 
 
 def _switch_on(db: Session) -> bool:
@@ -106,7 +106,7 @@ def capabilities(
         return Capabilities(enabled=False)
     try:
         caps, book = ProjectAutocountWriteService(db).read_capabilities(acting_company_id(db))
-        return Capabilities(enabled=True, sales_orders_book=book, **caps)
+        return Capabilities(enabled=True, book=book, **caps)
     except Exception as exc:
         _guard(exc)
 

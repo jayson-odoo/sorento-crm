@@ -93,13 +93,15 @@ function QuotationAutocountActions({
   const createCap = capabilities.data?.quotations?.create_doc;
   const editCap = capabilities.data?.quotations?.edit_doc;
   const cancelCap = capabilities.data?.quotations?.cancel_doc;
+  // R8/R9: no write of any kind (create included) waits until SS names a book.
+  const waitingForBook = !capabilities.data?.book?.trim();
   const createReason = !doc.latest_issue_accepted
     ? AUTOCOUNT_NOT_ACCEPTED_TEXT
-    : createCap && !createCap.enabled
-      ? createCap.reason
-      : null;
-  // R8: an update or cancel waits until SS names the book the record belongs to.
-  const waitingForBook = !capabilities.data?.sales_orders_book?.trim();
+    : waitingForBook
+      ? AUTOCOUNT_WAITING_TEXT
+      : createCap && !createCap.enabled
+        ? createCap.reason
+        : null;
   const updateReason = waitingForBook
     ? AUTOCOUNT_WAITING_TEXT
     : editCap && !editCap.enabled
