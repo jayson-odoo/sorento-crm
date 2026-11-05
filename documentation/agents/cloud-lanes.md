@@ -166,15 +166,15 @@ cached selection under 2 s.
 | Rule | Selects |
 | --- | --- |
 | changed test file | itself |
-| dependents | test files that import, through any chain of module-level imports, a changed module or a module that imports one (a lazy import is followed one hop, not further) |
+| dependents | test files that import a changed module directly, or import directly a module that imports one: two hops, never through a hub (`app/main.py`, `app/api/**/__init__.py`, a `conftest.py`); plus test files named after a changed module (`test_<stem>*.py`). Crew, 5 Nov: the transitive rule reached `app/main.py` and selected 3,274 of 3,274 files on `30bbcc6a..311a6b52` and 2,519 on `311a6b52..9ebae8e9`; the two-hop rule selects 1,428 and 815 there |
 | depended-by | for a changed module M and each module D it imports directly: `test_<D>.py` / `test_<D>_*.py` that import D |
 | changed non-module file | test files that name it (alembic revision, workflow, shell script, frontend path); a template or data file under `app/` also through the module that names it |
 | deleted module | test files that name its dotted path |
 | migration tests | `tests/test_migration_*.py` only when `alembic/`, `alembic.ini` or `app/models/` changed |
 | regression guards | `tests/test_lessons_learnt_regressions.py` on any backend change |
 
-A test file counts as importing, at module level, every `conftest.py` above it (pytest imports
-them first), and a changed package `__init__.py` counts as a change to every module of the package
+A `conftest.py` is a hub (a module it loads does not reach every test under it; a change to a
+conftest itself runs the full suite), and a changed package `__init__.py` counts as a change to every module of the package
 (Python runs it before any of them). `tests/scm/` runs only when these rules reach it.
 `tests/ci_excluded.txt` entries never run.
 The selection runs in the PR gate's split: main tree and `tests/scm/` each under xdist and then
