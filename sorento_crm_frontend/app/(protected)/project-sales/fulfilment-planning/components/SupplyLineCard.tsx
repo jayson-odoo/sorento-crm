@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import Link from 'next/link';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
@@ -112,6 +113,8 @@ export function SupplyLineCard({
         // BoardAmendDialog's own Borrow-add flow, `BoardAmendDialog.tsx`).
         donor_core_line_id: candidate.donor_core_line_id,
         donor_so_number: candidate.donor_so_number,
+        donor_customer_name: candidate.donor_customer_name ?? null,
+        donor_project_label: candidate.donor_project_label ?? null,
         donor_line_no: candidate.donor_line_no,
         donor_agent_code: candidate.donor_agent_code,
         same_agent: candidate.same_agent,
@@ -593,7 +596,8 @@ function borrowDocumentDonorText(row: DraftBorrow): string {
   const debt = row.donor_required_date
     ? `; its debt lands in ${debtMonthLabel(row.donor_required_date.slice(0, 7))}`
     : '';
-  return `From ${row.donor_so_number}${line}${agent}${due}${debt}.`;
+  const party = soCustomerProjectLabel(row.donor_customer_name, row.donor_project_label);
+  return `From ${row.donor_so_number}${line}${agent}${party ? ` - ${party}` : ''}${due}${debt}.`;
 }
 
 function SpoList({ refs }: { refs: SupplySpoRef[] }) {

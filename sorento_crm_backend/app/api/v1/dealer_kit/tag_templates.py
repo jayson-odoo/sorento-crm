@@ -29,11 +29,13 @@ from app.schemas.price_tag import (
     TagTemplateFromTagCreate,
     TagTemplatePublishIn,
     TagTemplateResponse,
+    TemplateNeeds,
     TagTemplateUpdate,
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
 from app.services.dealer_kit import tag_data_service, tag_template_service
+from app.services.dealer_kit.template_needs import template_needs
 from app.services.error_handler import AppException
 
 router = APIRouter(prefix="/tag-templates", tags=["tag-templates"])
@@ -59,6 +61,7 @@ def _response_for(t: TagTemplate, *, published: bool = False) -> TagTemplateResp
     resp = TagTemplateResponse.model_validate(t)
     if t.published_version is not None:
         resp.published_version_no = t.published_version.version_no
+        resp.needs = TemplateNeeds(**template_needs(t.published_version.doc))
         if published:
             resp.doc = t.published_version.doc
             resp.print_size = t.published_version.print_size

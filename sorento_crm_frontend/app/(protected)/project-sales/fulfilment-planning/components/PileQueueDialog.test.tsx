@@ -72,6 +72,7 @@ function queue(overrides: Partial<PileQueue> = {}): PileQueue {
         so_number: 'SO396351',
         line_no: 1,
         customer_name: 'MASUKA BINA SDN BHD',
+        project_label: 'LOT 77 PHASE 2',
         qty: '200',
         rank_score: 0.9,
         cumulative_ahead_qty: '320',
@@ -139,6 +140,15 @@ beforeEach(() => {
 });
 
 describe('PileQueueDialog', () => {
+  it('names each order\'s project beside its customer (OI-UX-FILTER-SNAPSHOT)', async () => {
+    getPileQueue.mockResolvedValue(queue());
+
+    renderDialog();
+
+    expect(await screen.findByText('LOT 77 PHASE 2')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
+  });
+
   it('asks by IDS and on behalf of the line, because both change the answer', async () => {
     getPileQueue.mockResolvedValue(queue());
 

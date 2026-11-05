@@ -59,6 +59,8 @@ const PRODUCT_SLOTS: SlotBinding[] = [
   'spec_lines',
   'list_price',
   'sell_price',
+  'price',
+  'price_label',
   'set_members',
   'included_accessories',
   'barcode',

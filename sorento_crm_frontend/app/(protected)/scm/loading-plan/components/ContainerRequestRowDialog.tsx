@@ -244,6 +244,7 @@ export function ContainerRequestRowDialog({
                     <tr className="text-muted-foreground">
                       <th className="py-1 text-start font-medium">Order</th>
                       <th className="py-1 text-start font-medium">Customer</th>
+                      <th className="py-1 text-start font-medium">Project</th>
                       <th className="py-1 text-end font-medium">Balance</th>
                       <th className="py-1 text-end font-medium">Delivery</th>
                     </tr>
@@ -265,6 +266,8 @@ export function ContainerRequestRowDialog({
                         >
                           {line.customer_label ?? EM_DASH}
                         </td>
+                        {/* OI-UX-FILTER-SNAPSHOT: the SO list's Project beside Customer. */}
+                        <td className="py-1">{line.project_title ?? EM_DASH}</td>
                         <td className="py-1 text-end tabular-nums">{fmtInt(line.qty)}</td>
                         <td className="py-1 text-end tabular-nums">
                           {dateLabel(line.required_date)}

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -49,6 +49,7 @@ vi.mock('../lib/portal-client', () => ({
   // mount for a NEW request - granted here so this suite (about save/submit
   // validation) is unaffected.
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
+  fetchSubmissionNeighbours: vi.fn().mockResolvedValue({ prev_id: null, next_id: null }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -124,6 +125,7 @@ vi.mock('./AttachmentDropzone', () => ({
 
 import {
   createRequest,
+  getRequest,
   lookupDebtors,
   lookupTagItems,
   submitRequest,
@@ -203,6 +205,7 @@ describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has a debtor and nothing else', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
 
@@ -304,18 +307,17 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
-    // Approve waits for a drawn tag; Escalate is the path that checks a blank form.
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
+    // Approve is live too; its click is what checks the tag (owner, 5 Nov).
+    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
     sendToMarketing();
 
     expect(
       await screen.findByText('Select the dealer these tags are for.'),
     ).toBeInTheDocument();
-    // The lines error renders inside "Sales Order & Lines", collapsed on a
-    // blank form - opened by hand to read it (AC-P10 promises the offending
-    // section opens itself; not asserted here, see PR notes).
-    openSalesOrderSection();
-    expect(screen.getByText('Add at least one line.')).toBeInTheDocument();
+    // AC-P10 + crew pass 5 Nov (#2138): EVERY section with a problem opens,
+    // not only the first, so the lines error inside "Sales Order & Lines"
+    // shows without opening it by hand.
+    expect(await screen.findByText('Add at least one line.')).toBeInTheDocument();
     expect(screen.queryByText('Pick the date you need them by.')).toBeNull();
     // AC-S1-3: "Say who prints these tags." must never appear.
     expect(
@@ -327,9 +329,24 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     expect(createRequest).not.toHaveBeenCalled();
   });
 
+  it('B: the "N things need attention" line is a button that scrolls to the first problem', async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    sendToMarketing();
+    await screen.findByText('Select the dealer these tags are for.');
+    scrolled.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /2 things need attention/ }));
+
+    await waitFor(() => expect(scrolled).toHaveBeenCalled());
+  });
+
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
     sendToMarketing();
@@ -347,6 +364,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     await screen.findByText('Select the dealer these tags are for.');
 
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await waitFor(() =>
       expect(
@@ -364,6 +382,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await addLineWithAProduct();
     await pickPrinting();
 
@@ -387,6 +406,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await addLineWithAProduct();
     await pickPrinting();
 
@@ -408,11 +428,144 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
  * Approve and needs no drawn tag.
  */
 function sendToMarketing() {
+  // Owner hand test 5 Nov: Escalate checks the form first; the note dialog
+  // opens only when nothing is missing.
   if (!screen.queryByLabelText('What marketing needs to fix')) {
     fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
   }
+  if (!screen.queryByLabelText('What marketing needs to fix')) return;
   fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
     target: { value: 'Please check' },
   });
   fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
 }
+
+
+/**
+ * Owner hand test 5 Nov (#2138): Escalate to marketing checks the lines FIRST
+ * and only then opens a lightbox with the note and Need by. Need by left the
+ * form for that dialog.
+ */
+describe('Escalate to marketing opens a dialog only when the form is complete', () => {
+  function clickEscalate() {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+
+  it('a missing line is reported on the form and no dialog opens', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+
+    clickEscalate();
+
+    expect(
+      await screen.findByText('Pick a set or a product for this line.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByLabelText('What marketing needs to fix')).toBeNull();
+    expect(createRequest).not.toHaveBeenCalled();
+  });
+
+  it('a complete form opens the Escalate to marketing dialog with the note and Need by', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await addLineWithAProduct();
+
+    clickEscalate();
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Escalate to marketing' })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('What marketing needs to fix')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Need by')).toBeInTheDocument();
+    const send = within(dialog).getByRole('button', { name: /send to marketing/i });
+    expect(send).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeInTheDocument();
+    expect(createRequest).not.toHaveBeenCalled();
+  });
+
+  it('Need by is no longer on the form itself', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openAdditionalInformationSection();
+
+    expect(screen.getByLabelText('Notes')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Need by')).toBeNull();
+  });
+
+  it('the Need by picked in the dialog (dd/mm/yyyy) is sent with the escalation', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await addLineWithAProduct();
+    clickEscalate();
+    const dialog = await screen.findByRole('dialog');
+
+    const needBy = within(dialog).getByLabelText('Need by');
+    fireEvent.change(needBy, { target: { value: '20/12/2030' } });
+    fireEvent.blur(needBy);
+    fireEvent.change(within(dialog).getByLabelText('What marketing needs to fix'), {
+      target: { value: 'Photo is the old model' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /send to marketing/i }));
+
+    await waitFor(() => expect(submitAndEscalate).toHaveBeenCalledWith('req-1', 'Photo is the old model'));
+    expect(asMock(createRequest).mock.calls[0][0].needed_by_date).toBe('2030-12-20');
+  });
+
+  it('a draft keeps its Need by and shows it in the dialog', async () => {
+    asMock(getRequest).mockResolvedValue({
+      id: 'req-1',
+      doc_number: 'PT-202611-0001',
+      debtor_code: 'ZZTD01',
+      debtor_name: 'ZZT Dealer Sdn Bhd',
+      needed_by_date: '2030-01-15',
+      notes: null,
+      price_mode: 'list',
+      status: 'draft',
+      line_count: 1,
+      created_at: '2026-11-01T00:00:00Z',
+      portal_draft_at: '2026-11-01T00:00:00Z',
+      contact_id: 'contact-1',
+      has_completed_export: false,
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: 'prod-uuid-1',
+          product_set_id: null,
+          name: 'ZZT Kitchen Sink',
+          code: 'CBF-1234',
+          show_promo_price: true,
+          quantity: 1,
+          alternatives: [],
+          included_accessories: null,
+        },
+      ],
+      attachments: [],
+    });
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await waitFor(() => expect(screen.getByLabelText('Debtor')).toHaveValue('ZZTD01'));
+
+    clickEscalate();
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Need by')).toHaveValue('15/01/2030');
+  });
+
+  it('at 375 px the dialog buttons span its width', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
+    await addLineWithAProduct();
+    clickEscalate();
+    const dialog = await screen.findByRole('dialog');
+
+    for (const name of [/send to marketing/i, /cancel/i]) {
+      const button = within(dialog).getByRole('button', { name });
+      expect(button.className).toMatch(/(^|\s)w-full(\s|$)/);
+      expect(button.className).toMatch(/sm:w-auto/);
+    }
+  });
+});

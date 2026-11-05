@@ -31,6 +31,8 @@ import type {
   TagLayerProps,
   TagLayerType,
   TagPartData,
+  TagSlots,
+  SubjectSlot,
   TextLayerProps,
 } from './tag-template-types';
 import {
@@ -85,6 +87,47 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
       return props.subjectPart;
     default:
       return undefined;
+  }
+}
+
+/** The position a layer points at (K1), for the same subject-aware kinds. */
+function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
+  switch (props.kind) {
+    case 'text':
+    case 'product_slot':
+    case 'price_badge':
+    case 'barcode':
+    case 'image':
+      return props.subjectSlot;
+    default:
+      return undefined;
+  }
+}
+
+/** The product at a position, `EMPTY_PART_PRODUCT` for one the line has not filled (AC-A3). */
+function productAtSlot(slot: SubjectSlot, slots: TagSlots): ProductTagData {
+  const part =
+    slot.kind === 'fixed'
+      ? slots.fixed[slot.index]
+      : slot.kind === 'pick'
+        ? slots.groups[slot.group]?.picks[slot.index]
+        : slot.kind === 'upgrade'
+          ? slots.upgrades[slot.index]
+          : undefined;
+  return part ? productFromPart(part) : EMPTY_PART_PRODUCT;
+}
+
+/** "Main product", "Fixed part 2", "<group>, pick 2" / "Choice group 1, pick 2", "Upgrade 1". */
+export function slotLabel(slot: SubjectSlot, slots: TagSlots | null | undefined): string {
+  switch (slot.kind) {
+    case 'main':
+      return 'Main product';
+    case 'fixed':
+      return `Fixed part ${slot.index + 1}`;
+    case 'upgrade':
+      return `Upgrade ${slot.index + 1}`;
+    case 'pick':
+      return `${slots?.groups[slot.group]?.role ?? `Choice group ${slot.group + 1}`}, pick ${slot.index + 1}`;
   }
 }
 
@@ -212,6 +255,21 @@ export function subjectOf(
   data: TagBindingData | null | undefined,
   layer: { props?: TagLayerProps } | undefined,
 ): TagBindingData | null | undefined {
+  // K3: a position wins over `subjectPart`. A binding whose payload predates `slots` (undefined)
+  // ignores it; `slots: null` means the line has no parts or combo, so every position but the
+  // main product is empty (AC-A3) and never the line itself.
+  const slot = layer?.props ? subjectSlotOf(layer.props) : undefined;
+  if (slot && (data?.kind === 'line' || data?.kind === 'product')) {
+    const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
+    if (slots !== undefined) {
+      if (slot.kind === 'main') {
+        // The main product's OWN picture and list price, not the combo's (AC-A2).
+        if (slots?.main) return { kind: 'product', product: productFromPart(slots.main) };
+        return data.kind === 'line' ? { kind: 'product', product: productFromLineParent(data.line) } : data;
+      }
+      return { kind: 'product', product: slots ? productAtSlot(slot, slots) : EMPTY_PART_PRODUCT };
+    }
+  }
   if (!data || data.kind !== 'line') return data;
   const subjectPart = layer?.props ? subjectPartOf(layer.props) : undefined;
   if (subjectPart === undefined) return data;
@@ -338,6 +396,17 @@ function comboSlotText(
 }
 
 /**
+ * A price on a text layer: the bare figure, or `RM 849` when the layer sets `showCurrency` (the
+ * price badge's flag). With the flag on, no amount prints nothing at all rather than the layer's
+ * own text, so an empty price leaves no stray label (AC-A3).
+ */
+function priceText(layer: { props?: TagLayerProps }, amount: number | null): string | null {
+  const showCurrency = layer.props?.kind === 'text' && layer.props.showCurrency === true;
+  if (amount == null) return showCurrency ? '' : null;
+  return formatTagPrice(amount, showCurrency);
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -369,7 +438,17 @@ export function resolveSlotText(
     // AC-A1/A2: a TEXT layer prints the bare figure. The BADGE (`price_badge`
     // props, drawn through `priceBadgeInput`/`formatTagPrice`'s default arg)
     // still prints `RM` - this branch only ever serves a text-slot binding.
-    return amount == null ? null : formatTagPrice(amount, false);
+    return priceText(layer, amount);
+  }
+
+  // PRICETAG-LPSP: one slot for the figure a line shows and one for its label, so a single
+  // template serves an LP line and an SP line alike.
+  if (layer.slot_binding === 'price' || layer.slot_binding === 'price_label') {
+    const { listPrice, offerPrice } = priceBadgeInput(subject);
+    if (layer.slot_binding === 'price_label') {
+      return offerPrice != null ? 'SP' : listPrice != null ? 'LP' : null;
+    }
+    return priceText(layer, offerPrice ?? listPrice);
   }
 
   if (subject.kind === 'line') {
@@ -1147,7 +1226,10 @@ export function layerDisplayName(layer: TagLayer): string {
 export function layerSubjectSuffix(
   layer: Pick<TagLayer, 'props'>,
   parts: TagPartData[] | undefined,
+  slots?: TagSlots | null,
 ): string {
+  const slot = subjectSlotOf(layer.props);
+  if (slot) return ` - ${slotLabel(slot, slots)}`;
   const subjectPart = subjectPartOf(layer.props);
   if (subjectPart === undefined || subjectPart < 0) return '';
   const part = parts?.[subjectPart];

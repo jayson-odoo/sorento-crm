@@ -50,6 +50,7 @@ class StockTransferOut(BaseModel):
     so_line_no: Optional[int] = None
     project_sales_order_id: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     sales_agent_id: Optional[str] = None
     agent_code: Optional[str] = None
     agent_name: Optional[str] = None

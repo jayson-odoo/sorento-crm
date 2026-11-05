@@ -42,6 +42,7 @@ import { carryFeedback } from '../../_shared/lib/quotationFeedbackMarks';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
 import {
+  PICKED_CODE_KEY,
   cellsPatch,
   completeSetText,
   draftCells,
@@ -133,8 +134,21 @@ export function QuotationVersionEditor({
   feedback,
   siblingScopes,
   formCopySources,
+  headerVersion,
 }: {
   project: Project;
+  /**
+   * Set by the quotation page (PROPOSAL-HEADER-LAYOUT): the version is the record header's chip,
+   * one number for the whole proposal, and Recheck alerts / Revise are its gear items. So this
+   * editor shows no version row of its own, reads the version the chip picked (falling back to
+   * the area's current one), and shows the header's last recheck answer for that version.
+   */
+  headerVersion?: {
+    versionNo: number | null;
+    /** The header's Recheck alerts answers, by the version id each one ran on. */
+    recheckResults?: Record<string, QuotationRecomputeResult>;
+    onDismissRecheck?: (versionId: string) => void;
+  };
   /**
    * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, and
    * on their copies in a later revision (same product, same occurrence), so a draft shows them.
@@ -176,7 +190,10 @@ export function QuotationVersionEditor({
     [versions.data],
   );
   const current = rows.find((version) => version.is_current) ?? null;
-  const selected = rows.find((version) => version.id === selectedId) ?? current;
+  const selected =
+    (headerVersion
+      ? rows.find((version) => version.version_no === headerVersion.versionNo)
+      : rows.find((version) => version.id === selectedId)) ?? current;
   // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column. A scope
   // added on the form has no version yet: its headers are the form's, until Save.
   const formColumns = isUnsaved ? edit?.columns : undefined;
@@ -378,7 +395,10 @@ export function QuotationVersionEditor({
         const storedSet = stored?.product_set_id === setId;
         return {
           value: `${SET_OPTION_PREFIX}${setId}`,
-          label: picked?.set_code ?? (storedSet ? (stored?.product_code ?? 'Selected set') : 'Selected set'),
+          label:
+            picked?.set_code ??
+            (storedSet ? stored?.product_code : null) ??
+            (draft[PICKED_CODE_KEY] || 'Selected set'),
           description:
             picked?.name ?? (storedSet ? (stored?.description ?? undefined) : undefined),
         };
@@ -395,10 +415,11 @@ export function QuotationVersionEditor({
       }
       return {
         value: productId,
+        // The stored code, else the code carried on the draft since the pick (a line not saved
+        // yet, after a section switch rebuilt this editor and its lookup).
         label:
-          stored?.product_id === productId
-            ? (stored.product_code ?? 'Selected product')
-            : 'Selected product',
+          (stored?.product_id === productId ? stored.product_code : null) ??
+          (draft[PICKED_CODE_KEY] || 'Selected product'),
         description:
           stored?.product_id === productId ? (stored.description ?? undefined) : undefined,
       };
@@ -661,89 +682,90 @@ export function QuotationVersionEditor({
   // panel it sits in, which at 375px would take the whole page sideways with it.
   return (
     <div className="min-w-0 space-y-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {rows.map((version) => (
-            <button
-              key={version.id}
-              type="button"
-              onClick={() => setSelectedId(version.id)}
-              aria-current={selected?.id === version.id}
-              className={
-                selected?.id === version.id
-                  ? 'rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium'
-                  : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
-              }
-            >
-              {`v${version.version_no}`}
-              {version.is_current ? '' : ' (frozen)'}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Re-ask both alerts against today's master data (S19). On the version that is
-              being looked at, and only while it is still open: the flags on a frozen
-              version are what was true when the customer was sent the paper.
-
-              Withheld while an edit session is open on this scope. Recompute writes to the
-              server, and the staged rows on screen would silently be answering for a state
-              the database no longer holds. */}
-          {project.can_edit && editable && selected && !locked && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={recompute.isPending || isEditing}
-              title={
-                isEditing
-                  ? 'Save or cancel your changes first'
-                  : 'Re-check every line against the series and price floors as they stand today'
-              }
-              onClick={async () => {
-                try {
-                  setRecomputed(await recompute.mutateAsync(selected.id));
-                } catch {
-                  // The mutation already toasted the reason.
+      {!headerVersion && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {rows.map((version) => (
+              <button
+                key={version.id}
+                type="button"
+                onClick={() => setSelectedId(version.id)}
+                aria-current={selected?.id === version.id}
+                className={
+                  selected?.id === version.id
+                    ? 'rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium'
+                    : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
                 }
-              }}
-            >
-              <RefreshCw className="size-4" aria-hidden />
-              {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
-            </Button>
-          )}
+              >
+                {`v${version.version_no}`}
+                {version.is_current ? '' : ' (frozen)'}
+              </button>
+            ))}
+          </div>
 
-          {/* Not on the form page: a revise writes a new version at once, under lines the form
-              has staged against the current one and saves by scope. The quotation page's Edit
-              quotation already asks to revise before it opens the form. */}
-          {project.can_edit && current && !edit && !locked && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setRevising(true)}
-            >
-              {`Revise to v${current.version_no + 1}`}
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Re-ask both alerts against today's master data (S19). On the version that is
+                being looked at, and only while it is still open: the flags on a frozen
+                version are what was true when the customer was sent the paper.
+
+                Withheld while an edit session is open on this scope. Recompute writes to the
+                server, and the staged rows on screen would silently be answering for a state
+                the database no longer holds. */}
+            {project.can_edit && editable && selected && !locked && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={recompute.isPending || isEditing}
+                title={
+                  isEditing
+                    ? 'Save or cancel your changes first'
+                    : 'Re-check every line against the series and price floors as they stand today'
+                }
+                onClick={async () => {
+                  try {
+                    setRecomputed(await recompute.mutateAsync(selected.id));
+                  } catch {
+                    // The mutation already toasted the reason.
+                  }
+                }}
+              >
+                <RefreshCw className="size-4" aria-hidden />
+                {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
+              </Button>
+            )}
+
+            {/* Not on the form page: a revise writes a new version at once, under lines the form
+                has staged against the current one and saves by scope. The quotation page's Edit
+                quotation already asks to revise before it opens the form. */}
+            {project.can_edit && current && !edit && !locked && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRevising(true)}
+              >
+                {`Revise to v${current.version_no + 1}`}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {recomputed && (
+      {recomputed && !headerVersion && (
         <RecomputeSummary result={recomputed} onDismiss={() => setRecomputed(null)} />
+      )}
+      {headerVersion && selected && headerVersion.recheckResults?.[selected.id] && (
+        <RecomputeSummary
+          result={headerVersion.recheckResults[selected.id]}
+          onDismiss={() => headerVersion.onDismissRecheck?.(selected.id)}
+        />
       )}
 
       {/* No "Issued by / Opened" strip above the table: the owner moved it into the Header tab's
           details ("this one should be in header details", #1341). */}
-      {/* Why this version cannot be edited, and the way out, in one sentence. The old copy
-          ("The customer holds this version, so its lines cannot be changed. Open a revision to
-          re-price it.") described a state and offered no move, which is exactly what the client
-          read and still could not act on. Edit quotation in the gear is the move now. */}
-      {selected?.is_issued && selected.is_current && (
-        <p className="text-xs text-muted-foreground">
-          {`The customer holds v${selected.version_no}. Edit quotation opens v${selected.version_no + 1} and leaves what was sent untouched.`}
-        </p>
-      )}
+      {/* No "The customer holds vN. Edit quotation opens vN+1" line (owner, 5 Nov 2026): Edit's
+          own prompt says it at the moment it matters (ReviseToEditDialog). */}
 
       {selected && !selected.is_current && (
         <p className="text-xs text-muted-foreground">
@@ -805,9 +827,9 @@ export function QuotationVersionEditor({
       {revising && current && quotation && (
         <ReviseQuotationDialog
           projectId={project.id}
-          quotation={quotation}
-          currentVersionNo={current.version_no}
-          lineCount={sortedLines.length}
+          scopes={[
+            { quotation, currentVersionNo: current.version_no, lineCount: sortedLines.length },
+          ]}
           onDone={(newVersionId) => {
             setRevising(false);
             // Land on the version that was just opened, not the one being read a moment ago.

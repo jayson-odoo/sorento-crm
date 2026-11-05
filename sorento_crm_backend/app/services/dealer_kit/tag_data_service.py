@@ -40,7 +40,6 @@ from app.services.dealer_kit.pricing import (
     DEFAULT_CURRENCY,
     combo_for_host,
     combo_prices,
-    free_part_ids,
     resolve_prices,
 )
 from app.services.dealer_kit.product_images import gallery_images
@@ -803,6 +802,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
         # D1/S9: the promotion is a LINE fact now, not the request's.
         promotion_id = line.promotion_id
+        # PRICETAG-LPSP: LP or SP is the line's own fact; none stored = the header's mode.
+        line_mode = line.price_type or request.price_mode
 
         if line.id not in line_data:
             line_data[line.id] = _line_product_data(db, line, viewer, promotion_id)
@@ -825,7 +826,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         part_rows = [
             _part_row(
                 db, product, viewer, promotion_id, parts_cache,
-                price_mode=request.price_mode,
+                price_mode=line_mode,
             )
             for product in part_products
         ]
@@ -835,7 +836,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # `set_members` below still reads.
         combo_rows = _combo_products(
             db, line, tag, viewer, promotion_id, parts_cache,
-            price_mode=request.price_mode,
+            price_mode=line_mode,
         )
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
@@ -864,22 +865,9 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             # The selling side takes the engine's offer where it HAS one and the
             # list price where it does not: an offer the engine cannot answer for
             # is not a discount, it is simply the price.
-            # AC-2.7: on a combo line a part the promotion lists at RM 0 is free.
-            free_ids = (
-                free_part_ids(
-                    db, [product.id for product in part_products], viewer, promotion_id
-                )
-                if line.combo_id
-                else set()
-            )
             sell_price = _sum_prices(
                 [sell_price if sell_price is not None else data["list_price"]]
-                + [
-                    Decimal("0")
-                    if product.id in free_ids
-                    else _offer_or_list(part_prices.get(product.id))
-                    for product in part_products
-                ]
+                + [_offer_or_list(part_prices.get(product.id)) for product in part_products]
             )
             package_text = _package_text(part_rows, open_groups)
             if package_text:
@@ -887,18 +875,22 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         elif open_groups:
             set_members = _package_text([], open_groups)
 
-        # PRICETAG-COMBO AC-2.4: the combo's own price replaces the sum, below a
-        # hand-typed line price and the tag override.
+        # PRICETAG-COMBO-RENDER K8: a combo line prints the combo's stored price or
+        # nothing, never the sum of its parts (a typed price and the override still win).
         combo_row = _line_combo(db, line, combo_cache)
         combo_obj = None
+        slots = None
         if combo_row is not None:
             picked_ids = {product.id for product in part_products}
             combo_obj = _combo_object(db, combo_row, picked_ids, viewer)
             combo_list, combo_sell, sell_decided = combo_prices(combo_row, picked_ids)
-            if combo_list is not None:
-                list_price = combo_list
-            if sell_decided:
-                sell_price = combo_sell
+            list_price = combo_list
+            sell_price = combo_sell if sell_decided else None
+        if not line.product_set_id:
+            slots = _line_slots(
+                db, line, tag, combo_row, viewer, promotion_id, parts_cache,
+                price_mode=line_mode,
+            )
 
         # D3/AC-S9-3: a hand-typed line price wins over the engine's sum, the
         # same as it does at save time (S7's `line_pricing`).
@@ -932,7 +924,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # ONE covered candidate would otherwise read the answer for a
         # sibling that resolved the uncovered one, and a promotion that
         # expires between save and read would keep printing SP forever.
-        show_promo_price = request.price_mode == "selling" and sell_price_basis != "list"
+        show_promo_price = line_mode == "selling" and sell_price_basis != "list"
 
         # The override is a SELLING price and wins over the engine's sum. It
         # never rewrites what the package LISTS at - the tag still shows what the
@@ -972,6 +964,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 or (combo_obj or {}).get("free_items")
                 or "",
                 "combo": combo_obj,
+                "slots": slots,
                 # The TAG's own quantity, seeded from the line's at submit and
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
@@ -982,6 +975,126 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         )
 
     return rows
+
+
+def _slots_dict(main: Optional[dict], fixed: list, groups: list, upgrades: list) -> dict:
+    return {"main": main, "fixed": fixed, "groups": groups, "upgrades": upgrades}
+
+
+def _combo_choice_groups(combo) -> dict[str, int]:
+    """The combo's choice groups in part order: group name -> number of options."""
+    from app.services.dealer_kit.template_needs import combo_shape
+
+    return {group["role"]: group["size"] for group in combo_shape(combo)["groups"]}
+
+
+def _combo_upgrade_products(combo) -> list:
+    return [
+        part.part_product
+        for part in (combo.parts or [])
+        if part.part_product is not None and part.is_upgrade
+    ]
+
+
+def _line_slots(
+    db: Session,
+    line,
+    tag,
+    combo_row,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> Optional[dict]:
+    """PRICETAG-COMBO-RENDER K2: where each product of this tag sits.
+
+    ``fixed`` = the line's resolved parts with no role, ``groups`` = one entry
+    per choice group with the picks in pick order, ``upgrades`` = the combo's
+    upgrades with ``chosen`` set on the one the line picked. None when the
+    line has neither parts nor a combo.
+    """
+    from app.models.product import Product
+
+    chosen_by_role = dict(tag.choices or {})
+    placed: list[tuple[str, str]] = []  # (role, product id) in line part order
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        role = part.role or ""
+        if part.product_id:
+            placed.append((role, str(part.product_id)))
+        elif role in chosen_by_role:
+            placed.append((role, str(chosen_by_role[role])))
+    if not placed and combo_row is None:
+        return None
+
+    upgrade_products = _combo_upgrade_products(combo_row) if combo_row is not None else []
+    upgrade_ids = {product.id for product in upgrade_products}
+    wanted = {product_id for _, product_id in placed}
+    host = db.query(Product).filter(Product.id == line.product_id).first()
+    products = (
+        {p.id: p for p in db.query(Product).filter(Product.id.in_(wanted)).all()}
+        if wanted
+        else {}
+    )
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, promotion_id, cache, price_mode=price_mode))
+
+    fixed: list[dict] = []
+    picks_by_role: dict[str, list[dict]] = {}
+    picked_upgrade_ids: set[str] = set()
+    for role, product_id in placed:
+        product = products.get(product_id)
+        if product is None:
+            continue
+        if role == "Upgrade" or product_id in upgrade_ids:
+            picked_upgrade_ids.add(product_id)
+        elif not role:
+            fixed.append(row(product))
+        else:
+            picks_by_role.setdefault(role, []).append(row(product))
+
+    if combo_row is not None:
+        group_sizes = _combo_choice_groups(combo_row)
+    else:
+        group_sizes = {role: len(picks) for role, picks in picks_by_role.items()}
+    groups = [
+        {"role": role, "size": size, "picks": picks_by_role.get(role, [])}
+        for role, size in group_sizes.items()
+    ]
+    upgrades = [
+        {**row(product), "chosen": product.id in picked_upgrade_ids}
+        for product in upgrade_products
+    ]
+    return _slots_dict(row(host) if host is not None else None, fixed, groups, upgrades)
+
+
+def _preview_slots(db: Session, combo, host) -> dict:
+    """The template editor's preview of a combo: fixed parts, every option of each
+    group in combo order, every upgrade (AC-A6)."""
+    viewer = staff_viewer()
+    cache: dict = {}
+
+    def row(product) -> dict:
+        return dict(_part_row(db, product, viewer, None, cache))
+
+    fixed: list[dict] = []
+    picks: dict[str, list[dict]] = {}
+    upgrades: list[dict] = []
+    for part in combo.parts or []:
+        product = part.part_product
+        if product is None:
+            continue
+        if part.is_upgrade:
+            upgrades.append({**row(product), "chosen": False})
+        elif part.choice_group:
+            picks.setdefault(part.choice_group, []).append(row(product))
+        else:
+            fixed.append(row(product))
+    groups = [
+        {"role": role, "size": len(items), "picks": items} for role, items in picks.items()
+    ]
+    return _slots_dict(row(host), fixed, groups, upgrades)
 
 
 def _tag_sell_price_basis(
@@ -1133,19 +1246,21 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
     from app.services.uuid_path_param import validate_uuid_path
 
     if not combo_id:
-        return {**data, "combo": None}
+        return {**data, "combo": None, "slots": None}
     combo_id = validate_uuid_path(combo_id, resource="Combo")
     combo = combo_for_host(db, combo_id, product.id, {product.id: product})
     if combo is None:
         raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
-    # The price the combo would print with nothing picked (AC-5.3); blank stays the host's.
+    # The price the combo would print with nothing picked (AC-5.3).
     combo_list, combo_sell, sell_decided = combo_prices(combo, set())
     return {
         **data,
-        "list_price": combo_list if combo_list is not None else data.get("list_price"),
-        "offer_price": combo_sell if sell_decided else data.get("offer_price"),
+        # The tag prints the combo's stored price or nothing (K8); the preview shows the same.
+        "list_price": combo_list,
+        "offer_price": combo_sell if sell_decided else None,
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
+        "slots": _preview_slots(db, combo, product),
     }
 
 
@@ -1628,6 +1743,9 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
         # kept as pinned rather than reprocessed, so `set_members`/Tag total
         # keep reading the right thing.
         row["own_parts"] = pinned.get("parts") or []
+    row["slots"] = _slots_from_pin(
+        tag, pinned.get("slots"), pinned.get("parts") or [], lambda images: resign_images(db, images)
+    )
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
@@ -1645,6 +1763,45 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     if tag.marketing_price_override is not None:
         row["sell_price"] = Decimal(str(tag.marketing_price_override))
     return row
+
+
+def _slots_from_pin(tag, pinned_slots: Optional[dict], pinned_parts: list, resign) -> Optional[dict]:
+    """The pinned `slots` with live photo links, and the tag's own pick of an open group read
+    fresh (like `combo.picked`, `_combo_with_picks`): it re-chooses among the candidates the pin
+    already holds in `parts`, so no position is re-read from master data."""
+    if pinned_slots is None:
+        return None
+    choices = dict(tag.choices or {})
+    candidates: dict[str, dict[str, dict]] = {}
+    for part in pinned_parts or []:
+        if part.get("role") and part.get("product_id"):
+            candidates.setdefault(part["role"], {})[part["product_id"]] = part
+
+    def fresh(parts: list) -> list:
+        return [{**part, "images": resign(part.get("images") or [])} for part in parts]
+
+    groups = []
+    for group in pinned_slots.get("groups") or []:
+        held = candidates.get(group.get("role") or "", {})
+        picks = group.get("picks") or []
+        chosen = held.get(str(choices.get(group.get("role"), "")))
+        if held and group.get("role") in choices:
+            # Picks that came from this open row are replaced by the tag's current choice.
+            picks = [p for p in picks if p.get("product_id") not in held]
+            if chosen is not None:
+                picks = [*picks, chosen]
+        groups.append({**group, "picks": fresh(picks)})
+    # An upgrade offered as an open row reflects the tag's CURRENT choice alone; a resolved one
+    # keeps its pinned flag.
+    open_upgrade = "Upgrade" in choices and bool(candidates.get("Upgrade"))
+    upgrades = [
+        {**up, "chosen": str(choices["Upgrade"]) == up.get("product_id") if open_upgrade else bool(up.get("chosen"))}
+        for up in pinned_slots.get("upgrades") or []
+    ]
+    main = pinned_slots.get("main")
+    return _slots_dict(
+        fresh([main])[0] if main else None, fresh(pinned_slots.get("fixed") or []), groups, fresh(upgrades)
+    )
 
 
 # ---------------------------------------------------------------------------

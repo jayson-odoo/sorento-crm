@@ -84,6 +84,7 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { formatMyr } from './QuotationsPanel';
 import {
+  PICKED_CODE_KEY,
   cellsPatch,
   draftCells,
   emptyDraft,
@@ -1212,6 +1213,7 @@ export function QuotationLinesGrid({
         update(key, {
           product_id: '',
           product_set_id: '',
+          [PICKED_CODE_KEY]: '',
           ...(held.draft.product_set_id ? { complete_set: '' } : {}),
           ...clearPicks,
         });
@@ -1222,6 +1224,8 @@ export function QuotationLinesGrid({
         update(key, {
           product_id: '',
           product_set_id: setId,
+          // The option's label IS the code (sets and products alike).
+          [PICKED_CODE_KEY]: option.label,
           uom: 'SET',
           ...clearPicks,
         });
@@ -1241,6 +1245,7 @@ export function QuotationLinesGrid({
       update(key, {
         product_id: option.value,
         product_set_id: '',
+        [PICKED_CODE_KEY]: option.label,
         // Off a set, its parts text no longer describes the line.
         ...(held.draft.product_set_id ? { complete_set: '' } : {}),
         ...fillFromProduct(option),
@@ -1418,7 +1423,9 @@ export function QuotationLinesGrid({
       return describeLine(
         row.staged.line,
         row.index,
-        !row.staged.line && productId ? productCodeOf(productId) : null,
+        !row.staged.line && productId
+          ? (productCodeOf(productId) ?? (row.staged.draft[PICKED_CODE_KEY] || null))
+          : null,
       );
     },
     [productCodeOf],

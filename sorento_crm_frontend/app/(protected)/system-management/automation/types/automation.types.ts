@@ -22,8 +22,8 @@ export interface RecipientConfig {
   cc_user_ids?: string[];
   cc_role_ids?: string[];
   cc_emails?: string[];
-  /** Set on save by the To/Cc picker. Unset = the row still sends "first address To, the
-   * rest Cc" (DEALER-OI-ROUTE card Q2 (b)). */
+  /** Set on save by the To/Cc picker for a new row, or once a To/Cc address is changed.
+   * Unset = the row still sends "first address To, the rest Cc" (DEALER-OI-ROUTE card Q2 (b)). */
   explicit_to_cc?: boolean;
 }
 

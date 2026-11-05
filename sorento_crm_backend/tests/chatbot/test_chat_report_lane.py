@@ -410,9 +410,9 @@ def test_a_422_or_5xx_is_one_clear_line_and_the_turn_closes(console, status) -> 
 
 def test_a_period_with_no_asks_says_so(console) -> None:
     console.body_over = {"rows": [], "total_count": 0, "total": {"value": 0},
-                         "message": "No asks in that period. Chat data starts 5 Sep 2026."}
+                         "message": "No asks in that period. Chat data starts 05/09/2026."}
     text, _calls = console.say(_chat(), "top 5 questions this week")
-    assert "No asks in that period. Chat data starts 5 Sep 2026." in text, text
+    assert "No asks in that period. Chat data starts 05/09/2026." in text, text
 
 
 def test_a_rate_limited_ask_says_too_many_reports(console) -> None:

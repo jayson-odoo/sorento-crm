@@ -69,7 +69,7 @@ import {
 import {
   renderMergeFields,
   soleMergeField,
-  type MergeFieldGroup,
+  PRICE_TAG_FIELD_GROUPS,
 } from '@/lib/dealer-kit/merge-fields';
 import {
   moveEdge,
@@ -558,7 +558,6 @@ interface DragSession {
  * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
  * page data exists. Three, the most the owner's sample prints on one page.
  */
-const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
 
 const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
   code: `Accessory ${n}`,
@@ -3515,6 +3514,16 @@ export function TagCanvasEditor({
       : specSheet
         ? SPEC_SHEET_ACCESSORY_PARTS
         : undefined;
+  // PRICETAG-COMBO-RENDER K7: the previewed combo's positions, for the position picker and the
+  // Layers suffix.
+  // In the template editor the previewed combo is the data (`dataOf`), not `boundData`.
+  const slotSource = comboPreview?.data ?? boundData;
+  const subjectSlots =
+    slotSource?.kind === 'line'
+      ? slotSource.line.slots
+      : slotSource?.kind === 'product'
+        ? slotSource.product.slots
+        : null;
   const subjectParentCode =
     boundData?.kind === 'line'
       ? boundData.line.code
@@ -3641,12 +3650,37 @@ export function TagCanvasEditor({
   // this open - otherwise a selection change with nothing typed would flush
   // whatever was left over from a PREVIOUS edit session against the newly
   // opened layer.
+  const editingSeedRef = useRef('');
   useEffect(() => {
-    if (editingLayerId) editingTextRef.current = editingContent;
+    if (editingLayerId) {
+      editingTextRef.current = editingContent;
+      editingSeedRef.current = editingContent;
+    }
     // Only re-seed when a NEW edit session opens, not on every keystroke -
     // `editingTextRef` itself is the up-to-date value once one is in progress.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingLayerId]);
+
+  // The canvas unmounting with typing still open (the spec sheet reader unloads a page scrolled far
+  // away): no blur or click outside will come, so hand the host the typed text now, the same way a
+  // commit writes it, or it is lost without a word.
+  const unloadRef = useRef({ editingLayerId, layers, onLayersChange });
+  unloadRef.current = { editingLayerId, layers, onLayersChange };
+  useEffect(
+    () => () => {
+      const { editingLayerId: id, layers: now, onLayersChange: report } = unloadRef.current;
+      const text = editingTextRef.current;
+      if (!id || !report || text === editingSeedRef.current) return;
+      report(
+        now.map((layer) => {
+          if (layer.id !== id) return layer;
+          if (layer.slot_binding) return { ...layer, text_override: text };
+          return layer.props.kind === 'text' ? { ...layer, props: { ...layer.props, text } } : layer;
+        }),
+      );
+    },
+    [],
+  );
 
   /**
    * The inline editor's own commit (S2, D5): Esc, Cmd/Ctrl+Enter or blur
@@ -4748,6 +4782,7 @@ export function TagCanvasEditor({
                     onMoveLayer={handleMoveLayer}
                     overflowingIds={overflowingIds}
                     subjectParts={subjectParts}
+                    subjectSlots={subjectSlots}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -4762,6 +4797,7 @@ export function TagCanvasEditor({
                   onMoveLayer={handleMoveLayer}
                   overflowingIds={overflowingIds}
                   subjectParts={subjectParts}
+                  subjectSlots={subjectSlots}
                 />
               </div>
             )}
@@ -4844,6 +4880,7 @@ export function TagCanvasEditor({
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
               subjectParts={subjectParts}
+              subjectSlots={subjectSlots}
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}

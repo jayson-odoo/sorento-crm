@@ -42,12 +42,15 @@ import type {
   LayerShowWhen,
   TagLayerProps,
   TagPartData,
+  TagSlots,
+  SubjectSlot,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
-import { isDynamic } from '@/lib/dealer-kit/product-block';
+import { isDynamic, slotLabel } from '@/lib/dealer-kit/product-block';
+import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -75,6 +78,8 @@ const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
   { value: 'included_accessories', label: 'Accessories' },
   { value: 'list_price', label: 'List Price' },
   { value: 'sell_price', label: 'Sell Price' },
+  { value: 'price', label: 'Price (LP or SP)' },
+  { value: 'price_label', label: 'Price label' },
   { value: 'badges', label: 'Badges' },
   { value: 'alternatives', label: 'Alternatives' },
   { value: 'set_members', label: 'Set Members' },
@@ -230,6 +235,8 @@ interface InspectorPanelProps {
    * tag, so no picker shows on ANY layer.
    */
   subjectParts?: TagPartData[];
+  /** The previewed combo's positions (template editor only); null/absent = nothing previewed. */
+  subjectSlots?: TagSlots | null;
   /** The parent's own code, for the picker's first entry. */
   subjectParentCode?: string | null;
   /** PS-SPEC-SHEET: a spec sheet page template, so layers can carry "Show only when". */
@@ -260,6 +267,7 @@ export function InspectorPanel({
   editingPoints,
   onToggleEditPoints,
   subjectParts,
+  subjectSlots,
   subjectParentCode,
   specSheet = false,
   specKeys,
@@ -328,7 +336,9 @@ export function InspectorPanel({
       hasSubjectAwareToken(layer.text_override ?? layer.props.text)) ||
     layer.slot_binding != null;
   const isSubjectAwareKind = carriesSubjectPart && readsProductData;
-  const showSubjectPicker = isSubjectAwareKind && (subjectParts?.length ?? 0) > 0;
+  // The template editor has no line, so no parts: it picks a POSITION in the combo instead.
+  const showSubjectPicker =
+    isSubjectAwareKind && (subjectParts ? subjectParts.length > 0 : !specSheet);
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
   // canvas side (S5): a polygon shape, or a price badge whose box IS its
@@ -350,7 +360,7 @@ export function InspectorPanel({
         <div className="flex flex-col gap-4 p-3">
           {/* -- Position & size -- */}
           <section>
-            <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               Transform
             </h4>
             <div className="grid grid-cols-2 gap-2">
@@ -442,7 +452,7 @@ export function InspectorPanel({
 
           {/* -- Slot binding -- */}
           <section>
-            <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
               Slot Binding
             </h4>
             <SearchableSelect
@@ -461,7 +471,8 @@ export function InspectorPanel({
           {showSubjectPicker && (
             <SubjectInspector
               props={layer.props}
-              parts={subjectParts ?? []}
+              parts={subjectParts}
+              slots={subjectSlots}
               parentCode={subjectParentCode ?? ''}
               onChange={updateProps}
             />
@@ -560,6 +571,8 @@ export function InspectorPanel({
 // Text inspector
 // ---------------------------------------------------------------------------
 
+const PRICE_SLOTS: string[] = ['list_price', 'sell_price', 'price'];
+
 function TextInspector({
   layer,
   props,
@@ -600,7 +613,7 @@ function TextInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Text
       </h4>
       <div className="flex flex-col gap-2">
@@ -613,7 +626,7 @@ function TextInspector({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-1.5 text-[10px]"
+                  className="h-6 px-1.5 text-2xs"
                   onClick={() => onUpdate({ text_override: null })}
                 >
                   <Link2 className="mr-1 size-3" />
@@ -625,7 +638,7 @@ function TextInspector({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-1.5 text-[10px]"
+                  className="h-6 px-1.5 text-2xs"
                   onClick={onInsertField}
                 >
                   <Braces className="mr-1 size-3" />
@@ -640,13 +653,13 @@ function TextInspector({
             onChange={(e) => handleContent(e.target.value)}
           />
           {overridden && !dynamic && (
-            <span className="flex items-center gap-1 text-[10px] text-amber-600">
+            <span className="flex items-center gap-1 text-2xs text-amber-600">
               <Link2Off className="size-3" />
               Unlinked from product data
             </span>
           )}
           {dynamic && (
-            <span className="flex items-center gap-1 text-[10px] text-sky-600">
+            <span className="flex items-center gap-1 text-2xs text-sky-600">
               <Braces className="size-3" />
               Draws from product data
             </span>
@@ -663,7 +676,7 @@ function TextInspector({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-6 shrink-0 px-1.5 text-[10px]"
+                className="h-6 shrink-0 px-1.5 text-2xs"
                 onClick={() => {
                   void navigator.clipboard.writeText(resolvedText);
                   toast.success('Copied');
@@ -675,6 +688,15 @@ function TextInspector({
             </div>
           )}
         </div>
+        {PRICE_SLOTS.includes(layer.slot_binding as string) && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <Checkbox
+              checked={props.showCurrency ?? false}
+              onCheckedChange={(v) => onChange({ ...props, showCurrency: !!v })}
+            />
+            Show currency
+          </label>
+        )}
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,
@@ -826,7 +848,7 @@ function TypographyControls({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 px-1.5 text-[10px]"
+              className="h-6 px-1.5 text-2xs"
               onClick={onUploadFont}
             >
               Manage fonts
@@ -994,7 +1016,7 @@ function ShapeInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Shape
       </h4>
       <div className="flex flex-col gap-2">
@@ -1065,12 +1087,12 @@ function ImageInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Image
       </h4>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground">{sourceLabel}</span>
+          <span className="text-2xs text-muted-foreground">{sourceLabel}</span>
           <Button
             type="button"
             variant="outline"
@@ -1166,7 +1188,7 @@ function PriceBadgeInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Price Badge
       </h4>
       <div className="flex flex-col gap-2">
@@ -1286,14 +1308,14 @@ function PreviewBlockInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Preview
       </h4>
       {label ? (
         <div className="flex items-center gap-1">
           <button
             type="button"
-            className="min-w-0 flex-1 truncate text-left text-[11px] font-medium hover:underline"
+            className="min-w-0 flex-1 truncate text-left text-2xs font-medium hover:underline"
             onClick={() => onPreview(groupId)}
             title={label}
           >
@@ -1347,12 +1369,12 @@ function GroupBindingInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Bound To
       </h4>
       {binding ? (
         <div className="flex flex-col gap-2">
-          <p className="text-[11px] font-medium">
+          <p className="text-2xs font-medium">
             {bindingLabel ?? (isSet ? 'Product set' : 'Product')}
           </p>
           <div className="flex gap-2">
@@ -1380,7 +1402,7 @@ function GroupBindingInspector({
           </div>
         </div>
       ) : (
-        <p className="text-[10px] text-muted-foreground">
+        <p className="text-2xs text-muted-foreground">
           This group is not bound to a product or set.
         </p>
       )}
@@ -1483,11 +1505,14 @@ function ShowWhenInspector({
 function SubjectInspector({
   props,
   parts,
+  slots,
   parentCode,
   onChange,
 }: {
   props: TagLayerProps;
-  parts: TagPartData[];
+  /** The request designer's line parts; absent in the template editor (positions instead). */
+  parts?: TagPartData[];
+  slots?: TagSlots | null;
   parentCode: string;
   onChange: (changes: Partial<TagLayerProps>) => void;
 }) {
@@ -1500,23 +1525,43 @@ function SubjectInspector({
     'subjectPart' in props && typeof props.subjectPart === 'number'
       ? props.subjectPart
       : undefined;
+  const subjectSlot = 'subjectSlot' in props ? props.subjectSlot : undefined;
   // r10 S6 (AC-S6-4): a tag's parts now carry every candidate of every
   // choice group, not only the one this tag chose, so the list is grouped
   // under the group's role ("Kitchen Tap") once any part carries one, and
   // this tag's own candidate says so. A row without roles - a fixed part, or
   // a row pinned before r10 - renders the same flat list it always did.
-  const grouped = parts.some((part) => Boolean(part.role));
-  const options: SearchableSelectOption[] = [
-    ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
-    { value: '-1', label: parentCode || 'Parent' },
-    ...parts.map((part, index) => ({
-      value: String(index),
-      label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
-      ...(grouped && part.role ? { group: part.role } : {}),
-    })),
-  ];
-  const value =
-    subjectPart === undefined ? (isPriceBadge ? 'default' : '-1') : String(subjectPart);
+  const grouped = (parts ?? []).some((part) => Boolean(part.role));
+  const options: SearchableSelectOption[] = parts
+    ? [
+        ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
+        { value: '-1', label: parentCode || 'Parent' },
+        ...parts.map((part, index) => ({
+          value: String(index),
+          label: `${part.code || part.name}${part.chosen ? ' (this tag)' : ''}`,
+          ...(grouped && part.role ? { group: part.role } : {}),
+        })),
+      ]
+    : [
+        // A layer saved with a part number keeps showing it, so it stays visible and replaceable.
+        ...(!subjectSlot && subjectPart !== undefined
+          ? [{ value: String(subjectPart), label: `Part ${subjectPart + 1}` }]
+          : []),
+        ...slotOptions(slots, isPriceBadge),
+      ];
+  const value = parts
+    ? subjectPart === undefined
+      ? isPriceBadge
+        ? 'default'
+        : '-1'
+      : String(subjectPart)
+    : subjectSlot
+      ? slotValue(subjectSlot)
+      : subjectPart !== undefined
+        ? String(subjectPart)
+        : isPriceBadge
+          ? 'default'
+          : 'slot:main';
   return (
     <section>
       <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1533,15 +1578,58 @@ function SubjectInspector({
         id={selectId}
         size="sm"
         value={value}
-        onChange={(v: string) =>
+        onChange={(v: string) => {
+          // A position and a part number are two ways to say the same thing, and the
+          // position wins at read time, so choosing either clears the other.
+          const slot = parseSlotValue(v);
           onChange({
-            subjectPart: v === 'default' ? undefined : Number(v),
-          } as Partial<TagLayerProps>)
-        }
+            subjectSlot: slot,
+            subjectPart: slot || v === 'default' ? undefined : Number(v),
+          } as Partial<TagLayerProps>);
+        }}
         options={options}
       />
     </section>
   );
+}
+
+function slotValue(slot: SubjectSlot): string {
+  switch (slot.kind) {
+    case 'main':
+      return 'slot:main';
+    case 'fixed':
+      return `slot:fixed:${slot.index}`;
+    case 'pick':
+      return `slot:pick:${slot.group}:${slot.index}`;
+    case 'upgrade':
+      return `slot:upgrade:${slot.index}`;
+  }
+}
+
+function parseSlotValue(value: string): SubjectSlot | undefined {
+  const [prefix, kind, a, b] = value.split(':');
+  if (prefix !== 'slot') return undefined;
+  if (kind === 'main') return { kind: 'main' };
+  if (kind === 'fixed') return { kind: 'fixed', index: Number(a) };
+  if (kind === 'pick') return { kind: 'pick', group: Number(a), index: Number(b) };
+  if (kind === 'upgrade') return { kind: 'upgrade', index: Number(a) };
+  return undefined;
+}
+
+/** The positions a layer may read: the previewed combo's own, else the generic set. */
+function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean): SearchableSelectOption[] {
+  const out: SearchableSelectOption[] = [];
+  const add = (slot: SubjectSlot, code?: string, group?: string) =>
+    out.push({
+      value: slotValue(slot),
+      label: slotLabel(slot, slots),
+      ...(code ? { description: code } : {}),
+      ...(group ? { group } : {}),
+    });
+  if (isPriceBadge) out.push({ value: 'default', label: 'Tag total' });
+  add({ kind: 'main' });
+  for (const position of comboPositions(slots)) add(position.slot, position.code, position.group);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1557,7 +1645,7 @@ function ProductSlotInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Product Slot
       </h4>
       <div className="flex flex-col gap-1">
@@ -1587,11 +1675,11 @@ function BadgeInspector({
 }) {
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Badge
       </h4>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">
+        <span className="text-2xs text-muted-foreground">
           {props.assetId ? 'Chosen' : 'None chosen'}
         </span>
         <Button
@@ -1642,7 +1730,7 @@ function BarcodeInspector({
 
   return (
     <section>
-      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Barcode
       </h4>
       <div className="flex flex-col gap-2">

@@ -9,6 +9,7 @@ are deliberately excluded.
 Attachment embedding, image classification and the guarded WeasyPrint call live
 in ``app.services.pdf_render``, shared with the other entity PDF exports.
 """
+from app.utils.date_format import fmt_date
 import logging
 from datetime import date, datetime
 from html import escape
@@ -25,6 +26,7 @@ from app.services.pdf_render import (
     non_image_names,
     photos_section_html,
     render_html,
+    today_in_malaysia,
 )
 from app.services.submission_status import APPEALED_LABEL, RESUBMITTED
 
@@ -40,7 +42,7 @@ def _fmt(value) -> str:
     if value is None:
         return "-"
     if isinstance(value, (datetime, date)):
-        return value.strftime("%d %b %Y")
+        return fmt_date(value)
     s = str(value).strip()
     return escape(s) if s else "-"
 
@@ -176,7 +178,7 @@ class ComplaintPDFService:
   .footer {{ margin-top: 22px; color: #999; font-size: 9px; border-top: 1px solid #eee; padding-top: 6px; }}
 </style></head><body>
   <h1>Complaint {title_num}</h1>
-  <div class="sub">Supporting document · generated {date.today().strftime('%d %b %Y')}</div>
+  <div class="sub">Supporting document · generated {fmt_date(today_in_malaysia())}</div>
 
   <div class="cols">
     <div><h2>Complaint Details</h2><table class="kv">{details}</table></div>

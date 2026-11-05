@@ -361,7 +361,7 @@ def test_the_export_carries_the_same_rows_the_list_shows(api):
 
     assert response.status_code == 200, response.text
     book = openpyxl.load_workbook(io.BytesIO(response.content))
-    # ONE sheet, never split by month (owner, 16 Oct 2026): two heading rows, then the
-    # rows themselves.
+    # ONE sheet, never split by month (owner, 16 Oct 2026): the header row (no title row
+    # above it, OI-EXPORT-SHARED), then the rows themselves.
     assert book.sheetnames == ["ORDER INQUIRY"]
-    assert book.worksheets[0].max_row - 2 == 1
+    assert book.worksheets[0].max_row - 1 == 1

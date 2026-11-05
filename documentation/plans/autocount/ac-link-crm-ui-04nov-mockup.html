@@ -1,0 +1,249 @@
+<title>Stock Debt PO Link</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: the app's own shell. A snapshot drill dialog, the Link dialog it opens, then the result states. Tokens copy css/config.reui.css (zinc neutrals, blue-500 primary, 0.5rem radius, Inter). */
+:root {
+  --bg: #fafafa; --card: #ffffff; --fg: #09090b; --muted: #f4f4f5; --muted-fg: #71717a;
+  --border: #ececee; --primary: #3b82f6; --primary-fg: #ffffff;
+  --green-bg: #d1fae5; --green-fg: #065f46; --amber-bg: #fef3c7; --amber-fg: #92400e;
+  --red-bg: #fee2e2; --red-fg: #991b1b; --blue-bg: #dbeafe; --blue-fg: #1e40af;
+  --note-bg: #f8fafc; --radius: 0.5rem;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #09090b; --card: #111113; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-fg: #ffffff;
+  --green-bg: #064e3b; --green-fg: #a7f3d0; --amber-bg: #451a03; --amber-fg: #fde68a;
+  --red-bg: #450a0a; --red-fg: #fecaca; --blue-bg: #172554; --blue-fg: #bfdbfe; --note-bg: #0f172a;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #09090b; --card: #111113; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-fg: #ffffff;
+  --green-bg: #064e3b; --green-fg: #a7f3d0; --amber-bg: #451a03; --amber-fg: #fde68a;
+  --red-bg: #450a0a; --red-fg: #fecaca; --blue-bg: #172554; --blue-fg: #bfdbfe; --note-bg: #0f172a;
+  color-scheme: dark; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 24px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 15px; font-weight: 600; margin: 0; text-wrap: balance; }
+h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-fg); font-weight: 600; }
+p { margin: 0; }
+.muted { color: var(--muted-fg); }
+.tab { font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.dialog { background: var(--card); border: 1px solid var(--border); border-radius: calc(var(--radius) + 4px); box-shadow: 0 10px 30px rgba(0,0,0,.08); overflow: hidden; min-width: 0; }
+.dlg-head { padding: 16px 20px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
+.dlg-body { padding: 16px 20px; display: grid; gap: 16px; min-width: 0; }
+.dlg-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; }
+.panel { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--card); }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 860px; table-layout: fixed; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { font-weight: 500; color: var(--muted-fg); font-size: 13px; background: var(--muted); }
+th .sort { opacity: .55; font-size: 10px; margin-left: 4px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tfoot td { font-weight: 600; background: var(--muted); }
+a, .link { color: var(--primary); text-decoration: none; font-weight: 500; }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.p-neutral { background: var(--muted); color: var(--fg); }
+.p-green { background: var(--green-bg); color: var(--green-fg); }
+.p-amber { background: var(--amber-bg); color: var(--amber-fg); }
+.p-red { background: var(--red-bg); color: var(--red-fg); }
+.p-blue { background: var(--blue-bg); color: var(--blue-fg); }
+.btn { font: inherit; font-size: 13px; font-weight: 500; border-radius: 6px; padding: 5px 12px; border: 1px solid var(--border); background: var(--card); color: var(--fg); cursor: pointer; white-space: nowrap; }
+.btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.btn.primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn.sm { padding: 3px 10px; font-size: 12px; }
+.menu { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: 0 6px 18px rgba(0,0,0,.1); width: min(320px, 100%); padding: 4px; }
+.menu-item { display: grid; gap: 1px; padding: 7px 10px; border-radius: 6px; }
+.menu-item.on:hover { background: var(--muted); }
+.menu-item.off { opacity: .55; }
+.menu-item .why { font-size: 12px; color: var(--muted-fg); }
+.cap { display: flex; flex-wrap: wrap; gap: 6px; }
+.callout { border: 1px solid var(--border); background: var(--note-bg); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 4px; }
+.callout.warn { background: var(--amber-bg); color: var(--amber-fg); border-color: transparent; }
+.callout.err { background: var(--red-bg); color: var(--red-fg); border-color: transparent; }
+.callout.ok { background: var(--green-bg); color: var(--green-fg); border-color: transparent; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.field { display: grid; gap: 4px; }
+.field label { font-size: 13px; font-weight: 500; }
+.input { font: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; background: var(--card); color: var(--fg); width: 140px; }
+.select { font: inherit; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; background: var(--card); color: var(--fg); min-width: 0; width: 100%; max-width: 260px; display: inline-flex; justify-content: space-between; gap: 8px; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.selected td { background: var(--blue-bg); }
+.ann { font-size: 12px; color: var(--muted-fg); border-left: 2px solid var(--border); padding-left: 8px; }
+.map td { white-space: normal; }
+.map table { min-width: 720px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: var(--muted); padding: 1px 4px; border-radius: 4px; }
+input[type=radio] { accent-color: var(--primary); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+.strip { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.cb { width:16px; height:16px; accent-color: var(--primary); }
+tr.ticked td { background: var(--blue-bg); }
+.ver { font-size:11px; font-weight:600; padding:1px 6px; border-radius:4px; background: var(--muted); color: var(--muted-fg); }
+</style>
+
+<div class="wrap">
+  <header class="stack">
+    <span class="eyebrow">Mock v4 (approved) · lane AC-LINK-CRM-UI · not wired · SO, PO and product codes from the repo test fixtures; quantities, parties and suppliers are examples</span>
+    <h1>Stock Debt snapshot: Decide on ticked lines, then Link to PO</h1>
+    <p class="muted" style="max-width:72ch">Project sales &gt; Stock Debt &gt; Snapshots &gt; a snapshot &gt; press a month cell. Tick the sales order lines first, then press <b>Decide (N)</b> and choose <b>Request CS to reserve</b> or <b>Link to PO</b>. This is the same order Fulfilment Planning and the Order Inquiry Reserve already use.</p>
+  </header>
+
+  <!-- 1. Drill: tick rows, then Decide -->
+  <section class="dialog" aria-labelledby="d1">
+    <div class="dlg-head">
+      <h2 id="d1">SRTWB242 · Nov 2026</h2>
+      <p class="muted" style="font-size:12px">As frozen 04/11/2026 09:12</p>
+      <div class="row tab" style="font-size:13px">
+        <span><span class="muted">Total</span> <b>-220</b></span>
+        <span><span class="muted">BRW on hand</span> <b>0</b></span>
+        <span><span class="muted">Lines</span> <b>4</b></span>
+        <span><span class="muted">Short</span> <b>200</b></span>
+        <span><span class="muted">Decision</span> <b>Buy</b></span>
+      </div>
+    </div>
+    <div class="dlg-body">
+      <div class="panel">
+        <div class="panel-head">
+          <a href="#">OI-2026-0412</a>
+          <div class="strip">
+            <span class="muted" style="font-size:13px">2 selected</span>
+            <button class="btn sm primary" type="button" aria-haspopup="menu">Decide (2) ▾</button>
+          </div>
+        </div>
+        <div class="scroll">
+          <table>
+            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:80px"><col style="width:100px"><col style="width:180px"><col style="width:70px"><col style="width:130px"></colgroup>
+            <thead><tr>
+              <th><input class="cb" type="checkbox" id="all" aria-label="Select all lines"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Ordered<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>Covered by<span class="sort">⇅</span></th><th class="num">Short<span class="sort">⇅</span></th><th>Now<span class="sort">⇅</span></th>
+            </tr></thead>
+            <tbody>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r1" checked aria-label="SO425045 line 140"></td><td><a href="#">SO425045</a></td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td class="num">120</td><td class="muted">-</td><td class="num">120</td><td><span class="pill p-neutral">Open 120</span></td></tr>
+              <tr class="ticked"><td><input class="cb" type="checkbox" id="r2" checked aria-label="SO419208 line 2"></td><td><a href="#">SO419208</a></td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td class="num">80</td><td class="muted">-</td><td class="num">80</td><td><span class="pill p-neutral">Open 80</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r3" aria-label="SO407114 line 1"></td><td><a href="#">SO407114</a></td><td class="num">1</td><td>BRW-BB</td><td class="tab">25/11/2026</td><td class="num">60</td><td class="num">60</td><td><a href="#">PO 202609-S0029</a> (60)</td><td class="num">0</td><td><span class="pill p-neutral">Open 60</span></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="r4" disabled aria-label="SO396071 line 4, reserved"></td><td><a href="#">SO396071</a></td><td class="num">4</td><td>BRW-BB</td><td class="tab">30/11/2026</td><td class="num">40</td><td class="num">40</td><td><a href="#">On hand BRW-BB</a> (40)</td><td class="num">0</td><td><span class="pill p-green">Reserved 40</span></td></tr>
+            </tbody>
+            <tfoot><tr><td></td><td>4 lines</td><td></td><td></td><td></td><td class="num">300</td><td class="num">300</td><td></td><td class="num">200</td><td></td></tr></tfoot>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="stack">
+          <span class="eyebrow">Decide (2) ▾</span>
+          <div class="menu" role="menu">
+            <div class="menu-item on"><b>Request CS to reserve…</b><span class="why">Opens today's Request CS to reserve with the 2 lines ticked.</span></div>
+            <div class="menu-item on"><b>Link to PO…</b><span class="why">Choose a PO for each ticked line.</span></div>
+            <div class="menu-item off"><b>Unlink from PO</b><span class="why">Waiting for AutoCount</span></div>
+            <div class="menu-item off"><b>Move PO to another sales order…</b><span class="why">Waiting for AutoCount</span></div>
+          </div>
+        </div>
+        <div class="stack">
+          <span class="eyebrow">How it reads off</span>
+          <p class="ann">Nothing ticked: Decide (0) is greyed with "Tick the lines to decide on". A greyed item always says why: "Waiting for AutoCount" while AutoCount cannot do it yet, "Changes to AutoCount are switched off here" on an environment where writing is off. The day AutoCount can do it, the item turns on by itself.</p>
+          <p class="ann">Lines already reserved or delivered cannot be ticked.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Link to PO popup -->
+  <section class="dialog" aria-labelledby="d2">
+    <div class="dlg-head">
+      <h2 id="d2">Link to PO · 2 of 2 lines</h2>
+      <p class="muted" style="font-size:13px">SRTWB242 · PO lines with stock still free for this product</p>
+    </div>
+    <div class="dlg-body">
+      <div class="panel">
+        <div class="scroll">
+          <table>
+            <colgroup><col style="width:40px"><col style="width:120px"><col style="width:60px"><col style="width:100px"><col style="width:110px"><col style="width:90px"><col style="width:220px"><col style="width:80px"><col style="width:80px"><col style="width:110px"></colgroup>
+            <thead><tr>
+              <th><input class="cb" type="checkbox" id="pa" checked aria-label="Select all"></th><th>Sales order<span class="sort">⇅</span></th><th class="num">Line<span class="sort">⇅</span></th><th>Location<span class="sort">⇅</span></th><th>Delivery date<span class="sort">⇅</span></th><th class="num">Outstanding<span class="sort">⇅</span></th><th>PO<span class="sort">⇅</span></th><th class="num">PO qty<span class="sort">⇅</span></th><th class="num">Free<span class="sort">⇅</span></th><th class="num">Qty<span class="sort">⇅</span></th>
+            </tr></thead>
+            <tbody>
+              <tr><td><input class="cb" type="checkbox" id="p1" checked aria-label="SO425045 line 140"></td><td>SO425045</td><td class="num">140</td><td>MWH-BB</td><td class="tab">18/11/2026</td><td class="num">120</td><td><span class="select" style="max-width:220px">202609-S0029 · line 3 · HQ · 380 free <span class="muted">▾</span></span></td><td class="num">500</td><td class="num">380</td><td class="num"><input class="input tab" id="q1" value="120" style="width:80px;text-align:right" aria-label="Qty for SO425045 line 140"></td></tr>
+              <tr><td><input class="cb" type="checkbox" id="p2" checked aria-label="SO419208 line 2"></td><td>SO419208</td><td class="num">2</td><td>HQ</td><td class="tab">22/11/2026</td><td class="num">80</td><td><span class="select" style="max-width:220px">202610-S0011 · line 2 · HQ · 200 free <span class="muted">▾</span></span></td><td class="num">200</td><td class="num">200</td><td class="num"><input class="input tab" id="q2" value="80" style="width:80px;text-align:right" aria-label="Qty for SO419208 line 2"></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="stack">
+          <span class="eyebrow">PO dropdown on SO425045 line 140</span>
+          <div class="menu" role="listbox">
+            <div class="menu-item on"><b>202609-S0029 · line 3</b><span class="why">HQ · arrives 12/11/2026 · 380 free · Supplier A (example)</span></div>
+            <div class="menu-item on"><b>202610-S0011 · line 2</b><span class="why">HQ · arrives 02/12/2026, after the delivery date · 200 free · Supplier B (example)</span></div>
+            <div class="menu-item off"><b>202610-S0007 · line 1</b><span class="why">MWH-BB · 120 free · whole line: waiting for AutoCount</span></div>
+          </div>
+          <p class="ann">Only PO lines with stock still free are listed. A PO line already fully given to other orders is not shown.</p>
+        </div>
+        <div class="callout">
+          <b>What will happen</b>
+          <ul class="steps tab" style="list-style:disc">
+            <li>SO425045 line 140: 120 from PO 202609-S0029, delivered to MWH-BB. The PO keeps 260 at HQ.</li>
+            <li>SO419208 line 2: 80 from PO 202610-S0011 at HQ. The PO keeps 120 at HQ.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="muted" style="font-size:12px;margin-right:auto">Saved to AutoCount (test company)</span>
+      <button class="btn" type="button">Cancel</button>
+      <button class="btn primary" type="button">Link 2 lines</button>
+    </div>
+  </section>
+
+  <!-- 3. Results -->
+  <section class="stack" aria-labelledby="d3">
+    <h2 id="d3">After Link: one result per line</h2>
+    <div class="grid2">
+      <div class="callout ok">
+        <b>Linked</b>
+        <span class="tab">SO425045 line 140 now covered by PO 202609-S0029 (120, MWH-BB).</span>
+      </div>
+      <div class="callout warn">
+        <b>Linked, still at HQ</b>
+        <span class="tab">SO419208 line 2 now covered by PO 202610-S0011 (80), but AutoCount kept it at HQ, not MWH-BB.</span>
+        <div><button class="btn sm" type="button">Move to MWH-BB</button></div>
+      </div>
+      <div class="callout err">
+        <b>Not linked</b>
+        <span class="tab">SO419208 line 2: AutoCount cannot do this yet. Nothing was changed.</span>
+      </div>
+      <div class="callout err">
+        <b>Needs attention</b>
+        <span class="tab">SO425045 line 140: AutoCount stopped half way. The team has been emailed.</span>
+        <div><button class="btn sm" type="button">Resume</button></div>
+      </div>
+    </div>
+    <p class="ann">Resume asks the Shared Service to look at AutoCount again and finish the job. The CRM never repeats a step on its own.</p>
+  </section>
+
+  <!-- 4. Component map -->
+  <section class="stack map" aria-labelledby="d4">
+    <h2 id="d4">What each element reuses</h2>
+    <div class="panel scroll">
+      <table>
+        <colgroup><col style="width:30%"><col style="width:70%"></colgroup>
+        <thead><tr><th>Element</th><th>Reused component (paths under sorento_crm_frontend/)</th></tr></thead>
+        <tbody>
+          <tr><td>Drill dialog and OI group grid</td><td><code>app/(protected)/project-sales/stock-debt/components/SnapshotDrillDialog.tsx</code>, <code>components/common/PanelDataGrid</code>, columns from <code>stock-debt/lib/stockDebtDemandColumns.tsx</code> (Bin header renamed Location; Delivery date already on the wire as <code>required_date</code>)</td></tr>
+          <tr><td>Row ticks</td><td><code>components/ui/data-grid-select-column</code> <code>buildSelectColumn</code>, as <code>order-inquiries/[id]/components/OrderInquiryLinesTab.tsx:378</code> (<code>enableRowSelection</code> per row) and <code>fulfilment-planning/components/FulfilmentPlanningClient.tsx:132</code></td></tr>
+          <tr><td>Decide (N) dropdown</td><td>Shape of <code>order-inquiries/[id]/components/ReserveDecideControl.tsx</code> (greyed at 0 with a title, <code>components/ui/dropdown-menu</code>); replaces the "Request CS to reserve" toolbar button</td></tr>
+          <tr><td>Link to PO popup</td><td>Same shell as <code>project-sales/_shared/components/RequestReserveDialog.tsx</code>: one <code>DataGrid</code>, select column, every line opens ticked, per-row <code>SearchableSelect</code> + <code>NumberInput</code> with <code>lib/number-field</code> <code>numberFieldError</code></td></tr>
+          <tr><td>Pills and results</td><td><code>lib/status-pill</code> tones, as <code>nowPill</code> uses</td></tr>
+          <tr><td>Dates</td><td><code>lib/helpers</code> <code>formatDateInMalaysia</code> (dd/mm/yyyy)</td></tr>
+          <tr><td>Save path</td><td>hook → <code>stockDebtSnapshotService</code> → <code>lib/api-client</code> → new BE route → <code>app/services/foundryx_autocount_client.py</code> (X-API-Key) → SS <code>/po-links</code>, <code>/po-links/unlink</code>, <code>/po-links/relink</code>, <code>/write-operations/{id}/resume</code>, <code>/write-capabilities</code> (SS PR #191)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>

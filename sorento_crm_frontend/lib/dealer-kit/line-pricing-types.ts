@@ -15,36 +15,23 @@
  * `app/(auth)/portal/components/__fixtures__/line-pricing.ts`); this file is
  * what is left for production to import.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 export type SellPriceBasis = 'manual' | 'promotion' | 'list';
 
 export interface LinePricingPromotionOption {
   id: string;
   description: string;
-  sell_price: number;
+  /** Null on a combo line whose combo stores no selling price (never a part sum). */
+  sell_price: number | null;
   /** `YYYY-MM-DD` when the promotion has ended but still prices inside its
    * type's grace (PRICE-TAG-A3-EXPIRED); null while it is live. */
   expired_on?: string | null;
 }
 
-const MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
 /**
  * The promotion's name as the dropdown and the line text show it:
- * `<description> (expired 30 Sep 2026)` for an ended one still in its grace.
+ * `<description> (expired 30/09/2026)` for an ended one still in its grace.
  * Parsed by hand, not through `Date`, so a browser west of UTC cannot show
  * the day before.
  */
@@ -53,8 +40,15 @@ export function promotionOptionName(
 ): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(option.expired_on ?? '');
   if (!match) return option.description;
-  const [, year, month, day] = match;
-  return `${option.description} (expired ${Number(day)} ${MONTHS[Number(month) - 1]} ${year})`;
+  return `${option.description} (expired ${formatDateInMalaysia(match[0])})`;
+}
+
+/** The dropdown label: the name, and the figure only when the option has one. */
+export function promotionOptionLabel(
+  option: Pick<LinePricingPromotionOption, 'description' | 'expired_on' | 'sell_price'>,
+): string {
+  const name = promotionOptionName(option);
+  return option.sell_price == null ? name : `${name} - RM ${option.sell_price.toLocaleString('en-MY')}`;
 }
 
 export interface LinePricingCandidate {
@@ -65,7 +59,8 @@ export interface LinePricingCandidate {
 
 export interface LinePricingResult {
   key: string;
-  list_price: number;
+  /** Null on a combo line whose combo stores no list price (never a part sum). */
+  list_price: number | null;
   promotion_options: LinePricingPromotionOption[];
   auto_promotion_id: string | null;
   sell_price: number | null;

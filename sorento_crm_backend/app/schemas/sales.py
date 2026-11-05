@@ -294,6 +294,9 @@ class SalesOpportunityResponse(BaseModel):
     lost_reason_label: Optional[str] = None
     sales_order_id: Optional[str] = None
     sales_order_no: Optional[str] = None
+    #: The linked sales order's customer (debtor name, else customer master) and project.
+    sales_order_customer_name: Optional[str] = None
+    sales_order_project_label: Optional[str] = None
     source: str
     created_by_label: Optional[str] = None
     created_by_contact_id: Optional[str] = None
@@ -349,6 +352,7 @@ class SalesOpportunitySalesOrderOption(BaseModel):
     so_number: str
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     order_date: Optional[DateType] = None
 
 
@@ -372,7 +376,7 @@ def _uuid_str(value):
 UuidStr = Annotated[str, BeforeValidator(_uuid_str)]
 
 Metric = Literal["amount", "quantity"]
-Basis = Literal["ordered", "delivered"]
+Basis = Literal["ordered", "delivered", "invoiced"]
 ProductScope = Literal["all", "categories", "products", "brands"]
 SplitUnit = Literal["day", "week", "month"]
 
@@ -667,6 +671,12 @@ class SalesTargetCommissionLine(BaseModel):
     amount: float
 
 
+class SalesTargetRateEntry(BaseModel):
+    #: The account's label ("A/C I") on a per-account rate, else null.
+    label: Optional[str] = None
+    rate: Optional[float] = None
+
+
 class SalesTargetPeriodOut(BaseModel):
     id: str
     period_start: DateType
@@ -682,6 +692,9 @@ class SalesTargetPeriodOut(BaseModel):
     commission_lines: List[SalesTargetCommissionLine] = Field(default_factory=list)
     #: 1-based main tier reached, null below the first.
     tier_reached: Optional[int] = None
+    #: The reached main tier's rate(s): one label-less entry, or one per account on per-account
+    #: rates (TARGET-COMMISSION-VIEW). Empty below the first tier.
+    tier_rates: List[SalesTargetRateEntry] = Field(default_factory=list)
     #: Points targets: the RM per point in force on the period's last day.
     point_ratio: Optional[float] = None
     ratio_missing: bool = False
@@ -749,6 +762,10 @@ class SalesTargetDetail(BaseModel):
     counts_label: str
     scope: List[SalesTargetScopeItem]
     periods: List[SalesTargetPeriodOut]
+    #: Commission + bonus of the periods that ended before `on`, and of the period containing
+    #: it (shown apart: it can still change). Null on a target with no commission.
+    commission_to_date: Optional[float] = None
+    commission_current: Optional[float] = None
     children: List[SalesTargetChild]
     members_without_figure: List[SalesTargetMemberRef]
     child_count: int

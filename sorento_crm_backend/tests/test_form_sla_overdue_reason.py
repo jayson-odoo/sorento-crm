@@ -84,7 +84,7 @@ def test_cs_stage_says_process():
 def test_due_timestamp_included():
     # _fmt_due renders the naive-UTC due in KL wall time (+8h); assert the date + "by".
     r = _reason(_tracker("complaint", "complaint", responded=True))
-    assert "by 10 Jul 2026," in r
+    assert "by 10/07/2026," in r
 
 
 def test_unmapped_stage_uses_generic_verb():

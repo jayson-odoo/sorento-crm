@@ -11,6 +11,7 @@ import {
   readPortalToken,
   stopPortalImpersonation,
 } from '../lib/portal-client';
+import { localStore } from '@/lib/storage';
 
 const COLLAPSE_KEY = 'sorento.portalImpersonationBannerCollapsed';
 
@@ -18,7 +19,7 @@ export function PortalImpersonationBanner() {
   const [info, setInfo] = useState<PortalImpersonationInfo | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(COLLAPSE_KEY) === '1';
+    return localStore.getItem(COLLAPSE_KEY) === '1';
   });
   const [exiting, setExiting] = useState(false);
 
@@ -44,7 +45,7 @@ export function PortalImpersonationBanner() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
+    localStore.setItem(COLLAPSE_KEY, collapsed ? '1' : '0');
   }, [collapsed]);
 
   useEffect(() => {

@@ -3669,12 +3669,12 @@ def _report_ask(body: dict) -> str:
     if body.get("date_from") is None and body.get("date_to") is None:
         facts.append("Period: all dates")  # an outstanding basis asked with no period
     else:
-        facts.append(f"Period: {_chat_date(body.get('date_from'))} to {_chat_date(body.get('date_to'))}")
+        facts.append(f"Period: {_ask_dates(body.get('date_from'), body.get('date_to'))}")
     skipped = _not_applied(body)
     if skipped:
         facts.append("Not applied: " + "; ".join(f"{n['label']} ({n['words']})" for n in skipped))
     if body.get("compare_to") and body.get("compare_from"):
-        facts.append(f"Compared with: {_chat_date(body.get('compare_from'))} to {_chat_date(body.get('compare_until'))}")
+        facts.append(f"Compared with: {_ask_dates(body.get('compare_from'), body.get('compare_until'))}")
     measure = body.get("measure")
     figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
@@ -3771,6 +3771,18 @@ _CHAT_TRENDS = ("week", "month", "day")
 _CHAT_PLURALS = {"category": "categories", "salesperson": "salespeople", "asked by": "askers"}
 _CHAT_SINGULARS = {"asked by": "asker"}
 _CHAT_COVERAGE_FLOOR = 80
+
+
+def _ask_dates(date_from: Any, date_to: Any) -> str:
+    """CP-4 (crew console pass): a report's dates as `dd/mm/yyyy - dd/mm/yyyy`; an unreadable date as it came."""
+
+    def one(value: Any) -> str:
+        try:
+            return datetime.strptime(str(value), "%Y-%m-%d").strftime("%d/%m/%Y")
+        except ValueError:
+            return str(value)
+
+    return f"{one(date_from)} - {one(date_to)}"
 
 
 def _chat_date(value: Any) -> str:

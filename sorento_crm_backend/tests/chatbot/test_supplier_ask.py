@@ -1538,9 +1538,9 @@ def test_the_customer_pick_reaches_the_report_with_that_customer(session_factory
         message_type="answer", intent_hint="check_order", domain_hint="order", order_status="outstanding",
         basis="pending_delivery", entities=[], reference_positions=[2],
     )
-    if report_kind_asked := ("Undelivered orders or pending delivery?" in reply):
+    if report_kind_asked := ("Sales order or delivery order?" in reply):
         reply, captured, _s = _span_turn(
-            session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=basis,
+            session_factory, monkeypatch, "Delivery order", list_resolver.Span("Delivery order"), set(), qf=basis,
         )
     asks = [a for n, a in captured if n in ORDER_TOOLS]
     assert asks and customer in (asks[0].get("customer_ids") or []), (report_kind_asked, reply, captured)
@@ -1685,7 +1685,7 @@ def test_after_a_supplier_po_thread_the_customer_pick_reaches_that_customers_do_
         status="outstanding", basis="pending_delivery", entities=echoed, reference_positions=[2], entity_op="reuse",
     )
     reply, captured, _s = _span_turn(
-        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=basis,
+        session_factory, monkeypatch, "Delivery order", list_resolver.Span("Delivery order"), set(), qf=basis,
     )
     asks = [a for n, a in captured if n in ORDER_TOOLS]
     assert asks and asks[0].get("customer_ids") == [customer], (reply, captured)
@@ -1765,14 +1765,14 @@ def test_crews_emissions_customer_pick_then_pending_delivery_is_that_customers_d
         "open_question_answer": {"mode": "pick", "items": [], "picked": [position], "qty_for_all": None},
         "entities": [{"raw": "orionis", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]})
     reply, _c, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
-    assert "Undelivered orders or pending delivery?" in reply, reply
+    assert "Sales order or delivery order?" in reply, reply
     pend_qf = _parser_output(
         message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
         reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
         reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS[pend],
     )
     reply, captured, _s = _span_turn(
-        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        session_factory, monkeypatch, "Delivery order", list_resolver.Span("Delivery order"), set(), qf=pend_qf,
         attributes=OWNER_GRANTS,
     )
     asks = [a for n, a in captured if n in ORDER_TOOLS]
@@ -1794,14 +1794,14 @@ def test_baseline_a_typed_customer_then_pending_delivery_is_that_customers_do_re
         session_factory, monkeypatch, "Outstanding order for orionis", list_resolver.Span("orionis", "customer"),
         {"orionis", ORIONIS.casefold()}, qf=ask,
     )
-    assert "Undelivered orders or pending delivery?" in reply, reply
+    assert "Sales order or delivery order?" in reply, reply
     pend_qf = _parser_output(
         message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
         reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
         reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS[pend],
     )
     reply, captured, _s = _span_turn(
-        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        session_factory, monkeypatch, "Delivery order", list_resolver.Span("Delivery order"), set(), qf=pend_qf,
         attributes=OWNER_GRANTS,
     )
     asks = [a for n, a in captured if n in ORDER_TOOLS]
@@ -1964,7 +1964,7 @@ def test_crews_step3_customer_pick_with_po_document_asks_the_kind_on_the_sales_s
     reply, _c, _s = _span_turn(
         session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick, attributes=OWNER_GRANTS,
     )
-    assert "Undelivered orders or pending delivery?" in reply, reply
+    assert "Sales order or delivery order?" in reply, reply
 
 
 def test_crews_unknown_supplier_with_no_parser_entity_never_lists_the_po_book(session_factory, monkeypatch):

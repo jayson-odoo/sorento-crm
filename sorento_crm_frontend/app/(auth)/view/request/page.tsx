@@ -17,7 +17,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { PurchaseRequestSignoffFooter } from '@/app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestSignoffFooter';
-import { formatCurrency } from '@/lib/helpers';
+import { formatCurrency, formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 interface ViewLineSummary {
   item_code?: string | null;
@@ -80,7 +80,7 @@ function formatDateStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
+    return Number.isNaN(d.getTime()) ? value : formatDateInMalaysia(d);
   } catch {
     return value;
   }
@@ -90,7 +90,7 @@ function formatDateTimeStr(value: string | null | undefined): string {
   if (!value) return '-';
   try {
     const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    return Number.isNaN(d.getTime()) ? value : formatDateTimeInMalaysia(d);
   } catch {
     return value;
   }

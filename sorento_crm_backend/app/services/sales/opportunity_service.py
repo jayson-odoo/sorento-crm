@@ -18,6 +18,7 @@ from app.models.access import RespondContact
 from app.models.lookup import LookupOption, LookupSet
 from app.models.order import Customer, SalesOrder
 from app.models.product import Product
+from app.services.scm.so_party import EMPTY_PARTY, so_parties, with_party
 from app.models.sales import SalesOpportunity, SalesOpportunityLine
 from app.models.sales_agent import SalesAgent
 from app.models.status import Status
@@ -727,14 +728,19 @@ def sales_order_options(
             c.id: c.customer_name
             for c in db.query(Customer).filter(Customer.id.in_(customer_ids)).all()
         }
+    parties = so_parties(db, ids=[o.id for o in orders])
     return [
-        {
-            "id": o.id,
-            "so_number": o.so_number,
-            "customer_id": o.customer_id,
-            "customer_name": customer_names.get(o.customer_id),
-            "order_date": o.order_date,
-        }
+        with_party(
+            {
+                "id": o.id,
+                "so_number": o.so_number,
+                "customer_id": o.customer_id,
+                "customer_name": customer_names.get(o.customer_id),
+                "order_date": o.order_date,
+            },
+            parties,
+            o.id,
+        )
         for o in orders
     ]
 
@@ -805,6 +811,11 @@ def serialize(db: Session, opportunity: SalesOpportunity) -> dict:
         if opportunity.sales_order_id
         else None
     )
+    order_party = (
+        so_parties(db, ids=[sales_order.id]).get(str(sales_order.id), EMPTY_PARTY)
+        if sales_order
+        else EMPTY_PARTY
+    )
     lost_reason_label = None
     if opportunity.lost_reason:
         option = (
@@ -851,6 +862,8 @@ def serialize(db: Session, opportunity: SalesOpportunity) -> dict:
         "lost_reason_label": lost_reason_label,
         "sales_order_id": opportunity.sales_order_id,
         "sales_order_no": sales_order.so_number if sales_order else None,
+        "sales_order_customer_name": order_party["customer_name"],
+        "sales_order_project_label": order_party["project_label"],
         "source": opportunity.source,
         "created_by_label": _created_by_label(db, opportunity),
         "created_by_contact_id": opportunity.created_by_contact_id,

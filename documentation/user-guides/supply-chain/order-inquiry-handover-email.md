@@ -109,8 +109,9 @@ named **Order inquiry to purchasing**.
   address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
   **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
   **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
-  you save it here. From that save on, To and Cc mean exactly what the boxes say, so check both
-  boxes before you save.
+  you add, remove or move an address under **To** or **Cc** here and save. Saving any other
+  change (a condition, the name, a tick box) leaves it sending as before. Once you change an
+  address, To and Cc mean exactly what the boxes say, so check both boxes before you save.
 * **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
   on the thread.
 * **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
@@ -149,10 +150,32 @@ retail mail goes to both rows' recipients.
 **Undo mails follow the same rule.** The **Order inquiry undone** row works the same way: give
 the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
 
-**Send to purchasing (resend)** uses the enabled row whose condition matches the order
-inquiry's sales order class (the oldest one, if several match). When every row is switched off,
-it uses the switched-off row for that class. If no row is for that class, the order inquiry is
-not sent and the preview lists it as skipped: it never goes to the other class's people.
+## One person's orders go to their own people
+
+A row can also be set by who raised the order inquiry, with the condition **Raised by**: pick
+one or more people with **is any of** (only their order inquiries) or **is none of** (everyone
+else's). An order inquiry nobody is named as raising counts as "none of" anyone.
+
+**Example: Agnes' project orders skip Eling.**
+
+1. Open the project row that sends to Eling. Click **Add condition**, pick **Raised by**,
+   **is none of**, **Agnes**, and save. It keeps its **Sales order class is Project** condition.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing** and
+   the same email template, and name it, for example **Order inquiry - Agnes' project orders**.
+3. Pick the people Agnes' orders should reach under **To** and **Cc**.
+4. Add the conditions **Sales order class**, **is**, **Project** and **Raised by**, **is any
+   of**, **Agnes**, and save.
+5. Do the same on the **Order inquiry undone** rows so undo mails follow the same people.
+
+When one Confirm covers order inquiries raised by different people, each line goes only to the
+rows it matches: Agnes' lines in one mail to her row, everyone else's lines together in one mail
+to Eling's row. A row with no **Raised by** condition gets every line, still once.
+
+**Send to purchasing (resend)** goes through every enabled row whose conditions match the order
+inquiry's sales order class and raiser, the same rows the automatic mail uses, one mail per
+row. When every row is switched off, it uses the oldest switched-off row that matches. If no
+row matches, the order inquiry is not sent and the preview lists it as skipped: it never goes
+to another class's or another raiser's people.
 
 ## Parallel run
 

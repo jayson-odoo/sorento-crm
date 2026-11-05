@@ -67,6 +67,7 @@ confirmation, and a binary float does not survive that.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -397,6 +398,7 @@ def _reserve_window_buy_reason() -> str:
     )
 
 _MONTHS = (
+    # date-format-ok: month label, day dates use fmt_date
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
@@ -422,7 +424,7 @@ def date_text(value: date) -> str:
     value = spo_supply.shown_date(value)
     if value is None:
         return "an unstated date"
-    return f"{value.day} {_MONTHS[value.month - 1]} {value.year}"
+    return fmt_date(value)
 
 
 def _dec(value: Any) -> Decimal:

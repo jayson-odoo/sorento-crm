@@ -283,7 +283,7 @@ export function DrillTable<TRow extends object>({
   );
 }
 
-const MONTHS = [
+const MONTHS = [ // date-format-ok: month bucket labels (Apr 26), not a calendar date
   'Jan',
   'Feb',
   'Mar',
@@ -1614,6 +1614,8 @@ export interface SoCoverageRow {
   kind: 'project' | 'retail';
   document: string | null;
   customer_name: string | null;
+  /** The order's project (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   required_date: string | null;
   qty: number;
   warehouse_code: string | null;
@@ -1730,6 +1732,11 @@ export function SoCoveragePicker({
         options: distinctFieldOptions(coverage, (c) => c.customer_name),
       },
       {
+        id: 'project_label',
+        label: 'Project',
+        options: distinctFieldOptions(coverage, (c) => c.project_label),
+      },
+      {
         id: 'warehouse_code',
         label: 'Location',
         options: distinctFieldOptions(coverage, (c) => c.warehouse_code),
@@ -1745,7 +1752,8 @@ export function SoCoveragePicker({
       out = out.filter(
         (c) =>
           (c.document ?? '').toLowerCase().includes(needle) ||
-          (c.customer_name ?? '').toLowerCase().includes(needle),
+          (c.customer_name ?? '').toLowerCase().includes(needle) ||
+          (c.project_label ?? '').toLowerCase().includes(needle),
       );
     }
     for (const cond of appliedConditions) {
@@ -1753,6 +1761,7 @@ export function SoCoveragePicker({
       const wanted = cond.value;
       if (cond.field === 'document') out = out.filter((c) => wanted.includes(c.document ?? ''));
       if (cond.field === 'customer_name') out = out.filter((c) => wanted.includes(c.customer_name ?? ''));
+      if (cond.field === 'project_label') out = out.filter((c) => wanted.includes(c.project_label ?? ''));
       if (cond.field === 'warehouse_code') out = out.filter((c) => wanted.includes(c.warehouse_code ?? ''));
     }
     return out;
@@ -1843,6 +1852,17 @@ export function SoCoveragePicker({
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.customer_name ?? undefined}>
             {textCell(row.original.customer_name)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'project_label',
+        accessorFn: (c) => c.project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project_label ?? undefined}>
+            {textCell(row.original.project_label)}
           </span>
         ),
         size: 170,

@@ -41,6 +41,8 @@ import type {
   PlanningChangeHeld,
   PlanningChangeRow,
 } from '../types/planningChange.types';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** One side of the Was / Now table. `null` on a value the row cannot state. */
 export interface BoardChangeSide {
@@ -76,6 +78,8 @@ export interface BoardChangeAnnotation {
   /** The batch row this came from - the id a decision is PUT against. */
   rowId: string;
   soNumber: string;
+  /** OI-UX-FILTER-SNAPSHOT: the order's `CUSTOMER / project`, null when it names neither. */
+  party?: string | null;
   lineNo: number;
   itemCode: string;
   /** The book's own change kind, for the caption. Never a reaction verb. */
@@ -120,36 +124,14 @@ export interface BoardChangeAnnotation {
 }
 
 /**
- * `4 Sep 2026` - a date in a sentence a person reads, the same shape the engine's own labels
- * use, WITH the year (PLAN-oi-replan-received-links.md AC-RL-01, owner ruling 16 Sep 2026): a
- * bare `1 Jun -> 1 Mar` reads as an advance within the same year when the book actually moved
+ * `04/09/2026` - a date in a sentence a person reads, WITH the year
+ * (PLAN-oi-replan-received-links.md AC-RL-01, owner ruling 16 Sep 2026): a
+ * bare `1/6 -> 1/3` reads as an advance within the same year when the book actually moved
  * a line from 2026 into 2027, which is exactly what SO314593 did.
- *
- * The months are named here rather than left to `Intl`, whose `en-GB` short form spells
- * September "Sept": the server composes "Buy 134 for 15 Mar" with this vocabulary, and a
- * lightbox that spelled the same month differently two lines apart would read as two
- * different facts.
  */
-export const SHORT_MONTHS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
 export function shortDay(value: string | null | undefined): string {
   if (!value) return '';
-  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+  return formatDateInMalaysia(value.slice(0, 10));
 }
 
 /**
@@ -394,6 +376,7 @@ export function annotationOf(
   row: PlanningChangeRow,
   soNumber: string,
   ownLocation?: string | null,
+  party?: string | null,
 ): BoardChangeAnnotation {
   // `cancelled`, renamed from `closed` (Slice A,
   // `documentation/plans/scm/PLAN-scm-change-management-one-engine.md` rule 5).
@@ -414,6 +397,7 @@ export function annotationOf(
   return {
     rowId: row.id,
     soNumber,
+    party: party ?? null,
     lineNo: row.so_line_no ?? row.line_no,
     itemCode: row.item_code,
     kind: row.kind,
@@ -487,6 +471,7 @@ export function annotationsByCell(
         row,
         order.so_number,
         lineId ? (locationByLine.get(lineId) ?? null) : null,
+        soCustomerProjectLabel(order.customer_name, order.project_label),
       );
       const held = out.get(key);
       if (held) held.push(annotation);
@@ -521,6 +506,7 @@ export function annotationsByLine(
         row,
         order.so_number,
         proposal?.fulfilment_location ?? null,
+        soCustomerProjectLabel(order.customer_name, order.project_label),
       );
       const held = out.get(key);
       if (held) held.push(annotation);

@@ -2,7 +2,7 @@
 
 Owner rule: email = preview = attachment, all three tally (`PLAN-confirm-preview-stale-2nov.md`).
 The dry run answers `email_lines` per order (`ProjectSupplyService._preview_email_lines`); the
-real press sends what `_fire_pending_handover` concludes, through `handover_class_groups` and
+real press sends what `_fire_pending_handover` concludes, through `handover_route_groups` and
 `build_handover_email`. Each test here runs the dry run and then the real press on the same
 data and asserts the two read the same, line for line.
 

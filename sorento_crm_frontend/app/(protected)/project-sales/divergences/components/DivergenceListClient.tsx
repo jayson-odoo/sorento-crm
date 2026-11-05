@@ -88,7 +88,7 @@ export function DivergenceListClient() {
     () => [
       {
         id: 'project_title',
-        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Registered project" column={column} />,
         cell: ({ row }) => {
           const text = row.original.project_title || 'Unnamed project';
           return (
@@ -99,7 +99,7 @@ export function DivergenceListClient() {
         },
         size: 220,
         minSize: 150,
-        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Registered project', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         id: 'sales_order_ref',
@@ -116,6 +116,36 @@ export function DivergenceListClient() {
         size: 160,
         minSize: 120,
         meta: { headerTitle: 'Sales order', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        id: 'customer_name',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) =>
+          row.original.customer_name ? (
+            <span className="block truncate" title={row.original.customer_name}>
+              {row.original.customer_name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        minSize: 140,
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        id: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) =>
+          row.original.project_label ? (
+            <span className="block truncate" title={row.original.project_label}>
+              {row.original.project_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        minSize: 140,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         id: 'differing_count',

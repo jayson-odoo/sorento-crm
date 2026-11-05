@@ -31,6 +31,7 @@ import {
   type TagSheetDesignPayload,
   type TagSheetDesignResponse,
 } from '@/lib/dealer-kit/design-payload';
+import { localStore, sessionStore } from '@/lib/storage';
 
 const TOKEN_KEY = 'sorento.portalToken';
 
@@ -295,8 +296,8 @@ export function readPortalToken(): string | null {
   if (typeof window === 'undefined') return null;
   // Impersonation (sessionStorage) wins over device trust (localStorage).
   return (
-    window.sessionStorage.getItem(TOKEN_KEY) ??
-    window.localStorage.getItem(TOKEN_KEY)
+    sessionStore.getItem(TOKEN_KEY) ??
+    localStore.getItem(TOKEN_KEY)
   );
 }
 
@@ -306,18 +307,18 @@ export function writePortalToken(
 ): void {
   if (typeof window === 'undefined') return;
   if (opts.impersonation) {
-    window.sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStore.setItem(TOKEN_KEY, token);
   } else {
-    window.localStorage.setItem(TOKEN_KEY, token);
+    localStore.setItem(TOKEN_KEY, token);
     // Drop any stale impersonation token so the new identity wins.
-    window.sessionStorage.removeItem(TOKEN_KEY);
+    sessionStore.removeItem(TOKEN_KEY);
   }
 }
 
 export function clearPortalToken(): void {
   if (typeof window === 'undefined') return;
-  window.sessionStorage.removeItem(TOKEN_KEY);
-  window.localStorage.removeItem(TOKEN_KEY);
+  sessionStore.removeItem(TOKEN_KEY);
+  localStore.removeItem(TOKEN_KEY);
 }
 
 /**
@@ -326,13 +327,13 @@ export function clearPortalToken(): void {
  */
 export function clearImpersonationToken(): void {
   if (typeof window === 'undefined') return;
-  window.sessionStorage.removeItem(TOKEN_KEY);
+  sessionStore.removeItem(TOKEN_KEY);
 }
 
 /** True when the active token is an impersonation (sessionStorage) token. */
 export function isImpersonationToken(): boolean {
   if (typeof window === 'undefined') return false;
-  return window.sessionStorage.getItem(TOKEN_KEY) != null;
+  return sessionStore.getItem(TOKEN_KEY) != null;
 }
 
 /**
@@ -342,10 +343,10 @@ export function isImpersonationToken(): boolean {
  */
 export function demoteTokenToSession(): void {
   if (typeof window === 'undefined') return;
-  const t = window.localStorage.getItem(TOKEN_KEY);
+  const t = localStore.getItem(TOKEN_KEY);
   if (t) {
-    window.sessionStorage.setItem(TOKEN_KEY, t);
-    window.localStorage.removeItem(TOKEN_KEY);
+    sessionStore.setItem(TOKEN_KEY, t);
+    localStore.removeItem(TOKEN_KEY);
   }
 }
 
@@ -456,7 +457,7 @@ export async function fetchMeWithGrace(): Promise<PortalContact> {
   const writtenAt =
     typeof window !== 'undefined'
       ? Number(
-          window.sessionStorage.getItem('sorento.portalTokenWrittenAt') || '0',
+          sessionStore.getItem('sorento.portalTokenWrittenAt') || '0',
         )
       : 0;
   const tokenIsFresh = writtenAt > 0 && Date.now() - writtenAt < 30_000;
@@ -969,7 +970,7 @@ export async function openCrmSession(portalLinkSecret: string): Promise<boolean>
     });
     if (!res?.ok || res.error) return false;
     const userId = await currentSessionUserId();
-    if (userId) window.localStorage.setItem(CRM_SESSION_FLAG_KEY, userId);
+    if (userId) localStore.setItem(CRM_SESSION_FLAG_KEY, userId);
     return true;
   } catch {
     return false;
@@ -983,9 +984,9 @@ export async function openCrmSession(portalLinkSecret: string): Promise<boolean>
  */
 export async function endCrmSession(): Promise<void> {
   if (typeof window === 'undefined') return;
-  const flagged = window.localStorage.getItem(CRM_SESSION_FLAG_KEY);
+  const flagged = localStore.getItem(CRM_SESSION_FLAG_KEY);
   if (!flagged) return;
-  window.localStorage.removeItem(CRM_SESSION_FLAG_KEY);
+  localStore.removeItem(CRM_SESSION_FLAG_KEY);
   try {
     if ((await currentSessionUserId()) !== flagged) return;
     const { revokeCurrentSession, clearCachedAuthToken } = await import('@/lib/api');
@@ -1269,6 +1270,15 @@ export interface AIExtractedProductLine {
   // AI-EXTRACT-DYM: on a row with no match only - the resolver's "did you
   // mean" candidates, best first. Never applied until the user picks one.
   suggestions?: AIExtractedProductSuggestion[];
+  // PRICETAG-LPSP (price tag form only): the model's reading of LP/SP, typed figures and a "+"
+  // set. `combo_id` is a STORED combo whose fixed parts equal `set_parts`; a set row without one
+  // comes back unmatched. A typed LP is never applied.
+  price_type?: 'list' | 'selling' | null;
+  typed_list_price?: number | null;
+  typed_sell_price?: number | null;
+  set_parts?: Array<{ product_code: string; product_id?: string | null }>;
+  combo_id?: string | null;
+  combo_name?: string | null;
 }
 
 export interface AIExtractedProductSuggestion {

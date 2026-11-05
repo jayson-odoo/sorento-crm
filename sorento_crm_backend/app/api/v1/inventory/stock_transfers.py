@@ -64,6 +64,8 @@ TransferSort = Literal[
     "from_location",
     "to_location",
     "so_number",
+    "customer",
+    "project_label",
     "proposed_at",
 ]
 

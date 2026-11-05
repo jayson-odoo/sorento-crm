@@ -370,7 +370,7 @@ TWO_LINE_ATTRIBUTION_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0011 arrives on 1 Mar 2027, by the required date",
+                reason="SPO 202703-S0011 arrives on 01/03/2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),
@@ -426,7 +426,7 @@ CONFIRMED_COVER_CASE = AttributionCase(
             Component(
                 kind=TIMELY_SPO,
                 qty=Decimal("10"),
-                reason="SPO 202703-S0012 arrives on 1 Mar 2027, by the required date",
+                reason="SPO 202703-S0012 arrives on 01/03/2027, by the required date",
                 source_location=OWN_LOCATION,
             ),
         ),
@@ -1351,7 +1351,7 @@ OTHER_GROUP_SHORT_BOOK_CASE = WalkCase(
             kind=BORROW,
             qty=Decimal("4"),
             reason=(
-                "Borrow 4 on hand at BRW-IB from SO419100 line 7 (JEREMY, due 20 Nov 2026); "
+                "Borrow 4 on hand at BRW-IB from SO419100 line 7 (JEREMY, due 20/11/2026); "
                 "its debt lands in Nov 2026"
             ),
             source_location=R_M_OTHER_LOCATION,
@@ -1407,7 +1407,7 @@ OTHER_GROUP_WHOLE_BOOK_CASE = WalkCase(
             kind=RESERVE,
             qty=Decimal("4"),
             reason=(
-                "BRW-IB has 529 free outside the BB group at 5 Oct 2026, none of it owed to "
+                "BRW-IB has 529 free outside the BB group at 05/10/2026, none of it owed to "
                 "a later IB order"
             ),
             source_location=R_M_OTHER_LOCATION,

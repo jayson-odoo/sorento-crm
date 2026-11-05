@@ -236,6 +236,15 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
     expect(within(section).getByText(/cannot be placed on the axis/i)).toBeInTheDocument();
   });
 
+  it('names the customer and project of each undated order (OI-UX-FILTER-SNAPSHOT)', () => {
+    withData(UNDATED);
+    const section = screen.getByRole('region', { name: 'Undated demand' });
+    expect(within(section).getByText('Customer')).toBeInTheDocument();
+    expect(within(section).getByText('Project')).toBeInTheDocument();
+    expect(within(section).getByText('Bina Jaya Sdn Bhd')).toBeInTheDocument();
+    expect(within(section).getByText('Tuju Residences')).toBeInTheDocument();
+  });
+
   it('states the horizon exclusion on screen, never silently (AC-B5)', () => {
     withData(UNDATED);
     expect(
@@ -290,6 +299,6 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
   it('renders computed_at as written, without shifting it out of Malaysia time', () => {
     withData(SHORTFALL);
     // The fixture is 2026-08-03T09:12:00, already Malaysia wall-clock.
-    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03/08/2026, 09:12');
+    expect(screen.getByTestId('coverage-verdict')).toHaveTextContent('Computed 03/08/2026, 9:12 am');
   });
 });

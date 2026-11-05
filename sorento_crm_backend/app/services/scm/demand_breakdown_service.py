@@ -79,6 +79,7 @@ from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
     BUY_VERB,
     NOT_REDIRECTED_SQL,
+    OIR_DATE,
     ORDER_INQUIRY_ORIGIN,
     PLAN_DEMAND_LINE_SQL,
     PLAN_DEMAND_ORDER_SQL,
@@ -591,7 +592,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # FE renders, and a separate uncapped count/sum for the totals.
         confirmed_base_sql = f"""
             SELECT so.id::text AS so_id, so.so_number, so.order_type, so.order_date,
-                   oir.delivery_date AS required_date, w.warehouse_code,
+                   {OIR_DATE} AS required_date, w.warehouse_code,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
@@ -641,11 +642,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
               AND sol.warehouse_id::text = ANY(:members)
               -- Same horizon rule as `demand.horizon_committed_select_sql`'s confirmed
               -- leg: off the inquiry row's own delivery date, not the book query's.
-              AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-                   OR oir.delivery_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+                   OR {OIR_DATE} <= CAST(:horizon AS date))
               -- S4: the start-side twin, same rule.
-              AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-                   OR oir.delivery_date >= CAST(:horizon_start AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR {OIR_DATE} IS NULL
+                   OR {OIR_DATE} >= CAST(:horizon_start AS date))
               -- Demand scope (21 Sep 2026): the run's own SO narrowing, project-scoped
               -- runs only (R1: the whole SO, intersected with every predicate above).
               {so_filter}
@@ -660,7 +661,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         }
         confirmed_rows = db.execute(text(
             confirmed_base_sql
-            + " ORDER BY oir.delivery_date NULLS LAST, so.so_number LIMIT :limit"
+            + " ORDER BY required_date NULLS LAST, so.so_number LIMIT :limit"
         ), {**confirmed_params, "limit": limit_n}).mappings().all()
         # The TOTAL, unlike the list above, counts acknowledged rows only - the same
         # `PLANNED_ACK_STATES` gate `horizon_committed_select_sql`'s own confirmed leg
@@ -690,7 +691,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         form_base_sql = f"""
             SELECT so.id::text AS so_id, oi.inquiry_no AS so_number,
                    fw.warehouse_code AS warehouse_code,
-                   oir.delivery_date AS required_date,
+                   {OIR_DATE} AS required_date,
                    psl.unit_price AS unit_price,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
@@ -748,11 +749,11 @@ def demand_for_recommendation(db: Session, rec_id: str,
               -- Ruling 6 (`PLAN-scm-supplied-with-companions.md`): a bundled unit never
               -- reaches reorder planning, the same gate `demand.py`'s form leg applies.
               AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
-              AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
-                   OR oir.delivery_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon AS date) IS NULL OR {OIR_DATE} IS NULL
+                   OR {OIR_DATE} <= CAST(:horizon AS date))
               -- S4: the start-side twin, same rule.
-              AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
-                   OR oir.delivery_date >= CAST(:horizon_start AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR {OIR_DATE} IS NULL
+                   OR {OIR_DATE} >= CAST(:horizon_start AS date))
               -- Demand scope (21 Sep 2026): same SO narrowing as the confirmed leg. `so`
               -- is LEFT JOINed (an unpublished project order has none), so a form row with
               -- no core SO at all never matches a named scope - it cannot belong to a
@@ -769,7 +770,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
         }
         form_rows = db.execute(text(
             form_base_sql
-            + " ORDER BY oir.delivery_date NULLS LAST, oi.inquiry_no LIMIT :limit"
+            + " ORDER BY required_date NULLS LAST, oi.inquiry_no LIMIT :limit"
         ), {**form_params, "limit": limit_n}).mappings().all()
         form_totals = db.execute(text(
             f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS qty FROM ({form_base_sql}) t"

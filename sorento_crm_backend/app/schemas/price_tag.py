@@ -48,6 +48,8 @@ class PriceTagRequestLineCreate(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
+    # PRICETAG-LPSP: this line's own LP/SP choice. None = the request's price_mode.
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int = Field(default=1, ge=1)
     # The catalogue package this line is asked for as, and the parts under it, in
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
@@ -104,6 +106,7 @@ class PriceTagReviseLineIn(BaseModel):
     promotion_id: Optional[str] = None
     tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -192,6 +195,7 @@ class PriceTagRequestLineResponse(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int
     combo_id: Optional[str] = None
     # What the package guard found at submit, for marketing to read (D2). NULL =
@@ -559,6 +563,9 @@ SLOT_BINDINGS = (
     "included_accessories",
     "list_price",
     "sell_price",
+    # PRICETAG-LPSP: the figure the line shows (SP else LP) and its label.
+    "price",
+    "price_label",
     "badges",
     "alternatives",
     "accessories",
@@ -603,12 +610,37 @@ class CropRect(_StrictProps):
     height: float
 
 
+class SlotMain(_StrictProps):
+    kind: Literal["main"]
+
+
+class SlotFixed(_StrictProps):
+    kind: Literal["fixed"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotPick(_StrictProps):
+    kind: Literal["pick"]
+    group: int = Field(ge=0, lt=32)
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotUpgrade(_StrictProps):
+    kind: Literal["upgrade"]
+    index: int = Field(ge=0, lt=64)
+
+
+#: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade]
+
+
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class LayerPaddingDoc(_StrictProps):
@@ -632,6 +664,8 @@ class TextLayerPropsDoc(_StrictProps):
     lineHeight: float
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+    showCurrency: Optional[bool] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -657,6 +691,7 @@ class ShapeLayerPropsDoc(_StrictProps):
 class ProductSlotLayerPropsDoc(_StrictProps):
     kind: Literal["product_slot"]
     fieldKey: str
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PriceBadgeLayerPropsDoc(_StrictProps):
@@ -694,6 +729,7 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     # used to do both jobs at once - `priceBadgeInsets` in the frontend's
     # `price-badge.ts` is the one place that resolves the legacy rule.
     margin: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
@@ -808,6 +844,14 @@ class TagTemplateUpdate(BaseModel):
     print_size: Optional[dict] = None
 
 
+class TemplateNeeds(BaseModel):
+    """PRICETAG-COMBO-RENDER K4: what a template reads from a combo, from its PUBLISHED document."""
+
+    fixed: int = 0
+    groups: list[int] = []
+    upgrades: int = 0
+
+
 class TagTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -827,6 +871,7 @@ class TagTemplateResponse(BaseModel):
     # route substitutes a VERSION's doc/print_size for the draft above.
     published_version_id: Optional[str] = None
     published_version_no: Optional[int] = None
+    needs: Optional[TemplateNeeds] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1074,6 +1119,9 @@ class TagItemLookupItem(BaseModel):
     id: str
     code: str
     name: str
+    # The option reads "CODE  RM <list price>" (owner, 4 Nov). None when the row
+    # has no price or a zero one; a set answers its override only.
+    list_price: Optional[float] = None
 
 
 def _uuid_or_none(value: Optional[str]) -> Optional[str]:
@@ -1142,7 +1190,8 @@ class LinePricingRequest(BaseModel):
 class LinePricingPromotionOption(BaseModel):
     id: str
     description: str
-    sell_price: float
+    #: None on a combo line whose combo stores no selling price (never a part sum).
+    sell_price: Optional[float] = None
     # PRICE-TAG-A3-EXPIRED: the end date of an ended A3 flyer still pricing
     # tags inside its type's bound; null for a live promotion. The dropdown
     # labels the option "(expired <date>)" from it.
@@ -1168,7 +1217,7 @@ class LinePricingRow(BaseModel):
     """
 
     key: str
-    list_price: float
+    list_price: Optional[float] = None
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
     sell_price: Optional[float] = None
@@ -1265,6 +1314,7 @@ class ProductTagData(BaseModel):
     currency: str = "MYR"
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1398,6 +1448,23 @@ class TagPartData(BaseModel):
     chosen: Optional[bool] = None
 
 
+class TagSlotGroup(BaseModel):
+    role: str
+    size: int
+    picks: list[TagPartData] = []
+
+
+class TagSlots(BaseModel):
+    """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
+    choice groups with their picks in pick order, upgrades with `chosen`)."""
+
+    #: The main product's own data (its picture and list price, never the combo's).
+    main: Optional[TagPartData] = None
+    fixed: list[TagPartData] = []
+    groups: list[TagSlotGroup] = []
+    upgrades: list[TagPartData] = []
+
+
 class ResolvedLineData(BaseModel):
     """Display data for one TAG, for the designer and the print page (D3).
 
@@ -1437,6 +1504,7 @@ class ResolvedLineData(BaseModel):
     included_accessories: str = ""
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1633,10 +1701,15 @@ class ProductTagTemplateItem(BaseModel):
     published: bool
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
+    #: PRICETAG-LPSP: the link preselected on a line (a lone link counts).
+    is_default: bool = False
+    needs: Optional[TemplateNeeds] = None
 
 
 class ProductTagTemplatesUpdate(BaseModel):
     template_ids: list[str] = Field(default_factory=list, max_length=100)
+    #: Must be one of ``template_ids`` (422 otherwise); None = no default.
+    default_template_id: Optional[str] = None
 
 
 class TemplateAssignFilter(BaseModel):
@@ -1673,6 +1746,7 @@ class TagPreviewLineIn(BaseModel):
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
     tag_template_id: Optional[str] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class TagPreviewIn(BaseModel):

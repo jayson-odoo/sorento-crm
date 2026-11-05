@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;
@@ -78,7 +78,9 @@ export function InsertFieldDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups), [specKeys, groups]);
+  // The previewed combo's own positions, when the data carries them.
+  const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : undefined;
+  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups, slots), [specKeys, groups, slots]);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -158,7 +160,7 @@ export function InsertFieldDialog({
             <div className="flex flex-col p-1">
               {grouped.map((section) => (
                 <div key={section.group}>
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {section.group}
                   </div>
                   {section.fields.map((field) => (
@@ -171,7 +173,7 @@ export function InsertFieldDialog({
                       <span className="truncate" title={field.label}>
                         {field.label}
                       </span>
-                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                         {field.token}
                       </span>
                     </button>

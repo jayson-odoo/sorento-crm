@@ -460,9 +460,10 @@ def delete_po(db: Session, *, po: ProjectPurchaseOrder) -> None:
 def _advance_to_po_received(db: Session, project: Project) -> bool:
     """AC-F10. Returns whether the status actually moved.
 
-    Outcome is deliberately untouched: it is derived from quotations (AC-E10), and a PO
+    Outcome is never flipped to won here: it is derived from quotations (AC-E10), and a PO
     against a lost scope is a data problem somebody should see rather than something to
-    paper over by flipping the outcome.
+    paper over. It is only re-derived after a move, so a project leaving a Lost / Dormant
+    rung (possible only on an admin graph with such an edge) stops reading lost.
     """
     from app.models.status import Status
     from app.services import status_service
@@ -509,6 +510,11 @@ def _advance_to_po_received(db: Session, project: Project) -> bool:
             )
         project.status_id = target.id
         db.flush()
+        # Leaving a Lost / Dormant rung hands the outcome back to the quotations
+        # (PROJECT-CLASH-LOST); on any other move this is a no-op.
+        from app.services.project_quotation_service import sync_project_outcome
+
+        sync_project_outcome(db, project)
         return True
     except AppException:
         # The graph says this move is not legal from here. The PO stays recorded; the

@@ -822,13 +822,13 @@ describe('State sorts on the line State, not the primary row state', () => {
       foldInquiryLines([
         { ...base, id: 'a', core_line_id: 'cl-1', line_no: 1, ack_state: 'changed' },
         { ...base, id: 'b', core_line_id: 'cl-2', line_no: 2, line_cancelled: true },
+        // OI-RESERVE-USED-ROW: a used-only line is not rendered, so no nothing_to_buy here.
         { ...base, id: 'c', core_line_id: 'cl-3', line_no: 3, redirected_to_pool: true, ack_state: 'acknowledged' },
       ] as OrderInquiryWorklistRow[]),
     );
     expect(lineRows.map((row, index) => stateColumn!.accessorFn!(row, index))).toEqual([
       'to_confirm',
       'line_cancelled',
-      'nothing_to_buy',
     ]);
   });
 });
@@ -1038,9 +1038,10 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
     expect(screen.getByText('Line cancelled')).toBeInTheDocument();
   });
 
-  it('a line with only used rows keeps Nothing to buy', () => {
-    render(<>{stateCell(linesRow({ id: 's8', core_line_id: 'cl-s8', redirected_to_pool: true }))}</>);
-    expect(screen.getByText('Nothing to buy')).toBeInTheDocument();
+  it('a line with only used rows is not a line (OI-RESERVE-USED-ROW, owner 4 Nov)', () => {
+    expect(
+      foldInquiryLines([{ id: 's8', core_line_id: 'cl-s8', redirected_to_pool: true } as OrderInquiryWorklistRow]),
+    ).toEqual([]);
   });
 
   it('a row with a PO link and a reserve link shows both chips in the PO cell', () => {
@@ -1105,5 +1106,73 @@ describe('OI-AUTO-CONFIRM review round 1: the status pill keeps its case and is 
 
   it('the State column is wide enough for "To order \u00b7 220 left" (at least 170)', () => {
     expect(stateColumn().size ?? 0).toBeGreaterThanOrEqual(170);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW: reserve on a not-Done row of any verb counts on its line (AC-AR-9..11)', () => {
+  function columns() {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    return (id: string) =>
+      result.current.find((c) => (c as { id?: string }).id === id) as {
+        cell: (context: unknown) => React.ReactNode;
+      };
+  }
+
+  // OI-2609-0257 SRTSA830-PJ: line 7 = the used 55 row + the live 33 DELAY row carrying
+  // request #2 (33); line 416 = the live 22 ORDER row, ack awaiting.
+  const oi0257 = () =>
+    toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'used-55', so_line_id: 'sol-7', line_no: 7, qty: '55', redirected_to_pool: true, ack_state: 'acknowledged', asked_reserve_qty: '0', reserved_qty: '0' }),
+        linesRow({ id: 'delay-33', so_line_id: 'sol-7', line_no: 7, verb: 'DELAY', qty: '33', ack_state: 'acknowledged', reserve_state: 'requested', requested_qty: '33', asked_reserve_qty: '33', reserved_qty: '0' }),
+        linesRow({ id: 'order-22', so_line_id: 'sol-416', line_no: 416, qty: '22', ack_state: 'awaiting', asked_reserve_qty: '0', reserved_qty: '0' }),
+      ]),
+    );
+
+  it('AC-AR-9: the 33 line reads Reserve requested 33 and the pill Request to reserve 33', () => {
+    const column = columns();
+    const [line7, line416] = oi0257();
+    render(
+      <>
+        <span data-testid="req7">{column('reserve_requested').cell({ row: { original: line7 } })}</span>
+        <span data-testid="state7">{column('state').cell({ row: { original: line7 } })}</span>
+        <span data-testid="req416">{column('reserve_requested').cell({ row: { original: line416 } })}</span>
+        <span data-testid="state416">{column('state').cell({ row: { original: line416 } })}</span>
+      </>,
+    );
+    expect(screen.getByTestId('req7')).toHaveTextContent('33');
+    expect(screen.getByTestId('state7')).toHaveTextContent(/Request to reserve 33/);
+    // Line 416 carries no request: the reserve column reads its empty dash, the State its own
+    // status (To order, ack awaiting).
+    expect(screen.getByTestId('req416')).toHaveTextContent(/^-$/);
+    expect(screen.getByTestId('state416')).toHaveTextContent(/To order/);
+  });
+
+  it('AC-AR-10: a DELAY row reserved 33 reads Reserved 33 and Taken 33', () => {
+    const column = columns();
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserve_state: 'reserved', requested_qty: '0', asked_reserve_qty: '33', reserved_qty: '33' }),
+      ]),
+    );
+    render(
+      <>
+        <span data-testid="res">{column('reserved').cell({ row: { original: lineRow } })}</span>
+        <span data-testid="taken">{column('taken').cell({ row: { original: lineRow } })}</span>
+      </>,
+    );
+    expect(screen.getByTestId('res')).toHaveTextContent('33');
+    expect(screen.getByTestId('taken')).toHaveTextContent('33');
+  });
+
+  it('an ADVANCE row reserve counts the same way', () => {
+    const column = columns();
+    const [lineRow] = toLineRows(
+      foldInquiryLines([
+        linesRow({ id: 'adv', so_line_id: 'sol-1', verb: 'ADVANCE', qty: '12', reserve_state: 'requested', requested_qty: '12', asked_reserve_qty: '12', reserved_qty: '0' }),
+      ]),
+    );
+    render(<span data-testid="req">{column('reserve_requested').cell({ row: { original: lineRow } })}</span>);
+    expect(screen.getByTestId('req')).toHaveTextContent('12');
   });
 });

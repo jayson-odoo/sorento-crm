@@ -39,6 +39,11 @@ export type SearchableSelectOption = {
    * label back apart guesses at a separator the option was never promised to use.
    */
   code?: string;
+  /**
+   * The record's own name, where the label is not it (a picker whose label reads
+   * "CODE  RM 1,050"). Carried for the same reason as `code`.
+   */
+  name?: string;
   /** Optional grouping header (renders one CommandGroup per distinct group). */
   group?: string;
   /** Per-option disabled (Radix `SelectItem disabled` parity). */

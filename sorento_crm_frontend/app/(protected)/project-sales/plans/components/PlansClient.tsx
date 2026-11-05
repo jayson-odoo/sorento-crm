@@ -162,6 +162,21 @@ export function PlansClient() {
         meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
+        id: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) =>
+          row.original.project_label ? (
+            <span className="block truncate" title={row.original.project_label}>
+              {row.original.project_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 200,
+        minSize: 140,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         id: 'agent_code',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         cell: ({ row }) =>

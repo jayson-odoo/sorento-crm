@@ -40,6 +40,7 @@ The locking fix belongs to the confirmation path and is not attempted here.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -84,6 +85,7 @@ from app.models.user import User
 from app.services import project_line_draft_service
 from app.services import so_remark_rules
 from app.services.error_handler import AppException
+from app.services.scm.so_party import party_of, so_parties, with_party
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -160,6 +162,7 @@ DAY_WINDOW_COLUMNS = 30
 GRANULARITIES = ("day", "date", "week", "month")
 
 _MONTHS = (
+    # date-format-ok: month bucket header (day and week buckets use fmt_date)
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
@@ -240,10 +243,10 @@ def _bucket_label(key: str, granularity: str) -> str:
     if granularity == "month":
         return f"{month} {when.year}"
     if granularity == "day":
-        return f"{when.day} {month} {when.year}"
+        return fmt_date(when)
     if granularity == "date":
         return when.strftime("%d/%m/%Y")
-    return f"w/c {when.day} {month} {when.year}"
+    return f"w/c {fmt_date(when)}"
 
 
 #: Where a location on a cell's stock table stands. The table is the evidence behind the
@@ -350,11 +353,11 @@ def _shown(value: Any) -> Any:
 
 
 def _date_words(when: Optional[date]) -> str:
-    """A date as it is said out loud: `3 Sep 2026`. Never ISO inside a sentence."""
+    """A date in a sentence: `03/09/2026`. Never ISO inside a sentence."""
     when = spo_supply.shown_date(when)
     if when is None:
         return "an unstated date"
-    return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
+    return fmt_date(when)
 
 
 def _option_row(option: Any) -> Dict[str, Any]:
@@ -430,6 +433,16 @@ def _project_label(order: SalesOrder) -> Optional[str]:
     return order.project_label or _project_label_from_note(order.internal_note)
 
 
+def _so_party(order: SalesOrder, master_name: Optional[str]) -> Dict[str, Optional[str]]:
+    """OI-UX-FILTER-SNAPSHOT: the order's Customer and Project exactly as the SO list names them
+    (`so_party.party_of`, off the order this row already read, so no extra query). What the
+    board's CUSTOMER / project labels and the List view's Project column print. The row's own
+    `project_label` keeps its note fallback (#813) for the pivot by project; a note such as
+    "OWN COLLECT" is not a project, so those labels never read it."""
+    party = party_of(order.debtor_name, master_name, order.project_label)
+    return {"so_customer_name": party["customer_name"], "so_project_label": party["project_label"]}
+
+
 class _Row:
     """One still-owed core sales-order line, which is all the board is ever built from."""
 
@@ -479,6 +492,8 @@ class _Row:
         "is_mockup", "remark_type",
         #: SO-LINE-DESC: the core line's AutoCount description, off the same line row.
         "description",
+        #: OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project (`_so_party`).
+        "so_customer_name", "so_project_label",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -1258,17 +1273,27 @@ class FulfilmentBoardService:
         # the sales-order rows above, and listing it again would subtract it twice. Only the
         # GROUP reading asks: one bin's drill is read beside its own Available, which does
         # not net holds either.
-        holds = [
-            {
-                "so_number": hold["so_number"],
-                "location": codes.get(hold["warehouse_id"]),
-                "required_date": hold["required_date"],
-                "qty": qty_text(hold["qty"]),
-            }
+        outside_holds = [
+            hold
             for hold in (
                 self.supply.holds_at_locations([product_id], target_ids) if group else []
             )
             if hold["line_warehouse_id"] not in codes
+        ]
+        # OI-UX-FILTER-SNAPSHOT: a hold names its order's customer and project.
+        hold_parties = so_parties(self.db, numbers=[h["so_number"] for h in outside_holds])
+        holds = [
+            with_party(
+                {
+                    "so_number": hold["so_number"],
+                    "location": codes.get(hold["warehouse_id"]),
+                    "required_date": hold["required_date"],
+                    "qty": qty_text(hold["qty"]),
+                },
+                hold_parties,
+                hold["so_number"],
+            )
+            for hold in outside_holds
         ]
         holds.sort(
             key=lambda hold: (
@@ -1482,13 +1507,14 @@ class FulfilmentBoardService:
             else None
         )
 
+        parties = so_parties(self.db, ids=[row.get("sales_order_id") for row in book])
         lines: List[Dict[str, Any]] = []
         running = _ZERO
         for position, row in enumerate(book, start=1):
             running += _dec(row["open_qty"])
             raw = priority.raw_facts_for_demand_row(row)
             lines.append(
-                {
+                with_party({
                     "position": position,
                     "line_id": row["line_id"],
                     "sales_order_id": row.get("sales_order_id"),
@@ -1521,7 +1547,7 @@ class FulfilmentBoardService:
                     "cumulative_ahead_qty": qty_text(running),
                     "is_this_line": asked is not None and row["line_id"] == asked["line_id"],
                     "is_covered_excluded": False,
-                }
+                }, parties, row.get("sales_order_id"))
             )
 
         return {
@@ -1712,6 +1738,7 @@ class FulfilmentBoardService:
                 so_number=order.so_number,
                 customer_id=customer_id,
                 customer_name=customers.get(customer_id or ""),
+                **_so_party(order, customers.get(customer_id or "")),
                 agent_code=agent.sales_agent if agent else None,
                 agent_label=agent.person_label if agent else None,
                 # Which warehouse-suffix ownership group this agent's stock lives in. The
@@ -1903,6 +1930,7 @@ class FulfilmentBoardService:
                     so_number=order.so_number,
                     customer_id=customer_id,
                     customer_name=customers.get(customer_id or ""),
+                    **_so_party(order, customers.get(customer_id or "")),
                     agent_code=agent.sales_agent if agent else None,
                     agent_label=agent.person_label if agent else None,
                     # Same field `_demand_rows` sets, same reason (nit, review round): the
@@ -2001,6 +2029,7 @@ class FulfilmentBoardService:
                     so_number=order.so_number,
                     customer_id=customer_id,
                     customer_name=customers.get(customer_id or ""),
+                    **_so_party(order, customers.get(customer_id or "")),
                     line_no=project_line.line_no,
                     so_line_no=core_line.line_no,
                     **_remark_facts(order, core_line),
@@ -5659,6 +5688,9 @@ class FulfilmentBoardService:
             "agent_code": row.agent_code,
             "agent_label": row.agent_label,
             "project_label": row.project_label,
+            #: OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project (`_so_party`).
+            "so_customer_name": row.so_customer_name,
+            "so_project_label": row.so_project_label,
             #: The key a pivot BY PROJECT groups on (see `_project_key`).
             "project_key": row.project_key,
             "line_no": row.line_no,

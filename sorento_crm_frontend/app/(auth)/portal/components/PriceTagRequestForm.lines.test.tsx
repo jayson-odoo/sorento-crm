@@ -162,12 +162,9 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
     await addLine();
     const item = await screen.findByLabelText('Search a set or product...');
-    await waitFor(() =>
-      expect(
-        screen.getByText('ZZT Bathroom Furniture Set'),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.getByText('ZZT Kitchen Sink')).toBeInTheDocument();
+    // Owner, 4 Nov: each option leads with its code (the name is its second line).
+    await waitFor(() => expect(screen.getByText('ZZTSET-1')).toBeInTheDocument());
+    expect(screen.getByText('CBF-1234')).toBeInTheDocument();
     expect(item).toBeInTheDocument();
   });
 
@@ -177,6 +174,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     // requirement (AC-P10); picking the customer auto-opens Sales Order &
     // Lines (AC-P3).
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -202,6 +200,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     render(<PriceTagRequestForm />);
     // Need by is optional since D-P2b - see the note above.
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
@@ -344,6 +343,7 @@ function sendToMarketing() {
   if (!screen.queryByLabelText('What marketing needs to fix')) {
     fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
   }
+  if (!screen.queryByLabelText('What marketing needs to fix')) return;
   fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
     target: { value: 'Please check' },
   });

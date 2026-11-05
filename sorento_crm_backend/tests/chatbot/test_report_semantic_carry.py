@@ -659,7 +659,7 @@ def test_v4d_the_declared_pick_of_account_type_wins_over_the_object_bucket(rbot,
 
 
 # ------------------------------------------------------------------------------------------ review round
-KIND_QUESTION = "Undelivered orders or pending delivery?"
+KIND_QUESTION = "Sales order or delivery order?"
 YR = dict(date_filter_start="2026-01-01", date_filter_end="2026-12-31")
 
 

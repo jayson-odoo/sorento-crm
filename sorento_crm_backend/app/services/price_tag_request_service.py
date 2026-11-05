@@ -277,10 +277,11 @@ class PriceTagRequestService:
         detail: str | None = None,
     ) -> None:
         """AC-S6-4: a manual price and a promotion are mutually exclusive on
-        a line, and a manual figure only means anything in Selling mode -
-        List mode prints the list price regardless of what was typed, so a
-        stray manual figure there is a mistake worth naming rather than a
-        value silently thrown away.
+        a line, and a manual figure only means anything on a selling price
+        line (``price_mode`` here is the LINE's effective type, its own
+        ``price_type`` else the request's) - an LP line prints the list price
+        regardless of what was typed, so a stray manual figure there is a
+        mistake worth naming rather than a value silently thrown away.
 
         The ONE seam every arm that can set a line's price basis passes
         through - create, update and revise (`_add_lines`), and the CRM line
@@ -307,7 +308,7 @@ class PriceTagRequestService:
         if price_mode != "selling":
             raise AppException(
                 status_code=422,
-                message="A manual price only applies in Selling mode.",
+                message="A manual price only applies on a selling price line.",
                 detail=detail,
                 code="INVALID_LINE_PRICE",
             )
@@ -324,7 +325,8 @@ class PriceTagRequestService:
         """Append lines in the order given, which is the order the form shows.
 
         ``show_promo_price`` is DERIVED per line (D1/D3/AC-S7-5) from the
-        request's header ``price_mode`` AND the line's own
+        line's effective price type (its own ``price_type``, else the
+        request's header ``price_mode``) AND the line's own
         ``sell_price_basis`` (through ``line_pricing`` - S7): a line in
         Selling mode with no covering promotion and no manual figure is
         still LP, same as a line whose promotion offer does not beat list.
@@ -355,7 +357,6 @@ class PriceTagRequestService:
 
         viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        selling = request.price_mode == "selling"
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
@@ -404,8 +405,12 @@ class PriceTagRequestService:
 
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
+            # PRICETAG-LPSP: LP or SP is the LINE's fact; none sent = the header's mode,
+            # stored explicitly so a later header change never rewrites the line.
+            price_type = line_data.get("price_type") or request.price_mode
+            selling = price_type == "selling"
             PriceTagRequestService._validate_line_price_basis(
-                promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
+                promotion_id, manual_sell_price, price_type, detail=f"line:{idx}"
             )
             # D1/D3/AC-S7-5: a line's price basis, resolved through the SAME
             # engine the portal's and the CRM's own line-pricing routes call
@@ -523,6 +528,7 @@ class PriceTagRequestService:
                     product_id=product_id,
                     product_set_id=product_set_id,
                     show_promo_price=selling and basis != "list",
+                    price_type=price_type,
                     quantity=line_data.get("quantity", 1),
                     combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
@@ -538,6 +544,7 @@ class PriceTagRequestService:
                         line_type=line_data["line_type"],
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
+                        combo_id=combo_id,
                     ),
                 )
             )
@@ -1067,8 +1074,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         if "manual_sell_price" in data and data["manual_sell_price"] is not None:
             promotion_id = None
 
+        price_type = line.price_type or request.price_mode
         PriceTagRequestService._validate_line_price_basis(
-            promotion_id, manual_sell_price, request.price_mode
+            promotion_id, manual_sell_price, price_type
         )
 
         basis = "list"
@@ -1147,7 +1155,7 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         line.promotion_id = promotion_id
         line.manual_sell_price = manual_sell_price
-        line.show_promo_price = request.price_mode == "selling" and basis != "list"
+        line.show_promo_price = price_type == "selling" and basis != "list"
 
         for tag in line.tags:
             tag.pinned_tag_data = None
@@ -1663,6 +1671,67 @@ Marketing's own work is not part of the form's payload, so it is captured
         return request.status == STATUS_PROOF_READY and not request.assigned_to_id
 
     @staticmethod
+    def require_combo_prices(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval that would print a combo line with no price (K8).
+
+        A combo line prints the combo's stored price or nothing. The figure is the tag's own
+        (``resolve_tags_live``: stored or option price, typed price, marketing override), judged
+        for the line's own LP or SP. The salesperson can still escalate such a line.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        line_index = {line.id: index for index, _tag, line, _t in tag_data_service.ordered_tags(request)}
+        for row in tag_data_service.resolve_tags_live(db, request):
+            if not row.get("combo"):
+                continue
+            line = next(l for l in request.lines if l.id == row["line_id"])
+            mode = line.price_type or request.price_mode
+            figure = row["sell_price"] if mode == "selling" else row["list_price"]
+            if figure is None:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        "This combo has no "
+                        + ("selling" if mode == "selling" else "list")
+                        + " price. Type the price or escalate it to marketing."
+                    ),
+                    detail=f"line:{line_index[line.id]}",
+                    code="COMBO_PRICE_MISSING",
+                )
+
+    @staticmethod
+    def require_template_positions(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval whose line lacks what its template prints (N1).
+
+        Judged against the stored template's needs and the line's combo, not the rows present, so
+        deleting a whole choice group row cannot slip through. A line with no combo or a template
+        that reads no such position is never refused. Escalate is unaffected.
+        """
+        from app.models.dealer_kit import TagTemplate
+        from app.models.product_combo import ProductCombo
+        from app.services.dealer_kit import tag_data_service
+        from app.services.dealer_kit.template_needs import missing_positions, template_needs
+
+        for index, _tag, line, _t in tag_data_service.ordered_tags(request):
+            if not line.combo_id or not line.tag_template_id:
+                continue
+            template = db.get(TagTemplate, line.tag_template_id)
+            combo = db.get(ProductCombo, line.combo_id)
+            version = template.published_version if template is not None else None
+            if combo is None or version is None:
+                continue
+            owed = missing_positions(
+                template_needs(version.doc), combo, [(p.role, p.product_id) for p in line.parts or []]
+            )
+            if owed:
+                raise AppException(
+                    status_code=422,
+                    message=" ".join(owed),
+                    detail=f"line:{index}",
+                    code="TEMPLATE_POSITIONS_MISSING",
+                )
+
+    @staticmethod
     def self_approve(
         db: Session, request: PriceTagRequest, doc: dict | None, approver_name: str | None,
     ) -> PriceTagRequest:
@@ -1690,6 +1759,8 @@ Marketing's own work is not part of the form's payload, so it is captured
                 code="INVALID_TRANSITION",
             )
         if not request.assigned_to_id:
+            PriceTagRequestService.require_combo_prices(db, request)
+            PriceTagRequestService.require_template_positions(db, request)
             if not doc:
                 raise AppException(
                     status_code=422,
@@ -2829,6 +2900,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         foreign key stores; the portal's generic product lookup answers with a code and
         no id at all, which is why a product line could never be saved.
 
+        Each row carries its `list_price` (None when unset or zero) for the option's
+        "CODE  RM <price>" line; a set answers its override only.
+
         Sets come first, then products, each ordered by code and each capped at `limit`
         (so at most `2 * limit` rows reach the picker). Sets lead because they are far
         fewer and are the thing a salesperson is likeliest to miss.
@@ -2844,6 +2918,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.set_code,
                 "name": row.name or "",
+                # The override only: the computed figure needs every member
+                # and its product loaded, per set, for a dropdown row.
+                "list_price": row.list_price_override or None,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -2853,6 +2930,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "id": str(row.id),
                 "code": row.product_code,
                 "name": row.product_name or "",
+                "list_price": row.list_price or None,
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

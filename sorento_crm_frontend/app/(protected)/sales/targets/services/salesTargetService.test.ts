@@ -8,7 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api', () => ({ apiFetch }));
 
+const saveBlobAs = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/save-blob', () => ({ saveBlobAs }));
+
 import {
+  requestCommissionStatement,
   createSalesTarget,
   createTargetChild,
   deleteSalesTarget,
@@ -154,5 +158,17 @@ describe('salesTargetService', () => {
         product_scope: 'all', start_date: '2026-12-31', end_date: '2026-10-01', target_value: 1,
       }),
     ).rejects.toThrow(/before the start date/);
+  });
+
+  it('asks My Downloads for the commission statement: one POST, no browser download (owner, 4 Nov)', async () => {
+    const job = { id: 'd1', kind: 'commission_statement_xlsx', status: 'pending', filename: 'commission-statement-TGT-000008-20261104.xlsx' };
+    apiFetch.mockResolvedValue(ok(job));
+    await expect(requestCommissionStatement(['t1', 't2'])).resolves.toEqual(job);
+    expect(apiFetch).toHaveBeenLastCalledWith('/api/v1/sales/targets/commission-statement', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ['t1', 't2'] }),
+    });
+    expect(saveBlobAs).not.toHaveBeenCalled();
   });
 });

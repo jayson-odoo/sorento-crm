@@ -53,6 +53,7 @@ DETAIL_ROW_CAP = 5000
 PIVOT_CELL_CAP = 5000
 
 _MONTH_ABBR = (
+    # date-format-ok: month period labels (Sep'26), no day to show
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
@@ -219,7 +220,7 @@ def resolve_period(raw: Any) -> Period:
         end = last + timedelta(days=1)
         # DD/MM/YYYY, the way the CRM writes a date everywhere else. The ISO form leaked
         # into the title block and into the SUMMARY's own closing line.
-        label = f"{start.strftime('%d/%m/%Y')} to {last.strftime('%d/%m/%Y')}"
+        label = f"{start.strftime('%d/%m/%Y')} to {last.strftime('%d/%m/%Y')}"  # date-format-ok: separator is follow-up 3 (chatbot + report suites parse "to")
         return Period(
             kind, start, end, label, _months_between(start, end), label.upper()
         )

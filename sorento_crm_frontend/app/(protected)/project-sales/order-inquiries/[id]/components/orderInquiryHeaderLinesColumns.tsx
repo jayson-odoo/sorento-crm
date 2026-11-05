@@ -31,7 +31,6 @@ import {
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import {
   formatInquiryQty,
-  isInquiryBuyRow,
   raisedKindLabel,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -274,6 +273,28 @@ function sitsOnText(split: OrderInquiryLineSplit, itemCode: string | null | unde
   return itemCode ? `line ${itemCode}` : 'line';
 }
 
+/**
+ * AC-D2: a part sitting on an SO line prints that line's date, with the part's own planned
+ * date muted beside it when they differ; a part with no AutoCount line yet prints its planned
+ * date marked "planned". A cancel part prints as it always did.
+ */
+export function SplitDateCell({ split }: { split: OrderInquiryLineSplit }) {
+  const own = splitDateText(split.delivery_date);
+  const onLine = split.sits_on_line_id ? splitDateText(split.sits_on_line_date) : '';
+  const shown = onLine || own;
+  const planned =
+    !split.is_cancel && own && (!split.sits_on_line_id || (onLine && onLine !== own))
+      ? `planned${split.sits_on_line_id ? ` ${own}` : ''}`
+      : '';
+  const title = planned ? `${shown} ${planned}` : shown;
+  return (
+    <span className="block truncate tabular-nums" title={title}>
+      {shown}
+      {planned ? <span className="ms-1 text-muted-foreground">{planned}</span> : null}
+    </span>
+  );
+}
+
 const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInquiryLineSplit>[] => [
   {
     accessorKey: 'qty',
@@ -287,10 +308,10 @@ const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInqu
   {
     accessorKey: 'delivery_date',
     header: 'Date',
-    // dd/mm/yyyy plus the header's own grip and padding, unclipped at 1280.
-    size: 130,
+    // dd/mm/yyyy, then "planned dd/mm/yyyy" beside it; truncates with a title.
+    size: 240,
     meta: { headerTitle: 'Date' },
-    cell: ({ row }) => splitDateText(row.original.delivery_date),
+    cell: ({ row }) => <SplitDateCell split={row.original} />,
   },
   {
     accessorKey: 'change',
@@ -549,12 +570,14 @@ function quantityColumn({
   };
 }
 
-/** The line's reserve figure: summed over its live buy rows, the same fold Taken and
- * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
+/** The line's reserve figure: summed over its live rows of ANY verb (OI-RESERVE-ANY-ROW, owner
+ * 5 Nov 2026: a DELAY or ADVANCE row is reservable too), the rows Taken counts reserve on
+ * (`orderInquiryLineFold.ts`), so the columns beside it agree. */
 function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | 'reserved_qty') {
-  const total = lineOf(row)
-    .liveRows.filter((live) => isInquiryBuyRow(live.verb))
-    .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
+  const total = lineOf(row).liveRows.reduce(
+    (sum, live) => sum + (Number(live[field] ?? '0') || 0),
+    0,
+  );
   return String(total);
 }
 
@@ -727,7 +750,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
       // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
       // Requested, the shared columns the Lines list uses, summed over the line's live
-      // buy rows.
+      // rows (any verb, OI-RESERVE-ANY-ROW).
       ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
       ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
         requestedOf: (row) => lineReserveQty(row, 'asked_reserve_qty'),
@@ -737,7 +760,7 @@ export function useOrderInquiryHeaderLinesColumns({
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
-        size: 140,
+        size: 180,
         meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <DeliveryDateCell row={row.original} />,
       },

@@ -39,6 +39,7 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date, fmt_datetime
 import logging
 import re
 import uuid
@@ -117,6 +118,11 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import (
+    line_date_sql as oi_line_date_sql,
+    line_dates,
+    resolve as resolve_oi_date,
+)
 from app.services.oi_auto_confirm_backfill import (
     cancelled_line_stmt,
     compute_done,
@@ -1608,6 +1614,9 @@ class ProjectOrderInquiryService:
         # attachments key on - off the SAME `ProjectSalesOrderLine` read, so this stays
         # one round trip rather than two.
         self._handover_line_no_cache: Dict[str, tuple[Optional[int], Optional[str]]] = {}
+        #: OI-ONE-DELIVERY-DATE: row id -> resolved date, filled by `prime_oi_dates` for a
+        #: caller about to build many lines; a row not primed is resolved on its own.
+        self._oi_date_cache: Dict[str, Any] = {}
         #: SO-LINE-DESC: core line id -> (description, company id), and (company id, code) -> tick.
         self._line_description_cache: Dict[str, tuple[str, Optional[str]]] = {}
         self._description_tick_cache: Dict[tuple[Optional[str], str], bool] = {}
@@ -2959,7 +2968,7 @@ class ProjectOrderInquiryService:
                     so_line_id=row.so_line_id, item_code=item_code,
                     stock_location=row.stock_location, verb=row.verb,
                     cited_document=row.cited_document, note=row.note,
-                    qty=to_qty, delivery_date=to_date or row.delivery_date,
+                    qty=to_qty, delivery_date=to_date or self._oi_date_of(row).date,
                 )
                 self._record_handover(
                     stand_in, kind="settled", was=line_was, actor_user_id=actor_user_id
@@ -3510,7 +3519,7 @@ class ProjectOrderInquiryService:
         for link in received_links:
             document = link.document or "the document"
             arrived = received[str(link.id)]
-            when = arrived.strftime("%d %b %Y") if arrived else "in full"
+            when = fmt_date(arrived) if arrived else "in full"
             fragments.append(f"{document} received {when}")
         location = f", goods are {row.stock_location} stock" if row.stock_location else ""
         fragment = (
@@ -3560,7 +3569,7 @@ class ProjectOrderInquiryService:
         location = f" into {row.stock_location}" if row.stock_location else ""
         fragments = [
             f"{link.document or 'the document'} received "
-            f"{arrived.strftime('%d %b %Y') if arrived else 'in full'}"
+            f"{fmt_date(arrived) if arrived else 'in full'}"
             for link, arrived in cached
         ]
         return f"{'; '.join(fragments)}{location}"
@@ -4562,6 +4571,7 @@ class ProjectOrderInquiryService:
             so_number = (
                 (order.autocount_doc_no or order.provisional_ref) if order else None
             )
+            shown = resolve_oi_date(self.db, [row])[str(row.id)]
             ctx = {
                 "order_inquiry_row": {
                     "id": str(row.id),
@@ -4577,13 +4587,12 @@ class ProjectOrderInquiryService:
                     "previous_qty": (
                         str(row.previous_qty) if row.previous_qty is not None else None
                     ),
+                    # OI-ONE-DELIVERY-DATE: the SO line's date and the Was beside it.
                     "delivery_date": (
-                        row.delivery_date.isoformat() if row.delivery_date else None
+                        shown.date.isoformat() if shown.date else None
                     ),
                     "previous_delivery_date": (
-                        row.previous_delivery_date.isoformat()
-                        if row.previous_delivery_date
-                        else None
+                        shown.was.isoformat() if shown.was else None
                     ),
                     "link": build_order_inquiry_link(inquiry.id),
                 },
@@ -4682,6 +4691,13 @@ class ProjectOrderInquiryService:
             line["was"] = {**was, "item_code": decorated}
         if wrapped:
             line["item_wrap"] = True
+
+    def prime_oi_dates(self, rows: Sequence[OrderInquiryRow]) -> None:
+        """Resolve the SO line date of all `rows` in one read, for `handover_item`."""
+        self._oi_date_cache.update(resolve_oi_date(self.db, rows))
+
+    def _oi_date_of(self, row: OrderInquiryRow) -> Any:
+        return self._oi_date_cache.get(str(row.id)) or resolve_oi_date(self.db, [row])[str(row.id)]
 
     def handover_item(
         self,
@@ -4787,7 +4803,14 @@ class ProjectOrderInquiryService:
             "project": facts.get("project"),
             "item_code": row.item_code,
             "qty": qty_str,
-            "delivery_date": _handover_fmt_date(row.delivery_date),
+            # OI-ONE-DELIVERY-DATE: the SO line's date, the one source of the email, the
+            # preview and the Excel attachment. `was` below stays the told date.
+            # A stand-in (a split part, a settle's new values) prints the date it carries.
+            "delivery_date": _handover_fmt_date(
+                row.delivery_date
+                if isinstance(row, SimpleNamespace)
+                else self._oi_date_of(row).date
+            ),
             # AC-1: "very, very important" to the owner - blank, never the word "None",
             # when the row carries no stock location (`_build_handover_context`'s own
             # subject-scope reduction already treats a blank the same way).
@@ -4815,6 +4838,11 @@ class ProjectOrderInquiryService:
             #: row lines with its one decision line (`record_saved_line`).
             "so_line_id": str(row.so_line_id) if row.so_line_id else None,
             "order_inquiry_id": str(row.order_inquiry_id),
+            #: OI-ROUTE-BY-RAISER: who raised this OI (the header's, never the actor), the
+            #: `order_inquiry.raisedBy` fact the automation rows read.
+            "raised_by": (
+                str(inquiry_scalars[0]) if inquiry_scalars and inquiry_scalars[0] else None
+            ),
             "pso_id": pso_id,
             "so_number": so_number,
             "customer": facts.get("customer"),
@@ -5840,6 +5868,12 @@ class ProjectOrderInquiryService:
                 "so_number": so_number,
                 #: DEALER-OI-ROUTE: the undo email routes by the same class rule.
                 "sales_order_class": email_class(facts.get("demand_class")),
+                #: OI-ROUTE-BY-RAISER: and by who raised the OI.
+                "raised_by": (
+                    str(existing_inquiry.raised_by)
+                    if existing_inquiry is not None and existing_inquiry.raised_by
+                    else None
+                ),
                 "customer": facts.get("customer"),
                 "project": facts.get("project"),
                 "revision_no": revision_no,
@@ -8384,14 +8418,14 @@ class ProjectOrderInquiryService:
         total = base.with_entities(func.count(OrderInquiryRow.id)).scalar() or 0
 
         sortable = {
-            "delivery_date": OrderInquiryRow.delivery_date,
+            "delivery_date": oi_line_date_sql(OrderInquiryRow),
             "item_code": OrderInquiryRow.item_code,
             "qty": OrderInquiryRow.qty,
             "verb": OrderInquiryRow.verb,
             "state": OrderInquiryRow.state,
             "created_at": OrderInquiryRow.created_at,
         }
-        column = sortable.get(sort, OrderInquiryRow.delivery_date)
+        column = sortable.get(sort, sortable["delivery_date"])
         ordering = column.desc() if str(direction).lower() == "desc" else column.asc()
         rows = (
             base.order_by(ordering, OrderInquiryRow.item_code.asc())
@@ -8514,6 +8548,7 @@ class ProjectOrderInquiryService:
                 )
             )
         out: List[Dict[str, Any]] = []
+        one_date = resolve_oi_date(self.db, rows)
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
             trace = traces.get(row.id, {})
@@ -8541,7 +8576,7 @@ class ProjectOrderInquiryService:
                     "is_amendment": meta.get("is_amendment", False),
                     "item_code": row.item_code,
                     "qty": _qty_str(_dec(row.qty)),
-                    "delivery_date": row.delivery_date,
+                    "delivery_date": one_date[str(row.id)].date,
                     "stock_location": row.stock_location,
                     "verb": row.verb,
                     "remark": self._remark(row),
@@ -8607,7 +8642,7 @@ class ProjectOrderInquiryService:
                         if row.previous_qty is not None
                         else None
                     ),
-                    "previous_delivery_date": row.previous_delivery_date,
+                    "previous_delivery_date": one_date[str(row.id)].was,
                     "previous_item_code": row.previous_item_code,
                     "splits": splits_by_line.get(str(row.so_line_id), [])
                     if row.so_line_id
@@ -8636,6 +8671,10 @@ class ProjectOrderInquiryService:
         from app.services.project_line_split_service import SplitOutputs
 
         splits = SplitOutputs(self.db, [str(i) for i in line_ids if i])
+        # AC-D2: the SO line date of the line each part sits on, one read for all parts.
+        sits_dates = line_dates(
+            self.db, [v.sits_on for views in splits.by_origin.values() for v in views]
+        )
         return {
             line_id: [
                 {
@@ -8650,6 +8689,11 @@ class ProjectOrderInquiryService:
                     "change": view.word,
                     "sits_on_line_id": view.sits_on,
                     "sits_on_line_no": splits.line_nos.get(view.sits_on) if view.sits_on else None,
+                    "sits_on_line_date": (
+                        sits_dates[str(view.sits_on)].isoformat()
+                        if view.sits_on and sits_dates.get(str(view.sits_on))
+                        else None
+                    ),
                     "remark": view.split.remark or "",
                 }
                 for view in views
@@ -8690,7 +8734,7 @@ class ProjectOrderInquiryService:
             self.db.query(
                 OrderInquiryLink,
                 OrderInquiryRow.stock_location,
-                OrderInquiryRow.delivery_date,
+                oi_line_date_sql(OrderInquiryRow),
                 PurchaseOrder.id,
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
@@ -9071,7 +9115,7 @@ class ProjectOrderInquiryService:
         rows = (
             self.db.query(
                 OrderInquirySuggestedLink,
-                OrderInquiryRow.delivery_date,
+                oi_line_date_sql(OrderInquiryRow),
                 PurchaseOrder.id,
                 PurchaseOrderLine.expected_date,
                 Warehouse.warehouse_code,
@@ -9809,13 +9853,14 @@ class ProjectOrderInquiryService:
                 (row.rejected_at for row in inquiry_rows if row.rejected_at),
                 default=None,
             ) or datetime.utcnow()
+            one_date = resolve_oi_date(self.db, inquiry_rows)
             lines = [
                 {
                     "item_code": row.item_code,
                     "qty": _qty_str(row.qty),
                     "delivery_date": (
-                        row.delivery_date.strftime("%d/%m/%Y")
-                        if row.delivery_date
+                        one_date[str(row.id)].date.strftime("%d/%m/%Y")
+                        if one_date[str(row.id)].date
                         else None
                     ),
                 }
@@ -9866,9 +9911,7 @@ class ProjectOrderInquiryService:
                             "customer": facts.get("customer"),
                             "project": facts.get("project"),
                             "reason": reason,
-                            "rejected_at": rejected_at.replace(tzinfo=timezone.utc)
-                            .astimezone(_MY_TZ)
-                            .strftime("%d/%m/%Y %H:%M"),
+                            "rejected_at": fmt_datetime(rejected_at),
                             "lines": lines,
                             "line_count": len(lines),
                             "link": build_order_inquiry_link(inquiry_id),
@@ -11997,9 +12040,12 @@ class ProjectOrderInquiryService:
                 still -= take
         return takes
 
-    @staticmethod
     def _within_window(
-        row: OrderInquiryRow, candidates: Sequence[Dict[str, Any]], lead_days: int
+        self,
+        row: OrderInquiryRow,
+        candidates: Sequence[Dict[str, Any]],
+        lead_days: int,
+        needed_by: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         """The candidates this row may be linked to AUTOMATICALLY
         (`PLAN-oi-cascade-skip-early-arrival.md` S2/S4) - the ONE filter both
@@ -12020,13 +12066,15 @@ class ProjectOrderInquiryService:
         still listed in the Link dialog (`po_candidates_for_row` runs this same filter
         only for `recommended`/`default_take`, never to drop a row from what it shows).
         """
+        if needed_by is None:
+            needed_by = resolve_oi_date(self.db, [row])[str(row.id)].date
         return [
             candidate
             for candidate in candidates
             if candidate.get("own_so_claim")
             or candidate.get("cited")
             or not arrives_outside_window(
-                candidate.get("expected_date"), row.delivery_date, lead_days
+                candidate.get("expected_date"), needed_by, lead_days
             )
         ]
 
@@ -12163,6 +12211,23 @@ class ProjectOrderInquiryService:
         )
         if recommended is not None:
             recommended["recommended"] = True
+        # OI-UX-FILTER-SNAPSHOT: every sales order named here (a placed claim, the order a
+        # line is dedicated to) also names its customer and project.
+        from app.services.scm.so_party import so_parties, with_party
+
+        parties = so_parties(
+            self.db,
+            numbers=[
+                *(c["so_number"] for entry in out for c in entry["claims"]),
+                *(entry["dedicated_to"] for entry in out),
+            ],
+        )
+        for entry in out:
+            for claim in entry["claims"]:
+                with_party(claim, parties, claim["so_number"])
+            dedicated = with_party({}, parties, entry["dedicated_to"])
+            entry["dedicated_customer_name"] = dedicated["customer_name"]
+            entry["dedicated_project_label"] = dedicated["project_label"]
         return out
 
     def linkable_qty_for_row(self, row_id: str) -> str:
@@ -12500,7 +12565,7 @@ class ProjectOrderInquiryService:
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
             .filter(column == target_id, *self._open_for_buying_clauses())
             .order_by(
-                OrderInquiryRow.delivery_date.desc().nullslast(),
+                oi_line_date_sql(OrderInquiryRow).desc().nullslast(),
                 OrderInquirySuggestedLink.suggested_at.desc(),
             )
             .all()
@@ -13365,18 +13430,14 @@ class ProjectOrderInquiryService:
         return LINK_HORIZON_NONE if link_up_to is None else LINK_HORIZON_DATE
 
     @staticmethod
-    def _after_horizon(row: OrderInquiryRow, link_up_to: Optional[date]) -> bool:
+    def _after_horizon(needed_by: Optional[date], link_up_to: Optional[date]) -> bool:
         """Is this row due beyond the horizon, and therefore not this pass's to link?
 
         A row with NO delivery date is INSIDE it (AC-LH4): the quantity is still owed,
         nobody has said when, and refusing it a document would leave it unbought for a date
         that was never stated.
         """
-        return (
-            link_up_to is not None
-            and row.delivery_date is not None
-            and row.delivery_date > link_up_to
-        )
+        return link_up_to is not None and needed_by is not None and needed_by > link_up_to
 
     def auto_place_for_products(self, product_ids: Optional[Sequence[str]], **kwargs: Any) -> Dict[str, Any]:
         """`_auto_place_for_products` with the per-pass document memo held (CONFIRM-DIALOG-
@@ -13647,6 +13708,8 @@ class ProjectOrderInquiryService:
         # quadratic as the table grows. Updated in memory as the loop writes each
         # row's own answer (see `_release_own_contribution` below), never re-queried.
         suggested_totals_by_target = self._suggested_totals_by_target()
+        # OI-ONE-DELIVERY-DATE: the SO line's date is when the row is needed, one read.
+        needed_by_row = resolve_oi_date(self.db, rows)
         for row in rows:
             product_id = product_id_by_row.get(row.id)
             if not product_id:
@@ -13688,7 +13751,7 @@ class ProjectOrderInquiryService:
             # `continue`s without ever reading it, so fetching it earlier cost one
             # `_suggested_of_row` query per after-horizon row for nothing; this branch
             # never drops a suggestion, so it never needed the fetch in the first place.
-            if self._after_horizon(row, link_up_to):
+            if self._after_horizon(needed_by_row[str(row.id)].date, link_up_to):
                 after_horizon += 1
                 continue
             # AC-LT-14/G2, Should fix 4 (review round 2): this row's OWN current
@@ -13740,7 +13803,9 @@ class ProjectOrderInquiryService:
             lead_days = lead_times.get(product_id)
             if lead_days is None:
                 lead_days = DEFAULT_LEAD_TIME_DAYS
-            candidates = self._within_window(row, candidates, lead_days)
+            candidates = self._within_window(
+                row, candidates, lead_days, needed_by_row[str(row.id)].date
+            )
             if not candidates:
                 # Same reasoning as the empty-candidates branch above: nothing left
                 # inside the lead-time window is nothing to keep suggesting.
@@ -13976,6 +14041,7 @@ class ProjectOrderInquiryService:
         # ordered by each product's first appearance - `auto_place_for_products` still
         # processes products in the same order it always has.
         product_by_row = self._resolve_product_ids_bulk(rows)
+        needed_by = resolve_oi_date(self.db, rows)
         groups: Dict[Optional[str], List[OrderInquiryRow]] = {}
         group_order: List[Optional[str]] = []
         for row in rows:
@@ -13990,7 +14056,7 @@ class ProjectOrderInquiryService:
         def _sort_key(row: OrderInquiryRow, scores: Dict[str, float]) -> Tuple[float, date, datetime]:
             return (
                 -scores.get(row.id, 0.0),
-                row.delivery_date or date.max,
+                needed_by[str(row.id)].date or date.max,
                 row.created_at or datetime.max,
             )
 
@@ -14012,7 +14078,7 @@ class ProjectOrderInquiryService:
                 demand_rows.append(
                     {
                         "row_key": row.id,
-                        "required_date": row.delivery_date,
+                        "required_date": needed_by[str(row.id)].date,
                         "order_date": order_dates.get(row.order_inquiry_id),
                         "payment_terms_days": (
                             terms_by_customer.get(customer_id) if customer_id else None
@@ -15209,13 +15275,91 @@ def _lines_by_inquiry(
     return out
 
 
-def handover_class_groups(items: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    """The queued handover lines split by sales order class (DEALER-OI-ROUTE), in the
-    order each class first appears; one group when the write touched one class."""
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+def handover_route_groups(
+    db: Session, items: Sequence[Dict[str, Any]]
+) -> List[List[Dict[str, Any]]]:
+    """The queued handover lines split into one email each (OI-ROUTE-BY-RAISER), in the
+    order each group first appears.
+
+    A group is the lines of one sales order class (DEALER-OI-ROUTE) that pass exactly the
+    same ENABLED handover rows for their class and their OI's raiser. So lines matching the
+    same rows share one email, a line never reaches a row it does not match, and no row gets
+    a line twice. Every line of a group answers every row's conditions the same way, so
+    `build_handover_email` stamps the group's first line's facts on the context and
+    `dispatch_event`'s own filter fires exactly that group's rows.
+
+    A line with no `raised_by` (queued before the field existed, or a stand-in) reads it off
+    its OI header."""
+    from app.models.automation import Automation
+    from app.services.automation_service import AutomationService
+
+    missing = {
+        str(item["order_inquiry_id"])
+        for item in items
+        if not item.get("raised_by") and item.get("order_inquiry_id")
+    }
+    if missing:
+        raisers = dict(
+            db.query(OrderInquiry.id, OrderInquiry.raised_by)
+            .filter(OrderInquiry.id.in_(list(missing)))
+            .all()
+        )
+        for item in items:
+            if not item.get("raised_by") and item.get("order_inquiry_id"):
+                raiser = raisers.get(str(item["order_inquiry_id"]))
+                item["raised_by"] = str(raiser) if raiser else None
+    rows = (
+        db.query(Automation)
+        .filter(
+            Automation.enabled.is_(True),
+            Automation.trigger_type == "order_inquiry_handover",
+        )
+        .order_by(Automation.created_at.asc())
+        .all()
+    )
+    service = AutomationService(db)
+    passing: Dict[Tuple[str, Optional[str]], frozenset] = {}
+    groups: Dict[Tuple[str, frozenset], List[Dict[str, Any]]] = {}
     for item in items:
-        groups.setdefault(item.get("sales_order_class") or PROJECT_DEMAND_CLASS, []).append(item)
+        cls = item.get("sales_order_class") or PROJECT_DEMAND_CLASS
+        facts = (cls, item.get("raised_by"))
+        if facts not in passing:
+            passing[facts] = frozenset(
+                str(row.id)
+                for row in service.passing_rows(
+                    "order_inquiry_handover",
+                    {"sales_order_class": cls, "raised_by": facts[1]},
+                    rows,
+                )
+            )
+        groups.setdefault((cls, passing[facts]), []).append(item)
     return list(groups.values())
+
+
+def send_handover_groups(
+    db: Session, items: Sequence[Dict[str, Any]], *, store_excel: bool
+) -> None:
+    """One `order_inquiry_handover` dispatch per `handover_route_groups` group, each
+    best-effort on its own: one failing never stops another's email."""
+    from app.services.automation_service import AutomationService
+
+    # A group no enabled row takes still dispatches (and fires nothing), as before: the
+    # workbook is only stored when an enabled row exists (`store_excel`).
+    for group in handover_route_groups(db, items):
+        try:
+            built = build_handover_email(db, group, store_excel=store_excel)
+            if built is None:
+                continue
+            context, source_id = built
+            AutomationService(db).dispatch_event(
+                "order_inquiry_handover",
+                context=context,
+                source_kind="order_inquiry_handover",
+                source_id=source_id,
+            )
+        except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+            db.rollback()
+            logger.exception("Automation dispatch(order_inquiry_handover) failed for one group")
 
 
 def build_handover_email(
@@ -15247,9 +15391,11 @@ def build_handover_email(
     if built is None:
         return None
     context, source_id = built
-    # DEALER-OI-ROUTE: the class the automation rows' conditions read. Every caller hands
-    # one class's lines (`handover_class_groups`; a resend is one OI, so one order).
+    # DEALER-OI-ROUTE / OI-ROUTE-BY-RAISER: the facts the automation rows' conditions read.
+    # Every caller hands lines that pass the same rows (`handover_route_groups`; a resend is
+    # one OI), so the first line's class and raiser answer for all of them.
     context["sales_order_class"] = items[0].get("sales_order_class") or PROJECT_DEMAND_CLASS
+    context["raised_by"] = items[0].get("raised_by")
     inquiry_ids = list(
         dict.fromkeys(item["order_inquiry_id"] for item in items if item.get("order_inquiry_id"))
     )
@@ -15292,6 +15438,8 @@ def _build_undo_context(
         "today": date.today().strftime("%d/%m/%Y"),
         # DEALER-OI-ROUTE: the class the automation rows' conditions read.
         "sales_order_class": item.get("sales_order_class") or PROJECT_DEMAND_CLASS,
+        # OI-ROUTE-BY-RAISER: and who raised the OI.
+        "raised_by": item.get("raised_by"),
     }
     return context, item["decision_id"]
 
@@ -15543,7 +15691,6 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             session.info.pop(_HANDOVER_PENDING_KEY, None)
 
         from app.database import SessionLocal
-        from app.services.automation_service import AutomationService
 
         fresh = SessionLocal()
         try:
@@ -15554,26 +15701,10 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             from app.services import park_send
 
             store_excel = park_send.first_automation(fresh, "order_inquiry_handover") is not None
-            # DEALER-OI-ROUTE: one email per sales order class, so retail and project
-            # lines confirmed in one write reach their own purchasing team. Each class is
-            # best-effort on its own: one failing never stops the other's email.
-            for group in handover_class_groups(concluded):
-                try:
-                    built = build_handover_email(fresh, group, store_excel=store_excel)
-                    if built is None:
-                        continue
-                    context, source_id = built
-                    AutomationService(fresh).dispatch_event(
-                        "order_inquiry_handover",
-                        context=context,
-                        source_kind="order_inquiry_handover",
-                        source_id=source_id,
-                    )
-                except Exception:  # noqa: BLE001 - a post-commit side effect never raises
-                    fresh.rollback()
-                    logger.exception(
-                        "Automation dispatch(order_inquiry_handover) failed for one class"
-                    )
+            # DEALER-OI-ROUTE + OI-ROUTE-BY-RAISER: one email per sales order class and
+            # set of matching rows, so retail and project lines, and one raiser's lines
+            # routed apart, each reach their own people, once.
+            send_handover_groups(fresh, concluded, store_excel=store_excel)
         except Exception:  # noqa: BLE001 - a post-commit side effect never raises
             fresh.rollback()
             logger.exception("Automation dispatch(order_inquiry_handover) failed to queue")

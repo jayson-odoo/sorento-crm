@@ -57,6 +57,25 @@ const emptyRecipients: RecipientConfig = {
   extra_emails: [],
 };
 
+/** The six To/Cc address lists; any other recipient setting is not an address change. Order
+ * counts: a legacy row puts its FIRST address on To, so reordering changes who gets To. */
+const ADDRESS_KEYS = [
+  'user_ids',
+  'role_ids',
+  'extra_emails',
+  'cc_user_ids',
+  'cc_role_ids',
+  'cc_emails',
+] as const;
+
+function addressesChanged(before: RecipientConfig, after: RecipientConfig): boolean {
+  return ADDRESS_KEYS.some((key) => {
+    const was = before[key] ?? [];
+    const now = after[key] ?? [];
+    return was.length !== now.length || was.some((value, i) => value !== now[i]);
+  });
+}
+
 export default function AutomationForm({ open, onOpenChange, automation, onSaved }: Props) {
   const isEdit = !!automation;
   const [name, setName] = useState('');
@@ -68,6 +87,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
   const [daysChecked, setDaysChecked] = useState(false);
   const [emailTemplateId, setEmailTemplateId] = useState<string>('');
   const [recipientConfig, setRecipientConfig] = useState<RecipientConfig>(emptyRecipients);
+  // The recipients as the edited row was saved, so Save can tell whether a To/Cc address moved.
+  const [savedRecipients, setSavedRecipients] = useState<RecipientConfig | null>(null);
   const [groupMatches, setGroupMatches] = useState(true);
   const [scheduleType, setScheduleType] = useState<'manual' | 'daily'>('manual');
   const [runTime, setRunTime] = useState<string>('09:00');
@@ -111,6 +132,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       // hydrated `false` regardless of what was saved, and an unchanged Save then wrote
       // that `false` back for real.
       setRecipientConfig({ ...emptyRecipients, ...(automation.recipient_config ?? {}) });
+      setSavedRecipients({ ...emptyRecipients, ...(automation.recipient_config ?? {}) });
       setGroupMatches(automation.group_matches ?? true);
       setScheduleType(automation.schedule_type);
       setRunTime(automation.run_time ? automation.run_time.slice(0, 5) : '09:00');
@@ -130,6 +152,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       );
       setEmailTemplateId('');
       setRecipientConfig(emptyRecipients);
+      setSavedRecipients(null);
       setGroupMatches(true);
       setScheduleType('manual');
       setRunTime('09:00');
@@ -233,8 +256,16 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       trigger_config: daysBeforeSchema ? { days_before: daysBefore } : {},
       action_type: 'send_email',
       email_template_id: emailTemplateId,
-      // Card Q2 (b): saved through the To/Cc picker, so To and Cc mean what the boxes say.
-      recipient_config: { ...recipientConfig, explicit_to_cc: true },
+      // Card Q2 (b), 1 Nov ruling: a new row, or one whose To/Cc addresses were changed here,
+      // means exactly what the boxes say. An existing row that was not changed keeps how it
+      // was saved: a legacy row stays "first address To, the rest Cc".
+      recipient_config: {
+        ...recipientConfig,
+        explicit_to_cc:
+          !savedRecipients ||
+          Boolean(savedRecipients.explicit_to_cc) ||
+          addressesChanged(savedRecipients, recipientConfig),
+      },
       group_matches: supportsGrouping ? groupMatches : true,
       // Only send a condition tree for triggers that expose facts; null = match all.
       conditions_json: factSources.length > 0 ? conditionsJson : null,

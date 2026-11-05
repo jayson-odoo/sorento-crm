@@ -38,3 +38,11 @@ dbcc51b9b06fb995636e2f843c86ef2c85490ed3:sorento_crm_backend/tests/test_inbox_qu
 # ("AIzaSyZZT..." plus an alphabet run) that proves provider errors are redacted; never a real or dev key.
 # Rewritten as a value built in parts in the fix commit that adds this line.
 b93b9704fd2d24e9cf84fc60c82e84ac83a2140a:sorento_crm_backend/tests/test_agentic_knowledge_extract.py:generic-api-key:519
+# OI-ONE-DELIVERY-DATE (#2145): worklist test helper calls that pass the test session token
+# variable and ISO month / day filter values (no secret). 6f91a549 line 41 is this note's first
+# wording, which quoted one of those calls.
+6f91a54940535da52e1ad8a5ac200726e85616dd:.gitleaksignore:generic-api-key:41
+28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:235
+28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:236
+28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:252
+28f7f880cfc5754cc30423b4ccd48caf99e5892b:sorento_crm_backend/tests/test_oi_one_delivery_date_resolver_worklist.py:generic-api-key:256

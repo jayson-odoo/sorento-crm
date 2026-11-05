@@ -58,6 +58,8 @@ import type {
   InternalNote,
   PanelTab,
 } from './types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { localStore } from '@/lib/storage';
 
 const PERSIST_KEY = 'sorento:activities-panel:tab';
 
@@ -73,7 +75,7 @@ function relativeTime(iso: string): string {
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return d.toLocaleString();
+  return formatDateTimeInMalaysia(d);
 }
 
 function formatSystemEvent(
@@ -124,7 +126,7 @@ export default function EntityActivitiesLayout({
   // tab they last used per resource.
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(`${PERSIST_KEY}:${entityType}`);
+      const stored = localStore.getItem(`${PERSIST_KEY}:${entityType}`);
       if (stored === 'activities' || stored === 'notes' || stored === 'messages') {
         setTab(stored);
       }
@@ -136,7 +138,7 @@ export default function EntityActivitiesLayout({
   function changeTab(next: PanelTab) {
     setTab(next);
     try {
-      localStorage.setItem(`${PERSIST_KEY}:${entityType}`, next);
+      localStore.setItem(`${PERSIST_KEY}:${entityType}`, next);
     } catch {
       /* ignore */
     }

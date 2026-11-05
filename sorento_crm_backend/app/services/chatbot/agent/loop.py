@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
@@ -932,7 +933,7 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     if left_out:
         text = (
             f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
-            "are outside this user's or this contact's access; never say the CRM lacks them."
+            "are outside this user's or this contact's access; never say the CRM lacks them, and never list them in no_tool."
         )
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
@@ -1088,6 +1089,48 @@ def run_agent_turn(
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
             context_after=context_after,
         )
+
+
+_NO_TOOL_MAX = 5
+_NO_TOOL_CHARS = 300
+
+
+# The sentence the prompt tells the model to use for an ask outside the user's access (`_system_prompt`), and
+# the model's own variants of it ("outside your current access permissions").
+_ACCESS_REFUSAL = re.compile(r"outside (?:of )?(?:this user's|your|the user's)\b[^.\n]{0,60}\baccess", re.IGNORECASE)
+
+
+def no_tool_items(args: dict | None) -> list[dict]:
+    """The answer's `no_tool` list, cleaned: strings only, trimmed, at most five, nothing empty.
+
+    Only a missing TOOL counts. An item the model marks `no_access`, or with no reason, is dropped, and so is
+    the whole list when the reply refuses for lack of access: a permission refusal is not a gap in the tools.
+    """
+    raw = (args or {}).get("no_tool")
+    if not isinstance(raw, list):
+        return []
+    if _ACCESS_REFUSAL.search(str((args or {}).get("text") or "")):
+        return []
+    items: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or entry.get("reason") != "no_tool":
+            continue
+        ask = entry.get("ask")
+        if not isinstance(ask, str) or not ask.strip():
+            continue
+        area = entry.get("area")
+        area = area.strip()[:80] if isinstance(area, str) and area.strip() else None
+        items.append({"ask": ask.strip()[:_NO_TOOL_CHARS], "area": area})
+        if len(items) >= _NO_TOOL_MAX:
+            break
+    return items
+
+
+def _channel(is_test: bool) -> str:
+    """Where the turn came from: the staff side panel, live WhatsApp, or the console's test run."""
+    if staff_principal.current() is not None:
+        return "panel"
+    return "console" if is_test else "whatsapp"
 
 
 def _run(
@@ -1295,6 +1338,7 @@ def _run(
         used_call_ids: set[str] = set()
         repaired = False
         final_args: dict | None = None
+        forced_args: dict | None = None
         nudge = (
             "Finish by calling the answer tool now: put your reply in text, list every number in "
             "figures with the call_id that shows it, and anything you could not find in not_found."
@@ -1317,7 +1361,8 @@ def _run(
                 }
             )
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
-            args = answer_of(res)
+            nonlocal forced_args
+            args = forced_args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
@@ -1512,6 +1557,13 @@ def _run(
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
+        gaps = no_tool_items(final_args if final_args is not None else forced_args)
+        if gaps:
+            # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
+            trace.add(
+                NO_TOOL_EVENT,
+                {"items": gaps, "user_id": str(ctx.user_id or "") or None, "channel": _channel(is_test)},
+            )
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

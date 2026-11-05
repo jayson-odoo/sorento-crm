@@ -1,11 +1,33 @@
 'use client';
 
+/**
+ * One prompt, on the standard record page (AI-PROMPTS-STD-VIEWS, owner 5 Nov).
+ *
+ * Record header: title + status pill, then pager, gear (actions on the LOADED version) and
+ * the one primary button, Edit. An edit session swaps that group for Cancel + Save - Save
+ * always writes a NEW immutable version. Below it, line tabs: Prompt (the editor, unchanged
+ * inside), Versions (the history in the standard grid), Model, Dry run.
+ */
+
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, GitCompare, Loader2, Save } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
+import {
+  Ellipsis,
+  FileText,
+  FlaskConical,
+  GitCompare,
+  History,
+  Loader2,
+  Save,
+  SquarePen,
+  Upload,
+  Cpu,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { cn } from '@/lib/utils';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,14 +41,25 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import BackToList from '@/components/common/BackToList';
 import { Container } from '@/components/common/container';
+import DetailActions from '@/components/common/DetailActions';
 import { PageHeader } from '@/components/common/PageHeader';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
+  promptsPagerQuery,
   usePromptKeys,
   usePromptVersion,
   usePromptVersions,
@@ -37,7 +70,7 @@ import {
 import { validateVars } from '../../lib/promptVars';
 import { splitTemplate } from '../../lib/promptSegments';
 import { CHATBOT_TURN_PROMPT_KEYS } from '../../services/aiPromptsService';
-import type { SaveVersionError } from '../../services/aiPromptsService';
+import type { PromptVersionRow, SaveVersionError } from '../../services/aiPromptsService';
 import { AgentModelCard } from './AgentModelCard';
 import { DiffView } from './DiffView';
 import { DryRunBox } from './DryRunBox';
@@ -50,25 +83,25 @@ import { WiredPanel } from './WiredPanel';
 import { FocusShell, FocusToggle } from '@/app/(protected)/dealer-kit/components/FocusMode';
 
 const EDIT_PERMISSION = 'system.ai_assistant_settings.edit';
+const LIST_PATH = '/system-management/ai-assistant/prompts';
+const TABS = ['prompt', 'versions', 'model', 'dry-run'] as const;
+
+type PublishLabel = 'production' | 'staging';
 
 export function PromptDetail({ name }: { name: string }) {
   const versionsQuery = usePromptVersions(name);
   const canEdit = useHasPermission(EDIT_PERMISSION);
+  const [tab, setTab] = useUrlTab({ tabs: [...TABS], defaultTab: 'prompt' });
 
   const meta = versionsQuery.data;
   const productionVersion = meta?.labels.production ?? meta?.versions[0]?.version ?? null;
 
-  // Whether a dry-run of THIS key would exercise the edit. It is a property of the
-  // key rather than of a version, and the versions response does not carry it, so it
-  // is read off the key list - already fetched beside this by the "Runs on" card and
-  // cached under the same query key as the list page. Unknown reads as runnable: a
-  // list still in flight must not tell the user their key is outside the pipeline,
-  // and the route refuses a non-runnable key with a 400 in any case.
+  // Whether a dry-run of THIS key would exercise the edit. It is a property of the key rather
+  // than of a version, and the versions response does not carry it, so it is read off the key
+  // list. Unknown reads as runnable: a list still in flight must not tell the user their key is
+  // outside the pipeline, and the route refuses a non-runnable key with a 400 in any case. The
+  // two chatbot keys run a dry-run chatbot TURN instead (AC-807), so they stay enabled.
   const keysQuery = usePromptKeys();
-  // The two chatbot keys are `dry_runnable: false` because they are not assistant-pipeline
-  // nodes, and that is still true - what changed at AC-807 is that their Test runs a
-  // dry-run chatbot TURN instead, which does exercise them. So the box stays enabled for
-  // them and `DryRunBox` decides which of the two things to run.
   const dryRunnable =
     CHATBOT_TURN_PROMPT_KEYS.includes(name) ||
     (keysQuery.data?.find((row) => row.name === name)?.dry_runnable ?? true);
@@ -83,6 +116,8 @@ export function PromptDetail({ name }: { name: string }) {
   const [draft, setDraft] = useState<string>('');
   const [commitMessage, setCommitMessage] = useState('');
   const [loadedFor, setLoadedFor] = useState<string>(''); // `${name}:${version}` currently in the buffer
+  // Standard form view: the record opens read-only, Edit starts a session, Save or Cancel ends it.
+  const [editing, setEditing] = useState(false);
 
   // Load the fetched base template into the draft buffer once per version load.
   useEffect(() => {
@@ -92,11 +127,8 @@ export function PromptDetail({ name }: { name: string }) {
     }
   }, [baseQuery.data, name, loadedFor]);
 
-  // Slice E: a key with no saved version has no `baseQuery.data` to seed
-  // from at all - the effect above never fires, and the editor opened
-  // empty (browser finding on every `ai_extract_*` key the day they were
-  // registered). `meta.fallback_text` - the code default - is what seeds it
-  // instead, once, the same "one load per key" shape as the effect above.
+  // Slice E: a key with no saved version seeds the editor from `meta.fallback_text` (the code
+  // default) instead, once per key.
   useEffect(() => {
     if (meta && meta.versions.length === 0 && loadedFor !== `${name}:fallback`) {
       setDraft(meta.fallback_text ?? '');
@@ -146,11 +178,10 @@ export function PromptDetail({ name }: { name: string }) {
     open: boolean;
     version: number | null;
     versionId: string | null;
-    label: 'production' | 'staging';
+    label: PublishLabel;
   }>({ open: false, version: null, versionId: null, label: 'production' });
 
-  // Version-switch discard confirm (AlertDialog, never window.confirm - CRUD UX
-  // standard / feedback_confirm_before_delete_or_unlink).
+  // Version-switch discard confirm (AlertDialog, never window.confirm).
   const [pendingSwitch, setPendingSwitch] = useState<number | null>(null);
 
   const saveInputRef = useRef<HTMLInputElement>(null);
@@ -158,16 +189,145 @@ export function PromptDetail({ name }: { name: string }) {
   const switchToVersion = (version: number) => {
     setBaseVersion(version);
     setLoadedFor('');
+    setTab('prompt');
   };
 
   const requestSwitch = (version: number) => {
-    if (version === baseVersion) return;
+    if (version === baseVersion) {
+      setTab('prompt');
+      return;
+    }
     if (dirty) {
       setPendingSwitch(version);
       return;
     }
     switchToVersion(version);
   };
+
+  const canPublish = canEdit && !!meta?.active;
+  const openPublish = (row: PromptVersionRow, label: PublishLabel) =>
+    setPublishState({ open: true, version: row.version, versionId: row.id, label });
+
+  const versionColumns = useMemo<ColumnDef<PromptVersionRow>[]>(
+    () => [
+      {
+        id: 'version',
+        accessorKey: 'version',
+        header: 'Version',
+        size: 100,
+        cell: ({ row }) => (
+          <span className="font-medium tabular-nums">
+            v{row.original.version}
+            {row.original.version === baseVersion ? (
+              <span className="ms-1.5 text-xs font-normal text-muted-foreground">(loaded)</span>
+            ) : null}
+          </span>
+        ),
+      },
+      {
+        id: 'labels',
+        accessorFn: (r) => r.labels.join(','),
+        header: 'Labels',
+        size: 170,
+        cell: ({ row }) => (
+          <span className="flex flex-wrap gap-1">
+            {row.original.labels.includes('production') ? (
+              <Badge variant="success" appearance="light">
+                production
+              </Badge>
+            ) : null}
+            {row.original.labels.includes('staging') ? (
+              <Badge variant="warning" appearance="light">
+                staging
+              </Badge>
+            ) : null}
+            {row.original.labels.length === 0 ? <span className="text-muted-foreground">-</span> : null}
+          </span>
+        ),
+      },
+      {
+        id: 'commit_message',
+        accessorKey: 'commit_message',
+        header: 'Commit message',
+        size: 320,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.commit_message ?? ''}>
+            {row.original.commit_message || <span className="italic text-muted-foreground">(no message)</span>}
+          </span>
+        ),
+      },
+      {
+        id: 'created_by_name',
+        accessorKey: 'created_by_name',
+        header: 'By',
+        size: 150,
+        cell: ({ row }) => (
+          <span className="truncate text-muted-foreground" title={row.original.created_by_name ?? ''}>
+            {row.original.created_by_name || '-'}
+          </span>
+        ),
+      },
+      {
+        id: 'created_at',
+        accessorKey: 'created_at',
+        header: 'Created',
+        size: 180,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{formatDateTimeInMalaysia(row.original.created_at)}</span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 56,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        cell: ({ row }) => {
+          const v = row.original;
+          const canProd = canPublish && !v.labels.includes('production');
+          const canStage = canPublish && !v.labels.includes('staging');
+          if (!canProd && !canStage) return null;
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  className="h-7 w-7"
+                  mode="icon"
+                  variant="ghost"
+                  aria-label={`Actions for v${v.version}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Ellipsis className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="bottom" align="end" onClick={(e) => e.stopPropagation()}>
+                {canProd ? (
+                  <DropdownMenuItem
+                    onClick={() => openPublish(v, 'production')}
+                    data-testid={`publish-production-${v.version}`}
+                  >
+                    Publish v{v.version}
+                  </DropdownMenuItem>
+                ) : null}
+                {canStage ? (
+                  <DropdownMenuItem
+                    onClick={() => openPublish(v, 'staging')}
+                    data-testid={`publish-staging-${v.version}`}
+                  >
+                    Stage v{v.version}
+                  </DropdownMenuItem>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        },
+      },
+    ],
+    [baseVersion, canPublish],
+  );
+
+  const backLink = <BackToList listPath={LIST_PATH} label="Back to prompts" />;
 
   if (versionsQuery.isLoading) {
     return (
@@ -178,13 +338,27 @@ export function PromptDetail({ name }: { name: string }) {
   }
   if (versionsQuery.isError || !meta) {
     return (
-      <Container>
+      <Container className="space-y-4">
+        <div className="flex justify-end">{backLink}</div>
         <p className="text-sm text-destructive">
           {(versionsQuery.error as Error)?.message || 'Failed to load prompt'}
         </p>
       </Container>
     );
   }
+
+  const beginEdit = () => {
+    setCommitMessage('');
+    setEditing(true);
+    setTab('prompt');
+  };
+
+  const cancelEdit = () => {
+    // Back to the stored version: the buffer reloads from it.
+    setLoadedFor('');
+    setCommitMessage('');
+    setEditing(false);
+  };
 
   const doSave = () => {
     if (!commitMessage.trim()) {
@@ -209,6 +383,7 @@ export function PromptDetail({ name }: { name: string }) {
           setCommitMessage('');
           setBaseVersion(v.version);
           setLoadedFor(''); // force reload of the new version into the buffer
+          setEditing(false);
         },
         onError: (e: Error & { validation?: SaveVersionError }) => {
           if (e.validation?.unknown_tokens?.length) {
@@ -236,335 +411,362 @@ export function PromptDetail({ name }: { name: string }) {
   };
 
   const baseVersionId = baseQuery.data?.id ?? null;
-  // Publish / Stage live in Version history, which full screen covers; the loaded version's
-  // two buttons come along into the editor header so they stay one click away.
   const baseRow = meta.versions.find((v) => v.version === baseVersion);
+  const saveDisabled = saveMut.isPending || hasUnknownTokens || !commitMessage.trim() || !dirty;
+
+  const toggleDiff = () => {
+    setDiffOpen((o) => !o);
+    if (diffAgainst == null) {
+      const other = meta.versions.find((v) => v.version !== baseVersion);
+      setDiffAgainst(other?.version ?? baseVersion);
+    }
+  };
+
+  // The gear acts on the LOADED version (what the editor shows), the same pair each Versions
+  // row offers for its own version.
+  const gearActions: RecordAction[] = [];
+  if (canPublish && baseRow) {
+    if (!baseRow.labels.includes('production')) {
+      gearActions.push({
+        key: 'prompt.publish',
+        label: `Publish v${baseRow.version}`,
+        icon: Upload,
+        run: () => openPublish(baseRow, 'production'),
+      });
+    }
+    if (!baseRow.labels.includes('staging')) {
+      gearActions.push({
+        key: 'prompt.stage',
+        label: `Stage v${baseRow.version}`,
+        icon: Upload,
+        run: () => openPublish(baseRow, 'staging'),
+      });
+    }
+  }
+
+  const saveButton = (
+    <Button type="button" size="sm" onClick={doSave} disabled={saveDisabled} data-testid="save-version">
+      {saveMut.isPending ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <>
+          <Save className="size-4" /> Save as new version
+        </>
+      )}
+    </Button>
+  );
 
   return (
     <Container className="space-y-4">
-      <PageHeader
-        title={
-          <span className="inline-flex flex-wrap items-center gap-2">
-            <span className="font-mono">{name}</span>
-            {!meta.active ? (
-              <Badge variant="warning" className="text-xs">
-                Dormant · activates in {meta.activates_in}
-              </Badge>
-            ) : null}
-          </span>
-        }
-        // The title carries a badge, so the trail is told the name separately:
-        // without it the trail would end on "Prompts" and stop linking there.
-        crumbTitle={name}
-        actions={
-          <Button variant="outline" asChild>
-            <Link href="/system-management/ai-assistant/prompts">
-              <ArrowLeft className="size-4" /> Back to prompts
-            </Link>
-          </Button>
-        }
-      />
-      <p className="text-sm text-muted-foreground break-words">{meta.role}</p>
+      <PageHeader title="Prompt" crumbTitle={name} actions={backLink} />
 
-      {!meta.active ? (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
-          Inactive - this prompt is saved but not used at runtime yet. It activates in milestone{' '}
-          {meta.activates_in}. You can draft ahead; dry-run is disabled until it has a call site.
-        </div>
-      ) : null}
-
-      <div
-        className={cn(
-          'grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]',
-          hasRegistry && '2xl:grid-cols-[260px_minmax(0,1fr)_300px]',
-        )}
-      >
-        <div className="flex min-w-0 flex-col gap-4">
-        <AgentModelCard name={name} canEdit={canEdit} />
-
-        {/* Version history */}
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle className="text-base">Version history</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-1.5">
-            {meta.versions.map((v) => {
-              const isBase = v.version === baseVersion;
-              return (
-                // Not a <button>: it holds real Publish/Stage <button>s (invalid
-                // to nest interactive-in-interactive). Clickable div + keyboard.
-                <div
-                  key={v.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => requestSwitch(v.version)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      requestSwitch(v.version);
-                    }
-                  }}
-                  className={cn(
-                    'w-full cursor-pointer rounded-md border p-2 text-left text-xs transition-colors',
-                    isBase ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
-                  )}
-                  data-testid={`version-row-${v.version}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">v{v.version}</span>
-                    <span className="flex gap-1">
-                      {v.labels.includes('production') ? (
-                        <Badge variant="success" className="text-[10px]">
-                          ● production
-                        </Badge>
-                      ) : null}
-                      {v.labels.includes('staging') ? (
-                        <Badge variant="warning" className="text-[10px]">
-                          staging
-                        </Badge>
-                      ) : null}
-                    </span>
-                  </div>
-                  <p className="mt-1 truncate text-muted-foreground" title={v.commit_message || ''}>
-                    {v.commit_message || <span className="italic">(no message)</span>}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    {v.created_by_name || 'unknown'}
-                  </p>
-                  {canEdit && meta.active ? (
-                    <div className="mt-2 flex gap-1">
-                      {!v.labels.includes('production') ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPublishState({ open: true, version: v.version, versionId: v.id, label: 'production' });
-                          }}
-                          className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-emerald-700"
-                          data-testid={`publish-production-${v.version}`}
-                        >
-                          Publish
-                        </button>
-                      ) : null}
-                      {!v.labels.includes('staging') ? (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPublishState({ open: true, version: v.version, versionId: v.id, label: 'staging' });
-                          }}
-                          className="rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-amber-600"
-                          data-testid={`publish-staging-${v.version}`}
-                        >
-                          Stage
-                        </button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-        </div>
-
-        {/* Editor + tools */}
-        {/* gap, not space-y: the full-screen wrapper around the card is `display: contents`. */}
-        <div className="flex min-w-0 flex-col gap-4">
-          <FocusShell active={focus} onExit={() => setFocus(false)} keepMounted>
-          <Card className={cn(focus && 'mb-8 flex-auto')}>
-            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
-              <CardTitle className="text-base">
-                Editor{' '}
-                <span className="text-xs font-normal text-muted-foreground">
-                  {/* Slice E: no saved version means `baseVersion` never
-                      resolves, so "v{baseVersion}" would print "vnull" - the
-                      draft came off `fallback_text` instead, and the label
-                      says so. */}
-                  (base: {meta?.versions.length === 0 ? 'code default' : `v${baseVersion}`}
-                  {dirty ? ' · unsaved changes' : ''})
-                </span>
+      {/* The record header: what the prompt IS, and what can be done to it. */}
+      <Card>
+        <CardHeader className="block py-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <CardTitle className="truncate font-mono text-lg" title={name}>
+                {name}
               </CardTitle>
-              <div className="flex flex-wrap items-center gap-2">
-              {focus && canEdit && meta.active && baseRow ? (
-                // The reason sits on a wrapper: a disabled Button takes no pointer events, so
-                // its own title would never show.
-                <span
-                  className="flex flex-wrap items-center gap-2"
-                  title={dirty ? 'Save first: this publishes the saved version, not the unsaved edits' : undefined}
+              {meta.active ? (
+                <Badge status="active">Active</Badge>
+              ) : (
+                <Badge variant="warning" appearance="light">
+                  {meta.activates_in ? `Dormant (activates in ${meta.activates_in})` : 'Dormant'}
+                </Badge>
+              )}
+            </div>
+            {/* An edit session states ONE intent: Save or Cancel. */}
+            {editing ? (
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={cancelEdit}
+                  disabled={saveMut.isPending}
+                  data-testid="cancel-edit"
                 >
-                  {!baseRow.labels.includes('staging') ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setPublishState({ open: true, version: baseRow.version, versionId: baseRow.id, label: 'staging' })
-                      }
-                      disabled={dirty}
-                      data-testid="fullscreen-publish-staging"
-                    >
-                      Stage v{baseRow.version}
-                    </Button>
-                  ) : null}
-                  {!baseRow.labels.includes('production') ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setPublishState({ open: true, version: baseRow.version, versionId: baseRow.id, label: 'production' })
-                      }
-                      disabled={dirty}
-                      data-testid="fullscreen-publish-production"
-                    >
-                      Publish v{baseRow.version}
-                    </Button>
-                  ) : null}
-                </span>
-              ) : null}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setDiffOpen((o) => !o);
-                  if (diffAgainst == null) {
-                    const other = meta.versions.find((v) => v.version !== baseVersion);
-                    setDiffAgainst(other?.version ?? baseVersion);
-                  }
-                }}
-                data-testid="diff-toggle"
-              >
-                <GitCompare className="size-4" /> {diffOpen ? 'Hide diff' : 'Diff'}
-              </Button>
-              <FocusToggle active={focus} onToggle={setFocus} label="editor" />
+                  Cancel
+                </Button>
+                {focus ? null : saveButton}
               </div>
-            </CardHeader>
-            <CardContent className={cn('space-y-3', focus && 'flex flex-auto flex-col')}>
-              {hasRegistry || isParser ? (
-                <Tabs value={editorMode} onValueChange={(v) => setEditorMode(v as 'edit' | 'preview' | 'architecture')}>
-                  <TabsList shape="pill" size="sm" aria-label="Editor mode">
-                    <TabsTrigger value="edit" data-testid="editor-mode-edit">
+            ) : (
+              <DetailActions
+                pager={{
+                  ...promptsPagerQuery,
+                  detailPath: LIST_PATH,
+                  currentId: name,
+                  ariaLabel: 'prompt',
+                }}
+                actions={gearActions.length ? gearActions : undefined}
+                primary={
+                  canEdit ? (
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={beginEdit} data-testid="edit-prompt">
+                      <SquarePen className="size-4" />
                       Edit
-                    </TabsTrigger>
-                    {hasRegistry ? (
-                      <TabsTrigger value="preview" data-testid="editor-mode-preview">
-                        Preview rendered prompt
-                      </TabsTrigger>
-                    ) : null}
-                    {isParser ? (
-                      <TabsTrigger value="architecture" data-testid="editor-mode-architecture">
-                        Architecture
-                      </TabsTrigger>
-                    ) : null}
-                  </TabsList>
-                </Tabs>
-              ) : null}
-              {isParser && editorMode === 'architecture' && (baseQuery.data?.version ?? baseVersion) != null ? (
-                <PromptArchitecture name={name} version={(baseQuery.data?.version ?? baseVersion) as number} />
-              ) : null}
-              {hasRegistry && editorMode === 'preview' ? (
-                <RenderedPreview template={draft} registryNames={registryNames} rows={registryRows} fill={focus} />
-              ) : null}
-              {hasRegistry ? (
-                // Stays mounted (hidden) under Preview, so the owner's last caret survives a
-                // look at the preview and the wired panel's Insert still lands there.
-                <div
-                  hidden={editorMode !== 'edit'}
-                  className={cn(focus && 'flex min-h-[360px] grow basis-0 flex-col')}
-                  data-testid="chip-editor-pane"
-                >
-                  <PromptChipEditor
-                    ref={chipEditorRef}
-                    value={draft}
-                    onChange={setDraft}
-                    variables={registryRows}
-                    registryNames={registryNames}
-                    disabled={!canEdit}
-                    fill={focus}
-                  />
-                </div>
-              ) : (
-                <div hidden={editorMode !== 'edit'} className={cn(focus && 'flex grow basis-0 flex-col')}>
-                  <SearchableTextarea
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    className={cn('min-h-[320px] font-mono text-xs', focus && 'grow basis-0 resize-none')}
-                    containerClassName={cn(focus && 'flex min-h-[320px] grow basis-0 flex-col')}
-                    spellCheck={false}
-                    disabled={!canEdit}
-                    data-testid="prompt-editor"
-                  />
-                </div>
-              )}
-              {editorMode !== 'architecture' ? <VarChips validation={validation} declared={declared} /> : null}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )}
+          </div>
+          {/* Read-only metadata sits under the record header, never in a tab body. */}
+          <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-0.5">
+              <dt className="text-xs text-muted-foreground">Role</dt>
+              <dd className="break-words" data-testid="prompt-role">
+                {meta.role}
+              </dd>
+            </div>
+            <div className="space-y-0.5">
+              <dt className="text-xs text-muted-foreground">Live versions</dt>
+              <dd className="tabular-nums">
+                Production {meta.labels.production != null ? `v${meta.labels.production}` : '-'} · Staging{' '}
+                {meta.labels.staging != null ? `v${meta.labels.staging}` : '-'}
+              </dd>
+            </div>
+          </dl>
+        </CardHeader>
+      </Card>
 
-              {diffOpen ? (
-                <div className="space-y-2 rounded-md border p-3">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-muted-foreground">Compare current draft against:</span>
-                    <div data-testid="diff-base-select">
-                      <SearchableSelect
-                        value={diffAgainst != null ? String(diffAgainst) : ''}
-                        onChange={(v) => setDiffAgainst(Number(v))}
-                        options={meta.versions.map((v) => ({
-                          value: String(v.version),
-                          label: `v${v.version}`,
-                        }))}
-                        placeholder="Select version"
-                        size="sm"
-                        triggerClassName="w-28"
-                      />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as (typeof TABS)[number])} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
+          <TabsTrigger value="prompt">
+            <FileText />
+            <span>Prompt</span>
+          </TabsTrigger>
+          <TabsTrigger value="versions">
+            <History />
+            <span>Versions</span>
+          </TabsTrigger>
+          <TabsTrigger value="model">
+            <Cpu />
+            <span>Model</span>
+          </TabsTrigger>
+          <TabsTrigger value="dry-run">
+            <FlaskConical />
+            <span>Dry run</span>
+          </TabsTrigger>
+        </TabsList>
+
+        {/* forceMount: the editor keeps its draft, caret and full-screen state across tabs. */}
+        <TabsContent
+          value="prompt"
+          forceMount
+          hidden={tab !== 'prompt'}
+          className="mt-0 space-y-4 focus-visible:outline-none"
+        >
+          <div
+            className={cn(
+              'grid gap-4',
+              hasRegistry && '2xl:grid-cols-[minmax(0,1fr)_300px]',
+            )}
+          >
+            {/* gap, not space-y: the full-screen wrapper around the card is `display: contents`. */}
+            <div className="flex min-w-0 flex-col gap-4">
+              <FocusShell active={focus} onExit={() => setFocus(false)} keepMounted>
+                <Card className={cn(focus && 'mb-8 flex-auto')}>
+                  <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+                    <CardTitle className="text-base">
+                      Editor{' '}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {/* Slice E: no saved version means the draft came off `fallback_text`. */}
+                        (base: {meta.versions.length === 0 ? 'code default' : `v${baseVersion}`}
+                        {dirty ? ' · unsaved changes' : ''})
+                      </span>
+                    </CardTitle>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Full screen covers the record header, so its actions come along. */}
+                      {focus && editing ? saveButton : null}
+                      {focus && !editing && canPublish && baseRow ? (
+                        // The reason sits on a wrapper: a disabled Button takes no pointer events.
+                        <span
+                          className="flex flex-wrap items-center gap-2"
+                          title={dirty ? 'Save first: this publishes the saved version, not the unsaved edits' : undefined}
+                        >
+                          {!baseRow.labels.includes('staging') ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openPublish(baseRow, 'staging')}
+                              disabled={dirty}
+                              data-testid="fullscreen-publish-staging"
+                            >
+                              Stage v{baseRow.version}
+                            </Button>
+                          ) : null}
+                          {!baseRow.labels.includes('production') ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openPublish(baseRow, 'production')}
+                              disabled={dirty}
+                              data-testid="fullscreen-publish-production"
+                            >
+                              Publish v{baseRow.version}
+                            </Button>
+                          ) : null}
+                        </span>
+                      ) : null}
+                      <Button type="button" variant="outline" size="sm" onClick={toggleDiff} data-testid="diff-toggle">
+                        <GitCompare className="size-4" /> {diffOpen ? 'Hide diff' : 'Diff'}
+                      </Button>
+                      <FocusToggle active={focus} onToggle={setFocus} label="editor" />
                     </div>
-                  </div>
-                  {diffAgainstQuery.data ? (
-                    <DiffView
-                      a={diffAgainstQuery.data.template}
-                      b={draft}
-                      aLabel={`v${diffAgainstQuery.data.version}`}
-                      bLabel={dirty ? 'current draft' : `v${baseVersion}`}
-                    />
-                  ) : (
-                    <SectionSkeleton rows={2} className="text-xs" />
-                  )}
-                </div>
-              ) : null}
-
-              {canEdit ? (
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <div className="flex-1 space-y-1">
-                    <label className="text-xs text-muted-foreground">Commit message (required)</label>
-                    <Input
-                      ref={saveInputRef}
-                      value={commitMessage}
-                      onChange={(e) => setCommitMessage(e.target.value)}
-                      placeholder="What changed and why?"
-                      data-testid="commit-message"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={doSave}
-                    disabled={saveMut.isPending || hasUnknownTokens || !commitMessage.trim() || !dirty}
-                    data-testid="save-version"
-                  >
-                    {saveMut.isPending ? (
-                      <Loader2 className="size-4 animate-spin" />
+                  </CardHeader>
+                  <CardContent className={cn('space-y-3', focus && 'flex flex-auto flex-col')}>
+                    {hasRegistry || isParser ? (
+                      <Tabs
+                        value={editorMode}
+                        onValueChange={(v) => setEditorMode(v as 'edit' | 'preview' | 'architecture')}
+                      >
+                        <TabsList shape="pill" size="sm" aria-label="Editor mode">
+                          <TabsTrigger value="edit" data-testid="editor-mode-edit">
+                            Edit
+                          </TabsTrigger>
+                          {hasRegistry ? (
+                            <TabsTrigger value="preview" data-testid="editor-mode-preview">
+                              Preview rendered prompt
+                            </TabsTrigger>
+                          ) : null}
+                          {isParser ? (
+                            <TabsTrigger value="architecture" data-testid="editor-mode-architecture">
+                              Architecture
+                            </TabsTrigger>
+                          ) : null}
+                        </TabsList>
+                      </Tabs>
+                    ) : null}
+                    {isParser && editorMode === 'architecture' && (baseQuery.data?.version ?? baseVersion) != null ? (
+                      <PromptArchitecture name={name} version={(baseQuery.data?.version ?? baseVersion) as number} />
+                    ) : null}
+                    {hasRegistry && editorMode === 'preview' ? (
+                      <RenderedPreview template={draft} registryNames={registryNames} rows={registryRows} fill={focus} />
+                    ) : null}
+                    {hasRegistry ? (
+                      // Stays mounted (hidden) under Preview, so the owner's last caret survives a
+                      // look at the preview and the wired panel's Insert still lands there.
+                      <div
+                        hidden={editorMode !== 'edit'}
+                        className={cn(focus && 'flex min-h-[360px] grow basis-0 flex-col')}
+                        data-testid="chip-editor-pane"
+                      >
+                        <PromptChipEditor
+                          ref={chipEditorRef}
+                          value={draft}
+                          onChange={setDraft}
+                          variables={registryRows}
+                          registryNames={registryNames}
+                          disabled={!editing}
+                          fill={focus}
+                        />
+                      </div>
                     ) : (
-                      <>
-                        <Save className="size-4" /> Save as new version
-                      </>
+                      <div hidden={editorMode !== 'edit'} className={cn(focus && 'flex grow basis-0 flex-col')}>
+                        <SearchableTextarea
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          className={cn('min-h-[320px] font-mono text-xs', focus && 'grow basis-0 resize-none')}
+                          containerClassName={cn(focus && 'flex min-h-[320px] grow basis-0 flex-col')}
+                          spellCheck={false}
+                          disabled={!editing}
+                          data-testid="prompt-editor"
+                        />
+                      </div>
                     )}
-                  </Button>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">You have read-only access to prompts.</p>
-              )}
-            </CardContent>
-          </Card>
-          </FocusShell>
+                    {editorMode !== 'architecture' ? <VarChips validation={validation} declared={declared} /> : null}
 
+                    {diffOpen ? (
+                      <div className="space-y-2 rounded-md border p-3">
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Compare current draft against:</span>
+                          <div data-testid="diff-base-select">
+                            <SearchableSelect
+                              value={diffAgainst != null ? String(diffAgainst) : ''}
+                              onChange={(v) => setDiffAgainst(Number(v))}
+                              options={meta.versions.map((v) => ({
+                                value: String(v.version),
+                                label: `v${v.version}`,
+                              }))}
+                              placeholder="Select version"
+                              size="sm"
+                              triggerClassName="w-28"
+                            />
+                          </div>
+                        </div>
+                        {diffAgainstQuery.data ? (
+                          <DiffView
+                            a={diffAgainstQuery.data.template}
+                            b={draft}
+                            aLabel={`v${diffAgainstQuery.data.version}`}
+                            bLabel={dirty ? 'current draft' : `v${baseVersion}`}
+                          />
+                        ) : (
+                          <SectionSkeleton rows={2} className="text-xs" />
+                        )}
+                      </div>
+                    ) : null}
+
+                    {editing ? (
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground" htmlFor="prompt-commit-message">
+                          Commit message (required)
+                        </label>
+                        <Input
+                          id="prompt-commit-message"
+                          ref={saveInputRef}
+                          value={commitMessage}
+                          onChange={(e) => setCommitMessage(e.target.value)}
+                          placeholder="What changed and why?"
+                          data-testid="commit-message"
+                        />
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </FocusShell>
+            </div>
+
+            {hasRegistry ? (
+              <div className="min-w-0">
+                <WiredPanel
+                  variables={registryRows}
+                  draft={draft}
+                  isLoading={registryQuery.isLoading}
+                  canEdit={editing}
+                  onInsert={(varName) => {
+                    // At the owner's last caret in the editor, never appended at the bottom
+                    // (owner hand test #1405, item 2).
+                    setEditorMode('edit');
+                    chipEditorRef.current?.insertVariable(varName);
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="versions" className="mt-0 focus-visible:outline-none">
+          <PanelDataGrid<PromptVersionRow>
+            title="Versions"
+            columns={versionColumns}
+            rows={meta.versions}
+            getRowId={(row) => row.id}
+            listingKey={null}
+            sortable
+            emptyTitle="No saved version yet."
+            onRowClick={(row) => requestSwitch(row.version)}
+            rowAttributes={(row) => ({ 'data-testid': `version-row-${row.version}` })}
+          />
+        </TabsContent>
+
+        <TabsContent value="model" className="mt-0 focus-visible:outline-none">
+          <AgentModelCard name={name} canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="dry-run" className="mt-0 focus-visible:outline-none">
           <DryRunBox
             keyName={name}
             versionId={baseVersionId}
@@ -578,25 +780,8 @@ export function PromptDetail({ name }: { name: string }) {
                   : undefined
             }
           />
-        </div>
-
-        {hasRegistry ? (
-          <div className="min-w-0 lg:col-span-2 2xl:col-span-1">
-            <WiredPanel
-              variables={registryRows}
-              draft={draft}
-              isLoading={registryQuery.isLoading}
-              canEdit={canEdit}
-              onInsert={(varName) => {
-                // At the owner's last caret in the editor, never appended at the bottom
-                // (owner hand test #1405, item 2).
-                setEditorMode('edit');
-                chipEditorRef.current?.insertVariable(varName);
-              }}
-            />
-          </div>
-        ) : null}
-      </div>
+        </TabsContent>
+      </Tabs>
 
       <PublishDialog
         open={publishState.open}
@@ -638,7 +823,7 @@ export function PromptDetail({ name }: { name: string }) {
 /** Malaysia time, in the form the chatbot's `{{current_date}}` directive uses ("Wednesday, 30 September 2026"). */
 function todayInMalaysia(): string {
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', {
+    new Intl.DateTimeFormat('en-GB', { // date-format-ok: mirrors the model's own {{current_date}} text (Wednesday, 30 September 2026), not a CRM date display
       timeZone: 'Asia/Kuala_Lumpur',
       weekday: 'long',
       day: '2-digit',

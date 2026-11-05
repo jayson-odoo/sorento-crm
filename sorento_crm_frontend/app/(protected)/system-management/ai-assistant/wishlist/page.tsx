@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -9,12 +8,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { useWishlist } from '../hooks/useAIUsage';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { NoToolAsksCard } from './NoToolAsksCard';
 
 const PERMISSION = 'system.ai_assistant_settings.view';
 
 function formatLastSeen(d: string): string {
   try {
-    return format(new Date(d), 'MMM d, yyyy HH:mm');
+    return formatDateTimeInMalaysia(d);
   } catch {
     return d;
   }
@@ -42,6 +43,7 @@ export default function AIWishlistPage() {
         <PageHeader title="AI Feature Wishlist" />
       </Container>
       <Container className="space-y-4">
+        <NoToolAsksCard />
         <Card>
           <CardHeader>
             <CardTitle>Clusters</CardTitle>

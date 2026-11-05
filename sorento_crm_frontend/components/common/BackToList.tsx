@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { isDetailViewKey } from '@/lib/listNavQuery';
 
 export interface BackToListProps {
   /** The list route, e.g. `/order-management/orders`. */
@@ -37,15 +38,21 @@ export interface BackToListProps {
  */
 export function useHrefWithListState(path: string, appendListState = true): string {
   const searchParams = useSearchParams();
-  // `tab` is the detail page's own state (which tab is open), not list state, so
-  // it must not ride along to the list, the edit screen, or a post-delete redirect.
+  // `tab` and `view_*` (a detail grid's own search, filter and sort) are the detail
+  // page's own state, not list state, so they must not ride along to the list, the
+  // edit screen, or a post-delete redirect.
   const search = useMemo(() => {
     if (!appendListState) return '';
     const params = new URLSearchParams(searchParams.toString());
     params.delete('tab');
+    for (const key of [...params.keys()]) if (isDetailViewKey(key)) params.delete(key);
     return params.toString();
   }, [appendListState, searchParams]);
-  return search ? `${path}?${search}` : path;
+  if (!search) return path;
+  // A path that names its own query (a tabbed list's `?tab=dealer`) keeps it first; the list
+  // state rides after it.
+  const [base, own] = path.split('?');
+  return own ? `${base}?${own}&${search}` : `${path}?${search}`;
 }
 
 /** The href this page's Back button points at. */

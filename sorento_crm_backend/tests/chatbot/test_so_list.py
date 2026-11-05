@@ -68,7 +68,7 @@ def _date(iso: str) -> str:
     from datetime import date
 
     d = date.fromisoformat(iso)
-    return f"{d.day} {d:%b %Y}"
+    return d.strftime("%d/%m/%Y")
 
 
 def _seed_hanlim(session_factory) -> dict[str, str]:
@@ -109,7 +109,7 @@ class TestSoListForOneGroup:
         _seed_hanlim(session_factory)
         reply, captured = _turn(session_factory, monkeypatch, _list_ask("2026-09-01", "2026-09-30"))
         lines = reply.strip().split("\n")
-        assert lines[0] == "Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:", reply
+        assert lines[0] == "Sales orders for HANLIM TRADING SDN BHD, 01/09/2026 - 30/09/2026:", reply
         assert [ln.split(" - ")[0] for ln in lines[1:]] == [r[0] for r in SEP_ROWS], reply
         for number, words in WORDS.items():
             iso = next(r[1] for r in SEP_ROWS if r[0] == number)
@@ -119,15 +119,15 @@ class TestSoListForOneGroup:
         assert _calls(captured, ORDERS) == [], captured
 
     def test_a_cancelled_row_carries_the_marker_and_no_delivery_word(self, session_factory, monkeypatch) -> None:
-        """Q2 (a): 'SO418652 - 27 Aug 2026 - ❗ Cancelled'."""
+        """Q2 (a): 'SO418652 - 27/08/2026 - ❗ Cancelled'."""
         _seed_hanlim(session_factory)
         reply, _ = _turn(session_factory, monkeypatch, _list_ask("2026-08-10", "2026-09-02"), "my SOs")
-        assert "SO418652 - 27 Aug 2026 - ❗ Cancelled" in reply.split("\n"), reply
+        assert "SO418652 - 27/08/2026 - ❗ Cancelled" in reply.split("\n"), reply
 
     def test_an_empty_period_says_so_in_one_line(self, session_factory, monkeypatch) -> None:
         _seed_hanlim(session_factory)
         reply, _ = _turn(session_factory, monkeypatch, _list_ask("2026-07-01", "2026-07-31"))
-        assert reply.strip() == "No sales orders for HANLIM TRADING SDN BHD from 1 Jul 2026 to 31 Jul 2026.", reply
+        assert reply.strip() == "No sales orders for HANLIM TRADING SDN BHD from 01/07/2026 to 31/07/2026.", reply
 
 
 class TestSoListPeriod:
@@ -149,7 +149,7 @@ class TestSoListPeriod:
                            date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
             "september",
         )
-        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 01/09/2026 - 30/09/2026:\nSO422095"), reply
 
     def test_more_than_31_days_is_refused_with_suggestions(self, session_factory, monkeypatch) -> None:
         """Q1 (a): the 31-day rolling cap."""
@@ -174,9 +174,9 @@ class TestSoListMultiGroup:
         lines = reply.strip().split("\n")
         assert lines[0].startswith("Sales orders for HANLIM TRADING SDN BHD, SOON HENG HARDWARE CO.SDN.BHD., MODERNMED SDN BHD"), reply
         assert lines[1:] == [
-            "SO422095 - 21 Sep 2026 - HANLIM TRADING SDN BHD - Closed - fully delivered",
-            "SO421800 - 18 Sep 2026 - SOON HENG HARDWARE CO.SDN.BHD. - Open - not delivered yet",
-            "SO421700 - 17 Sep 2026 - MODERNMED SDN BHD - ❗ Cancelled",
+            "SO422095 - 21/09/2026 - HANLIM TRADING SDN BHD - Closed - fully delivered",
+            "SO421800 - 18/09/2026 - SOON HENG HARDWARE CO.SDN.BHD. - Open - not delivered yet",
+            "SO421700 - 17/09/2026 - MODERNMED SDN BHD - ❗ Cancelled",
         ], reply
 
 
@@ -316,7 +316,7 @@ class TestCloudPassLiveParserReadings:
             session_factory, monkeypatch, _live(date_filter_start="2026-09-01", date_filter_end="2026-09-30"),
             "september",
         )
-        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 01/09/2026 - 30/09/2026:\nSO422095"), reply
         assert "crm_outstanding_report" not in [n for n, _ in captured], captured
 
     def test_outstanding_typed_after_the_list_still_runs_the_report(self, session_factory, monkeypatch) -> None:
@@ -368,7 +368,7 @@ class TestCloudPassParserDropsTheTypedWords:
         reply, captured = _turn(
             session_factory, monkeypatch, _live(order_status="sales_report", status="sales_report"), "september"
         )
-        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026 to 30 Sep 2026:\nSO422095"), reply
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 01/09/2026 - 30/09/2026:\nSO422095"), reply
         assert captured == [], captured
 
     def test_outstanding_in_september_without_a_status_is_the_report(self, session_factory, monkeypatch) -> None:
@@ -393,7 +393,7 @@ class TestReviewRoundCarriedStatusGuards:
         _seed_hanlim(session_factory)
         reply, _ = _turn(session_factory, monkeypatch, _live(order_status=None, date_filter_start="2026-09-01",
                                                           date_filter_end="2026-09-30"), "all my sales orders")
-        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 1 Sep 2026"), reply
+        assert reply.startswith("Sales orders for HANLIM TRADING SDN BHD, 01/09/2026"), reply
 
     def test_pending_delivery_after_the_list_is_not_the_list(self, session_factory, monkeypatch) -> None:
         self._on_the_list(session_factory, monkeypatch)

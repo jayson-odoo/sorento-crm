@@ -63,9 +63,11 @@ from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import project_customer_label
 from app.services.scm import cover_service, plan_grain, po_book_service
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm import last_po_supplier as last_po_rule
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
+    OIR_DATE,
     ACTIVE_DECISION_STATE,
     BUY_VERB,
     UNPLACED_INQUIRY_STATE,
@@ -788,9 +790,9 @@ def _earliest_project_need_dates(db: Session, product_ids: list[str]) -> dict[st
     """
     if not product_ids:
         return {}
-    rows = db.execute(text("""
+    rows = db.execute(text(f"""
         SELECT sol.product_id::text AS pid,
-               MIN(COALESCE(oir.delivery_date, sol.required_date)) AS needed
+               MIN(COALESCE({OIR_DATE}, sol.required_date)) AS needed
         FROM projects.order_inquiry_rows oir
         JOIN projects.so_supply_decisions d
           ON d.id = oir.supply_decision_id AND d.state = :active
@@ -1326,6 +1328,7 @@ _EXPORT_COLUMNS = (
     "Last in date", "Remarks",
 )
 
+# date-format-ok: month bucket label, no day to show
 _MONTH_ABBR = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
               "Nov", "Dec")
 
@@ -1985,8 +1988,11 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
     total = 0.0
     line_ids = [str(r[4]) for r in rows if _channel_of(r[3]) == kind]
     decision_refs = _decision_refs(db, line_ids) if kind != RETAIL_KIND else {}
+    # OI-UX-FILTER-SNAPSHOT: `project_name` above is the customer (older readers); the order's
+    # own customer and project label travel as `customer_name` / `project_label`.
+    parties = so_parties(db, ids=[r[0] for r in rows if _channel_of(r[3]) == kind])
     for r in rows:
-        (_so_id, so_number, order_date, demand_class, line_id, qty_ordered, qty_delivered,
+        (so_id, so_number, order_date, demand_class, line_id, qty_ordered, qty_delivered,
          required_date, requested_delivery_date, customer_name, warehouse_code) = r
         # `public.sales_order_lines` carries no line number - the human one lives on the
         # reconciled PROJECT line, which is also where the decision reference comes from,
@@ -2001,7 +2007,7 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
         qty = float(qty_ordered or 0) - float(qty_delivered or 0)
         total += qty
         if kind == PROJECT_KIND:
-            project_lines.append({
+            project_lines.append(with_party({
                 # AC-C2.3 asks for the PROJECT name, and the SCM order book does not carry
                 # one: `sales_orders` has customer, type and dates, and the project-sales
                 # module's `project_sales_orders` is a separate book with no link to this
@@ -2019,9 +2025,9 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                 "line_no": line_no,
                 "warehouse_code": warehouse_code,
                 "decision_ref": traced.get("ref"),
-            })
+            }, parties, so_id))
         elif kind == RETAIL_KIND:
-            retail_lines.append({
+            retail_lines.append(with_party({
                 "dealer_name": customer_name or "",
                 "so_number": so_number or "",
                 "qty": round(qty, 4),
@@ -2029,9 +2035,9 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                     (today - order_date).days if order_date is not None else 0
                 ),
                 "ordered_date": order_date.isoformat() if order_date else None,
-            })
+            }, parties, so_id))
         else:
-            unclassified_lines.append({
+            unclassified_lines.append(with_party({
                 "customer_name": customer_name or "",
                 "so_number": so_number or "",
                 "line_no": line_no,
@@ -2041,7 +2047,7 @@ def demand_drill(db: Session, product_code: str, *, kind: str) -> dict:
                 # type, stated order type, market segment and sales agent and none of them
                 # said. That is a data-quality job, not a third channel.
                 "exception": "No demand class on the sales order",
-            })
+            }, parties, so_id))
 
     # Undated project lines LAST rather than first: `date.min` would put a line nobody has
     # dated at the top of a list ordered by urgency.

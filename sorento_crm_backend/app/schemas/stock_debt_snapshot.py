@@ -133,14 +133,26 @@ class SnapshotOiRow(BaseModel):
     state: str
     now_state: Optional[str] = None
     reserve_state: Optional[Literal["requested", "parked", "reserved", "cancelled"]] = None
+    #: OI-RESERVE-USED-ROW: the qty the latest request asked for, or CS answered when reserved.
+    reserve_qty: Optional[float] = None
     remaining: Optional[float] = None
     requestable: bool = False
     after_snapshot: bool = False
 
 
+class SnapshotLinePoLink(BaseModel):
+    """AC-LINK-CRM-UI: a PO line linked to this SO line now (live)."""
+    po_line_id: str
+    po_number: str
+    po_line_no: Optional[int] = None
+    qty: float
+    location_code: Optional[str] = None
+
+
 class SnapshotLineNow(BaseModel):
     so_status: Optional[str] = None
     open_qty: float = 0.0
+    po_links: List[SnapshotLinePoLink] = []
 
 
 class SnapshotLine(StockDebtDemandLine):
@@ -152,3 +164,89 @@ class SnapshotLine(StockDebtDemandLine):
 
 class SnapshotLineList(BaseModel):
     data: List[SnapshotLine]
+
+
+# --------------------------------------------------------------- PO link (AC-LINK-CRM-UI)
+
+
+class PoLinkCapability(BaseModel):
+    enabled: bool
+    reason: Optional[str] = None
+
+
+class PoLinkCapabilities(BaseModel):
+    split_link: PoLinkCapability
+    link_row: PoLinkCapability
+    unlink_row: PoLinkCapability
+    relink_row: PoLinkCapability
+
+
+class PoLinkOption(BaseModel):
+    po_line_id: str
+    po_number: str
+    po_line_no: Optional[int] = None
+    location_code: Optional[str] = None
+    delivery_date: Optional[DateType] = None
+    po_qty: float
+    free_qty: float
+    supplier_name: Optional[str] = None
+    #: The AutoCount book (database) the PO line lives in.
+    book: Optional[str] = None
+
+
+class PoLinkOptions(BaseModel):
+    capabilities: PoLinkCapabilities
+    po_lines: List[PoLinkOption]
+    #: sales_order_line_id -> its AutoCount book: a PO line links only within its own book.
+    so_books: Dict[str, str] = {}
+
+
+class PoLinkLineIn(BaseModel):
+    sales_order_line_id: str
+    po_line_id: str
+    qty: float
+
+
+class PoLinkIn(BaseModel):
+    lines: List[PoLinkLineIn] = Field(min_length=1, max_length=50)
+
+
+class PoUnlinkIn(BaseModel):
+    po_line_ids: List[str] = Field(min_length=1, max_length=50)
+
+
+class PoRelinkMoveIn(BaseModel):
+    po_line_id: str
+    to_sales_order_line_id: str
+
+
+class PoRelinkIn(BaseModel):
+    moves: List[PoRelinkMoveIn] = Field(min_length=1, max_length=50)
+
+
+class PoRelocateIn(BaseModel):
+    po_line_id: str
+
+
+class PoResumeIn(BaseModel):
+    po_line_id: str
+    sales_order_line_id: Optional[str] = None
+
+
+class PoLinkResult(BaseModel):
+    sales_order_line_id: Optional[str] = None
+    so_number: Optional[str] = None
+    so_line_no: Optional[int] = None
+    po_number: Optional[str] = None
+    qty: Optional[float] = None
+    outcome: Optional[str] = None
+    error_code: Optional[str] = None
+    warnings: List[str] = []
+    message: str = ""
+    operation_id: Optional[str] = None
+    company_code: Optional[str] = None
+    po_line_id: Optional[str] = None
+
+
+class PoLinkResults(BaseModel):
+    results: List[PoLinkResult]

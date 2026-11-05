@@ -87,6 +87,7 @@
 
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
@@ -118,6 +119,8 @@ export interface LinePartCandidate {
   name: string;
   /** Set on an upgrade candidate: its top-up. */
   topup_amount?: number | null;
+  /** The product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /**
@@ -164,6 +167,8 @@ export interface PriceTagRequestLine {
   /** Human-readable code resolved from the product/set. */
   code: string;
   show_promo_price: boolean;
+  /** PRICETAG-LPSP: this line's own LP/SP; null on a line saved before it existed. */
+  price_type?: PriceMode | null;
   quantity: number;
   included_accessories: string | null;
   /** Free-text note on the line (D6). Set on the line, not the header, so
@@ -204,6 +209,10 @@ export interface ProductTagTemplateOption {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
+  /** PRICETAG-LPSP: the link preselected on a line. */
+  is_default?: boolean;
+  /** What the template reads from a combo (from its published layers). */
+  needs?: TemplateNeeds;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -217,6 +226,8 @@ export interface TagPreviewLineInput {
   promotion_id: string | null;
   manual_sell_price: number | null;
   tag_template_id: string | null;
+  /** PRICETAG-LPSP: null = the request's mode. */
+  price_type?: PriceMode | null;
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
@@ -339,6 +350,9 @@ export interface TagItemOption {
   id: string;
   code: string;
   name: string;
+  /** None when unpriced or zero; a set answers its override only. Optional so a
+   *  caller that builds one by hand need not invent a price. */
+  list_price?: number | null;
 }
 
 /** One part of a combo, as the combos lookup answers it. */
@@ -352,6 +366,8 @@ export interface ComboPartOption {
   is_upgrade?: boolean;
   /** An upgrade's top-up, when set. */
   topup_amount?: number | null;
+  /** The part product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */
@@ -403,6 +419,8 @@ export type PriceTagRequestLineInput = {
   manual_sell_price?: number | null;
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's pick (null = none). */
   tag_template_id?: string | null;
+  /** PRICETAG-LPSP: this line's LP or SP; null/absent = the request's mode. */
+  price_type?: PriceMode | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -600,9 +618,12 @@ export function makePriceTagRequestService(
    */
   async function lookupProductTagTemplates(
     productId: string,
+    comboId?: string | null,
   ): Promise<ProductTagTemplateOption[]> {
+    // PRICETAG-LPSP: with a combo, the combo's own links when it has any.
+    const query = comboId ? `?combo_id=${encodeURIComponent(comboId)}` : '';
     const res = await fetcher(
-      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}`,
+      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}${query}`,
     );
     return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
   }

@@ -76,6 +76,7 @@ from app.services.scm.demand import (
     qty_of as demand_qty_of,
 )
 from app.services.scm import spo_supply
+from app.services.scm.so_party import EMPTY_PARTY, so_parties
 from app.services.scm.reorder_engine import resolve_policy_for_sku
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -151,6 +152,9 @@ class UndatedDemand:
     item_code: str
     qty: float
     location: str
+    #: OI-UX-FILTER-SNAPSHOT: the order's own customer and project.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -429,6 +433,10 @@ class CoverageService:
 
         events: dict[str, list[TimelineEvent]] = {}
         undated: dict[str, list[UndatedDemand]] = {}
+        parties = so_parties(
+            self.db,
+            numbers=[r.so_number for r in rows if not (r.required_date or r.requested_delivery_date)],
+        )
         for r in rows:
             pid = str(r.product_id)
             outstanding = demand_qty_of(r)
@@ -444,6 +452,7 @@ class CoverageService:
                         item_code=r.product_code or "",
                         qty=outstanding,
                         location=r.warehouse_code or "",
+                        **parties.get(r.so_number or "", EMPTY_PARTY),
                     )
                 )
                 continue
