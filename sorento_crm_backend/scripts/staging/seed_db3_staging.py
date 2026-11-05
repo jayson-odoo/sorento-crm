@@ -52,7 +52,7 @@ AUTOCOUNT_SWITCHES = (
 INTEGRATION_NAME = "foundryx-esb"
 DEFAULT_COMPANY_CODE = "SRT_DB3"
 DEFAULT_COMPANY_NAME = "TEST - AutoCount db3"
-DEFAULT_ADMIN_EMAIL = "staging-admin@sorento.local"
+DEFAULT_ADMIN_EMAIL = "staging-admin@example.com"
 
 
 class RefusedTarget(Exception):
