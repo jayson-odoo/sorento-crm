@@ -335,6 +335,10 @@ def test_u4b_a_move_never_un_holds_the_company_and_only_brand_and_account_type_n
     ask = {"company": None, "brands": ["Sorento"]}
     report_ask._keep_held(ask, held, set(), None)
     assert ask["company"] == "Sorento", ask
+    held = {"account_types": ["Cabana"], "brands": []}
+    ask = {"account_types": [], "brands": ["Cabana"]}
+    report_ask._keep_held(ask, held, set(), None)
+    assert ask["account_types"] == [], f"an account type the answer moved to brands is not refilled (review N2): {ask}"
     held = {"sales_agents": ["Tan"], "customers": []}
     ask = {"sales_agents": [], "customers": ["Tan"]}
     report_ask._keep_held(ask, held, set(), None)
@@ -363,6 +367,8 @@ def test_u5b_a_company_this_message_typed_is_never_read_as_an_echo() -> None:
     """Review B2: "Sorento SG" typed by the user (an entity of this message) stays as written, refused downstream."""
     assert report_ask._held_spelling("Sorento SG", "Sorento", (), ["Sorento SG"]) == "Sorento SG"
     assert report_ask._held_spelling("Sorento SG", "Sorento", (), []) == "Sorento"
+    assert report_ask._held_spelling("SORENTOG", "Sorento", (), ["sorento g", "SORENTOG"]) == "SORENTOG", "a typed code counts (N3)"
+    assert report_ask._held_spelling("SORENTOG", "Sorento", (), ["sorento g"]) == "Sorento", "control: the code is what saved it"
 
 
 # ------------------------------------------------------------------------------------------ the prompt candidate + gold
@@ -402,12 +408,16 @@ def test_p2_the_committed_filter_all_gold_file_loads_whole() -> None:
 
 
 @pytest.mark.parametrize("text", ["all brands", "clear the brand", "no brand", "sorento"])
-def test_k1_an_open_outstanding_list_never_reads_the_words_of_a_report_object_turn(text) -> None:
+def test_k1_an_open_outstanding_list_never_reads_the_words_of_a_report_object_turn(text, monkeypatch) -> None:
     """Owner 5 Nov: no keyword or regex decides a report's filters; the parser's object does. `order_list.clears_the_brand`
     and `brand_word_alone` stand down when the parse carries a report object."""
+    from app.services.chatbot import order_list
     from app.services.chatbot.order_list import order_list_verdict
     from app.services.chatbot.turn.state import Focus, State
 
+    # Review N8: with no database `brand_word_alone` never matches; make every word a live brand word so the bare-word
+    # switch is really exercised.
+    monkeypatch.setattr(order_list, "brand_word_alone", lambda _db, t: t)
     focus = Focus(domains=["order"], status="do_outstanding", outstanding_brand_ids=["b1"])
     verdict = {"order_status": "do_outstanding", "report_ask": _ra2(None, kind="outstanding", brands=[ALL]), "entities": []}
     out, state, rule = order_list_verdict(None, verdict, State(focus=focus), text)

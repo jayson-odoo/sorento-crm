@@ -20,6 +20,11 @@ unless it names another file.
 | SC-8 (test_report_semantic_carry) | Dealer channel held | A restated product ask that leaves channel null | Channel dealer kept (owner 3 Nov) |
 | CL-1..CL-7 (test_report_totals_filters) | | Legacy-prompt clears | Unchanged |
 | HT1-18..20 (test_report_totals_filters_ht1) | | Company echo, switch, forbidden | Unchanged |
+| R1 | Company Sorento held, every agent | "sorento brand only", company null (said_as brand) | Company Sorento kept, the brand applied |
+| R2 | Company Sorento held | The user types "Sorento SG" (not held), object company "Sorento SG" | "You do not have access to that company."; nothing runs |
+| R3 | Company Sorento + brand SORENTO held | "sorento company only" (said_as company) | Company Sorento, no brand |
+| U4 / U4b | | A brand moved to the company, an account type moved to brands, a new customer "Tan" beside a held agent "Tan" | The first two are not refilled; the agent refills; the company is never un-held by a move |
+| U5 / U5b | | Company spellings | An own close name and a typed name or code are never echoes |
 | K1 | An outstanding list open | A report object turn saying "all brands" / "clear the brand" / "no brand" / a bare brand word | No keyword rule fires; the object decides (the plain order list keeps its own clear) |
 | K2 | | | The report lane imports no regex |
 | P1 | | | The candidate text is the v72 base (d29c1983) plus the ALL edits, md5 698e137b, and defines ALL; v72 does not |
