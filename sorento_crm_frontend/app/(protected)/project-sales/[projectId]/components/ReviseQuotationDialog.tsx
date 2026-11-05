@@ -35,7 +35,7 @@ export type ReviseScope = {
  */
 export function ReviseQuotationDialog({
   projectId,
-  scopes,
+  scopes: scopesOnOpen,
   onDone,
 }: {
   projectId: string;
@@ -49,6 +49,9 @@ export function ReviseQuotationDialog({
    * cannot be undone.
    */
   const done = React.useRef(new Map<string, string>());
+  // Worded from what the dialog was opened on: after a partial failure the refetched scopes
+  // already count the areas that moved, and the wording must not promise them a second step.
+  const [scopes] = React.useState(scopesOnOpen);
   const currentVersionNo = Math.max(0, ...scopes.map((scope) => scope.currentVersionNo));
   const lineCount = scopes.reduce((sum, scope) => sum + scope.lineCount, 0);
   const sameVersion = scopes.every((scope) => scope.currentVersionNo === currentVersionNo);

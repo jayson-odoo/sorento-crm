@@ -213,6 +213,12 @@ const SECTION_SKELETON_SEGMENTS = [
   'dealer-kit/pages/[pageId]',
   'dealer-kit/bundles',
   'dealer-kit/price-tag-requests/[id]/design',
+  // PROPOSAL-HEADER-LAYOUT (#2194): the quotation document's prose tabs sit under `(view)`,
+  // whose loading.tsx is the Header tab's list skeleton.
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/cover-letter',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/terms',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/signatures',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/feedback',
 ];
 
 // Every segment that must carry a loading.tsx: what the walk finds, plus the manually
