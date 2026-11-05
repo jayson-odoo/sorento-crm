@@ -413,10 +413,10 @@ def test_a_feature_icons_layer_defaults_to_left_aligned():
 def test_a_zero_icon_size_is_refused():
     with pytest.raises(pydantic.ValidationError) as exc:
         TagTemplateDocModel.model_validate(_layer(iconSize_mm=0))
-    assert "iconSize_mm" in str(exc.value)
+    assert any("iconSize_mm" in e["loc"] for e in exc.value.errors())
 
 
 def test_an_unknown_align_is_refused():
     with pytest.raises(pydantic.ValidationError) as exc:
         TagTemplateDocModel.model_validate(_layer(align="justify"))
-    assert "align" in str(exc.value)
+    assert any("align" in e["loc"] for e in exc.value.errors())
