@@ -10576,17 +10576,19 @@ class ProjectSupplyService:
         if not pids or not wids:
             return {}
 
-        # The line's position inside its own document, in the order `PurchaseOrder.lines`
-        # uses - so the number on screen is the number the document detail shows.
+        # AutoCount's own line number (`line_no`, its Seq) - the number staff read on the PO in
+        # AutoCount (AC-LINK-CRM-UI) - else the line's position inside its own document, in the
+        # order `PurchaseOrder.lines` uses, for a line not synced since the column landed.
         numbered = (
             self.db.query(
                 PurchaseOrderLine.id.label("line_id"),
-                func.row_number()
-                .over(
-                    partition_by=PurchaseOrderLine.purchase_order_id,
-                    order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
-                )
-                .label("line_no"),
+                func.coalesce(
+                    PurchaseOrderLine.line_no,
+                    func.row_number().over(
+                        partition_by=PurchaseOrderLine.purchase_order_id,
+                        order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
+                    ),
+                ).label("line_no"),
             )
             .subquery()
         )

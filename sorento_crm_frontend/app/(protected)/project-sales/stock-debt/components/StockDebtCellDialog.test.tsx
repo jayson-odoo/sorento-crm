@@ -213,7 +213,7 @@ describe('StockDebtCellDialog', () => {
     const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers).toEqual([
       // OI-UX-FILTER-SNAPSHOT: the SO list's Customer and Project right after Sales order.
-      'Sales order', 'Customer', 'Project', 'Agent', 'Bin', 'Due', 'Ordered', 'Delivered',
+      'Sales order', 'Customer', 'Project', 'Agent', 'Location', 'Delivery date', 'Ordered', 'Delivered',
       'Outstanding', 'Assigned', 'Covered by', 'Status',
     ]);
     expect(screen.queryByRole('link', { name: 'Plan' })).not.toBeInTheDocument();
@@ -247,10 +247,10 @@ describe('StockDebtCellDialog', () => {
     // Unsorted (service order): the later-due row is fed first and stays first.
     expect(firstRowSo()).toBe('SO-LATE');
 
-    fireEvent.click(screen.getByText('Due'));
+    fireEvent.click(screen.getByText('Delivery date'));
     await waitFor(() => expect(firstRowSo()).toBe('SO-EARLY'));
 
-    fireEvent.click(screen.getByText('Due'));
+    fireEvent.click(screen.getByText('Delivery date'));
     await waitFor(() => expect(firstRowSo()).toBe('SO-LATE'));
   });
 

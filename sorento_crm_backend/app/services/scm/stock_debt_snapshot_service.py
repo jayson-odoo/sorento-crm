@@ -44,6 +44,7 @@ from app.services.order_inquiry_reserve_service import (
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.demand import demand_qty
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
+from app.services.scm.stock_debt_po_link_service import po_links_for
 from app.services.scm.stock_debt_service import StockDebtService, annotate_so_parties
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
@@ -449,6 +450,22 @@ class StockDebtSnapshotService:
         annotate_so_parties(self.db, lines)
 
         now = self._line_now(core_ids)
+        # AC-LINK-CRM-UI: the PO lines linked to each line now, live, so a link made from the
+        # drill shows on it without a new snapshot.
+        po_links = po_links_for(self.db, core_ids)
+        for line_id, entry in now.items():
+            entry["po_links"] = po_links.get(line_id, [])
+        # A snapshot stored before the demand row carried `line_no` reads it off the SO line.
+        missing = [l["sales_order_line_id"] for l in lines if l.get("line_no") is None]
+        if missing:
+            numbers = dict(
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no)
+                .filter(SalesOrderLine.id.in_(sorted(set(missing))))
+                .all()
+            )
+            for line in lines:
+                if line.get("line_no") is None:
+                    line["line_no"] = numbers.get(line["sales_order_line_id"])
         # Security L1: without `projects.projects.view` no order inquiry row is served,
         # frozen or live.
         if not UserPermissionService(self.db).check_user_has_permission(user_id, OI_PERMISSION):
