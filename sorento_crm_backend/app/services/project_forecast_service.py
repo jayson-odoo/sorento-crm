@@ -270,14 +270,13 @@ def _live_projects(db: Session, company_id: str) -> List[Project]:
 def _lost_projects_with_committed_money(db: Session, company_id: str) -> List[Project]:
     """Lost projects that nevertheless have a purchase order on record.
 
-    A PO is money a contractor already committed to. If the remaining scopes are then lost the
-    project's derived outcome becomes `lost` -- and dropping the whole project took its banked
-    PO out of Committed with it, so the one number that reports what was ORDERED went down
-    when a different scope was lost. Orders do not un-happen.
+    A PO is money a contractor already committed to. If the project is then marked lost,
+    dropping the whole project would take its banked PO out of Committed with it, so the one
+    number that reports what was ORDERED would go down. Orders do not un-happen.
 
     Narrow on purpose: only lost projects that actually carry a PO come back, and they come
-    back for Committed only. Their Pipeline and Weighted stay zero because `_open_quotation_
-    totals` finds no open quotation and the estimate is suppressed once anything was priced.
+    back for Committed only. Their Pipeline and Weighted stay zero because a lost project
+    counts no pipeline (`forecast` zeroes it before the estimate fallback).
 
     No "not already in the live set" clause: the live set excludes lost projects by definition,
     so it could never overlap, and expressing the redundancy meant handing a bare Python
@@ -331,7 +330,10 @@ def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
 
     for project in projects:
         pipeline = open_totals.get(project.id)
-        if pipeline is None:
+        if project.outcome != OUTCOME_OPEN:
+            # Won or lost: no pipeline, whatever the registration estimate says.
+            pipeline = Decimal("0.00")
+        elif pipeline is None:
             # Nothing OPEN. The estimate only stands in for a project that was never priced
             # at all -- a fully-decided project is committed, not pipeline.
             pipeline = Decimal("0.00") if project.id in quoted else estimates.get(project.id, Decimal("0.00"))
@@ -484,7 +486,9 @@ def by_salesperson(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
             },
         )
         pipeline = open_totals.get(project.id)
-        if pipeline is None:
+        if project.outcome != OUTCOME_OPEN:
+            pipeline = Decimal("0.00")
+        elif pipeline is None:
             pipeline = Decimal("0.00") if project.id in quoted else estimates.get(project.id, Decimal("0.00"))
         percent = probabilities.get(project.status_id or "", Decimal("0"))
 

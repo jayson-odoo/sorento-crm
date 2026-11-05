@@ -332,13 +332,6 @@ export function PipelineClient() {
           Clear filters
         </Button>
       )}
-      {losingTo && (
-        <ProjectLossDialog
-          projectId={losingTo.projectId}
-          toStatusId={losingTo.toStatusId}
-          onDone={() => setLosingTo(null)}
-        />
-      )}
     </div>
   );
 
@@ -521,6 +514,13 @@ export function PipelineClient() {
         <DeliveryScheduleUploadDialog
           onDone={() => setStartAction(null)}
           pipelineListQuery={detailSearch}
+        />
+      )}
+      {losingTo && (
+        <ProjectLossDialog
+          projectId={losingTo.projectId}
+          toStatusId={losingTo.toStatusId}
+          onDone={() => setLosingTo(null)}
         />
       )}
     </div>

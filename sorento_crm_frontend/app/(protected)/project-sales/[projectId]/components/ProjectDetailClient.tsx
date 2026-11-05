@@ -238,7 +238,10 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
   const canMarkWon = !waiting && project.outcome === 'open';
-  const canReopen = !waiting && (project.outcome === 'won' || project.outcome === 'lost');
+  const canReopen =
+    !waiting &&
+    (project.outcome === 'won' || project.outcome === 'lost') &&
+    project.status_key !== 'po_received';
   const hasGearItems =
     !narrowed &&
     (showEditItem ||

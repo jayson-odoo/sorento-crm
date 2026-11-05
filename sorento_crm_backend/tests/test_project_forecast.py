@@ -537,3 +537,50 @@ def test_salesperson_performance_reports_per_owner(seeded):
     assert rows[owner]["pipeline"] == Decimal("10000.00")
     assert rows[other]["pipeline"] == Decimal("1000.00")
     assert rows[owner]["owner_name"] == f"{MARKER} Ali"
+
+
+def test_an_unpriced_won_project_with_an_estimate_counts_no_pipeline_or_weighted(seeded):
+    """A won or lost project never falls back to its registration estimate."""
+    from app.services import project_forecast_service as fc
+
+    db, company_id, owner = seeded
+    _set_probability(db, "quoted", 40)
+    project = _project(
+        db,
+        company_id,
+        owner,
+        status_key="quoted",
+        details={"estimated_sales_value": Decimal("250000.00")},
+    )
+    project.outcome = "won"
+    db.flush()
+
+    numbers = fc.forecast(db, company_id=company_id)
+    assert numbers["pipeline"] == Decimal("0.00")
+    assert numbers["weighted"] == Decimal("0.00")
+    rows = {r["owner_user_id"]: r for r in fc.by_salesperson(db, company_id=company_id)}
+    assert rows[owner]["pipeline"] == Decimal("0.00")
+    assert rows[owner]["weighted"] == Decimal("0.00")
+
+
+def test_an_unpriced_lost_project_with_a_po_has_no_pipeline_but_still_commits(seeded):
+    from app.services import project_forecast_service as fc
+
+    db, company_id, owner = seeded
+    _set_probability(db, "quoted", 40)
+    project = _project(
+        db,
+        company_id,
+        owner,
+        status_key="quoted",
+        details={"estimated_sales_value": Decimal("250000.00")},
+    )
+    _po(db, project, owner, amount="7000.00")
+    project.outcome = "lost"
+    project.loss_reason = "price"
+    db.flush()
+
+    numbers = fc.forecast(db, company_id=company_id)
+    assert numbers["pipeline"] == Decimal("0.00")
+    assert numbers["weighted"] == Decimal("0.00")
+    assert numbers["committed"] == Decimal("7000.00")

@@ -397,7 +397,7 @@ def test_be3_mark_won_on_a_won_project_is_a_no_op(seeded):
 def test_be3_reopen_from_won_clears_the_reason_and_keeps_the_status(seeded):
     db, company_id, owner = seeded
     project = _project(db, company_id, owner, status_key="quoted")
-    _move(db, project, owner, "po_received")
+    _set_outcome(db, project, owner, "won")
     assert project.outcome == "won"
 
     _set_outcome(db, project, owner, "open")
@@ -405,7 +405,24 @@ def test_be3_reopen_from_won_clears_the_reason_and_keeps_the_status(seeded):
     db.refresh(project)
     assert project.outcome == "open"
     assert project.loss_reason is None
-    assert project.status_id == _status_id(db, "po_received")
+    assert project.status_id == _status_id(db, "quoted")
+
+
+def test_be3_reopen_is_refused_once_the_project_has_its_po(seeded):
+    """Fix round 1 S2: a project on PO Received cannot be re-opened."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner, status_key="quoted")
+    _move(db, project, owner, "po_received")
+    assert project.outcome == "won"
+
+    with pytest.raises(AppException) as refused:
+        _set_outcome(db, project, owner, "open")
+
+    assert refused.value.status_code == 409
+    assert refused.value.code == "project_po_received"
+    assert "cannot be re-opened" in refused.value.message
+    db.refresh(project)
+    assert project.outcome == "won"
 
 
 def test_be3_reopen_on_an_open_project_is_a_no_op(seeded):

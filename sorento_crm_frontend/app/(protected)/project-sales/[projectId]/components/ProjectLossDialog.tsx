@@ -5,6 +5,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -37,6 +38,7 @@ export function ProjectLossDialog({
       <DialogContent className="max-h-[92dvh] w-full max-w-md overflow-hidden">
         <DialogHeader>
           <DialogTitle>Mark lost</DialogTitle>
+          <DialogDescription>Pick why the project was lost.</DialogDescription>
         </DialogHeader>
 
         <form

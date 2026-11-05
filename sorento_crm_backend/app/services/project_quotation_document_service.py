@@ -1,8 +1,8 @@
 """The quotation DOCUMENT: one letterhead carrying several priced scopes.
 
 Sits above ``project_quotation_service``, which keeps owning a scope and its version chain. The
-split matters: outcome is per scope and is not a property of a revision, so this module never
-touches outcome, and the project's derived outcome keeps working untouched.
+split matters: a scope carries no outcome (the project has the one Won/Lost outcome), and the
+only outcome this module writes is a customer acceptance winning an open project.
 
 Three rules are enforced here rather than left to callers, because each has already been got
 wrong once somewhere in this codebase:

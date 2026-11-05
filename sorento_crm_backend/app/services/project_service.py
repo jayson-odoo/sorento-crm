@@ -1565,19 +1565,31 @@ def _rung_before_lost(db: Session, project: Project, scope_id) -> str:
             ActivityEvent.entity_id == str(project.id),
             ActivityEvent.system_template == "stage_changed",
         )
-        .order_by(ActivityEvent.created_at.desc())
+        .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
         .all()
     )
     targets = [str((e.system_payload or {}).get("to_status_id") or "") for e in events]
     current = str(project.status_id)
+    candidate = None
     if current in targets:
         index = targets.index(current)
-        came_from = (events[index].system_payload or {}).get("from_status_id")
-        if came_from:
-            return came_from
-        later = targets[index + 1 :]
-        if later and later[0]:
-            return later[0]
+        candidate = (events[index].system_payload or {}).get("from_status_id")
+        if not candidate:
+            later = targets[index + 1 :]
+            candidate = later[0] if later and later[0] else None
+    if candidate:
+        # A rung an admin has since retired is not somewhere to put the project back.
+        usable = (
+            db.query(Status.id)
+            .filter(
+                Status.id == candidate,
+                Status.is_active.is_(True),
+                Status.is_archived.is_(False),
+            )
+            .first()
+        )
+        if usable:
+            return str(candidate)
     return status_service.initial_status(db, "project", scope_id).id
 
 
@@ -1609,6 +1621,14 @@ def set_project_outcome(
 
     from app.services import project_activity_service as activity
 
+    if outcome == "open" and project.status_id is not None:
+        if db.query(Status.key).filter(Status.id == project.status_id).scalar() == "po_received":
+            raise AppException(
+                status_code=409,
+                message="This project has its PO. It cannot be re-opened.",
+                code="project_po_received",
+            )
+
     project.outcome = outcome
     project.loss_reason = None
 
@@ -1618,6 +1638,7 @@ def set_project_outcome(
             entity = get_status_entity("project")
             scope_id = entity.scope_for(project) if entity is not None else None
             target = _rung_before_lost(db, project, scope_id)
+            lost_id = project.status_id
             project.status_id = target
             db.flush()
             # Terminal rungs have no outgoing edge, so this is a direct write, still recorded.
@@ -1625,7 +1646,7 @@ def set_project_outcome(
                 db,
                 project=project,
                 template="stage_changed",
-                payload={"to_status_id": str(target)},
+                payload={"to_status_id": str(target), "from_status_id": str(lost_id)},
                 actor_id=actor_user_id,
             )
 

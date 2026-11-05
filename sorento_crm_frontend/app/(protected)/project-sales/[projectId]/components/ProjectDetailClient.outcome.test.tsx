@@ -318,6 +318,21 @@ describe('gear: Mark won and Re-open', () => {
     expect(setOutcome.mock.calls[0][0]).toMatchObject({ projectId: 'p1', outcome: 'open' });
   });
 
+  it('hides Re-open once the project is on PO Received', async () => {
+    projectFixture = project({
+      outcome: 'won',
+      status_id: 's-po',
+      status_key: 'po_received',
+      status_label: 'PO Received',
+    });
+    renderDetail();
+
+    // Nothing else is in the gear for this project, so the menu may not exist at all.
+    const gear = screen.queryByRole('button', { name: 'Project actions' });
+    if (gear) await openGear();
+    expect(screen.queryByRole('menuitem', { name: 'Re-open' })).toBeNull();
+  });
+
   it('offers neither without edit rights', () => {
     projectFixture = project({ outcome: 'open', can_edit: false });
     renderDetail();
