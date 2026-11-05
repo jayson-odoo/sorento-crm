@@ -1,6 +1,6 @@
 # PLAN: Proposal / quotation detail header like Order Inquiry; lines on Header tab
 
-Status: Plan (mock v4 final, layout OK pending; 12:28 ruling: no per-area outcome, project-level outcome is a separate lane). Track: small fix track (FE only, no migration, no RBAC change).
+Status: Built, reviewed (READY), browser pass PASS; owner hand test pending. Track: M lane (FE only, no migration, no RBAC change; diff over the small-fix size). Mock v4 OKed by the owner 12:31; 12:28 ruling: no per-area outcome, project-level outcome is lane PROJECT-OUTCOME-SINGLE.
 
 Lane: PROPOSAL-HEADER-LAYOUT. Owner request 5 Nov 2026 12:20 MYT.
 
