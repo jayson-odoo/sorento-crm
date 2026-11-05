@@ -95,9 +95,9 @@ offered when a console operator acts for someone else (an aggregate cannot be in
 ## Token measurement (AC-6)
 
 OpenAI `responses/input_tokens`, gpt-4.1 tokenizer, the same request with the in-process tool block (USER_READS,
-WRITES, plan and answer schemas) before and after, measured again on the head merged with main of 5 Nov evening: 2145 before, 2474 after,
-**+329 input tokens per model call** for a user offered the tools (+254 on the first head, +305 after the Gemini fix,
-+329 after the naming and field-note guidance below). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
+WRITES, plan and answer schemas) before and after, measured again on the head merged with main of 5 Nov evening: 2145 before, 2504 after,
+**+359 input tokens per model call** for a user offered the tools (+254 on the first head, +305 after the Gemini fix,
++329 after the naming and field-note guidance, +359 after the faf6f91b pass's description lines below). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
 is not met by this lane alone; the parent plan's lever is the module waves replacing per-module tools with
 registry entities.
 
@@ -116,3 +116,20 @@ registry entities.
   complaint number and customer), and the result's `name_rows_by` tells the model to name each row by them.
 - Steps 3 and 6 are model choices; the change gives the model the facts and the instruction, and crew's re-pass
   is the check.
+
+## Crew browser pass on faf6f91b and owner rulings (5 Nov)
+
+- Steps 1, 2, 4, 5, 7 passed; step 7 matched the list for all 68 agents.
+- Step 3 was flaky: in 2 of 3 runs the model took the sales report tool (`crm_report_ask`) for "delivery orders per
+  agent", which was denied on dev. The `crm_query` description now says DO counts and totals per agent, customer
+  or month are `crm_query` on `order`, not the sales report.
+- Why the report was denied: a panel read through MCP names the staff member (`X-Staff-User`), and by design every
+  slug check on it also asks the integration's act-as user (`user_service.gate_user_ids`, AGENTIC-UNIFY), so the
+  dev integration user without `sales.reports.view` refuses the asking staff member too. That rule is not changed
+  here (AGENT-REPORTS / owner call); `crm_query` runs in process as the staff member and is not affected.
+- Step 6: the model still dropped the product name. `query_tools.name_rows`, called in `loop.final_reply`, adds a
+  row's name in brackets after the first mention of its code when the reply shows the code without the name.
+- Owner ruling, dates: results return dates as dd/mm/yyyy and timestamps as Malaysian dd/mm/yyyy hh:mm; filters
+  accept dd/mm/yyyy as well as YYYY-MM-DD.
+- Owner ruling, cancelled orders: `EntityDef.default_filters`; `order` leaves cancelled orders out unless the query
+  filters on `is_cancelled`, and the result's `notes` says so (the model is told to say every note).

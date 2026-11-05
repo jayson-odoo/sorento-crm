@@ -69,6 +69,11 @@ register(
         },
         relations={"customer": ("customer", "customer_id"), "status": ("order_status", "order_status_id")},
         name_by=("order_number", "debtor_name"),
+        # Owner ruling (5 Nov): an order count or total is of orders that are not cancelled, and says so.
+        default_filters=((
+            "is_cancelled", "eq", False,
+            "Cancelled orders are left out; filter is_cancelled to include them.",
+        ),),
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),
         routes=("GET /api/v1/order-management/orders/",),

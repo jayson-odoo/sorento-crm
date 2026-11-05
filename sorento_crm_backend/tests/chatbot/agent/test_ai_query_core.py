@@ -338,7 +338,8 @@ def test_Q5_group_by_with_a_month_bucket_matches_hand_written_sql(db):
         ),
         {"t": t, "c": SORENTO},
     ).all()
-    want = {(r[0], r[1], str(r[2])): (float(r[3]), int(r[4])) for r in rows}
+    # the answer's date form, dd/mm/yyyy (owner ruling, 5 Nov)
+    want = {(r[0], r[1], r[2].strftime("%d/%m/%Y")): (float(r[3]), int(r[4])) for r in rows}
     assert want and got == want
     assert out["total_groups"] == len(want)
     assert out["truncated"] is False
@@ -675,7 +676,7 @@ def test_R1_timestamps_are_malaysian_days_in_filters_and_buckets(db):
     db.flush()
     user = mk_user(db, ORDERS_VIEW)
     days = core(db, user, order_spec(t, group_by=[{"field": "created_at", "bucket": "day"}]))
-    assert {g["created_at_day"]: g["count"] for g in days["groups"]} == {"2026-10-01": 1, "2026-10-02": 1}
+    assert {g["created_at_day"]: g["count"] for g in days["groups"]} == {"01/10/2026": 1, "02/10/2026": 1}
     def numbers(op, value):
         spec = order_spec(t, fields=["order_number"])
         spec["filters"].append({"field": "created_at", "op": op, "value": value})
@@ -899,3 +900,77 @@ def test_R3_per_agent_counts_equal_the_delivery_orders_lists_own_filter(db):
         return int(out["pagination"]["total"])
 
     assert {agent: listed(agent) for agent in (a, b)} == bot
+
+
+# ------------------------------------------------------------------ crew browser pass on faf6f91b + owner rulings (5 Nov)
+
+
+def test_R4_the_query_tool_says_delivery_order_counts_are_its_job_not_the_sales_reports():
+    """Step 3 went to the sales report in 2 of 3 runs: the description must claim DO counts per agent."""
+    text = writes.USER_READS["crm_query"].schema["function"]["description"].lower()
+    assert "delivery order" in text and "per agent" in text
+    assert "not the sales report" in text
+
+
+def _ledger_with_products(rows: list[dict]) -> dict:
+    return {"c1": {"name": "crm_query", "status": "ok", "args": {"entity": "product"}, "data": {
+        "entity": "product", "rows": rows, "total": len(rows), "truncated": False, "restricted": [],
+        "name_rows_by": ["product_code", "product_name"],
+    }}}
+
+
+def test_R4_the_reply_names_a_product_shown_by_its_code_only():
+    """Step 6: the model listed code and price and left the name out; code adds it after the code."""
+    from app.services.chatbot.agent import loop
+
+    ledger = _ledger_with_products([
+        {"id": "x1", "product_code": "CB600-NL", "product_name": "Concealed Basin 600", "list_price": 5000.0},
+        {"id": "x2", "product_code": "SRTBT1108", "product_name": "Bath Tub 1108", "list_price": 4000.0},
+    ])
+    answer = {"text": "1. CB600-NL: RM 5,000\n2. SRTBT1108 (Bath Tub 1108): RM 4,000"}
+    reply, _ = loop.final_reply(answer, [], [], ledger=ledger)
+    assert "CB600-NL (Concealed Basin 600)" in reply
+    assert reply.count("Bath Tub 1108") == 1  # already named: left as it is
+
+
+def test_R4_the_reply_is_unchanged_without_a_query_result():
+    from app.services.chatbot.agent import loop
+
+    reply, _ = loop.final_reply({"text": "CB600-NL is in stock."}, [], [], ledger={})
+    assert reply == "CB600-NL is in stock."
+
+
+def test_R4_dates_come_back_as_dd_mm_yyyy_and_timestamps_in_malaysian_time(db):
+    from datetime import datetime
+
+    t = tag()
+    mk_order(db, t, 1, order_date=date(2026, 10, 5), created_at=datetime(2026, 10, 1, 17, 30))
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    row = core(db, user, order_spec(t, fields=["order_date", "created_at"]))["rows"][0]
+    assert row["order_date"] == "05/10/2026"
+    assert row["created_at"] == "02/10/2026 01:30"
+    months = core(db, user, order_spec(t, group_by=[{"field": "order_date", "bucket": "month"}]))["groups"]
+    assert months[0]["order_date_month"] == "01/10/2026"
+    # a filter value written the same way is read as a date
+    spec = order_spec(t, fields=["order_number"])
+    spec["filters"].append({"field": "order_date", "op": "eq", "value": "05/10/2026"})
+    assert core(db, user, spec)["total"] == 1
+
+
+def test_R4_orders_leave_out_cancelled_ones_by_default_and_say_so(db):
+    """Owner ruling: a count of orders is of orders that are not cancelled, and the answer says so."""
+    t = tag()
+    mk_orders(db, t, 2)
+    mk_order(db, t, 9, is_cancelled=True)
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    out = core(db, user, order_spec(t, aggregates=[{"fn": "count"}]))
+    assert out["groups"][0]["count"] == 2
+    assert any("cancelled" in note.lower() for note in out["notes"])
+    rows = core(db, user, order_spec(t, fields=["order_number"]))
+    assert rows["total"] == 2 and rows["notes"]
+    spec = order_spec(t, fields=["order_number"])
+    spec["filters"].append({"field": "is_cancelled", "op": "eq", "value": True})
+    asked = core(db, user, spec)
+    assert asked["total"] == 1 and not asked.get("notes")

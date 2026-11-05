@@ -580,6 +580,10 @@ def final_reply(
     left = open_parts(args, plan or [], on_limit)
     if left:
         text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
+    # A record shown by its code alone is named as well (`crm_query` rows carry `name_rows_by`).
+    from app.services.chatbot.agent.query_tools import name_rows
+
+    text = name_rows(text, ledger)
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 

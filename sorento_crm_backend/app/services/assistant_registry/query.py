@@ -39,6 +39,9 @@ BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
 SPEC_KEYS = ("entity", "fields", "filters", "group_by", "aggregates", "sort", "limit")
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+#: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
+_DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_MYT = dt.timezone(dt.timedelta(hours=8))
 #: Postgres `query_canceled`: the statement timeout fired.
 _QUERY_CANCELED = "57014"
 #: Postgres class 22, data exception: a value that does not fit its field ("abc" for a number).
@@ -217,7 +220,12 @@ def _local(column, kind: str):
 # ------------------------------------------------------------------ filters
 
 
-def _scalar(value: Any, path: str) -> Any:
+def _scalar(value: Any, path: str, kind: str = "") -> Any:
+    if isinstance(value, str) and kind in ("date", "datetime"):
+        found = _DMY.match(value.strip())
+        if found:
+            day, month, year = found.groups()
+            return f"{year}-{int(month):02d}-{int(day):02d}"
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     raise QueryRefused("invalid", f"The value for `{path}` must be text, a number, true/false or a list of those.")
@@ -264,7 +272,7 @@ def _filter(paths: _Paths, item: Any):
     if op in ("in", "not_in"):
         if not isinstance(value, list) or not value or len(value) > MAX_IN_VALUES:
             raise QueryRefused("invalid", f"`{op}` on `{path}` needs a list of 1 to {MAX_IN_VALUES} values.")
-        values = [_scalar(v, path) for v in value]
+        values = [_scalar(v, path, kind) for v in value]
         if day and all(_next_day(v) for v in values):
             matched = or_(*((local >= v) & (local < _next_day(v)) for v in values))
             return matched if op == "in" else ~matched
@@ -272,10 +280,10 @@ def _filter(paths: _Paths, item: Any):
     if op == "between":
         if not isinstance(value, list) or len(value) != 2:
             raise QueryRefused("invalid", f"`between` on `{path}` needs [from, to].")
-        low, high = (_scalar(v, path) for v in value)
+        low, high = (_scalar(v, path, kind) for v in value)
         upper = _next_day(high) if day else None
         return (local >= low) & (local < upper if upper is not None else local <= high)
-    value = _scalar(value, path)
+    value = _scalar(value, path, kind)
     if value is None:
         raise QueryRefused("invalid", f"`{op}` on `{path}` needs a value; use is_null for an empty one.")
     after = _next_day(value) if day else None
@@ -316,10 +324,16 @@ def _limit(spec: dict, cap: int, default: int) -> int:
 
 
 def _plain(value: Any) -> Any:
+    """A value as the answer shows it: a date as dd/mm/yyyy, a stored (naive UTC) timestamp as Malaysian
+    dd/mm/yyyy hh:mm (owner ruling, 5 Nov)."""
     if isinstance(value, Decimal):
         return float(value)
-    if isinstance(value, (dt.datetime, dt.date)):
-        return value.isoformat()
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return value.astimezone(_MYT).strftime("%d/%m/%Y %H:%M")
+    if isinstance(value, dt.date):
+        return value.strftime("%d/%m/%Y")
     return value
 
 
@@ -416,14 +430,24 @@ def run_query(db, user_id: str, spec: Any) -> dict:
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
     paths = _Paths(db, user_id, entity, slugs)
-    filters = [_filter(paths, f) for f in _list(spec, "filters", MAX_FILTERS)]
+    asked = _list(spec, "filters", MAX_FILTERS)
+    filters = [_filter(paths, f) for f in asked]
+    named = {f.get("field") for f in asked if isinstance(f, dict)}
+    notes = []
+    for field, op, value, note in entity.default_filters:
+        if field not in named:
+            filters.append(_filter(paths, {"field": field, "op": op, "value": value}))
+            notes.append(note)
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
     if group_by or aggregates:
         if _list(spec, "fields"):
             raise QueryRefused("invalid", "`fields` lists rows; with group_by or aggregates leave it out.")
-        return _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates, spec)
-    return _rows(db, user_id, entity, own_only, paths, filters, spec)
+        out = _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates, spec)
+    else:
+        out = _rows(db, user_id, entity, own_only, paths, filters, spec)
+    out["notes"] = notes
+    return out
 
 
 def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:

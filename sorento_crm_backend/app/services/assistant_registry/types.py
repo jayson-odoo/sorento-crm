@@ -47,6 +47,9 @@ class EntityDef:
     #: The fields a person names a record by (its number or code, then its name): every row carries them, and
     #: the result tells the model to name each row by them.
     name_by: tuple[str, ...] = ()
+    #: Filters applied unless the query filters on that field itself: (field, op, value, note). The note is
+    #: returned with the result so the answer says what was left out (orders: cancelled ones, owner ruling).
+    default_filters: tuple[tuple[str, str, Any, str], ...] = ()
     #: "/scm/purchase-orders/{id}", for row links; "" = no detail page.
     screen_path: str = ""
     #: Path prefixes where this module's actions load first (ACT-CORE).
