@@ -1,6 +1,7 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Build done, tests green locally; waiting on review. Track: full (multi-entity RBAC, no migration).
+Status: Review (round 2: security and code review fixed, own-only targets added). Track: full (RBAC, one
+additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
 Parent: `PLAN-ai-tools-standard-5nov.md` (PR #2185), `PLAN-ai-query-core-5nov.md` (#2188, merged).
@@ -15,8 +16,7 @@ module reaches the agent through the registry, one `crm_query` tool, no per-scre
   :546): `target_service.target_detail.period_out` computes them per period from `_achieved_by_account`,
   `period_payout` (over `commission_service.payout_for`) and `_replacing_reached`.
 - Targets screen: `sales.targets.view` for every read (`api/v1/sales/targets.py:43,84`), module `sales`. No own-only
-  slug. Crew ruling 5 Nov: the entity mirrors the screen exactly (option b); own-only for salespeople is an owner
-  question for later, not this wave.
+  slug on base. Owner ruling 5 Nov 23:2x: add `sales.targets.view_own` (below).
 - Sales: `app/services/sales/invoiced_sales.py` is the one sales calculation: `posted()` :79, `signed_amount()` :91
   (IV + CS + DN - CN on `local_net_total`), `agent_label()` :134, `sales_type_label()` :318. Billing documents
   screen `finance.billing_documents.view` (`api/v1/finance/billing_documents.py:29`), module `finance`, no own rule;
@@ -44,6 +44,34 @@ module reaches the agent through the registry, one `crm_query` tool, no per-scre
   cancelled left out by default and said), `sales_order` (consignments out), `customer` promoted from a lookup
   (no phone, email, address or AR), `sales_agent` lookup.
 - `crm_query` description: one line routing targets and commission to `sales_target`.
+
+## Own-only targets (owner ruling 5 Nov 23:2x)
+
+- `sales.targets.view_own`: migration `sales_0007_targets_view_own` (additive, granted to no role; an admin grants
+  it to the salesperson role), in `PERMISSION_REGISTRY`.
+- Rule `own_scope.sales_target_clause`: agent targets of the user's own sales agents (`own_scope.me().agent_ids`,
+  through the user's linked contact); never a team or dealer target. Held with `sales.targets.view`, ignored.
+- Screen (`api/v1/sales/targets.py`): list, detail, options, point ratios and the commission statement accept
+  either slug; for an own-only holder the list is cut to their agents' agent targets (team and dealer tabs empty,
+  company-wide summary figures zeroed) and a detail or statement of any other target answers 404.
+- FE: "My targets" in the salesperson's MY WORK (`config/menu.config.tsx`); the targets page shows only the Agents
+  tab to an own-only holder. Column layout already accepts `<slug>_own` (`api/v1/list_query.py:207`).
+- `crm_query`: `sales_target.own_permission`/`own_clause` apply the same rule before anything is computed.
+- Tests `tests/test_sales_targets_view_own.py` (written red first): own vs another agent on the list, detail and
+  statement; team and dealer hidden; no slug still 403; view holder unchanged; `crm_query` own rows equal the
+  screen's list; no linked agent reads nothing; the slug is registered and seeded to no role.
+
+## Review rounds
+
+- Security review: brand-scoped linked-user turns refused on billing_document / sales_target / sales_order
+  (`EntityDef.brand_blind`); a related entity with its own list screen is a lookup (name fields only, no further
+  hop) without its slug; computed path counts periods first (cap 2000), windows over two years refused, the
+  service runs under the statement timeout; expression fields only on the entity itself; two-company test.
+- Code review: T8 holds points (ratio missing and converted), replaced dealer and team targets equal to the page;
+  engine tests E1 to E3 (truncation, sort with empty values, between, ne and booleans as SQL, window days); `null`
+  in between / in refused; a date filter without a `period` window refused; `below_target` on the raw figures;
+  `ratio_missing` exposed (target and % empty then); dealer subject without the ledger marker. The mutations that
+  survived round 1 (replaced zeroing, points ratio, truncation, between bound, ne) now fail the suite.
 
 ## Token measurement (task item 5)
 
