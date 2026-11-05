@@ -209,3 +209,29 @@ def test_r12_the_legacy_default_on_an_sp_only_template_sets_default_selling_only
     res = c.put(f"{DK}/combos/{combo.id}/tag-templates", json={"template_ids": [lp, sp], "default_template_id": sp})
     assert res.status_code == 200, res.text
     assert _ids(res.json(), "default_selling") == [sp]
+
+
+# --------------------------------------------------------------------------- R1 read-side guard
+def test_r1_the_read_side_ignores_a_stale_flag_even_without_the_put_clearing_it(env):
+    """R1 guard for `_defaults_for`: the type is changed with RAW SQL, so the link keeps
+    default_selling = true. GET must still report it false, and an SP line with no pick must not
+    pick the template."""
+    from app.models.dealer_kit import ProductTagTemplate
+
+    db, c, _ = env
+    product = _product(db, _reference(db))
+    a, b = _template(db, "A"), _template(db, "B")
+    url = f"{DK}/products/{product}/tag-templates"
+    assert c.put(url, json={"template_ids": [a, b], "default_template_id": a}).status_code == 200
+    _set_type(db, b, "selling")
+    _set_type(db, a, "list")  # raw: nothing clears the flags
+
+    db.expire_all()
+    assert db.query(ProductTagTemplate).filter_by(product_id=product, template_id=a).one().default_selling is True
+
+    items = {row["id"]: row for row in c.get(url).json()}
+    assert items[a]["default_list"] is True
+    assert items[a]["default_selling"] is False, "a stale flag is not reported"
+
+    body = _draft(c, [_line(product, "selling")])
+    assert body["lines"][0]["tag_template_id"] == b, "the LP-only template is not picked for an SP line"

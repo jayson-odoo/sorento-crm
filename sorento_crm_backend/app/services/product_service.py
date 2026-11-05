@@ -186,7 +186,7 @@ from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import is_uuid, resolve_identifier
-from app.utils.tag_rich_text import sanitise_tag_html
+from app.services.tag_description import clean_description
 
 
 # Lifted out of `bulk_import_products` (PLAN-autocount-pull-review.md, P11) so the
@@ -1164,7 +1164,9 @@ class ProductService:
         data = product_data.model_dump()
         data["product_code"] = product_code
         if data.get("price_tag_description") is not None:
-            data["price_tag_description"] = sanitise_tag_html(data["price_tag_description"])
+            data["price_tag_description"] = clean_description(
+                data["price_tag_description"], "Price tag description"
+            )
         if data.get("item_class_id"):
             from app.models.base import get_company_scope
             from app.services.company_scope import resolve_write_company_id
@@ -1217,7 +1219,9 @@ class ProductService:
         
         update_data = product_data.model_dump(exclude_unset=True)
         if update_data.get("price_tag_description") is not None:
-            update_data["price_tag_description"] = sanitise_tag_html(update_data["price_tag_description"])
+            update_data["price_tag_description"] = clean_description(
+                update_data["price_tag_description"], "Price tag description"
+            )
         if update_data.get("item_class_id"):
             self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:

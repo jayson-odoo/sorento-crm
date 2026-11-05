@@ -209,7 +209,7 @@ class ProductBase(BaseModel):
     # PLAN-price-tag-r10.md S4: staff-authored copy for the price tag - CRM-owned,
     # never sent by the AutoCount masters push (AC-S4-9, `CanonicalProduct`
     # deliberately has no field of this name).
-    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
+    price_tag_description: Optional[str] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -232,7 +232,9 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    # Raw cap before sanitising; the stored value is capped at 5000 in the service. Not on the
+    # base: a response must never fail on a stored value's length.
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
 
 class ProductUpdate(BaseModel):

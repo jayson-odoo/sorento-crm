@@ -40,7 +40,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException, handle_not_found
-from app.utils.tag_rich_text import sanitise_tag_html
+from app.services.tag_description import clean_description
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -77,18 +77,7 @@ def _validated_image_ext(filename: str) -> str:
     return ext
 
 
-MAX_DESCRIPTION_CHARS = 5000
-
-
-def _clean_description(raw: Optional[str]) -> Optional[str]:
-    """Allow-list the stored HTML, then apply the length limit to what is actually stored."""
-    cleaned = sanitise_tag_html(raw)
-    if cleaned is not None and len(cleaned) > MAX_DESCRIPTION_CHARS:
-        raise AppException(
-            status_code=422,
-            message=f"Description must be {MAX_DESCRIPTION_CHARS} characters or fewer",
-        )
-    return cleaned
+_clean_description = clean_description
 
 
 def _dimensions(product: Optional[Product]) -> Optional[str]:
