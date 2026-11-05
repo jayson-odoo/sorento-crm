@@ -205,7 +205,7 @@ def test_s1_needing_all_five_fits_and_six_does_not(db):
     assert _mod().fit_reason({"fixed": 0, "groups": [5], "upgrades": 0}, shape) is None
     assert (
         _mod().fit_reason({"fixed": 0, "groups": [6], "upgrades": 0}, shape)
-        == "Needs 6 from choice group 1; Kitchen tap has 5"
+        == "Needs 6 from Kitchen tap; this combo has 5"
     )
 
 
@@ -229,7 +229,7 @@ def test_s2_one_fixed_fits_two_does_not(db):
 def test_s2_has_no_choice_group(db):
     shape = _shape(db, shapes.s2)
     assert (
-        _mod().fit_reason({"fixed": 0, "groups": [1], "upgrades": 0}, shape)
+        _mod().fit_reason({"fixed": 1, "groups": [1], "upgrades": 0}, shape)
         == "Needs choice group 1; this combo has 0"
     )
 
@@ -238,7 +238,7 @@ def test_s3_needing_three_of_two_options_names_the_shortfall(db):
     shape = _shape(db, shapes.s3)
     assert (
         _mod().fit_reason({"fixed": 0, "groups": [3], "upgrades": 0}, shape)
-        == "Needs 3 from choice group 1; Tap colour has 2"
+        == "Needs 3 from Tap colour; this combo has 2"
     )
 
 
@@ -277,12 +277,25 @@ def test_s5_upgrade_need_fits_one_upgrade_but_not_two(db):
 def test_upgrade_need_on_a_combo_with_no_upgrade(db):
     shape = _shape(db, shapes.s4)
     assert (
-        _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 1}, shape)
+        _mod().fit_reason({"fixed": 2, "groups": [], "upgrades": 1}, shape)
         == "Needs 1 upgrade; this combo has 0"
     )
 
 
-def test_a_template_needing_nothing_fits_every_shape(db):
-    for builder in (shapes.s1, shapes.s2, shapes.s3, shapes.s4):
+def test_a_template_needing_nothing_fits_every_shape_without_fixed_parts(db):
+    for builder in (shapes.s1, shapes.s3):
         shape = _shape(db, builder)
         assert _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape) is None
+
+
+def test_m1_a_template_must_print_every_fixed_part(db):
+    """Fixed parts are always in the box: fewer fixed positions than the combo has does not fit."""
+    shape = _shape(db, shapes.s4)
+    assert (
+        _mod().fit_reason({"fixed": 1, "groups": [], "upgrades": 0}, shape)
+        == "Needs 1 fixed part; this combo has 2"
+    )
+    assert (
+        _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape)
+        == "Needs 0 fixed parts; this combo has 2"
+    )

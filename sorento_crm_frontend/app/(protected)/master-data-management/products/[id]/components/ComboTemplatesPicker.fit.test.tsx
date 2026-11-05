@@ -86,7 +86,7 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     draw(S1);
     expect(row('a').dataset.disabled).toBe('true');
     expect(row('a').dataset.badge).toBe('Does not fit');
-    expect(description('a')).toBe('Needs 6 from choice group 1; Kitchen tap has 5');
+    expect(description('a')).toBe('Needs 6 from Kitchen tap; this combo has 5');
   });
 
   it('S2: needs one fixed part', () => {
@@ -109,7 +109,7 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     draw(S3);
     expect(description('two')).toBe('105 x 148 mm. Needs 2 from Tap colour');
     expect(row('three').dataset.disabled).toBe('true');
-    expect(description('three')).toBe('Needs 3 from choice group 1; Tap colour has 2');
+    expect(description('three')).toBe('Needs 3 from Tap colour; this combo has 2');
   });
 
   it('S4: three fixed parts do not fit two', () => {
@@ -119,11 +119,18 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     expect(description('a')).toBe('Needs 3 fixed parts; this combo has 2');
   });
 
-  it('a template that needs nothing says so and fits every shape', () => {
+  it('a template that needs nothing says so and fits a combo with no fixed part', () => {
     templates.mockReturnValue([tpl('a', { fixed: 0, groups: [], upgrades: 0 })]);
-    draw(S4);
+    draw(S3);
     expect(description('a')).toBe('105 x 148 mm. Needs the main product only');
     expect(row('a').dataset.disabled).toBe('false');
+  });
+
+  it('M1: a combo with more fixed parts than the template prints is disabled with the reason', () => {
+    templates.mockReturnValue([tpl('a', { fixed: 2, groups: [], upgrades: 0 })]);
+    draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
+    expect(description('a')).toBe('Needs 2 fixed parts; this combo has 4');
+    expect(row('a').dataset.disabled).toBe('true');
   });
 
   it('keeps the template name as the label', () => {

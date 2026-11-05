@@ -96,7 +96,7 @@ describe('fitReason', () => {
     const shape = m.comboShape(S1_PARTS);
     expect(m.fitReason({ fixed: 0, groups: [3], upgrades: 1 }, shape)).toBeNull();
     expect(m.fitReason({ fixed: 0, groups: [6], upgrades: 0 }, shape)).toBe(
-      'Needs 6 from choice group 1; Kitchen tap has 5',
+      'Needs 6 from Kitchen tap; this combo has 5',
     );
   });
   it('S2: one fixed fits, two does not, a group does not exist', async () => {
@@ -106,7 +106,7 @@ describe('fitReason', () => {
     expect(m.fitReason({ fixed: 2, groups: [], upgrades: 0 }, shape)).toBe(
       'Needs 2 fixed parts; this combo has 1',
     );
-    expect(m.fitReason({ fixed: 0, groups: [1], upgrades: 0 }, shape)).toBe(
+    expect(m.fitReason({ fixed: 1, groups: [1], upgrades: 0 }, shape)).toBe(
       'Needs choice group 1; this combo has 0',
     );
   });
@@ -114,7 +114,7 @@ describe('fitReason', () => {
     const m = await mod();
     const shape = m.comboShape(S3_PARTS);
     expect(m.fitReason({ fixed: 0, groups: [3], upgrades: 0 }, shape)).toBe(
-      'Needs 3 from choice group 1; Tap colour has 2',
+      'Needs 3 from Tap colour; this combo has 2',
     );
     expect(m.fitReason({ fixed: 0, groups: [1], upgrades: 0 }, shape)).toBeNull();
     expect(m.fitReason({ fixed: 0, groups: [2], upgrades: 0 }, shape)).toBeNull();
@@ -130,19 +130,29 @@ describe('fitReason', () => {
       'Needs 3 fixed parts; this combo has 2',
     );
   });
+  it('M1: a template must print every fixed part the combo has', async () => {
+    const m = await mod();
+    const shape = m.comboShape(S4_PARTS);
+    expect(m.fitReason({ fixed: 1, groups: [], upgrades: 0 }, shape)).toBe(
+      'Needs 1 fixed part; this combo has 2',
+    );
+    expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, shape)).toBe(
+      'Needs 0 fixed parts; this combo has 2',
+    );
+  });
   it('S5: the upgrade need fits one upgrade, two do not, none on a combo without', async () => {
     const m = await mod();
     expect(m.fitReason({ fixed: 0, groups: [1], upgrades: 1 }, m.comboShape(S1_PARTS))).toBeNull();
     expect(m.fitReason({ fixed: 0, groups: [], upgrades: 2 }, m.comboShape(S1_PARTS))).toBe(
       'Needs 2 upgrades; this combo has 1',
     );
-    expect(m.fitReason({ fixed: 0, groups: [], upgrades: 1 }, m.comboShape(S4_PARTS))).toBe(
+    expect(m.fitReason({ fixed: 2, groups: [], upgrades: 1 }, m.comboShape(S4_PARTS))).toBe(
       'Needs 1 upgrade; this combo has 0',
     );
   });
-  it('a template that needs nothing fits every shape', async () => {
+  it('a template that needs nothing fits every shape without a fixed part', async () => {
     const m = await mod();
-    for (const parts of [S1_PARTS, S2_PARTS, S3_PARTS, S4_PARTS]) {
+    for (const parts of [S1_PARTS, S3_PARTS]) {
       expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, m.comboShape(parts))).toBeNull();
     }
   });

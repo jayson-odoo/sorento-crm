@@ -422,7 +422,8 @@ def test_link_templates_links_every_published_template_that_fits(db, catalogue, 
     e = entry("S2", shapes.S2_HOST, "ZZT S2", components=[shapes.S2_FIXED])
     _code, _out, _rows = _run(db, tmp_path, [e], "--apply", "--link-templates")
     combo = _combo(db, "ZZT S2", shapes.S2_HOST)
-    assert _linked(db, combo) == {fits_one, fits_main}
+    assert _linked(db, combo) == {fits_one}
+    assert fits_main not in _linked(db, combo)  # M1: it would leave the fixed part off
     assert too_many not in _linked(db, combo) and needs_group not in _linked(db, combo)
 
 

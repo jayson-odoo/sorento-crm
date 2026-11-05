@@ -77,8 +77,11 @@ def _plural(count: int, noun: str) -> str:
 
 
 def fit_reason(needs: dict, shape: dict) -> Optional[str]:
-    """None when the combo has what the template reads, else the first shortfall in the combo's words."""
-    if needs["fixed"] > shape["fixed"]:
+    """None when the combo fits, else the first shortfall in the combo's words.
+
+    Fixed parts are always in the box, so a template must print every one (`==`); a choice group
+    and the upgrades are at most what the combo has (a pick of k from n, an offer)."""
+    if needs["fixed"] != shape["fixed"]:
         return f"Needs {_plural(needs['fixed'], 'fixed part')}; this combo has {shape['fixed']}"
     for index, need in enumerate(needs["groups"]):
         if need <= 0:
@@ -87,7 +90,7 @@ def fit_reason(needs: dict, shape: dict) -> Optional[str]:
             return f"Needs choice group {index + 1}; this combo has {len(shape['groups'])}"
         group = shape["groups"][index]
         if need > group["size"]:
-            return f"Needs {need} from choice group {index + 1}; {group['role']} has {group['size']}"
+            return f"Needs {need} from {group['role']}; this combo has {group['size']}"
     if needs["upgrades"] > shape["upgrades"]:
         return f"Needs {_plural(needs['upgrades'], 'upgrade')}; this combo has {shape['upgrades']}"
     return None
