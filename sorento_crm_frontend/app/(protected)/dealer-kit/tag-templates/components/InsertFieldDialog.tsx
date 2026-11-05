@@ -160,7 +160,7 @@ export function InsertFieldDialog({
             <div className="flex flex-col p-1">
               {grouped.map((section) => (
                 <div key={section.group}>
-                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div className="px-2 py-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {section.group}
                   </div>
                   {section.fields.map((field) => (
@@ -173,7 +173,7 @@ export function InsertFieldDialog({
                       <span className="truncate" title={field.label}>
                         {field.label}
                       </span>
-                      <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                      <span className="shrink-0 font-mono text-2xs text-muted-foreground">
                         {field.token}
                       </span>
                     </button>

@@ -91,7 +91,7 @@ import {
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
 import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
-import { PriceTagLivePreview, previewLines } from '@/components/dealer-kit/PriceTagLivePreview';
+import { PriceTagLivePreview } from '@/components/dealer-kit/PriceTagLivePreview';
 import {
   usePriceTagLineEditor,
   type PriceTagLineLookups,
@@ -1485,6 +1485,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
+  const hasDrawableLine = lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id));
+
   /** Why Approve is off on the draft form, or null when the tag can be approved. */
   const previewBlockedReason: string | null =
     previewState.missing.length > 0
@@ -1492,7 +1494,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       : previewState.failed
         ? 'The tag preview could not be drawn. Escalate it to marketing.'
         : !previewState.drawn
-          ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
+          ? hasDrawableLine
             ? 'Drawing the tag preview...'
             : ''
           : null;
@@ -2261,7 +2263,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <Button
               size="sm"
               variant="outline"
-              disabled={previewLines(lines, priceMode).length === 0}
+              disabled={!hasDrawableLine}
               onClick={() => setPreviewOpen(true)}
             >
               Preview
