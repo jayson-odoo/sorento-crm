@@ -82,13 +82,15 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
     expect(screen.getByText('To order')).toBeInTheDocument();
     expect(screen.queryByText('On PO/SPO')).toBeNull();
     expect(screen.queryByText(/to buy/i)).toBeNull();
-    // The OI page's own PO chip: the number, clickable.
-    expect(screen.getByText('202611-P0042')).toBeInTheDocument();
+    // The OI page's own PO chip, in the pill's lightbox (owner hand test, 5 Nov).
+    expect(screen.queryByText('202611-P0042')).toBeNull();
     const oi = screen.getByText('OI-2611-0048').closest('a');
     expect(oi).toHaveAttribute(
       'href',
       '/project-sales/order-inquiries/oi-2611-0048?row=row-cksw015',
     );
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
+    expect(screen.getByText('202611-P0042')).toBeInTheDocument();
   });
 
   it('a raised, unconfirmed row reads "To order", not "To Buy"', () => {
@@ -114,7 +116,8 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
       oiRow({ id: 'row-cancelled', state: 'cancelled' }),
     ]);
     expect(screen.getByText('To order')).toBeInTheDocument();
-    // The used row's PO is not this line's live cover.
+    // The used row's PO is not this line's live cover, not even in the lightbox.
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
     expect(screen.queryByText('202611-P0042')).toBeNull();
     expect(screen.queryByText('On PO/SPO')).toBeNull();
   });
@@ -139,6 +142,8 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
       } as never),
     ]);
     expect(screen.getByText(/Reserved 4/)).toBeInTheDocument();
+    // Where it was reserved from, in the pill's lightbox.
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
     expect(screen.getByText('Reserved @ BRW 4')).toBeInTheDocument();
   });
 
@@ -163,7 +168,7 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
     expect(within(dialog).getByText(/05\/11\/2026/)).toBeInTheDocument();
   });
 
-  it('crew fix (1): PO, via-SPO PO and SPO chips share ONE slot - the first chip truncates, the rest sit behind "+N", nothing overlaps', () => {
+  it('owner hand test: the column shows the OI number and the pill only; the pill opens a lightbox listing every PO and SPO', () => {
     renderCell([
       oiRow({
         state: 'placed',
@@ -182,45 +187,30 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
         ] as never,
       }),
     ]);
-    const slot = screen.getByTestId('line-documents-compact');
-    // One chip inline: the PO, which truncates (ellipsis) rather than keeping its width.
-    const inline = within(slot).getByText('202611-P0042');
-    expect(inline).toHaveClass('truncate');
-    expect(inline.closest('span.overflow-hidden')).not.toBeNull();
-    expect(within(slot).queryByText('SPO-2026/09-0041')).toBeNull();
-    expect(within(slot).queryByText('202609-S0086')).toBeNull();
-    // Everything else behind ONE "+N", listed in full.
-    const more = within(slot).getByRole('button', { name: '2 more PO or SPO' });
-    expect(more).toHaveTextContent('+2');
-    fireEvent.click(more);
-    expect(screen.getByText('SPO-2026/09-0041')).toBeInTheDocument();
-    expect(screen.getByText('202609-S0086')).toBeInTheDocument();
+    const cell = screen.getByTestId('so-line-oi-core-32');
+    expect(within(cell).getByText('OI-2611-0048')).toBeInTheDocument();
+    expect(within(cell).getByText('To order')).toBeInTheDocument();
+    // No document in the column itself.
+    expect(within(cell).queryByText('202611-P0042')).toBeNull();
+    expect(within(cell).queryByText('SPO-2026/09-0041')).toBeNull();
+    expect(within(cell).queryByText(/^\+\d/)).toBeNull();
+
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
+    const dialog = screen.getByTestId('so-line-oi-core-32-documents');
+    expect(within(dialog).getByText('OI-2611-0048')).toBeInTheDocument();
+    // Every PO and SPO row, each the OI page's own clickable chip.
+    expect(within(dialog).getByText('202611-P0042')).toBeInTheDocument();
+    expect(within(dialog).getByText('SPO-2026/09-0041')).toBeInTheDocument();
+    expect(within(dialog).getByText('202609-S0086')).toBeInTheDocument();
+    expect(within(dialog).getByText('L7')).toBeInTheDocument();
   });
 
-  it('crew pass 2: a "via PO" tag keeps its whole width; the document number gives way first', () => {
-    renderCell([
-      oiRow({
-        state: 'placed',
-        links: [
-          {
-            id: 'derived-alloc-7',
-            kind: 'spo',
-            derived: true,
-            document: 'SPO-2026/09-0041',
-            qty: '4',
-            spo_allocation_id: 'alloc-7',
-            line_label: 'L7',
-          },
-        ] as never,
-      }),
-    ]);
-    const tag = screen.getByText('via PO');
-    const number = screen.getByText('SPO-2026/09-0041');
-    // The tag sits BEFORE the number, so the slot's clip edge falls on the number, which
-    // ellipsizes; the tag itself never shrinks.
-    expect(tag.compareDocumentPosition(number) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(tag).toHaveClass('shrink-0');
-    expect(number).toHaveClass('truncate');
+  it('the lightbox says when nothing is linked yet', () => {
+    renderCell([oiRow()]);
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
+    expect(
+      within(screen.getByTestId('so-line-oi-core-32-documents')).getByText('No PO or SPO linked yet.'),
+    ).toBeInTheDocument();
   });
 
   it('crew fix (1): the cell and each OI entry clip rather than paint past their width', () => {

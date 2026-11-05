@@ -15,7 +15,16 @@ import {
   type OrderInquiryLine,
 } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
-import { LineDocumentsCompact } from '@/app/(protected)/project-sales/order-inquiries/components/OrderInquiryLineDocuments';
+import { LineDocumentsList } from '@/app/(protected)/project-sales/order-inquiries/components/OrderInquiryLineDocuments';
+import { ackStateOf } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryAck';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   ReserveText,
   reserveTextOfRows,
@@ -60,9 +69,11 @@ export function soLineInquiryEntries(
 
 function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: string }) {
   const { line } = entry;
+  const [open, setOpen] = React.useState(false);
   const href = entry.inquiryId
     ? `/project-sales/order-inquiries/${entry.inquiryId}?row=${line.primary.id}`
     : null;
+  const rejected = ackStateOf(line.primary) === 'rejected' && line.liveRows.length > 0;
   const reserve = reserveTextOfRows(line.liveRows);
   return (
     <span className="flex min-w-0 items-center gap-1.5 overflow-hidden" data-testid={testId}>
@@ -79,14 +90,43 @@ function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: stri
           {entry.inquiryNo}
         </span>
       )}
-      <OrderInquiryLineStatusPill line={line} rejectedTestId={`${testId}-rejected`} />
-      {/* Crew fix (1): one slot for every PO / SPO chip, first chip + "+N", so two
-          document cells never paint over each other in the one-row cell. */}
-      <LineDocumentsCompact line={line} />
-      {reserve ? (
-        <span className="min-w-0 max-w-[45%] shrink truncate">
-          <ReserveText text={reserve} />
-        </span>
+      {rejected ? (
+        // A refusal's pill already opens its own lightbox (who, when, why).
+        <OrderInquiryLineStatusPill line={line} rejectedTestId={`${testId}-rejected`} />
+      ) : (
+        // Owner hand test (5 Nov 2026): the PO / SPO rows are not in the column; the pill
+        // opens them in a lightbox.
+        <button
+          type="button"
+          className="inline-flex min-w-0 shrink-0 rounded-full outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`PO and SPO for ${entry.inquiryNo}`}
+          data-testid={`${testId}-pill`}
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen(true);
+          }}
+        >
+          <OrderInquiryLineStatusPill line={line} />
+        </button>
+      )}
+      {open ? (
+        <Dialog open onOpenChange={setOpen}>
+          <DialogContent
+            className="max-w-lg"
+            data-testid={`${testId}-documents`}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <DialogHeader>
+              <DialogTitle className="tabular-nums">{entry.inquiryNo}</DialogTitle>
+              <DialogDescription>PO and SPO for this line</DialogDescription>
+            </DialogHeader>
+            <DialogBody className="space-y-3 text-sm">
+              <OrderInquiryLineStatusPill line={line} />
+              <LineDocumentsList line={line} />
+              {reserve ? <ReserveText text={reserve} /> : null}
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </span>
   );
@@ -95,9 +135,10 @@ function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: stri
 /**
  * SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): the Sales Order Lines tab's Order inquiry
  * cell says what the OI Lines tab says about the same line, from the same fold and the
- * same pill (`OrderInquiryLineStatusPill`), with the OI page's own PO / SPO chips (click
- * goes to the linked line), its reserve text and its Rejected lightbox. One row always: a
- * second OI on the line sits behind "+N", like the OI page's own chips.
+ * same pill (`OrderInquiryLineStatusPill`). The cell is the OI number and the pill only
+ * (owner hand test, 5 Nov): the pill opens a lightbox with the OI page's own PO / SPO
+ * chips (click goes to the linked line) and the reserve text; a refusal's pill opens its
+ * Rejected lightbox. One row always: a second OI on the line sits behind "+N".
  */
 export function SoLineOrderInquiryCell({
   rows,

@@ -104,20 +104,16 @@ export function LinePurchaseDocumentsCell({ line, kind }: { line: OrderInquiryLi
   );
 }
 
-export function DocumentCell({
+function DocumentCell({
   chip,
   kind,
   showLine = false,
-  fit = false,
 }: {
   chip: DocumentEntry;
   kind: 'po' | 'spo';
   /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
    * document sit side by side. */
   showLine?: boolean;
-  /** SO-LINE-OI-STATUS-UNIFY crew fix (1): the number truncates (ellipsis, full text on
-   * hover) instead of keeping its whole width, for a slot shared with other chips. */
-  fit?: boolean;
 }) {
   // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
   // as the worklist's own receipt pill opens its lightbox.
@@ -130,21 +126,10 @@ export function DocumentCell({
   // po-kind link behind it - `chip.poId` is the resolved identity instead.
   const derived = kind === 'po' && chip.via === 'spo';
   const row = chip.row;
-  const viaTag = chip.via ? (
-    <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
-      via {chip.via === 'po' ? 'PO' : 'SPO'}
-    </WorklistPill>
-  ) : null;
   return (
-    <span
-      className={`flex min-w-0 items-center gap-1 ${fit ? 'overflow-hidden' : ''}`}
-      title={fit ? chip.document : undefined}
-    >
-      {/* Crew pass 2: in a tight slot the tag goes first and stays whole ("via SPO", never
-          clipped to "via"); the document number after it is what truncates. */}
-      {fit ? viaTag : null}
+    <span className="flex min-w-0 items-center gap-1">
       {derived ? (
-        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole={!fit} />
+        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole />
       ) : (
         <OrderInquiryDocumentLink
           kind={kind}
@@ -152,13 +137,17 @@ export function DocumentCell({
           poId={link?.po_id}
           poLineId={link?.po_line_id}
           spoLineId={link?.spo_allocation_id}
-          whole={!fit}
+          whole
         />
       )}
       {showLine && chip.lineLabel ? (
         <span className="shrink-0 text-2xs text-muted-foreground">{chip.lineLabel}</span>
       ) : null}
-      {chip.via && !fit ? viaTag : null}
+      {chip.via ? (
+        <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
+          via {chip.via === 'po' ? 'PO' : 'SPO'}
+        </WorklistPill>
+      ) : null}
       {/* LINKAGE-UNIFY U3 (AC-D4): the worklist's own document pills, the same piece. */}
       <DocumentStatePills
         receipts={chip.receipts}
@@ -187,53 +176,28 @@ export function DocumentCell({
 
 
 /**
- * SO-LINE-OI-STATUS-UNIFY crew fix (1): every PO and SPO chip of the line in ONE slot - the
- * first chip (PO before SPO), truncating, and every other one behind a single "+N" that
- * lists them all in full. For a narrow cell that must stay one row (the Sales Order Lines
- * tab's Order inquiry cell), where a PO cell and an SPO cell side by side painted over
- * each other.
+ * Every PO and SPO chip of the line as a list, each the OI Lines tab's own chip (the
+ * number opens the document at the linked line). The Sales Order's Order inquiry pill
+ * opens this in a lightbox (owner hand test, 5 Nov 2026).
  */
-export function LineDocumentsCompact({ line }: { line: OrderInquiryLine }) {
+export function LineDocumentsList({ line }: { line: OrderInquiryLine }) {
   const chips = [
     ...lineDocumentsOf(line, 'po').map((chip) => ({ chip, kind: 'po' as const })),
     ...lineDocumentsOf(line, 'spo').map((chip) => ({ chip, kind: 'spo' as const })),
   ];
-  if (chips.length === 0) return null;
-  const [first, ...rest] = chips;
+  if (chips.length === 0) {
+    return <p className="text-muted-foreground">No PO or SPO linked yet.</p>;
+  }
   return (
-    <span className="flex min-w-0 items-center gap-1" data-testid="line-documents-compact">
-      <span className="flex min-w-0 shrink items-center overflow-hidden">
-        <DocumentCell chip={first.chip} kind={first.kind} fit />
-      </span>
-      {rest.length > 0 ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
-              aria-label={`${rest.length} more PO or SPO`}
-              onClick={(event) => event.stopPropagation()}
-            >
-              +{rest.length}
-            </Button>
-          </PopoverTrigger>
-          <PopoverPortal>
-            <PopoverContent
-              align="start"
-              collisionPadding={8}
-              className="w-auto max-w-[92vw] space-y-1 p-2"
-            >
-              {chips.map(({ chip, kind }) => (
-                <div key={`${kind}-${chip.key}`}>
-                  <DocumentCell chip={chip} kind={kind} showLine />
-                </div>
-              ))}
-            </PopoverContent>
-          </PopoverPortal>
-        </Popover>
-      ) : null}
-    </span>
+    <ul className="space-y-1.5" data-testid="line-documents-list">
+      {chips.map(({ chip, kind }) => (
+        <li key={`${kind}-${chip.key}`} className="flex min-w-0 items-center gap-2">
+          <span className="w-9 shrink-0 text-2xs font-medium text-muted-foreground">
+            {kind === 'po' ? 'PO' : 'SPO'}
+          </span>
+          <DocumentCell chip={chip} kind={kind} showLine />
+        </li>
+      ))}
+    </ul>
   );
 }

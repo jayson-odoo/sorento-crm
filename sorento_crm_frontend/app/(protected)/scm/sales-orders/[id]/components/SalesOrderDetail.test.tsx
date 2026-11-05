@@ -1682,7 +1682,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     // on both screens, never "On PO/SPO" here and "To order" there; its PO chip shows.
     expect(within(row).getByText('To order')).toBeInTheDocument();
     expect(within(row).queryByText('On PO/SPO')).toBeNull();
-    expect(within(row).getAllByText('202611-P0042').length).toBeGreaterThanOrEqual(1);
+    // Owner hand test (5 Nov): the PO is in the pill's lightbox, not the column.
+    fireEvent.click(within(row).getByTestId('so-line-oi-l-planned-pill'));
+    expect(screen.getAllByText('202611-P0042').length).toBeGreaterThanOrEqual(1);
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
