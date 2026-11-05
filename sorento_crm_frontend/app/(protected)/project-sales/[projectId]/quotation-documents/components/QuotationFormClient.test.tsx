@@ -109,6 +109,7 @@ const listQuotationVersions = vi.fn();
 const listQuotationLines = vi.fn();
 const listSeries = vi.fn();
 const replaceQuotationLines = vi.fn();
+const recomputeQuotationVersion = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -124,6 +125,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
     listSeries: (...args: unknown[]) => listSeries(...args),
     replaceQuotationLines: (...args: unknown[]) =>
       replaceQuotationLines(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
     judgeQuotationLine: vi.fn(async () => ({
       is_non_standard: false,
       is_below_floor: false,
@@ -1740,5 +1742,107 @@ describe('QuotationFormClient: an unsaved line keeps its product code across a s
     const picker = await within(back).findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
     expect(picker).toHaveTextContent('SRT-BASIN-02');
     expect(within(back).queryByText('Selected product')).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// PROPOSAL-HEADER-LAYOUT, owner hand test (5 Nov 2026): "the Lines also should be align with the
+// view page also". The form reads like the view: no Lines tab, the lines under the letterhead on
+// the Header tab, no per-area Won/Lost pill, no version row; the version and Recheck alerts sit in
+// the record card at the top, as on the view page.
+// ---------------------------------------------------------------------------------------------
+describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT)', () => {
+  it('F1: create and edit read Header, Cover letter, Terms (no Lines tab)', async () => {
+    const { unmount } = renderForm();
+    expect((await screen.findAllByRole('tab')).map((tab) => tab.textContent)).toEqual([
+      'Header',
+      'Cover letter',
+      'Terms',
+    ]);
+    unmount();
+
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Header',
+      'Cover letter',
+      'Terms',
+    ]);
+  });
+
+  it('F2: the Header tab holds the letterhead fields AND the editable lines under them', async () => {
+    renderForm('d1');
+
+    expect(await screen.findByRole('textbox', { name: 'Your Ref' })).toBeInTheDocument();
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    expect(await within(card).findByRole('button', { name: 'Add a line' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Add a section' })).toBeInTheDocument();
+  });
+
+  it('F3: no per-area Won/Lost pill anywhere on the form', async () => {
+    listQuotations.mockResolvedValue([{ ...SCOPE, outcome: 'won' }]);
+    getQuotationDocument.mockResolvedValue(
+      document({
+        scopes: [{ ...document().scopes![0], outcome: 'won' }],
+      }),
+    );
+    renderForm('d1');
+
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(screen.queryByText('Won')).toBeNull();
+  });
+
+  it('F4: no version row above the lines; the version is a chip in the record card', async () => {
+    renderForm('d1');
+
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(
+      screen
+        .queryAllByRole('button', { name: /^v\d/ })
+        .filter((button) => button.hasAttribute('aria-current')),
+    ).toHaveLength(0);
+    expect(within(card).queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    const header = await screen.findByTestId('record-header-card');
+    expect(within(header).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
+    expect(await within(header).findByText('v1')).toBeInTheDocument();
+  });
+
+  it('F5: Recheck alerts sits in the record card, waits on unsaved changes, and rechecks every area', async () => {
+    recomputeQuotationVersion.mockResolvedValue({
+      version_id: 'v1',
+      version_no: 1,
+      quotation_id: 'q1',
+      line_count: 1,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: [],
+    });
+    renderForm('d1');
+
+    const header = await screen.findByTestId('record-header-card');
+    const recheck = await within(header).findByRole('button', { name: 'Recheck alerts' });
+    await waitFor(() => expect(recheck).toBeEnabled());
+    fireEvent.click(recheck);
+    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v1'));
+
+    // Something typed: the recheck would answer for rows the screen no longer shows.
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/19' } });
+    await waitFor(() =>
+      expect(within(header).getByRole('button', { name: 'Recheck alerts' })).toBeDisabled(),
+    );
+  });
+
+  it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {
+    renderForm();
+    await screen.findByRole('textbox', { name: 'Your Ref' });
+    expect(screen.queryByTestId('record-header-card')).toBeNull();
   });
 });
