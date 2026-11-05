@@ -22,8 +22,14 @@ never touched outcome, so moving to Lost left Outcome Won.
 
 ## Fix
 
-1. Step 1 Check lists every candidate (code link, title, stage, outcome, owner). Blocking
-   rule unchanged: only an open project of the same/unknown developer blocks.
+1. Step 1 Check lists every candidate (code link, title, stage, outcome, owner as separate
+   muted items, no middle dot). Owner hand test (5 Nov, "if got match then should follow the
+   same clash path") + answer (a) to the Lost question: a STRONG match (same or unstated
+   developer, at/above the block bar or title containment, not a sibling phase) blocks in
+   EVERY outcome, Won/Lost/Dormant included, so the form offers "Register as secondary lead
+   on <code>" and the server refuses a plain register (409). This supersedes ADR-0004's
+   "only an open pursuit blocks" (`BLOCKING_OUTCOMES` removed). Weak lookalikes above the
+   surface bar stay "Existing:" context.
 2. A terminal Lost / Dormant stage is authoritative for outcome: `derive_project_outcome`
    returns lost/dormant when the project's status key is lost/dormant; leaving that stage
    re-derives from quotations. `change_status`, the PO auto-advance and the admin bulk status
