@@ -21,7 +21,8 @@ export type TagLayerType =
   | 'price_badge'
   | 'badge'
   | 'barcode'
-  | 'group';
+  | 'group'
+  | 'feature_icons';
 
 /** Named slots that bind a layer to a product data field at render time. */
 export type SlotBinding =
@@ -327,6 +328,23 @@ export interface BarcodeLayerProps {
   subjectSlot?: SubjectSlot;
 }
 
+/**
+ * PRICETAG-DESIGNER-GAPS item 3: one packed row of the library icons whose "show when" rule
+ * matches the subject's specs (`featureIconsFor`). `order` holds icon asset ids the designer put
+ * first; the rest follow by name.
+ */
+export interface FeatureIconsLayerProps {
+  kind: 'feature_icons';
+  iconSize_mm: number;
+  gap_mm: number;
+  align: 'left' | 'center' | 'right';
+  order: string[];
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
+}
+
 export interface GroupLayerProps {
   kind: 'group';
   children: string[];
@@ -347,7 +365,8 @@ export type TagLayerProps =
   | PriceBadgeLayerProps
   | BadgeLayerProps
   | BarcodeLayerProps
-  | GroupLayerProps;
+  | GroupLayerProps
+  | FeatureIconsLayerProps;
 
 // ---------------------------------------------------------------------------
 // Layer
@@ -608,6 +627,8 @@ export interface TagSpecValue {
   label: string;
   value: string;
   unit: string | null;
+  /** The stored value as text (`mixer`, `true`). Feature icons match on this, never on `value`. */
+  raw?: string;
 }
 
 /**
@@ -955,6 +976,10 @@ export function defaultBadgeProps(): BadgeLayerProps {
     kind: 'badge',
     assetId: '',
   };
+}
+
+export function defaultFeatureIconsProps(): FeatureIconsLayerProps {
+  return { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left', order: [] };
 }
 
 export function defaultBarcodeProps(): BarcodeLayerProps {

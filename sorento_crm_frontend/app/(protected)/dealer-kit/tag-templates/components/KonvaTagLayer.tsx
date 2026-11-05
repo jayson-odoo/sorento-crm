@@ -17,6 +17,7 @@ import { useMemo } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
+  FeatureIconsLayerProps,
   LayerPadding,
   TagLayer,
   TagLayerProps,
@@ -40,6 +41,7 @@ import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -348,6 +350,19 @@ function LayerContent({
             fontStyle="bold"
           />
         </>
+      );
+
+    case 'feature_icons':
+      return (
+        <FeatureIconsContent
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
+          props={props}
+          icons={display?.icons ?? []}
+        />
       );
 
     case 'barcode':
@@ -931,4 +946,60 @@ function badgeTextDecoration(typo: PriceBadgeTypography): string {
   return [typo.underline && 'underline', typo.strikethrough && 'line-through']
     .filter(Boolean)
     .join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * One packed row of the matched icons, laid out by `featureIconRow` (the print page uses the
+ * same function), each vertically centred in the box. No icon: the dashed "Feature icons"
+ * outline, so the designer can still place and size the layer.
+ */
+function FeatureIconsContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  icons,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: FeatureIconsLayerProps;
+  icons: { id: string; url: string }[];
+}) {
+  const xs = featureIconRow(icons.length, props, widthMm);
+  if (xs.length === 0) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Text
+          width={w}
+          height={h}
+          text="Feature icons"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const size = mm2px(props.iconSize_mm, scale);
+  const y = mm2px((heightMm - props.iconSize_mm) / 2, scale);
+  return (
+    <>
+      {xs.map((x, i) => (
+        <Group key={`${icons[i].id}-${i}`} x={mm2px(x, scale)} y={y}>
+          <ImageContent w={size} h={size} url={icons[i].url} fit="contain" maskShape="none" />
+        </Group>
+      ))}
+    </>
+  );
 }
