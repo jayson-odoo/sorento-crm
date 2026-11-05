@@ -137,7 +137,7 @@ describe('TemplateSettingsDialog', () => {
   });
 
   it('keeps a family no longer in the list as an option, so it is not blanked', () => {
-    renderDialog({ initial: { name: 'Old', family: 'toilet', width_mm: 85, height_mm: 58 } });
+    renderDialog({ initial: { name: 'Old', family: 'toilet' as never, width_mm: 85, height_mm: 58 } });
     expect(family().value).toBe('toilet');
   });
 
