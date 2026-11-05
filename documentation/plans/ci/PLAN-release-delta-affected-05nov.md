@@ -1,6 +1,6 @@
 # PLAN: release delta runs only the affected tests (RELEASE-DELTA-AFFECTED)
 
-Status: in progress (small fix track: CI/test tooling only, no migration, no auth change)
+Status: in review on PR #2191, reviewer READY (small fix track: CI/test tooling only, no migration, no auth change)
 
 Owner ruling, 5 Nov 2026 ~11:40 MYT (verbatim): "hm we should run the SCM tests only if they are
 affected, the key is to run only the tests that are affected, dependent, or depended by".
