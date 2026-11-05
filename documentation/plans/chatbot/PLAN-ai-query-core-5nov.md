@@ -95,9 +95,9 @@ offered when a console operator acts for someone else (an aggregate cannot be in
 ## Token measurement (AC-6)
 
 OpenAI `responses/input_tokens`, gpt-4.1 tokenizer, the same request with the in-process tool block (USER_READS,
-WRITES, plan and answer schemas) before and after, measured again on the head merged with main of 5 Nov evening: 2145 before, 2504 after,
-**+359 input tokens per model call** for a user offered the tools (+254 on the first head, +305 after the Gemini fix,
-+329 after the naming and field-note guidance, +359 after the faf6f91b pass's description lines below). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
+WRITES, plan and answer schemas) before and after, measured again on the head merged with main of 5 Nov evening: 2145 before, 2505 after,
+**+360 input tokens per model call** for a user offered the tools (+254 on the first head, +305 after the Gemini fix,
++329 after the naming and field-note guidance, +359 after the faf6f91b pass's description lines, +360 after the f54a8859 pass below). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
 is not met by this lane alone; the parent plan's lever is the module waves replacing per-module tools with
 registry entities.
 
@@ -133,3 +133,22 @@ registry entities.
   accept dd/mm/yyyy as well as YYYY-MM-DD.
 - Owner ruling, cancelled orders: `EntityDef.default_filters`; `order` leaves cancelled orders out unless the query
   filters on `is_cancelled`, and the result's `notes` says so (the model is told to say every note).
+
+## Crew browser pass on f54a8859 (5 Nov): decided in the tool output, enforced in code
+
+- Steps 1, 2, 4, 5, 7 passed; step 3 called `crm_query` in 3 of 3 runs. Still failing on the model's wording: the
+  cancelled-orders note in 1 of 3 runs, one period written yyyy-mm-dd, and step 6 still without product names.
+  Owner: stop relying on prompt wording.
+- Rows carry ONE display field, `label` = "CODE: Name" (or the number alone for an entity named by one field), in
+  place of the separate code and name fields; the name_by fields still filter and sort.
+- Every result carries `period_display` (the query's own date filters, "Order date 01/10/2026 to 31/10/2026") and
+  `scope_note` ("Cancelled orders excluded." while the default leaves them out). No result field holds a raw ISO
+  date (`test_R5_no_result_carries_a_raw_iso_date_anywhere`).
+- `query_tools.shape_reply`, called from `loop.final_reply` for every agent reply: a `crm_query` row shown by its
+  code (alone, as "CODE (Name)", in a table, bold, any case) becomes its label; a result's scope note is added
+  when the reply lacks it; any yyyy-mm-dd date becomes dd/mm/yyyy (a code that only contains one, such as
+  SO-2026-10-01, and an impossible date are left alone).
+- Tests on the tool output and on the reply through the real loop with a scripted model
+  (`tests/chatbot/agent/test_ai_query_reply.py`); disconnecting `shape_reply` fails 9 of its 10 tests.
+- Live check x3 not run from the cloud sandbox: the OpenAI account behind it answers 429 "no credits remaining",
+  and the dev copy's Gemini key is not reachable from here. Crew's 3-run re-pass on the dev copy is the live check.

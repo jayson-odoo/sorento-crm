@@ -8,6 +8,8 @@ cut down to what both people may see, so the tools are not offered then.
 """
 from __future__ import annotations
 
+import datetime as dt
+import re
 from typing import Any
 
 from app.services.assistant_registry import ENTITIES
@@ -90,8 +92,8 @@ QUERY_SCHEMA = {
             "Read CRM records as their screens show them: rows, or totals with group_by. Delivery order counts "
             "and totals per agent, customer or month are this tool on entity order, not the sales report. "
             "Entity keys and fields come from crm_describe, whose notes say which field a list column is; a field "
-            "may go through a relation (supplier.name). In the reply, name each row by its name_rows_by fields "
-            "and say every note the result carries. "
+            "may go through a relation (supplier.name). In the reply, show each row by its label exactly and "
+            "say the result's period_display and scope_note. "
             "filters: [{field, op, value}], op one of eq ne in not_in lt lte gt gte between contains starts_with "
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
@@ -152,28 +154,45 @@ TOOL_LABELS.setdefault(QUERY, "reading CRM records, totals and groupings")
 TOOL_LABELS.setdefault(DESCRIBE, "listing the CRM records you can read")
 
 
-_CODE_EDGE = r"(?<![\w-]){}(?![\w-])"
+_ISO_DATE = re.compile(r"(?<![\w-])(\d{4})-(\d{2})-(\d{2})(?![\w-])")
 
 
-def name_rows(text: str, ledger: dict | None) -> str:
-    """The reply with each `crm_query` row that it shows by its code only named as well: the first
-    `name_rows_by` field is the code, the rest the name, added in brackets after the code's first mention.
-    The model is told to name rows; this is the rule in code (crew pass, 5 Nov: products by code and price)."""
-    import re
+def _dmy(found: "re.Match") -> str:
+    year, month, day = found.groups()
+    try:
+        dt.date(int(year), int(month), int(day))
+    except ValueError:
+        return found.group(0)
+    return f"{day}/{month}/{year}"
 
+
+def shape_reply(text: str, ledger: dict | None) -> str:
+    """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
+    a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
+    result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
+    lowered = text.lower()
+    notes: list[str] = []
     for entry in (ledger or {}).values():
         if entry.get("name") != QUERY or entry.get("status") != "ok" or not isinstance(entry.get("data"), dict):
             continue
         data = entry["data"]
-        keys = data.get("name_rows_by") or []
-        if len(keys) < 2:
-            continue
+        note = data.get("scope_note")
+        if note and note not in notes:
+            notes.append(note)
         for row in data.get("rows") or []:
-            code = str(row.get(keys[0]) or "").strip()
-            names = [str(row.get(k) or "").strip() for k in keys[1:]]
-            names = [n for n in names if n]
-            if not code or not names or all(n.lower() in text.lower() for n in names):
+            label = str(row.get("label") or "")
+            if ": " not in label or label.lower() in lowered:
                 continue
-            pattern = re.compile(_CODE_EDGE.format(re.escape(code)))
-            text = pattern.sub(lambda m: f"{m.group(0)} ({', '.join(names)})", text, count=1)
-    return text
+            code, name = label.split(": ", 1)
+            shown = re.compile(
+                r"(?<![\w-])" + re.escape(code) + r"(?:\s*(?:[:\-]\s*|\(\s*)" + re.escape(name) + r"\)?)?(?![\w-])",
+                re.IGNORECASE,
+            )
+            text, changed = shown.subn(lambda m: label, text, count=1)
+            if changed:
+                lowered = text.lower()
+    for note in notes:
+        if note.lower().rstrip(".") not in lowered:
+            text = f"{text.rstrip()}\n\n{note}"
+            lowered = text.lower()
+    return _ISO_DATE.sub(_dmy, text)

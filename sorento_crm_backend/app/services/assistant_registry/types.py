@@ -44,8 +44,8 @@ class EntityDef:
     fields: dict[str, FieldDef] = field(default_factory=dict)
     #: name -> (entity key, fk column on this model), for lookups and joins.
     relations: dict[str, tuple[str, str]] = field(default_factory=dict)
-    #: The fields a person names a record by (its number or code, then its name): every row carries them, and
-    #: the result tells the model to name each row by them.
+    #: The fields a person names a record by (its number or code, then its name): every row carries them as one
+    #: `label`, "CODE: Name", in place of the separate fields.
     name_by: tuple[str, ...] = ()
     #: Filters applied unless the query filters on that field itself: (field, op, value, note). The note is
     #: returned with the result so the answer says what was left out (orders: cancelled ones, owner ruling).

@@ -72,7 +72,7 @@ register(
         # Owner ruling (5 Nov): an order count or total is of orders that are not cancelled, and says so.
         default_filters=((
             "is_cancelled", "eq", False,
-            "Cancelled orders are left out; filter is_cancelled to include them.",
+            "Cancelled orders excluded.",
         ),),
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),

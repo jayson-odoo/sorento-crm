@@ -438,6 +438,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         if field not in named:
             filters.append(_filter(paths, {"field": field, "op": op, "value": value}))
             notes.append(note)
+    period = _period_display(paths, asked)
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
     if group_by or aggregates:
@@ -446,8 +447,49 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         out = _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates, spec)
     else:
         out = _rows(db, user_id, entity, own_only, paths, filters, spec)
-    out["notes"] = notes
+    # Display facts decided here, not by the model (crew pass, 5 Nov): the period in dd/mm/yyyy and what the
+    # result leaves out. `loop.final_reply` puts the scope note in the reply when the model does not.
+    out["period_display"] = period
+    out["scope_note"] = " ".join(notes) or None
     return out
+
+
+def _display_date(value: Any, kind: str) -> str:
+    iso = _scalar(value, "", kind)
+    if isinstance(iso, str) and _DATE_ONLY.match(iso):
+        return dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
+    return str(value)
+
+
+def _period_display(paths: _Paths, asked: list) -> str | None:
+    """The date window the query's own filters set, as a person reads it: "Order date 01/10/2026 to 31/10/2026"."""
+    windows: dict[str, dict[str, str]] = {}
+    for item in asked:
+        if not isinstance(item, dict) or item.get("op") not in ("between", "eq", "gte", "gt", "lte", "lt"):
+            continue
+        _column, field, kind = paths.resolve(item.get("field"))
+        if kind not in ("date", "datetime"):
+            continue
+        window = windows.setdefault(field.label, {})
+        value, op = item.get("value"), item["op"]
+        if op == "between" and isinstance(value, list) and len(value) == 2:
+            window["from"], window["to"] = _display_date(value[0], kind), _display_date(value[1], kind)
+        elif op == "eq":
+            window["from"] = window["to"] = _display_date(value, kind)
+        elif op in ("gte", "gt"):
+            window["from"] = _display_date(value, kind) + (" (after)" if op == "gt" else "")
+        else:
+            window["to"] = _display_date(value, kind) + (" (before)" if op == "lt" else "")
+    parts = []
+    for label, window in windows.items():
+        low, high = window.get("from"), window.get("to")
+        if low and high:
+            parts.append(f"{label} {low}" if low == high else f"{label} {low} to {high}")
+        elif low:
+            parts.append(f"{label} from {low}")
+        elif high:
+            parts.append(f"{label} up to {high}")
+    return "; ".join(parts) or None
 
 
 def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
@@ -481,11 +523,16 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
         item = {"id": str(data["id"])}
         if entity.screen_path:
             item["link"] = entity.screen_path.format(id=data["id"])
-        item.update({f: _plain(data[f]) for f in shown})
+        # One display field per record, "CODE: Name", in place of the separate code and name (crew pass, 5 Nov:
+        # the model showed the code and dropped the name). The name_by fields still filter and sort.
+        parts = [str(_plain(data[f])) for f in entity.name_by if f in shown and data[f] not in (None, "")]
+        if parts:
+            item["label"] = parts[0] if len(parts) == 1 else f"{parts[0]}: {' '.join(parts[1:])}"
+        item.update({f: _plain(data[f]) for f in shown if f not in entity.name_by})
         out_rows.append(item)
     return {
         "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
-        "restricted": restricted, "name_rows_by": [f for f in entity.name_by if f in shown],
+        "restricted": restricted,
     }
 
 

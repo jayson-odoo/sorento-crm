@@ -171,6 +171,11 @@ def tool(db, ctx, args: dict, *, name: str = "crm_query", panel: bool = True):
     return writes.run_user_read(db, ctx, name, args, set())
 
 
+def code(row: dict) -> str:
+    """A row's number or code: the part of its `label` ("CODE: Name") before the colon."""
+    return row["label"].split(": ", 1)[0]
+
+
 def order_spec(t: str, **extra) -> dict:
     return {"entity": "order", "filters": [{"field": "debtor_code", "op": "eq", "value": t}], **extra}
 
@@ -193,8 +198,9 @@ def test_Q1_filter_sort_limit_and_only_allowlisted_fields(db):
     from app.services.assistant_registry import ENTITIES
 
     for row in rows:
-        # what was asked, plus the fields the record is named by (its number and debtor)
-        assert set(row) <= {"order_number", "total_amount", "id", "link", *ENTITIES["order"].name_by}
+        # what was asked; the number and debtor the record is named by come as one label
+        assert set(row) <= {"total_amount", "id", "link", "label"}
+        assert not set(row) & set(ENTITIES["order"].name_by)
         assert "deliver_phone" not in row
         assert row["id"] and row["link"]
     assert out["total"] == 5
@@ -225,7 +231,7 @@ def test_Q2_a_restricted_field_is_dropped_named_and_refused_in_a_filter(db):
     }
     out = core(db, plain, spec)
     assert len(out["rows"]) == 1
-    assert out["rows"][0]["product_code"] == code
+    assert out["rows"][0]["label"].split(": ", 1)[0] == code
     assert "cost_price" not in out["rows"][0]
     assert out["restricted"] == ["cost_price"]
 
@@ -257,7 +263,7 @@ def test_Q3_a_user_never_sees_another_companys_orders(db, panel):
     ctx = make_ctx(user)
     out = tool(db, ctx, order_spec(t, fields=["order_number"], limit=50), panel=panel)
     assert out.status == "ok", out
-    numbers = {r["order_number"] for r in out.data["rows"]}
+    numbers = {code(r) for r in out.data["rows"]}
     assert numbers == {f"{t}-0", f"{t}-1"}
     assert out.data["total"] == 2
 
@@ -283,9 +289,9 @@ def test_Q4_view_own_sees_only_their_contacts_complaints_and_view_sees_both(db):
         "filters": [{"field": "complaint_number", "op": "starts_with", "value": t}],
     }
     mine = core(db, owner, spec)
-    assert [r["complaint_number"] for r in mine["rows"]] == [a.complaint_number]
+    assert [code(r) for r in mine["rows"]] == [a.complaint_number]
     both = core(db, viewer, spec)
-    assert {r["complaint_number"] for r in both["rows"]} == {a.complaint_number, b.complaint_number}
+    assert {code(r) for r in both["rows"]} == {a.complaint_number, b.complaint_number}
 
 
 def test_Q4_own_only_holder_on_an_entity_without_an_own_clause_is_refused(db, monkeypatch):
@@ -358,7 +364,7 @@ def test_Q6_a_relation_path_filters_and_a_third_hop_is_too_deep(db):
         "entity": "purchase_order", "fields": ["po_number"],
         "filters": [{"field": "supplier.name", "op": "contains", "value": f"{t} Mine"}],
     })
-    assert [r["po_number"] for r in out["rows"]] == [keep.po_number]
+    assert [code(r) for r in out["rows"]] == [keep.po_number]
     err = refusal(db, user, {
         "entity": "purchase_order", "fields": ["po_number"],
         "filters": [{"field": "supplier.a.b.c", "op": "eq", "value": "x"}],
@@ -579,7 +585,7 @@ def test_R1_a_company_b_only_user_reads_company_b_through_the_tool(db):
     user = mk_user(db, ORDERS_VIEW, companies=(company_b,))
     out = tool(db, make_ctx(user), order_spec(t, fields=["order_number"]))
     assert out.status == "ok", out.message
-    assert sorted(r["order_number"] for r in out.data["rows"]) == [f"{t}-{100 + i}" for i in range(3)]
+    assert sorted(code(r) for r in out.data["rows"]) == [f"{t}-{100 + i}" for i in range(3)]
 
 
 def test_R1_relation_fields_project_group_and_sort_and_stay_in_the_users_company(db):
@@ -634,7 +640,7 @@ def test_R1_a_brand_scoped_contact_sees_only_orders_with_its_brands_and_no_whole
     with brand_scoped(db, {chain_in[2]}):
         rows = tool(db, ctx, order_spec(t, fields=["order_number"]), panel=False)
         assert rows.status == "ok", rows.message
-        assert [r["order_number"] for r in rows.data["rows"]] == [f"{t}-1"]
+        assert [code(r) for r in rows.data["rows"]] == [f"{t}-1"]
         totals = tool(db, ctx, order_spec(t, aggregates=[{"fn": "sum", "field": "total_amount"}]), panel=False)
         assert totals.status == "denied"
         listed = tool(db, ctx, order_spec(t, fields=["order_number", "total_amount"]), panel=False)
@@ -662,7 +668,7 @@ def test_R1_a_brand_scoped_contact_sees_only_complaints_of_its_brands(db):
             "filters": [{"field": "complaint_number", "op": "starts_with", "value": t}]}
     with brand_scoped(db, {chain_in[2]}):
         out = tool(db, make_ctx(user), spec, panel=False)
-    assert [r["complaint_number"] for r in out.data["rows"]] == [f"{t}-1"]
+    assert [code(r) for r in out.data["rows"]] == [f"{t}-1"]
     assert core(db, user, spec)["total"] == 2
 
 
@@ -680,7 +686,7 @@ def test_R1_timestamps_are_malaysian_days_in_filters_and_buckets(db):
     def numbers(op, value):
         spec = order_spec(t, fields=["order_number"])
         spec["filters"].append({"field": "created_at", "op": op, "value": value})
-        return sorted(r["order_number"] for r in core(db, user, spec)["rows"])
+        return sorted(code(r) for r in core(db, user, spec)["rows"])
     assert numbers("lte", "2026-10-01") == [f"{t}-2"]
     assert numbers("eq", "2026-10-02") == [f"{t}-1"]
     assert numbers("between", ["2026-10-01", "2026-10-01"]) == [f"{t}-2"]
@@ -826,27 +832,6 @@ def test_R3_describe_says_which_order_field_is_the_lists_agent_and_its_date(db):
     assert "not the order date" in fields["created_at"].get("note", "")
 
 
-def test_R3_rows_always_carry_the_fields_a_record_is_named_by(db):
-    """A product answer showed code and price without the name: rows carry the entity's naming fields whatever
-    was asked, and the result says to name each row by them."""
-    chain = mk_product_chain(db)
-    t = tag()
-    for i, price in enumerate(("100.00", "300.00", "200.00")):
-        row = mk_product(db, f"{t}-{i}", chain)
-        row.list_price = Decimal(price)
-    db.flush()
-    user = mk_user(db, PRODUCTS_VIEW)
-    out = core(db, user, {
-        "entity": "product", "fields": ["list_price"],
-        "filters": [{"field": "product_code", "op": "starts_with", "value": t}],
-        "sort": [{"field": "list_price", "dir": "desc"}], "limit": 2,
-    })
-    assert out["name_rows_by"] == ["product_code", "product_name"]
-    assert [(r["product_code"], r["product_name"], r["list_price"]) for r in out["rows"]] == [
-        (f"{t}-1", f"ZZT {t}-1", 300.0), (f"{t}-2", f"ZZT {t}-2", 200.0),
-    ]
-
-
 def test_R3_per_agent_counts_equal_the_delivery_orders_lists_own_filter(db):
     """Step 7: the list filtered on Agent + Order date 1 to 31 Oct + not cancelled. Each per-agent count from
     crm_query must equal what the list's own search (`ListQuerySearchService`, the Filters dialog's path) returns
@@ -912,27 +897,6 @@ def test_R4_the_query_tool_says_delivery_order_counts_are_its_job_not_the_sales_
     assert "not the sales report" in text
 
 
-def _ledger_with_products(rows: list[dict]) -> dict:
-    return {"c1": {"name": "crm_query", "status": "ok", "args": {"entity": "product"}, "data": {
-        "entity": "product", "rows": rows, "total": len(rows), "truncated": False, "restricted": [],
-        "name_rows_by": ["product_code", "product_name"],
-    }}}
-
-
-def test_R4_the_reply_names_a_product_shown_by_its_code_only():
-    """Step 6: the model listed code and price and left the name out; code adds it after the code."""
-    from app.services.chatbot.agent import loop
-
-    ledger = _ledger_with_products([
-        {"id": "x1", "product_code": "CB600-NL", "product_name": "Concealed Basin 600", "list_price": 5000.0},
-        {"id": "x2", "product_code": "SRTBT1108", "product_name": "Bath Tub 1108", "list_price": 4000.0},
-    ])
-    answer = {"text": "1. CB600-NL: RM 5,000\n2. SRTBT1108 (Bath Tub 1108): RM 4,000"}
-    reply, _ = loop.final_reply(answer, [], [], ledger=ledger)
-    assert "CB600-NL (Concealed Basin 600)" in reply
-    assert reply.count("Bath Tub 1108") == 1  # already named: left as it is
-
-
 def test_R4_the_reply_is_unchanged_without_a_query_result():
     from app.services.chatbot.agent import loop
 
@@ -958,19 +922,72 @@ def test_R4_dates_come_back_as_dd_mm_yyyy_and_timestamps_in_malaysian_time(db):
     assert core(db, user, spec)["total"] == 1
 
 
-def test_R4_orders_leave_out_cancelled_ones_by_default_and_say_so(db):
-    """Owner ruling: a count of orders is of orders that are not cancelled, and the answer says so."""
+
+
+# ------------------------------------------------------------------ crew pass on f54a8859: decided in the tool output (5 Nov)
+
+_ISO = __import__("re").compile(r"(?<![\w-])\d{4}-\d{2}-\d{2}(?![\w-])")
+
+
+def _no_iso(value) -> list[str]:
+    return _ISO.findall(json.dumps(value, default=str))
+
+
+def test_R5_a_row_carries_one_label_code_colon_name_and_no_separate_code_or_name(db):
+    chain = mk_product_chain(db)
     t = tag()
-    mk_orders(db, t, 2)
-    mk_order(db, t, 9, is_cancelled=True)
+    for i, price in enumerate(("100.00", "300.00", "200.00")):
+        row = mk_product(db, f"{t}-{i}", chain)
+        row.list_price = Decimal(price)
+    db.flush()
+    user = mk_user(db, PRODUCTS_VIEW)
+    out = core(db, user, {
+        "entity": "product", "fields": ["product_code", "product_name", "list_price"],
+        "filters": [{"field": "product_code", "op": "starts_with", "value": t}],
+        "sort": [{"field": "list_price", "dir": "desc"}], "limit": 2,
+    })
+    assert [(r["label"], r["list_price"]) for r in out["rows"]] == [(f"{t}-1: ZZT {t}-1", 300.0), (f"{t}-2: ZZT {t}-2", 200.0)]
+    for row in out["rows"]:
+        assert "product_code" not in row and "product_name" not in row
+    # an entity named by one field: the label is that value
+    supplier = mk_supplier(db, f"{t} Sup")
+    mk_po(db, f"{t}-PO", supplier)
+    po = core(db, mk_user(db, SCM_VIEW), {"entity": "purchase_order", "fields": ["status"],
+                                           "filters": [{"field": "po_number", "op": "eq", "value": f"{t}-PO"}]})
+    assert po["rows"][0]["label"] == f"{t}-PO"
+
+
+def test_R5_an_order_result_carries_its_period_and_scope_note_in_display_form(db):
+    t = tag()
+    mk_order(db, t, 1, order_date=date(2026, 10, 3), agent="A")
+    mk_order(db, t, 2, order_date=date(2026, 10, 9), agent="A", is_cancelled=True)
     db.flush()
     user = mk_user(db, ORDERS_VIEW)
-    out = core(db, user, order_spec(t, aggregates=[{"fn": "count"}]))
-    assert out["groups"][0]["count"] == 2
-    assert any("cancelled" in note.lower() for note in out["notes"])
-    rows = core(db, user, order_spec(t, fields=["order_number"]))
-    assert rows["total"] == 2 and rows["notes"]
-    spec = order_spec(t, fields=["order_number"])
-    spec["filters"].append({"field": "is_cancelled", "op": "eq", "value": True})
-    asked = core(db, user, spec)
-    assert asked["total"] == 1 and not asked.get("notes")
+    spec = order_spec(t, group_by=["agent"], aggregates=[{"fn": "count"}])
+    spec["filters"].append({"field": "order_date", "op": "between", "value": ["2026-10-01", "2026-10-31"]})
+    out = core(db, user, spec)
+    assert out["groups"] == [{"agent": "A", "count": 1}]
+    assert out["period_display"] == "Order date 01/10/2026 to 31/10/2026"
+    assert out["scope_note"] == "Cancelled orders excluded."
+    assert _no_iso(out) == []
+    # asked for cancelled ones: no exclusion note
+    asked = order_spec(t, fields=["order_number"])
+    asked["filters"].append({"field": "is_cancelled", "op": "eq", "value": True})
+    out = core(db, user, asked)
+    assert out["total"] == 1 and out.get("scope_note") is None and out.get("period_display") is None
+
+
+def test_R5_no_result_carries_a_raw_iso_date_anywhere(db):
+    from datetime import datetime
+
+    t = tag()
+    mk_order(db, t, 1, order_date=date(2026, 10, 3), created_at=datetime(2026, 10, 3, 5))
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    for spec in (
+        order_spec(t),
+        order_spec(t, fields=["order_date", "created_at", "estimated_delivery_date"]),
+        order_spec(t, group_by=["order_date", {"field": "created_at", "bucket": "week"}]),
+        {**order_spec(t), "filters": order_spec(t)["filters"] + [{"field": "created_at", "op": "gte", "value": "2026-10-01"}]},
+    ):
+        assert _no_iso(core(db, user, spec)) == [], spec
