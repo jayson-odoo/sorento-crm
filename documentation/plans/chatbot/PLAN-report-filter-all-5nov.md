@@ -38,10 +38,13 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
 3. `report_ask._keep_held` is the ONE safety rule. A slot the object left empty, over a held value, without ALL, forgot
    to echo it, so the held value stays. It has two guards, both read from the object itself:
    - Not the breakdown's own axis slot: it would collapse to one row (C6-2).
-   - Not a held name the object now holds in a slot the held report did not hold it in: it moved, for example a name
-     the message calls the company.
-4. `report_ask._held_spelling`: a company that is none of the contact's own (by name or code) but a close spelling of
-   the held one (ratio >= 0.8) is the held one. An exact own company always wins.
+   - Not a held brand or account type name that the object newly puts in the other of those two lists, or in the
+     company (`_MOVES`). Examples: the brand-or-account-type answer, or a name the message calls the company. The
+     company itself is never un-held by a move: "<name> brand only" keeps the held company (review B1, R1). No other
+     slot pair moves: a new customer "Tan" never blocks a held agent "Tan" (U4b).
+4. `report_ask._held_spelling`: a company that is none of the contact's own (by name or code), that no entity of this
+   message types, and that is a close spelling of the held one (ratio >= 0.8) is the held one. An own company always
+   wins. A company the user typed stays as written and is refused when not held (review B2: "Sorento SG", R2).
 5. Temporary: `report_ask._legacy_all`. On a prompt without ALL (production v72 today), the legacy widen signal
    (`widened_kinds`) reads as ALL for the empty slots it names. TODO(REPORT-FILTER-ALL): delete it, `_LEGACY_WIDEN_SLOTS`
    and the `all_value` switch once the owner publishes the ALL prompt (crew Q2 ruling).
@@ -54,10 +57,10 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
 |---|---|---|
 | `_carry` (`report_ask.py:3684-3710` on main) | CP-1 / C6-2: the object drops a held filter the message did not touch | `_keep_held` (empty + held + no ALL keeps), FA-1 |
 | `_carry`'s `widened_kinds` read | B5-B7 "all brands" / "clear the brand filter" clear despite `brands: []` | ALL (`_read_all`), FA-1 / FA-2; legacy prompt: `_legacy_all`, CL-1..6 |
-| `_carry`'s `named & hints` skip (a kind this message names is never carried) | "sorento company only" over a held SORENTO brand (TF-28, HT1-2) | the moved-name guard in `_keep_held`, plus said_as (`_word_kinds`), U4 |
-| `_carry`'s brand + account type as ONE kind (`_CARRY_KINDS`) | a word moved between brands and account_types | the moved-name guard, U4 |
+| `_carry`'s `named & hints` skip (a kind this message names is never carried) | "sorento company only" over a held SORENTO brand (TF-28, HT1-2) | said_as (`_word_kinds`) drops the brand when the message calls the name the company (R3, TF-28, HT1-2); the `_MOVES` guard keeps a moved name from refilling, U4 |
+| `_carry`'s brand + account type as ONE kind (`_CARRY_KINDS`) | a word moved between brands and account_types | the `_MOVES` guard (brands with account_types), U4 |
 | `_carry`'s `answering` channel rule (CP-1: the channel carried only while a question is open) | the held channel kept on a reply | `_keep_held` for every turn (owner 3 Nov: a full new ask keeps the channel), FA-6, SC-8 updated |
-| HT1-18 echo rule (`report_ask.py:3589-3605` on main, keyed on top-level `sales_company`) | v202 "Sorenth" echo over a held Sorento | `_held_spelling`, FA-5c (now also with `sales_company` null, which the old rule refused) |
+| HT1-18 echo rule (`report_ask.py:3589-3605` on main, keyed on top-level `sales_company`) | v202 "Sorenth" echo over a held Sorento | `_held_spelling`, FA-5c (now also with `sales_company` null, which the old rule refused). The old rule's entity guard is kept (a company this message types is never an echo, R2 / U5b); its `sales_company` guard is replaced by "none of the contact's own" |
 
 Keyword rules (owner 5 Nov: "clear all" is never hard-coded; the parser reads the meaning, code applies the object).
 `report_ask.py` reads no message text: no regex, and `take_words` takes its text argument for the seam's shape only. One
