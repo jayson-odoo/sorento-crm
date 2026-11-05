@@ -4,13 +4,15 @@ owner's sales figure over them.
 Sales = Invoices + Cash sales + Debit notes - Credit notes, net of tax in RM, by document date, cancelled
 documents excluded (owner ruling, SALES-UNIFIED). The figure, the agent and the sales type are the expressions of
 `app/services/sales/invoiced_sales.py`, the one sales calculation, never written again here. The screen is
-`finance.billing_documents.view` with no own rule (`api/v1/finance/billing_documents.py`); its rows show the net
-total, the total and the outstanding, so no field here needs a further slug.
+`finance.billing_documents.view` with no own rule (`api/v1/finance/billing_documents.py`). The figures follow the
+sales report's gate on top (crew pass, 5 Nov): money fields and every total need the staff reveal the report needs,
+so `crm_query` never shows what `crm_report_ask` refuses.
 """
 from __future__ import annotations
 
 from app.models.finance import POSTED, BillingDocument
 from app.services.assistant_registry import register
+from app.services.assistant_registry.query import OUTSTANDING, SALES_REPORT
 from app.services.assistant_registry.types import EntityDef, FieldDef
 from app.services.sales import invoiced_sales
 
@@ -36,7 +38,7 @@ register(
                 note="The agent the sale belongs to, as the sales reports count it; group by this for per agent sales.",
             ),
             "sales_amount": FieldDef(
-                "Sales (RM)", expr=invoiced_sales.signed_amount,
+                "Sales (RM)", expr=invoiced_sales.signed_amount, permission=SALES_REPORT,
                 note="THE sales figure: net of tax in RM, a credit note negative. Sales = sum of this "
                      "(invoices + cash sales + debit notes - credit notes).",
             ),
@@ -44,11 +46,11 @@ register(
                 "Sales type", expr=invoiced_sales.sales_type_label,
                 note="Dealer, Project team, Other, Set apart, ... as the sales reports split sales.",
             ),
-            "net_total": FieldDef("Net total", note="In the document's currency, not signed; use sales_amount for sales."),
-            "total": FieldDef("Total incl. tax", note="In the document's currency, not signed."),
+            "net_total": FieldDef("Net total", permission=SALES_REPORT, note="In the document's currency, not signed; use sales_amount for sales."),
+            "total": FieldDef("Total incl. tax", permission=SALES_REPORT, note="In the document's currency, not signed."),
             "currency_code": FieldDef("Currency"),
             "status": FieldDef("Status", note="posted or cancelled."),
-            "outstanding": FieldDef("Outstanding", note="Still owed on the document (synced from AutoCount)."),
+            "outstanding": FieldDef("Outstanding", permission=OUTSTANDING, note="Still owed on the document (synced from AutoCount)."),
             "due_date": FieldDef("Due date"),
         },
         relations={"customer": ("customer", "customer_id")},
@@ -60,5 +62,10 @@ register(
         routes=("GET /api/v1/finance/billing-documents",),
         # Totals and lines of every brand: refused on a brand-scoped contact's turn (security review B1).
         brand_blind=True,
+        # Crew pass 5 Nov: the money and every total follow the sales report's own gate
+        # (`api/v1/order_management/report_ask.py`: the staff reveal `sales_orders.sales_report`, held through
+        # `sales.reports.view`; outstanding through `sales_orders.outstanding`), so the registry is no side door.
+        aggregate_permission=SALES_REPORT,
+        hint="invoices, cash sales, debit and credit notes. SALES = sum sales_amount by doc_date, group by agent",
     ),
 )

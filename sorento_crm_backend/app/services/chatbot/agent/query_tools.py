@@ -114,6 +114,8 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
     lines = [heading]
     totals = data.get("totals") or {}
     if panel:
+        # A blank line before and after the table, or markdown renders it as raw "|" text (crew pass, 5 Nov).
+        lines.append("")
         lines.append("| " + " | ".join(c["label"] for c in columns) + " |")
         lines.append("|" + "|".join("---" for _ in columns) + "|")
         for item in items:
@@ -122,6 +124,7 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             cells = [_cell(totals[c["key"]]) if c["key"] in totals else "" for c in columns]
             cells[0] = cells[0] or "Total"
             lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
     else:
         first, rest = (columns[0], columns[1:]) if columns else ({"key": ""}, [])
         for item in items:
@@ -174,6 +177,25 @@ def _describe(db, ctx, args: dict) -> ToolResult:
 # Every array names its items and every object its properties: Gemini refuses a schema that does not (400),
 # and the turn then fails as a whole (`tests/chatbot/agent/test_agent_tool_schemas_gemini.py`).
 _TEXT = {"type": "string"}
+
+
+def entity_index() -> str:
+    """The compact index in `crm_query`'s description: each queryable entity's hint, fields and relations, so most
+    questions are one `crm_query` call with no `crm_describe` round first (crew pass on d430fe3c, 5 Nov: the extra
+    round took list turns from ~49k to ~77k prompt tokens). Notes stay in `crm_describe`."""
+    lines = []
+    for e in ENTITIES.values():
+        if e.view_permission is None:
+            continue
+        # A relation shows the fields it is named by (all a lookup may read; crm_describe lists the rest).
+        rel = [
+            f"{name}.{{{','.join(ENTITIES[target].name_by or tuple(ENTITIES[target].fields))}}}"
+            for name, (target, _fk) in e.relations.items()
+        ]
+        lines.append(f"{e.key} ({e.hint}): {','.join([*e.fields, *rel])}")
+    return "\n".join(lines)
+
+
 _SCALARS = [_TEXT, {"type": "number"}, {"type": "boolean"}]
 
 QUERY_SCHEMA = {
@@ -183,15 +205,15 @@ QUERY_SCHEMA = {
         "description": (
             "Read CRM records as their screens show them: rows, or totals with group_by. Delivery order counts "
             "and totals per agent, customer or month are this tool on entity order, not the sales report. "
-            "Sales targets, below target and commission payout: entity sales_target. "
-            "Entity keys and fields come from crm_describe, whose notes say which field a list column is; a field "
-            "may go through a relation (supplier.name). In the reply, show each row by its label exactly and "
-            "say the result's period_display and scope_note. "
+            "Call it directly with the entities and fields below (a relation field is customer.code); call "
+            "crm_describe only when a field's meaning is unclear. In the reply, show each row by its label exactly "
+            "and say the result's period_display and scope_note. "
             "filters: [{field, op, value}], op one of eq ne in not_in lt lte gt gte between contains starts_with "
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
             f"sorts by its key or an aggregate alias such as sum_total_amount). At most {MAX_ROWS} rows or "
-            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy."
+            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy.\n"
+            "Entities:\n" + entity_index()
         ),
         "parameters": {
             "type": "object",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.models.order import DOC_TYPE_SALES_ORDER, SalesOrder
 from app.services.assistant_registry import register
+from app.services.assistant_registry.query import SALES_REPORT
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 
@@ -43,5 +44,8 @@ register(
         scope=_screen_rules,
         # Totals and lines of every brand: refused on a brand-scoped contact's turn (security review B1).
         brand_blind=True,
+        # Counts and rankings of orders are the sales report's (ordered basis): its gate (crew pass, 5 Nov).
+        aggregate_permission=SALES_REPORT,
+        hint="sales orders (no amounts; sales are billing_document)",
     ),
 )

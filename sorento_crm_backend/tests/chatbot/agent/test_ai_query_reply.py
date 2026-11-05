@@ -202,7 +202,8 @@ def test_a_long_grouped_result_is_a_code_rendered_table_on_the_panel(db):
     assert out.status == "ok"
     card = out.display
     assert card.splitlines()[0] == "Delivery orders by agent, Order date 01/10/2026 to 31/10/2026"
-    assert card.splitlines()[1] == "| Agent | Delivery orders | Total |"
+    assert card.splitlines()[1] == ""  # a blank line before the table, or markdown shows raw "|" (wave 2)
+    assert card.splitlines()[2] == "| Agent | Delivery orders | Total |"
     body = [line for line in card.splitlines() if line.startswith("| AGENT ")]
     assert len(body) == 12 and body[0] == "| AGENT 00 | 1 | 100.50 |"
     assert "| Total | 24 | 2,412 |" in card

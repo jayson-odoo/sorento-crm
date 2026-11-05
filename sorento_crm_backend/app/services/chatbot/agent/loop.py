@@ -79,6 +79,12 @@ CATALOG_RETRY_SECONDS = 30
 _CATALOG_LOCK = threading.Lock()
 
 
+#: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
+#: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
+QUERY_TOOLS = ("crm_query", "crm_describe")
+MAX_QUERY_CALLS = 4
+
+
 @dataclass
 class Budgets:
     max_rounds: int = 8
@@ -1464,6 +1470,15 @@ def _run(
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
+                if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
+                    # Crew pass on d430fe3c (5 Nov): turns of 7 query calls ran to 161-173k prompt tokens.
+                    replies[idx] = ToolResult(
+                        "denied",
+                        message=f"At most {MAX_QUERY_CALLS} crm_query/crm_describe calls per question; answer with "
+                                "the results you have and say what is missing.",
+                    ).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
                 if tool_index >= budgets.calls_per_round:
                     # A Gemini continuation must be replayed with a reply for every call it
                     # contains, so each extra call gets one; the digest and trace carry one note.

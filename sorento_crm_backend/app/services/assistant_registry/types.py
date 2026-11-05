@@ -14,6 +14,8 @@ from typing import Any, Callable
 class FieldDef:
     label: str
     #: An extra slug needed to read this field (cost price, phone, margin); None = the entity's slug is enough.
+    #: `reveal:<key>` names a reveal key instead (`contact_field_reveal_service`), held by a staff member through
+    #: the slug of the screen that shows that data (`staff_reveal_keys`): the sales report's own gate.
     permission: str | None = None
     #: The model attribute; None = the field key itself.
     column: str | None = None
@@ -74,3 +76,9 @@ class EntityDef:
     #: Figures that cover every brand and cannot be cut to a brand-scoped contact's brands (invoice totals, a
     #: target's achievement): refused while the session carries a brand scope (a linked user's WhatsApp turn).
     brand_blind: bool = False
+    #: A slug (or `reveal:<key>`) needed for any group_by or aggregate: totals and rankings are the sales report's
+    #: figures, so they follow its gate even where the list screen does not (crew pass, 5 Nov).
+    aggregate_permission: str | None = None
+    #: One line for the compact entity index in `crm_query`'s description: what the entity is for, so most
+    #: questions need no `crm_describe` call (crew pass, 5 Nov: the extra round cost ~28k prompt tokens a turn).
+    hint: str = ""

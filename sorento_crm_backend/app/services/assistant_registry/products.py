@@ -52,5 +52,6 @@ register(
         screen_path="/master-data-management/products/{id}",
         pages=("/master-data-management/products",),
         routes=("GET /api/v1/master-data/products/",),
+        hint="products with brand and category",
     ),
 )

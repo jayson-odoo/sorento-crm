@@ -299,6 +299,9 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    from app.services.assistant_registry.query import require_aggregate
+
+    require_aggregate(entity, slugs, bool(group_by or aggregates))
     if (group_by or aggregates) and _list(spec, "fields"):
         raise QueryRefused("invalid", "`fields` lists rows; with group_by or aggregates leave it out.")
     # Every name in the spec is checked before the service runs, so a refusal costs no computation.

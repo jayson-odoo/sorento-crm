@@ -42,6 +42,10 @@ register(
         },
         relations={"agent": ("sales_agent", "sales_agent_id")},
         name_by=("code", "name"),
+        # "Active customers": the Customers list's own Active filter (`order_service._build_customer_list_query`,
+        # `status=active` is `is_active`), applied unless the query names `is_active` (crew pass, 5 Nov).
+        default_filters=(("is_active", "eq", True, "Inactive customers excluded."),),
+        hint="customers; agent.code for an agent's customers",
         screen_path="/order-management/customers/{id}",
         pages=("/order-management/customers",),
         routes=("GET /api/v1/order-management/customers/",),
@@ -92,6 +96,7 @@ register(
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),
         routes=("GET /api/v1/order-management/orders/",),
+        hint="delivery orders (DO); per agent = group by agent, period = order_date",
         scope=_screen_rules,
     ),
 )

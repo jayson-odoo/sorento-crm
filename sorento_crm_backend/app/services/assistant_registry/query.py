@@ -61,10 +61,30 @@ class QueryRefused(Exception):
 # ------------------------------------------------------------------ access
 
 
+#: A field or aggregate gated by a reveal key, not a slug: `reveal:sales_orders.sales_report`.
+REVEAL = "reveal:"
+SALES_REPORT = REVEAL + "sales_orders.sales_report"
+OUTSTANDING = REVEAL + "sales_orders.outstanding"
+
+
 def _slugs(db, user_id: str) -> set[str]:
+    """The user's slugs, plus `reveal:<key>` for every reveal key their slugs answer (`staff_reveal_keys`, the
+    sales report route's staff gate, `api/v1/order_management/report_ask.py`)."""
+    from app.services.contact_field_reveal_service import staff_reveal_keys
     from app.services.user_service import UserPermissionService
 
-    return set(UserPermissionService(db).get_user_permission_slugs(str(user_id)))
+    held = set(UserPermissionService(db).get_user_permission_slugs(str(user_id)))
+    return held | {REVEAL + key for key in staff_reveal_keys(db, str(user_id))}
+
+
+def require_aggregate(entity: EntityDef, slugs: set[str], grouped: bool) -> None:
+    """Totals and rankings follow the sales report's gate (`EntityDef.aggregate_permission`)."""
+    if grouped and entity.aggregate_permission and entity.aggregate_permission not in slugs:
+        raise QueryRefused(
+            "restricted",
+            f"Totals of {entity.label.lower()} need the sales report, which is not enabled for this user; "
+            "list the records instead.",
+        )
 
 
 def _module_blocked(db, user_id: str, module: str) -> bool:
@@ -477,6 +497,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
     period = _period_display(paths, asked)
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    require_aggregate(entity, slugs, bool(group_by or aggregates))
     if group_by or aggregates:
         if _list(spec, "fields"):
             raise QueryRefused("invalid", "`fields` lists rows; with group_by or aggregates leave it out.")

@@ -31,6 +31,8 @@ TARGETS_VIEW = "sales.targets.view"
 BILLING_VIEW = "finance.billing_documents.view"
 CUSTOMERS_VIEW = "order_management.customers.view"
 SO_VIEW = "scm.dashboard.view"
+#: The sales report reveal (round 3): billing money and every billing total need it.
+SALES_REVEAL = "reveal:sales_orders.sales_report"
 SEP = ["01/09/2026", "30/09/2026"]
 
 
@@ -238,7 +240,7 @@ def _doc(db, company_id, kind, net, when, *, status="posted", agent=None, custom
 @pytest.fixture
 def sales(api, grant):
     client, db, company_id = api
-    grant(BILLING_VIEW)
+    grant(BILLING_VIEW, SALES_REVEAL)
     a, b = _agent(db, "SA", "Sales A"), _agent(db, "SB", "Sales B")
     cust = _customer(db, company_id, "ZZT BILL CUST")
     oct_ = date(2026, 10, 3)
@@ -356,7 +358,7 @@ def test_R1_brand_scoped_turn_cannot_read_every_brands_money(sales, grant):
     from app.services.assistant_registry.query import describe
 
     db, _company, _s = sales
-    grant(BILLING_VIEW, TARGETS_VIEW, SO_VIEW, CUSTOMERS_VIEW)
+    grant(BILLING_VIEW, SALES_REVEAL, TARGETS_VIEW, SO_VIEW, CUSTOMERS_VIEW)
     before = get_brand_scope(db)
     set_brand_scope(db, frozenset({str(uuid.uuid4())}))
     try:
@@ -372,7 +374,7 @@ def test_R1_brand_scoped_turn_cannot_read_every_brands_money(sales, grant):
 
 def test_R2_a_related_customer_is_a_lookup_without_the_customers_slug(sales, grant):
     db, _company, s = sales
-    grant(BILLING_VIEW)
+    grant(BILLING_VIEW, SALES_REVEAL)
     mine = {"field": "debtor_code", "op": "eq", "value": s["cust"].customer_code}
     out = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["customer.code", "customer.region"], "limit": 1})
     assert out["rows"][0]["customer.code"] == s["cust"].customer_code
@@ -383,7 +385,7 @@ def test_R2_a_related_customer_is_a_lookup_without_the_customers_slug(sales, gra
 
     shown = describe(db, str(uuid.uuid4()), "billing_document")["relations"]["customer"]
     assert {f["field"] for f in shown["fields"]} == {"code", "name"} and shown["relations"] == []
-    grant(BILLING_VIEW, CUSTOMERS_VIEW)
+    grant(BILLING_VIEW, SALES_REVEAL, CUSTOMERS_VIEW)
     out = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["customer.region"], "limit": 1})
     assert out["restricted"] == []
 
@@ -421,7 +423,7 @@ def test_R4_another_companys_targets_and_documents_stay_out(targets, grant):
     assert b_agent.sales_agent not in {r.get("agent") for r in out["rows"]}
     assert f"/sales/targets/{res.json()['id']}" not in {r["link"] for r in out["rows"]}
     assert len(out["rows"]) == 14  # this company's 6 + 6 + 2 periods only
-    grant(BILLING_VIEW)
+    grant(BILLING_VIEW, SALES_REVEAL)
     docs = run(db, {"entity": "billing_document", "filters": [{"field": "net_total", "op": "eq", "value": 123456}]})
     assert docs["rows"] == []
 
