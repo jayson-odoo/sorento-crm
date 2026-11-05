@@ -469,11 +469,14 @@ def test_a_second_press_with_only_waiting_rows_left_makes_no_write_call(api, fak
     db.commit()
     _answer_update(fake_ss, world, held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)])
     client.post(_url(world))
-    writes = len(fake_ss.writes())
+    def sent():
+        return [r for r in fake_ss.writes() if r.method != "GET"]
+
+    writes = len(sent())
 
     body = client.post(_url(world)).json()
 
-    assert len(fake_ss.writes()) == writes, "no line edits and no header change: no PATCH"
+    assert len(sent()) == writes, "no line edits and no header change: no PATCH"
     assert "ZZT-OLD-CODE" in str(body["waiting"])
 
 
