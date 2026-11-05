@@ -460,13 +460,15 @@ describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
     expect(screen.getByText('Publish router v2 to staging?')).toBeInTheDocument();
   });
 
-  it('disables full-screen Stage / Publish while the draft has unsaved edits', () => {
+  it('offers Save, not Stage / Publish, in full screen during an edit session', () => {
     renderDetail();
     startEdit();
     enter();
     fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'unsaved' } });
-    // It publishes the SAVED version, so beside unsaved text it would mislead.
-    expect(screen.getByTestId('fullscreen-publish-staging')).toBeDisabled();
+    // Publishing acts on the SAVED version, so beside unsaved text it would mislead; an edit
+    // session offers one intent, Save (the record header's rule, carried into full screen).
+    expect(screen.queryByTestId('fullscreen-publish-staging')).toBeNull();
+    expect(overlay()!.contains(screen.getByTestId('save-version'))).toBe(true);
   });
 
   describe('with registry variables (chip editor)', () => {
