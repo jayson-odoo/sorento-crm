@@ -78,6 +78,7 @@ import {
   isLiveInquiryRow,
   isWaitingUsedRow,
   reserveHistoryRowOf,
+  reserveRowsOfLines,
   tickRowsOf,
   type OrderInquiryLine,
 } from '../../../_shared/lib/orderInquiryLineFold';
@@ -302,11 +303,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
   // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,
   // with a tooltip naming the FIRST reason (not a tally of every one).
-  const reserveIneligibleReasons = useMemo(
-    () => selectedLines.map(reserveIneligibleReason).filter((reason): reason is string => Boolean(reason)),
-    [selectedLines],
+  // OI-RESERVE-ANY-ROW (crew, 5 Nov): a ticked line asks ONCE, on its primary row, even when
+  // its ORDER and DELAY rows are both live.
+  const reserveRows = useMemo(
+    () => reserveRowsOfLines(lines, (row) => Boolean(rowSelection[row.id])),
+    [lines, rowSelection],
   );
-  const canRequestReserve = selectedLines.length > 0 && reserveIneligibleReasons.length === 0;
+  const reserveIneligibleReasons = useMemo(
+    () =>
+      reserveRows
+        .map((row) => reserveIneligibleReason(row))
+        .filter((reason): reason is string => Boolean(reason)),
+    [reserveRows],
+  );
+  const canRequestReserve = reserveRows.length > 0 && reserveIneligibleReasons.length === 0;
   const reserveDisabledReason =
     selectedLines.length === 0 ? 'Select at least one row' : reserveIneligibleReasons[0];
 
@@ -1065,7 +1075,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           inquiryId={id}
           open={reserveDialogOpen}
           onOpenChange={setReserveDialogOpen}
-          rows={selectedLines}
+          rows={reserveRows}
           onSent={() => {
             setRowSelection({});
             invalidateReserveQueries();
