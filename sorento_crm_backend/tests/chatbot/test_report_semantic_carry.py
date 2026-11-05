@@ -455,7 +455,10 @@ def test_sc6_the_owners_fourteen_turns_hold_slot_by_slot(rbot, world) -> None:
 # ------------------------------------------------------------------------------------------ SC-8 (restated ask)
 
 
-def test_sc8_a_restated_product_ask_runs_every_channel_and_the_header_says_so(rbot, world) -> None:
+def test_sc8_a_restated_product_ask_keeps_the_held_channel(rbot, world) -> None:
+    """Owner ruling 3 Nov (d29c1983 edit 3, which replaced the 2 Nov "a restated ask drops the channel"): a full new ask
+    keeps every held filter it does not change, the channel included. REPORT-FILTER-ALL: an object that leaves the held
+    channel null forgot it (`report_ask._keep_held`); every channel is the explicit ALL (test_report_filter_all)."""
     sorento, _mocha = world
     rbot.extra_body = {"filters": [{"key": "channel", "label": "Channel", "values": ["Dealer"]}]}
     first = _v(
@@ -478,8 +481,7 @@ def test_sc8_a_restated_product_ask_runs_every_channel_and_the_header_says_so(rb
     assert args, f"turn 2 did not run: {text.strip()!r}"
     assert args[0].get("product_code") == PRODUCT_CODE and args[0].get("basis") == "invoiced", args[0]
     assert args[0].get("date_from") == "2026-01-01" and args[0].get("date_to") == "2026-12-31", args[0]
-    assert not args[0].get("channel"), f"the restated ask kept the channel: {args[0]}"
-    assert "Dealer" not in text, f"the reply header still names the dealer channel: {text!r}"
+    assert args[0].get("channel") == "dealer", f"the restated ask lost the held channel: {args[0]}"
 
 
 # ------------------------------------------------------------------------------------------ SC-9 .. SC-13 (rails)

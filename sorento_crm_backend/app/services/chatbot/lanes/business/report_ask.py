@@ -2429,11 +2429,6 @@ def _settle(
         }
         if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
             held_channel = source["channel"]
-        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
-        held_filters = {
-            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "account_types")
-            if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
-        }
         held_customer = _dict(parse_output.get(HELD_KEY)).get("customer_ids")
         if held_customer and _customer_stays(parse_output, axis):
             # Only off the stamp, never the frame: an open ask the message replaced is newer than a ranking still on screen.
@@ -3081,16 +3076,16 @@ OPEN_QUESTION_WORDS = {
 #: M2: the words the Held report line names the company-or-brand question with (`kind_both`); the brand or account type
 #: question keeps its own.
 COMPANY_OR_BRAND_WORDS = "company or brand"
-#: Crew C6-2 (round 6): the kinds a held filter carries by, each as (the object lists that hold it, the entity hints that
-#: name it this message). Brand and account type are ONE kind (the model moves a word between the two lists).
-_CARRY_KINDS = (
-    (("sales_agents",), frozenset({"sales_agent"})),
-    (("brands", "account_types", "brand_or_account_type"), frozenset({"brand", "account_type"})),
-    (("categories",), frozenset({"category"})),
-    (("customers",), frozenset({"customer"})),
-    (("products",), frozenset({"product"})),
-    (("company",), frozenset({"company"})),
-)
+#: REPORT-FILTER-ALL: the `report_ask` filter slots. Each takes the explicit ALL (`parser.REPORT_ALL`: company and channel
+#: "ALL", a list ["ALL"]): every value, no filter. An empty one the parser left over a held value keeps it (`_keep_held`).
+_FILTER_SLOTS = ("company", "channel", "sales_agents", "account_types", "brands", "categories", "customers", "products")
+#: TODO(REPORT-FILTER-ALL): delete with `_legacy_all` once the owner publishes a prompt that writes ALL. The legacy widen
+#: signal (`turn.decide.widened_kinds`, an entity hint) -> the slots it empties; brand and account type widen together.
+_LEGACY_WIDEN_SLOTS = {
+    "sales_agent": ("sales_agents",), "brand": ("brands", "account_types"), "account_type": ("brands", "account_types"),
+    "category": ("categories",), "customer": ("customers",), "product": ("products",), "company": ("company",),
+    "channel": ("channel",),
+}
 #: A breakdown axis -> the object slot that filters its own dimension (C6-2: an axis whose slot the ask filters to ONE
 #: value is one row, not a breakdown).
 _AXIS_SLOTS = {
@@ -3455,7 +3450,7 @@ def _entity(raw: str, hint: str, code: Any = None, **more: Any) -> dict[str, Any
 
 def from_object(
     verdict: dict[str, Any], *, on: bool, focus: Any = None, pending: Any = None, companies: Any = (),
-    said_as_text: bool = False,
+    said_as_text: bool = False, all_value: bool = False,
 ) -> dict[str, Any]:
     """Engine seam, right after the parse (A3). `on`: the prompt in use carries the report ask marker
     (`ParserConfig.report_ask`); off, the key is dropped and nothing else changes.
@@ -3466,9 +3461,11 @@ def from_object(
     reads the turn. Value checks only: V1, the object's basis counts when this message's own `basis` / `sales_basis` says
     it or the held report / open ask already has it; the open question's declared pick fills the slot it asks when the
     object left it null (`_open_pick`; the word question's company option fills the company, C6-1); a month or year axis
-    takes only this message's own count. C6-2, over the model's own outputs: a held filter of a kind this message's
-    entities name nothing of and the object dropped stays (`_carry`); an axis this message does not type stays the held
-    one on an answer to the open question, and over a slot the ask filters to one value. The held names -> ids ride
+    takes only this message's own count. REPORT-FILTER-ALL: the object is final; a filter slot written ALL is no
+    filter, and the one safety rule (`_keep_held`) keeps a held value the object left empty. `all_value`: the prompt in use
+    defines ALL (`parser.REPORT_ALL` in `ParserConfig.report_ask_defined`); off, the legacy widen signal stands in for it
+    (`_legacy_all`). An axis this message does not type stays the held one on an answer to the open question, and over a
+    slot the ask filters to one value (C6-2). The held names -> ids ride
     along for the lane's customer rule (`_fresh_args`). The object counts only on a report parse (`REPORT_STATUSES`)
     or a reply while this ask's question is open; an object that is not a sales or outstanding ask, or a turn read off
     the rows on screen (`_rows_on_screen`), keeps today's path: the object is set aside (null). `companies`: the contact's
@@ -3489,6 +3486,7 @@ def from_object(
     ):
         return {**verdict, OBJECT_KEY: None}
     ask = {key: raw.get(key) for key in REPORT_ASK_KEYS}  # the schema's keys only
+    cleared = _read_all(ask) | (set() if all_value else _legacy_all(ask, verdict))
     # M1: what the report gives back, the parser's own call; null or absent (a text without the key) is today's inference.
     frame = ask["frame"] = ask.get("frame") if ask.get("frame") in REPORT_ASK_FRAMES else None
 
@@ -3587,24 +3585,7 @@ def from_object(
         held_measure = (held_ask or {}).get("measure") if carrying else None
         ask["measure"] = held_measure if held_measure in METRICS else "amount"
     if carrying:
-        held_company = held_ask.get("company")
-        echo = _squash(ask.get("company") or "")
-        if (
-            held_company and echo and echo != _squash(held_company)
-            and _squash(verdict.get("sales_company") or "") == _squash(held_company)
-            and not any(
-                isinstance(e, dict) and e.get("current_message") is not False
-                and echo in {_squash(e.get("raw") or ""), _squash(e.get("canonical_code") or "")}
-                for e in jsc.array(verdict.get("entities"))
-            )
-        ):
-            # HT1-18: the parse's own `sales_company` is the held company and no entity of this message is the object's
-            # other company, so that company is an echo, not an ask: the held one stays. A message whose entity is that
-            # company keeps today's path (a switch, or the forbidden line, HT1-19 / HT1-20); a null `sales_company` never
-            # fires (HT1-18b). Parser fields only, never the message text.
-            ask["company"] = held_company
-        # CP-1: while a clarification is open, every held filter the parse leaves out stays (the channel too).
-        _carry(ask, held_ask, verdict, slot_of_axis, answering=bool(_dict(getattr(focus, "required_ask", None)).get("asking")))
+        _keep_held(ask, held_ask, cleared, slot_of_axis, companies)
     breakdown = frame == "breakdown" and axis is not None
     if outstanding:
         status = status if status in OUTSTANDING_STATUSES else "outstanding"
@@ -3681,33 +3662,75 @@ def from_object(
     return out
 
 
-def _carry(
-    ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None, *, answering: bool = False
-) -> None:
-    """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
-    name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
-    word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
-    widens is not carried (`turn.decide.widened_kinds`, the reader the open which-one customer pick shares: `broaden_axis`
-    with `broaden_to` "all" naming one of the kind's hints, and for the customer a global drill or "my ..."). The axis's
-    own slot is not carried: a breakdown ranks across it (`_AXIS_FILTERS`). `answering` (a clarification is open, crew
-    console pass CP-1, owner 3 Nov): the held channel is carried too, unless the parse widens it or splits by it."""
-    named = {
-        jsc.js_string(e.get("hint") or "").strip().lower()
-        for e in jsc.array(verdict.get("entities"))
-        if isinstance(e, dict) and e.get("current_message") is not False
-    }
+def _read_all(ask: dict[str, Any]) -> set[str]:
+    """REPORT-FILTER-ALL: the filter slots the object writes ALL (`parser.REPORT_ALL`), each set to no filter (null or [])
+    in place. ALL anywhere in a list is the whole list."""
+    from app.services.chatbot.head.parser import REPORT_ALL
+
+    out: set[str] = set()
+    for slot in _FILTER_SLOTS:
+        value = ask.get(slot)
+        values = jsc.array(value) if isinstance(value, list) else [value]
+        if any(isinstance(v, str) and v.strip() == REPORT_ALL for v in values):
+            ask[slot] = [] if isinstance(value, list) else None
+            out.add(slot)
+    return out
+
+
+def _legacy_all(ask: dict[str, Any], verdict: dict[str, Any]) -> set[str]:
+    """TODO(REPORT-FILTER-ALL): delete once the owner publishes a prompt that writes ALL (crew ruling Q2, 5 Nov). A
+    prompt without ALL widens by the legacy signal (`turn.decide.widened_kinds`: `broaden_axis` with `broaden_to` "all",
+    and the customer on a global drill or "my ..."): each slot it names that the object left empty reads as ALL."""
     from app.services.chatbot.turn.decide import widened_kinds
 
-    # R-P3-09: the kinds the parse widens, read as each kind's own hint (brand and account type clear together).
-    widened = widened_kinds(verdict)
-    for keys, hints in _CARRY_KINDS:
-        if named & hints or hints & widened or any(ask.get(k) for k in keys):
+    slots = {slot for kind in widened_kinds(verdict) for slot in _LEGACY_WIDEN_SLOTS.get(kind, ())}
+    return {slot for slot in slots if not ask.get(slot)}
+
+
+def _keep_held(
+    ask: dict[str, Any], held_ask: dict[str, Any], cleared: set[str], axis_slot: str | None, companies: Any = ()
+) -> None:
+    """REPORT-FILTER-ALL, the ONE safety rule over the parser's final object: a filter slot it left empty, over a held
+    value, without ALL, forgot to echo it: the held value stays. Not the axis's own slot (a breakdown ranks across it,
+    C6-2), and not a held name the object now holds in another slot (it moved: a name the message calls the company, an
+    account type the brand question settled). Then a company that is none of the contact's own but spells the held one
+    is the held one (`_held_spelling`)."""
+    def fold(value: Any) -> str:
+        return _squash(value)
+
+    for slot in _FILTER_SLOTS:
+        held = held_ask.get(slot)
+        if slot in cleared or slot == axis_slot or ask.get(slot) or not held:
             continue
-        for key in keys:
-            if key not in ("brand_or_account_type", axis_slot) and held_ask.get(key):
-                ask[key] = held_ask[key]
-    if answering and not ask.get("channel") and "channel" not in widened and axis_slot != "channel" and held_ask.get("channel"):
-        ask["channel"] = held_ask["channel"]
+        elsewhere = {
+            fold(v) for other in _FILTER_SLOTS if other != slot
+            for v in (jsc.array(ask.get(other)) if isinstance(ask.get(other), list) else [ask.get(other)]) if v
+        }
+        if isinstance(held, list):
+            ask[slot] = [v for v in held if fold(v) not in elsewhere]
+        elif fold(held) not in elsewhere:
+            ask[slot] = held
+    ask["company"] = _held_spelling(ask.get("company"), held_ask.get("company"), companies)
+
+
+def _held_spelling(company: Any, held: Any, companies: Any = ()) -> Any:
+    """HT1-18 (v202 parse "Sorenth" over a held Sorento): the object's company, unless it is none of the contact's own
+    companies (by name or code) and a near spelling of the held one: then the held one. An own company always wins
+    (HT1-18b / HT1-19); a name like no own company stays as written and is refused downstream (HT1-20)."""
+    from difflib import SequenceMatcher
+
+    said, kept = _squash(company or ""), _squash(held or "")
+    if not said or not kept or said == kept:
+        return company
+    own = {_squash(c[i]) for c in jsc.array(companies) if isinstance(c, (list, tuple)) for i in (1, 2) if len(c) > i}
+    if said in own:
+        return company
+    return held if SequenceMatcher(None, said, kept).ratio() >= _ECHO_RATIO else company
+
+
+#: `_held_spelling`: how close an unknown company name must be to the held one to be its echo (one wrong letter in a
+#: seven-letter name is 0.86; another company's name is far below).
+_ECHO_RATIO = 0.8
 
 
 _COMPANY_ROWS = {"sales_agent": "SalesAgent", "brand": "Brand", "category": "ProductCategory", "customer": "Customer"}
