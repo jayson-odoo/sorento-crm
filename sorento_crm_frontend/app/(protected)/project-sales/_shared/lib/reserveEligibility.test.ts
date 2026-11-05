@@ -50,9 +50,20 @@ describe('reserveIneligibleReason', () => {
     expect(reserveIneligibleReason(row({ verb: 'ORDER_BACK', state: 'partly_linked' }))).toBeNull();
   });
 
-  it('names the row when the verb is not ORDER or ORDER_BACK', () => {
-    expect(reserveIneligibleReason(row({ verb: 'RETURN' }))).toBe(
-      'SRTWT904-NL: not an ORDER or ORDER BACK row',
+  // OI-RESERVE-ANY-ROW (owner, 5 Nov 2026): any row that is not Done, whatever its verb.
+  it.each(['DELAY', 'ADVANCE', 'RESERVE_AND_ORDER', 'CHANGE_SO'])('accepts a not-Done %s row', (verb) => {
+    expect(reserveIneligibleReason(row({ verb }))).toBeNull();
+  });
+
+  it('refuses a Done row whatever its verb', () => {
+    expect(reserveIneligibleReason(row({ verb: 'DELAY', state: 'actioned' }))).toBe(
+      'SRTWT904-NL: not open for a reserve request',
+    );
+  });
+
+  it('refuses a used row whatever its verb', () => {
+    expect(reserveIneligibleReason(row({ verb: 'DELAY', redirected_to_pool: true }))).toBe(
+      "SRTWT904-NL: a used row, request on its line's live row",
     );
   });
 
@@ -76,13 +87,12 @@ describe('reserveIneligibleReason', () => {
   });
 
   it('falls back to "This row" when the item code is missing', () => {
-    expect(reserveIneligibleReason(row({ item_code: null, verb: 'RETURN' }))).toBe(
-      'This row: not an ORDER or ORDER BACK row',
+    expect(reserveIneligibleReason(row({ item_code: null, state: 'actioned' }))).toBe(
+      'This row: not open for a reserve request',
     );
   });
 
-  it('checks the verb before the state, and the state before the quantity', () => {
-    expect(reserveIneligibleReason(row({ verb: 'RETURN', state: 'actioned' }))).toMatch(/ORDER or ORDER BACK/);
+  it('checks the state before the quantity', () => {
     expect(reserveIneligibleReason(row({ state: 'actioned', qty: '1', linked_qty: '1' }))).toMatch(
       /not open for a reserve request/,
     );
