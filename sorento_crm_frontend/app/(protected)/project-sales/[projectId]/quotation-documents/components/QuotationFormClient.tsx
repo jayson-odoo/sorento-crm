@@ -955,7 +955,6 @@ function FormLines({
       id: scope.key,
       scope_label: scopeTitle(scope, index),
       sort_order: index,
-      outcome: saved?.outcome ?? 'open',
       current_version_id: saved?.current_version_id ?? null,
       current_version_no: saved?.current_version_no ?? null,
       line_count: saved?.line_count ?? 0,

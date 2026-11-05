@@ -21,7 +21,6 @@ from app.models.status import Status, StatusTransition
 from app.models.user import User
 from app.services import project_service
 from app.services.project_clash_service import find_clashes, normalise_project_title
-from app.services.project_quotation_service import derive_project_outcome
 
 from ._pg_fixture import blank_session
 
@@ -206,6 +205,21 @@ def test_the_preview_serialiser_carries_stage_outcome_and_owner_for_a_closed_mat
 # ------------------------------------------------------------------ stage drives outcome
 
 
+def _loss_reason(db, value="price") -> str:
+    """The configurable loss-reason set a Lost move validates against (PROJECT-OUTCOME-SINGLE)."""
+    from app.models.lookup import LookupOption, LookupSet
+    from app.models.projects import QUOTATION_LOSS_REASON_SET_KEY
+
+    lookup_set = db.query(LookupSet).filter(LookupSet.set_key == QUOTATION_LOSS_REASON_SET_KEY).first()
+    if lookup_set is None:
+        lookup_set = LookupSet(id=_uid(), set_key=QUOTATION_LOSS_REASON_SET_KEY, name="Loss reasons")
+        db.add(lookup_set)
+        db.flush()
+    db.add(LookupOption(id=_uid(), set_id=lookup_set.id, value=value, label=value.title()))
+    db.flush()
+    return value
+
+
 def test_moving_a_won_project_to_lost_makes_its_outcome_lost():
     with blank_session() as db:
         company_id = _sorento(db)
@@ -215,33 +229,43 @@ def test_moving_a_won_project_to_lost_makes_its_outcome_lost():
         _won_quotation(db, company_id, project)
 
         project_service.change_status(
-            db, project, to_status_id=lost_rung.id, actor_user_id=owner, permissions=set()
+            db,
+            project,
+            to_status_id=lost_rung.id,
+            actor_user_id=owner,
+            permissions=set(),
+            loss_reason=_loss_reason(db),
         )
 
         db.refresh(project)
         assert project.status_id == lost_rung.id
         assert project.outcome == "lost"
+        assert project.loss_reason == "price"
 
 
-def test_a_won_quotation_does_not_turn_a_lost_stage_back_into_won():
-    """A project cannot be Lost and Won at once: the decided stage wins the derivation."""
+def test_a_project_on_the_lost_stage_reads_lost_whatever_its_areas_say():
+    """A project cannot be Lost and Won at once: the stage decides, an area carries no outcome."""
     with blank_session() as db:
         company_id = _sorento(db)
         _live, lost_rung = _funnel(db)
         project = _project(db, company_id, outcome="open", status_id=lost_rung.id)
         _won_quotation(db, company_id, project)
 
-        assert derive_project_outcome(db, project) == "lost"
+        project_service.outcome_follows_stage(db, project)
+
+        assert project.outcome == "lost"
 
 
-def test_a_live_stage_still_derives_outcome_from_quotations():
+def test_a_live_stage_leaves_the_project_outcome_alone():
+    """No derivation from areas any more: Mark won on a live stage stays Won."""
     with blank_session() as db:
         company_id = _sorento(db)
         live, _lost = _funnel(db)
-        project = _project(db, company_id, outcome="open", status_id=live.id)
-        _won_quotation(db, company_id, project)
+        project = _project(db, company_id, outcome="won", status_id=live.id)
 
-        assert derive_project_outcome(db, project) == "won"
+        project_service.outcome_follows_stage(db, project)
+
+        assert project.outcome == "won"
 
 
 def test_an_admin_bulk_migration_onto_lost_syncs_outcome_too():

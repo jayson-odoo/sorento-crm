@@ -963,6 +963,9 @@ export function BoardCellBreakdownDialog({
                 <OrderInquiryRejectedBadge
                   refusal={inquiry}
                   testId={`breakdown-oi-rejected-${row.original.key}`}
+                  // Review N4: the 190px cell keeps the OI number; the reason is in the
+                  // title and the lightbox.
+                  showReason={false}
                 />
               ) : (
                 <OrderInquiryStatePill state={inquiry.state} />

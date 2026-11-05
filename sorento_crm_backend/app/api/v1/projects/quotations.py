@@ -38,7 +38,6 @@ from app.schemas.projects import (
     ProjectQuotationLineCreate,
     ProjectQuotationLineResponse,
     ProjectQuotationLineUpdate,
-    ProjectQuotationOutcomeRequest,
     ProjectQuotationResponse,
     ProjectQuotationUpdate,
     ProjectQuotationVersionResponse,
@@ -201,35 +200,6 @@ def update_quotation(
         quotation = _quotation_for_edit(db, quotation_id, current_user)
         svc.update_quotation(
             db, quotation=quotation, payload=payload.model_dump(exclude_unset=True)
-        )
-        db.commit()
-        db.refresh(quotation)
-        return svc.serialize_quotations(db, [quotation])[0]
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/quotations/{quotation_id}/outcome", response_model=ProjectQuotationResponse)
-def set_quotation_outcome(
-    quotation_id: str,
-    payload: ProjectQuotationOutcomeRequest,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Win or lose ONE scope; the project's outcome is re-derived from all of them.
-
-    The project's STATUS is deliberately untouched (AC-E10a) -- a project at "PO
-    Received" with an open Common Area scope is still live on the board.
-    """
-    try:
-        validate_uuid_path(quotation_id, resource="Quotation")
-        quotation = _quotation_for_edit(db, quotation_id, current_user)
-        svc.set_outcome(
-            db,
-            quotation=quotation,
-            outcome=payload.outcome,
-            loss_reason=payload.loss_reason,
         )
         db.commit()
         db.refresh(quotation)

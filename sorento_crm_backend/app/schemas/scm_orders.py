@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -205,6 +205,13 @@ class SalesOrderLine(BaseModel):
     #: Sent on the SINGLE order read only. The list has no column for it and would pay two
     #: more queries a page for a fact nothing there prints.
     order_inquiry: Optional[SalesOrderLineInquiry] = None
+    #: SO-LINE-OI-STATUS-UNIFY (5 Nov 2026): EVERY order inquiry row of this line, live,
+    #: used and cancelled, in the OI worklist's own row shape (`OrderInquiryWorklistRow`,
+    #: dumped to JSON by the service; typed as dicts here only because that schema module
+    #: imports this one). The FE runs the OI Lines tab's own fold over them, so the SO
+    #: line and the OI row read ONE status. `None` on a line nobody raised a row on.
+    #: Single order read only, like `order_inquiry`.
+    order_inquiry_rows: Optional[List[Dict[str, Any]]] = None
     #: OI-SPLIT-VIEW (UAC B1, B7): the split popup of this line's planning mirror, the same
     #: value the OI reads carry; null on a line with no splits or no project order. Single
     #: order read only, like `order_inquiry`.

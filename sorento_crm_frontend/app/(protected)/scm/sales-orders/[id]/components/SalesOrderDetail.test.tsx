@@ -16,7 +16,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
@@ -1629,6 +1629,22 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
    * Both columns therefore state their own absence rather than inheriting the header's
    * answer, and "-" is what that absence looks like on this grid.
    */
+  function oiRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'oi-row-9',
+      order_inquiry_id: 'oi-header-1',
+      inquiry_no: 'OI-000123',
+      so_line_id: 'mirror-1',
+      qty: '10',
+      verb: 'ORDER',
+      state: 'placed',
+      ack_state: 'awaiting',
+      redirected_to_pool: false,
+      links: [{ id: 'link-1', kind: 'po', document: '202611-P0042', qty: '10', po_id: 'po-42' }],
+      ...over,
+    } as never;
+  }
+
   function planned(over: Partial<SalesOrderLine> = {}): SalesOrder {
     return so({
       lines: [
@@ -1643,6 +1659,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
           line_status: 'open',
           required_date: '2026-08-30',
           order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' },
+          // SO-LINE-OI-STATUS-UNIFY: the line's OI rows, which the cell folds. The owner's
+          // CKSW015 shape: linked to a PO (`placed`) but not confirmed (`awaiting`).
+          order_inquiry_rows: [oiRow()],
           decision_revision: 2,
           ...over,
         } as SalesOrderLine,
@@ -1658,10 +1677,14 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The same pill wording the order-inquiry worklist uses, so the state word cannot mean
-    // two things on two screens. S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's
-    // pick, 22 Sep 2026): `placed` now reads "On PO/SPO", not "Linked".
-    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
+    // SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026, SO429216 CKSW015): the OI Lines tab's
+    // own status. A row linked to a PO that purchasing has not confirmed reads "To order"
+    // on both screens, never "On PO/SPO" here and "To order" there; its PO chip shows.
+    expect(within(row).getByText('To order')).toBeInTheDocument();
+    expect(within(row).queryByText('On PO/SPO')).toBeNull();
+    // Owner hand test (5 Nov): the PO is in the pill's lightbox, not the column.
+    fireEvent.click(within(row).getByTestId('so-line-oi-l-planned-pill'));
+    expect(screen.getAllByText('202611-P0042').length).toBeGreaterThanOrEqual(1);
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
@@ -1671,14 +1694,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
    */
   it('AC-B6-2: links the Order inquiry cell to the exact row once inquiry_id/row_id are on the line', () => {
     useSalesOrder.mockReturnValue({
-      data: planned({
-        order_inquiry: {
-          inquiry_no: 'OI-000123',
-          state: 'placed',
-          inquiry_id: 'oi-header-1',
-          row_id: 'oi-row-9',
-        },
-      }),
+      data: planned(),
       isLoading: false,
       isError: false,
     });
@@ -1702,16 +1718,16 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
   it('PR 1622: shows the open refusal as a Rejected badge with who, when and why', () => {
     useSalesOrder.mockReturnValue({
       data: planned({
-        order_inquiry: {
-          inquiry_no: 'OI-000123',
-          state: 'raised',
-          inquiry_id: 'oi-header-1',
-          row_id: 'oi-row-9',
-          ack_state: 'rejected',
-          rejected_reason: 'DISCON',
-          rejected_by_name: 'Joey',
-          rejected_at: '2026-10-13T08:32:00',
-        },
+        order_inquiry_rows: [
+          oiRow({
+            state: 'raised',
+            links: [],
+            ack_state: 'rejected',
+            rejected_reason: 'DISCON',
+            rejected_by_name: 'Joey',
+            rejected_at: '2026-10-13T08:32:00',
+          }),
+        ],
       }),
       isLoading: false,
       isError: false,
@@ -1721,8 +1737,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123').closest('a')).not.toBeNull();
-    const badge = within(row).getByTestId('so-line-oi-rejected-l-planned');
-    expect(badge).toHaveTextContent(/^Rejected$/);
+    const badge = within(row).getByTestId('so-line-oi-l-planned-rejected');
+    // SO-LINE-OI-STATUS-UNIFY (owner Q4): the pill and the reason beside it.
+    expect(badge).toHaveTextContent(/^RejectedDISCON$/);
     expect(badge.getAttribute('title')).toMatch(
       /^Rejected by Joey on 13\/10\/2026, 4:32\s?pm: DISCON$/i,
     );
@@ -1732,7 +1749,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
   it('PR 1622: shows the plain state word again once the refusal is answered', () => {
     useSalesOrder.mockReturnValue({
       data: planned({
-        order_inquiry: { inquiry_no: 'OI-000123', state: 'placed', ack_state: null },
+        order_inquiry_rows: [oiRow({ ack_state: null })],
       }),
       isLoading: false,
       isError: false,
@@ -1741,12 +1758,16 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     openTab('Lines');
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
-    expect(within(row).queryByTestId('so-line-oi-rejected-l-planned')).toBeNull();
+    expect(within(row).getByText('To order')).toBeInTheDocument();
+    expect(within(row).queryByTestId('so-line-oi-l-planned-rejected')).toBeNull();
   });
 
   it('AC-B6-2: stays plain text - no link - while inquiry_id/row_id are not yet on the line', () => {
-    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    useSalesOrder.mockReturnValue({
+      data: planned({ order_inquiry_rows: [oiRow({ order_inquiry_id: null })] }),
+      isLoading: false,
+      isError: false,
+    });
     renderDetail();
     openTab('Lines');
 
@@ -1820,7 +1841,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
   it('prints a dash on a line nothing has been raised or decided on', () => {
     useSalesOrder.mockReturnValue({
-      data: planned({ order_inquiry: null, decision_revision: null }),
+      data: planned({ order_inquiry: null, order_inquiry_rows: null, decision_revision: null }),
       isLoading: false,
       isError: false,
     });
@@ -2742,5 +2763,93 @@ describe('FULFIL-SO-REMARK (AC-17, AC-18): Remark, Shipping Info and the Mockup 
     withData({ lines: [{ ...line('l-1', 'SRTWB1515', false), is_mockup: true }] });
     openTab('Lines');
     expect(screen.queryByTestId('so-line-mockup-badge')).toBeNull();
+  });
+});
+
+describe('owner hand test (5 Nov 2026): a link to one line of a long order lands on its page', () => {
+  function longOrder(): SalesOrder {
+    return so({
+      lines: Array.from({ length: 60 }, (_, index) => ({
+        id: `l-${index + 1}`,
+        sku: `SKU-${String(index + 1).padStart(3, '0')}`,
+        product_name: `Line ${index + 1}`,
+        qty_ordered: 1,
+        qty_delivered: 0,
+        uom: 'PCS',
+        warehouse_code: 'BRW-BB',
+        line_status: 'open',
+        line_no: (index + 1) * 16,
+      })) as SalesOrderLine[],
+      line_count: 60,
+    });
+  }
+
+  it('opens the Lines tab on the page holding line 40 of 60, highlighted, and stays there on a re-read', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+
+    const target = await screen.findByText('SKU-040');
+    expect(target.closest('tr')).toHaveClass('deep-link-highlight');
+    expect(screen.queryByText('SKU-001')).toBeNull();
+
+    // The order query answers again (focus, an action's invalidation): a NEW object.
+    await act(async () => {
+      useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+      // Any URL write re-renders the page, which reads the order afresh.
+      replaceSearchParams(new URLSearchParams(searchParams.toString()));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByText('SKU-040')).toBeInTheDocument();
+    expect(screen.queryByText('SKU-001')).toBeNull();
+  });
+
+  it('crew pass: an order already in the cache (data on the first render) still lands on the line under StrictMode', async () => {
+    // The SO was opened earlier in the tab, so its read answers from the cache and the
+    // landing runs in the mount effects. Dev's StrictMode runs those effects twice; a page
+    // reset that ran on mount used to fire again AFTER the landing and drop it to page 1.
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <SalesOrderDetail id="so-1" />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    const target = await screen.findByText('SKU-040');
+    expect(target.closest('tr')).toHaveClass('deep-link-highlight');
+    expect(screen.queryByText('SKU-001')).toBeNull();
+  });
+
+  it('review: a search typed on page 4 shows its result from page 1, never an empty page', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+    await screen.findByText('SKU-040');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search lines' }), {
+      target: { value: 'SKU-003' },
+    });
+    expect(await screen.findByText('SKU-003', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByText('SKU-040')).toBeNull();
+  });
+
+  it('review: lines shrinking under the current page fall back to the last page there is', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-55');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+    await screen.findByText('SKU-055');
+
+    await act(async () => {
+      const shorter = longOrder();
+      shorter.lines = shorter.lines.slice(0, 15);
+      useSalesOrder.mockReturnValue({ data: shorter, isLoading: false, isError: false });
+      replaceSearchParams(new URLSearchParams(searchParams.toString()));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    // 15 lines at 10 a page: page 2 holds 11 to 15.
+    expect(await screen.findByText('SKU-015')).toBeInTheDocument();
   });
 });

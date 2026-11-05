@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.models.projects import (
     OUTCOME_LOST,
+    OUTCOME_OPEN,
     OUTCOME_WON,
     Project,
     ProjectPurchaseOrder,
@@ -36,7 +37,6 @@ from app.models.projects import (
     ProjectQuotation,
     ProjectQuotationVersion,
     ProjectSalesProfile,
-    QUOTATION_OUTCOME_OPEN,
 )
 from app.models.status import Status
 
@@ -120,10 +120,20 @@ def _open_quotation_totals(db: Session, project_ids: List[str]) -> Dict[str, Dec
         .group_by(ProjectQuotationVersion.quotation_id)
         .subquery()
     )
+    open_ids = {
+        row[0]
+        for row in db.query(Project.id)
+        .filter(Project.id.in_(project_ids), Project.outcome == OUTCOME_OPEN)
+        .all()
+    }
+    if not open_ids:
+        return {}
+
     rows = (
         db.query(
             ProjectQuotation.project_id,
-            func.coalesce(func.sum(ProjectQuotationVersion.total_amount), 0),
+            ProjectQuotation.document_id,
+            ProjectQuotationVersion.total_amount,
         )
         .join(
             ProjectQuotationVersion,
@@ -134,14 +144,28 @@ def _open_quotation_totals(db: Session, project_ids: List[str]) -> Dict[str, Dec
             (highest.c.quotation_id == ProjectQuotationVersion.quotation_id)
             & (highest.c.version_no == ProjectQuotationVersion.version_no),
         )
-        .filter(
-            ProjectQuotation.project_id.in_(project_ids),
-            ProjectQuotation.outcome == QUOTATION_OUTCOME_OPEN,
-        )
-        .group_by(ProjectQuotation.project_id)
+        .filter(ProjectQuotation.project_id.in_(open_ids))
         .all()
     )
-    return {row[0]: _money(row[1]) for row in rows}
+
+    # A project holding its quotation counts that document's areas only; otherwise every area.
+    from app.models.projects import ProjectQuotationDocument
+
+    held = {
+        row[0]: row[1]
+        for row in db.query(ProjectQuotationDocument.project_id, ProjectQuotationDocument.id)
+        .filter(
+            ProjectQuotationDocument.project_id.in_(open_ids),
+            ProjectQuotationDocument.kind == "quotation",
+        )
+        .all()
+    }
+    totals: Dict[str, Decimal] = {}
+    for project_id, document_id, amount in rows:
+        if project_id in held and document_id != held[project_id]:
+            continue
+        totals[project_id] = totals.get(project_id, Decimal(0)) + Decimal(amount or 0)
+    return {pid: _money(total) for pid, total in totals.items()}
 
 
 def _quoted_project_ids(db: Session, project_ids: List[str]) -> set:
@@ -246,15 +270,13 @@ def _live_projects(db: Session, company_id: str) -> List[Project]:
 def _lost_projects_with_committed_money(db: Session, company_id: str) -> List[Project]:
     """Lost projects that nevertheless have a purchase order on record.
 
-    A PO is money a contractor already committed to. If the remaining scopes are then lost the
-    project's derived outcome becomes `lost` -- and dropping the whole project took its banked
-    PO out of Committed with it, so the one number that reports what was ORDERED went down
-    when a different scope was lost. Orders do not un-happen.
+    A PO is money a contractor already committed to. If the project is then marked lost,
+    dropping the whole project would take its banked PO out of Committed with it, so the one
+    number that reports what was ORDERED would go down. Orders do not un-happen.
 
     Narrow on purpose: only lost projects that actually carry a PO come back, and they come
-    back for Committed only. Their Pipeline and Weighted stay zero: a project lost through its
-    quotations has no open quotation, and one moved onto the Lost stage by hand (whose open
-    quotations may remain) sits on a 0% rung; the estimate is suppressed once anything was priced.
+    back for Committed only. Their Pipeline and Weighted stay zero because a lost project
+    counts no pipeline (`forecast` zeroes it before the estimate fallback).
 
     No "not already in the live set" clause: the live set excludes lost projects by definition,
     so it could never overlap, and expressing the redundancy meant handing a bare Python
@@ -308,7 +330,10 @@ def forecast(db: Session, *, company_id: str) -> Dict[str, Any]:
 
     for project in projects:
         pipeline = open_totals.get(project.id)
-        if pipeline is None:
+        if project.outcome != OUTCOME_OPEN:
+            # Won or lost: no pipeline, whatever the registration estimate says.
+            pipeline = Decimal("0.00")
+        elif pipeline is None:
             # Nothing OPEN. The estimate only stands in for a project that was never priced
             # at all -- a fully-decided project is committed, not pipeline.
             pipeline = Decimal("0.00") if project.id in quoted else estimates.get(project.id, Decimal("0.00"))
@@ -393,20 +418,20 @@ def conversion(db: Session, *, company_id: str) -> Dict[str, Any]:
 
 
 def loss_reason_counts(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
-    """AC-I4. Counted on the QUOTATION, where the reason is actually recorded, so a project
-    that lost two scopes for two different reasons reports both."""
+    """AC-I4. Lost projects counted by the reason recorded on the project."""
     from app.services.project_quotation_service import loss_reasons
+    from app.services.project_service import approved_projects
 
     labels = {row["value"]: row["label"] for row in loss_reasons(db)}
     rows = (
-        db.query(ProjectQuotation.loss_reason, func.count(ProjectQuotation.id))
-        .join(Project, Project.id == ProjectQuotation.project_id)
+        approved_projects(db.query(Project.loss_reason, func.count(Project.id)))
         .filter(
             Project.company_id == company_id,
-            ProjectQuotation.loss_reason.isnot(None),
+            Project.outcome == OUTCOME_LOST,
+            Project.loss_reason.isnot(None),
         )
-        .group_by(ProjectQuotation.loss_reason)
-        .order_by(func.count(ProjectQuotation.id).desc())
+        .group_by(Project.loss_reason)
+        .order_by(func.count(Project.id).desc())
         .all()
     )
     return [
@@ -461,7 +486,9 @@ def by_salesperson(db: Session, *, company_id: str) -> List[Dict[str, Any]]:
             },
         )
         pipeline = open_totals.get(project.id)
-        if pipeline is None:
+        if project.outcome != OUTCOME_OPEN:
+            pipeline = Decimal("0.00")
+        elif pipeline is None:
             pipeline = Decimal("0.00") if project.id in quoted else estimates.get(project.id, Decimal("0.00"))
         percent = probabilities.get(project.status_id or "", Decimal("0"))
 

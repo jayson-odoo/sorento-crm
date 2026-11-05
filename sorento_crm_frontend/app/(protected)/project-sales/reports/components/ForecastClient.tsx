@@ -192,7 +192,7 @@ export function ForecastClient() {
                   {conversion.rate ? `${Number(conversion.rate).toFixed(1)}%` : 'Nothing decided yet'}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {`${conversion.won} won, ${conversion.lost} lost, ${conversion.open} still open. A project is decided only when its scopes are.`}
+                  {`${conversion.won} won, ${conversion.lost} lost, ${conversion.open} still open.`}
                 </p>
                 {sponsorship.sponsored_projects > 0 && (
                   <p className="text-xs text-muted-foreground">
@@ -209,8 +209,7 @@ export function ForecastClient() {
               <CardContent>
                 {loss_reasons.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    Nothing has been marked lost yet. Reasons are recorded per scope, so one
-                    project can appear under two of them.
+                    Nothing has been marked lost yet.
                   </p>
                 ) : (
                   <ul className="space-y-1.5">

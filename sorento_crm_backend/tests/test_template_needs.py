@@ -295,8 +295,26 @@ def test_m1_a_template_must_print_every_fixed_part(db):
         _mod().fit_reason({"fixed": 1, "groups": [], "upgrades": 0}, shape)
         == "Prints 1 of this combo's 2 fixed parts"
     )
+
+
+def test_hotfix_a_plain_template_fits_every_combo_shape(db):
+    """PRICETAG-COMBO-FIT-HOTFIX (owner option a): a template with no combo position field is a
+    plain template and prints the combo as one product, so it fits any combo, fixed parts too."""
+    for builder in (shapes.s1, shapes.s2, shapes.s3, shapes.s4):
+        shape = _shape(db, builder)
+        assert _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape) is None
+
+
+def test_hotfix_a_group_that_reads_nothing_still_counts_as_plain(db):
+    shape = _shape(db, shapes.s4)
+    assert _mod().fit_reason({"fixed": 0, "groups": [0, 0], "upgrades": 0}, shape) is None
+
+
+def test_hotfix_a_partial_template_is_still_refused(db):
+    """A template that reads SOME position but fewer fixed parts than the combo has still does not fit."""
+    shape = _shape(db, shapes.s4)
     assert (
-        _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape)
+        _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 1}, shape)
         == "Prints 0 of this combo's 2 fixed parts"
     )
 

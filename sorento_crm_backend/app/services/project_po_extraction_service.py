@@ -52,9 +52,6 @@ from app.models.project_so import (
     ProjectPOVersion,
 )
 from app.models.projects import (
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_OPEN,
-    QUOTATION_OUTCOME_WON,
     Project,
     ProjectPurchaseOrder,
     ProjectPurchaseOrderLine,

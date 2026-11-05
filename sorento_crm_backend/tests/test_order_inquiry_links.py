@@ -1659,3 +1659,36 @@ def test_the_cascade_builds_the_availability_reader_once_for_the_whole_pass(worl
 
     assert len(builds) == 1, f"one build for the whole pass, not {len(builds)}"
     assert builds[0] == sorted([str(world.product), str(second)])
+
+
+def test_a_po_line_label_reads_its_line_no_never_the_raw_autocount_key(world):
+    """SO-LINE-OI-STATUS-UNIFY owner hand test (5 Nov 2026): AutoCount's `source_ref` is
+    `"{database}:{DocKey}:{DtlKey}"` and printed as "LAED_SORENTO:45836908:45884936" beside
+    the PO. The label is the PO line's own `line_no`, on the candidate list AND on the link;
+    a line with neither a number nor a numeric ref reads no label at all."""
+    [numbered, unnumbered] = world.purchase_order(
+        "202611-S0042",
+        date(2026, 11, 1),
+        [
+            ("BRW-IB", 30, date(2026, 12, 1), "AED_SORENTO:45836908:45884936"),
+            ("BRW-IB", 30, date(2026, 12, 2), "AED_SORENTO:45836908:45884937"),
+        ],
+    )
+    world.db.execute(
+        text("UPDATE purchase_order_lines SET line_no = 3 WHERE id = :i"), {"i": numbered}
+    )
+    world.db.flush()
+    row = world.row("ORDER", 8)
+
+    labels = {
+        c["po_line_id"]: c["line_label"] for c in world.svc.po_candidates_for_row(row.id)
+    }
+    assert labels[numbered] == "L3"
+    assert labels[unnumbered] is None
+
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": numbered, "qty": Decimal("8")}], actor_user_id=None
+    )
+    world.db.flush()
+    [link] = world.svc.links_for_rows([row.id])[row.id]
+    assert link["line_label"] == "L3"
