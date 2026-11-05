@@ -1,7 +1,8 @@
 /**
  * Feature icons review fix round 1 (B2): opened to manage ONE kind (the icon library from a
- * Feature icons layer), the picker lists only that kind, files an upload as it, and keeps the new
- * asset in the list instead of picking it (so its Show when rule can be set next).
+ * Feature icons layer or the spec screen), the picker lists only that kind, files an upload as it,
+ * and keeps the new asset in the list instead of picking it. Owner ruling 5 Nov 20:35: the rule
+ * lives on the spec value, so no asset offers "Show when" any more.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,8 +40,7 @@ const { listAssets, uploadAsset } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-vi.mock('../../services/assetService', () => ({ listAssets, uploadAsset, setAssetShowWhen: vi.fn() }));
-vi.mock('../../services/tagDataService', () => ({ listSpecKeys: vi.fn(async () => []) }));
+vi.mock('../../services/assetService', () => ({ listAssets, uploadAsset }));
 vi.mock('@/components/common/FileDropzone', () => ({
   FileDropzone: (props: { onFilesChange: (files: File[]) => void }) => (
     <button type="button" onClick={() => props.onFilesChange([new File(['x'], 'cold.png', { type: 'image/png' })])}>
@@ -83,7 +83,12 @@ describe('AssetPickerDialog managing the icon library', () => {
     await waitFor(() => expect(uploadAsset).toHaveBeenCalled());
     expect(uploadAsset).toHaveBeenCalledWith(expect.objectContaining({ kind: 'icon' }));
     await waitFor(() => expect(screen.getByTitle('Cold')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: /show when.*cold/i })).toBeInTheDocument();
     expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it('offers no "Show when" on any icon', async () => {
+    mount();
+    await waitFor(() => expect(screen.getByTitle('Hot')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /show when/i })).toBeNull();
   });
 });

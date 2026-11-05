@@ -5,12 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import {
-  featureIconRow,
-  featureIconsFor,
-  iconsFromAssets,
-  type FeatureIcon,
-} from './feature-icons';
+import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
 
 const spec = (key: string, value: string, raw?: string) => ({
   key,
@@ -55,13 +50,45 @@ describe('featureIconsFor', () => {
     expect(out.map((i) => i.id)).toEqual(['hot']);
   });
 
-  it('puts ids in `order` first, in that order, then the rest by name ignoring case', () => {
+  it('puts ids in `order` first, in that order, then the rest in the order they came (never by name)', () => {
+    // Owner ruling 5 Nov 20:4x: the default is the order the admin set on the spec value.
     const a = icon('a', 'alpha', 'k', ['x']);
     const b = icon('b', 'Bravo', 'k', ['x']);
     const c = icon('c', 'charlie', 'k', ['x']);
     const d = icon('d', 'Delta', 'k', ['x']);
     const out = featureIconsFor([spec('k', 'X', 'x')], [d, c, b, a], ['c', 'missing', 'a']);
-    expect(out.map((i) => i.id)).toEqual(['c', 'a', 'b', 'd']);
+    expect(out.map((i) => i.id)).toEqual(['c', 'a', 'd', 'b']);
+  });
+
+  it("keeps a value's own icon order [b, a] when the layer names no order", () => {
+    const b = icon('b', 'Bravo', 'k', ['x']);
+    const a = icon('a', 'Alpha', 'k', ['x']);
+    expect(featureIconsFor([spec('k', 'X', 'x')], [b, a]).map((i) => i.id)).toEqual(['b', 'a']);
+  });
+
+  it('shows ONE combined icon when Mixer maps to a single red-blue icon', () => {
+    const combined = icon('red-blue', 'Hot and cold', 'water_supply', ['mixer']);
+    const blue = icon('blue', 'Cold', 'water_supply', ['cold_only']);
+    const icons = [blue, combined];
+    expect(featureIconsFor([spec('water_supply', 'Mixer', 'mixer')], icons).map((i) => i.id)).toEqual([
+      'red-blue',
+    ]);
+    expect(
+      featureIconsFor([spec('water_supply', 'Cold Only', 'cold_only')], icons).map((i) => i.id),
+    ).toEqual(['blue']);
+  });
+
+  it('shows an icon reached twice for one product once, at its first position', () => {
+    // The backend sends one entry per (value, icon); the same asset can sit on two values
+    // the product holds (here on two keys).
+    const coldOnSupply = icon('cold', 'Cold', 'water_supply', ['mixer']);
+    const hot = icon('hot', 'Hot', 'water_supply', ['mixer']);
+    const coldOnFinish = icon('cold', 'Cold', 'finish', ['ice']);
+    const out = featureIconsFor(
+      [spec('water_supply', 'Mixer', 'mixer'), spec('finish', 'Ice', 'ice')],
+      [hot, coldOnFinish, coldOnSupply],
+    );
+    expect(out.map((i) => i.id)).toEqual(['hot', 'cold']);
   });
 
   it('lists an icon at most once even when the order repeats it', () => {
@@ -84,33 +111,7 @@ describe('featureIconsFor', () => {
       [spec('water_supply', 'Cold Only', 'cold_only'), spec('steel_grade', '304', '304')],
       [SUS, COLD],
     );
-    expect(out.map((i) => i.id)).toEqual(['cold', 'sus']);
-  });
-});
-
-describe('iconsFromAssets', () => {
-  const row = (over: Record<string, unknown>) => ({
-    id: 'x',
-    name: 'X',
-    kind: 'icon',
-    tags: [],
-    url: null,
-    mime_type: 'image/png',
-    ...over,
-  });
-
-  it('keeps only icon assets that carry a rule', () => {
-    const out = iconsFromAssets([
-      row({ id: 'ruled', name: 'Hot', show_when_spec_key: 'water_supply', show_when_values: ['mixer'] }),
-      row({ id: 'plain', name: 'No rule' }),
-      row({ id: 'null-rule', show_when_spec_key: null, show_when_values: null }),
-      row({ id: 'badge', kind: 'badge', show_when_spec_key: 'water_supply', show_when_values: ['mixer'] }),
-    ] as never);
-    expect(out).toEqual([{ id: 'ruled', name: 'Hot', spec_key: 'water_supply', values: ['mixer'] }]);
-  });
-
-  it('returns nothing for an empty library', () => {
-    expect(iconsFromAssets([])).toEqual([]);
+    expect(out.map((i) => i.id)).toEqual(['sus', 'cold']);
   });
 });
 

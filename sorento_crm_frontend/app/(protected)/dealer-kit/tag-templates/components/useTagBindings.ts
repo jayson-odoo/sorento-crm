@@ -26,7 +26,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
 import { kitLibraryClient, resetKitLibraryCache } from '@/lib/dealer-kit/kit-library-cache';
-import { iconsFromAssets, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   ensureFontsLoaded,
   ensureSeedFontsLoaded,
@@ -39,10 +39,13 @@ import {
   fontAssetUrl,
   listAssets,
   listFontAssets,
-  listIconAssets,
   type KitAsset,
 } from '../../services/assetService';
-import { listSpecKeys } from '../../services/tagDataService';
+import {
+  listFeatureIcons,
+  listSpecKeys,
+  type FeatureIconWithUrl,
+} from '../../services/tagDataService';
 import type { SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { STATIC_FONT_OPTIONS } from './InspectorPanel';
 
@@ -180,7 +183,7 @@ export interface KitLibrary {
   fonts: KitAsset[];
   /** The spec vocabulary the Insert field dialog offers under Specs (D58). */
   specKeys: SpecKeyOption[];
-  /** Feature icons: the library icons that carry a "show when" rule. */
+  /** Feature icons: every icon each spec value carries, in display order (one per value). */
   featureIcons: FeatureIcon[];
   /** Google fallbacks plus every uploaded brand font. */
   fontOptions: SearchableSelectOption[];
@@ -196,8 +199,9 @@ export interface KitLibrary {
 const libraryClient = kitLibraryClient;
 const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
 const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
-/** Feature icons: read by kind so no icon the print page shows falls outside a page of artwork. */
-export const ICONS_KEY = ['dealer-kit', 'library', 'icons'] as const;
+/** Feature icons: the spec-value icon list the print page gets too, with signed URLs. */
+export const FEATURE_ICONS_KEY = ['dealer-kit', 'library', 'feature-icons'] as const;
+const NO_FEATURE_ICONS: FeatureIconWithUrl[] = [];
 const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
 export { resetKitLibraryCache };
 const NO_ASSETS: KitAsset[] = [];
@@ -214,11 +218,8 @@ export function useKitLibrary(): KitLibrary {
     { queryKey: FONTS_KEY, queryFn: () => listFontAssets() },
     libraryClient,
   );
-  const iconsQuery = useQuery(
-    {
-      queryKey: ICONS_KEY,
-      queryFn: () => listIconAssets(),
-    },
+  const featureIconsQuery = useQuery(
+    { queryKey: FEATURE_ICONS_KEY, queryFn: async () => listFeatureIcons() },
     libraryClient,
   );
   // A registry read that fails leaves the Specs group empty rather than stopping the canvas.
@@ -231,14 +232,14 @@ export function useKitLibrary(): KitLibrary {
   );
   const assets = assetsQuery.data ?? NO_ASSETS;
   const fonts = fontsQuery.data ?? NO_ASSETS;
-  const icons = iconsQuery.data ?? NO_ASSETS;
+  const iconRows = featureIconsQuery.data ?? NO_FEATURE_ICONS;
   const specKeys = specKeysQuery.data ?? NO_SPEC_KEYS;
 
   const reload = useCallback(async () => {
     await Promise.all([
       libraryClient.refetchQueries({ queryKey: ASSETS_KEY }),
       libraryClient.refetchQueries({ queryKey: FONTS_KEY }),
-      libraryClient.refetchQueries({ queryKey: ICONS_KEY }),
+      libraryClient.refetchQueries({ queryKey: FEATURE_ICONS_KEY }),
     ]);
   }, []);
 
@@ -285,12 +286,6 @@ export function useKitLibrary(): KitLibrary {
         asset,
       ]);
     }
-    if (asset.kind === 'icon') {
-      libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, (prev) => [
-        ...(prev ?? []).filter((a) => a.id !== asset.id),
-        asset,
-      ]);
-    }
   }, []);
 
   /** The row's name changed on the server; carry it here without a round trip. */
@@ -299,7 +294,9 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).map((a) => (a.id === id ? { ...a, name } : a));
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
-    libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, apply);
+    libraryClient.setQueryData<FeatureIconWithUrl[]>(FEATURE_ICONS_KEY, (prev) =>
+      (prev ?? []).map((icon) => (icon.id === id ? { ...icon, name } : icon)),
+    );
   }, []);
 
   /** The row was deleted on the server; drop it from every list it was in. */
@@ -308,26 +305,35 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).filter((a) => a.id !== id);
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
-    libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, apply);
+    libraryClient.setQueryData<FeatureIconWithUrl[]>(FEATURE_ICONS_KEY, (prev) =>
+      (prev ?? []).filter((icon) => icon.id !== id),
+    );
   }, []);
 
   const assetUrls = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const asset of [...icons, ...assets]) {
+    for (const icon of iconRows) {
+      if (icon.url) map[icon.id] = icon.url;
+    }
+    for (const asset of assets) {
       if (asset.url) map[asset.id] = asset.url;
     }
     return map;
-  }, [assets, icons]);
+  }, [assets, iconRows]);
 
   const thumbUrls = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const asset of [...icons, ...assets]) {
+    for (const asset of assets) {
       if (asset.thumb_url) map[asset.id] = asset.thumb_url;
     }
     return map;
-  }, [assets, icons]);
+  }, [assets]);
 
-  const featureIcons = useMemo(() => iconsFromAssets(icons), [icons]);
+  // The rule only (id, name, spec_key, values); the URL went into `assetUrls` above.
+  const featureIcons = useMemo<FeatureIcon[]>(
+    () => iconRows.map(({ id, name, spec_key, values }) => ({ id, name, spec_key, values })),
+    [iconRows],
+  );
 
   const fontOptions = useMemo(() => {
     const brand = fonts.map((font) => ({

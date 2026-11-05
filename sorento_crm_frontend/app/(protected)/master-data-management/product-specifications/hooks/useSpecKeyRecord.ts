@@ -48,6 +48,8 @@ export interface SpecKeyDraft {
   droppedWords: Record<string, string[]>;
   /** value -> the display label a person reads instead of the slug (#423). */
   valueLabels: Record<string, string>;
+  /** value -> Dealer Kit icon ids, in display order (feature icons). */
+  valueIcons: Record<string, string[]>;
   rules: SpecDerivationRule[];
 }
 
@@ -119,6 +121,9 @@ export function projectSpecKeyDraft(row: SpecRegistryKey): SpecKeyDraft {
     words,
     droppedWords,
     valueLabels: { ...(row.value_labels ?? {}) },
+    valueIcons: Object.fromEntries(
+      Object.entries(row.value_icons ?? {}).map(([value, ids]) => [value, [...ids]]),
+    ),
     // Given an identity on the way in so dragging (RulesTab) moves a RULE, not a
     // position, and Try it/preview keep reading the same row across an edit.
     rules: (row.effective_rules ?? row.derivation_rules ?? []).map((rule, index) => ({
@@ -138,6 +143,23 @@ function trimmedValueLabels(labels: Record<string, string>): Record<string, stri
   return next;
 }
 
+/** value_icons with empty lists dropped; null when they say what the row already holds. Sent
+ *  only on a change, so a save about something else never trips over an icon deleted since. */
+function changedValueIcons(
+  row: SpecRegistryKey,
+  icons: Record<string, string[]>,
+): Record<string, string[]> | null {
+  const clean = (map: Record<string, string[]>) =>
+    Object.fromEntries(Object.entries(map).filter(([, ids]) => ids.length > 0));
+  const next = clean(icons);
+  const before = clean(row.value_icons ?? {});
+  const keys = new Set([...Object.keys(next), ...Object.keys(before)]);
+  const same = [...keys].every(
+    (key) => (next[key] ?? []).join('\u0000') === (before[key] ?? []).join('\u0000'),
+  );
+  return same ? null : next;
+}
+
 export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
   const { user_synonyms, suppressed_synonyms } = wordPayload(row, {
     words: draft.words,
@@ -148,6 +170,7 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     draft.liveValues,
     draft.droppedValues,
   );
+  const valueIcons = changedValueIcons(row, draft.valueIcons ?? {});
   const maxValueTrimmed = draft.maxValue.trim();
   const maxValueNumber = maxValueTrimmed === '' ? null : Number(maxValueTrimmed);
   const maxValuePayload =
@@ -168,6 +191,7 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     user_values,
     suppressed_values,
     value_labels: trimmedValueLabels(draft.valueLabels),
+    ...(valueIcons ? { value_icons: valueIcons } : {}),
     derivation_rules: draft.rules,
   };
 }

@@ -43,6 +43,7 @@ import type {
   ProductTagData,
 } from '@/lib/dealer-kit/tag-template-types';
 import type { SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 
 const BASE = '/api/v1/dealer-kit';
 
@@ -73,6 +74,23 @@ export async function listSpecKeys(): Promise<SpecKeyOption[]> {
   const response = await apiFetch(`${BASE}/spec-keys`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load the spec keys'));
+  }
+  return response.json();
+}
+
+/** One icon of one spec value, with its signed URL (`GET /dealer-kit/feature-icons`). */
+export interface FeatureIconWithUrl extends FeatureIcon {
+  url: string | null;
+}
+
+/**
+ * The icons each spec value carries, in display order (feature icons): the same list the
+ * print page gets, behind the editor's own permission.
+ */
+export async function listFeatureIcons(): Promise<FeatureIconWithUrl[]> {
+  const response = await apiFetch(`${BASE}/feature-icons`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the feature icons'));
   }
   return response.json();
 }

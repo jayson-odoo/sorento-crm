@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Search, SlidersHorizontal, Upload } from 'lucide-react';
+import { Loader2, Search, Upload } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,7 +37,6 @@ import {
   type AssetKind,
   type KitAsset,
 } from '../../services/assetService';
-import { AssetShowWhenEditor } from './AssetShowWhenEditor';
 
 const LIBRARY_TAGS: { value: string; label: string }[] = [
   { value: '__all__', label: 'All artwork' },
@@ -84,8 +83,6 @@ export function AssetPickerDialog({
   const [tagFilter, setTagFilter] = useState('__all__');
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
-  // Feature icons: the icon whose "Show when" rule is open, in place of the grid.
-  const [editing, setEditing] = useState<KitAsset | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,7 +108,6 @@ export function AssetPickerDialog({
     if (!open) return;
     setTab(allowProductPhotos ? 'product' : 'library');
     setFiles([]);
-    setEditing(null);
   }, [open, allowProductPhotos]);
 
   useEffect(() => {
@@ -131,7 +127,10 @@ export function AssetPickerDialog({
       setFiles([]);
       toast.success(`${asset.name} added to the library`);
       if (libraryKind) {
-        setAssets((rows) => [...rows.filter((row) => row.id !== asset.id), asset]);
+        setAssets((rows) => [
+          ...rows.filter((row) => row.id !== asset.id),
+          asset,
+        ]);
       } else {
         onPick({ type: 'asset', assetId: asset.id });
       }
@@ -197,134 +196,98 @@ export function AssetPickerDialog({
             )}
 
             <TabsContent value="library" className="mt-3 flex flex-col gap-3">
-              {editing ? (
-                <AssetShowWhenEditor
-                  key={editing.id}
-                  asset={editing}
-                  onBack={() => setEditing(null)}
-                  onSaved={(saved) => {
-                    setAssets((rows) =>
-                      rows.map((row) =>
-                        row.id === saved.id ? { ...row, ...saved } : row,
-                      ),
-                    );
-                    setEditing(null);
-                  }}
-                />
-              ) : (
-                <>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        className="h-8 pl-7 text-xs"
-                        placeholder="Search artwork"
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                      />
-                    </div>
-                    {!libraryKind && (
-                      <div className="w-40">
-                        <SearchableSelect
-                          value={tagFilter}
-                          onChange={setTagFilter}
-                          options={LIBRARY_TAGS}
-                          size="sm"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {loading ? (
-                    <div className="flex justify-center py-8">
-                      <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : assets.length === 0 ? (
-                    <p className="py-6 text-center text-xs text-muted-foreground">
-                      Nothing in the library yet. Upload artwork below.
-                    </p>
-                  ) : (
-                    <div className="grid max-h-64 grid-cols-5 gap-2 overflow-auto">
-                      {assets.map((asset) => {
-                        // A rendition for the grid, never 200 originals.
-                        const preview = asset.thumb_url ?? asset.url;
-                        return (
-                          <div key={asset.id} className="relative">
-                            <button
-                              type="button"
-                              className="flex w-full flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
-                              onClick={() =>
-                                onPick({ type: 'asset', assetId: asset.id })
-                              }
-                              title={asset.name}
-                            >
-                              <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
-                                {preview ? (
-                                  <img
-                                    src={preview}
-                                    alt=""
-                                    className="size-full object-contain"
-                                  />
-                                ) : (
-                                  <span className="text-2xs text-muted-foreground">
-                                    No preview
-                                  </span>
-                                )}
-                              </span>
-                              <span className="w-full truncate text-2xs">
-                                {asset.name}
-                              </span>
-                            </button>
-                            {asset.kind === 'icon' && (
-                              <Button
-                                type="button"
-                                variant={
-                                  asset.show_when_spec_key
-                                    ? 'primary'
-                                    : 'outline'
-                                }
-                                size="sm"
-                                mode="icon"
-                                className="absolute right-1 top-1 size-6"
-                                aria-label={`Show when: ${asset.name}`}
-                                title="Show when"
-                                onClick={() => setEditing(asset)}
-                              >
-                                <SlidersHorizontal className="size-3" />
-                              </Button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="flex flex-col gap-2 border-t pt-3">
-                    <FileDropzone
-                      accept=".png,.jpg,.jpeg,.webp,.svg"
-                      files={files}
-                      onFilesChange={setFiles}
-                      maxSizeMb={20}
-                      title="Upload artwork"
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-8 pl-7 text-xs"
+                    placeholder="Search artwork"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </div>
+                {!libraryKind && (
+                  <div className="w-40">
+                    <SearchableSelect
+                      value={tagFilter}
+                      onChange={setTagFilter}
+                      options={LIBRARY_TAGS}
+                      size="sm"
                     />
-                    <div className="flex justify-end">
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={handleUpload}
-                        disabled={files.length === 0 || uploading}
-                      >
-                        {uploading ? (
-                          <Loader2 className="mr-1 size-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="mr-1 size-3.5" />
-                        )}
-                        {libraryKind ? 'Upload' : 'Upload and use'}
-                      </Button>
-                    </div>
                   </div>
-                </>
+                )}
+              </div>
+
+              {loading ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : assets.length === 0 ? (
+                <p className="py-6 text-center text-xs text-muted-foreground">
+                  Nothing in the library yet. Upload artwork below.
+                </p>
+              ) : (
+                <div className="grid max-h-64 grid-cols-5 gap-2 overflow-auto">
+                  {assets.map((asset) => {
+                    // A rendition for the grid, never 200 originals.
+                    const preview = asset.thumb_url ?? asset.url;
+                    return (
+                      <div key={asset.id} className="relative">
+                        <button
+                          type="button"
+                          className="flex w-full flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
+                          onClick={() =>
+                            onPick({ type: 'asset', assetId: asset.id })
+                          }
+                          title={asset.name}
+                        >
+                          <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
+                            {preview ? (
+                              <img
+                                src={preview}
+                                alt=""
+                                className="size-full object-contain"
+                              />
+                            ) : (
+                              <span className="text-2xs text-muted-foreground">
+                                No preview
+                              </span>
+                            )}
+                          </span>
+                          <span className="w-full truncate text-2xs">
+                            {asset.name}
+                          </span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
+
+              <div className="flex flex-col gap-2 border-t pt-3">
+                <FileDropzone
+                  accept=".png,.jpg,.jpeg,.webp,.svg"
+                  files={files}
+                  onFilesChange={setFiles}
+                  maxSizeMb={20}
+                  title="Upload artwork"
+                />
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={handleUpload}
+                    disabled={files.length === 0 || uploading}
+                  >
+                    {uploading ? (
+                      <Loader2 className="mr-1 size-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="mr-1 size-3.5" />
+                    )}
+                    {libraryKind ? 'Upload' : 'Upload and use'}
+                  </Button>
+                </div>
+              </div>
             </TabsContent>
           </Tabs>
         </DialogBody>

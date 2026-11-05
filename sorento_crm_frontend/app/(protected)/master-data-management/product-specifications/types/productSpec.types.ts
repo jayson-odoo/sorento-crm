@@ -321,6 +321,13 @@ export interface SpecRegistryKey {
    * absent dict as `{}`.
    */
   value_labels?: Record<string, string>;
+  /**
+   * value -> Dealer Kit icon asset ids, in the admin's order: the feature icons a price tag
+   * shows for a product holding that value. Optional on older fixtures; absent reads `{}`.
+   */
+  value_icons?: Record<string, string[]>;
+  /** asset id -> name for every icon in `value_icons`, so the screen never shows an id. */
+  value_icon_names?: Record<string, string>;
   /** What this field means to the chatbot: one line the parser sees. Null when unset. */
   parser_hint: string | null;
   /** True once staff edited the Name: the seed repair leaves it alone. */
