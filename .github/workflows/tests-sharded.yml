@@ -1,0 +1,363 @@
+# Release delta and nightly full sweep on GitHub-hosted runners, sharded in parallel
+# (CI-PARALLEL-ACTIONS, owner 5 Nov 2026; plan documentation/plans/ci/PLAN-ci-parallel-actions-05nov.md).
+#
+# Replaces running scripts/release-delta.sh / scripts/nightly-sweep.sh serially in one Claude Code
+# cloud sandbox (4 cores, 2 h command cap: the 5 Nov release delta took ~2.5 h and its vitest
+# step was killed). This workflow touches neither deploy.yml's deploy jobs nor the `ci`-label PR
+# gate; it only runs tests and posts one `crew-tests:` comment.
+#
+#   select    sorento_crm_backend/scripts/sharded_tests_plan.py: the backend test files of each
+#             pool (main tree, tests/scm, migrations) and how many runners each gets. mode=full
+#             runs everything (tests/nightly_only.txt included); mode=delta runs the affected
+#             tests of <base>..<head> (scripts/release_delta_select.py, never a nightly-only test).
+#   backend   one runner per (pool, shard), pgvector Postgres + Redis service containers, the
+#             same setup and pytest flags as deploy.yml's test-backend; pytest-split balances a
+#             pool's files across its runners by the committed .test_durations. The `serial`
+#             entry runs the migration tests and the serial_ddl tests alone, without xdist.
+#   vitest    full: `vitest run --shard=i/N`; related: `vitest related` + the source guards.
+#   summary   one `crew-tests:` line (passed/failed per shard, failing test ids, wall clock and
+#             billable runner minutes), in the run summary and as a comment on `comment_on`
+#             (dispatch) or the nightly issue #2176 (schedule).
+#
+# Release (crew, after the nightly's green line on #2176):
+#   gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
+#     -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
+on:
+  # TEMPORARY (measurement on main HEAD before the file is on main, where dispatch needs it);
+  # removed before the lane is done.
+  push:
+    branches: [claude/ci-parallel-actions-sharding-9u25cp]
+    paths: [.github/workflows/tests-sharded.yml]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "delta = the affected tests of base..head (release); full = every test (nightly)"
+        type: choice
+        options: [delta, full]
+        default: delta
+      base:
+        description: "delta only: the last green nightly's sha"
+        required: false
+        default: ""
+      head:
+        description: "sha or branch to test (default main)"
+        required: false
+        default: main
+      comment_on:
+        description: "PR or issue number for the crew-tests comment (empty: run summary only)"
+        required: false
+        default: ""
+  # 01:47 MYT. Off until crew switches the nightly over: set the repository variable
+  # TESTS_SHARDED_NIGHTLY=on (Settings > Secrets and variables > Actions > Variables).
+  schedule:
+    - cron: "47 17 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-sharded-${{ github.event_name }}-${{ inputs.head || github.ref }}
+  cancel-in-progress: false
+
+env:
+  MODE: ${{ github.event_name == 'schedule' && 'full' || inputs.mode || 'full' }}
+  HEAD_REF: ${{ inputs.head || 'main' }}
+  BASE_SHA: ${{ inputs.base || '' }}
+
+jobs:
+  select:
+    name: Select and shard
+    if: github.event_name != 'schedule' || vars.TESTS_SHARDED_NIGHTLY == 'on'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      head_sha: ${{ steps.head.outputs.sha }}
+      backend: ${{ steps.matrix.outputs.backend }}
+      backend_n: ${{ steps.matrix.outputs.backend_n }}
+      vitest: ${{ steps.plan.outputs.vitest }}
+      vitest_shards: ${{ steps.plan.outputs.vitest_shards }}
+      vitest_n: ${{ steps.plan.outputs.vitest_n }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      # The tooling (this workflow's own commit) and the code under test (head) are separate
+      # checkouts: a head older than the planner borrows it, as release-delta.sh borrows the
+      # selector.
+      - name: Checkout the tooling
+        uses: actions/checkout@v4
+        with:
+          path: tool
+      - name: Checkout the head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.HEAD_REF }}
+          path: head
+          fetch-depth: 0
+      - name: Resolve the head sha
+        id: head
+        working-directory: head
+        run: |
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$MODE" = delta ]; then
+            [ -n "$BASE_SHA" ] || { echo "mode=delta needs the base input (the last green nightly's sha)"; exit 1; }
+            git merge-base --is-ancestor "$BASE_SHA" "$sha" || { echo "$BASE_SHA is not an ancestor of $sha"; exit 1; }
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Plan
+        id: plan
+        run: |
+          args=(--mode "$MODE" --backend head/sorento_crm_backend --out plan)
+          [ "$MODE" = full ] || args+=(--base "$BASE_SHA" --head "${{ steps.head.outputs.sha }}")
+          python tool/sorento_crm_backend/scripts/sharded_tests_plan.py "${args[@]}" > outputs.txt
+          mv outputs.txt plan/outputs.txt
+          echo "${{ steps.head.outputs.sha }}" > plan/head_sha.txt
+          cat plan/plan.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      # One matrix for both pools and the serial entry: {pool, shard, of}.
+      - name: Backend matrix
+        id: matrix
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          o = dict(l.rstrip("\n").split("=", 1) for l in open("plan/outputs.txt") if "=" in l)
+          inc = []
+          for pool in ("main", "scm"):
+              n = int(o[f"{pool}_n"])
+              inc += [{"pool": pool, "shard": i, "of": n} for i in range(1, n + 1)]
+          if o["serial"] == "true":
+              inc.append({"pool": "serial", "shard": 1, "of": 1})
+          print("backend=" + json.dumps({"include": inc}))
+          print(f"backend_n={len(inc)}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: plan/
+          retention-days: 7
+
+  backend:
+    name: backend ${{ matrix.pool }} ${{ matrix.shard }}/${{ matrix.of }}
+    needs: select
+    if: needs.select.outputs.backend_n != '0'
+    runs-on: ubuntu-latest
+    # A full main shard measured about 13-16 min of pytest (see the plan); twice that is a hang.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.backend) }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sorento
+          POSTGRES_PASSWORD: sorento
+          POSTGRES_DB: sorento_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_ci
+      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-dummy-secret
+      JWT_ALGORITHM: HS256
+      # No frontend on this runner (see deploy.yml test-backend).
+      DEALER_KIT_RENDER_TESTS: skip
+    steps:
+      - name: Checkout the head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.head_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sorento_crm_backend/requirements.txt
+      - name: Install dependencies
+        working-directory: sorento_crm_backend
+        run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: plan
+      # deploy.yml test-backend's settings: no durability on a throwaway database, and a lock
+      # table large enough for four xdist workers' scratch schemas (run 33130805987).
+      - name: Relax Postgres durability for the test run
+        run: |
+          PSQL="psql $DATABASE_URL -v ON_ERROR_STOP=1"
+          $PSQL -c "ALTER SYSTEM SET fsync = off" \
+                -c "ALTER SYSTEM SET synchronous_commit = off" \
+                -c "ALTER SYSTEM SET full_page_writes = off" \
+                -c "ALTER SYSTEM SET max_locks_per_transaction = 1024" \
+                -c "SELECT pg_reload_conf()"
+          docker restart ${{ job.services.postgres.id }}
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U sorento && break
+            sleep 1
+          done
+      - name: Bootstrap the database
+        working-directory: sorento_crm_backend
+        run: python -m scripts.bootstrap_env
+      # Exit 5 (nothing collected: a serial_ddl pass over a pool without one) is not a failure.
+      - name: Run pytest (${{ matrix.pool }} ${{ matrix.shard }}/${{ matrix.of }})
+        working-directory: sorento_crm_backend
+        env:
+          POOL: ${{ matrix.pool }}
+          SHARD: ${{ matrix.shard }}
+          OF: ${{ matrix.of }}
+        run: |
+          mkdir -p junit
+          rc=0
+          run() {  # run <junit name> <pytest args...>
+            local name="$1"; shift
+            python -m pytest -q -p no:cacheprovider -rfE --durations=20 --junitxml="junit/$name.xml" "$@" \
+              || { r=$?; [ "$r" -eq 5 ] || rc=1; }
+          }
+          XDIST=(-n auto --dist loadfile --max-worker-restart 0 -p tests._xdist_crash_guard)
+          case "$POOL" in
+            main|scm)
+              mapfile -t FILES < "../plan/$POOL.txt"
+              echo "$POOL shard $SHARD of $OF over ${#FILES[@]} files"
+              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" -m "not serial_ddl" "${FILES[@]}"
+              ;;
+            serial)
+              mapfile -t MIG < ../plan/migrations.txt
+              mapfile -t MAIN < ../plan/main.txt
+              mapfile -t SCM < ../plan/scm.txt
+              [ ${#MIG[@]} -eq 0 ] || run serial-migrations -p no:xdist "${MIG[@]}"
+              [ ${#MAIN[@]} -eq 0 ] || run serial-main-ddl -p no:xdist -m serial_ddl "${MAIN[@]}"
+              [ ${#SCM[@]} -eq 0 ] || run serial-scm-ddl -p no:xdist -m serial_ddl "${SCM[@]}"
+              ;;
+          esac
+          exit "$rc"
+      - name: Upload junit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-backend-${{ matrix.pool }}-${{ matrix.shard }}
+          path: sorento_crm_backend/junit/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  vitest:
+    name: vitest ${{ matrix.shard }}/${{ needs.select.outputs.vitest_n }}
+    needs: select
+    if: needs.select.outputs.vitest_n != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.select.outputs.vitest_shards) }}
+    steps:
+      - name: Checkout the head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sorento_crm_frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: sorento_crm_frontend
+        run: npm ci --force
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: plan
+      - name: Run vitest
+        working-directory: sorento_crm_frontend
+        env:
+          VITEST_MODE: ${{ needs.select.outputs.vitest }}
+          SHARD: ${{ matrix.shard }}
+          OF: ${{ needs.select.outputs.vitest_n }}
+        run: |
+          mkdir -p junit
+          J=(--reporter=default --reporter=junit)
+          if [ "$VITEST_MODE" = full ]; then
+            npx vitest run --shard="$SHARD/$OF" "${J[@]}" --outputFile.junit="junit/vitest-$SHARD.xml"
+          else
+            rc=0
+            mapfile -t RELATED < ../plan/vitest_related.txt
+            if [ ${#RELATED[@]} -gt 0 ]; then
+              npx vitest related --run --passWithNoTests "${J[@]}" --outputFile.junit=junit/vitest-related.xml \
+                "${RELATED[@]}" || rc=1
+            fi
+            set -o pipefail
+            scripts/source-guard-tests.sh | xargs -0 -r npx vitest run "${J[@]}" \
+              --outputFile.junit=junit/vitest-guards.xml || rc=1
+            exit "$rc"
+          fi
+      - name: Upload junit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-vitest-${{ matrix.shard }}
+          path: sorento_crm_frontend/junit/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  summary:
+    name: crew-tests summary
+    needs: [select, backend, vitest]
+    if: always() && needs.select.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout the tooling
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: sorento_crm_backend/scripts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: junit
+      - name: Jobs of this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs" \
+            --jq '.jobs[]' > jobs.jsonl
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq '.run_started_at' > started.txt
+      - name: Summarise
+        env:
+          HEAD_SHA: ${{ needs.select.outputs.head_sha }}
+          REASON: ${{ needs.select.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 sorento_crm_backend/scripts/sharded_tests_summary.py \
+            --junit junit --jobs jobs.jsonl --started "$(cat started.txt)" \
+            --head "$HEAD_SHA" --mode "$MODE" --base "$BASE_SHA" --reason "$REASON" --run-url "$RUN_URL" \
+            > comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Post the crew-tests comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ github.event_name == 'schedule' && '2176' || inputs.comment_on || '' }}
+        run: |
+          if [ -z "$TARGET" ]; then
+            echo "no comment target: the line is in the run summary"
+            exit 0
+          fi
+          gh issue comment "$TARGET" --repo "${{ github.repository }}" --body-file comment.md
+      - name: Fail when a test failed
+        run: |
+          if grep -q '^crew-tests: .* FAILED' comment.md; then exit 1; fi

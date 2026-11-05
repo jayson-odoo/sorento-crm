@@ -9,7 +9,7 @@
 #            (sorento_crm_backend/scripts/ci_select_tests.py, the selection the PR gate used),
 #            the forms lifecycle chains when forms code changed (FORMS-REGRESSION, 30 Oct), and
 #            the regression guards (tests/test_lessons_learnt_regressions.py); ci_excluded.txt
-#            entries and paths the checkout no longer holds are dropped. Postgres, never sqlite,
+#            and nightly_only.txt entries and paths the checkout no longer holds are dropped. Postgres, never sqlite,
 #            through SORENTO_ENV_FILE=.env.ci-tests (scripts/cloud-env-setup.sh writes it).
 #   mcp      sorento_crm_mcp/tests when the MCP tree changed.
 #   vitest   `vitest run --changed <base>` plus the source-scanning guards
@@ -94,12 +94,16 @@ if has '^sorento_crm_backend/'; then
                 tests/test_sla_due_escalations.py tests/test_complaint_status_guard.py 2>/dev/null || true)"
   fi
   excluded="$(grep -vE '^\s*#|^\s*$' "$BACKEND/tests/ci_excluded.txt" 2>/dev/null || true)"
+  # The reorder-planning tests run in the nightly full sweep only (CI-PARALLEL-ACTIONS, owner 5 Nov).
+  nightly_only="$(grep -vE '^\s*#|^\s*$' "$BACKEND/tests/nightly_only.txt" 2>/dev/null || true)"
   for path in $selected; do
     rel="${path#"$BACKEND"/}"
     if [ ! -f "$BACKEND/$rel" ]; then
       echo "not run: $rel (not in the checkout)" >&2
     elif grep -qxF "$rel" <<< "$excluded"; then
       echo "not run: $rel (tests/ci_excluded.txt)" >&2
+    elif grep -qxF "$rel" <<< "$nightly_only"; then
+      echo "not run: $rel (tests/nightly_only.txt: the nightly sweep runs it)" >&2
     else
       backend_list="$backend_list $rel"
     fi
