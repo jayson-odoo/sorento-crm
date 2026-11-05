@@ -141,10 +141,10 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     ]);
     draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
     expect(row('plain').dataset.disabled).toBe('false');
-    expect(row('plain').dataset.badge).toBe('');
+    expect(row('plain').dataset.badge).toBe('Not set');
     expect(description('plain')).toBe('105 x 148 mm. Needs the main product only');
     expect(row('partial').dataset.disabled).toBe('true');
-    expect(row('partial').dataset.badge).toBe('Does not fit');
+    expect(row('partial').dataset.badge).toBe('Not set / Does not fit');
     expect(description('partial')).toBe("Prints 2 of this combo's 4 fixed parts");
   });
 
