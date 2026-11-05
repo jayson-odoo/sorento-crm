@@ -106,7 +106,10 @@ def assert_unused(db: Session, template_ids: list[str]) -> None:
     ids = [str(i) for i in template_ids if i]
     if not ids:
         return
-    rows = db.query(TagTemplate).filter(TagTemplate.id.in_(ids)).all()
+    # In the caller's order, so a batch refusal always names the same template (the query's own
+    # row order is whatever Postgres returns).
+    by_id = {row.id: row for row in db.query(TagTemplate).filter(TagTemplate.id.in_(ids)).all()}
+    rows = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
     for row in rows:
         version_ids = [
             v.id for v in db.query(TagTemplateVersion.id).filter(TagTemplateVersion.template_id == row.id)
@@ -188,7 +191,7 @@ def bulk_delete(
         # Refused before anything is touched - a partial batch delete would be
         # a data-loss surprise nobody selected on purpose.
         raise _not_found()
-    assert_unused(db, [row.id for row in rows])
+    assert_unused(db, ids)
     _audit_deletion(db, rows, requested_by_id=requested_by_id, batch_size=len(rows))
     now = datetime.utcnow()
     for row in rows:
