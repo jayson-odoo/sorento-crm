@@ -287,3 +287,17 @@ describe('a discontinued fixed part (round 3)', () => {
     expect(screen.queryByText('Discontinued')).toBeNull();
   });
 });
+
+describe('S5: the "lists every option" hint only where the template uses none of the group', () => {
+  const hint = 'The tag will list every option.';
+
+  it('is hidden when the chosen template uses positions from the group', () => {
+    renderTable();
+    expect(screen.queryByText(hint)).toBeNull();
+  });
+
+  it('shows when the chosen template uses no position from the group', () => {
+    renderTable({ tag_templates: [tpl('t0', [0], 1), tpl('t1', [1])], tag_template_id: 't0' });
+    expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+});

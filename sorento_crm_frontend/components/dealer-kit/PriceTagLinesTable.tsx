@@ -22,7 +22,7 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
-import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
+import { comboShape, groupIndexOf, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
@@ -33,6 +33,7 @@ import {
   itemValue,
   linePriceType,
   lineTemplateState,
+  type LineTemplateState,
   packageWarningFor,
   comboOfLine,
   partsAtListTitle,
@@ -208,6 +209,15 @@ interface LineRowProps {
  *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
  *  `sell_price` unconditionally showed the offer price in List mode too.
  *  Falls back to the bare code while pricing has not answered yet. */
+/** Whether the line's chosen template prints a position of the choice group `role`. */
+function templateUsesGroup(line: DraftLine, state: LineTemplateState, role: string | null | undefined): boolean {
+  const template = state.kind === 'single' ? state.template : state.kind === 'many' ? state.picked : null;
+  const combo = comboOfLine(line);
+  if (!template?.needs || !combo || !role) return false;
+  const shape = comboShape(combo.parts);
+  return (template.needs.groups[groupIndexOf(role, shape)] ?? 0) > 0;
+}
+
 function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
@@ -780,7 +790,7 @@ function LineRow({
             ) : null;
           })()}
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
-          {part.key === lastOpenPartKey && (
+          {part.key === lastOpenPartKey && !templateUsesGroup(line, templateState, part.role) && (
             <tr>
               <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
