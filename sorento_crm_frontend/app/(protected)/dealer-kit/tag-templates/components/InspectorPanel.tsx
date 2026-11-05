@@ -53,7 +53,7 @@ import { isDynamic, slotLabel } from '@/lib/dealer-kit/product-block';
 import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
-import { ColorPicker } from './ColorPicker';
+import { ColorPicker } from '@/components/common/ColorPicker';
 
 // ---------------------------------------------------------------------------
 // Slot binding options
