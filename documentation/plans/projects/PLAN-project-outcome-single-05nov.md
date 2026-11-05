@@ -1,6 +1,6 @@
 # PLAN: One Won/Lost outcome per project (drop per-area outcome)
 
-Status: Review (built; owner answered 5 Nov ~12:40). Track: standard, size M, no migration.
+Status: Merge-ready pending owner hand test (built, reviewed, fix round 1 in c6c61186; owner answered 5 Nov ~12:40). Track: standard, size M, no migration.
 
 Lane: PROJECT-OUTCOME-SINGLE. Owner ruling 5 Nov 2026 12:28 MYT: "we don't need per area
 outcome" / "we only need per project outcome, simple as that".
