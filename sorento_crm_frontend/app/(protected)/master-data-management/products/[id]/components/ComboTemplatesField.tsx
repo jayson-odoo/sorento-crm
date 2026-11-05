@@ -17,7 +17,10 @@ import {
   useComboTagTemplates,
   useSetComboTagTemplates,
 } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
-import { explicitDefaultId } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
+import {
+  explicitDefaults,
+  linksBody,
+} from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 
 type Parts = React.ComponentProps<typeof ComboTemplatesPicker>['parts'];
 
@@ -46,16 +49,18 @@ function ComboTemplatesEditor({ comboId, parts }: { comboId: string; parts?: Par
 
   if (linked.isLoading || linked.isError) return null;
   const current = rows.map((row) => row.id);
+  const chosen = explicitDefaults(rows);
   return (
     <div className="border-b p-3">
       <ComboTemplatesPicker
         idPrefix={`combo-${comboId}`}
         parts={parts}
         value={current}
-        defaultId={explicitDefaultId(rows) ?? ''}
+        defaultListId={chosen.list}
+        defaultSellingId={chosen.selling}
         selectedOptions={rows.map((row) => ({ value: row.id, label: row.name }))}
         disabled={save.isPending || unlinking.isPending}
-        onChange={(ids, defaultId) => {
+        onChange={(ids, defaults) => {
           const removed = current.filter((id) => !ids.includes(id));
           const added = ids.filter((id) => !current.includes(id));
           if (removed.length > 0) {
@@ -71,8 +76,7 @@ function ComboTemplatesEditor({ comboId, parts }: { comboId: string; parts?: Par
           const all = [...current, ...added];
           save.mutate({
             combo_id: comboId,
-            template_ids: all,
-            default_template_id: all.length > 1 && defaultId ? defaultId : null,
+            ...linksBody(all, all.length > 1 ? defaults : { list: '', selling: '' }),
           });
         }}
       />

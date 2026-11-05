@@ -19,6 +19,7 @@ import type {
   SlotBinding,
   SpecSheetDocFields,
   TagBindingData,
+  TagCombo,
   TagImage,
   TagLayer,
   TagOpenGroup,
@@ -26,10 +27,12 @@ import type {
   TagSheetDoc,
   TagSheet,
   TagSpecValue,
+  TextLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
   layerShownFor,
+  layerRichBlocks,
   layerText,
   priceBadgeInput,
   resolveBarcodeValue,
@@ -44,7 +47,13 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
-import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import {
+  LIST_INDENT_MM,
+  runFace,
+  textFace,
+  textLayerLines,
+  type RichLine,
+} from '@/lib/dealer-kit/text-layout';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
@@ -103,6 +112,8 @@ export interface ResolvedLineData {
   /** Staff-authored tag copy (r10 S4), what `{{product.price_tag_description}}`
    *  draws. Null for a set line. */
   price_tag_description?: string | null;
+  /** The combo this line prints (PRICETAG-COMBO). */
+  combo?: TagCombo | null;
   /** PS-SPEC-SHEET: a project spec sheet page's own fields (absent on a price tag). */
   brand?: string;
   drawing?: TagImage | null;
@@ -195,13 +206,25 @@ function paddingCss(padding: LayerPadding | undefined): string {
 function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLineData | null }) {
   const props = layer.props;
   const epoch = useFontsEpoch();
-  const text = props.kind === 'text' ? layerText(layer, bindingOf(resolved), 'print') : '';
+  const binding = bindingOf(resolved);
+  // A rich description keeps its merge fields out of the markup: they resolve on the parsed runs.
+  const blocks = useMemo(
+    () => (props.kind === 'text' ? layerRichBlocks(layer, binding, 'print') : null),
+    [layer, props.kind, binding],
+  );
+  const text = props.kind === 'text' && !blocks ? layerText(layer, binding, 'print') : '';
   const lines = useMemo(() => {
     void epoch; // re-measure once a face has loaded
-    return props.kind === 'text'
+    return props.kind === 'text' && !blocks
       ? textLayerLines(props, text, layer.width_mm, layer.height_mm)
       : [];
-  }, [props, text, layer.width_mm, layer.height_mm, epoch]);
+  }, [props, blocks, text, layer.width_mm, layer.height_mm, epoch]);
+  const richLines = useMemo(() => {
+    void epoch;
+    return props.kind === 'text' && blocks
+      ? textLayerLines(props, blocks, layer.width_mm, layer.height_mm)
+      : null;
+  }, [props, blocks, layer.width_mm, layer.height_mm, epoch]);
 
   if (props.kind !== 'text') return null;
   const face = textFace(props);
@@ -233,7 +256,55 @@ function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLin
         whiteSpace: 'pre',
       }}
     >
-      {lines.join('\n')}
+      {richLines ? richLines.map((line, index) => <RichLineView key={index} line={line} props={props} />) : lines.join('\n')}
+    </div>
+  );
+}
+
+/**
+ * One line of a rich description: React spans only (never `innerHTML`), one per run, in the same
+ * face the canvas draws it in. The line is already broken (`white-space: pre`); a list item's
+ * marker hangs to the left of the text.
+ */
+function RichLineView({ line, props }: { line: RichLine; props: TextLayerProps }) {
+  const first = line[0];
+  const height = `${first.lineHeight_mm}mm`;
+  return (
+    <div
+      style={{
+        textAlign: first.align,
+        paddingLeft: first.indent_mm ? `${first.indent_mm}mm` : undefined,
+        minHeight: height,
+        whiteSpace: 'pre',
+      }}
+    >
+      {line.map((run, index) => {
+        const runFaceOf = runFace(props, run, run.sizeFactor);
+        const bold = !!run.bold;
+        const decoration = [
+          (props.underline || run.underline) && 'underline',
+          (props.strikethrough || run.strike) && 'line-through',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const style: CSSProperties = {
+          ...(bold ? { fontWeight: Math.max(700, props.fontWeight || 400) } : {}),
+          ...(run.italic ? { fontStyle: 'italic' } : {}),
+          ...(run.code ? { fontFamily: runFaceOf.fontFamily } : {}),
+          ...(run.sizeFactor !== 1 ? { fontSize: `${runFaceOf.fontSize_mm}mm` } : {}),
+          ...(decoration ? { textDecoration: decoration } : {}),
+          ...(run.color ? { color: run.color } : {}),
+          ...(run.highlight ? { backgroundColor: run.highlight } : {}),
+          ...(run.marker
+            ? { display: 'inline-block', width: `${LIST_INDENT_MM}mm`, marginLeft: `-${LIST_INDENT_MM}mm` }
+            : {}),
+        };
+        return (
+          <span key={index} style={style}>
+            {run.text}
+          </span>
+        );
+      })}
     </div>
   );
 }

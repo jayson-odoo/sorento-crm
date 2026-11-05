@@ -99,6 +99,7 @@ import {
 import {
   draftLinesPayload,
   lineNeedsTemplate,
+  templateAfterFlip,
   lineToDraft,
   EMPTY_LINE,
   lineProblemsOf,
@@ -1395,7 +1396,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         if (!l.guard_error) return l;
         const holding = [
           ...(l.product_id || l.product_set_id ? [] : [EMPTY_LINE]),
-          ...(lineNeedsTemplate(l) ? [MISSING_TAG_TEMPLATE] : []),
+          ...(lineNeedsTemplate(l, priceMode) ? [MISSING_TAG_TEMPLATE] : []),
           ...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode),
           ...(l.code && previewState.missing.includes(l.code) ? ['No tag template yet.'] : []),
           // Prices still loading say nothing either way: keep what the click found.
@@ -1420,7 +1421,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     const { next, emptyRows } = collectProblems();
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
-    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l) ? [index] : []));
+    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l, priceMode) ? [index] : []));
     // Approve also reads the facts that stop a tag being drawn (no combo price, a discontinued
     // part, no template, a short pick). They are found HERE, on the click, and shown on the line;
     // Escalate is the way out of them, so it does not ask (owner, 5 Nov; same mechanism as #2138).
@@ -2255,6 +2256,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onChange={(mode) => {
               setPriceModeChosen(true);
               setPriceMode(mode);
+              // R7: a line that follows the header moves to the new type's template.
+              setLines((prev) =>
+                prev.map((l) => (l.price_type ? l : { ...l, ...templateAfterFlip(l, mode) })),
+              );
               // Direct call (review round 2): `setPriceMode('list')` is a
               // no-op on a fresh form (priceMode is already 'list'), so
               // React bails out of re-rendering and the auto-open effect

@@ -189,7 +189,9 @@ def test_saving_a_products_template_set_keeps_the_link_to_an_archived_template(a
     product = _product(db, "TTD3")
     db.add_all(
         [
-            ProductTagTemplate(product_id=product.id, template_id=archived, is_default=True),
+            ProductTagTemplate(
+                product_id=product.id, template_id=archived, default_list=True, default_selling=True
+            ),
             ProductTagTemplate(product_id=product.id, template_id=live),
         ]
     )
@@ -202,10 +204,12 @@ def test_saving_a_products_template_set_keeps_the_link_to_an_archived_template(a
     db.commit()
     db.expire_all()
 
+    # PRICETAG-COMBO-FORMAT: the default is two per-type flags; the legacy default_template_id
+    # sets both on a template with no price type.
     links = {
-        link.template_id: link.is_default
+        link.template_id: (link.default_list, link.default_selling)
         for link in db.query(ProductTagTemplate).filter(ProductTagTemplate.product_id == product.id)
     }
-    assert links == {archived: False, live: False, added: True}
+    assert links == {archived: (False, False), live: (False, False), added: (True, True)}
     items = product_tag_template_service.linked_items(db, product.id)
     assert {i["id"]: i["is_default"] for i in items} == {live: False, added: True}

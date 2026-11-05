@@ -24,6 +24,11 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import {
+  TEMPLATE_PRICE_TYPE_OPTIONS,
+  type TemplatePriceType,
+} from '@/lib/dealer-kit/template-price-type';
 import {
   DEFAULT_TAG_SIZE,
   ALL_TEMPLATE_FAMILIES,
@@ -48,6 +53,7 @@ export function TagTemplateDialog({
   const [family, setFamily] = useState<TagTemplateFamily>('ala_carte');
   const [widthMm, setWidthMm] = useState<number | null>(DEFAULT_TAG_SIZE.width_mm);
   const [heightMm, setHeightMm] = useState<number | null>(DEFAULT_TAG_SIZE.height_mm);
+  const [priceType, setPriceType] = useState<TemplatePriceType | null>(null);
   const [checked, setChecked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +64,7 @@ export function TagTemplateDialog({
       setFamily('ala_carte');
       setWidthMm(DEFAULT_TAG_SIZE.width_mm);
       setHeightMm(DEFAULT_TAG_SIZE.height_mm);
+      setPriceType(null);
       setError(null);
       setChecked(false);
     }
@@ -76,6 +83,7 @@ export function TagTemplateDialog({
       const template = await createTemplate({
         name: name.trim(),
         family,
+        price_type: priceType,
         print_size: {
           width_mm: parseNumberDraft(widthMm) as number,
           height_mm: parseNumberDraft(heightMm) as number,
@@ -115,14 +123,34 @@ export function TagTemplateDialog({
             />
           </div>
 
-          {/* Family */}
-          <div className="flex flex-col gap-2">
-            <Label>Family</Label>
-            <SearchableSelect
-              value={family}
-              onChange={(v: string) => setFamily(v as TagTemplateFamily)}
-              options={ALL_TEMPLATE_FAMILIES}
-            />
+          {/* Family and price type */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label>Family</Label>
+              <SearchableSelect
+                value={family}
+                onChange={(v: string) => setFamily(v as TagTemplateFamily)}
+                options={ALL_TEMPLATE_FAMILIES}
+              />
+            </div>
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label id="tt-price-type-label">Price type</Label>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                aria-labelledby="tt-price-type-label"
+                value={priceType ?? ''}
+                onValueChange={(next) => setPriceType((next || null) as TemplatePriceType | null)}
+                className="flex-wrap"
+              >
+                {TEMPLATE_PRICE_TYPE_OPTIONS.map((option) => (
+                  <ToggleGroupItem key={option.value} value={option.value}>
+                    {option.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </div>
           </div>
 
           {/* Print size */}

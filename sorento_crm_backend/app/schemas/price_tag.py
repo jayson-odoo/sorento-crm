@@ -41,7 +41,9 @@ class LinePartIn(BaseModel):
 
     product_id: Optional[str] = None
     role: Optional[str] = None
-    candidates: list[str] = Field(default_factory=list)
+    # A choice group's options are a handful; the ceiling stops one part from forcing a full
+    # product resolution per id in a single preview (security review, PRICETAG-COMBO-FORMAT).
+    candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
 class PriceTagRequestLineCreate(BaseModel):
@@ -861,6 +863,8 @@ class TagTemplateCreate(BaseModel):
     family: str = Field(..., min_length=1, max_length=50)
     doc: dict = Field(default_factory=dict)
     print_size: dict = Field(default_factory=dict)
+    #: Hand-picked LP / SP / LP & SP; None = unset (offered on both kinds of line).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
 
 
 #: A template setting that is trimmed and must not be blank (item 4).
@@ -874,6 +878,8 @@ class TagTemplateUpdate(BaseModel):
     family: Optional[_SettingText50] = None
     doc: Optional[dict] = None
     print_size: Optional[dict] = None
+    #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
 
 
 class TemplateNeeds(BaseModel):
@@ -900,6 +906,7 @@ class TagTemplateResponse(BaseModel):
     family: str
     doc: dict
     print_size: dict
+    price_type: Optional[Literal["list", "selling", "both"]] = None
     company_id: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -1761,14 +1768,22 @@ class ProductTagTemplateItem(BaseModel):
     published: bool
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
-    #: PRICETAG-LPSP: the link preselected on a line (a lone link counts).
+    #: Compat: a default of either kind (``default_list or default_selling``).
     is_default: bool = False
+    #: PRICETAG-COMBO-FORMAT: the template's price type (None = unset) and the link's defaults
+    #: per type (a lone fitting link counts).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+    default_list: bool = False
+    default_selling: bool = False
     needs: Optional[TemplateNeeds] = None
 
 
 class ProductTagTemplatesUpdate(BaseModel):
     template_ids: list[str] = Field(default_factory=list, max_length=100)
-    #: Must be one of ``template_ids`` (422 otherwise); None = no default.
+    #: Each must be one of ``template_ids`` (422 otherwise) and fit its type; None = none.
+    default_list_template_id: Optional[str] = None
+    default_selling_template_id: Optional[str] = None
+    #: Legacy: with neither new key sent, sets BOTH defaults.
     default_template_id: Optional[str] = None
 
 

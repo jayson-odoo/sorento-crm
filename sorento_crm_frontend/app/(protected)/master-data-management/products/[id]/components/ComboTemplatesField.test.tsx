@@ -67,7 +67,11 @@ const row = (id: string, isDefault = false) => ({
   published: true,
   width_mm: 80,
   height_mm: 50,
+  price_type: null,
   is_default: isDefault,
+  // The release backfill: an old default is the default for both types.
+  default_list: isDefault,
+  default_selling: isDefault,
 });
 
 describe('ComboTemplatesField (existing combo)', () => {
@@ -91,7 +95,8 @@ describe('ComboTemplatesField (existing combo)', () => {
     render(<ComboTemplatesField comboId="cb1" />);
     expect(screen.getByText('Price tag templates')).toBeInTheDocument();
     expect(screen.getByTestId('chosen')).toHaveTextContent('a,b');
-    expect((screen.getByLabelText('Default template') as HTMLSelectElement).value).toBe('b');
+    expect((screen.getByLabelText('Default LP template') as HTMLSelectElement).value).toBe('b');
+    expect((screen.getByLabelText('Default SP template') as HTMLSelectElement).value).toBe('b');
   });
 
   it('adding a template saves through the combo PUT and keeps the chosen default', () => {
@@ -102,7 +107,8 @@ describe('ComboTemplatesField (existing combo)', () => {
     expect(save).toHaveBeenCalledWith({
       combo_id: 'cb1',
       template_ids: ['a', 'b', 'c'],
-      default_template_id: 'b',
+      default_list_template_id: 'b',
+      default_selling_template_id: 'b',
     });
   });
 
@@ -110,11 +116,12 @@ describe('ComboTemplatesField (existing combo)', () => {
     granted.add('dealer_kit.tag_templates.manage');
     linked.mockReturnValue({ data: [row('a'), row('b', true)], isLoading: false, isError: false });
     render(<ComboTemplatesField comboId="cb1" />);
-    fireEvent.change(screen.getByLabelText('Default template'), { target: { value: 'a' } });
+    fireEvent.change(screen.getByLabelText('Default LP template'), { target: { value: 'a' } });
     expect(save).toHaveBeenCalledWith({
       combo_id: 'cb1',
       template_ids: ['a', 'b'],
-      default_template_id: 'a',
+      default_list_template_id: 'a',
+      default_selling_template_id: 'b',
     });
   });
 
@@ -126,7 +133,8 @@ describe('ComboTemplatesField (existing combo)', () => {
     expect(save).toHaveBeenCalledWith({
       combo_id: 'cb1',
       template_ids: ['a', 'c'],
-      default_template_id: null,
+      default_list_template_id: null,
+      default_selling_template_id: null,
     });
   });
 

@@ -722,6 +722,11 @@ class TagTemplate(Base, CompanyScopedMixin):
     __tablename__ = "tag_template"
     __table_args__ = (
         Index("ix_dealer_kit_tag_template_family", "family"),
+        # PRICETAG-COMBO-FORMAT: hand-picked; NULL = unset (offered on LP and SP lines).
+        CheckConstraint(
+            "price_type IN ('list','selling','both')",
+            name="ck_dealer_kit_tag_template_price_type",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -730,6 +735,7 @@ class TagTemplate(Base, CompanyScopedMixin):
     family = Column(String(50), nullable=False)
     doc = Column(JSONB, nullable=False)
     print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    price_type = Column(String(16), nullable=True)
     published_version_id = Column(
         UUID(as_uuid=False),
         ForeignKey(
@@ -819,12 +825,18 @@ class ProductTagTemplate(Base):
             "product_id", "template_id", name="uq_dealer_kit_product_tag_template"
         ),
         Index("ix_dealer_kit_product_tag_template_template_id", "template_id"),
-        # PRICETAG-LPSP: at most one default link per product.
+        # PRICETAG-COMBO-FORMAT: at most one default LP and one default SP link per product.
         Index(
-            "uq_dealer_kit_product_tag_template_default",
+            "uq_dealer_kit_product_tag_template_default_list",
             "product_id",
             unique=True,
-            postgresql_where=text("is_default"),
+            postgresql_where=text("default_list"),
+        ),
+        Index(
+            "uq_dealer_kit_product_tag_template_default_selling",
+            "product_id",
+            unique=True,
+            postgresql_where=text("default_selling"),
         ),
         {"schema": SCHEMA},
     )
@@ -840,8 +852,9 @@ class ProductTagTemplate(Base):
         ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
         nullable=False,
     )
-    # PRICETAG-LPSP: the link preselected on a line. A lone link is implicitly the default.
-    is_default = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # The link preselected on an LP / SP line. A lone fitting link is implicitly the default.
+    default_list = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    default_selling = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     # String, not UUID - same reason as ``TagTemplateVersion.created_by``.
     created_by = Column(String, nullable=True)
     created_at = _created_at()
@@ -857,10 +870,16 @@ class ComboTagTemplate(Base):
         UniqueConstraint("combo_id", "template_id", name="uq_dealer_kit_combo_tag_template"),
         Index("ix_dealer_kit_combo_tag_template_template_id", "template_id"),
         Index(
-            "uq_dealer_kit_combo_tag_template_default",
+            "uq_dealer_kit_combo_tag_template_default_list",
             "combo_id",
             unique=True,
-            postgresql_where=text("is_default"),
+            postgresql_where=text("default_list"),
+        ),
+        Index(
+            "uq_dealer_kit_combo_tag_template_default_selling",
+            "combo_id",
+            unique=True,
+            postgresql_where=text("default_selling"),
         ),
         {"schema": SCHEMA},
     )
@@ -876,7 +895,8 @@ class ComboTagTemplate(Base):
         ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
         nullable=False,
     )
-    is_default = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    default_list = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    default_selling = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_by = Column(String, nullable=True)
     created_at = _created_at()
 

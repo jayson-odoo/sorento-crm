@@ -33,6 +33,7 @@ from typing import Iterable, Optional, Sequence
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.tag_rich_text import plain_text
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
 from app.utils.product_display import distinct_name
@@ -2073,8 +2074,8 @@ def diff_pin_against_live(
     add(
         "price_tag_description",
         "Price tag description",
-        pinned.get("price_tag_description"),
-        live.get("price_tag_description"),
+        plain_text(pinned.get("price_tag_description")),
+        plain_text(live.get("price_tag_description")),
     )
     add(
         "list_price",
@@ -2090,8 +2091,8 @@ def diff_pin_against_live(
         add(
             "combo:description",
             "Combo description",
-            old_combo.get("description"),
-            new_combo.get("description"),
+            plain_text(old_combo.get("description")),
+            plain_text(new_combo.get("description")),
         )
         add(
             "combo:free_items",
@@ -2197,8 +2198,8 @@ def diff_pin_against_live(
         add(
             f"part:{code}:price_tag_description",
             f"{code} price tag description",
-            before.get("price_tag_description"),
-            after.get("price_tag_description"),
+            plain_text(before.get("price_tag_description")),
+            plain_text(after.get("price_tag_description")),
         )
         before_images = {
             image.get("attachment_id") for image in before.get("images") or []

@@ -22,6 +22,7 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
+import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import {
   useCallback,
   useEffect,
@@ -2292,7 +2293,10 @@ export function TagCanvasEditor({
       // so this cast is safe for exactly the nodes reaching this branch -
       // `findOne` only exists on a Container, and `Konva.Node` (what
       // `transformer.nodes()` is typed as) is not one.
-      const textNode = (node as unknown as Konva.Group).findOne('Text');
+      // A rich description is drawn as many runs; it re-lays itself out on commit.
+      const textNode = (node as unknown as Konva.Group).findOne('.rich-text')
+        ? null
+        : (node as unknown as Konva.Group).findOne('Text');
       if (textNode) {
         // The Text CHILD wraps inside the PADDED box (S3), not the Group's
         // raw one - `KonvaTagLayer`'s own render does the same fold on every
@@ -3636,6 +3640,12 @@ export function TagCanvasEditor({
   /** The seed value the inline editor opened with - stable for the whole edit. */
   const editingContent = editingLayer ? contentFor(editingLayer) : '';
 
+  /** R16: a layer bound to a description slot holds rich HTML edited on the product / combo
+   *  page; here it opens read-only on its plain text and never writes to the layer. */
+  const editingIsDescription =
+    editingLayer?.slot_binding === 'combo_description' ||
+    editingLayer?.slot_binding === 'price_tag_description';
+
   /**
    * A sole-token layer opens the inline editor on its RESOLVED value instead
    * of the raw token (S3, AC-S3-1): `{{product.code}}` shows
@@ -3716,10 +3726,10 @@ export function TagCanvasEditor({
    */
   const commitInlineEdit = useCallback(
     (content: string) => {
-      if (editingLayerId) writeContentToLayer(editingLayerId, content);
+      if (editingLayerId && !editingIsDescription) writeContentToLayer(editingLayerId, content);
       setEditingLayerId(null);
     },
-    [editingLayerId, writeContentToLayer],
+    [editingLayerId, editingIsDescription, writeContentToLayer],
   );
 
   /** The inline editor's own no-op close (B2): nothing was typed, nothing to write. */
@@ -4508,15 +4518,19 @@ export function TagCanvasEditor({
                 <InlineTextEditor
                   key={editingLayer.id}
                   layer={editingLayer}
-                  value={editingResolvedValue ?? editingContent}
+                  value={
+                    editingIsDescription
+                      ? richPlainText(editingContent)
+                      : (editingResolvedValue ?? editingContent)
+                  }
                   // The template editor shows a data field's value read-only; a spec sheet page
                   // types over it (that page only), starting from what it prints.
-                  readOnly={editingResolvedValue != null && !embedded}
+                  readOnly={editingIsDescription || (editingResolvedValue != null && !embedded)}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}
                   onChangeText={(text) => {
-                    editingTextRef.current = text;
+                    if (!editingIsDescription) editingTextRef.current = text;
                   }}
                   onCommit={commitInlineEdit}
                   onCancel={cancelInlineEdit}

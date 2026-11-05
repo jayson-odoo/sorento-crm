@@ -37,6 +37,9 @@ export interface ProductComboPartRow {
 export interface ProductComboImage {
   attachment_id: string;
   url: string;
+  /** The uploaded file's name and type, so the preview modal picks the right viewer. */
+  file_name?: string | null;
+  mime_type?: string | null;
 }
 
 export interface ProductComboRow {

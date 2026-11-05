@@ -210,8 +210,13 @@ export interface ProductTagTemplateOption {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
-  /** PRICETAG-LPSP: the link preselected on a line. */
+  /** PRICETAG-LPSP: the link preselected on a line (a default of either kind). */
   is_default?: boolean;
+  /** PRICETAG-COMBO-FORMAT: the template's hand-picked type (null = not set, fits both) and the
+   *  link's default per type. */
+  price_type?: 'list' | 'selling' | 'both' | null;
+  default_list?: boolean;
+  default_selling?: boolean;
   /** What the template reads from a combo (from its published layers). */
   needs?: TemplateNeeds;
 }

@@ -82,6 +82,7 @@ from app.services.audit_service import register_audit_listeners  # noqa: E402
 from app.services.dealer_kit.pricing import _no_selling_price_product_ids  # noqa: E402
 from app.services.dealer_kit.product_tag_template_service import NON_PRICE_TAG_FAMILY_PREFIX  # noqa: E402
 from app.services.dealer_kit.template_needs import combo_shape, fit_reason, template_needs  # noqa: E402
+from app.utils.tag_rich_text import plain_text  # noqa: E402
 from app.services.error_handler import AppException  # noqa: E402
 from app.services.product_combo_service import ProductComboService  # noqa: E402
 
@@ -381,7 +382,7 @@ def process_entry(
     description = (entry.get("combo_description") or "").strip()
     free_items = free_items_text(entry.get("free_items"))
     fill = {}
-    if description and not (existing and (existing.description or "").strip()):
+    if description and not (existing and (plain_text(existing.description) or "").strip()):
         fill["description"] = description
     if free_items and not (existing and (existing.free_items or "").strip()):
         fill["free_items"] = free_items
