@@ -18,7 +18,8 @@ Owner, 5 Nov: put the additional 1% on the tier row itself ("A/C I 6 + 1 %") ins
 - each line is rounded on its own then added (line 18-21, ruling 3):
   4,607.64 + 767.94 + 767.94 = 6,143.52 (one combined 8% would be 6,143.51).
 
-So the engine pays 6% + 1% + 1% = 8%. The spreadsheet says tier 2 = 6% + 1% = 7% = 5,375.57.
+So the engine pays 6% + 1% + 1% = 8%. The spreadsheet says tier 2 = 6% + 1% = 7%: 4,607.64 + 767.94 =
+5,375.58 (two lines, each rounded; one combined 7% would be 5,375.57).
 
 ## Model (owner answers 5 Nov 11:10)
 
