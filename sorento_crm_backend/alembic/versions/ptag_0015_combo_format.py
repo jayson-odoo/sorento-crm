@@ -15,7 +15,7 @@ Downgrade: ``is_default`` = ``default_selling``, or ``default_list`` where the o
 Idempotent: a database built by ``create_all`` already holds the new shape.
 
 Revision ID: ptag_0015_combo_format
-Revises: pol_0001_stock_debt_link_po
+Revises: ttdc_0001_tag_template_archived
 Create Date: 2026-11-05
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "ptag_0015_combo_format"
-down_revision = "pol_0001_stock_debt_link_po"
+down_revision = "ttdc_0001_tag_template_archived"
 branch_labels = None
 depends_on = None
 

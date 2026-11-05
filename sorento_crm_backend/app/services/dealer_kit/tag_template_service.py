@@ -1,5 +1,10 @@
 """Tag template delete, single and in bulk (PLAN-price-tag-feedback-r2.md D26, S11).
 
+Delete ARCHIVES (TAG-TEMPLATE-DELETE-CONFIRM, owner 5 Nov): it stamps `archived_at` and keeps the
+row, its versions, its product/combo links and the request lines that print with it, so a
+mis-click is restorable (`archived_at = NULL`). `_scoped` only ever answers live templates, so an
+archived one reads exactly like a missing one here too.
+
 One rule, and the whole module is built around it: a foreign or missing id in
 the batch refuses the WHOLE batch, before anything is deleted. `TagTemplate`
 carries `CompanyScopedMixin`, so a row belonging to another company simply
@@ -19,6 +24,7 @@ neither.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import func, or_
@@ -48,7 +54,7 @@ def _scoped(db: Session) -> Query:
     scope back on the session first (`form_action_service._execute`), so this is
     the clicking user's company even when the sweep is what ran the handler.
     """
-    query = db.query(TagTemplate)
+    query = db.query(TagTemplate).filter(TagTemplate.archived_at.is_(None))
     predicate = build_company_predicate(TagTemplate, get_company_scope(db))
     return query if predicate is None else query.filter(predicate)
 
@@ -66,6 +72,7 @@ def _audit_deletion(
     """
     from app.services.audit_service import log_audit
 
+    now = datetime.utcnow()
     detail = ", ".join(f"{row.name} ({row.id})" for row in rows)
     logger.info(
         "Deleting %s tag template(s) [%s] requested by %s",
@@ -80,10 +87,11 @@ def _audit_deletion(
             str(row.id),
             "DELETE",
             old_values={"name": row.name, "family": row.family},
+            new_values={"archived_at": now.isoformat()},
             user_id=requested_by_id,
             company_id=str(row.company_id) if row.company_id else None,
             description=(
-                f'Deleted tag template "{row.name}"'
+                f'Archived tag template "{row.name}"'
                 + (f" (one of {batch_size} selected)" if batch_size > 1 else "")
             ),
         )
@@ -98,7 +106,10 @@ def assert_unused(db: Session, template_ids: list[str]) -> None:
     ids = [str(i) for i in template_ids if i]
     if not ids:
         return
-    rows = db.query(TagTemplate).filter(TagTemplate.id.in_(ids)).all()
+    # In the caller's order, so a batch refusal always names the same template (the query's own
+    # row order is whatever Postgres returns).
+    by_id = {row.id: row for row in db.query(TagTemplate).filter(TagTemplate.id.in_(ids)).all()}
+    rows = [by_id[i] for i in dict.fromkeys(ids) if i in by_id]
     for row in rows:
         version_ids = [
             v.id for v in db.query(TagTemplateVersion.id).filter(TagTemplateVersion.template_id == row.id)
@@ -130,6 +141,29 @@ def assert_unused(db: Session, template_ids: list[str]) -> None:
             )
 
 
+def usage(db: Session, template_id: str) -> dict:
+    """Products and combos linked to the template, and the price tag requests with a line that
+    prints with it. Counted for the delete confirm; the caller has already scoped the template."""
+    from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate
+    from app.models.price_tag import PriceTagRequestLine
+
+    def count(expr, *where) -> int:
+        return db.query(func.count(expr)).filter(*where).scalar() or 0
+
+    return {
+        "products": count(
+            func.distinct(ProductTagTemplate.product_id), ProductTagTemplate.template_id == template_id
+        ),
+        "combos": count(
+            func.distinct(ComboTagTemplate.combo_id), ComboTagTemplate.template_id == template_id
+        ),
+        "requests": count(
+            func.distinct(PriceTagRequestLine.request_id),
+            PriceTagRequestLine.tag_template_id == template_id,
+        ),
+    }
+
+
 def delete_template(
     db: Session, template_id: str, *, requested_by_id: Optional[str] = None
 ) -> dict:
@@ -140,7 +174,7 @@ def delete_template(
         raise _not_found()
     assert_unused(db, [row.id])
     _audit_deletion(db, [row], requested_by_id=requested_by_id, batch_size=1)
-    db.delete(row)
+    row.archived_at = datetime.utcnow()
     db.commit()
     return {"deleted": 1}
 
@@ -148,12 +182,8 @@ def delete_template(
 def bulk_delete(
     db: Session, template_ids: list[str], *, requested_by_id: Optional[str] = None
 ) -> dict:
-    """Delete every listed template, or none of them.
-
-    Versions and the published pointer cascade with the row (ON DELETE CASCADE /
-    SET NULL, see `TagTemplate.published_version_id` and
-    `TagTemplateVersion.template_id`), so nothing extra is deleted here.
-    """
+    """Archive every listed template, or none of them. Versions, links and the published
+    pointer are left alone, so each one can be restored."""
     ids = [str(i) for i in template_ids if i]
     rows = _scoped(db).filter(TagTemplate.id.in_(ids)).all()
     found = {row.id for row in rows}
@@ -161,10 +191,11 @@ def bulk_delete(
         # Refused before anything is touched - a partial batch delete would be
         # a data-loss surprise nobody selected on purpose.
         raise _not_found()
-    assert_unused(db, [row.id for row in rows])
+    assert_unused(db, ids)
     _audit_deletion(db, rows, requested_by_id=requested_by_id, batch_size=len(rows))
+    now = datetime.utcnow()
     for row in rows:
-        db.delete(row)
+        row.archived_at = now
     db.commit()
     return {"deleted": len(rows)}
 

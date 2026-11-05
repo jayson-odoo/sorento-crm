@@ -29,14 +29,18 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { useQuery } from '@tanstack/react-query';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import {
-  useDeferredRowAction,
-  useRowPending,
-} from '@/hooks/useDeferredRowAction';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
-import { listTemplates } from '../../services/tagTemplateService';
+import {
+  deleteTemplate,
+  getTemplateUsage,
+  listTemplates,
+  type TagTemplateUsage,
+} from '../../services/tagTemplateService';
 import { useSetTemplatePriceType } from '../../hooks/useSetTemplatePriceType';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
@@ -105,6 +109,22 @@ function PriceTypeCell({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+/** "2 products, 1 combo and 3 requests", or null when nothing uses it. */
+function usageSentence(usage: TagTemplateUsage): string | null {
+  const parts = [
+    usage.products ? plural(usage.products, 'product') : null,
+    usage.combos ? plural(usage.combos, 'combo') : null,
+    usage.requests ? plural(usage.requests, 'request') : null,
+  ].filter((p): p is string => p !== null);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 export function TagTemplatesList() {
@@ -218,16 +238,16 @@ export function TagTemplatesList() {
     onCommitted: fetchData,
   });
 
-  // The per-row Delete asks nothing either (D7): the row dims and a toast counts
-  // down with Cancel, exactly like the batch above - one template is just a batch
-  // of one, and it goes through the single-record action so the countdown can name
-  // the template by name.
-  const deletion = useDeferredRowAction({
-    actionKey: 'tag_template.delete',
-    entityType: 'tag_template',
-    successMessage: 'Template deleted',
-    onCommitted: fetchData,
+  // The per-row Delete ASKS first (TAG-TEMPLATE-DELETE-CONFIRM, owner 5 Nov, an
+  // explicit exception to D7 after a one-click loss on prod): the confirm names the
+  // template and what uses it. The server archives, so links and versions survive.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const usageQuery = useQuery({
+    queryKey: ['tag-template-usage', deleteTarget?.id],
+    queryFn: () => getTemplateUsage(deleteTarget!.id),
+    enabled: deleteTarget !== null,
   });
+  const usedBy = usageQuery.data ? usageSentence(usageQuery.data) : null;
   const rowPending = useRowPending<TagTemplate>('tag_template');
 
   // `start()` reads its OWN hook's current closure, which only carries the
@@ -358,7 +378,7 @@ export function TagTemplatesList() {
               className="h-7 w-7 p-0 text-destructive hover:text-destructive"
               onClick={(e) => {
                 e.stopPropagation();
-                deletion.run({ id: row.original.id, subject: row.original.name });
+                setDeleteTarget({ id: row.original.id, name: row.original.name });
               }}
               title="Delete template"
               aria-label="Delete template"
@@ -369,7 +389,7 @@ export function TagTemplatesList() {
         ),
       },
     ],
-    [router, deletion, changePriceType],
+    [router, changePriceType],
   );
 
   const table = useReactTable({
@@ -457,6 +477,30 @@ export function TagTemplatesList() {
         </CardTable>
       </Card>
 
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="Delete template?"
+        description={
+          <>
+            <span className="font-medium">{deleteTarget?.name}</span>
+            {usageQuery.isLoading
+              ? ' - checking what uses it.'
+              : usageQuery.isError
+                ? ' - could not check what uses it.'
+                : usedBy
+                ? ` is used by ${usedBy}.`
+                : ' is not used by any product, combo or request.'}
+          </>
+        }
+        onDelete={async () => {
+          if (deleteTarget) await deleteTemplate(deleteTarget.id);
+        }}
+        successMessage="Template deleted"
+        onSuccess={() => void fetchData()}
+      />
       <TagTemplateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}

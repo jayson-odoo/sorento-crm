@@ -71,6 +71,10 @@ def _not_a_price_tag() -> AppException:
 
 def _scoped(db: Session, model) -> Query:
     query = db.query(model)
+    if model is TagTemplate:
+        # An archived template (TAG-TEMPLATE-DELETE-CONFIRM) keeps its links for a restore, but
+        # no product, combo or request picker offers it and nothing new can link to it.
+        query = query.filter(TagTemplate.archived_at.is_(None))
     predicate = build_company_predicate(model, get_company_scope(db))
     return query if predicate is None else query.filter(predicate)
 
@@ -386,10 +390,20 @@ def _replace_links(
     user_id: Optional[str],
 ) -> None:
     owner_col = getattr(link_model, owner_attr)
-    existing = {
-        link.template_id: link
-        for link in db.query(link_model).filter(owner_col == owner_id).all()
-    }
+    existing = {}
+    for link, archived_at in (
+        db.query(link_model, TagTemplate.archived_at)
+        .join(TagTemplate, TagTemplate.id == link_model.template_id)
+        .filter(owner_col == owner_id)
+        .all()
+    ):
+        if archived_at is None:
+            existing[link.template_id] = link
+        elif link.default_list or link.default_selling:
+            # A link to an archived template stays for a restore (TAG-TEMPLATE-DELETE-CONFIRM),
+            # out of sight of the picker that sent `wanted`; it just cannot hold a default.
+            link.default_list = False
+            link.default_selling = False
     # Crew pass on bb5954ce: a 1 -> 2 link change must never drop the default. A lone link IS
     # the default, stored or not, so it stays the default when others are added; and a single
     # wanted link is the default. Clearing on purpose (None with 2+ links before and after)

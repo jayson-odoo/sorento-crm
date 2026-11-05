@@ -33,6 +33,7 @@ from app.schemas.price_tag import (
     TagTemplateResponse,
     TemplateNeeds,
     TagTemplateUpdate,
+    TagTemplateUsage,
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
@@ -71,7 +72,12 @@ def _response_for(t: TagTemplate, *, published: bool = False) -> TagTemplateResp
 
 
 def _get_template_or_404(db: Session, template_id: str) -> TagTemplate:
-    t = db.query(TagTemplate).filter(TagTemplate.id == template_id).first()
+    # An archived template (TAG-TEMPLATE-DELETE-CONFIRM) answers exactly like a missing one.
+    t = (
+        db.query(TagTemplate)
+        .filter(TagTemplate.id == template_id, TagTemplate.archived_at.is_(None))
+        .first()
+    )
     if not t:
         raise AppException(
             status_code=404, message="Tag template not found.", code="NOT_FOUND"
@@ -94,7 +100,11 @@ def list_tag_templates(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    query = db.query(TagTemplate).options(joinedload(TagTemplate.published_version))
+    query = (
+        db.query(TagTemplate)
+        .options(joinedload(TagTemplate.published_version))
+        .filter(TagTemplate.archived_at.is_(None))
+    )
     if price_type == "unset":
         query = query.filter(TagTemplate.price_type.is_(None))
     elif price_type:
@@ -204,6 +214,18 @@ def get_tag_template(
     return _response_for(t)
 
 
+@router.get("/{template_id}/usage", response_model=TagTemplateUsage)
+def get_tag_template_usage(
+    template_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """How many products, combos and price tag requests use the template - what the
+    delete confirm names (TAG-TEMPLATE-DELETE-CONFIRM)."""
+    t = _get_template_or_404(db, template_id)
+    return TagTemplateUsage(**tag_template_service.usage(db, t.id))
+
+
 @router.post("", response_model=TagTemplateResponse, status_code=status.HTTP_201_CREATED)
 def create_tag_template(
     payload: TagTemplateCreate,
@@ -250,8 +272,8 @@ def delete_tag_template(
     db: Session = Depends(get_db),
     _user: dict = Depends(_MANAGE),
 ):
-    """The immediate delete. The deferred one (`tag_template.delete`, the list's
-    countdown) calls the SAME service method, so the two cannot drift."""
+    """Archive the template (the list's row Delete, behind its confirm). The deferred
+    `tag_template.delete` calls the SAME service method, so the two cannot drift."""
     tag_template_service.delete_template(
         db, template_id, requested_by_id=_user_id(_user)
     )

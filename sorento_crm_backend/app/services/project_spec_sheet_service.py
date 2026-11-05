@@ -165,7 +165,9 @@ def _published_template(
 ) -> TagTemplate:
     """A published template of ``family`` that belongs to the document's own company."""
     template = (
-        db.query(TagTemplate).filter(TagTemplate.id == str(template_id)).first()
+        db.query(TagTemplate)
+        .filter(TagTemplate.id == str(template_id), TagTemplate.archived_at.is_(None))
+        .first()
         if _is_uuid(template_id)
         else None
     )
@@ -1772,6 +1774,7 @@ def published_templates(db: Session) -> dict:
         .filter(
             TagTemplate.family.in_([COVER_FAMILY, PAGE_FAMILY]),
             TagTemplate.published_version_id.isnot(None),
+            TagTemplate.archived_at.is_(None),
         )
         .order_by(TagTemplate.name)
         .all()

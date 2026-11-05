@@ -195,6 +195,32 @@ export async function publishTemplate(id: string, note?: string): Promise<TagTem
   return response.json();
 }
 
+/** What the delete confirm names: how many products, combos and requests use the template. */
+export interface TagTemplateUsage {
+  products: number;
+  combos: number;
+  requests: number;
+}
+
+export async function getTemplateUsage(id: string): Promise<TagTemplateUsage> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/usage`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load template usage'));
+  }
+  return response.json();
+}
+
+/**
+ * Delete (archive) a template. The server keeps the row, its versions and every
+ * product/combo/request link, so it can be restored (TAG-TEMPLATE-DELETE-CONFIRM).
+ */
+export async function deleteTemplate(id: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to delete template'));
+  }
+}
+
 /**
  * Move the live pointer to nothing (AC-S5-3). The draft and every version row
  * are untouched; the template can be published again at any time.
