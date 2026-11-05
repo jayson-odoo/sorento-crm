@@ -1090,6 +1090,38 @@ def run_agent_turn(
         )
 
 
+NO_TOOL_EVENT = "agent_no_tool"
+_NO_TOOL_MAX = 5
+_NO_TOOL_CHARS = 300
+
+
+def no_tool_items(args: dict | None) -> list[dict]:
+    """The answer's `no_tool` list, cleaned: strings only, trimmed, at most five, nothing empty."""
+    raw = (args or {}).get("no_tool")
+    if not isinstance(raw, list):
+        return []
+    items: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        ask = entry.get("ask")
+        if not isinstance(ask, str) or not ask.strip():
+            continue
+        area = entry.get("area")
+        area = area.strip()[:80] if isinstance(area, str) and area.strip() else None
+        items.append({"ask": ask.strip()[:_NO_TOOL_CHARS], "area": area})
+        if len(items) >= _NO_TOOL_MAX:
+            break
+    return items
+
+
+def _channel(is_test: bool) -> str:
+    """Where the turn came from: the staff side panel, live WhatsApp, or the console's test run."""
+    if staff_principal.current() is not None:
+        return "panel"
+    return "console" if is_test else "whatsapp"
+
+
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
     is_test=True, context_before="", context_after="",
@@ -1295,6 +1327,7 @@ def _run(
         used_call_ids: set[str] = set()
         repaired = False
         final_args: dict | None = None
+        forced_args: dict | None = None
         nudge = (
             "Finish by calling the answer tool now: put your reply in text, list every number in "
             "figures with the call_id that shows it, and anything you could not find in not_found."
@@ -1317,7 +1350,8 @@ def _run(
                 }
             )
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
-            args = answer_of(res)
+            nonlocal forced_args
+            args = forced_args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
@@ -1512,6 +1546,13 @@ def _run(
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
+        gaps = no_tool_items(final_args if final_args is not None else forced_args)
+        if gaps:
+            # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
+            trace.add(
+                NO_TOOL_EVENT,
+                {"items": gaps, "user_id": str(ctx.user_id or "") or None, "channel": _channel(is_test)},
+            )
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

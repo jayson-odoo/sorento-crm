@@ -427,6 +427,20 @@ ANSWER_SCHEMA: dict[str, Any] = {
                 },
                 "not_checked": {"type": "array", "items": {"type": "string"}},
                 "answered": {"type": "array", "items": {"type": "string"}},
+                "no_tool": {
+                    "type": "array",
+                    "description": (
+                        "Only for a part of the ask you could not do because none of your tools can read or "
+                        "change it (not for a search that found nothing): what the user asked, in a few words, "
+                        "and the area of the CRM it belongs to (orders, stock, purchasing, ...)."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {"ask": {"type": "string"}, "area": {"type": "string"}},
+                        "required": ["ask"],
+                    },
+                    "maxItems": 5,
+                },
                 "asked_back": {
                     "type": "boolean",
                     "description": (
