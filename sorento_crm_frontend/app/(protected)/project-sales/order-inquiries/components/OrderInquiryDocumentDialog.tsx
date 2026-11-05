@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -114,6 +113,11 @@ export function OrderInquiryDocumentDialog({
   // off this, even when the page itself does not change (the reader presses it again
   // after scrolling away by hand).
   const [goToNonce, setGoToNonce] = React.useState(0);
+  // SO-LINE-OI-STATUS-UNIFY crew fix (3): "Go to linked line" did nothing on a dialog whose
+  // own lines do not carry the line it was opened for (a via-SPO PO number names no PO
+  // line; an id the loaded document does not list). The body reports whether its loaded
+  // lines hold the target, and the button shows only when a press can land somewhere.
+  const [targetPresent, setTargetPresent] = React.useState(false);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl" data-testid={`document-detail-${document}`}>
@@ -124,11 +128,12 @@ export function OrderInquiryDocumentDialog({
               {kind === 'po' ? 'Purchase order' : 'Shipping order'}
             </DialogDescription>
           </div>
-          <GoToLinkedLineButton
-            label={goToLabel}
-            disabled={!highlightedLineId}
-            onClick={() => setGoToNonce((current) => current + 1)}
-          />
+          {highlightedLineId && targetPresent ? (
+            <GoToLinkedLineButton
+              label={goToLabel}
+              onClick={() => setGoToNonce((current) => current + 1)}
+            />
+          ) : null}
         </DialogHeader>
         <DialogBody className="max-h-[70vh] overflow-y-auto">
           {kind === 'po' ? (
@@ -139,6 +144,7 @@ export function OrderInquiryDocumentDialog({
               goToLineId={highlightedLineId}
               goToNonce={goToNonce}
               open={open}
+              onTargetPresent={setTargetPresent}
             />
           ) : (
             <SpoBody
@@ -150,6 +156,7 @@ export function OrderInquiryDocumentDialog({
               open={open}
               highlightLines={highlightLines}
               onHighlightResolved={setResolvedHighlightLineId}
+              onTargetPresent={setTargetPresent}
             />
           )}
         </DialogBody>
@@ -159,42 +166,22 @@ export function OrderInquiryDocumentDialog({
 }
 
 /**
- * R16: one button, both lightboxes, same label rule and same disabled state - reused
- * rather than written twice so the two screens can never drift about wording. Wrapped
- * in a `Tooltip` only while disabled (the data-grid-list-toolbar idiom): a `<span
- * tabIndex={0}>` around the disabled `<button>` so the reason is still reachable by
- * keyboard and screen reader, since a real `disabled` button swallows focus and hover.
+ * R16: one button, both lightboxes, same label rule - reused rather than written twice so
+ * the two screens can never drift about wording. Crew fix (3, SO-LINE-OI-STATUS-UNIFY):
+ * rendered only when the dialog's loaded lines hold the target, never disabled.
  */
-function GoToLinkedLineButton({
-  label,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  disabled: boolean;
-  onClick: () => void;
-}) {
-  const button = (
+function GoToLinkedLineButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
     <Button
       type="button"
       variant="outline"
       size="sm"
       data-testid="document-detail-go-to-line"
-      disabled={disabled}
       onClick={onClick}
       className="shrink-0"
     >
       {label}
     </Button>
-  );
-  if (!disabled) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span tabIndex={0}>{button}</span>
-      </TooltipTrigger>
-      <TooltipContent>No linked or suggested line to go to</TooltipContent>
-    </Tooltip>
   );
 }
 
@@ -574,6 +561,7 @@ function PoBody({
   goToLineId,
   goToNonce = 0,
   open,
+  onTargetPresent,
 }: {
   poId: string | null;
   poLineId?: string | null;
@@ -582,12 +570,22 @@ function PoBody({
   goToLineId?: string | null;
   goToNonce?: number;
   open: boolean;
+  /** Crew fix (3): whether the loaded lines hold `goToLineId`, so the header's Go to
+   * button only shows when a press can land. */
+  onTargetPresent?: (present: boolean) => void;
 }) {
   const { data, isLoading, isError, error } = useOrderInquiryPoDetail(poId ?? undefined, {
     enabled: open && Boolean(poId),
   });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   useGoToHighlightedLine(containerRef, goToNonce);
+  const targetPresent = Boolean(
+    goToLineId && data?.lines?.some((line) => line.id === goToLineId),
+  );
+  React.useEffect(() => {
+    onTargetPresent?.(targetPresent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetPresent]);
 
   if (!poId) {
     return (
@@ -708,6 +706,7 @@ function SpoBody({
   open,
   highlightLines,
   onHighlightResolved,
+  onTargetPresent,
 }: {
   spoNumber: string;
   /**
@@ -736,6 +735,8 @@ function SpoBody({
    * BEFORE this body's own data does) can stay disabled until a real row backs it.
    */
   onHighlightResolved?: (rowId: string | null) => void;
+  /** Crew fix (3): whether the loaded lines hold the go-to target. */
+  onTargetPresent?: (present: boolean) => void;
 }) {
   const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -758,6 +759,14 @@ function SpoBody({
   }, [highlightLineRowId]);
   const effectiveSpoLineId = spoLineId ?? highlightLineRowId;
   const effectiveGoToLineId = spoLineId ?? suggestedLineId ?? highlightLineRowId ?? goToLineId ?? null;
+  const targetPresent = Boolean(
+    effectiveGoToLineId &&
+      data?.lines?.some((line) => spoLineRowId(line) === effectiveGoToLineId),
+  );
+  React.useEffect(() => {
+    onTargetPresent?.(targetPresent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetPresent]);
 
   if (isLoading) return <LoadingBody />;
   if (isError || !data) {
