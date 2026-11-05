@@ -83,6 +83,9 @@ CONSOLE_LABELS = [
     "finding dealer contacts",
     "purchase requests and sponsorship forms",
     "your ideas",
+    # AI-QUERY-CORE: the general read over the assistant registry, on both channels.
+    "reading CRM records, totals and groupings",
+    "listing the CRM records you can read",
 ]
 
 
