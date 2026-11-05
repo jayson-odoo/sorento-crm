@@ -505,8 +505,14 @@ export function resolveSlotText(
       return product.spec_lines.join('\n');
     case 'barcode':
       return product.barcode;
-    case 'price_tag_description':
+    case 'price_tag_description': {
+      // R19 on the designer canvas: "Preview combo" binds the combo as `product.combo`; its own
+      // description wins, as on a request line. A part / position subject carries no combo.
+      const comboDescription = (product as { combo?: { description?: string | null } | null }).combo
+        ?.description;
+      if (comboDescription && comboDescription.trim()) return comboDescription;
       return product.price_tag_description ?? null;
+    }
     default:
       return null;
   }

@@ -76,7 +76,9 @@ export function ComboTemplatesPicker({
     });
   }, [templateOptions.data, parts]);
   const typeById = useMemo(
-    () => new Map((templateOptions.data ?? []).map((template) => [template.id, template.price_type ?? null])),
+    // Raw value: `undefined` = an older payload without the key (no type text, as in the
+    // multi-select above), `null` = known to be unset ("Not set").
+    () => new Map((templateOptions.data ?? []).map((template) => [template.id, template.price_type])),
     [templateOptions.data],
   );
   // The default is chosen among the linked templates; their names come from the options, or the
@@ -90,7 +92,8 @@ export function ComboTemplatesPicker({
         {
           value: found.value,
           label: found.label,
-          description: type ? TEMPLATE_PRICE_TYPE_LABEL[type] : 'Not set',
+          description:
+            type === undefined ? undefined : type ? TEMPLATE_PRICE_TYPE_LABEL[type] : 'Not set',
         },
       ];
     });

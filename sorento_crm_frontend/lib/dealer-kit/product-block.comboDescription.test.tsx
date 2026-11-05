@@ -128,3 +128,28 @@ describe('R19 fallbacks and position subjects', () => {
     expect(printed(l, resolved)).toEqual([['part desc', false]]);
   });
 });
+
+// Reviewer should-fix (R19 on the designer canvas): the template editor's "Preview combo" binds the
+// combo as `{ kind: 'product', product }` with `product.combo`, not as a request line.
+describe('R19 on the designer canvas (product binding with a previewed combo)', () => {
+  const productBinding = (combo: { description: string | null } | null, host: string | null) =>
+    ({
+      kind: 'product',
+      product: {
+        code: 'SRTBF11416', name: 'Host', dimensions: '', spec_lines: [], barcode: null,
+        price_tag_description: host, images: [], specs: [],
+        combo: combo ? { id: 'c1', name: 'SRTBF11416', free_items: null, choices: [], upgrades: [], ...combo } : null,
+      },
+    }) as unknown as TagBindingData;
+
+  it('the price_tag_description slot shows the previewed combo description, not the host', () => {
+    const l = layer('price_tag_description', 'Text');
+    expect(flat(layerRichBlocks(l, productBinding({ description: COMBO_HTML }, '<p>host</p>'), 'editor'))).toEqual(COMBO_RUNS);
+  });
+
+  it('with no combo previewed (or a blank combo description) the host description stays', () => {
+    const l = layer('price_tag_description', 'Text');
+    expect(flat(layerRichBlocks(l, productBinding(null, '<p>host</p>'), 'editor'))).toEqual([['host', false]]);
+    expect(flat(layerRichBlocks(l, productBinding({ description: '  ' }, '<p>host</p>'), 'editor'))).toEqual([['host', false]]);
+  });
+});

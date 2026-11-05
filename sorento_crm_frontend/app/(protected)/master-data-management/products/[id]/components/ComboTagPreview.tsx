@@ -98,6 +98,13 @@ export function ComboTagPreview({
   }, [preview.data, combo, description]);
 
   if (links.isLoading || (link?.published && preview.isLoading)) return <SectionSkeleton rows={4} />;
+  if (links.isError || preview.isError) {
+    return (
+      <div className="rounded-lg border border-dashed p-4 text-center">
+        <p className="text-sm text-muted-foreground">Could not load the tag preview</p>
+      </div>
+    );
+  }
   if (!payload) {
     return (
       <div className="rounded-lg border border-dashed p-4 text-center">

@@ -203,4 +203,13 @@ describe('ComboTagPreview empty states (R18 keeps them)', () => {
     expect(await screen.findByText('No published price tag template')).toBeInTheDocument();
     expect(screen.queryByText('No price tag template linked')).toBeNull();
   });
+
+  it('reviewer should-fix: a failed preview says it could not load, never that a template is missing', async () => {
+    state.links = [link({ default_selling: true })];
+    previewTags.mockRejectedValue(new Error('500'));
+    draw('<p>x</p>');
+    expect(await screen.findByText('Could not load the tag preview')).toBeInTheDocument();
+    expect(screen.queryByText('No published price tag template')).toBeNull();
+    expect(screen.queryByText('No price tag template linked')).toBeNull();
+  });
 });
