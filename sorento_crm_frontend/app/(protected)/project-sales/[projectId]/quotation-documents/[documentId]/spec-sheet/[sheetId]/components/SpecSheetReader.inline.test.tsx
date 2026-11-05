@@ -1232,6 +1232,23 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     });
   });
 
+  it('Escape that cancels an Area edit does not also leave full screen', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('double-click area k1'),
+    );
+    const box = await screen.findByRole('textbox', { name: 'Area' });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Area' })).toBeNull(),
+    );
+    expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
+  });
+
   it('a viewer who cannot edit gets no Templates button', async () => {
     getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false });
     renderReader();

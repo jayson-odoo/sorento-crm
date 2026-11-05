@@ -505,6 +505,8 @@ export const ReaderPage = React.memo(function ReaderPage({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') finish();
                     if (e.key === 'Escape') {
+                      // Handled here: full screen must not also take this Escape as "exit".
+                      e.preventDefault();
                       cancelled.current = true;
                       setEditing(null);
                     }
