@@ -28,6 +28,23 @@ So the engine pays 6% + 1% + 1% = 8%. The spreadsheet says tier 2 = 6% + 1% = 7%
 - Existing `is_additional` rows fold onto the main row of the same period + threshold
   (dry-run report first, owner approves apply).
 
+## Conflict with an earlier ruling
+
+Stacking was ruled on 16 Oct (`PLAN-dealer-sales-targets-15oct.md:68`, Q5; example E2 at `:119`,
+additionals at 220,000 / 250,000 that sit on no tier). Asked on the PR which rule wins.
+
+## File map (for the build)
+
+- Engine: `sorento_crm_backend/app/services/sales/commission_service.py` (`payout_for`, 155-159).
+- Model: `sorento_crm_backend/app/models/sales.py:524-575` (`SalesTargetCommissionTier`).
+- Schemas: `sorento_crm_backend/app/schemas/sales.py:429, 668, 724`.
+- Service: `target_service.py` tier save (~600-700), engine input (~1351), Periods rungs
+  (~2240-2290, `additional_rates` already paired by threshold).
+- Import: `dealer_target_import.py` (`RateEntry.is_additional`, 724-756, 1158-1200, 1380-1460).
+- FE: `sorento_crm_frontend/app/(protected)/sales/targets/components/TargetRecord.tsx`
+  (Type select 105 / 2234, view 2093) + `types/salesTarget.types.ts`.
+- Existing tests: `tests/test_dealer_targets_engine.py` (E2 asserts stacking).
+
 ## Count query (read-only)
 
 See the PR crew-note.
