@@ -100,6 +100,14 @@ describe('TemplateSettingsDialog', () => {
     expect(screen.getByText(/1 layer sits outside 70 x 130 mm/i)).toBeInTheDocument();
   });
 
+  it('does not count a layer that already stuck out before the size change', () => {
+    const stray = [...LAYERS, { id: 's', type: 'shape', x_mm: 80, y_mm: 0, width_mm: 20, height_mm: 5 }] as TagLayer[];
+    renderDialog({ layers: stray });
+    fireEvent.change(screen.getByLabelText('Height (mm)'), { target: { value: '140' } });
+    expect(screen.getByText(/may need moving/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sits? outside/i)).toBeNull();
+  });
+
   it('says the live version keeps its size until the next publish', () => {
     renderDialog({ isLive: true });
     fireEvent.change(screen.getByLabelText('Height (mm)'), { target: { value: '100' } });

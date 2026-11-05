@@ -28,7 +28,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
-import { layersOutside } from '@/lib/dealer-kit/layer-bounds';
+import { layersCutOff } from '@/lib/dealer-kit/layer-bounds';
 import {
   SPEC_SHEET_FAMILIES,
   TAG_TEMPLATE_FAMILIES,
@@ -107,7 +107,13 @@ export function TemplateSettingsDialog({
     !numberFieldError(widthMm, { min: MIN_MM }) && !numberFieldError(heightMm, { min: MIN_MM });
   const sizeChanged =
     sizeValid && (width !== initial.width_mm || height !== initial.height_mm);
-  const cutOff = sizeChanged ? layersOutside(layers, width as number, height as number) : 0;
+  const cutOff = sizeChanged
+    ? layersCutOff(
+        layers,
+        { width_mm: initial.width_mm, height_mm: initial.height_mm },
+        { width_mm: width as number, height_mm: height as number },
+      )
+    : 0;
 
   const widthError = checked ? numberFieldError(widthMm, { min: MIN_MM }) : undefined;
   const heightError = checked ? numberFieldError(heightMm, { min: MIN_MM }) : undefined;

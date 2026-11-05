@@ -4,7 +4,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { TagLayer } from './tag-template-types';
-import { layersOutside } from './layer-bounds';
+import { layersCutOff } from './layer-bounds';
+
+const BIG = { width_mm: 1000, height_mm: 1000 };
+const layersOutside = (layers: TagLayer[], w: number, h: number) =>
+  layersCutOff(layers, BIG, { width_mm: w, height_mm: h });
 
 function layer(id: string, x: number, y: number, w: number, h: number, extra: Partial<TagLayer> = {}): TagLayer {
   return {
@@ -25,7 +29,7 @@ function layer(id: string, x: number, y: number, w: number, h: number, extra: Pa
   } as TagLayer;
 }
 
-describe('layersOutside', () => {
+describe('layersCutOff from a size everything fits', () => {
   const layers = [layer('a', 0, 0, 40, 20), layer('b', 50, 10, 30, 30), layer('c', 5, 60, 10, 10)];
 
   it('is zero when everything still fits', () => {
@@ -51,5 +55,18 @@ describe('layersOutside', () => {
   it('does not count a group box on top of its children', () => {
     const group = layer('g', 50, 10, 30, 30, { type: 'group', props: { kind: 'group', children: ['b'] } as never });
     expect(layersOutside([...layers, group], 70, 130)).toBe(1);
+  });
+});
+
+describe('layersCutOff', () => {
+  const layers = [layer('a', 0, 0, 40, 20), layer('b', 50, 10, 30, 30), layer('stray', 80, 0, 20, 5)];
+
+  it('counts only layers the new size cuts off, not ones already outside the old size', () => {
+    // `stray` reaches 100 mm: already outside 85 mm wide, so it is not news.
+    expect(layersCutOff(layers, { width_mm: 85, height_mm: 130 }, { width_mm: 85, height_mm: 140 })).toBe(0);
+  });
+
+  it('counts a layer that fitted before and does not now', () => {
+    expect(layersCutOff(layers, { width_mm: 85, height_mm: 130 }, { width_mm: 70, height_mm: 130 })).toBe(1);
   });
 });
