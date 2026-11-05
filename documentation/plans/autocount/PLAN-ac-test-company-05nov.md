@@ -1,6 +1,6 @@
 # PLAN: AC-TEST-COMPANY - standing TEST company bound to AutoCount db3
 
-Status: Built (re-scoped 5 Nov to a LOCAL staging kit; script + tests + SS contract + runbook in PR #2202; reviewer + security-reviewer findings fixed; waiting on crew to bring it up locally). Track: small fix (no migration, no app code change, no auth/RBAC change).
+Status: In review, awaiting local bring-up by crew (re-scoped 5 Nov to a LOCAL staging kit; script + tests + SS contract + runbook in PR #2202; reviewer + security-reviewer findings fixed; waiting on crew to bring it up locally). Track: small fix (no migration, no app code change, no auth/RBAC change).
 
 Lane: AC-TEST-COMPANY. Owner ask (5 Nov 2026): a company in the real CRM the owner and picked admins can use to
 exercise every AutoCount integration end to end against the AutoCount db3 test book, without risk to the live book.
