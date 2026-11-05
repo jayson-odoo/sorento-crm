@@ -2429,6 +2429,12 @@ def _settle(
         }
         if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
             held_channel = source["channel"]
+        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not). The old hold
+        # path only: an object turn never reaches here (`_OBJECT_DROPS` empties `source`); PR B deletes the path whole.
+        held_filters = {
+            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "account_types")
+            if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
+        }
         held_customer = _dict(parse_output.get(HELD_KEY)).get("customer_ids")
         if held_customer and _customer_stays(parse_output, axis):
             # Only off the stamp, never the frame: an open ask the message replaced is newer than a ranking still on screen.

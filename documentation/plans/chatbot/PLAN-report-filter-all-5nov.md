@@ -17,10 +17,13 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
     `broaden_to: "all"` also named that kind (`turn/decide.widened_kinds`). That was one axis per turn, and the signal
     was easy to miss.
 - The company was a single nullable string, so "all companies", null and "not said" could not be told apart.
-- Correction to the crew diagnosis: the `held_filters` refill (`report_ask.py:2433-2442`, `:2479`) never ran on an
-  object turn. `:2246` drops `sales_ranking_frame` and `report_held` (`_OBJECT_DROPS`) first. It only served text
-  without the report marker. Production v72 carries the marker (crew, 5 Nov: line 838 of the d29c1983 text), so it was
-  deleted anyway (crew Q3 = b).
+- Correction to the crew diagnosis: the `held_filters` refill (`report_ask.py:2433-2442`, `:2479`) never runs on an
+  object turn. `:2246` drops `sales_ranking_frame` and `report_held` (`_OBJECT_DROPS`) first. It serves only the old
+  hold path, which still runs on the marker prompt whenever the model leaves `report_ask` null on a report ask. There it
+  locks owner ruling B / S6b (23 Oct: a new axis after a ranking keeps the filter on screen;
+  `test_one_ranking_r2::test_r2_2`, `test_sales_account_type_lane::test_at34_a_new_axis_keeps_the_held_account_filter`,
+  which fail when it is deleted and pass on main). So it stays here, and PR B deletes it with the rest of the old path
+  (crew-ask on #2209).
 
 ## Design
 
@@ -55,7 +58,6 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
 | `_carry`'s brand + account type as ONE kind (`_CARRY_KINDS`) | a word moved between brands and account_types | the moved-name guard, U4 |
 | `_carry`'s `answering` channel rule (CP-1: the channel carried only while a question is open) | the held channel kept on a reply | `_keep_held` for every turn (owner 3 Nov: a full new ask keeps the channel), FA-6, SC-8 updated |
 | HT1-18 echo rule (`report_ask.py:3589-3605` on main, keyed on top-level `sales_company`) | v202 "Sorenth" echo over a held Sorento | `_held_spelling`, FA-5c (now also with `sales_company` null, which the old rule refused) |
-| `held_filters` brand / category / agent / account type refill (`report_ask.py:2433-2442`, `:2479` on main) | the old hold path's new axis kept the filters on screen | the object path (the marker prompt serves production); the held customer stamp stays (owner 1 Nov ruling) |
 
 `broaden_axis`, `scope_intent` and `entity_op: "clear"` are no longer read for reports on an ALL prompt (FA-2).
 `widened_kinds` stays for the which-one customer pick. `topic_reset` still means "no held report" (CL-7).
