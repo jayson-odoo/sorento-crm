@@ -313,3 +313,57 @@ def test_a_key_with_no_fixed_values_cannot_carry_a_rule(api, client):
     res = _put(client, icon.id, {"spec_key": key, "values": ["anything"]})
     assert res.status_code == 422, res.text
     assert res.json()["code"] == "SPEC_NOT_RULEABLE"
+
+
+# ---------------------------------------------------------------------------
+# Crew pass 5 Nov: the Show when values read like the product screens
+# ---------------------------------------------------------------------------
+
+
+def _grant_tag_templates_view(api) -> None:
+    from app.models.user import UserPermission, UserRolePermission
+    from tests.test_feature_icons import _ROLE_ID
+
+    slug = "dealer_kit.tag_templates.view"
+    perm = api.query(UserPermission).filter_by(slug=slug).first()
+    if perm is None:
+        perm = UserPermission(id=str(uuid.uuid4()), slug=slug, name=slug, description="")
+        api.add(perm)
+        api.flush()
+    api.add(UserRolePermission(id=str(uuid.uuid4()), role_id=_ROLE_ID, permission_id=perm.id))
+    api.commit()
+
+
+def test_spec_key_value_options_use_the_shared_display_labels(api, client):
+    """`display_spec_value(title_case=True)` is the one label source: the tag prints
+    "Cold Only", so the Show when list says "Cold Only", not "cold_only"; a staff-typed
+    label still wins."""
+    from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import display_spec_value
+
+    key = _registry(api, allowed=["cold_only", "mixer", "pvc_pipe"])
+    row = api.query(ProductSpecRegistry).filter_by(spec_key=key).one()
+    row.value_labels = {"mixer": "Hot and cold"}
+    api.flush()
+    _grant_tag_templates_view(api)
+
+    res = client.get("/api/v1/dealer-kit/spec-keys")
+    assert res.status_code == 200, res.text
+    got = next(r for r in res.json() if r["key"] == key)
+    assert got["value_options"] == [
+        {"value": "cold_only", "label": "Cold Only"},
+        {"value": "mixer", "label": "Hot and cold"},
+        {"value": "pvc_pipe", "label": display_spec_value("pvc_pipe", None, title_case=True)},
+    ]
+
+
+def test_a_boolean_spec_key_offers_yes_and_no(api, client):
+    key = _registry(api, allowed=[], data_type="boolean")
+    _grant_tag_templates_view(api)
+
+    res = client.get("/api/v1/dealer-kit/spec-keys")
+    got = next(r for r in res.json() if r["key"] == key)
+    assert got["value_options"] == [
+        {"value": "true", "label": "Yes"},
+        {"value": "false", "label": "No"},
+    ]

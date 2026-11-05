@@ -59,7 +59,13 @@ vi.mock('../../services/tagDataService', () => ({
       unit: null,
       data_type: 'enum',
       allowed_values: ['cold_only', 'mixer'],
-      value_labels: { cold_only: 'Cold only', mixer: 'Mixer' },
+      // Crew pass 5 Nov: no staff-typed labels here, so the raw keys would leak through
+      // unless the editor reads the server's labelled options (one label source).
+      value_labels: {},
+      value_options: [
+        { value: 'cold_only', label: 'Cold Only' },
+        { value: 'mixer', label: 'Mixer' },
+      ],
     },
   ]),
 }));
@@ -130,6 +136,18 @@ function mount() {
 }
 
 describe('AssetPickerDialog show-when', () => {
+  it('labels the values the way the product screens do, never the raw keys', async () => {
+    mount();
+    await waitFor(() => expect(screen.getByTitle('Hot')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /show when.*hot/i }));
+    const select = await screen.findByRole('combobox');
+    await screen.findByRole('option', { name: 'Water supply' });
+    fireEvent.change(select, { target: { value: 'water_supply' } });
+
+    expect(await screen.findByLabelText('Cold Only')).toBeInTheDocument();
+    expect(screen.queryByLabelText('cold_only')).toBeNull();
+  });
+
   it('offers "Show when" on an icon and not on a badge', async () => {
     mount();
     await waitFor(() => expect(screen.getByTitle('Hot')).toBeInTheDocument());

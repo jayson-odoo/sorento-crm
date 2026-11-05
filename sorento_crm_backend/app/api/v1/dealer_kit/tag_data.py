@@ -30,6 +30,7 @@ from app.schemas.price_tag import (
     ProductTagTemplateItem,
     ProductTagTemplatesUpdate,
     SpecKeyItem,
+    SpecValueOption,
 )
 from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.error_handler import AppException
@@ -136,7 +137,26 @@ def list_spec_keys(
     rest of the editor already uses. A key added to the registry therefore shows
     up in the dialog with no code change.
     """
-    from app.services.product_spec_registry import active_registry, merged_allowed_values
+    from app.services.product_spec_registry import (
+        active_registry,
+        display_spec_value,
+        merged_allowed_values,
+    )
+
+    def _value_options(row) -> list[SpecValueOption]:
+        # One label source: the tag's own reading of a stored value (crew pass, 5 Nov).
+        if row.data_type == "boolean":
+            return [
+                SpecValueOption(value="true", label=display_spec_value(True)),
+                SpecValueOption(value="false", label=display_spec_value(False)),
+            ]
+        return [
+            SpecValueOption(
+                value=str(v),
+                label=display_spec_value(v, row.value_labels, title_case=True),
+            )
+            for v in merged_allowed_values(row)
+        ]
 
     return [
         SpecKeyItem(
@@ -146,6 +166,7 @@ def list_spec_keys(
             data_type=row.data_type,
             allowed_values=[str(v) for v in merged_allowed_values(row)],
             value_labels={str(k): str(v) for k, v in (row.value_labels or {}).items()},
+            value_options=_value_options(row),
         )
         for row in active_registry(db)
     ]

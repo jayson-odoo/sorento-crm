@@ -14,8 +14,6 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { useFeatureIconSpecKeys, useSetAssetShowWhen } from '../../hooks/useFeatureIcons';
 import type { KitAsset } from '../../services/assetService';
 
-const BOOLEAN_VALUES = ['true', 'false'];
-
 interface AssetShowWhenEditorProps {
   asset: KitAsset;
   onBack: () => void;
@@ -46,19 +44,9 @@ export function AssetShowWhenEditor({
     [keys],
   );
   const chosen = keys.find((key) => key.key === specKey);
-  const valueOptions = useMemo(() => {
-    if (!chosen) return [];
-    if (chosen.data_type === 'boolean') {
-      return BOOLEAN_VALUES.map((v) => ({
-        value: v,
-        label: v === 'true' ? 'Yes' : 'No',
-      }));
-    }
-    return (chosen.allowed_values ?? []).map((v) => ({
-      value: v,
-      label: chosen.value_labels?.[v] ?? v,
-    }));
-  }, [chosen]);
+  // Labels come from the server, the same reading a tag prints ("Cold Only"), so this list
+  // and the product screens cannot word a value differently (crew pass, 5 Nov).
+  const valueOptions = useMemo(() => chosen?.value_options ?? [], [chosen]);
 
   const canSave = !save.isPending && (specKey === '' || values.length > 0);
 

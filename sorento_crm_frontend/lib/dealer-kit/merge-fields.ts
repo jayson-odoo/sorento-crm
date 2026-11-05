@@ -75,6 +75,8 @@ export interface SpecKeyOption {
   data_type?: string | null;
   allowed_values?: string[];
   value_labels?: Record<string, string>;
+  /** Each pickable value with the label a tag prints for it (server: `display_spec_value`). */
+  value_options?: { value: string; label: string }[];
 }
 
 /**
