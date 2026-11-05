@@ -45,6 +45,7 @@ from tests.chatbot.test_report_totals_filters import (  # noqa: F401 - fixtures 
     _widen,
 )
 from tests.chatbot.test_report_unify_routing import bot, console  # noqa: F401 - fixtures
+from tests.chatbot.test_report_totals_filters_ht1 import _hold_agents, _t4, said_as_on  # noqa: F401 - fixture + helpers
 
 ALL = parser_mod.REPORT_ALL
 FORBIDDEN = "You do not have access to that company."
@@ -253,6 +254,42 @@ def test_fa6_all_channels_drops_the_held_channel_and_a_null_one_keeps_it(rbot, w
     assert not _args(calls).get("channel"), f"FA-6 clear: {_args(calls)}"
 
 
+# ------------------------------------------------------------------------------------------ review round 1 (engine replays)
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+def test_r1_brand_only_over_a_held_company_of_that_name_keeps_the_company(rbot, world) -> None:
+    """Review B1: held Sorento company, every agent; "sorento brand only" with company null (the forgotten echo)."""
+    sorento, _m = world
+    _hold_agents(rbot, sorento)
+    text, calls = rbot.say(_t4("brand", company=None), "sorento brand only")
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"R1: {args}"
+
+
+@pytest.mark.usefixtures("all_on")
+def test_r2_a_company_the_message_types_and_the_contact_does_not_hold_is_refused_never_the_held_one(rbot, world) -> None:
+    """Review B2: "Sorento SG" is close to the held Sorento, but the user typed it: refused, never Sorento's figures."""
+    sorento, _m = world
+    _hold(rbot, sorento, group_by=None)
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", company="Sorento SG", **SEP)
+    v = _follow("sales_analysis", ra, _ent("Sorento SG", "brand", None, None), group_by="channel", sales_company="Sorento", **SEPF)
+    text, calls = rbot.say(v, "Sorento SG sales only")
+    assert text.strip() == FORBIDDEN, f"R2: {text!r}"
+    assert not _ran(calls), _ran(calls)
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+def test_r3_company_only_over_a_held_company_and_same_name_brand_drops_the_brand(rbot, world) -> None:
+    """Review should-fix 5: held company Sorento + brand SORENTO; "sorento company only" (said_as company)."""
+    sorento, _m = world
+    first = _hold(rbot, sorento, group_by="sales_agent", brands=["Sorento"], entities=(_ent("sorento", "brand", "SORENTO", "brand"),))
+    assert first.get("brand_ids"), f"setup: {first}"
+    text, calls = rbot.say(_t4("company", company=sorento), "sorento company only")
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"R3: {args}"
+
+
 # ------------------------------------------------------------------------------------------ units
 
 
@@ -268,8 +305,8 @@ def test_u1_the_prompt_defines_all_by_its_word_and_the_channel_enum_offers_it_on
 
 
 def test_u2_read_all_empties_each_slot_written_all() -> None:
-    ask = {"company": ALL, "channel": "dealer", "brands": ["x", ALL], "sales_agents": ["a"], "customers": []}
-    assert report_ask._read_all(ask) == {"company", "brands"}
+    ask = {"company": ALL, "channel": "dealer", "brands": ["x", "All"], "sales_agents": ["a"], "customers": []}
+    assert report_ask._read_all(ask) == {"company", "brands"}, "ALL in any case"
     assert ask["company"] is None and ask["brands"] == [] and ask["channel"] == "dealer" and ask["sales_agents"] == ["a"]
 
 
@@ -291,6 +328,19 @@ def test_u4_keep_held_never_refills_the_axis_slot_or_a_name_the_object_moved() -
     assert ask["brands"] == [], f"a name the message calls the company is not refilled as a brand: {ask}"
 
 
+def test_u4b_a_move_never_un_holds_the_company_and_only_brand_and_account_type_names_move() -> None:
+    """Review B1 / M14: "<name> brand only" over a held company of that name keeps the company. Review should-fix 4: a new
+    customer "Tan" does not stop a held sales agent "Tan" from refilling (only the real move pairs, `_MOVES`)."""
+    held = {"company": "Sorento", "brands": []}
+    ask = {"company": None, "brands": ["Sorento"]}
+    report_ask._keep_held(ask, held, set(), None)
+    assert ask["company"] == "Sorento", ask
+    held = {"sales_agents": ["Tan"], "customers": []}
+    ask = {"sales_agents": [], "customers": ["Tan"]}
+    report_ask._keep_held(ask, held, set(), None)
+    assert ask["sales_agents"] == ["Tan"], ask
+
+
 @pytest.mark.parametrize(
     "said, held, companies, want",
     [
@@ -301,10 +351,18 @@ def test_u4_keep_held_never_refills_the_axis_slot_or_a_name_the_object_moved() -
         ("Sorenth", None, (), "Sorenth"),
         (None, "Sorento", (), None),
         ("SOR", "Sorento", (("1", "Sorento", "SOR"),), "SOR"),
+        # Review M10: an own company spelled close to the held one is still that own company.
+        ("Sorento SG", "Sorento", (("1", "Sorento", "SOR"), ("3", "Sorento SG", "SSG")), "Sorento SG"),
     ],
 )
 def test_u5_held_spelling(said, held, companies, want) -> None:
     assert report_ask._held_spelling(said, held, companies) == want
+
+
+def test_u5b_a_company_this_message_typed_is_never_read_as_an_echo() -> None:
+    """Review B2: "Sorento SG" typed by the user (an entity of this message) stays as written, refused downstream."""
+    assert report_ask._held_spelling("Sorento SG", "Sorento", (), ["Sorento SG"]) == "Sorento SG"
+    assert report_ask._held_spelling("Sorento SG", "Sorento", (), []) == "Sorento"
 
 
 # ------------------------------------------------------------------------------------------ the prompt candidate + gold

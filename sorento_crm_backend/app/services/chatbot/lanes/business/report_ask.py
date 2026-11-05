@@ -3592,7 +3592,11 @@ def from_object(
         held_measure = (held_ask or {}).get("measure") if carrying else None
         ask["measure"] = held_measure if held_measure in METRICS else "amount"
     if carrying:
-        _keep_held(ask, held_ask, cleared, slot_of_axis, companies)
+        typed = [
+            e.get(k) for e in jsc.array(verdict.get("entities"))
+            if isinstance(e, dict) and e.get("current_message") is not False for k in ("raw", "canonical_code")
+        ]
+        _keep_held(ask, held_ask, cleared, slot_of_axis, companies, typed)
     breakdown = frame == "breakdown" and axis is not None
     if outstanding:
         status = status if status in OUTSTANDING_STATUSES else "outstanding"
@@ -3678,7 +3682,7 @@ def _read_all(ask: dict[str, Any]) -> set[str]:
     for slot in _FILTER_SLOTS:
         value = ask.get(slot)
         values = jsc.array(value) if isinstance(value, list) else [value]
-        if any(isinstance(v, str) and v.strip() == REPORT_ALL for v in values):
+        if any(isinstance(v, str) and v.strip().casefold() == REPORT_ALL.casefold() for v in values):
             ask[slot] = [] if isinstance(value, list) else None
             out.add(slot)
     return out
@@ -3695,41 +3699,50 @@ def _legacy_all(ask: dict[str, Any], verdict: dict[str, Any]) -> set[str]:
 
 
 def _keep_held(
-    ask: dict[str, Any], held_ask: dict[str, Any], cleared: set[str], axis_slot: str | None, companies: Any = ()
+    ask: dict[str, Any], held_ask: dict[str, Any], cleared: set[str], axis_slot: str | None, companies: Any = (),
+    typed: Any = (),
 ) -> None:
     """REPORT-FILTER-ALL, the ONE safety rule over the parser's final object: a filter slot it left empty, over a held
     value, without ALL, forgot to echo it: the held value stays. Not the axis's own slot (a breakdown ranks across it,
-    C6-2), and not a held name the object puts in a slot the held report did not hold it in (it moved: a name the
-    message calls the company, an account type the brand question settled). Then a company that is none of the
-    contact's own but spells the held one is the held one (`_held_spelling`)."""
-    def names(source: dict[str, Any], slot: str) -> set[str]:
-        value = source.get(slot)
+    C6-2), and not a held brand or account type name the object moved to the other of the two lists or to the company
+    (`_MOVES`: the brand-or-account-type answer, a name the message calls the company); the company itself is never
+    un-held by a move ("<name> brand only" keeps the held company). Then a company that is none of the contact's own,
+    that this message does not type, and that spells the held one is the held one (`_held_spelling`)."""
+    def fold(value: Any) -> set[str]:
         return {_squash(v) for v in (jsc.array(value) if isinstance(value, list) else [value]) if v}
 
-    # A name the object puts in a slot the held report did not hold it in (read before any refill).
-    moved = {name for slot in _FILTER_SLOTS for name in names(ask, slot) - names(held_ask, slot)}
+    def new_in(slot: str) -> set[str]:  # what the object newly puts in this slot (a refill equals the held value)
+        return fold(ask.get(slot)) - fold(held_ask.get(slot))
+
     for slot in _FILTER_SLOTS:
         held = held_ask.get(slot)
         if slot in cleared or slot == axis_slot or ask.get(slot) or not held:
             continue
         if isinstance(held, list):
+            moved = {name for other in _MOVES.get(slot, ()) for name in new_in(other)}
             ask[slot] = [v for v in held if _squash(v) not in moved]
-        elif _squash(held) not in moved:
+        else:
             ask[slot] = held
-    ask["company"] = _held_spelling(ask.get("company"), held_ask.get("company"), companies)
+    ask["company"] = _held_spelling(ask.get("company"), held_ask.get("company"), companies, typed)
 
 
-def _held_spelling(company: Any, held: Any, companies: Any = ()) -> Any:
+#: `_keep_held`: the slots a held list name can move to (the model moves a word between brands and account types, and a
+#: name the message calls the company out of the brands). Every other slot only ever refills.
+_MOVES = {"brands": ("account_types", "company"), "account_types": ("brands",)}
+
+
+def _held_spelling(company: Any, held: Any, companies: Any = (), typed: Any = ()) -> Any:
     """HT1-18 (v202 parse "Sorenth" over a held Sorento): the object's company, unless it is none of the contact's own
-    companies (by name or code) and a near spelling of the held one: then the held one. An own company always wins
-    (HT1-18b / HT1-19); a name like no own company stays as written and is refused downstream (HT1-20)."""
+    companies (by name or code), no entity of this message names it (`typed`: the raw words and codes of this message's
+    entities), and it is a near spelling of the held one: then the held one. An own company always wins (HT1-18b /
+    HT1-19); a company the message typed stays as written and is refused downstream when not held (HT1-20)."""
     from difflib import SequenceMatcher
 
     said, kept = _squash(company or ""), _squash(held or "")
     if not said or not kept or said == kept:
         return company
-    own = {_squash(c[i]) for c in jsc.array(companies) if isinstance(c, (list, tuple)) for i in (1, 2) if len(c) > i}
-    if said in own:
+    own = {_squash(c[i]) for c in list(companies or ()) if isinstance(c, (list, tuple)) for i in (1, 2) if len(c) > i}
+    if said in own or said in {_squash(t) for t in list(typed or ()) if t}:
         return company
     return held if SequenceMatcher(None, said, kept).ratio() >= _ECHO_RATIO else company
 
