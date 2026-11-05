@@ -52,6 +52,7 @@ import {
   defaultPriceBadgeProps,
   defaultBadgeProps,
   defaultBarcodeProps,
+  defaultFeatureIconsProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
   buildAccessoriesStrip,
@@ -1168,6 +1169,13 @@ export function TagCanvasEditor({
       ...makeBaseLayer('barcode', 40, 22),
       slot_binding: 'barcode',
       props: defaultBarcodeProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
+  const handleAddFeatureIcons = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('feature_icons', 40, 10),
+      props: defaultFeatureIconsProps(),
     });
   }, [addLayer, makeBaseLayer]);
 
@@ -3899,7 +3907,7 @@ export function TagCanvasEditor({
                           key={`${layer.id}-ghost`}
                           layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -3939,7 +3947,7 @@ export function TagCanvasEditor({
                           key={layer.id}
                           layer={withPolygonPreview(layer)}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -4654,6 +4662,7 @@ export function TagCanvasEditor({
         onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
+        onAddFeatureIcons={handleAddFeatureIcons}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
@@ -4884,6 +4893,7 @@ export function TagCanvasEditor({
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}
+              featureIcons={library.featureIcons}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

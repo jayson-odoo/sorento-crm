@@ -1805,6 +1805,7 @@ export function RequestTagDesigner({
               onSelectTag={setSelectedTagId}
               resolved={resolved}
               assetUrls={library.assetUrls}
+              featureIcons={library.featureIcons}
               onPrintSheet={handlePrintSheet}
               printing={printing}
               placement={arranged.placement}

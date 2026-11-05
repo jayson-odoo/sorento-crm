@@ -26,6 +26,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
 import { kitLibraryClient, resetKitLibraryCache } from '@/lib/dealer-kit/kit-library-cache';
+import { iconsFromAssets, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   ensureFontsLoaded,
   ensureSeedFontsLoaded,
@@ -178,6 +179,8 @@ export interface KitLibrary {
   fonts: KitAsset[];
   /** The spec vocabulary the Insert field dialog offers under Specs (D58). */
   specKeys: SpecKeyOption[];
+  /** Feature icons: the library icons that carry a "show when" rule. */
+  featureIcons: FeatureIcon[];
   /** Google fallbacks plus every uploaded brand font. */
   fontOptions: SearchableSelectOption[];
   reload: () => Promise<void>;
@@ -304,6 +307,8 @@ export function useKitLibrary(): KitLibrary {
     return map;
   }, [assets]);
 
+  const featureIcons = useMemo(() => iconsFromAssets(assets), [assets]);
+
   const fontOptions = useMemo(() => {
     const brand = fonts.map((font) => ({
       value: font.name,
@@ -322,6 +327,7 @@ export function useKitLibrary(): KitLibrary {
     thumbUrls,
     fonts,
     specKeys,
+    featureIcons,
     fontOptions,
     reload,
     remember,
