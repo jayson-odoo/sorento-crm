@@ -1,6 +1,6 @@
 # PLAN: tier "Additional" as a column (lane TARGET-TIER-ADDITIONAL)
 
-Status: Plan - waiting on owner answers to the card (crew-ask on the PR). Track: TBD (likely full: migration).
+Status: Review - built per owner answers 5 Nov 11:10 (+ 11:30 grids/lightbox, 11:40 header/KPI markup); fold apply waits on owner approval of the dry run. Track: full (migration). UAC: `target-tier-additional-05nov-acceptance-criteria.md`.
 
 ## Why
 
@@ -20,10 +20,11 @@ Owner, 5 Nov: put the additional 1% on the tier row itself ("A/C I 6 + 1 %") ins
 
 So the engine pays 6% + 1% + 1% = 8%. The spreadsheet says tier 2 = 6% + 1% = 7% = 5,375.57.
 
-## Proposed model (pending answers)
+## Model (owner answers 5 Nov 11:10)
 
-- `target_commission_tiers` gains `additional_kind` (`pct` | `amount`) + `additional_value`
-  on each main tier row; only the reached tier's additional pays.
+- `target_commission_tiers.additional_rate` (the % Additional, new); the RM Additional reuses
+  `bonus_amount` (owner Q2), now paid for the reached tier only. Only the reached tier's
+  Additional pays (replaces the 16 Oct Q5 stacking).
 - Periods rate cell: "A/C I 6.00% + 1.00%" or "+ RM x".
 - Existing `is_additional` rows fold onto the main row of the same period + threshold
   (dry-run report first, owner approves apply).
