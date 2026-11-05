@@ -26,6 +26,7 @@ from app.services.chatbot.head import list_resolver
 from app.services.chatbot.head import lookup_lists as ll
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import gate as gate_mod
+from app.services.chatbot.lanes.business import report_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
@@ -2176,7 +2177,7 @@ def _fullshun_turn(session_factory, monkeypatch, text: str, hint: str, canonical
 
 
 #: The sales side's own next question for these asks (the kind, the basis, the period).
-_SALES_SIDE_REPLIES = ("Undelivered orders or pending delivery?", "Invoiced, delivered, ordered or outstanding?", "Which period")
+_SALES_SIDE_REPLIES = (report_ask.KIND_QUESTION, "Invoiced, delivered, ordered or outstanding?", "Which period")
 
 _SALES_ASKS = {
     "delivery for fullshun": dict(
@@ -2280,7 +2281,7 @@ def test_an_outstanding_order_ask_over_a_both_sides_name_reports_that_customer(s
         session_factory, monkeypatch, "Outstanding order for fullshun", hint, canonical,
         **_SALES_ASKS["Outstanding order for fullshun"],
     )
-    assert "Undelivered orders or pending delivery?" in reply, reply
+    assert report_ask.KIND_QUESTION in reply, reply
     pend_qf = _parser_output(
         message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
         reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
@@ -2341,3 +2342,97 @@ def test_a_prompt_without_the_party_side_line_has_no_key(session_factory, monkey
     off = _parser_config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n== CLOSED LISTS ==\n")
     assert off.party_side is False
     assert "party_side" not in (off.json_schema or parser_mod._base_schema(off))["properties"]
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE (owner, 5 Nov 2026, prod on parser v202 / label v71): "delivery to hanlim" still replied "Which
+# one do you mean? 1. hanlim (customer) 2. hanlim (supplier)" because #2120's code was not on main while the prompt
+# already carried its PARTY_SIDE section. The parser's party_side decides; only a message naming no side asks.
+# --------------------------------------------------------------------------- #
+
+HANLIM = "ZZT HANLIM ENTERPRISE SDN BHD"
+
+
+def _party_side_section(name: str) -> str:
+    """The PARTY_SIDE section as published in the prod text (md5 d29c1983 carries it verbatim), from its PROMPT doc
+    wherever the plan currently lives (plans/ or plans/_archive/)."""
+    import pathlib
+
+    docs = pathlib.Path(__file__).resolve().parents[3] / "documentation" / "plans"
+    found = sorted(docs.glob(f"**/chatbot/{name}"))
+    assert found, f"{name} not under {docs}"
+    text = found[0].read_text(encoding="utf-8")
+    return text.split("```text\n", 1)[1].split("```", 1)[0]
+
+
+def test_the_prod_party_side_section_carries_the_line_the_code_keys_on():
+    """The section v202 published (PROMPT-party-side-3nov.md Edit 1, 1315 bytes, md5 9fcfa92c) turns the key on."""
+    import hashlib
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    section = _party_side_section("PROMPT-party-side-3nov.md")
+    assert hashlib.md5(section.encode("utf-8")).hexdigest() == "9fcfa92c8b6045279b8889734c0fe4d8"
+    assert section.splitlines()[0] == parser_mod.PARTY_SIDE_LINE
+    for side in parser_mod.PARTY_SIDES:
+        assert f'"{side}"' in section, side
+
+
+def _hanlim_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["hl_customer"] = _seed_customer(session_factory, HANLIM)
+    ids["hl_supplier"] = _seed_named(session_factory, HANLIM, "ZZTSUP-HL01")
+    return ids
+
+
+def _hanlim_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, **parse):
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim", HANLIM.casefold()},
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_delivery_to_hanlim_is_the_customer_never_asked(session_factory, monkeypatch, hint):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "delivery to hanlim", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side="customer",
+    )
+    assert "Which one do you mean?" not in reply and "(supplier)" not in reply, reply
+    assert HANLIM in reply and "couldn't find" not in reply, reply
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and n_party(a)]
+    assert all(a.get("customer_ids") == [ids["hl_customer"]] for a in party), (reply, captured)
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_po_from_hanlim_is_the_supplier_never_asked(session_factory, monkeypatch, hint):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "PO from hanlim", hint, canonical,
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"], party_side="supplier",
+    )
+    assert "Which one do you mean?" not in reply and "(customer)" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["hl_supplier"]], (reply, captured)
+    assert not calls[0].get("customer_ids"), calls
+
+
+@pytest.mark.parametrize("said", ["unclear", None])
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_hanlim_alone_is_still_asked(session_factory, monkeypatch, hint, said):
+    ids = _hanlim_world(session_factory)
+    canonical = ids["hl_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _hanlim_turn(
+        session_factory, monkeypatch, "hanlim", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status=None, party_side=said,
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
