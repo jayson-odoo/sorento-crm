@@ -1522,6 +1522,14 @@ export const MENU_SIDEBAR: MenuConfig = [
     audience: 'salesperson',
   },
   {
+    // AI-TOOLS-WAVE2 (owner ruling 5 Nov): own agent targets with their commission.
+    title: 'My targets',
+    icon: TrendingUp,
+    path: '/sales/targets',
+    permission: 'sales.targets.view_own',
+    audience: 'salesperson',
+  },
+  {
     title: 'Customer asks',
     icon: Star,
     path: '/sales/customer-asks',

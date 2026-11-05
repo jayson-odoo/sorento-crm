@@ -144,7 +144,13 @@ export default function SalesTargetsView() {
   const params = useSearchParams();
   const router = useRouter();
   const canAdd = useHasPermission('sales.targets.add');
-  const [tab, setTab] = useState<TargetSubjectKind>(tabOf(params.get('tab')));
+  // `sales.targets.view_own` without `.view`: only their own agents' agent targets exist for them, so only
+  // the Agents tab (the server cuts the list the same way).
+  const seesAll = useHasPermission('sales.targets.view');
+  const ownOnly = useHasPermission('sales.targets.view_own') && !seesAll;
+  const tabs = ownOnly ? TABS.filter((t) => t.value === 'agent') : TABS;
+  const [chosenTab, setTab] = useState<TargetSubjectKind>(tabOf(params.get('tab')));
+  const tab: TargetSubjectKind = ownOnly ? 'agent' : chosenTab;
   const [teamFilter, setTeamFilter] = useState(params.get('team') ?? '');
 
   const changeTab = (value: string) => {
@@ -173,7 +179,7 @@ export default function SalesTargetsView() {
         <div className="space-y-4">
           <Tabs value={tab} onValueChange={changeTab}>
             <TabsList variant="line">
-              {TABS.map((t) => (
+              {tabs.map((t) => (
                 <TabsTrigger key={t.value} value={t.value} onClick={() => changeTab(t.value)}>
                   <t.icon className="size-4" />
                   <span>{t.label}</span>
