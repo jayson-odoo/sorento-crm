@@ -203,11 +203,12 @@ export const projectsPagerQuery = {
     listProjects(projectsListParamsFromUrl(params)),
 };
 
-export function useProjects(params: ProjectListParams) {
+export function useProjects(params: ProjectListParams, options?: { enabled?: boolean }) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: projectsListKey(params),
     queryFn: () => listProjects(params),
+    enabled: options?.enabled ?? true,
   });
 }
 

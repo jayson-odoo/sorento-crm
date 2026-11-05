@@ -130,7 +130,7 @@ def test_ac_3_2_a_dealer_pick_resolves_that_part_and_the_tag_shows_only_it(db):
         for o in g["options"]
     }
     assert picked == {basins[0].id: False, basins[1].id: True, basins[2].id: False}
-    assert row["list_price"] == Decimal("1100.00"), "host 1000 + the picked basin 100"
+    assert row["list_price"] is None, "K8: no stored combo price, never host + the picked basin"
 
 
 # --------------------------------------------------------------------------- AC-3.3
