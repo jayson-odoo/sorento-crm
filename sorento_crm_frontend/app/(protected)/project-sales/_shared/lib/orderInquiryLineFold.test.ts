@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   foldInquiryLines,
   foldKeyOf,
+  isReservableInquiryRow,
   lineConfirmationOf,
   lineFooterTotals,
   lineHistoryEntries,
@@ -596,5 +597,32 @@ describe('SO-LINE-CHANGE-HISTORY F2 (AC-7, AC-9 to AC-13): the Before entry', ()
     const entries = lineHistoryEntries(foldInquiryLines([nowRow()])[0]);
     expect(entries[0].what).toBe('Now');
     expect(entries[0].why).toBe('Was 182. Customer moved the date');
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW: the reserve-bearing row of any verb addresses the line (AC-AR-11)', () => {
+  it('an ORDER row beside a DELAY row carrying the request: the DELAY row is primary', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'order', so_line_id: 'sol-1', qty: '22' }),
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserve_state: 'requested' }),
+    ]);
+    expect(line.primary.id).toBe('delay');
+    // Requested stays the buy rows' qty: the DELAY row restates the line, it adds nothing.
+    expect(line.requested).toBe(22);
+  });
+
+  it('Taken counts reserve on a not-Done DELAY row', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserved_qty: '33', reserve_state: 'reserved' }),
+    ]);
+    expect(line.taken).toBe(33);
+  });
+
+  it('isReservableInquiryRow: live and not Done, any verb', () => {
+    expect(isReservableInquiryRow(row({ verb: 'DELAY' }))).toBe(true);
+    expect(isReservableInquiryRow(row({ verb: 'ADVANCE', state: 'placed' }))).toBe(true);
+    expect(isReservableInquiryRow(row({ verb: 'DELAY', state: 'actioned' }))).toBe(false);
+    expect(isReservableInquiryRow(row({ state: 'cancelled' }))).toBe(false);
+    expect(isReservableInquiryRow(row({ verb: 'DELAY', redirected_to_pool: true }))).toBe(false);
   });
 });
