@@ -41,7 +41,7 @@ import {
   type QuotationSignatureBody,
 } from '../services/quotationDocumentService';
 
-const DOCUMENTS_KEY = 'project-quotation-documents';
+export const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
 const VIEWS_KEY = 'project-quotation-views';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];

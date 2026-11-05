@@ -170,6 +170,13 @@ async function settled() {
   });
 }
 
+/** The button is greyed until the capability feed answers; press it once it is enabled. */
+async function pressCreate() {
+  const create = await screen.findByRole('button', { name: /Create in AutoCount/ });
+  await waitFor(() => expect(create).toBeEnabled());
+  fireEvent.click(create);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   permissions = new Set([WRITE]);
@@ -189,7 +196,9 @@ describe('Create in AutoCount on the worksheet', () => {
   it('shows beside Download CSV when the switch is on, the permission is held, it can export and the order is not in AutoCount', async () => {
     await renderWorksheet();
 
-    expect(await screen.findByRole('button', { name: /Create in AutoCount/ })).toBeEnabled();
+    const create = await screen.findByRole('button', { name: /Create in AutoCount/ });
+    // Greyed while the capability feed loads, enabled once it says create_doc is on.
+    await waitFor(() => expect(create).toBeEnabled());
     expect(screen.getByRole('button', { name: /Download CSV/ })).toBeEnabled();
   });
 
@@ -237,7 +246,7 @@ describe('Create in AutoCount on the worksheet', () => {
   it('presses through the write route and shows AutoCount\'s answer in the dialog', async () => {
     await renderWorksheet();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Create in AutoCount/ }));
+    await pressCreate();
 
     expect(await screen.findByText('SO412345 created in AutoCount')).toBeInTheDocument();
     const write = apiFetch.mock.calls.find(([url]) =>
@@ -252,7 +261,7 @@ describe('Create in AutoCount on the worksheet', () => {
   it('never sends a company code or a document key from the browser', async () => {
     await renderWorksheet();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Create in AutoCount/ }));
+    await pressCreate();
     await screen.findByText('SO412345 created in AutoCount');
 
     const write = apiFetch.mock.calls.find(([url]) =>

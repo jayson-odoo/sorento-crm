@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Mock (owner answered Q1-Q6 5 Nov; mock v2 `ac-qtso-crm-04nov-mockup.html` with the R6 result note; first red tests in).
+Lane: AC-QTSO-CRM. Status: Review (fix round 1).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -12,7 +12,6 @@ Track: full pipeline (writes to an external system, new admin switch, security r
 
 ## Behaviour card
 
-To follow (posted as a crew-ask on the PR, then copied here with the owner's answers).
 
 ### Where it lives (existing screens only)
 
@@ -38,7 +37,7 @@ Sales order, built from `worksheet()` (`project_so_draft_service.py:3024`), so t
 Quotation: header as above (DebtorCode from the recipient party's customer), lines = the issued revision's priced lines across scopes
 (ItemCode, Description, Qty, UOM, UnitPrice, Amount), Remark = CRM `document_no (Rn)`.
 
-Update (SO): only the published amendment's accepted change-list rows (QTY_CHANGE, ADVANCE/DELAY = delivery date, ADD_LINE, REMOVE_LINE / CANCEL_BALANCE = line cancel, never delete). Update (QT): the newly issued revision replaces the lines.
+Update (SO): only the published amendment's accepted change-list rows (ORDER / RESERVE & ORDER = qty up on an existing line, ADVANCE/DELAY = delivery date; CHANGE SO NO and CANCEL BALANCE wait, never delete). Update (QT): the newly issued revision replaces the lines.
 
 Cancel: SS cancel operation on the whole document; never a delete.
 
@@ -99,9 +98,19 @@ Edit (`PATCH`): header ref, description, remark1-4, displayTerm, salesAgent, you
 description, deliveryDate. Anything else answers 422 FIELD_NOT_EDITABLE. Always sends `docDate` (DOC_DATE_REQUIRED) and
 `expectedLastModified` from the last read-back; a change in AutoCount answers DOC_STALE -> "Changed in AutoCount since dd/mm/yyyy,
 open Compare first". Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
-Amendment verbs: QTY_CHANGE and ADVANCE / DELAY = edit; ADD_LINE = add line (no dtlKey back: the CRM diffs `document.Details`
-against the lines it knew); REMOVE_LINE / CANCEL_BALANCE / REPOINT_SO / MODEL_CHANGE = greyed "Waiting for AutoCount" (need
-delete_line / cancel). An amendment mixing both: the editable rows go, the rest stay listed as waiting.
+Amendment verbs (the delta service's own, `project_so_delta_service.py:65-70`; fix round 1):
+
+| Verb | AutoCount |
+| --- | --- |
+| ORDER, RESERVE & ORDER (qty up on an existing line) | PATCH line qty to `to_value` |
+| ADVANCE, DELAY | PATCH line deliveryDate to `to_value` |
+| CANCEL BALANCE | waits ("Waiting for AutoCount") while `_SEND_CANCEL_BALANCE_AS_QTY_EDIT = False`; a qty edit down to `to_value` when the owner turns it on. Both paths built and tested. |
+| CHANGE SO NO | waits |
+
+A new product is never a row (the delta service reports it in `unmatched`), so there is no add-line from an amendment. A line with no core
+line yet (right after a CRM create) waits with "Waiting for the next AutoCount sync". An amendment mixing both: the editable rows go in ONE
+PATCH (key `crm-amd-{id}-update-edit`, marked `so_amendments.autocount_edit_sent_at` on done), the rest stay listed as waiting. A second press
+after done answers done ("Already in AutoCount.") with no call.
 
 ### SS gaps (crew opens an SS lane)
 
@@ -155,7 +164,7 @@ Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount
 - Capability shape `{"sales_orders": {op: {enabled, reason}}, "quotations": {...}}`, ops `create_doc, edit_doc, add_line, delete_line, cancel_doc`. Reasons: VENDOR_UNSUPPORTED (and any unknown) "Waiting for AutoCount"; WRITE_DISABLED / WRITE_NOT_ALLOWED / WRITE_COMPANY_NOT_TEST "Changes to AutoCount are switched off here"; SS unreachable -> every op "Could not reach AutoCount". companyCode = `companies.code` of the record's `company_id`, never from the request (U19).
 - Idempotency-Key: `crm-pso-{pso_id}-create`, `crm-amd-{amendment_id}-update`, `crm-qt-{document_id}-{issue_id}-create|update`, `crm-pso-{pso_id}-cancel`, `crm-qt-{document_id}-cancel`.
 - Result: `{outcome, message, doc_no, lines[{line_no, item_code, description, qty, unit_price, location, delivery_date}], warnings[], skipped[], exploded[], waiting[]}`. `lines` from `document.Details` (AutoCount field names ItemCode, Description, Qty, UnitPrice, Location, DeliveryDate). Only `outcome == done` writes to the CRM (`autocount_doc_no`, `autocount_doc_key`, `autocount_last_modified` = `document.LastModified`, QT also `autocount_issue_id`) (U8, U9).
-- Update SO (U10-U13): rows of the published amendment's AutoCount change list. QTY_CHANGE -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; ADD_LINE -> POST lines; any other verb -> `waiting` (no call) unless the feed enables delete_line / cancel_doc. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`; dtlKey = last `:` segment of the core SO line's `source_ref`. DOC_STALE -> message "Changed in AutoCount since dd/mm/yyyy, open Compare first." (date from the stored last-modified).
+- Update SO (U10-U13): rows of the published amendment's AutoCount change list. ORDER / RESERVE & ORDER -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; CHANGE SO NO and CANCEL BALANCE -> `waiting` (no call), see the verb table. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`; dtlKey = last `:` segment of the core SO line's `source_ref`. DOC_STALE -> message "Changed in AutoCount since dd/mm/yyyy, open Compare first." (date from the stored last-modified).
 - Cancel (U14): reads capabilities; `cancel_doc` off -> 409 `ac_waiting` "Waiting for AutoCount" with no write call.
 
 ### Routes (`app/api/v1/projects/project_autocount_write.py`, `projects.autocount.write`)

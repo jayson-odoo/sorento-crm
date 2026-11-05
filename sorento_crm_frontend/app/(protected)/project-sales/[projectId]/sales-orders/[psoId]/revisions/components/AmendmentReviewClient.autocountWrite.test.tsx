@@ -3,8 +3,8 @@
  *
  * UAC U2, U10, U11, U18, ruling R3. The button shows only when the switch is on, the user holds
  * `projects.autocount.write`, the amendment is `published` and its order is `in_autocount` (the
- * SO detail's new field). N counts only the rows the CRM can send: QTY_CHANGE, ADVANCE, DELAY and
- * ADD_LINE (REMOVE_LINE, CANCEL_BALANCE and the rest wait for AutoCount).
+ * SO detail's new field). N counts only the rows the CRM can send: ORDER, RESERVE & ORDER, ADVANCE and
+ * DELAY (CHANGE SO NO and CANCEL BALANCE wait for AutoCount).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -134,11 +134,11 @@ function salesOrder(inAutocount: boolean) {
 }
 
 const ROWS = [
-  { so_number: 'SO397450', line_no: 1, item_code: 'A1', verb: 'QTY_CHANGE', old_qty: '10', new_qty: '8' },
+  { so_number: 'SO397450', line_no: 1, item_code: 'A1', verb: 'ORDER', old_qty: '10', new_qty: '12' },
   { so_number: 'SO397450', line_no: 2, item_code: 'A2', verb: 'DELAY', old_date: '2026-07-01', new_date: '2027-01-07' },
-  { so_number: 'SO397450', line_no: 3, item_code: 'A3', verb: 'ADD_LINE', new_qty: '5' },
-  { so_number: 'SO397450', line_no: 4, item_code: 'A4', verb: 'REMOVE_LINE' },
-  { so_number: 'SO397450', line_no: 5, item_code: 'A5', verb: 'CANCEL_BALANCE', old_qty: '9', new_qty: '4' },
+  { so_number: 'SO397450', line_no: 3, item_code: 'A3', verb: 'RESERVE & ORDER', old_qty: '5', new_qty: '9' },
+  { so_number: 'SO397450', line_no: 4, item_code: 'A4', verb: 'CHANGE SO NO', new_so_number: 'SO397451' },
+  { so_number: 'SO397450', line_no: 5, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '4' },
 ];
 
 async function openAmendment({ status = 'published', inAutocount = true } = {}) {
@@ -236,7 +236,7 @@ beforeEach(() => {
 });
 
 describe('Update in AutoCount on a published amendment', () => {
-  it('counts only the rows the CRM can send: QTY_CHANGE, ADVANCE, DELAY, ADD_LINE', async () => {
+  it('counts only the rows the CRM can send: ORDER, RESERVE & ORDER, ADVANCE, DELAY', async () => {
     await openAmendment();
 
     expect(await screen.findByRole('button', { name: 'Update in AutoCount (3)' })).toBeEnabled();

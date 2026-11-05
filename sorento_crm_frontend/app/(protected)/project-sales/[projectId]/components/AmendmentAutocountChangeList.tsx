@@ -15,8 +15,12 @@ import { formatQty } from './SalesOrderMoney';
 import { distinctName } from '@/lib/product-display';
 import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 
-/** The verbs the CRM can send to AutoCount today; every other verb waits (R3, U11). */
-const SENDABLE_VERBS = new Set(['QTY_CHANGE', 'ADVANCE', 'DELAY', 'ADD_LINE']);
+/**
+ * The verbs the CRM sends to AutoCount today (the delta service's own, R3, U11): qty up on an
+ * existing line (ORDER, RESERVE & ORDER) and the date moves. CHANGE SO NO and CANCEL BALANCE
+ * wait (CANCEL BALANCE joins once the owner rules it goes as a quantity edit).
+ */
+const SENDABLE_VERBS = new Set(['ORDER', 'RESERVE & ORDER', 'ADVANCE', 'DELAY']);
 export const isAutocountSendableVerb = (verb: string): boolean => SENDABLE_VERBS.has(verb);
 
 /** "Update in AutoCount (N)": shown by the caller only when the switch, permission and order allow. */

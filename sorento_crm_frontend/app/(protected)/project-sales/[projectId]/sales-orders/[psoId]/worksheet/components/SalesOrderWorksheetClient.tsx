@@ -409,8 +409,16 @@ function WorksheetView({
               pendingLabel="Creating…"
               variant="primary"
               run={() => createInAutocount.mutateAsync(psoId)}
-              disabled={createCap ? !createCap.enabled : false}
-              title={createCap && !createCap.enabled ? (createCap.reason ?? undefined) : undefined}
+              disabled={!createCap?.enabled}
+              title={
+                capabilities.isLoading
+                  ? 'Checking AutoCount…'
+                  : !createCap
+                    ? 'Could not reach AutoCount'
+                    : !createCap.enabled
+                      ? (createCap.reason ?? undefined)
+                      : undefined
+              }
             />
           )}
         </div>

@@ -3,6 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { DOCUMENTS_KEY } from './useQuotationDocuments';
+import {
+  SALES_ORDERS_KEY,
+  SALES_ORDER_KEY,
+  SALES_ORDER_WORKSHEET_KEY,
+} from './useProjectSalesOrders';
 import {
   cancelQuotationInAutocount,
   cancelSalesOrderInAutocount,
@@ -63,13 +69,13 @@ function useAutocountWrite(
 }
 
 const refreshOrders = (queryClient: ReturnType<typeof useQueryClient>) => {
-  queryClient.invalidateQueries({ queryKey: ['project-sales-orders'] });
-  queryClient.invalidateQueries({ queryKey: ['project-sales-order'] });
-  queryClient.invalidateQueries({ queryKey: ['project-sales-order-worksheet'] });
+  queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY] });
+  queryClient.invalidateQueries({ queryKey: [SALES_ORDER_KEY] });
+  queryClient.invalidateQueries({ queryKey: [SALES_ORDER_WORKSHEET_KEY] });
 };
 
 const refreshQuotations = (queryClient: ReturnType<typeof useQueryClient>) => {
-  queryClient.invalidateQueries({ queryKey: ['project-quotation-documents'] });
+  queryClient.invalidateQueries({ queryKey: [DOCUMENTS_KEY] });
 };
 
 export const useCreateSalesOrderInAutocount = () =>

@@ -1,7 +1,11 @@
 'use client';
 
 import * as React from 'react';
+import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   Dialog,
   DialogBody,
@@ -12,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
-import type { AutocountWriteResult } from '../types/projectAutocountWrite.types';
+import type { AutocountWriteLine, AutocountWriteResult } from '../types/projectAutocountWrite.types';
 
 const VERB_TEXT: Record<string, string> = {
   REMOVE_LINE: 'Remove line',
@@ -79,42 +83,7 @@ export function AutocountWriteDialog({
                 ) : null;
               })}
 
-              {(result.lines ?? []).length > 0 && (
-                <div className="overflow-x-auto rounded-lg border border-border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
-                      <tr>
-                        <th className="px-3 py-2 font-medium">Line</th>
-                        <th className="px-3 py-2 font-medium">Item</th>
-                        <th className="px-3 py-2 font-medium">Description</th>
-                        <th className="px-3 py-2 text-right font-medium">Qty</th>
-                        <th className="px-3 py-2 text-right font-medium">Unit price</th>
-                        <th className="px-3 py-2 font-medium">Location</th>
-                        <th className="px-3 py-2 font-medium">Delivery</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.lines.map((line) => (
-                        <tr key={`${line.line_no}-${line.item_code}`} className="border-t border-border">
-                          <td className="px-3 py-2 tabular-nums">{line.line_no}</td>
-                          <td className="max-w-[10rem] truncate px-3 py-2 font-medium" title={line.item_code ?? ''}>
-                            {line.item_code}
-                          </td>
-                          <td className="max-w-[16rem] truncate px-3 py-2" title={line.description ?? ''}>
-                            {line.description}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">{line.qty}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{line.unit_price}</td>
-                          <td className="px-3 py-2">{line.location}</td>
-                          <td className="px-3 py-2 tabular-nums">
-                            {line.delivery_date ? formatDateInMalaysia(line.delivery_date) : '-'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {(result.lines ?? []).length > 0 && <ReadBackGrid lines={result.lines} />}
 
               {(result.skipped ?? []).length > 0 && (
                 <div className="space-y-1">
@@ -167,5 +136,94 @@ export function AutocountWriteDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function text(value: string | null | undefined, className = 'block truncate') {
+  return (
+    <span className={className} title={value ?? ''}>
+      {value || '-'}
+    </span>
+  );
+}
+
+/** The lines AutoCount holds after the write (its read-back, not what we sent). */
+function ReadBackGrid({ lines }: { lines: AutocountWriteLine[] }) {
+  const columns = React.useMemo<ColumnDef<AutocountWriteLine>[]>(
+    () => [
+      {
+        id: 'line_no',
+        header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
+        cell: ({ row }) => <span className="tabular-nums">{row.original.line_no}</span>,
+        size: 60,
+        meta: { headerTitle: 'Line' },
+      },
+      {
+        id: 'item_code',
+        header: ({ column }) => <DataGridColumnHeader title="Item" column={column} />,
+        cell: ({ row }) => text(row.original.item_code, 'block truncate font-medium'),
+        size: 150,
+        meta: { headerTitle: 'Item' },
+      },
+      {
+        id: 'description',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => text(row.original.description),
+        size: 240,
+        meta: { headerTitle: 'Description' },
+      },
+      {
+        id: 'qty',
+        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        cell: ({ row }) => text(row.original.qty, 'block truncate text-end tabular-nums'),
+        size: 80,
+        meta: { headerTitle: 'Qty' },
+      },
+      {
+        id: 'unit_price',
+        header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
+        cell: ({ row }) => text(row.original.unit_price, 'block truncate text-end tabular-nums'),
+        size: 110,
+        meta: { headerTitle: 'Unit price' },
+      },
+      {
+        id: 'location',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) => text(row.original.location),
+        size: 110,
+        meta: { headerTitle: 'Location' },
+      },
+      {
+        id: 'delivery_date',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
+        cell: ({ row }) =>
+          text(row.original.delivery_date ? formatDateInMalaysia(row.original.delivery_date) : null),
+        size: 110,
+        meta: { headerTitle: 'Delivery' },
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: lines,
+    getRowId: (row, index) => `${row.line_no}:${row.item_code}:${index}`,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      recordCount={lines.length}
+      isLoading={false}
+      listingKey={null}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
+    >
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <DataGridTable />
+      </div>
+    </DataGrid>
   );
 }
