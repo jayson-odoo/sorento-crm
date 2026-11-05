@@ -10,8 +10,13 @@ Computed per period from the target's tiers, never stored:
 - Thresholds: `pct` (a tier's `from_pct` of the period's target figure, the original tiers),
   `amount` (a fixed RM, or units on a quantity target) or `points` (points x the RM-per-point
   ratio in force on the period's last day, Q4; no ratio = no tier reachable).
-- "+ Additional" tiers (`is_additional`) each pay their own rate on the same achievement when
-  their own threshold is reached; they stack (Q5).
+- A main tier's Additional (lane TARGET-TIER-ADDITIONAL, owner 5 Nov): `additional_rate` (a %,
+  RM per unit on a quantity target) or a fixed RM (`bonus_amount`). Only the REACHED tier's
+  Additional pays, never a lower tier's (this replaces the 16 Oct Q5 stacking). The % is its own
+  line, paid on every account the tier pays, each account rounded on its own.
+- Legacy "+ Additional" rows (`is_additional`) still pay their own rate when their own threshold
+  is reached and stack, until `fold_additionals` moves them onto their tier; a row it cannot place
+  keeps paying that way.
 - A tier pays its `rate` on every counted account, or with `account_rates` only on the accounts
   it names, each at its own rate (ruling 2). `achieved` maps an account to its achievement; an
   agent or team target passes a single bucket.
@@ -19,7 +24,7 @@ Computed per period from the target's tiers, never stored:
   line is rounded half up on its own, then added, never one combined rate (ruling 3). The unit
   is the target's: sen (0.01, default) or ringgit (1). The marginal main line is the sum of its
   slices, rounded once, as before.
-- Bonuses: every reached non-additional tier pays its `bonus_amount` once per period.
+- Bonus (the RM Additional): the reached main tier's `bonus_amount`, once per period.
 - `rate` is a % of the achieved amount on an amount target, RM per unit on a quantity target.
 - `none` returns null commission and bonus.
 """
@@ -42,6 +47,8 @@ class Tier(NamedTuple):
     is_additional: bool = False
     #: account -> rate. None: `rate` on every counted account.
     account_rates: Optional[Dict[Hashable, Decimal]] = None
+    #: The tier's % Additional, paid on top of `rate` when this is the reached tier.
+    additional_rate: Optional[Decimal] = None
 
 
 class PayLine(NamedTuple):
@@ -105,8 +112,15 @@ def payout_for(
     def pay(rate: Decimal, base: Decimal) -> Decimal:
         return base * rate if metric == "quantity" else base * rate / HUNDRED
 
-    def line_amount(tier: Tier) -> Decimal:
-        # Each account's amount rounded on its own, then added (ruling 3).
+    def line_amount(tier: Tier, extra: Optional[Decimal] = None) -> Decimal:
+        # Each account's amount rounded on its own, then added (ruling 3). `extra`: pay this
+        # rate instead, on the same accounts the tier pays (its Additional).
+        if extra is not None:
+            keys = by_account.keys() if tier.account_rates is None else tier.account_rates.keys()
+            return sum(
+                (_round(pay(Decimal(extra), by_account.get(key, Decimal("0"))), unit) for key in keys),
+                Decimal("0"),
+            )
         if tier.account_rates is not None:
             return sum(
                 (_round(pay(Decimal(rate), by_account.get(key, Decimal("0"))), unit)
@@ -152,6 +166,9 @@ def payout_for(
                 slices += pay(Decimal(tier.rate or 0), top - low)
         if hit or slices:
             lines.append(PayLine("main", _rm(at(main[hit[-1]])) if hit else None, _round(slices, unit)))
+    if hit and main[hit[-1]].additional_rate:
+        top = main[hit[-1]]
+        lines.append(PayLine("additional", _rm(at(top)), line_amount(top, top.additional_rate)))
     additional = sorted(
         (t for t in tiers if t.is_additional and reached(t)), key=lambda t: at(t) or Decimal("0")
     )
@@ -159,10 +176,93 @@ def payout_for(
         lines.append(PayLine("additional", _rm(at(tier)), line_amount(tier)))
 
     commission = sum((line.amount for line in lines), Decimal("0"))
-    bonus = sum(
-        (Decimal(main[i].bonus_amount or 0) for i in hit), Decimal("0")
-    )
+    bonus = Decimal(main[hit[-1]].bonus_amount or 0) if hit else Decimal("0")
     return Payout(_round(commission, unit), _round(bonus, unit), lines, tier_reached, ratio_missing)
+
+
+class FoldRow(NamedTuple):
+    """One stored tier, as `fold_additionals` reads it. `threshold`: the value in the target's
+    own unit (`from_pct` or `threshold`), so rows of one target compare like for like."""
+
+    period_start: Optional[object]
+    threshold: Decimal
+    is_additional: bool
+    rate: Optional[Decimal]
+    account_rates: Optional[Dict[Hashable, Decimal]]
+    additional_rate: Optional[Decimal] = None
+    bonus_amount: Optional[Decimal] = None
+
+
+class Fold(NamedTuple):
+    #: legacy additional row index -> the main tier index it folds onto.
+    moves: Dict[int, int]
+    #: main tier index -> its new `additional_rate`.
+    rates: Dict[int, Decimal]
+    #: legacy additional row index -> why it stays a row of its own.
+    skipped: Dict[int, str]
+    #: main tier indexes whose Additional now also pays accounts the old row did not name.
+    broadened: set
+
+
+def fold_additionals(rows: Sequence[FoldRow]) -> Fold:
+    """Where each legacy "+ Additional from X" row goes (lane TARGET-TIER-ADDITIONAL, owner Q5):
+    onto the main tier of the same period and threshold, as that tier's % Additional. Left as
+    it is, with the reason, when there is no such tier, two additionals share it, the tier
+    already has an Additional or an RM Additional (Bonus), or the row pays different rates per
+    account. Pure: the import and `scripts/fold_tier_additionals.py` both call it."""
+    mains: Dict[tuple, int] = {}
+    for i, r in enumerate(rows):
+        if not r.is_additional:
+            mains.setdefault((r.period_start, Decimal(r.threshold)), i)
+    by_main: Dict[int, List[int]] = {}
+    skipped: Dict[int, str] = {}
+    for i, r in enumerate(rows):
+        if not r.is_additional:
+            continue
+        m = mains.get((r.period_start, Decimal(r.threshold)))
+        if m is None:
+            skipped[i] = f"no tier starts at {Decimal(r.threshold):,.2f} in its period"
+            continue
+        by_main.setdefault(m, []).append(i)
+    moves: Dict[int, int] = {}
+    rates: Dict[int, Decimal] = {}
+    broadened: set = set()
+    for m, adds in by_main.items():
+        main = rows[m]
+        if len(adds) > 1:
+            for i in adds:
+                skipped[i] = "two additionals on one tier"
+            continue
+        i = adds[0]
+        r = rows[i]
+        if main.additional_rate:
+            skipped[i] = "the tier already has an Additional"
+            continue
+        if main.bonus_amount:
+            skipped[i] = "the tier already has an RM Additional (Bonus)"
+            continue
+        if r.account_rates:
+            values = {Decimal(v) for v in r.account_rates.values()}
+            if len(values) != 1:
+                skipped[i] = "different additional rates per account"
+                continue
+            rate = values.pop()
+            paid = None if main.account_rates is None else set(main.account_rates)
+            named = set(r.account_rates)
+            if paid is not None and named - paid:
+                skipped[i] = "names an account the tier does not pay"
+                continue
+            if paid is None or paid != named:
+                broadened.add(m)
+        else:
+            rate = Decimal(r.rate or 0)
+            if main.account_rates is not None:
+                # The old row paid every account; the tier pays only its named ones.
+                skipped[i] = "pays every account but the tier pays named accounts only"
+                continue
+        moves[i] = m
+        rates[m] = rate
+    return Fold(moves, rates, skipped, broadened)
 
 
 def _rm(value: Optional[Decimal]) -> Optional[Decimal]:
