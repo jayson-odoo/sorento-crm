@@ -154,12 +154,12 @@ def test_sibling_phases_are_context_not_a_block():
         assert clashes[0].similarity > 0.8
 
 
-def test_a_lost_project_is_context_and_never_blocks():
-    """ADR-0004: only an OPEN pursuit blocks.
+def test_a_lost_project_blocks_like_any_match():
+    """PROJECT-CLASH-LOST (owner, 5 Nov): any match follows the clash path, Lost included.
 
-    Blocking forever would make a lost 2023 tender permanently unregistrable, and
-    a re-tender is a normal, valuable event. The lost row still comes back so the
-    new owner can read why it was lost before repeating the mistake.
+    Superseded ADR-0004's "only an OPEN pursuit blocks". A re-tender goes through the same
+    "Register as secondary lead" request, so a sales manager decides it rather than a
+    salesperson silently registering a second copy.
     """
     with blank_session() as db:
         company_id = _sorento(db)
@@ -176,12 +176,12 @@ def test_a_lost_project_is_context_and_never_blocks():
         )
 
         assert [c.project_id for c in clashes] == [lost.id]
-        assert clashes[0].blocks is False
+        assert clashes[0].blocks is True
         assert clashes[0].outcome == "lost"
 
 
-def test_a_dormant_project_is_context_and_never_blocks():
-    """Dormant is "gone quiet", not "gone". Same re-registration logic as lost."""
+def test_a_dormant_project_blocks_like_any_match():
+    """Dormant is "gone quiet", not "gone": it follows the same clash path as lost."""
     with blank_session() as db:
         company_id = _sorento(db)
         developer = _party(db, company_id, f"{MARKER} IOI Properties")
@@ -197,7 +197,7 @@ def test_a_dormant_project_is_context_and_never_blocks():
         )
 
         assert [c.project_id for c in clashes] == [dormant.id]
-        assert clashes[0].blocks is False
+        assert clashes[0].blocks is True
 
 
 def test_the_same_title_under_a_different_developer_does_not_clash():

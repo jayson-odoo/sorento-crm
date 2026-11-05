@@ -54,6 +54,7 @@ import type {
   TagLayer,
   TagLayerType,
   TagPartData,
+  TagSlots,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
   isDynamic,
@@ -119,6 +120,7 @@ interface LayersPanelProps {
    *  its row with that part's code. Every layer here is on the SAME tag, so
    *  one list serves the whole panel. */
   subjectParts?: TagPartData[];
+  subjectSlots?: TagSlots | null;
 }
 
 export function LayersPanel({
@@ -130,6 +132,7 @@ export function LayersPanel({
   onMoveLayer,
   overflowingIds,
   subjectParts,
+  subjectSlots,
 }: LayersPanelProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [hint, setHint] = useState<DropHint | null>(null);
@@ -245,6 +248,7 @@ export function LayersPanel({
                     onToggleVisibility={onToggleVisibility}
                     onToggleLock={onToggleLock}
                     subjectParts={subjectParts}
+                    subjectSlots={subjectSlots}
                   />
                 );
               })}
@@ -273,6 +277,7 @@ function LayerRow({
   onToggleVisibility,
   onToggleLock,
   subjectParts,
+  subjectSlots,
 }: {
   layer: TagLayer;
   depth: number;
@@ -285,6 +290,7 @@ function LayerRow({
   onToggleVisibility: (id: string) => void;
   onToggleLock: (id: string) => void;
   subjectParts?: TagPartData[];
+  subjectSlots?: TagSlots | null;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: layer.id });
@@ -341,10 +347,10 @@ function LayerRow({
         {/* Name */}
         <span
           className="min-w-0 flex-1 truncate"
-          title={layerDisplayName(layer) + layerSubjectSuffix(layer, subjectParts)}
+          title={layerDisplayName(layer) + layerSubjectSuffix(layer, subjectParts, subjectSlots)}
         >
           {layerDisplayName(layer)}
-          {layerSubjectSuffix(layer, subjectParts)}
+          {layerSubjectSuffix(layer, subjectParts, subjectSlots)}
         </span>
 
         {/* Unlinked marker: bound to a slot but showing typed text instead.
@@ -366,7 +372,7 @@ function LayerRow({
             say the opposite of what is happening. */}
         {isDynamic(layer) && (
           <span
-            className="shrink-0 font-mono text-[10px] leading-none text-sky-600"
+            className="shrink-0 font-mono text-2xs leading-none text-sky-600"
             title="Draws from product data through merge fields"
           >
             {'{}'}

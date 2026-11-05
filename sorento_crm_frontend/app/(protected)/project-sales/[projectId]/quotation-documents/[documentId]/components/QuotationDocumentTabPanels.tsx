@@ -3,29 +3,20 @@
 import * as React from 'react';
 import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
-import { QuotationDocumentHeader, useQuotationHeaderDetails } from './QuotationDocumentHeader';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { useQuotationCoverPreview } from '../../../../_shared/hooks/useQuotationDocuments';
 
 /**
+ * The Header tab lives in `QuotationHeaderTab.tsx` (it carries the lines grid, and keeping it out
+ * of this module keeps the prose tabs' routes off the DataGrid).
+ *
  * The three prose tabs, each one nothing but the panel it always was plus the document the layout
  * already fetched.
  *
  * The panels themselves are untouched on purpose. What the client asked for was to stop scrolling
  * past fifty priced lines to reach the terms, not for the terms to read differently.
  */
-/**
- * The Header tab, first of the five (#1341): the letterhead card the customer reads (To, Attn,
- * Our Ref, Your Ref, Date, Total) and who issued and opened each scope's current version. The
- * owner on that strip: "this one should be in header details".
- */
-export function QuotationHeaderTab() {
-  const { projectId, document } = useQuotationDocumentScreen();
-  const details = useQuotationHeaderDetails(projectId, document.scopes ?? []);
-  return <QuotationDocumentHeader document={document} details={details} />;
-}
-
 export function QuotationCoverLetterTab() {
   const { projectId, document } = useQuotationDocumentScreen();
   // A read: the preview of the saved quotation; the intro and closing are edited with the rest

@@ -162,6 +162,12 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1,
   ],
   [
+    'app/(protected)/project-sales/stock-debt/components/PoLinkDialog.tsx',
+    // AC-LINK-CRM-UI: the Link to PO popup, RequestReserveDialog's shell - one row per
+    // ticked line inside its own DialogBody (overflow-y-auto).
+    1,
+  ],
+  [
     'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveConfirmDialog.tsx',
     // OI-STAGED-NOTIFY: the staged lines of the Reserve confirmation, inside its own
     // DialogBody (overflow-y-auto).

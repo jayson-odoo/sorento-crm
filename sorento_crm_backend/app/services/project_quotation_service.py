@@ -30,6 +30,7 @@ from app.models.lookup import LookupOption, LookupSet
 from app.models.product import Product
 from app.models.product_set import ProductSet
 from app.models.projects import (
+    OUTCOME_DORMANT,
     OUTCOME_LOST,
     OUTCOME_OPEN,
     OUTCOME_WON,
@@ -1457,12 +1458,33 @@ def set_outcome(
     return quotation
 
 
+# A project parked on one of these funnel rungs has been decided by a person, and that
+# decision is its outcome whatever its quotations say (PROJECT-CLASH-LOST): a project on
+# the Lost rung read "Won" in the list because one scope had been won earlier, and a
+# project cannot be Lost and Won at once. Keyed on the rung's stable key, as the seeded
+# funnel defines it (project_seed_service.DEFAULT_FUNNEL).
+_OUTCOME_BY_TERMINAL_STATUS_KEY = {"lost": OUTCOME_LOST, "dormant": OUTCOME_DORMANT}
+
+
+def terminal_status_outcome(db: Session, project: Project) -> Optional[str]:
+    if not project.status_id:
+        return None
+    from app.models.status import Status
+
+    key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+    return _OUTCOME_BY_TERMINAL_STATUS_KEY.get(key)
+
+
 def derive_project_outcome(db: Session, project: Project) -> str:
-    """Won if ANY quotation is won; lost only when ALL are lost; otherwise open.
+    """The project's stage, when it sits on Lost or Dormant; otherwise its quotations:
+    won if ANY quotation is won, lost only when ALL are lost, otherwise open.
 
     No quotations at all is OPEN, not lost: nothing has been decided yet, and a project
     registered this morning is not a loss.
     """
+    decided = terminal_status_outcome(db, project)
+    if decided is not None:
+        return decided
     rows = (
         db.query(ProjectQuotation.outcome, func.count(ProjectQuotation.id))
         .filter(ProjectQuotation.project_id == project.id)

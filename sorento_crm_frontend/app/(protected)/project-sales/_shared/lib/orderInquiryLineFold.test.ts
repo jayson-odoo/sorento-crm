@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   foldInquiryLines,
   foldKeyOf,
+  isReservableInquiryRow,
+  reserveRowsOfLines,
   lineConfirmationOf,
   lineFooterTotals,
   lineHistoryEntries,
@@ -596,5 +598,106 @@ describe('SO-LINE-CHANGE-HISTORY F2 (AC-7, AC-9 to AC-13): the Before entry', ()
     const entries = lineHistoryEntries(foldInquiryLines([nowRow()])[0]);
     expect(entries[0].what).toBe('Now');
     expect(entries[0].why).toBe('Was 182. Customer moved the date');
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW: the reserve-bearing row of any verb addresses the line (AC-AR-11)', () => {
+  it('an ORDER row beside a DELAY row carrying the request: the DELAY row is primary', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'order', so_line_id: 'sol-1', qty: '22' }),
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserve_state: 'requested' }),
+    ]);
+    expect(line.primary.id).toBe('delay');
+    // Requested stays the buy rows' qty: the DELAY row restates the line, it adds nothing.
+    expect(line.requested).toBe(22);
+  });
+
+  it('Taken counts reserve on a not-Done DELAY row', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserved_qty: '33', reserve_state: 'reserved' }),
+    ]);
+    expect(line.taken).toBe(33);
+  });
+
+  it('isReservableInquiryRow: live and not Done, any verb', () => {
+    expect(isReservableInquiryRow(row({ verb: 'DELAY' }))).toBe(true);
+    expect(isReservableInquiryRow(row({ verb: 'ADVANCE', state: 'placed' }))).toBe(true);
+    expect(isReservableInquiryRow(row({ verb: 'DELAY', state: 'actioned' }))).toBe(false);
+    expect(isReservableInquiryRow(row({ state: 'cancelled' }))).toBe(false);
+    expect(isReservableInquiryRow(row({ verb: 'DELAY', redirected_to_pool: true }))).toBe(false);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW owner (b): ORDER and DELAY both live on one line, each reserve counted once', () => {
+  it('Requested stays the buy qty; Taken adds each row reserve once', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'order', so_line_id: 'sol-1', qty: '22', linked_qty: '0', reserved_qty: '10' }),
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserved_qty: '5' }),
+    ]);
+    expect(line.requested).toBe(22);
+    expect(line.taken).toBe(15);
+    expect(line.remaining).toBe(7);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW crew: one action on one line asks once for the line', () => {
+  const both = [
+    row({ id: 'used', so_line_id: 'sol-1', qty: '55', redirected_to_pool: true }),
+    row({ id: 'order', so_line_id: 'sol-1', qty: '22' }),
+    row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33' }),
+    row({ id: 'other', so_line_id: 'sol-2', qty: '7' }),
+  ];
+
+  it('a ticked line with a live ORDER and a live DELAY row sends one row, the ORDER (primary)', () => {
+    const picked = new Set(['order', 'delay']);
+    expect(reserveRowsOfLines(both, (r) => picked.has(r.id)).map((r) => r.id)).toEqual(['order']);
+  });
+
+  it('picking only the DELAY row still sends the line once, on its buy row', () => {
+    expect(reserveRowsOfLines(both, (r) => r.id === 'delay').map((r) => r.id)).toEqual(['order']);
+  });
+
+  it('OI-2609-0257 line 7: only the DELAY row is live, so it is the one sent', () => {
+    const rows = [
+      row({ id: 'used', so_line_id: 'sol-7', qty: '55', redirected_to_pool: true }),
+      row({ id: 'delay', so_line_id: 'sol-7', verb: 'DELAY', qty: '33' }),
+    ];
+    expect(reserveRowsOfLines(rows, (r) => r.id === 'delay').map((r) => r.id)).toEqual(['delay']);
+  });
+
+  it('two ticked lines send one row each', () => {
+    expect(reserveRowsOfLines(both, () => true).map((r) => r.id)).toEqual(['order', 'other']);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW review R1: a line split over several ORDER rows asks for each', () => {
+  const split = [
+    row({ id: 'a', so_line_id: 'sol-1', qty: '10' }),
+    row({ id: 'b', so_line_id: 'sol-1', qty: '12' }),
+  ];
+
+  it('both raised ORDER rows of the line are sent', () => {
+    expect(reserveRowsOfLines(split, () => true).map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('after A is requested, B is still sent (A is not primary-locked)', () => {
+    const rows = [{ ...split[0], reserve_state: 'requested' } as OrderInquiryWorklistRow, split[1]];
+    expect(reserveRowsOfLines(rows, () => true).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(reserveRowsOfLines(rows, (r) => r.id === 'b').map((r) => r.id)).toEqual(['b']);
+  });
+
+  it('a Done ORDER row is left out; a line with nothing reservable sends its primary', () => {
+    const done = [row({ id: 'x', so_line_id: 'sol-1', state: 'actioned' })];
+    expect(reserveRowsOfLines([...done, row({ id: 'y', so_line_id: 'sol-1' })], () => true).map((r) => r.id)).toEqual(['y']);
+    expect(reserveRowsOfLines(done, () => true).map((r) => r.id)).toEqual(['x']);
+  });
+
+  it('two live notice rows and no buy row: one row, the picked one', () => {
+    const notices = [
+      row({ id: 'adv', so_line_id: 'sol-1', verb: 'ADVANCE' }),
+      row({ id: 'dly', so_line_id: 'sol-1', verb: 'DELAY' }),
+    ];
+    expect(reserveRowsOfLines(notices, (r) => r.id === 'dly').map((r) => r.id)).toEqual(['dly']);
+    expect(reserveRowsOfLines(notices, () => true)).toHaveLength(1);
   });
 });

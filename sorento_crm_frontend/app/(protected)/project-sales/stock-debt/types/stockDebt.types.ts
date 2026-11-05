@@ -139,6 +139,8 @@ export type StockDebtDemandStatus = 'covered' | 'late' | 'short' | 'pinned' | 'o
 /** One sales-order line due in the cell's month (or in its TBA / undated bucket). */
 export interface StockDebtDemandLine {
   so_number: string;
+  /** R29: the SO line's own number (the project mirror's `line_no`); null when it has none. */
+  line_no?: number | null;
   agent_code: string | null;
   /** The bin the line is booked in - the drill's Bin column. Null for an unlocated line. */
   warehouse_code: string | null;

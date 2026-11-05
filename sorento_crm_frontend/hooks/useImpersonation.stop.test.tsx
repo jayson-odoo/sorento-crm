@@ -50,6 +50,15 @@ describe('useImpersonation().stop', () => {
     expect(impersonationStore.getState()).toBeNull();
   });
 
+  it("names this tab's view-as, so a stale tab cannot end another tab's newer one", async () => {
+    stopImpersonation.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useImpersonation(), { wrapper });
+    await act(async () => {
+      await result.current.stop();
+    });
+    expect(stopImpersonation).toHaveBeenCalledWith(VIEW_AS.sessionId);
+  });
+
   it('a failed stop restores the view-as it cleared', async () => {
     stopImpersonation.mockRejectedValue(new Error('Failed to stop impersonation'));
     const { result } = renderHook(() => useImpersonation(), { wrapper });

@@ -23,11 +23,14 @@
  * other to have finished loading.
  */
 
-import { comboOf, resolveSlotText, subjectOf } from './product-block';
+import { comboPositions } from './combo-slots';
+import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
 import type {
   SlotBinding,
+  SubjectSlot,
   TagBindingData,
   TagLayer,
+  TagSlots,
   TagSpecValue,
 } from './tag-template-types';
 
@@ -39,7 +42,14 @@ import type {
 export type MergeFieldMode = 'print' | 'editor';
 
 /** How the Insert field dialog sorts the catalogue into sections. */
-export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line' | 'Combo' | 'Spec sheet';
+export type MergeFieldGroup =
+  | 'Product'
+  | 'Specs'
+  | 'Set'
+  | 'Line'
+  | 'Combo'
+  | 'Combo positions'
+  | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
  *  never an empty string or the raw token - same default the backend column
@@ -93,6 +103,50 @@ const PATH_SLOTS: Record<string, Exclude<SlotBinding, null>> = {
   'set.name': 'name',
   'set.members': 'set_members',
 };
+
+/**
+ * O1: the fields a `{{slot.*}}` token may read, each one a `product.<field>` path above, so a
+ * position token and a position-bound layer resolve through the same code.
+ */
+const SLOT_TOKEN_FIELDS: { field: string; label: string }[] = [
+  { field: 'code', label: 'code' },
+  { field: 'name', label: 'name' },
+  { field: 'list_price', label: 'list price' },
+  { field: 'price_tag_description', label: 'price tag description' },
+];
+
+/** The token path for a position and field, numbered from 1 like the UI labels. */
+export function slotTokenPath(slot: SubjectSlot, field: string): string {
+  switch (slot.kind) {
+    case 'main':
+      return `slot.main.${field}`;
+    case 'fixed':
+      return `slot.fixed.${slot.index + 1}.${field}`;
+    case 'pick':
+      return `slot.pick.${slot.group + 1}.${slot.index + 1}.${field}`;
+    case 'upgrade':
+      return `slot.upgrade.${slot.index + 1}.${field}`;
+  }
+}
+
+/** Read `slot.<kind>.<numbers>.<field>` back into a 0-based position, or null when malformed. */
+function parseSlotToken(path: string): { slot: SubjectSlot; field: string } | null {
+  const [head, kind, ...rest] = path.split('.');
+  if (head !== 'slot') return null;
+  const field = rest.pop();
+  const numbers = rest.map((n) => (/^[1-9][0-9]*$/.test(n) ? Number(n) - 1 : NaN));
+  if (!field || numbers.some(Number.isNaN)) return null;
+  if (kind === 'main' && numbers.length === 0) return { slot: { kind: 'main' }, field };
+  if (kind === 'fixed' && numbers.length === 1) return { slot: { kind: 'fixed', index: numbers[0] }, field };
+  if (kind === 'upgrade' && numbers.length === 1) return { slot: { kind: 'upgrade', index: numbers[0] }, field };
+  if (kind === 'pick' && numbers.length === 2) {
+    return { slot: { kind: 'pick', group: numbers[0], index: numbers[1] }, field };
+  }
+  return null;
+}
+
+/** The groups a price tag template offers in Insert field (the spec sheet's own are for its templates). */
+export const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions'];
 
 /** How each fixed path is named in the dialog. */
 const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = [
@@ -271,6 +325,17 @@ function resolvePath(
     return source.currency ?? DEFAULT_TAG_CURRENCY;
   }
 
+  if (path.startsWith('slot.')) {
+    // O1: a position of its own, through the same `subjectOf` position code a bound layer uses.
+    // Empty (never the main product, never the token) for a position the line does not have.
+    const parsed = parseSlotToken(path);
+    if (!parsed || !SLOT_TOKEN_FIELDS.some((f) => f.field === parsed.field)) return '';
+    const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : undefined;
+    if (!slots) return '';
+    const at = { props: { kind: 'text', subjectSlot: parsed.slot } } as unknown as Pick<TagLayer, 'props'>;
+    return resolvePath(`product.${parsed.field}`, data, at, mode) ?? '';
+  }
+
   const slot = PATH_SLOTS[path];
   if (!slot) return null;
   return resolveSlotText({ slot_binding: slot, props: layer?.props }, data);
@@ -398,6 +463,7 @@ export function renderPriceTagDescription(
 export function mergeFieldCatalog(
   specKeys: SpecKeyOption[],
   groups?: MergeFieldGroup[],
+  slots?: TagSlots | null,
 ): MergeField[] {
   const fixed = FIELD_LABELS.map(({ path, label, group }) => ({
     path,
@@ -413,6 +479,20 @@ export function mergeFieldCatalog(
     group: 'Specs' as const,
   }));
 
+  // O1: the previewed combo's own positions with their codes, else the generic counts.
+  const positions: MergeField[] = comboPositions(slots).flatMap(({ slot, code, group }) =>
+    SLOT_TOKEN_FIELDS.map(({ field, label }) => {
+      const path = slotTokenPath(slot, field);
+      const known = field === 'code' && code ? `: ${code}` : '';
+      return {
+        path,
+        token: `{{${path}}}`,
+        label: `${slotLabel(slot, slots)} ${label}${known}`,
+        group: 'Combo positions' as const,
+      };
+    }),
+  );
+
   // Product first, then the specs a designer is most likely hunting for, then
   // the two groups that only apply to some blocks.
   const all = [
@@ -421,6 +501,7 @@ export function mergeFieldCatalog(
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
     ...fixed.filter((field) => field.group === 'Combo'),
+    ...positions,
     // PS-SPEC-SHEET: offered on spec sheet templates; a price tag editor passes `groups`
     // without it, so it never shows there.
     ...fixed.filter((field) => field.group === 'Spec sheet'),

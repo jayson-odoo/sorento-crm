@@ -21,6 +21,8 @@ export interface TagFont {
 }
 
 const loaded = new Set<string>();
+/** Faces that rejected: asked for once per page, not once per tag that mounts. */
+const failedKeys = new Set<string>();
 
 /**
  * The two faces the seeded starter templates are set in.
@@ -122,7 +124,12 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsRe
 
   for (const font of fonts) {
     const key = `${font.family}|${font.url}`;
-    if (!font.url || !font.family || loaded.has(key)) continue;
+    if (!font.url || !font.family) continue;
+    if (failedKeys.has(key)) {
+      failed.push(font.family);
+      continue;
+    }
+    if (loaded.has(key)) continue;
     loaded.add(key);
 
     try {
@@ -139,15 +146,15 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsRe
       document.fonts.add(face);
       pending.push(
         face.load().catch(() => {
-          // A font that will not load leaves the layer in its fallback, and
-          // is eligible to try again on the next call.
+          // A font that will not load leaves the layer in its fallback, and is
+          // not asked for again: every tag on a page calls this.
           document.fonts.delete(face);
-          loaded.delete(key);
+          failedKeys.add(key);
           failed.push(font.family);
         }),
       );
     } catch {
-      loaded.delete(key);
+      failedKeys.add(key);
       failed.push(font.family);
     }
   }
@@ -164,4 +171,5 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsRe
 /** Forget what has been loaded. For tests only. */
 export function _resetLoadedFonts(): void {
   loaded.clear();
+  failedKeys.clear();
 }

@@ -50,6 +50,8 @@ interface Props {
   currentRound?: number;
   /** PRICETAG-SELF-APPROVAL: the salesperson's own proof, nothing for marketing to claim. */
   withSalesperson?: boolean;
+  /** Somebody already holds it: the hint must not tell them to Claim (crew pass). */
+  claimed?: boolean;
 }
 
 export default function RequestDesignSection({
@@ -59,6 +61,7 @@ export default function RequestDesignSection({
   onCommentsChange,
   currentRound,
   withSalesperson = false,
+  claimed = false,
 }: Props) {
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -208,7 +211,9 @@ export default function RequestDesignSection({
         emptyHint={
           withSalesperson
             ? 'With the salesperson for approval.'
-            : 'Claim the request and open the designer to draw the tags.'
+            : claimed
+              ? 'Open the designer to draw the tags.'
+              : 'Claim the request and open the designer to draw the tags.'
         }
         review={{ comments, drafts: [], currentRound }}
         footer={footer}

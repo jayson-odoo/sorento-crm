@@ -173,3 +173,68 @@ def test_anthropic_forces_tool_choice_and_returns_input_as_content(monkeypatch):
     assert result.prompt_tokens == 5
     assert result.completion_tokens == 9
     assert result.total_tokens == 14
+
+
+# --------------------------------------------------------------------------- #
+# propertyOrdering: Gemini's generation-order hint is dropped for other providers #
+# --------------------------------------------------------------------------- #
+def _ordered_schema() -> dict[str, Any]:
+    entity = {
+        "type": "object",
+        "properties": {"said_as": {"type": "string"}, "said_as_text": {"type": "string"}},
+        "required": ["said_as_text", "said_as"],
+        "propertyOrdering": ["said_as_text", "said_as"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"entities": {"type": "array", "items": entity}, "tail": {"type": "object", "properties": {}, "propertyOrdering": []}},
+        "required": ["entities", "tail"],
+        "propertyOrdering": ["tail", "entities"],
+        "additionalProperties": False,
+    }
+
+
+def _no_ordering(node: Any) -> bool:
+    if isinstance(node, dict):
+        return "propertyOrdering" not in node and all(_no_ordering(v) for v in node.values())
+    if isinstance(node, list):
+        return all(_no_ordering(v) for v in node)
+    return True
+
+
+def test_without_property_ordering_strips_every_depth_and_keeps_the_rest():
+    from app.services.llm_provider import _without_property_ordering
+
+    src = _ordered_schema()
+    out = _without_property_ordering(src)
+    assert _no_ordering(out), out
+    assert out["properties"]["entities"]["items"]["properties"].keys() == {"said_as", "said_as_text"}
+    assert out["properties"]["entities"]["items"]["required"] == ["said_as_text", "said_as"]
+    assert "propertyOrdering" in src["properties"]["entities"]["items"], "the input is not mutated"
+
+
+def test_without_property_ordering_returns_a_schema_without_it_as_the_same_object():
+    from app.services.llm_provider import _without_property_ordering
+
+    assert _without_property_ordering(PARSE_RESULT_JSON_SCHEMA) is PARSE_RESULT_JSON_SCHEMA
+
+
+def test_openai_request_carries_no_property_ordering_at_any_depth(monkeypatch):
+    stub = _StubOpenAIClient(json.dumps({}))
+    monkeypatch.setattr("openai.OpenAI", lambda api_key=None: stub)
+    OpenAIProvider("k", default_model="gpt-4o-mini").chat(
+        [{"role": "user", "content": "hi"}], json_schema=_ordered_schema(), json_schema_name="x"
+    )
+    sent = stub.last_kwargs["response_format"]["json_schema"]["schema"]
+    assert _no_ordering(sent) and sent["properties"]["entities"]["items"]["required"] == ["said_as_text", "said_as"], sent
+
+
+def test_anthropic_request_carries_no_property_ordering_at_any_depth(monkeypatch):
+    stub = _StubAnthropicClient({})
+    monkeypatch.setitem(sys.modules, "anthropic", types.SimpleNamespace(Anthropic=lambda api_key=None: stub))
+    AnthropicProvider("k", default_model="claude-haiku-4-5").chat(
+        [{"role": "user", "content": "hi"}], json_schema=_ordered_schema(), json_schema_name="x"
+    )
+    sent = stub.last_kwargs["tools"][0]["input_schema"]
+    assert _no_ordering(sent) and sent["properties"]["entities"]["items"]["required"] == ["said_as_text", "said_as"], sent

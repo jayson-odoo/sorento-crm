@@ -299,16 +299,15 @@ def test_tag_price_sum_promotion_override(db):
     mirror = _product(db, "SRTMR502-BL", list_price="199.00")
     white = _product(db, "SRTBS900-WH", list_price="299.00")
     black = _product(db, "SRTBS900-BK", list_price="349.00")
-    combo = _combo(
-        db, cabinet, "3 in 1", [(mirror, None), (white, "Basin"), (black, "Basin")]
-    )
+    # The host must have a package for its line to take parts; the lines below name no combo.
+    _combo(db, cabinet, "3 in 1", [(mirror, None), (white, "Basin"), (black, "Basin")])
 
     # Case 1: list price is the host plus the resolved mirror plus THIS tag's
     # own basin - two tags, auto-split off the one open group.
     request = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         parts=[
             {"product_id": mirror.id},
             {"role": "Basin", "candidates": [white.id, black.id]},
@@ -328,7 +327,7 @@ def test_tag_price_sum_promotion_override(db):
     promoted = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         promotion_id=promotion.id,
         price_mode="selling",
         parts=[{"product_id": mirror.id}, {"product_id": white.id}],
@@ -369,12 +368,12 @@ def test_two_split_tags_price_their_own_candidate(db):
     cabinet = _product(db, "SRTBF11834", list_price="1599.00")
     white = _product(db, "SRTBS900-WH", list_price="299.00")
     black = _product(db, "SRTBS900-BK", list_price="349.00")
-    combo = _combo(db, cabinet, "2 in 1", [(white, "Basin"), (black, "Basin")])
+    _combo(db, cabinet, "2 in 1", [(white, "Basin"), (black, "Basin")])  # the host's package
 
     request = _request(
         db,
         product=cabinet,
-        combo=combo,
+        combo=None,  # K8: a combo line is never summed; the sum is the no-combo rule
         parts=[{"role": "Basin", "candidates": [white.id, black.id]}],
     )
     db.flush()

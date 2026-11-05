@@ -1,6 +1,6 @@
 # PLAN: Price tag self-approval, edit after approval, escalate to configured assignee
 
-Status: Review (owner answers in: Q1 a, Q2 two clicks, Q3 hide the row, Q4 a). Review round 1 fixed (B1, B2, S1-S4).
+Status: implemented (#2101 merged 4 Nov after owner hand test OK; follow-up PR carries the crew re-pass items).
 Track: normal (no migration, but the diff is over 300 lines and changes the portal's write routes).
 Lane: PRICETAG-SELF-APPROVAL (#2101). Sibling lane: PRICETAG-TEMPLATE-PER-PRODUCT (#2100).
 Source: "Feedback on Price Tag" meeting 2 Nov 2026 + owner rulings 2 Nov ~21:10.
@@ -162,3 +162,32 @@ download status check, `self_review` / `can_escalate` on the detail body), `port
 `PriceTagSelfApproval.tsx` (new), `PriceTagRequestForm.tsx` post-submit actions, the portal service,
 `priceTagRequestActions.ts` (CRM offers nothing on his own proof).
 #2100: `_add_lines` template field, lookups, form Preview section, `request-tags.ts` builder.
+
+## Follow-up after merge (crew re-pass, 4 Nov)
+
+- Approve on the draft form is full width in the stacked 375 layout, like Save Draft and Escalate.
+- The CRM Design card hint says "Open the designer to draw the tags." on a request somebody holds,
+  "Claim the request..." only when nobody does.
+- One Approve took 27 s on the crew copy (others 2.6-8 s, a retime 9 s). Profiled: the server work of
+  `submit-approve` is about 0.4 s (two preview resolves of about 0.04 s, pins, version, export
+  enqueue). The rest is the salesperson's WhatsApp, sent inline by `transition_status` through
+  `respond_messaging_service`: a Respond.io window lookup and a send, each with a 15 s timeout
+  (`integration_service.py`), the lookup cached for 45 s. The crew copy routes Respond.io through a
+  dead proxy, so a cold approve waits on the timeouts and a retry inside 45 s skips the lookup. In
+  production it is one fast round trip. Trigger for changing it: if Respond.io latency shows up in
+  production, send the salesperson's message after the response (a background task) for every price
+  tag transition at once, not only Approve.
+
+## Owner hand test #2138 (5 Nov)
+
+- Escalate to marketing checks the form first (dealer, lines, template pick, numbers: the same
+  checks and messages as Approve) and marks what is missing on the form; nothing opens until it
+  passes (`readyToFinish` in `PriceTagRequestForm.tsx`).
+- When it passes, a centred dialog (`EscalateDialog` in `PriceTagSelfApproval.tsx`, the app's
+  `Dialog`) asks "What needs fixing?" (required) and Need by (the shared `DatePicker`, dd/mm/yyyy,
+  a date after today), with Send to marketing and Cancel, full width at 375.
+- Need by left the draft form for that dialog. A draft keeps its stored value and the dialog opens
+  on it; Approve still sends the stored value. A revision (no Escalate there) keeps the field on the
+  form. The portal read view and the CRM detail still show Need by.
+- The other two Escalate buttons (gear menu, own-proof card) open the same dialog with the note only:
+  the request already exists and its Need by was set when it was created or escalated.
