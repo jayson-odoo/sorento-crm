@@ -51,9 +51,9 @@ MIGRATION_RE = re.compile(r"^tests/test_migration_[A-Za-z0-9_.-]*\.py$")
 
 # Runners for a full run. Measured on GitHub-hosted 4-vCPU runners: see the plan
 # (documentation/plans/ci/PLAN-ci-parallel-actions-05nov.md, "Measured").
-MAIN_SHARDS = 36
+MAIN_SHARDS = 24
 SCM_SHARDS = 3
-VITEST_SHARDS = 6
+VITEST_SHARDS = 8
 
 
 def all_tests(root: Path) -> list[str]:

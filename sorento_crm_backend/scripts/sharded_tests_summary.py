@@ -91,8 +91,12 @@ def summarise(junit: Path, jobs: list[dict], started: str, now: datetime, *, hea
             problems.append(f"{name}: {verdict}")
         rows.append(f"| {name} | {conclusion} | {p} | {f} | {minutes} |")
 
-    t0 = _ts(started)
+    # Wall clock from the first job's start: a run queued behind another in the concurrency
+    # group would otherwise count its wait (run 41986047860: 43 min reported, 21 of them queued).
+    starts = [t for t in (_ts(j.get("started_at")) for j in jobs) if t]
+    t0 = min(starts) if starts else _ts(started)
     wall = math.ceil((now - t0).total_seconds() / 60) if t0 else 0
+    queued = math.ceil((t0 - _ts(started)).total_seconds() / 60) if t0 and _ts(started) and t0 > _ts(started) else 0
     label = "nightly full sweep" if mode == "full" else f"delta since nightly {base}"
     be, fe = totals["backend"], totals["vitest"]
     verdict = f" FAILED ({'; '.join(problems[:8])}{'; ...' if len(problems) > 8 else ''})" if problems else ""
@@ -100,7 +104,7 @@ def summarise(junit: Path, jobs: list[dict], started: str, now: datetime, *, hea
         f"crew-tests: {head} {label} backend {be[0]} passed/{be[1]} failed, vitest {fe[0]}/{fe[1]}{verdict}",
         "",
         f"selection: {reason}",
-        f"wall clock: {wall} min (run start to this summary); billable runner minutes: {billable} "
+        f"wall clock: {wall} min (first job start to this summary; {queued} min queued before it); billable runner minutes: {billable} "
         f"(each finished job rounded up to a minute; this summary job not counted)",
         f"run: {run_url}",
         "",

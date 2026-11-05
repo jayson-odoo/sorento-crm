@@ -155,7 +155,8 @@ def test_a_green_run_reads_as_a_pass_with_minutes(tmp_path):
     text = _summary(tmp_path, [_job("backend main 1/1"), _job("vitest 1/1"), _job("Select and shard", minutes=1)])
     first = text.splitlines()[0]
     assert first == "crew-tests: abc delta since nightly def backend 1 passed/0 failed, vitest 1/0"
-    assert "wall clock: 21 min" in text and "billable runner minutes: 24" in text
+    assert "wall clock: 20 min (first job start to this summary; 1 min queued before it)" in text
+    assert "billable runner minutes: 24" in text
 
 
 def test_a_failed_test_or_a_lost_shard_reads_as_failed(tmp_path):
