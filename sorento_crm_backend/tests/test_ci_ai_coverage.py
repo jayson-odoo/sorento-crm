@@ -369,12 +369,142 @@ def test_new_router_file_mounted_with_prefix_resolves_full_path(repo, capsys):
     assert "GET /api/v1/gadgets " in out  # trailing slash normalized away
 
 
+def test_route_factory_with_router_parameter_resolves_on_each_caller(repo, capsys):
+    """`def register_x_routes(router): @router.get(...)` mounted by two callers, like portal/my-requests."""
+    root, base = repo
+    _write(
+        root,
+        {
+            "sorento_crm_backend/app/api/v1/shared_routes.py": """
+                from fastapi import APIRouter
+
+                BASE = "/requests"
+
+
+                def register_request_routes(router: APIRouter, dep=None) -> None:
+                    @router.get(f"{BASE}/mine")
+                    def list_my_requests(page: int = 1):
+                        return []
+
+
+                def register_outer(router):
+                    register_request_routes(router)
+            """,
+            "sorento_crm_backend/app/api/v1/portal.py": """
+                from fastapi import APIRouter
+                from app.api.v1.shared_routes import register_outer, register_request_routes
+
+                router = APIRouter()
+                staff_router = APIRouter()
+                register_request_routes(router, dep=None)
+                register_outer(router=staff_router)
+            """,
+            "sorento_crm_backend/app/api/v1/__init__.py": """
+                from fastapi import APIRouter
+                from app.api.v1 import portal, widgets
+
+                api_router = APIRouter()
+                api_router.include_router(widgets.router, prefix="/widgets")
+                api_router.include_router(portal.router, prefix="/portal")
+                api_router.include_router(portal.staff_router, prefix="/my")
+            """,
+        },
+    )
+    _commit(root, "factory")
+    code, out = _run(root, base, capsys)
+    assert code == 1
+    assert "/api/v1/portal/requests/mine" in out and "/api/v1/my/requests/mine" in out
+
+
+def test_router_built_by_a_factory_function_resolves(repo, capsys):
+    """`def build_x_router(): router = APIRouter(); ...; return router` then include_router(build_x_router())."""
+    root, base = repo
+    _write(
+        root,
+        {
+            "sorento_crm_backend/app/api/v1/chat_routes.py": """
+                from fastapi import APIRouter
+
+
+                def build_chat_router(kind: str):
+                    router = APIRouter()
+
+                    @router.get("/{entity_id}/messages")
+                    def list_messages(entity_id: str, limit: int = 50):
+                        return []
+
+                    return router
+            """,
+        },
+    )
+    _append(
+        root,
+        PARTS,
+        """
+
+        from app.api.v1.chat_routes import build_chat_router
+
+        router.include_router(build_chat_router("part"))
+        """,
+    )
+    _commit(root, "factory router")
+    code, out = _run(root, base, capsys)
+    assert code == 1
+    assert "/api/v1/widgets/parts/{}/messages" in out
+
+
+def test_route_path_from_module_constants_resolves(repo, capsys):
+    root, base = repo
+    _append(
+        root,
+        PARTS,
+        """
+
+        BASE = "/bins"
+        LINES = BASE + "/{bin_id}/lines"
+
+
+        @router.get(LINES)
+        def list_bin_lines(bin_id: str, page: int = 1):
+            return []
+        """,
+    )
+    _commit(root, "constant path")
+    code, out = _run(root, base, capsys)
+    assert code == 1
+    assert "/api/v1/widgets/parts/bins/{}/lines" in out
+
+
 def test_real_tree_every_get_route_resolves_to_a_full_path():
     """Guards the static resolver against the live backend: no GET route is left unmounted."""
     mod = _load()
     graph = mod.build_graph(mod.Tree(_REPO_ROOT, None).files())
     assert len(graph.routes) > 500
     unresolved = [
-        f"{r.file}:{r.line}" for r in graph.routes if graph.full_paths(r.router) is None
+        f"{r.file}:{r.line}"
+        for r in graph.routes
+        if r.path is None or graph.full_paths(r.router) is None
     ]
     assert unresolved == []
+
+
+def test_static_paths_equal_the_apps_live_get_routes():
+    """The AST resolver serves exactly the GET paths FastAPI registers: nothing missed, nothing invented.
+
+    A new mounting pattern the resolver does not follow turns this red, before it lets a list route
+    slip past the gate.
+    """
+    from fastapi.routing import APIRoute
+
+    from app.main import app
+
+    mod = _load()
+    live = {
+        mod.normalize(r.path) for r in app.routes if isinstance(r, APIRoute) and "GET" in r.methods
+    }
+    graph = mod.build_graph(mod.Tree(_REPO_ROOT, None).files())
+    static: set[str] = set()
+    for r in graph.routes:
+        static |= mod.route_keys(graph, r)
+    assert sorted(static - live) == []
+    assert sorted(live - static) == []

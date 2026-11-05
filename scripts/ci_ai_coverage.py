@@ -121,12 +121,35 @@ def module_name(rel_path: str) -> str:
     return p.replace("/", ".")
 
 
-def _str_kw(call: ast.Call, name: str) -> str | None:
+def _eval_str(node: ast.AST | None, consts: dict[str, str]) -> str | None:
+    """A string literal, a module constant, `+` of those, or an f-string over them; else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _eval_str(node.left, consts), _eval_str(node.right, consts)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for v in node.values:
+            if isinstance(v, ast.FormattedValue):
+                if v.format_spec is not None or v.conversion != -1:
+                    return None
+                v = v.value
+            text = _eval_str(v, consts)
+            if text is None:
+                return None
+            parts.append(text)
+        return "".join(parts)
+    return None
+
+
+def _str_kw(call: ast.Call, name: str, consts: dict[str, str] | None = None) -> str | None:
+    """A keyword's string value; "" when the keyword is absent, None when it cannot be worked out."""
     for kw in call.keywords:
         if kw.arg == name:
-            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                return kw.value.value
-            return None
+            return _eval_str(kw.value, consts or {})
     return ""
 
 
@@ -144,7 +167,7 @@ class Route:
     line: int
     func: str
     router: tuple[str, str]  # (module, variable)
-    path: str  # decorator path, router prefix not included
+    path: str | None  # decorator path, router prefix not included; None = not worked out
     paged: bool
     opt_out: str | None  # None = no comment; "" = comment without a reason
 
@@ -190,29 +213,81 @@ def _resolve_import(graph_modules: set[str], current: str, is_pkg: bool, node: a
     return node.module
 
 
+def _module_stmts(body: list[ast.stmt], into_defs: bool = False):
+    """Statements through if / try / with blocks; into def and class bodies only with `into_defs`.
+
+    Statement level only: walking every expression node of every file (ast.walk) took most of the
+    gate's run time. Imports, routers and mounts sit at module level; route functions also sit in
+    route factories (`def register_x_routes(router): @router.get(...)`), hence `into_defs`.
+    """
+    for node in body:
+        yield node
+        blocks = (ast.If, ast.Try, ast.With, ast.For)
+        if into_defs:
+            blocks = blocks + (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        if isinstance(node, blocks):
+            for name in ("body", "orelse", "finalbody"):
+                inner = getattr(node, name, None)
+                if isinstance(inner, list):
+                    yield from _module_stmts(inner, into_defs)
+        if isinstance(node, ast.Try):
+            for handler in node.handlers:
+                yield from _module_stmts(handler.body, into_defs)
+
+
 def build_graph(files: dict[str, str]) -> Graph:
     g = Graph()
     g.modules = {module_name(p) for p in files}
     parsed: dict[str, tuple[str, ast.Module, list[str]]] = {}
     for rel, src in files.items():
+        # Only files that can declare, mount, re-export or decorate with a router: parsing all
+        # ~1.5k backend files twice took most of a minute.
+        if "router" not in src.lower() and "FastAPI" not in src:
+            continue
         try:
             tree = ast.parse(src, filename=rel)
         except SyntaxError:
             continue
         parsed[rel] = (module_name(rel), tree, src.splitlines())
 
+    # pass 0: module-level string constants (`BASE = "/stock-debt/snapshots"`, `PO = BASE + "/{id}"`)
+    consts: dict[str, dict[str, str]] = {}
+    for rel, (mod, tree, _lines) in parsed.items():
+        table: dict[str, str] = {}
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                value = _eval_str(node.value, table)
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        if value is None:
+                            table.pop(t.id, None)
+                        else:
+                            table[t.id] = value
+        consts[mod] = table
+
     # pass 1: routers declared at module level
     for rel, (mod, tree, _lines) in parsed.items():
-        for node in tree.body:
+        for node in _module_stmts(tree.body):
             if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Call):
                 fn = _call_name(node.value.func)
                 if fn not in ("APIRouter", "FastAPI"):
                     continue
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                prefix = _str_kw(node.value, "prefix") if fn == "APIRouter" else ""
+                prefix = _str_kw(node.value, "prefix", consts[mod]) if fn == "APIRouter" else ""
                 for t in targets:
                     if isinstance(t, ast.Name):
                         g.routers[(mod, t.id)] = prefix
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # a router factory's own router, keyed "<function>()": every file must see it
+                # before pass 3 resolves `include_router(build_x_router(...))` anywhere
+                for inner in _module_stmts(node.body):
+                    if (
+                        isinstance(inner, ast.Assign)
+                        and isinstance(inner.value, ast.Call)
+                        and _call_name(inner.value.func) == "APIRouter"
+                    ):
+                        g.routers[(mod, f"{node.name}()")] = _str_kw(inner.value, "prefix", consts[mod])
 
     # pass 2: every file's import map, and re-exports (`from .x import router` in a package)
     imports: dict[str, dict[str, tuple]] = {}
@@ -221,7 +296,7 @@ def build_graph(files: dict[str, str]) -> Graph:
         is_pkg = rel.endswith("/__init__.py")
         # local name -> ("module", dotted) | ("attr", module, attr)
         names: dict[str, tuple] = {}
-        for node in ast.walk(tree):
+        for node in _module_stmts(tree.body):
             if isinstance(node, ast.ImportFrom):
                 src_mod = _resolve_import(g.modules, mod, is_pkg, node)
                 if not src_mod:
@@ -247,14 +322,68 @@ def build_graph(files: dict[str, str]) -> Graph:
             key = aliases[key]
         return key
 
-    # pass 3: include_router calls and GET routes
+    # Module-level functions and their parameter names, for route factories:
+    # `def register_x_routes(router, ...): @router.get(...)` called as `register_x_routes(some_router)`,
+    # and `def build_x_router(): router = APIRouter(); @router.get(...); return router`.
+    params: dict[tuple[str, str], list[str]] = {}
+    for rel, (mod, tree, _lines) in parsed.items():
+        for node in _module_stmts(tree.body):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                a = node.args
+                params[(mod, node.name)] = [x.arg for x in a.posonlyargs + a.args + a.kwonlyargs]
+
+    def func_key(names: dict[str, tuple], mod: str, expr: ast.AST) -> tuple[str, str] | None:
+        key: tuple[str, str] | None = None
+        if isinstance(expr, ast.Name):
+            if (mod, expr.id) in params:
+                return (mod, expr.id)
+            ref = names.get(expr.id)
+            if ref and ref[0] == "attr":
+                key = (ref[1], ref[2])
+        elif isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+            ref = names.get(expr.value.id)
+            if ref and ref[0] == "module":
+                key = (ref[1], expr.attr)
+        for _ in range(8):
+            if key is None or key in params or key not in aliases:
+                break
+            key = aliases[key]
+        return key if key in params else None
+
+    # factory (module, function) -> [(parameter name, Route without its router)]
+    factory_routes: dict[tuple[str, str], list[tuple[str, Route]]] = {}
+    # factory -> [(its parameter name, inner factory, inner parameter name)]
+    factory_calls: dict[tuple[str, str], list[tuple[str, tuple[str, str], str]]] = {}
+    # (factory, parameter name, router key the caller passed)
+    applications: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
+
+    def call_bindings(fkey: tuple[str, str], call: ast.Call) -> list[tuple[str, ast.AST]]:
+        names_ = params[fkey]
+        out = [(names_[i], arg) for i, arg in enumerate(call.args) if i < len(names_)]
+        out += [(kw.arg, kw.value) for kw in call.keywords if kw.arg]
+        return out
+
+    # pass 3: include_router calls, factory calls and GET routes
     for rel, (mod, tree, lines) in parsed.items():
         names = imports[rel]
+        call_assigns: dict[str, ast.Call] = {}
+        for node in _module_stmts(tree.body):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                for t in node.targets:
+                    if isinstance(t, ast.Name) and (mod, t.id) not in g.routers:
+                        call_assigns[t.id] = node.value
 
-        def router_key(expr: ast.AST) -> tuple[str, str] | None:
+        def router_key(expr: ast.AST, depth: int = 0) -> tuple[str, str] | None:
+            if isinstance(expr, ast.Call):
+                fkey = func_key(names, mod, expr.func)
+                if fkey and (fkey[0], f"{fkey[1]}()") in g.routers:
+                    return (fkey[0], f"{fkey[1]}()")
+                return None
             if isinstance(expr, ast.Name):
                 if (mod, expr.id) in g.routers:
                     return (mod, expr.id)
+                if expr.id in call_assigns and depth < 4:
+                    return router_key(call_assigns[expr.id], depth + 1)
                 ref = names.get(expr.id)
                 if ref and ref[0] == "attr":
                     return canon((ref[1], ref[2]))
@@ -278,21 +407,51 @@ def build_graph(files: dict[str, str]) -> Graph:
                 return canon((target, chain[-1]))
             return None
 
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "include_router"
-                and node.args
-            ):
+        # routers built inside a factory: `def build_x(): router = APIRouter(...)`
+        local_routers: dict[str, dict[str, tuple[str, str]]] = {}
+        for fn in _module_stmts(tree.body):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in _module_stmts(fn.body):
+                if (
+                    isinstance(node, ast.Assign)
+                    and isinstance(node.value, ast.Call)
+                    and _call_name(node.value.func) == "APIRouter"
+                ):
+                    key = (mod, f"{fn.name}()")
+                    g.routers[key] = _str_kw(node.value, "prefix", consts[mod])
+                    for t in node.targets:
+                        if isinstance(t, ast.Name):
+                            local_routers.setdefault(fn.name, {})[t.id] = key
+
+        for stmt in _module_stmts(tree.body):
+            node = stmt.value if isinstance(stmt, ast.Expr) else None
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "include_router" and node.args:
                 parent = router_key(node.func.value)
                 child = router_key(node.args[0])
                 if parent and child:
-                    g.mounts.setdefault(child, []).append((parent, _str_kw(node, "prefix")))
-
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    g.mounts.setdefault(child, []).append((parent, _str_kw(node, "prefix", consts[mod])))
                 continue
+            fkey = func_key(names, mod, node.func)
+            if fkey:
+                for pname, arg in call_bindings(fkey, node):
+                    rkey = router_key(arg)
+                    if rkey and rkey in g.routers:
+                        applications.append((fkey, pname, rkey))
+
+        def walk_defs(body: list[ast.stmt], enclosing: ast.AST | None):
+            for node in _module_stmts(body):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield node, enclosing
+                    yield from walk_defs(node.body, node if enclosing is None else enclosing)
+                elif isinstance(node, ast.ClassDef):
+                    yield from walk_defs(node.body, enclosing)
+
+        for node, factory in walk_defs(tree.body, None):
+            fparams = params.get((mod, factory.name), []) if factory is not None else []
+            local = local_routers.get(factory.name, {}) if factory is not None else {}
             for dec in node.decorator_list:
                 if not (
                     isinstance(dec, ast.Call)
@@ -300,27 +459,63 @@ def build_graph(files: dict[str, str]) -> Graph:
                     and dec.func.attr == "get"
                 ):
                     continue
-                rkey = router_key(dec.func.value)
-                if rkey is None or rkey not in g.routers:
-                    continue  # not an APIRouter / FastAPI object declared under app/
-                if dec.args and isinstance(dec.args[0], ast.Constant) and isinstance(dec.args[0].value, str):
-                    path = dec.args[0].value
+                base = dec.func.value
+                if dec.args:
+                    path = _eval_str(dec.args[0], consts[mod])
                 else:
-                    path = _str_kw(dec, "path") or ""
+                    path = _str_kw(dec, "path", consts[mod])
                 all_args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
-                paged = any(a.arg in PAGED_PARAMS for a in all_args)
                 first_line = min([d.lineno for d in node.decorator_list] + [node.lineno])
-                g.routes.append(
-                    Route(
-                        file=rel,
-                        line=dec.lineno,
-                        func=node.name,
-                        router=rkey,
-                        path=path,
-                        paged=paged,
-                        opt_out=_opt_out_above(lines, first_line),
-                    )
+                route = Route(
+                    file=rel,
+                    line=dec.lineno,
+                    func=node.name,
+                    router=("", ""),
+                    path=path,
+                    paged=any(a.arg in PAGED_PARAMS for a in all_args),
+                    opt_out=_opt_out_above(lines, first_line),
                 )
+                if isinstance(base, ast.Name) and base.id in local:
+                    route.router = local[base.id]
+                elif isinstance(base, ast.Name) and base.id in fparams:
+                    factory_routes.setdefault((mod, factory.name), []).append((base.id, route))
+                    continue
+                else:
+                    rkey = router_key(base)
+                    if rkey is None or rkey not in g.routers:
+                        continue  # not an APIRouter / FastAPI object declared under app/
+                    route.router = rkey
+                g.routes.append(route)
+
+        # factories that pass their router parameter to another factory
+        for fn in _module_stmts(tree.body):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            fparams = params.get((mod, fn.name), [])
+            for stmt in _module_stmts(fn.body):
+                node = stmt.value if isinstance(stmt, ast.Expr) else None
+                if not isinstance(node, ast.Call):
+                    continue
+                inner = func_key(names, mod, node.func)
+                if not inner:
+                    continue
+                for pname, arg in call_bindings(inner, node):
+                    if isinstance(arg, ast.Name) and arg.id in fparams:
+                        factory_calls.setdefault((mod, fn.name), []).append((arg.id, inner, pname))
+
+    # pass 4: instantiate factory routes on the routers their callers passed
+    def apply(fkey: tuple[str, str], pname: str, rkey: tuple[str, str], depth: int = 0) -> None:
+        if depth > 6:
+            return
+        for p, route in factory_routes.get(fkey, []):
+            if p == pname:
+                g.routes.append(Route(**{**route.__dict__, "router": rkey}))
+        for p, inner, inner_p in factory_calls.get(fkey, []):
+            if p == pname:
+                apply(inner, inner_p, rkey, depth + 1)
+
+    for fkey, pname, rkey in applications:
+        apply(fkey, pname, rkey)
     return g
 
 
@@ -346,6 +541,9 @@ def normalize(path: str) -> str:
 
 
 def route_keys(g: Graph, r: Route) -> set[str]:
+    if r.path is None:
+        # a path the AST cannot evaluate: keyed by function, so an edit still matches the base
+        return {f"?{module_name(r.file)}.{r.func}"}
     full = g.full_paths(r.router)
     if full is None:
         prefix = g.routers.get(r.router) or ""
