@@ -317,6 +317,25 @@ def assert_pending_action_allowed(
         )
         if found is None:
             raise handle_not_found("Sales Opportunity", entity_id)
+    elif action_key == "sales_target.delete":
+        # `sales.targets.view_own` (AI-TOOLS-WAVE2): only their own agents' agent targets.
+        if not user_is_limited(db, actor_id, TARGETS_VIEW, TARGETS_VIEW_OWN):
+            return
+        import uuid
+
+        from app.models.sales import SalesTarget
+
+        try:
+            uuid.UUID(str(entity_id))
+        except (TypeError, ValueError):
+            raise handle_not_found("Target", entity_id)
+        found = (
+            db.query(SalesTarget.id)
+            .filter(SalesTarget.id == str(entity_id), sales_target_clause(me(db, actor_id)))
+            .first()
+        )
+        if found is None:
+            raise handle_not_found("Target", entity_id)
     elif action_key in _PROJECT_ACTIONS_REFUSED:
         if user_is_limited(db, actor_id, PROJECTS_VIEW, PROJECTS_VIEW_OWN):
             raise AppException(

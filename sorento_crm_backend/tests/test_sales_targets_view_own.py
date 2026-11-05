@@ -209,3 +209,34 @@ def test_O10_the_slug_is_registered_and_seeded_to_no_role():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert len(module.revision) <= 32
+
+
+def test_O11_writes_follow_the_own_rule(scene):
+    """Security review round 2: with `.edit` / `.add` / `.delete` beside `view_own`, a write on another agent's
+    target is a 404 (it never answers with that target's figures), creating one for another agent is refused,
+    and the deferred delete repeats the rule."""
+    from app.services import own_scope
+    from app.services.error_handler import AppException
+
+    db, me_user, t = scene
+    perms = [VIEW_OWN, "sales.targets.add", "sales.targets.edit", "sales.targets.delete"]
+    client, originals = _client_as(db, me_user, perms)
+    try:
+        other = t["other"]["id"]
+        assert client.patch(f"{BASE}/{other}", json={"name": "ZZT renamed"}).status_code == 404
+        assert client.post(f"{BASE}/{other}/duplicate").status_code == 404
+        assert client.delete(f"{BASE}/{other}").status_code == 404
+        assert client.patch(f"{BASE}/{t['mine']['id']}", json={"name": "ZZT mine renamed"}).status_code == 200
+        body = {
+            "subject_kind": "agent", "name": "ZZT new", "metric": "amount", "basis": "ordered",
+            "product_scope": "all", "start_date": "2026-11-01", "end_date": "2026-11-30", "target_value": 1,
+        }
+        other_agent = db.get(type(t["agent_mine"]), next(iter([t["other"]["sales_agent_id"]])))
+        assert client.post(BASE, json={**body, "sales_agent_id": other_agent.id}).status_code == 403
+        assert client.post(BASE, json={**body, "sales_agent_id": t["agent_mine"].id}).status_code == 201
+        with pytest.raises(AppException) as info:
+            own_scope.assert_pending_action_allowed(db, "sales_target.delete", other, me_user)
+        assert info.value.status_code == 404
+        own_scope.assert_pending_action_allowed(db, "sales_target.delete", t["mine"]["id"], me_user)
+    finally:
+        _restore(originals)

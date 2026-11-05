@@ -339,6 +339,12 @@ def create_target(
     db: Session = Depends(get_db),
 ):
     try:
+        own = _own_agents(db, user)
+        if own is not None and not (payload.subject_kind == "agent" and payload.sales_agent_id in own):
+            # An own-only holder writes only their own agents' agent targets (security review, wave 2).
+            raise AppException(
+                status_code=403, message="You can set targets only for your own agents.", code="NOT_OWN_AGENT"
+            )
         with db.begin_nested():
             target = target_service.create_target(db, payload, user_id=_user_id(user))
         db.commit()
@@ -370,7 +376,7 @@ def update_target(
 ):
     """The header, the commission tiers and every changed figure in one request (F1, F2)."""
     try:
-        target = _load(db, target_id)
+        target = _load(db, target_id, user)
         with db.begin_nested():
             target_service.update_target(db, target, payload, user_id=_user_id(user))
         db.commit()
@@ -385,11 +391,11 @@ def update_period(
     target_id: str,
     period_id: str,
     payload: SalesTargetPeriodUpdate,
-    _user: dict = Depends(require_permission(EDIT)),
+    user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     try:
-        target = _load(db, target_id)
+        target = _load(db, target_id, user)
         validate_uuid_path(period_id, resource="Period")
         with db.begin_nested():
             target_service.update_period(db, target, period_id, payload.target_value)
@@ -409,7 +415,7 @@ def duplicate_target(
     db: Session = Depends(get_db),
 ):
     try:
-        source = _load(db, target_id)
+        source = _load(db, target_id, user)
         with db.begin_nested():
             copy = target_service.duplicate_target(db, source, user_id=_user_id(user))
         db.commit()
@@ -431,7 +437,7 @@ def add_child(
     """Add figure (S1-28): returns the team target, re-summed."""
     try:
         validate_uuid_path(payload.sales_agent_id, resource="Sales Agent")
-        parent = _load(db, target_id)
+        parent = _load(db, target_id, user)
         with db.begin_nested():
             target_service.add_child(
                 db, parent, payload.sales_agent_id, payload.target_value, user_id=_user_id(user)
@@ -446,12 +452,12 @@ def add_child(
 @router.delete("/{target_id}")
 def delete_target(
     target_id: str,
-    _user: dict = Depends(require_permission(DELETE)),
+    user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
 ):
     """Immediate hard delete. The screens park `sales_target.delete` instead (D7)."""
     try:
-        target = _load(db, target_id)
+        target = _load(db, target_id, user)
         name = target.name
         with db.begin_nested():
             target_service.delete_target(db, target)
