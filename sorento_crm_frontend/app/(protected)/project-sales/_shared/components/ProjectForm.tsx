@@ -349,10 +349,10 @@ export function ProjectForm(props: ProjectFormProps) {
   const matches =
     mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
   const blockingCandidate = matches.find((candidate) => candidate.blocks);
-  // Every other match, in EVERY stage and outcome (won, lost, dormant included), is listed
-  // with its code, stage, outcome and owner so the user can judge it (PROJECT-CLASH-LOST):
-  // a "No clash" over a hidden Won project of the same name read as a missed duplicate.
-  const otherMatches = matches.filter((candidate) => candidate !== blockingCandidate);
+  // Every match is listed with its code, stage, outcome and owner (PROJECT-CLASH-LOST). The
+  // server blocks a strong match in EVERY outcome (owner, 5 Nov: "if got match then should
+  // follow the same clash path"), so each of those reads "Clash:"; only a weak lookalike the
+  // server leaves non-blocking reads "Existing:".
   /** The one result block of a Check, the same in create and edit. */
   const checkResult = checkFailed ? (
     <p className="text-sm text-destructive" role="alert">
@@ -365,12 +365,13 @@ export function ProjectForm(props: ProjectFormProps) {
       </p>
     ) : (
       <div className="min-w-0 space-y-1.5" aria-live="polite">
-        {blockingCandidate && (
-          <ClashMatchLine candidate={blockingCandidate} label="Clash:" blocking />
+        {matches.map((candidate) =>
+          candidate.blocks ? (
+            <ClashMatchLine key={candidate.project_id} candidate={candidate} label="Clash:" blocking />
+          ) : (
+            <ClashMatchLine key={candidate.project_id} candidate={candidate} label="Existing:" />
+          ),
         )}
-        {otherMatches.map((candidate) => (
-          <ClashMatchLine key={candidate.project_id} candidate={candidate} label="Existing:" />
-        ))}
       </div>
     )
   ) : null;
@@ -1319,7 +1320,14 @@ function ClashMatchLine({
         {candidate.title}
       </p>
       {facts.length > 0 && (
-        <p className="break-words text-xs text-muted-foreground">{facts.join(' · ')}</p>
+        // Separate muted items, no separator glyph (owner, 5 Nov: no middle dots).
+        <p className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+          {facts.map((fact, index) => (
+            <span key={index} className="break-words">
+              {fact}
+            </span>
+          ))}
+        </p>
       )}
     </div>
   );

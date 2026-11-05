@@ -115,7 +115,11 @@ def _funnel(db):
 
 
 def test_a_won_and_a_lost_project_of_the_same_title_are_both_returned_with_no_developer():
-    """The owner's case: title "test", Developer empty, PPF2611001 "test" is Won."""
+    """The owner's case: title "test", Developer empty, PPF2611001 "test" is Won.
+
+    Owner hand test (5 Nov): "if got match then should follow the same clash path", so a
+    Won, Lost or Dormant match blocks exactly like an Open one.
+    """
     with blank_session() as db:
         company_id = _sorento(db)
         # One developer each: (company, developer, title) is unique.
@@ -135,8 +139,48 @@ def test_a_won_and_a_lost_project_of_the_same_title_are_both_returned_with_no_de
         assert {won.id, lost.id, dormant.id} <= set(by_id)
         assert by_id[won.id].outcome == "won"
         assert by_id[lost.id].outcome == "lost"
-        # Only an open pursuit locks the development; a closed one is shown, not blocking.
-        assert not any(by_id[pid].blocks for pid in (won.id, lost.id, dormant.id))
+        assert all(by_id[pid].blocks for pid in (won.id, lost.id, dormant.id))
+
+
+def test_registering_the_title_of_a_won_project_is_refused_server_side():
+    """The form is not the guard: a direct register call must hit the same clash path."""
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        developer = _developer(db, company_id)
+        _project(db, company_id, title="Menara Won Test", outcome="won", developer=developer)
+        owner = _user(db)
+
+        try:
+            project_service.register_project(
+                db,
+                company_id=company_id,
+                actor_user_id=owner,
+                developer_party_id=developer.id,
+                title="Menara Won Test",
+            )
+        except AppException as exc:
+            assert exc.status_code == 409
+        else:
+            raise AssertionError("a Won match must block a new registration")
+
+
+def test_a_weak_lookalike_of_a_won_project_stays_context():
+    """Only a match that would block if Open blocks: generic-noun lookalikes stay context."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        developer = _developer(db, company_id)
+        other = _project(
+            db, company_id, title="The Wyn Residence", outcome="won", developer=developer
+        )
+
+        clashes = find_clashes(
+            db, company_id=company_id, developer_party_id=developer.id, title="Taiga Residence"
+        )
+
+        match = next((c for c in clashes if c.project_id == other.id), None)
+        assert match is not None and match.blocks is False
 
 
 def test_the_preview_serialiser_carries_stage_outcome_and_owner_for_a_closed_match():

@@ -602,7 +602,8 @@ describe('D2 a blocking clash becomes Register interest', () => {
     expect(within(line).getByRole('link', { name: 'PRJ-000009' })).toHaveAttribute('href', '/project-sales/p9');
     expect(within(line).queryByRole('button')).toBeNull();
     // PROJECT-CLASH-LOST: the owner asked to see each clash's outcome and owner to decide.
-    expect(screen.getByText('Open · Manager M')).toBeInTheDocument();
+    expect(screen.getByText('Open')).toBeInTheDocument();
+    expect(screen.getByText('Manager M')).toBeInTheDocument();
     expect(screen.queryByText(/Stage:|Owner:|%/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Ask to join|Dispute/ })).toBeNull();
     expect(screen.queryByText(/Blocked by an existing project/)).toBeNull();

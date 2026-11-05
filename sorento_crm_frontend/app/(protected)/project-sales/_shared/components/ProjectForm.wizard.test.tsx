@@ -455,27 +455,38 @@ describe('AC-W2 / AC-W3 no blocking clash', () => {
       expect(linesWithText('Existing: PRJ-000010 Setia Alam Phase 3C CONTOH')).toHaveLength(1),
     );
     expect(screen.queryByText('No clash')).toBeNull();
-    expect(screen.getByText('Open · Sales B')).toBeInTheDocument();
+    expect(screen.getByText('Open')).toBeInTheDocument();
+    expect(screen.getByText('Sales B')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
   });
 
-  it('PROJECT-CLASH-LOST a Won and a Lost project of the same title are both shown, never "No clash"', async () => {
+  it('PROJECT-CLASH-LOST a Won and a Lost match follow the clash path: Clash lines, secondary lead, no Next', async () => {
+    // The server blocks on any strong match whatever its outcome (owner hand test, 5 Nov).
     clashAnswer = () => ({
       candidates: [
         { ...SIMILAR, project_id: 'w1', project_code: 'PPF2611001', title: 'test', outcome: 'won',
-          status_label: 'Sponsorship Form', owner_name: 'Teh Jayson', similarity: 1 },
+          status_label: 'Sponsorship Form', owner_name: 'Teh Jayson', similarity: 1, blocks: true },
         { ...SIMILAR, project_id: 'l1', project_code: 'PPF2611002', title: 'test', outcome: 'lost',
-          status_label: 'Lost', owner_name: 'Sales B', similarity: 1 },
+          status_label: 'Lost', owner_name: 'Sales B', similarity: 1, blocks: true },
       ],
-      would_block: false,
+      would_block: true,
     });
     renderForm();
     await runCheck('test');
-    await waitFor(() => expect(linesWithText('Existing: PPF2611001 test')).toHaveLength(1));
-    expect(linesWithText('Existing: PPF2611002 test')).toHaveLength(1);
-    expect(screen.getByText('Sponsorship Form · Won · Teh Jayson')).toBeInTheDocument();
-    expect(screen.getByText('Lost · Sales B')).toBeInTheDocument();
+    await waitFor(() => expect(linesWithText('Clash: PPF2611001 test')).toHaveLength(1));
+    expect(linesWithText('Clash: PPF2611002 test')).toHaveLength(1);
+    expect(screen.queryByText(/^Existing:/)).toBeNull();
     expect(screen.queryByText('No clash')).toBeNull();
+    // Stage, outcome and owner as separate items, never joined with a middle dot.
+    for (const fact of ['Sponsorship Form', 'Won', 'Teh Jayson', 'Sales B']) {
+      expect(screen.getByText(fact)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Lost')).toHaveLength(1); // stage Lost, outcome Lost said once
+    expect(document.body.textContent).not.toContain('\u00b7');
+    expect(
+      await screen.findByRole('button', { name: 'Register as secondary lead on PPF2611001' }),
+    ).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
     expect(screen.getByRole('link', { name: 'PPF2611001' })).toHaveAttribute(
       'href',
       '/project-sales/w1',
