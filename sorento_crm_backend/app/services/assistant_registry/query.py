@@ -393,10 +393,10 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
             item["link"] = entity.screen_path.format(id=data["id"])
         item.update({f: _plain(data[f]) for f in shown})
         out_rows.append(item)
-    result = {"entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows)}
-    if restricted:
-        result["restricted"] = restricted
-    return result
+    return {
+        "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
+        "restricted": restricted,
+    }
 
 
 def _group_key(paths: _Paths, item: Any) -> tuple[str, Any]:

@@ -2,14 +2,15 @@
 
 Two `UserRead`s, run in process as the user (`writes.run_as_user`), on the panel and on a WhatsApp turn whose
 contact has a linked active user; never for a contact principal (`writes.permitted_user_reads`). The read needs no
-slug of its own: each entity's screen slug, own-row rule, field slugs and module switch are checked inside
-(`assistant_registry.query`). Linked-only: when a console operator acts for someone else, a group total cannot be
+slug of its own beyond holding one registered entity's view or own slug: each entity's screen slug, own-row
+rule, field slugs and module switch are checked inside (`assistant_registry.query`). Linked-only: when a console operator acts for someone else, a group total cannot be
 cut down to what both people may see, so the tools are not offered then.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from app.services.assistant_registry import ENTITIES
 from app.services.assistant_registry.query import MAX_GROUPS, MAX_ROWS, QueryRefused, describe, run_query
 from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.tools import TOOL_LABELS, ToolResult, cap_result
@@ -55,71 +56,29 @@ def _describe(db, ctx, args: dict) -> ToolResult:
     return _as_user(db, ctx, DESCRIBE, lambda user_id: describe(db, user_id, entity))
 
 
-_FIELD = {"type": "string"}
-_SCALAR = {"type": ["string", "number", "boolean", "null"]}
-
 QUERY_SCHEMA = {
     "type": "function",
     "function": {
         "name": QUERY,
         "description": (
-            "Read CRM records as the screens show them: rows, filters, totals and group-by over one entity. "
-            "Call crm_describe first for the entity keys and fields. Fields may go through relations "
-            "(supplier.name). With group_by or aggregates you get groups, else rows (each with id and link). "
-            f"At most {MAX_ROWS} rows or {MAX_GROUPS} groups; `total` and `truncated` say if there are more. "
-            "Dates are Malaysian dates (YYYY-MM-DD)."
+            "Read CRM records as their screens show them: rows, or totals with group_by. Entity keys and fields "
+            "come from crm_describe; a field may go through a relation (supplier.name). "
+            "filters: [{field, op, value}], op one of eq ne in not_in lt lte gt gte between contains starts_with "
+            "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
+            "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
+            f"sorts by its key or an aggregate alias such as sum_total_amount). At most {MAX_ROWS} rows or "
+            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian, YYYY-MM-DD."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "entity": _FIELD,
-                "fields": {"type": "array", "items": _FIELD},
-                "filters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "field": _FIELD,
-                            "op": {"type": "string", "enum": [
-                                "eq", "ne", "in", "not_in", "lt", "lte", "gt", "gte", "between", "contains",
-                                "starts_with", "is_null", "is_not_null",
-                            ]},
-                            "value": {"anyOf": [_SCALAR, {"type": "array", "items": _SCALAR}]},
-                        },
-                        "required": ["field", "op"],
-                    },
-                },
-                "group_by": {
-                    "type": "array",
-                    "items": {"anyOf": [_FIELD, {
-                        "type": "object",
-                        "properties": {
-                            "field": _FIELD,
-                            "bucket": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
-                        },
-                        "required": ["field"],
-                    }]},
-                },
-                "aggregates": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "fn": {"type": "string", "enum": ["count", "count_distinct", "sum", "avg", "min", "max"]},
-                            "field": _FIELD,
-                        },
-                        "required": ["fn"],
-                    },
-                },
-                "sort": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"field": _FIELD, "dir": {"type": "string", "enum": ["asc", "desc"]}},
-                        "required": ["field"],
-                    },
-                },
-                "limit": {"type": "integer", "minimum": 1},
+                "entity": {"type": "string"},
+                "fields": {"type": "array", "items": {"type": "string"}},
+                "filters": {"type": "array", "items": {"type": "object"}},
+                "group_by": {"type": "array"},
+                "aggregates": {"type": "array", "items": {"type": "object"}},
+                "sort": {"type": "array", "items": {"type": "object"}},
+                "limit": {"type": "integer"},
             },
             "required": ["entity"],
         },
@@ -134,15 +93,21 @@ DESCRIBE_SCHEMA = {
             "Without entity: the CRM entities this user may read with crm_query. With entity: its fields "
             "(type, restricted), relations, filter ops, date buckets, aggregates and limits."
         ),
-        "parameters": {"type": "object", "properties": {"entity": _FIELD}},
+        "parameters": {"type": "object", "properties": {"entity": {"type": "string"}}},
     },
 }
 
+#: Offered to a user who may read at least one registered entity (its view or own slug); each entity's own
+#: slugs are checked again inside every call.
+ANY_ENTITY = tuple(sorted({
+    slug for e in ENTITIES.values() for slug in (e.view_permission, e.own_permission) if slug
+}))
+
 writes.USER_READS[QUERY] = writes.UserRead(
-    name=QUERY, user_permission="", schema=QUERY_SCHEMA, run=_query, linked_only=True,
+    name=QUERY, user_permission=ANY_ENTITY, schema=QUERY_SCHEMA, run=_query, linked_only=True,
 )
 writes.USER_READS[DESCRIBE] = writes.UserRead(
-    name=DESCRIBE, user_permission="", schema=DESCRIBE_SCHEMA, run=_describe, linked_only=True,
+    name=DESCRIBE, user_permission=ANY_ENTITY, schema=DESCRIBE_SCHEMA, run=_describe, linked_only=True,
 )
 TOOL_LABELS.setdefault(QUERY, "reading CRM records, totals and groupings")
 TOOL_LABELS.setdefault(DESCRIBE, "listing the CRM records you can read")
