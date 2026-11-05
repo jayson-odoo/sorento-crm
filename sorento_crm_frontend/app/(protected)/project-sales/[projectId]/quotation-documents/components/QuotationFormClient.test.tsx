@@ -109,6 +109,7 @@ const listQuotationVersions = vi.fn();
 const listQuotationLines = vi.fn();
 const listSeries = vi.fn();
 const replaceQuotationLines = vi.fn();
+const recomputeQuotationVersion = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -124,6 +125,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
     listSeries: (...args: unknown[]) => listSeries(...args),
     replaceQuotationLines: (...args: unknown[]) =>
       replaceQuotationLines(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
     judgeQuotationLine: vi.fn(async () => ({
       is_non_standard: false,
       is_below_floor: false,
@@ -358,11 +360,17 @@ function renderForm(documentId?: string) {
 }
 
 /** The form's own tabs (#1341, owner: "header stays in header tab"). */
-async function openTab(name: 'Header' | 'Lines' | 'Cover letter' | 'Terms') {
+async function openTab(name: 'Header' | 'Cover letter' | 'Terms') {
   fireEvent.mouseDown(await screen.findByRole('tab', { name }), { button: 0 });
   await waitFor(() =>
     expect(screen.getByRole('tab', { name })).toHaveAttribute('data-state', 'active'),
   );
+}
+
+/** The form's own tabs (Header, Cover letter, Terms); the area strip below is its own tablist. */
+async function formTabNames() {
+  const strips = await screen.findAllByRole('tablist');
+  return within(strips[0]).getAllByRole('tab').map((tab) => tab.textContent);
 }
 
 /** The open scope's card, by the name its strip tab carries. */
@@ -370,9 +378,12 @@ function scopeCard(name: string) {
   return screen.getByRole('region', { name });
 }
 
-/** The Lines tab, open, with the scope's line table drawn and ready to type into. */
+/**
+ * The lines, open, with the scope's line table drawn and ready to type into. They sit on the
+ * Header tab under the letterhead (PROPOSAL-HEADER-LAYOUT); there is no Lines tab.
+ */
 async function openLines(scope = 'Scope 1') {
-  await openTab('Lines');
+  await openTab('Header');
   const card = await waitFor(() => scopeCard(scope));
   await within(card).findByRole('button', { name: 'Add a line' });
   return card;
@@ -840,7 +851,7 @@ describe('QuotationFormClient edit', () => {
   it('AC-QF023: a scope the customer holds shows its lines read-only and never sends them', async () => {
     listQuotationVersions.mockResolvedValue([version({ is_editable: false })]);
     renderForm('d1');
-    await openTab('Lines');
+    await openTab('Header');
     const card = await waitFor(() => scopeCard('Townhouse'));
     await within(card).findByText('Wall-hung WC');
 
@@ -954,23 +965,17 @@ describe('QuotationFormClient guards', () => {
  * create as well", "yes can, header only is fine".
  */
 describe('QuotationFormClient tabs (AC-QF055)', () => {
-  it('create reads Header, Lines, Cover letter, Terms as tabs, not stacked sections', async () => {
+  // No Lines tab since PROPOSAL-HEADER-LAYOUT: the lines sit under the letterhead on Header.
+  it('create reads Header, Cover letter, Terms as tabs; Header holds the letterhead and the lines', async () => {
     renderForm();
 
-    const tabs = await screen.findAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual([
-      'Header',
-      'Lines',
-      'Cover letter',
-      'Terms',
-    ]);
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
     expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('data-state', 'active');
-    // Header is open: its fields are on screen and the scopes are not.
     expect(await screen.findByRole('textbox', { name: 'Your Ref' })).toBeInTheDocument();
-    expect(screen.queryByRole('region', { name: 'Scope 1' })).toBeNull();
-
     await openLines();
     expect(scopeCard('Scope 1')).toBeInTheDocument();
+
+    await openTab('Terms');
     expect(screen.queryByRole('textbox', { name: 'Your Ref' })).toBeNull();
   });
 
@@ -982,16 +987,11 @@ describe('QuotationFormClient tabs (AC-QF055)', () => {
     }
   });
 
-  it('edit uses the same four tabs in the same order', async () => {
+  it('edit uses the same three tabs in the same order', async () => {
     renderForm('d1');
 
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
-      'Header',
-      'Lines',
-      'Cover letter',
-      'Terms',
-    ]);
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
   });
 });
 
@@ -1050,16 +1050,16 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
     );
   });
 
-  it('still refuses a scope that has lines but no name, and opens Lines to show it', async () => {
+  it('still refuses a scope that has lines but no name, and opens Header (where the lines are) to show it', async () => {
     renderForm();
     const card = await openLines();
     fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
-    await openTab('Header');
+    await openTab('Terms');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(await screen.findByText(/Every scope needs a name/i)).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('data-state', 'active');
     expect(createQuotationDocument).not.toHaveBeenCalled();
   });
 });
@@ -1153,7 +1153,7 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
   it('Remove scope from the menu has the same staged result as the button: gone now, one PATCH on Save', async () => {
     renderForm('d1');
     const card = await waitFor(() => scopeCard('Townhouse'), { timeout: 3000 }).catch(async () => {
-      await openTab('Lines');
+      await openTab('Header');
       return waitFor(() => scopeCard('Townhouse'));
     });
     expect(card).toBeInTheDocument();
@@ -1750,5 +1750,83 @@ describe('QuotationFormClient: an unsaved line keeps its product code across a s
     const picker = await within(back).findByRole('combobox', { name: 'Product on SRT-BASIN-02' });
     expect(picker).toHaveTextContent('SRT-BASIN-02');
     expect(within(back).queryByText('Selected product')).toBeNull();
+  });
+});
+
+
+// ---------------------------------------------------------------------------------------------
+// PROPOSAL-HEADER-LAYOUT, owner hand test (5 Nov 2026): "the Lines also should be align with the
+// view page also". The form reads like the view: no Lines tab, the lines under the letterhead on
+// the Header tab, no per-area Won/Lost pill, no version row; the version and Recheck alerts sit in
+// the record card at the top, as on the view page.
+// ---------------------------------------------------------------------------------------------
+describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT)', () => {
+  it('F1: create and edit read Header, Cover letter, Terms (no Lines tab)', async () => {
+    const { unmount } = renderForm();
+    await screen.findByLabelText('Your Ref');
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
+    unmount();
+
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    expect(await formTabNames()).toEqual(['Header', 'Cover letter', 'Terms']);
+  });
+
+  it('F2: the Header tab holds the letterhead fields AND the editable lines under them', async () => {
+    renderForm('d1');
+
+    expect(await screen.findByRole('textbox', { name: 'Your Ref' })).toBeInTheDocument();
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    expect(await within(card).findByRole('button', { name: 'Add a line' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Add a section' })).toBeInTheDocument();
+  });
+
+  it('F3: no per-area Won/Lost pill anywhere on the form', async () => {
+    listQuotations.mockResolvedValue([{ ...SCOPE, outcome: 'won' }]);
+    getQuotationDocument.mockResolvedValue(
+      document({
+        scopes: [{ ...document().scopes![0], outcome: 'won' }],
+      }),
+    );
+    renderForm('d1');
+
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(screen.queryByText('Won')).toBeNull();
+  });
+
+  it('F4: no version row above the lines; the version is a chip in the record card', async () => {
+    renderForm('d1');
+
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(
+      screen
+        .queryAllByRole('button', { name: /^v\d/ })
+        .filter((button) => button.hasAttribute('aria-current')),
+    ).toHaveLength(0);
+    expect(within(card).queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    const header = await screen.findByTestId('record-header-card');
+    expect(within(header).getByRole('heading', { name: 'PRJQ-2026-0002' })).toBeInTheDocument();
+    expect(await within(header).findByText('v1')).toBeInTheDocument();
+  });
+
+  // Owner hand test (5 Nov 2026) struck Recheck alerts from the edit page: it lives in the view
+  // page's gear only.
+  it('F5: the edit page offers no Recheck alerts, in the card or above the lines', async () => {
+    renderForm('d1');
+
+    const header = await screen.findByTestId('record-header-card');
+    const card = await waitFor(() => scopeCard('Townhouse'));
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(within(header).getByText('v1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    expect(recomputeQuotationVersion).not.toHaveBeenCalled();
+  });
+
+  it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {
+    renderForm();
+    await screen.findByRole('textbox', { name: 'Your Ref' });
+    expect(screen.queryByTestId('record-header-card')).toBeNull();
   });
 });

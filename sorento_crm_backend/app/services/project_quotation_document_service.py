@@ -878,6 +878,13 @@ def project_quotation(db: Session, project_id: str) -> Optional[ProjectQuotation
     )
 
 
+def _stage_label(db: Session, project: Project) -> Optional[str]:
+    """The label the user sees on the project's current stage (an admin may rename it)."""
+    from app.models.status import Status
+
+    return db.query(Status.label).filter(Status.id == project.status_id).scalar()
+
+
 def make_quotation(
     db: Session,
     *,
@@ -910,6 +917,17 @@ def make_quotation(
     if project is None:
         raise AppException(
             status_code=404, message="Project not found.", code="project_not_found"
+        )
+    if project.outcome == "dormant":
+        # A Dormant stage makes the outcome dormant (PROJECT-CLASH-LOST): say which stage
+        # stops it, as the admin may have renamed it.
+        raise AppException(
+            status_code=409,
+            message=(
+                f"This project is on the {_stage_label(db, project) or 'Dormant'}"
+                " stage, so it cannot get a quotation."
+            ),
+            code="project_dormant",
         )
     if project.outcome == "lost":
         raise AppException(

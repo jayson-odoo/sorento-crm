@@ -272,10 +272,11 @@ def test_be1_other_moves_leave_outcome_and_reason_alone(seeded):
     db.refresh(other)
     assert other.outcome == "open"
 
+    # Dormant is a decided stage since PROJECT-CLASH-LOST (#2192): it sets outcome dormant.
     parked = _project(db, company_id, owner, status_key="quoted")
     _move(db, parked, owner, "dormant")
     db.refresh(parked)
-    assert parked.outcome == "open"
+    assert parked.outcome == "dormant"
 
 
 def test_be1_the_status_route_takes_loss_reason(v2):
@@ -379,6 +380,25 @@ def test_be3_mark_won_from_lost_is_refused_with_project_lost(seeded):
     assert "Re-open the project first" in refused.value.message
     db.refresh(project)
     assert project.outcome == "lost"
+
+
+def test_moving_to_dormant_makes_the_outcome_dormant_and_locks_mark_won_and_reopen(seeded):
+    """Merged with PROJECT-CLASH-LOST: the Dormant stage decides the outcome, and neither
+    gear action may make it disagree with that final stage."""
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner, status_key="quoted")
+    _move(db, project, owner, "dormant")
+    db.refresh(project)
+    assert project.outcome == "dormant"
+
+    for outcome in ("won", "open"):
+        with pytest.raises(AppException) as refused:
+            _set_outcome(db, project, owner, outcome)
+        assert refused.value.status_code == 409
+        assert refused.value.code == "project_dormant"
+    db.refresh(project)
+    assert project.outcome == "dormant"
+    assert _status_key(db, project.status_id) == "dormant"
 
 
 def test_be3_mark_won_on_a_won_project_is_a_no_op(seeded):
@@ -678,6 +698,24 @@ def test_be5_make_quotation_is_refused_on_a_lost_project():
         assert refused.value.status_code == 409
         assert refused.value.code == "project_lost"
         assert "Re-open it before making its quotation" in refused.value.message
+
+
+def test_be5_make_quotation_is_refused_on_a_dormant_project():
+    """PROJECT-CLASH-LOST makes the Dormant stage's outcome dormant; it gets no quotation."""
+    from .test_project_proposal_quotation import _issue, _make, _price, _setup
+
+    with blank_session() as db:
+        _company, owner, product, project, proposal, scope = _setup(db)
+        _price(db, scope, product, owner, "100.00")
+        record = _issue(db, proposal, owner)
+        project.outcome = "dormant"
+        db.flush()
+
+        with pytest.raises(AppException) as refused:
+            _make(db, proposal, record, owner)
+
+        assert refused.value.status_code == 409
+        assert refused.value.code == "project_dormant"
 
 
 # ------------------------------------------------------------------------------ BE6 pipeline

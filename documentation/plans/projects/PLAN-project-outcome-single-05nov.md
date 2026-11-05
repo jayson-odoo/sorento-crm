@@ -170,3 +170,14 @@ against the quotation. No? Don't need to fix existing data. This is not rolled o
 - **FE5 Make quotation** (`quotation-documents/actions.tsx:157`): offered when
   `projectOutcome !== 'lost'` (was `=== 'won'`).
 - Project-level OutcomePill in the projects grid stays.
+
+## Merge with main (PROJECT-CLASH-LOST #2192 and PROPOSAL-HEADER-LAYOUT #2194)
+- #2192 made the outcome follow the Lost / Dormant stage through the per-area derive this lane
+  removes. Kept its behaviour without the derive: `project_service.outcome_follows_stage`
+  (Lost -> lost, Dormant -> dormant, PO Received -> won, leaving Lost/Dormant on an admin edge
+  -> open; any other stage leaves the outcome alone), called by `change_status`, and by the status
+  editor's bulk move (`status_entities._migrate_projects`). Its backfill script stays.
+- Dormant follows from that: Mark won and Re-open are refused on a dormant project (409
+  `project_dormant`), and so is Make quotation (409 `project_dormant`, with #2192's stage-label
+  message). The gear offers neither on a dormant project.
+- #2194 had already removed the area header row (pill + Record outcome); its side was taken.

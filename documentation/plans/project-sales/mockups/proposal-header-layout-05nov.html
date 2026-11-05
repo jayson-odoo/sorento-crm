@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal header layout</title>
+<!-- PROPOSAL-HEADER-LAYOUT Lavish mock. Annotated mockup, not shipped code. Plain inline CSS so it
+     opens from a file. Plan: documentation/plans/project-sales/PLAN-proposal-header-layout-05nov.md
+     Data: the owner's screenshot, PRJQ-2026-0005 "test", Accepted, R2, RM 350.00. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --green:#15803d; --green-soft:#f0fdf4; --red:#dc2626; --red-soft:#fef2f2;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff;vertical-align:middle}
+.content{padding:20px 28px 28px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.phrow h1{font-size:20px;margin:0}
+.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;font:500 13px var(--font);color:var(--fg);white-space:nowrap;height:32px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.icon{width:32px;justify-content:center;padding:0}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.rcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:16px}
+.rrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+.rid{display:flex;flex-direction:column;gap:4px;min-width:0}
+.rtitle{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.rtitle b{font-size:18px;font-variant-numeric:tabular-nums}
+.rsub{font-size:14px;color:var(--muted)}
+.rsub u{text-decoration:none;border-bottom:1px dotted var(--muted)}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.pager{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:13px}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);margin-bottom:16px;font-size:13px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:600}
+.tabs span.gone{color:var(--red);text-decoration:line-through}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 24px;font-size:13px}
+.kv div span{color:var(--muted);display:inline-block;width:80px}
+.scopes{display:flex;gap:8px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafafa}
+td{padding:9px 10px;border-bottom:1px solid var(--line)}
+td.num,th.num{text-align:right}
+.tblwrap{overflow-x:auto}
+.strike{color:var(--red);text-decoration:line-through;font-size:13px}
+.m375 .content{padding:14px 16px}
+.m375 .kv{grid-template-columns:1fr}
+.m375 .rrow{flex-direction:column;align-items:stretch}
+.m375 .acts{justify-content:flex-start}
+.qa{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-width:1100px}
+.qa h3{margin:14px 0 4px;font-size:14px}
+.qa p{margin:0 0 6px}
+.rec{color:var(--green);font-weight:600}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Proposal / quotation detail header (PROPOSAL-HEADER-LAYOUT)</h1>
+<p class="sub"><b>Mock v4 final</b>, 5 Nov 2026 (owner 12:28: no per-area outcome anywhere; project-level outcome is a separate lane, so the v4 project-page frame is dropped. owner 12:25: version chip is just "v1", per proposal, callout 13. Owner answers 12:24: Q1 pager kept, Q2 "edit opens the next" text dropped in both places, Q3 one page for both, Q4 no "·" delimiter: title, view state and hint each on their own muted line (frame 2c), Q5 + 12:28 Record outcome leaves this page; per-area outcome is not wanted, a project-level outcome is a separate lane). v3 note: <b>Mock v3</b>, 5 Nov 2026 (owner 12:22 on v2: "the version should be shown at the header tab la, don't need to show here", struck the version row: v1 pill, Recheck alerts, Revise to v2. The version moves into the header card as a chip (callout 13); Recheck alerts and Revise move into the gear (frame 2b). Lines block is now: area tabs, Search lines + Columns, table.) v2 note (owner 12:20 on v1: "in view i don't even need this", struck the area header row inside the lines: area name + Open pill + series + Record outcome. Gone in view; Record outcome moves into the gear, frame 2b). v1 text follows. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
+actions right). The customer line and the "customer holds this version" hint go. The printer sits beside the gear. The Lines tab
+goes; the lines sit on the Header tab under the letterhead card. Quotations use the same page, so they change too.
+Pink numbers map each element to the component it reuses (list on the right).</p>
+
+<h2 class="ft">1. Before (today, owner's screenshot)</h2>
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0005</h1><div class="crumbs">Dashboards › Project Sales › Projects › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+  <div class="rrow" style="align-items:flex-start">
+    <div class="rid">
+      <span class="pill green" style="align-self:flex-start">Accepted</span>
+      <b style="font-size:20px">test</b>
+      <span class="strike">1 LIVING DEPOT SDN BHD [A/C I]</span>
+      <span class="rsub">Not viewed yet</span>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+      <div class="acts"><span class="btn icon">⚙</span><span class="btn primary">Send to Customer R3 ▾</span><span class="btn">🖨 0</span></div>
+      <span class="strike">The customer holds this version. Edit opens the next one.</span>
+    </div>
+  </div>
+  <div class="tabs" style="margin-top:16px"><span class="on">Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span></div>
+  <div class="card" style="color:var(--muted)">Letterhead card (To, Attn, Our Ref, Your Ref, Date, Total)</div>
+</div></div></div>
+
+<h2 class="ft">2. After, Header tab (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0005</h1><div class="crumbs">Dashboards › Project Sales › Projects › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+
+  <div class="rcard">
+    <div class="rrow">
+      <div class="rid">
+        <div class="rtitle"><span class="co">1</span><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="co">2</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span><span class="co">13</span></div>
+        <span class="rsub"><span class="co">3</span> test</span><span class="rsub"><u>Not viewed yet</u></span>
+      </div>
+      <div class="acts">
+        <span class="co">4</span><span class="pager">‹ 1 / 3 ›</span>
+        <span class="btn icon">⚙</span><span class="co">5</span>
+        <span class="btn">🖨 0</span><span class="co">6</span>
+        <span class="btn primary">Send to Customer R3 ▾</span><span class="co">7</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs"><span class="on">Header</span><span class="gone">Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span><span class="co" style="padding:0;margin-top:6px;color:#fff">8</span></div>
+
+  <div class="card"><span class="co" style="float:right">9</span>
+    <div class="kv">
+      <div><span>To</span>1 LIVING DEPOT SDN BHD [A/C I]</div><div><span>Our Ref</span>PRJQ-2026-0005-R2</div>
+      <div><span>Attn</span>-</div><div><span>Your Ref</span>-</div>
+      <div><span>Issued by</span>Sales User</div><div><span>Date</span>05/11/2026</div>
+      <div><span>Opened</span>-</div><div><span>Total</span><b>RM 350.00</b></div>
+    </div>
+  </div>
+
+  <div class="scopes"><span class="co">10</span><span class="pill blue">Townhouse $</span><span class="pill">Semi-D $</span></div>
+  <div class="strike" style="margin:0 0 6px"><span class="co">11</span> v1 area header row, gone in view: "Townhouse · Open · Project · [Record outcome]"</div>
+  <div class="card" style="padding:0">
+    <div class="strike" style="padding:8px 16px 0"><span class="co">14</span> v2 version row, gone: "[v1] ... [Recheck alerts] [Revise to v2]"</div>
+    <div class="rrow" style="padding:12px 16px;border-bottom:1px solid var(--line)"><div class="rtitle" style="gap:8px"><span class="btn" style="width:240px;color:var(--muted)">Search lines</span></div><div class="rtitle" style="gap:8px"><span class="btn">Columns</span></div></div>
+    <div class="tblwrap" style="padding:12px 16px"><table>
+      <thead><tr><th>#</th><th>Photo</th><th>Product</th><th>Description</th><th>Brand</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>▢</td><td>SAMPLE-001</td><td>Basin mixer</td><td>Sorento</td><td class="num">2</td><td>PCS</td><td class="num">100.00</td><td class="num">200.00</td></tr>
+        <tr><td>2</td><td>▢</td><td>SAMPLE-002</td><td>Shower set</td><td>Sorento</td><td class="num">1</td><td>SET</td><td class="num">150.00</td><td class="num">150.00</td></tr>
+        <tr><td colspan="8" class="num"><b>Total</b></td><td class="num"><b>350.00</b></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</div></div></div>
+
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>Record card</b>The OI card: number + status inline, subtitle under, actions right. OI's card is inline today (and copied into ~14 detail pages), so it is extracted once as <code>RecordHeaderCard</code> and used by both OI and this page.<span class="ref">from app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx:767-971 → new components/common/RecordHeaderCard.tsx</span></div></li>
+  <li><span class="co">2</span><div><b>Status badge, inline</b>Same reading as the project's proposal list (quotationStanding), so list and page never disagree. No more floating "Accepted" above the title.<span class="ref">app/(protected)/project-sales/_shared/lib/quotationDecision.ts quotationStanding + lib/status-pill.ts</span></div></li>
+  <li><span class="co">3</span><div><b>Subtitle lines (v4: no "·")</b>The title on one muted line, the viewed state on the next, any hint on a third (2c). The viewed part keeps its view-log popover, shown once sent ("Viewed 3 times, last 05/11/2026, 2:14 pm"). Customer line removed (it repeats To in the card below).<span class="ref">QuotationViewCount.tsx (viewCountText, formatDateTimeInMalaysia)</span></div></li>
+  <li><span class="co">4</span><div><b>Pager</b>Already exists: steps through this project's proposals and quotations, shown when the project has 2 or more. Unchanged.<span class="ref">components/common/RecordNavigation.tsx, QuotationDocumentClient.tsx:350</span></div></li>
+  <li><span class="co">5</span><div><b>Gear</b>Unchanged menu (Edit, exports, delete...).<span class="ref">components/common/DetailActionsMenu.tsx, actions.tsx useQuotationDocumentActions</span></div></li>
+  <li><span class="co">6</span><div><b>Printer + count, beside the gear</b>Moved left out of the primary slot. Still shown only once something has been sent.<span class="ref">components/my-downloads/EntityDownloadsButton.tsx</span></div></li>
+  <li><span class="co">7</span><div><b>One primary</b>Send to Customer R3 (Email / WhatsApp), or Sign / Send for approval / Approve+Reject, exactly as today.<span class="ref">components/common/DetailActions.tsx (pager, gear, primary)</span></div></li>
+  <li><span class="co">8</span><div><b>Lines tab removed</b>Old /lines links (and the feedback tab's "go to line") land on Header.<span class="ref">QuotationDocumentTabs.tsx:36, (view)/lines/page.tsx</span></div></li>
+  <li><span class="co">9</span><div><b>Letterhead card</b>Unchanged, first on the Header tab.<span class="ref">QuotationDocumentHeader.tsx</span></div></li>
+  <li><span class="co">10</span><div><b>Lines, under the card</b>The whole former Lines tab minus the area header row (11): area tab strip, version strip, the lines grid with its editing, sorting, totals and feedback marks.<span class="ref">QuotationScopesTab.tsx → QuotationVersionEditor.tsx → QuotationLinesGrid.tsx</span></div></li>
+  <li><span class="co">11</span><div><b>Area header row removed (v2)</b>Owner: "in view i don't even need this". Area name is already the open tab; the Open/Won/Lost pill and series go with it. Record outcome goes too (owner 12:24 + 12:28: outcome is per project, separate lane). Since v3 the block starts at Search lines + Columns (see 14).<span class="ref">QuotationScopesTab.tsx:97-128 (CardHeader removed); QuotationOutcomeDialog.tsx reused as is</span></div></li>
+  <li><span class="co">13</span><div><b>Version, in the header card (v4: just "v1")</b>Owner 12:25: "should just be v1, version is per quotation / proposal". One "v&lt;n&gt;" chip for the whole proposal, no area name. Fact: the data stores a version per area (QuotationScope.current_version_no, quotationDocumentService.ts:69); Edit already revises every frozen area together (QuotationDocumentClient.tsx:299-311), so they normally match. The chip shows the highest current version across the areas. With more than one version it opens "v2 (current)", "v1 (frozen)" and switches the lines of every area to that version, the job the old pills did; reading a frozen one, it says "v1 (frozen)".<span class="ref">was QuotationVersionEditor.tsx:669-687 (version pills); menu: components/ui/dropdown-menu</span></div></li>
+  <li><span class="co">14</span><div><b>Version row removed (v3)</b>Owner 12:22. The pills go to the chip (13); Recheck alerts and Revise to v2 go into the gear (2b). Each keeps today's rule for when it shows (can edit, open version, not locked for approval, no edit session). The recheck result panel still appears above the lines after a recheck. The "Frozen. Make changes on v2." line stays when reading a frozen version.<span class="ref">QuotationVersionEditor.tsx:689-735, 737-757</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">2b. Recheck alerts and Revise in the gear (gear open). v4: no Record outcome here</h2>
+<div class="layout">
+<div class="frame" style="width:560px;flex:none"><div class="content">
+  <div class="rcard" style="margin-bottom:0">
+    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span></div><span class="rsub">test</span><span class="rsub"><u>Not viewed yet</u></span></div>
+    <div class="acts"><span class="btn icon" style="outline:2px solid var(--primary)">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div></div>
+  </div>
+  <div class="card" style="width:260px;margin:6px 0 0 150px;padding:6px 0;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px">
+    <div style="padding:6px 12px">Edit proposal</div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Recheck alerts</b> <span class="co">15</span></div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Revise to v2</b> <span class="co">15</span></div>
+    <div style="padding:6px 12px">Make quotation</div>
+    <div style="padding:6px 12px">Download PDF</div>
+    <div style="padding:6px 12px">Download Excel</div>
+    <div style="padding:6px 12px">Copy counter-sign link</div>
+    <div style="border-top:1px solid var(--line);margin:4px 0"></div>
+    <div style="padding:6px 12px;color:var(--red)">Delete</div>
+  </div>
+</div></div>
+<div class="notes"><ol><li><span class="co">12</span><div><b>Record outcome: not on this page (v4)</b>Owner 12:24: "it should be at project level". Removed from this page entirely. Owner 12:28: "we don't need per area outcome", "we only need per project outcome". Not added anywhere else in this lane; a project-level outcome is a separate lane.</div></li>
+<li><span class="co">15</span><div><b>Recheck alerts, Revise to vN, in the gear (v3, v4 per proposal)</b>The header's existing pattern: one primary, every secondary action behind the gear (D6, components/common/DetailActions.tsx: pager, gear, primary). v4: both act on the whole proposal, matching "version is per proposal": Revise to v2 opens v2 on every area (the same sequential loop Edit uses), Recheck alerts rechecks every area's open version. Same dialogs as today (ReviseQuotationDialog), same show rules (can edit, open version, not locked for approval, no edit session).<span class="ref">QuotationVersionEditor.tsx:697-733 → gear via useQuotationDocumentActions</span></div></li></ol></div>
+</div>
+
+<h2 class="ft">2c. v4: a hint, own line, no "·" (pending manager approval, sales user)</h2>
+<div class="layout">
+<div class="frame" style="width:860px;flex:none"><div class="content">
+  <div class="rcard" style="margin-bottom:0">
+    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0006</b><span class="pill" style="background:#fffbeb;color:#b45309">Pending approval</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v2 ▾</span></div>
+      <span class="rsub">test</span><span class="rsub">With a manager for approval</span><span class="co">16</span></div>
+    <div class="acts"><span class="pager">‹ 2 / 3 ›</span><span class="btn icon">⚙</span></div></div>
+  </div>
+</div></div>
+<div class="notes"><ol><li><span class="co">16</span><div><b>Hints on their own line</b>The two hints that stay ("With a manager for approval", "You can read this quotation but not change it.") sit in the identity column as their own muted line, same text-sm muted style as the subtitle, never under the buttons and never joined with "·". No view state line here because nothing has been sent yet (as today). "The customer holds this version. Edit opens the next one." is gone (Q2).<span class="ref">hints from QuotationDocumentClient.tsx:265-271 and quotationDecision.ts:92-93</span></div></li></ol></div>
+</div>
+
+<h2 class="ft">3. After, 375 px (no sideways page scroll; the lines grid scrolls inside its card)</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="content">
+  <div class="phrow"><div><h1 style="font-size:18px">Proposal PRJQ-2026-0005</h1><div class="crumbs">… › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+  <div class="rcard" style="padding:14px 16px">
+    <div class="rrow">
+      <div class="rid">
+        <div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span></div>
+        <span class="rsub">test</span><span class="rsub"><u>Not viewed yet</u></span>
+      </div>
+      <div class="acts"><span class="pager">‹ 1 / 3 ›</span><span class="btn icon">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div>
+    </div>
+  </div>
+  <div class="tabs"><span class="on">Header</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span></div>
+  <div class="card"><div class="kv">
+    <div><span>To</span>1 LIVING DEPOT SDN BHD [A/C I]</div><div><span>Our Ref</span>PRJQ-2026-0005-R2</div><div><span>Date</span>05/11/2026</div><div><span>Total</span><b>RM 350.00</b></div>
+  </div></div>
+  <div class="scopes"><span class="pill blue">Townhouse $</span><span class="pill">Semi-D $</span></div>
+  <div class="card" style="padding:0"><div class="rtitle" style="gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)"><span class="btn" style="flex:1;color:var(--muted)">Search lines</span><span class="btn">Columns</span></div><div class="tblwrap" style="padding:10px 12px"><table style="min-width:560px">
+    <thead><tr><th>#</th><th>Product</th><th>Description</th><th class="num">Qty</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+    <tbody><tr><td>1</td><td>SAMPLE-001</td><td>Basin mixer</td><td class="num">2</td><td class="num">100.00</td><td class="num">200.00</td></tr>
+    <tr><td>2</td><td>SAMPLE-002</td><td>Shower set</td><td class="num">1</td><td class="num">150.00</td><td class="num">150.00</td></tr></tbody>
+  </table></div></div>
+</div></div>
+<div class="notes"><ol><li><span class="co">i</span><div><b>Wrap</b>The actions wrap under the identity at 375 (D6, same as OI). The tab strip scrolls in its own gutter, as today.</div></li></ol></div>
+</div>
+
+<h2 class="ft">4. Behaviour card v4: owner answers (12:24), built as</h2>
+<div class="qa">
+  <p><b>Q1 Pager</b> "yes should": prev/next over this project's proposals and quotations, kept as is.</p>
+  <p><b>Q2 "Edit opens the next version"</b> "ok": dropped in both places (header hint, and its twin above the lines, QuotationVersionEditor.tsx:747-751). The Edit prompt still says it.</p>
+  <p><b>Q3 Quotation</b> "same": one page, one change.</p>
+  <p><b>Q4 Hints</b> "I don't want . as delimiter": each on its own muted line (frame 2c). The title and the view state are on separate lines too, so no "·" anywhere in the card.</p>
+  <p><b>Q5 Record outcome</b> "it should be at project level", then 12:28 "we don't need per area outcome", "we only need per project outcome, simple as that": removed from this page, not added to the project page in this lane. Project-level outcome: separate lane.</p>
+  <p><b>12:25 note</b> "should just be v1": the header chip is "v1" for the whole proposal (callout 13); Revise and Recheck alerts in the gear act on the whole proposal (callout 15).</p>
+  <p><b>v1 default</b> Order Inquiry uses the same shared header card (no visible change).</p>
+  <p><b>v4 final.</b> No open questions.</p>
+</div>
+</div>
+</body>
+</html>

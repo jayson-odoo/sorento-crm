@@ -263,7 +263,8 @@ def assert_no_blocking_clash(
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
 ) -> None:
-    """409 when an open project under the developer is the same development."""
+    """409 when an existing project under the developer, in any outcome, is the same
+    development (PROJECT-CLASH-LOST: Won / Lost / Dormant block like Open)."""
     blockers = [
         candidate
         for candidate in find_clashes(
@@ -301,7 +302,7 @@ def register_project(
 ) -> Project:
     """Claim a development for ``actor_user_id``.
 
-    Raises 409 when an open project under the same developer is the same
+    Raises 409 when a project under the same developer, in any outcome, is the same
     development. There is no override flag: the recourse is request-to-join or a
     dispute (ADR-0004), both of which leave a record, whereas a force-create flag
     would leave none and would become the default click.
@@ -1465,6 +1466,37 @@ def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: s
         )
 
 
+# A project on one of these rungs has been decided by a person, and that decision is its
+# outcome (PROJECT-CLASH-LOST): the list, board, forecast and clash check never read "Won" for
+# a project on the Lost stage. Keyed on the rung's stable key (project_seed_service.DEFAULT_FUNNEL).
+_OUTCOME_BY_STAGE_KEY = {"lost": "lost", "dormant": "dormant", "po_received": "won"}
+
+
+def outcome_follows_stage(db: Session, project: Project) -> None:
+    """Make the stored outcome agree with a decided stage, after any status write.
+
+    On Lost, Dormant or PO Received the outcome is lost / dormant / won (a Lost move through
+    `change_status` has already stored its reason; a bulk move has none to give). A project
+    that left Lost or Dormant (only possible on an admin graph with such an edge) is Open
+    again. Any other stage leaves the outcome alone: Mark won does not need a stage.
+    """
+    key = None
+    if project.status_id:
+        key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+    decided = _OUTCOME_BY_STAGE_KEY.get(key)
+    if decided is not None:
+        target = decided
+    elif project.outcome in ("lost", "dormant"):
+        target = "open"
+    else:
+        return
+    if project.outcome != target:
+        project.outcome = target
+    if target != "lost":
+        project.loss_reason = None
+    db.flush()
+
+
 def change_status(
     db: Session,
     project: Project,
@@ -1526,6 +1558,9 @@ def change_status(
     from_status_id = project.status_id
     project.status_id = to_status_id
     db.flush()
+
+    # Outcome follows a decided stage (PROJECT-CLASH-LOST), also off an admin's own edge.
+    outcome_follows_stage(db, project)
 
     # A funnel move is real work (AC-H2), so it advances the staleness clock and writes the
     # feed row. Done here rather than in the route because the board, the detail page and
@@ -1612,6 +1647,14 @@ def set_project_outcome(
         )
     if project.outcome == outcome:
         return project
+    if project.outcome == "dormant":
+        # Dormant follows the Dormant stage (PROJECT-CLASH-LOST), a final rung: winning or
+        # re-opening here would leave the outcome disagreeing with the stage.
+        raise AppException(
+            status_code=409,
+            message="This project is dormant, so its outcome cannot change here.",
+            code="project_dormant",
+        )
     if outcome == "won" and project.outcome == "lost":
         raise AppException(
             status_code=409,

@@ -517,9 +517,8 @@ describe('QuotationVersionEditor', () => {
     expect(await screen.findByText('RM 900.00')).toBeInTheDocument();
   });
 
-  it('names the revision as the way out of a version the customer holds', async () => {
-    // The sentence that replaced "its lines cannot be changed. Open a revision to re-price it.",
-    // which stated a fact and offered no move. Reason and next action, in one line.
+  it('no longer says "The customer holds vN. Edit quotation opens vN+1" (owner, 5 Nov 2026)', async () => {
+    // Dropped with the header's twin of it: Edit's own prompt says it when it matters.
     listQuotationVersions.mockResolvedValue([
       version({ id: 'v1', version_no: 1, frozen_at: '2026-07-01T02:00:00' }),
       version({ id: 'v2', version_no: 2, is_current: true, is_issued: true, is_editable: false }),
@@ -527,9 +526,8 @@ describe('QuotationVersionEditor', () => {
 
     renderEditor();
 
-    expect(
-      await screen.findByText(/The customer holds v2\. Edit quotation opens v3/i),
-    ).toBeInTheDocument();
+    await screen.findByRole('button', { name: /^v2/ });
+    expect(screen.queryByText(/The customer holds v2/i)).toBeNull();
   });
 
   it('says what a revise will freeze before doing it', async () => {
