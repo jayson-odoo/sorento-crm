@@ -330,7 +330,7 @@ def build_so_world(
     return SoWorld(
         service=service, order=order, project=project, product=product, product2=product2,
         po=po, customer=customer, agent=agent, line1=line1, line2=line2,
-        company_id=company_id, owner=owner,
+        company_id=company_id, owner=owner, db=db,
     )
 
 
@@ -378,34 +378,48 @@ def add_amendment(db, world: SoWorld, rows: list[dict], *, status: str = AMENDME
     return amendment
 
 
-def qty_row(world: SoWorld, line, to: str) -> dict:
-    return {
-        "so_line_id": line.id, "line_no": line.line_no, "product_code": "X", "description": "d",
-        "verb": "QTY_CHANGE", "field": "qty", "from_value": str(line.qty), "to_value": to,
-    }
+def _delta_row(world, line, verb: str, field: str, from_value, to_value) -> dict:
+    """A row exactly as `ProjectSODeltaService` produces it, verb constants and all."""
+    from app.services.project_so_delta_service import ProjectSODeltaService
+
+    return ProjectSODeltaService(world.db)._row(
+        order=world.order,
+        line=line,
+        product_id=line.product_id,
+        verb=verb,
+        field_name=field,
+        from_value=from_value,
+        to_value=to_value,
+        qty=Decimal("1"),
+    )
 
 
-def delay_row(line, to: str) -> dict:
-    return {
-        "so_line_id": line.id, "line_no": line.line_no, "product_code": "X", "description": "d",
-        "verb": "DELAY", "field": "delivery_date", "from_value": str(line.delivery_date), "to_value": to,
-    }
+def order_row(world: SoWorld, line, to: str, *, verb: str = "ORDER") -> dict:
+    """Quantity up on an existing line: ORDER, or RESERVE & ORDER inside the reserve window."""
+    return _delta_row(world, line, verb, "qty", str(line.qty), to)
 
 
-def add_row(world: SoWorld, qty: str = "5") -> dict:
-    code = world.product.product_code
-    return {
-        "so_line_id": None, "line_no": 3, "product_code": code, "description": "Added line",
-        "verb": "ADD_LINE", "field": "qty", "from_value": None, "to_value": qty,
-        "uom": "UNIT", "unit_price": "10.00", "delivery_date": "2026-09-01", "stock_location": "BRW-BB",
-    }
+qty_row = order_row
 
 
-def remove_row(line) -> dict:
-    return {
-        "so_line_id": line.id, "line_no": line.line_no, "product_code": "X", "description": "d",
-        "verb": "REMOVE_LINE", "field": "qty", "from_value": str(line.qty), "to_value": "0",
-    }
+def reserve_row(world: SoWorld, line, to: str) -> dict:
+    return order_row(world, line, to, verb="RESERVE & ORDER")
+
+
+def delay_row(world: SoWorld, line, to: str, *, verb: str = "DELAY") -> dict:
+    return _delta_row(world, line, verb, "delivery_date", str(line.delivery_date), to)
+
+
+def advance_row(world: SoWorld, line, to: str) -> dict:
+    return delay_row(world, line, to, verb="ADVANCE")
+
+
+def cancel_balance_row(world: SoWorld, line, to: str) -> dict:
+    return _delta_row(world, line, "CANCEL BALANCE", "qty", str(line.qty), to)
+
+
+def change_so_no_row(world: SoWorld, line, to: str = "TOWER B") -> dict:
+    return _delta_row(world, line, "CHANGE SO NO", "area_group", world.order.area_group, to)
 
 
 # --------------------------------------------------------------------------- quotation world

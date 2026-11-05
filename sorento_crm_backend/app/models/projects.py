@@ -1207,6 +1207,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     autocount_doc_key = Column(String(80), nullable=True)
     autocount_last_modified = Column(String(64), nullable=True)
     autocount_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    # Per-step progress of an update for one issue, so a retry sends only what is left: the
+    # PATCH (header + line edits) and the added lines. Markers, no FK.
+    autocount_edit_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_lines_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    autocount_cancelled_by = Column(UUID(as_uuid=False), nullable=True)
 
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True

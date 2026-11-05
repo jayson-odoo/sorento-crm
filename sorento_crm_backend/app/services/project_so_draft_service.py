@@ -48,7 +48,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.inventory import Warehouse
-from app.models.order import Customer
+from app.models.order import Customer, SalesOrder
 from app.models.product import Product
 from app.models.project_so import (
     AMENDMENT_PUBLISHED,
@@ -3341,6 +3341,23 @@ class ProjectSODraftService:
             return None, "The purchase order names no customer."
         return self.derived_location_for_customer(customer)
 
+    def autocount_doc_key(self, order: ProjectSalesOrder) -> Optional[str]:
+        """The AutoCount DocKey of this order, if it lives in AutoCount.
+
+        Its own key once the CRM created it; otherwise (an order keyed by hand from the import
+        file and adopted by ingest) the second segment of the linked core order's
+        `source_ref`, `{database}:{DocKey}`. Digits only, else None.
+        """
+        if order.autocount_doc_key:
+            return order.autocount_doc_key
+        if not order.so_id:
+            return None
+        ref = self.db.query(SalesOrder.source_ref).filter(SalesOrder.id == order.so_id).scalar()
+        parts = (ref or "").strip().split(":")
+        if len(parts) >= 2 and parts[1].strip().isdigit():
+            return parts[1].strip()
+        return None
+
     def derived_location_for_customer(
         self, customer: Customer
     ) -> Tuple[Optional[str], Optional[str]]:
@@ -3538,7 +3555,7 @@ class ProjectSODraftService:
             "provisional_ref": order.provisional_ref,
             "autocount_doc_no": order.autocount_doc_no,
             # AC-QTSO-CRM: presence only; the AutoCount key never leaves the server.
-            "in_autocount": bool(order.autocount_doc_key),
+            "in_autocount": bool(self.autocount_doc_key(order)),
             "area_group": order.area_group,
             "status": order.status,
             "grouping_origin": order.grouping_origin,

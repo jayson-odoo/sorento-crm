@@ -1,16 +1,13 @@
-"""AC-QTSO-CRM Phase 2, RED: update an AutoCount sales order from a published amendment.
+"""AC-QTSO-CRM Phase 2: update an AutoCount sales order from a published amendment.
 
 UAC U10-U13, R3. Route: `POST /api/v1/project-sales/sales-orders/amendments/{amendment_id}/autocount`.
 
-Plan, "Update SO (U10-U13)": the rows of the published amendment's accepted AutoCount change
-list. QTY_CHANGE -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; ADD_LINE ->
-POST lines; any other verb -> `waiting` with no call while the feed keeps delete_line / cancel_doc
-off. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`,
-dtlKey = the last `:` segment of the core SO line's `source_ref`.
-
-Delta row shape (from `ProjectSODeltaService`): `{so_line_id, line_no, product_code, description,
-verb, field, from_value, to_value}`; the new verbs QTY_CHANGE / ADD_LINE / REMOVE_LINE are the
-constants in `app.models.project_so`.
+The rows are the real producer's (`ProjectSODeltaService`, verbs ORDER, RESERVE & ORDER, ADVANCE,
+DELAY, CHANGE SO NO, CANCEL BALANCE). ORDER / RESERVE & ORDER (qty up on an existing line) PATCH
+the line's qty to `to_value`; ADVANCE / DELAY PATCH deliveryDate; CHANGE SO NO waits; CANCEL
+BALANCE waits while `_SEND_CANCEL_BALANCE_AS_QTY_EDIT` is False (owner pending) and goes as a qty
+edit down to `to_value` when it is True. A new product never arrives as a row (the delta service
+reports it in `unmatched`). The PATCH's key is `crm-amd-{id}-update-edit`, stable across retries.
 """
 from __future__ import annotations
 
@@ -20,7 +17,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.models.order import SalesOrderLine
+from app.models.order import SalesOrder, SalesOrderLine
 from app.models.project_so import ProjectSalesOrderLine
 from tests._ac_write_support import (
     BASE,
@@ -34,18 +31,20 @@ from tests._ac_write_support import (
     WAITING,
     WRITE,
     add_amendment,
-    add_row,
+    advance_row,
     api_fixture,
+    cancel_balance_row,
+    change_so_no_row,
     delay_row,
     detail,
     done_body,
     fake_ss,  # noqa: F401  (fixture)
-    find_dicts,
+    caps_with,
     myt_today_candidates,
+    order_row,
     put_in_autocount,
-    qty_row,
     refused_body,
-    remove_row,
+    reserve_row,
 )
 
 DTL_3 = 12011
@@ -89,47 +88,48 @@ def _third_line(db, world):
     return line
 
 
-def _answer_edits(fake_ss, *, patch=None, post=None):
+def _answer_edits(fake_ss, *, patch=None):
     after = [
-        detail(DTL_1, "X1", "80", "392.85", "BRW-BB", "2026-07-01", 1),
+        detail(DTL_1, "X1", "120", "392.85", "BRW-BB", "2026-07-01", 1),
         detail(DTL_2, "X2", "20", "50.00", "MWH-BB", "2027-01-07", 2),
     ]
     fake_ss.answers[("PATCH", DOC_PATH)] = patch or (
         200, done_body(details=after, last_modified="2026-11-05T11:00:00")
     )
-    fake_ss.answers[("POST", LINES_PATH)] = post or (
-        200, done_body(details=after + [detail(12099, "NEW", "5", "10.00", "BRW-BB", "2026-09-01", 3)],
-                       last_modified="2026-11-05T11:05:00")
-    )
 
 
 def _setup_mixed(db, world):
+    """ORDER (qty up) and DELAY go; CHANGE SO NO and CANCEL BALANCE (third line) do not."""
     put_in_autocount(db, world)
     line3 = _third_line(db, world)
     amendment = add_amendment(
         db,
         world,
         [
-            qty_row(world, world.line1, "80"),
-            delay_row(world.line2, "2027-01-07"),
-            add_row(world, "5"),
-            remove_row(line3),
+            order_row(world, world.line1, "120"),
+            delay_row(world, world.line2, "2027-01-07"),
+            change_so_no_row(world, world.line2),
+            cancel_balance_row(world, line3, "0"),
         ],
     )
     db.commit()
-    return amendment
+    return amendment, line3
 
 
 def _url(amendment) -> str:
     return f"{BASE}/sales-orders/amendments/{amendment.id}/autocount"
 
 
+def _calls_after_setup(fake_ss):
+    return [r for r in fake_ss.calls if r.url.path != "/api/v1/autocount/write-capabilities"]
+
+
 # --------------------------------------------------------------------------- U11 / U12: the mixed amendment
 
 
-def test_qty_and_date_rows_go_as_one_patch_with_docdate_expected_last_modified_and_dtlkeys(api, fake_ss):
+def test_order_and_delay_rows_go_as_one_patch_with_docdate_expected_last_modified_and_dtlkeys(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
 
     response = client.post(_url(amendment))
@@ -141,43 +141,80 @@ def test_qty_and_date_rows_go_as_one_patch_with_docdate_expected_last_modified_a
     assert body["header"]["docDate"] in myt_today_candidates()
     assert body["expectedLastModified"] == LAST_MODIFIED
     by_key = {str(l["dtlKey"]): l for l in body["lines"]}
-    assert set(by_key) == {str(DTL_1), str(DTL_2)}, "REMOVE_LINE and ADD_LINE must not ride the PATCH"
-    assert D(by_key[str(DTL_1)]["qty"]) == 80
+    assert set(by_key) == {str(DTL_1), str(DTL_2)}, "CHANGE SO NO and CANCEL BALANCE must not ride the PATCH"
+    assert D(by_key[str(DTL_1)]["qty"]) == 120
     assert by_key[str(DTL_2)]["deliveryDate"] == "2027-01-07"
-    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update"
+    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
+    assert fake_ss.to("POST", LINES_PATH) == [], "a new product is never a row, so no add-line"
 
 
-def test_an_added_line_goes_as_a_post_lines_with_its_item_and_qty(api, fake_ss):
+def test_reserve_and_order_and_advance_go_as_patch_edits(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    put_in_autocount(db, world)
+    amendment = add_amendment(
+        db,
+        world,
+        [reserve_row(world, world.line1, "130"), advance_row(world, world.line2, "2026-06-01")],
+    )
+    db.commit()
     _answer_edits(fake_ss)
 
     client.post(_url(amendment))
 
-    [post] = fake_ss.to("POST", LINES_PATH)
-    sent = fake_ss.body(post)
-    assert sent["companyCode"] == "SRT"
-    assert find_dicts(sent, itemCode=world.product.product_code, qty="5"), sent
-    assert post.headers["Idempotency-Key"]
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    by_key = {str(l["dtlKey"]): l for l in fake_ss.body(patch)["lines"]}
+    assert D(by_key[str(DTL_1)]["qty"]) == 130
+    assert by_key[str(DTL_2)]["deliveryDate"] == "2026-06-01"
 
 
-def test_remove_line_is_listed_as_waiting_and_never_deleted(api, fake_ss):
+def test_change_so_no_and_cancel_balance_are_listed_as_waiting_and_never_deleted(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
 
     body = client.post(_url(amendment)).json()
 
-    assert [w["verb"] for w in body["waiting"]] == ["REMOVE_LINE"]
-    assert body["waiting"][0]["reason"] == WAITING
+    assert [w["verb"] for w in body["waiting"]] == ["CHANGE SO NO", "CANCEL BALANCE"]
+    assert all(w["reason"] == WAITING for w in body["waiting"])
     assert [r for r in fake_ss.calls if r.method == "DELETE"] == []
     assert all("cancel" not in r.url.path for r in fake_ss.calls)
     assert all(str(DTL_3) not in r.content.decode() for r in fake_ss.writes())
 
 
-def test_done_lists_the_read_back_and_stores_the_new_last_modified(api, fake_ss):
+def test_cancel_balance_goes_as_a_qty_edit_when_the_owner_switch_is_on(api, fake_ss, monkeypatch):
+    from app.services import project_autocount_write_service as svc
+
+    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", True)
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss)
+
+    body = client.post(_url(amendment)).json()
+
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    by_key = {str(l["dtlKey"]): l for l in fake_ss.body(patch)["lines"]}
+    assert D(by_key[str(DTL_3)]["qty"]) == 0
+    assert [w["verb"] for w in body["waiting"]] == ["CHANGE SO NO"]
+
+
+def test_cancel_balance_waits_when_the_owner_switch_is_off(api, fake_ss, monkeypatch):
+    from app.services import project_autocount_write_service as svc
+
+    monkeypatch.setattr(svc, "_SEND_CANCEL_BALANCE_AS_QTY_EDIT", False)
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss)
+
+    body = client.post(_url(amendment)).json()
+
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    assert str(DTL_3) not in {str(l["dtlKey"]) for l in fake_ss.body(patch)["lines"]}
+    assert "CANCEL BALANCE" in [w["verb"] for w in body["waiting"]]
+
+
+def test_done_lists_the_read_back_stores_last_modified_and_marks_the_step(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
 
     body = client.post(_url(amendment)).json()
@@ -185,15 +222,51 @@ def test_done_lists_the_read_back_and_stores_the_new_last_modified(api, fake_ss)
     assert body["outcome"] == "done"
     assert body["lines"], "the dialog lists AutoCount's read-back lines"
     db.refresh(world.order)
-    assert world.order.autocount_last_modified == "2026-11-05T11:05:00"
+    db.refresh(amendment)
+    assert world.order.autocount_last_modified == "2026-11-05T11:00:00"
     assert world.order.autocount_doc_no == "SO412345"
+    assert amendment.autocount_edit_sent_at is not None
+
+
+def test_a_second_press_after_done_makes_no_call_and_answers_already(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss)
+    client.post(_url(amendment))
+    calls = len(fake_ss.calls)
+
+    second = client.post(_url(amendment))
+
+    assert second.status_code == 200
+    assert second.json()["outcome"] == "done"
+    assert second.json()["message"] == "Already in AutoCount."
+    assert len(fake_ss.calls) == calls, "a second press replays nothing"
+    assert [w["verb"] for w in second.json()["waiting"]] == ["CHANGE SO NO", "CANCEL BALANCE"]
+
+
+def test_a_refused_patch_retried_sends_the_same_key_and_body_and_marks_only_on_done(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss, patch=(422, refused_body("ITEM_LOCKED", "Item locked")))
+    client.post(_url(amendment))
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is None
+    _answer_edits(fake_ss)
+
+    client.post(_url(amendment))
+
+    first, second = fake_ss.to("PATCH", DOC_PATH)
+    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
+    assert first.content == second.content
+    db.refresh(amendment)
+    assert amendment.autocount_edit_sent_at is not None
 
 
 def test_a_declined_row_is_not_sent(api, fake_ss):
     client, db, world = api
     put_in_autocount(db, world)
     amendment = add_amendment(
-        db, world, [qty_row(world, world.line1, "80"), delay_row(world.line2, "2027-01-07")]
+        db, world, [order_row(world, world.line1, "120"), delay_row(world, world.line2, "2027-01-07")]
     )
     amendment.row_decisions = {"0": {"decision": "declined", "reason": "customer reversed"}}
     db.commit()
@@ -209,8 +282,7 @@ def test_a_declined_row_is_not_sent(api, fake_ss):
 def test_an_amendment_of_only_waiting_rows_makes_no_write_call(api, fake_ss):
     client, db, world = api
     put_in_autocount(db, world)
-    line3 = _third_line(db, world)
-    amendment = add_amendment(db, world, [remove_row(line3)])
+    amendment = add_amendment(db, world, [change_so_no_row(world, world.line2)])
     db.commit()
     _answer_edits(fake_ss)
 
@@ -220,10 +292,52 @@ def test_an_amendment_of_only_waiting_rows_makes_no_write_call(api, fake_ss):
     assert fake_ss.writes() == []
 
 
-def test_the_feed_is_read_not_hard_coded(api, fake_ss):
-    """U14 applies here too: the capability read is what keeps REMOVE_LINE waiting."""
+def test_a_line_with_no_core_line_yet_waits_for_the_next_sync(api, fake_ss):
+    """After a CRM create the core lines arrive with the next AutoCount sync: no dtlKey yet."""
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    put_in_autocount(db, world)
+    world.line1.core_sales_order_line_id = None
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
+    db.commit()
+
+    body = client.post(_url(amendment)).json()
+
+    assert [w["reason"] for w in body["waiting"]] == ["Waiting for the next AutoCount sync"]
+    assert fake_ss.writes() == []
+
+
+def test_edit_doc_off_in_the_feed_keeps_the_edits_waiting_with_its_reason(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    fake_ss.answers[("GET", "/api/v1/autocount/write-capabilities")] = (
+        200, {"capabilities": caps_with(edit_doc=(False, "WRITE_DISABLED"))}
+    )
+
+    body = client.post(_url(amendment)).json()
+
+    assert fake_ss.writes() == []
+    assert "Changes to AutoCount are switched off here" in [w["reason"] for w in body["waiting"]]
+
+
+def test_a_recovered_answer_writes_nothing_to_the_crm(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    recovered = {**done_body(), "outcome": "recovered"}
+    _answer_edits(fake_ss, patch=(200, recovered))
+
+    body = client.post(_url(amendment)).json()
+
+    assert body["outcome"] != "done"
+    db.refresh(world.order)
+    db.refresh(amendment)
+    assert world.order.autocount_last_modified == LAST_MODIFIED
+    assert amendment.autocount_edit_sent_at is None
+
+
+def test_the_feed_is_read_not_hard_coded(api, fake_ss):
+    """U14 applies here too: the capability read is what gates the edits."""
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
 
     client.post(_url(amendment))
@@ -231,12 +345,70 @@ def test_the_feed_is_read_not_hard_coded(api, fake_ss):
     assert fake_ss.to("GET", "/api/v1/autocount/write-capabilities")
 
 
+# --------------------------------------------------------------------------- adopted orders
+
+
+def _adopt(db, world):
+    """Keyed by hand from the import file and adopted by ingest: a doc number and a core order
+    whose source_ref is `{database}:{DocKey}`, but no CRM-held key or last-modified."""
+    put_in_autocount(db, world)
+    core = db.query(SalesOrder).filter(SalesOrder.id == world.order.so_id).one()
+    core.source_ref = f"AED_SRT:{DOC_KEY}"
+    world.order.autocount_doc_key = None
+    world.order.autocount_last_modified = None
+    db.commit()
+
+
+def test_an_adopted_order_shows_in_autocount_on_the_wire(api, fake_ss):
+    client, db, world = api
+    _adopt(db, world)
+
+    response = client.get(f"{BASE}/sales-orders/{world.order.id}")
+
+    assert response.status_code == 200, response.text
+    assert '"in_autocount":true' in response.text.replace(" ", "")
+
+
+def test_an_adopted_order_updates_with_its_core_keys_after_reading_the_document(api, fake_ss):
+    client, db, world = api
+    _adopt(db, world)
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
+    db.commit()
+    fake_ss.answers[("GET", DOC_PATH)] = (
+        200, done_body(details=[], last_modified="2026-10-30T07:00:00")
+    )
+    _answer_edits(fake_ss)
+
+    response = client.post(_url(amendment))
+
+    assert response.status_code == 200, response.text
+    assert len(fake_ss.to("GET", DOC_PATH)) == 1, "no stored last-modified, so it is read first"
+    [patch] = fake_ss.to("PATCH", DOC_PATH)
+    body = fake_ss.body(patch)
+    assert body["expectedLastModified"] == "2026-10-30T07:00:00"
+    assert [str(l["dtlKey"]) for l in body["lines"]] == [str(DTL_1)]
+
+
+def test_a_non_numeric_core_key_is_not_in_autocount(api, fake_ss):
+    client, db, world = api
+    _adopt(db, world)
+    core = db.query(SalesOrder).filter(SalesOrder.id == world.order.so_id).one()
+    core.source_ref = "AED_SRT:12008/../x"
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
+    db.commit()
+
+    response = client.post(_url(amendment))
+
+    assert response.status_code == 409
+    assert fake_ss.calls == []
+
+
 # --------------------------------------------------------------------------- U12: DOC_STALE
 
 
 def test_doc_stale_says_changed_in_autocount_since_the_stored_date_and_changes_nothing(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss, patch=(409, refused_body("DOC_STALE", "document changed since expectedLastModified")))
 
     response = client.post(_url(amendment))
@@ -245,7 +417,6 @@ def test_doc_stale_says_changed_in_autocount_since_the_stored_date_and_changes_n
     body = response.json()
     assert body["outcome"] == "refused"
     assert body["message"] == "Changed in AutoCount since 01/10/2026, open Compare first."
-    assert fake_ss.to("POST", LINES_PATH) == [], "no add-line after a stale refusal"
     db.refresh(world.order)
     assert world.order.autocount_last_modified == LAST_MODIFIED
 
@@ -255,7 +426,7 @@ def test_doc_stale_says_changed_in_autocount_since_the_stored_date_and_changes_n
 
 def test_qty_below_transferred_is_shown_as_autocounts_refusal_and_changes_nothing(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(
         fake_ss,
         patch=(422, refused_body("QTY_BELOW_TRANSFERRED", "Qty 80 is below the 100 already delivered")),
@@ -278,7 +449,7 @@ def test_qty_below_transferred_is_shown_as_autocounts_refusal_and_changes_nothin
 
 def test_an_order_not_in_autocount_gets_409_and_no_call(api, fake_ss):
     client, db, world = api
-    amendment = add_amendment(db, world, [qty_row(world, world.line1, "80")])
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")])
     db.commit()
 
     response = client.post(_url(amendment))
@@ -290,7 +461,7 @@ def test_an_order_not_in_autocount_gets_409_and_no_call(api, fake_ss):
 def test_an_amendment_that_is_not_published_gets_409_and_no_call(api, fake_ss):
     client, db, world = api
     put_in_autocount(db, world)
-    amendment = add_amendment(db, world, [qty_row(world, world.line1, "80")], status="proposed")
+    amendment = add_amendment(db, world, [order_row(world, world.line1, "120")], status="proposed")
     db.commit()
 
     response = client.post(_url(amendment))
@@ -311,7 +482,7 @@ def test_an_unknown_amendment_is_an_application_404(api, fake_ss):
 
 def test_the_dtl_key_is_resolved_on_the_server_never_taken_from_the_request(api, fake_ss):
     client, db, world = api
-    amendment = _setup_mixed(db, world)
+    amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss)
 
     client.post(_url(amendment), json={"docKey": 1, "expectedLastModified": "1999-01-01", "companyCode": "MCH"})

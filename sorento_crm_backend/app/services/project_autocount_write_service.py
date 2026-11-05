@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
@@ -28,10 +28,6 @@ from app.models.project_so import (
     AMENDMENT_PUBLISHED,
     SO_STATUS_AMENDED,
     SO_STATUS_PUBLISHED,
-    VERB_ADD_LINE,
-    VERB_ADVANCE,
-    VERB_DELAY,
-    VERB_QTY_CHANGE,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOAmendment,
@@ -47,7 +43,15 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
-from app.services.project_so_delta_service import ProjectSODeltaService
+from app.services.set_driver_pricing import split_set_driver_price
+from app.services.project_so_delta_service import (
+    VERB_ADVANCE,
+    VERB_CANCEL_BALANCE,
+    VERB_DELAY,
+    VERB_ORDER,
+    VERB_RESERVE_AND_ORDER,
+    ProjectSODeltaService,
+)
 from app.services.project_so_draft_service import ProjectSODraftService
 
 logger = logging.getLogger(__name__)
@@ -70,7 +74,19 @@ _REASONS = {
 }
 OPS = ("create_doc", "edit_doc", "add_line", "delete_line", "cancel_doc")
 _KINDS = {"sales_orders": "sales-orders", "quotations": "quotations"}
-_DONE = ("done", "recovered")
+# Only `done` is a success: a `recovered` answer means SS rolled the write back.
+_DONE = ("done",)
+
+#: Longest SS message or warning text the CRM relays to a screen.
+_MAX_TEXT = 500
+WAITING_SYNC = "Waiting for the next AutoCount sync"
+
+#: Owner decision pending (fix round 1): does CANCEL BALANCE go to AutoCount as a quantity edit
+#: down to `to_value`? Off, it waits like CHANGE SO NO. One switch, both paths are built.
+_SEND_CANCEL_BALANCE_AS_QTY_EDIT = False
+
+_QTY_VERBS = (VERB_ORDER, VERB_RESERVE_AND_ORDER)
+_DATE_VERBS = (VERB_ADVANCE, VERB_DELAY)
 
 
 # ------------------------------------------------------------------ small helpers
@@ -108,16 +124,31 @@ def _iso_date(value: Any) -> Optional[str]:
 
 
 def _since(stored: Optional[str]) -> str:
-    """The stored last-modified as dd/mm/yyyy (the date part, as AutoCount wrote it)."""
-    text = (stored or "")[:10]
+    """The stored last-modified as dd/mm/yyyy in Malaysia time (a stamp with no zone is UTC)."""
+    text = (stored or "").strip()
     try:
-        return datetime.strptime(text, "%Y-%m-%d").strftime("%d/%m/%Y")
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
-        return text or "the last read"
+        return text[:10] or "the last read"
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(_MYT).strftime("%d/%m/%Y")
 
 
 def _trim_sentence(message: Optional[str]) -> str:
-    return (message or "").strip().rstrip(".").strip()
+    return (message or "").strip()[:_MAX_TEXT].rstrip(".").strip()
+
+
+def _safe_key(key: Any) -> str:
+    """A DocKey is digits; anything else never reaches a gateway path."""
+    text = str(key or "").strip()
+    if not text.isdigit():
+        raise AppException(
+            status_code=409,
+            message="The AutoCount document key is not valid.",
+            code="ac_bad_doc_key",
+        )
+    return text
 
 
 # ------------------------------------------------------------------ quotation lines (R6)
@@ -148,17 +179,35 @@ def build_quotation_lines(lines: Iterable[Any], *, location: str) -> QuotationLi
         if line.set_parts_snapshot:
             components = []
             for part in line.set_parts_snapshot:
-                part_qty = _dec(part.get("quantity") if part.get("quantity") is not None else 1) * qty
-                out.lines.append(
-                    {
-                        "itemCode": part["product_code"],
-                        "description": part.get("description"),
-                        "uom": part.get("uom") or line.uom,
-                        "qty": part_qty,
-                        "unitPrice": _dec(line.unit_price) if part.get("is_driver") else _ZERO,
-                        "location": location,
-                    }
-                )
+                per_set = _dec(part.get("quantity") if part.get("quantity") is not None else 1)
+                part_qty = per_set * qty
+                uom = part.get("uom") or line.uom
+                if part.get("is_driver"):
+                    # One shared rule with the SO draft (R6a): rows of (qty, unit price).
+                    for row_qty, row_price in split_set_driver_price(
+                        _dec(line.unit_price), qty, per_set
+                    ):
+                        out.lines.append(
+                            {
+                                "itemCode": part["product_code"],
+                                "description": part.get("description"),
+                                "uom": uom,
+                                "qty": row_qty,
+                                "unitPrice": row_price,
+                                "location": location,
+                            }
+                        )
+                else:
+                    out.lines.append(
+                        {
+                            "itemCode": part["product_code"],
+                            "description": part.get("description"),
+                            "uom": uom,
+                            "qty": part_qty,
+                            "unitPrice": _ZERO,
+                            "location": location,
+                        }
+                    )
                 components.append({"code": part["product_code"], "qty": part_qty})
             out.exploded.append({"code": line.product_code_snapshot, "components": components})
             continue
@@ -270,6 +319,14 @@ class ProjectAutocountWriteService:
             )
         return out
 
+    @staticmethod
+    def _warning(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {
+                k: (v[:_MAX_TEXT] if isinstance(v, str) else v) for k, v in item.items()
+            }
+        return str(item)[:_MAX_TEXT]
+
     def _interpret(
         self, answer: Dict[str, Any], *, verb: str, stale_since: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -281,7 +338,7 @@ class ProjectAutocountWriteService:
         if outcome in _DONE:
             result = self._blank("done", f"{doc_no} {verb} in AutoCount", doc_no)
             result["lines"] = self._read_back(document)
-            result["warnings"] = list(answer.get("warnings") or [])
+            result["warnings"] = [self._warning(w) for w in (answer.get("warnings") or [])]
             return result
         if outcome == "pending_verification":
             return self._blank("pending_verification", PENDING)
@@ -431,7 +488,7 @@ class ProjectAutocountWriteService:
 
     def create_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
-        if order.autocount_doc_no or order.autocount_doc_key:
+        if order.autocount_doc_no or self._draft.autocount_doc_key(order):
             raise AppException(
                 status_code=409,
                 message=f"{order.provisional_ref} is already in AutoCount.",
@@ -482,24 +539,30 @@ class ProjectAutocountWriteService:
                 message="Only a published amendment goes to AutoCount.",
                 code="ac_amendment_not_published",
             )
-        if not order.autocount_doc_key:
+        doc_key = self._draft.autocount_doc_key(order)
+        if not doc_key:
             raise AppException(
                 status_code=409,
                 message=f"{order.provisional_ref} is not in AutoCount yet.",
                 code="ac_not_in_autocount",
             )
+        doc_key = _safe_key(doc_key)
         accepted, _declined = ProjectSODeltaService(self.db)._decided_rows(
             amendment, amendment.delta_json or {}
         )
-        caps = self.capabilities(order.company_id)["sales_orders"]
 
+        # Classify first (no gateway): what is sent, and what waits.
         edits: Dict[int, Dict[str, Any]] = {}
-        adds: List[dict] = []
+        edit_rows: List[dict] = []
         waiting: List[dict] = []
-        derived: Optional[str] = None
         for row in accepted:
             verb = str(row.get("verb") or "")
-            blocked = self._row_blocked(verb, caps)
+            as_qty = verb in _QTY_VERBS or (
+                verb == VERB_CANCEL_BALANCE and _SEND_CANCEL_BALANCE_AS_QTY_EDIT
+            )
+            if not (as_qty or verb in _DATE_VERBS):
+                waiting.append(self._waiting(row, WAITING))
+                continue
             line = (
                 self.db.query(ProjectSalesOrderLine)
                 .filter(ProjectSalesOrderLine.id == row.get("so_line_id"))
@@ -507,108 +570,69 @@ class ProjectAutocountWriteService:
                 if row.get("so_line_id")
                 else None
             )
-            if blocked is not None:
-                waiting.append(self._waiting(row, blocked))
-                continue
-            if verb == VERB_ADD_LINE:
-                if derived is None:
-                    derived = self._draft.derived_stock_location(order)[0] or ""
-                location = (row.get("stock_location") or "").strip() or derived
-                if not location:
-                    raise AppException(
-                        status_code=422,
-                        message=f"No location on line {row.get('line_no')}.",
-                        code="ac_missing_location",
-                    )
-                adds.append(
-                    {
-                        "itemCode": row.get("product_code"),
-                        "description": row.get("description"),
-                        "uom": row.get("uom"),
-                        "qty": _num(row.get("to_value")),
-                        "unitPrice": _num(row.get("unit_price")),
-                        "location": location,
-                        "deliveryDate": _iso_date(row.get("delivery_date")),
-                    }
-                )
-                continue
             dtl = self._dtl_key(line)
             if dtl is None:
-                waiting.append(self._waiting(row, WAITING))
+                waiting.append(self._waiting(row, WAITING_SYNC))
                 continue
             entry = edits.setdefault(dtl, {"dtlKey": dtl})
-            if verb == VERB_QTY_CHANGE:
+            if as_qty:
                 entry["qty"] = _num(row.get("to_value"))
             else:
                 entry["deliveryDate"] = _iso_date(row.get("to_value"))
+            edit_rows.append(row)
 
-        result = self._blank("waiting", WAITING)
-        result["doc_no"] = order.autocount_doc_no
+        result = self._blank("waiting", WAITING, order.autocount_doc_no)
         result["waiting"] = waiting
-        if not edits and not adds:
+        if not edits:
+            return result
+        if amendment.autocount_edit_sent_at is not None:
+            # Sent in full already: a second press replays nothing.
+            done = self._blank("done", ALREADY, order.autocount_doc_no)
+            done["waiting"] = waiting
+            return done
+
+        caps = self.capabilities(order.company_id)["sales_orders"]
+        if not caps["edit_doc"]["enabled"]:
+            reason = caps["edit_doc"]["reason"] or WAITING
+            result["waiting"] = waiting + [self._waiting(row, reason) for row in edit_rows]
             return result
 
         company = self._order_company_code(order)
-        base_key = f"crm-amd-{amendment.id}-update"
-        last_answer: Optional[Dict[str, Any]] = None
         expected = order.autocount_last_modified
-        stale_since = order.autocount_last_modified
-        if edits:
-            body = {
-                "companyCode": company,
-                "header": {"docDate": _today()},
-                "expectedLastModified": expected,
-                "lines": list(edits.values()),
-            }
-            path = f"documents/sales-orders/{order.autocount_doc_key}"
-            answer = self._call(lambda c: c.patch(path, body, idempotency_key=base_key))
-            if not self._is_done(answer):
-                refused = self._interpret(answer, verb="updated", stale_since=stale_since)
-                refused["waiting"] = waiting
-                return refused
-            last_answer = answer
-            expected = (answer.get("document") or {}).get("LastModified") or expected
-        if adds:
-            body = {"companyCode": company, "expectedLastModified": expected, "lines": adds}
-            path = f"documents/sales-orders/{order.autocount_doc_key}/lines"
-            answer = self._call(
-                lambda c: c.write(path, body, idempotency_key=f"{base_key}-lines")
-            )
-            if not self._is_done(answer):
-                refused = self._interpret(answer, verb="updated", stale_since=stale_since)
-                if last_answer is not None:
-                    # The edits already reached AutoCount: keep our stale guard in step.
-                    order.autocount_last_modified = expected
-                    self.db.flush()
-                    refused["message"] += " The quantity and date changes were made."
-                refused["waiting"] = waiting
-                return refused
-            last_answer = answer
-        final = self._interpret(last_answer or {}, verb="updated")
+        if not expected:
+            # Adopted order: nothing read back yet, so read the document before the PATCH.
+            try:
+                held = self._gateway().read_document("sales-orders", doc_key, company)
+            except FoundryxPullError as exc:
+                failed = self._interpret(
+                    {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message},
+                    verb="updated",
+                )
+                failed["waiting"] = waiting
+                return failed
+            expected = (held.get("document") or held).get("LastModified")
+        body = {
+            "companyCode": company,
+            "header": {"docDate": _today()},
+            "expectedLastModified": expected,
+            "lines": list(edits.values()),
+        }
+        path = f"documents/sales-orders/{doc_key}"
+        key = f"crm-amd-{amendment.id}-update-edit"
+        answer = self._call(lambda c: c.patch(path, body, idempotency_key=key))
+        if not self._is_done(answer):
+            refused = self._interpret(answer, verb="updated", stale_since=expected)
+            refused["waiting"] = waiting
+            return refused
+        final = self._interpret(answer, verb="updated")
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
         final["message"] = f"{final['doc_no']} updated in AutoCount"
         final["waiting"] = waiting
-        order.autocount_last_modified = (
-            (last_answer.get("document") or {}).get("LastModified") or order.autocount_last_modified
-        )
+        order.autocount_doc_key = order.autocount_doc_key or doc_key
+        order.autocount_last_modified = (answer.get("document") or {}).get("LastModified") or expected
+        amendment.autocount_edit_sent_at = datetime.utcnow()
         self.db.flush()
         return final
-
-    @staticmethod
-    def _row_blocked(verb: str, caps: Dict[str, Dict[str, Any]]) -> Optional[str]:
-        """Why this amendment row cannot go now, else None.
-
-        Quantity and date moves need `edit_doc`, an added line `add_line`. Every other verb
-        (remove, balance cancel, repoint, model change) needs the delete / cancel door, which
-        is built only when SS ships it: until then it waits, whatever the feed says.
-        """
-        if verb in (VERB_QTY_CHANGE, VERB_ADVANCE, VERB_DELAY):
-            op = caps["edit_doc"]
-        elif verb == VERB_ADD_LINE:
-            op = caps["add_line"]
-        else:
-            return WAITING
-        return None if op["enabled"] else op["reason"]
 
     @staticmethod
     def _waiting(row: dict, reason: str) -> dict:
@@ -623,17 +647,19 @@ class ProjectAutocountWriteService:
 
     def cancel_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
-        if not order.autocount_doc_key:
+        doc_key = self._draft.autocount_doc_key(order)
+        if not doc_key:
             raise AppException(
                 status_code=409,
                 message=f"{order.provisional_ref} is not in AutoCount.",
                 code="ac_not_in_autocount",
             )
+        doc_key = _safe_key(doc_key)
         cap = self.capabilities(order.company_id)["sales_orders"]["cancel_doc"]
         if not cap["enabled"]:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self._order_company_code(order)}
-        path = f"documents/sales-orders/{order.autocount_doc_key}/cancel"
+        path = f"documents/sales-orders/{doc_key}/cancel"
         answer = self._call(
             lambda c: c.write(path, body, idempotency_key=f"crm-pso-{order.id}-cancel")
         )
@@ -644,6 +670,8 @@ class ProjectAutocountWriteService:
             order.autocount_last_modified = (
                 (answer.get("document") or {}).get("LastModified") or order.autocount_last_modified
             )
+            order.autocount_cancelled_at = datetime.utcnow()
+            order.autocount_cancelled_by = (actor or {}).get("id")
             self.db.flush()
         return result
 
@@ -772,16 +800,21 @@ class ProjectAutocountWriteService:
         self.db.flush()
 
     def _update_quotation(self, document, issue, payload, company, remark):
-        """Match the revision's lines to what AutoCount holds, by item code in order (Q8)."""
-        key = document.autocount_doc_key
+        """Match the revision's lines to what AutoCount holds, by item code in order (Q8).
+
+        Two steps, each with its own stable key and its own progress marker, so a retry sends
+        only what is left and never rebuilds a step that already reached AutoCount:
+        the PATCH (header + changed lines) and the POST of added lines.
+        """
+        key = _safe_key(document.autocount_doc_key)
         try:
             held_doc = self._gateway().read_document("quotations", key, company)
         except FoundryxPullError as exc:
             return self._interpret(
-                {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message}, verb="updated"
+                {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message},
+                verb="updated",
             )
         held = list((held_doc.get("document") or held_doc).get("Details") or [])
-        caps = self.capabilities(document.company_id)["quotations"]
         used: set = set()
         patched: List[dict] = []
         adds: List[dict] = []
@@ -813,48 +846,107 @@ class ProjectAutocountWriteService:
             for i, d in enumerate(held)
             if i not in used
         ]
-        stale_since = document.autocount_last_modified
-        expected = stale_since
-        base_key = f"crm-qt-{document.id}-{issue.id}-update"
-        header = {"docDate": _today(), "remark1": remark}
-        if patched and not caps["edit_doc"]["enabled"]:
+        edit_done = document.autocount_edit_issue_id == issue.id
+        lines_done = document.autocount_lines_issue_id == issue.id
+        need_patch = not edit_done  # the header (new revision ref) goes once per issue
+        need_adds = bool(adds) and not lines_done
+
+        def finish(answer: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            result = self._interpret(answer or {"outcome": "done"}, verb="updated")
+            result["doc_no"] = result["doc_no"] or document.autocount_doc_no
+            result["message"] = f"{result['doc_no']} updated in AutoCount"
+            result["skipped"] = payload.skipped
+            result["exploded"] = payload.exploded
+            result["waiting"] = waiting
+            if not waiting:
+                # Fully matched: this issue is now what AutoCount holds. With rows waiting it
+                # stays "needs update", so the screen keeps offering the rest.
+                document.autocount_issue_id = issue.id
+            self.db.flush()
+            return result
+
+        if not need_patch and not need_adds:
+            if waiting:
+                result = self._blank("waiting", WAITING, document.autocount_doc_no)
+                result["waiting"] = waiting
+                result["skipped"] = payload.skipped
+                result["exploded"] = payload.exploded
+                return result
+            return finish(None)
+
+        caps = self.capabilities(document.company_id)["quotations"]
+        if need_patch and not caps["edit_doc"]["enabled"]:
             return self._blank("refused", caps["edit_doc"]["reason"] or WAITING)
-        if adds and not caps["add_line"]["enabled"]:
+        if need_adds and not caps["add_line"]["enabled"]:
             return self._blank("refused", caps["add_line"]["reason"] or WAITING)
-        body = {"companyCode": company, "header": header, "expectedLastModified": expected}
-        if patched:
-            body["lines"] = patched
-        answer = self._call(
-            lambda c: c.patch(f"documents/quotations/{key}", body, idempotency_key=base_key)
-        )
-        if not self._is_done(answer):
-            refused = self._interpret(answer, verb="updated", stale_since=stale_since)
-            refused["waiting"] = waiting
-            return refused
-        last = answer
-        if adds:
-            expected = (answer.get("document") or {}).get("LastModified") or expected
-            add_body = {"companyCode": company, "expectedLastModified": expected, "lines": adds}
+
+        stale_since = document.autocount_last_modified
+        base_key = f"crm-qt-{document.id}-{issue.id}-update"
+        last: Optional[Dict[str, Any]] = None
+        if need_patch:
+            body = {
+                "companyCode": company,
+                "header": {"docDate": _today(), "remark1": remark},
+                "expectedLastModified": stale_since,
+            }
+            if patched:
+                body["lines"] = patched
+            answer = self._call(
+                lambda c: c.patch(
+                    f"documents/quotations/{key}", body, idempotency_key=f"{base_key}-edit"
+                )
+            )
+            if not self._is_done(answer):
+                refused = self._interpret(answer, verb="updated", stale_since=stale_since)
+                refused["waiting"] = waiting
+                return refused
+            document.autocount_edit_issue_id = issue.id
+            document.autocount_last_modified = (
+                (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
+            )
+            self.db.flush()
+            last = answer
+            edit_done = True
+        if need_adds:
+            add_body = {
+                "companyCode": company,
+                "expectedLastModified": document.autocount_last_modified,
+                "lines": adds,
+            }
             add_answer = self._call(
                 lambda c: c.write(
-                    f"documents/quotations/{key}/lines", add_body, idempotency_key=f"{base_key}-lines"
+                    f"documents/quotations/{key}/lines",
+                    add_body,
+                    idempotency_key=f"{base_key}-lines",
                 )
             )
             if not self._is_done(add_answer):
-                document.autocount_last_modified = expected
-                self.db.flush()
                 refused = self._interpret(add_answer, verb="updated", stale_since=stale_since)
+                if edit_done and refused["outcome"] == "refused":
+                    refused["message"] = (
+                        f"{'Quantity and price changes were made' if patched else 'The quotation header was updated'}. "
+                        f"AutoCount refused the added lines: {self._reason_of(add_answer)}."
+                    )
+                elif edit_done:
+                    refused["message"] = (
+                        f"{'Quantity and price changes were made' if patched else 'The quotation header was updated'}. "
+                        f"{refused['message']}"
+                    )
                 refused["waiting"] = waiting
                 return refused
+            document.autocount_lines_issue_id = issue.id
+            document.autocount_last_modified = (
+                (add_answer.get("document") or {}).get("LastModified")
+                or document.autocount_last_modified
+            )
             last = add_answer
-        result = self._interpret(last, verb="updated")
-        result["doc_no"] = result["doc_no"] or document.autocount_doc_no
-        result["message"] = f"{result['doc_no']} updated in AutoCount"
-        result["skipped"] = payload.skipped
-        result["exploded"] = payload.exploded
-        result["waiting"] = waiting
-        self._store_sent(document, issue, last)
-        return result
+        return finish(last)
+
+    @staticmethod
+    def _reason_of(answer: Dict[str, Any]) -> str:
+        if answer.get("outcome") == "gateway_error":
+            return _trim_sentence(answer.get("message"))
+        return _trim_sentence(answer.get("message")) or "no reason given"
 
     def cancel_quotation(self, document_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         document = self._document(document_id)
@@ -862,11 +954,12 @@ class ProjectAutocountWriteService:
             raise AppException(
                 status_code=409, message="This quotation is not in AutoCount.", code="ac_not_in_autocount"
             )
+        key = _safe_key(document.autocount_doc_key)
         cap = self.capabilities(document.company_id)["quotations"]["cancel_doc"]
         if not cap["enabled"]:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self.company_code(document.company_id)}
-        path = f"documents/quotations/{document.autocount_doc_key}/cancel"
+        path = f"documents/quotations/{key}/cancel"
         answer = self._call(
             lambda c: c.write(path, body, idempotency_key=f"crm-qt-{document.id}-cancel")
         )
@@ -877,5 +970,7 @@ class ProjectAutocountWriteService:
             document.autocount_last_modified = (
                 (answer.get("document") or {}).get("LastModified") or document.autocount_last_modified
             )
+            document.autocount_cancelled_at = datetime.utcnow()
+            document.autocount_cancelled_by = (actor or {}).get("id")
             self.db.flush()
         return result

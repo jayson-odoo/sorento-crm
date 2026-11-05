@@ -17,6 +17,7 @@ dialog can show AutoCount's own words.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -35,12 +36,17 @@ from app.services.project_autocount_write_service import ProjectAutocountWriteSe
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.uuid_path_param import validate_uuid_path
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 WRITE = "projects.autocount.write"
 SWITCHED_OFF = (
     "AutoCount quotations and sales orders from Project sales are switched off in Settings."
 )
+
+
+GENERIC_FAILURE = "Something went wrong talking to AutoCount."
 
 
 class WriteResult(BaseModel):
@@ -81,7 +87,12 @@ def _assert_project_access(db: Session, project_id: Optional[str], current_user:
 
 
 def _guard(exc: Exception):
-    raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    """An application error passes through; anything else is logged here and answered with a
+    fixed sentence, so no internal text reaches the screen."""
+    if hasattr(exc, "status_code"):
+        raise exc
+    logger.exception("AutoCount write failed")
+    raise handle_internal_error(GENERIC_FAILURE)
 
 
 @router.get("/autocount-write/capabilities", response_model=Capabilities)
