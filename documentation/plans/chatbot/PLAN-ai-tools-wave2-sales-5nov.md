@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 3: crew browser pass on d430fe3c fixed; targets and commission passed there). Track: full (RBAC, one
+Status: Review (round 4: crew pass on 69b3b479 fixed at the root causes; figures passed there). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -106,6 +106,49 @@ prompt and MCP catalogue, taken as 18.5k so that "before" reproduces crew's meas
 | sales last month per agent | 4 calls, 79.0k | 2 calls, 39.5k |
 
 Per call the in-process schemas grow 662 -> 1,100 tokens (the index); one describe round saved is ~19k.
+
+## Crew pass on 69b3b479 (5 Nov) and round 4: root causes
+
+1. Identity gate on the agent path. An identity read (shared key + `X-Staff-User`) asks every slug of the staff
+   member AND the key's act-as user (`user_service.gate_user_ids`, used by `report_ask.py:432`), so the dev act-as
+   user without the sales report reveal refused a staff member who holds it. The act-as half stays for anyone else
+   holding the key; the backend's own panel agent now proves who it answers: `app/services/staff_proof.py` (HMAC over
+   staff id + expiry, key derived from JWT_SECRET under its own label, 5 minutes), sent by the panel MCP client as
+   `X-MCP-Staff-Proof` (`ai_assistant_service.MCPRuntimeClient._headers`), stripped by the MCP server from a caller
+   without the bearer token (`auth.AUTHENTICATED_ONLY_HEADERS`), relayed as `X-Staff-Proof` only beside a forwarded
+   `X-Staff-User` (`scope.forwarded_staff_proof`, `http_client`), verified in `dependencies._apply_staff_identity`
+   (`staff_proven`), after which `gate_user_ids` is the staff member alone. A proof never grants what the staff
+   member lacks; a wrong, expired, tampered or other-staff proof changes nothing (`tests/test_staff_read_identity.py`).
+   A panel 403 now says to try `crm_query` (`tools.PANEL_ROUTE_REFUSED`) instead of "do not get this another way":
+   `crm_query` runs in process as the user under the same reveal rule, so it is no side door. Contact turns unchanged.
+2. Customers of an agent: the Customers list links an agent by `Customer.sales_agent_id`
+   (`order_service._build_customer_list_query`, the agent's Customers tab `api/v1/master_data/sales_agents.py:156`)
+   and Active is `is_active` (`order_service.py:3740`). Both were already the registry's; the model filtered
+   `agent.code` with a NAME ("Agent A") and found none. `customer.agent` is now one field "CODE - Name" (the screens'
+   `agent_label`), matched with contains on either.
+3. Tokens. Measured on the real loop with a scripted model and the real MCP catalogue (in process, 55 tools, the
+   admin-like user gets 24): every call carries system 1.6k (the fallback prompt here) + MCP tool schemas 17.2k +
+   in-process tools 4.5k; tool results in history are 0.2k to 1.9k. So the bulk is the tool block resent on every
+   call, not old results. `loop.narrow_after_query`: after a round of only crm_query / crm_describe in which one
+   answered, the next rounds carry only those two, `answer` and `plan`. Rows without `fields` show the entity's
+   `list_fields`, not all 22 columns.
+4. Tables: agent replies render through `components/chatbot/WhatsAppBlocks.tsx` (`AIAssistantBubble.tsx:778`, any
+   reply with `metadata_json.route`), which had no table support, so the blank line could not help. It now renders a
+   GFM table (header, separator, rows) as a real table.
+5. Payout per agent: no period filter reads the periods containing today (test P1: October only, 180 each).
+
+Tokens per turn (gpt-4.1 tokenizer; same scripted calls on 69b3b479 and on this head):
+
+| Question | path | before | after |
+|---|---|---|---|
+| commission payout per agent this month | query, answer | 46,958 | 26,968 |
+| commission payout per agent this month | describe x2, query, answer | 96,680 | 36,694 |
+| who is below target this quarter | query, answer | 47,288 | 27,067 |
+| who is below target this quarter | describe x2, query, answer | 97,010 | 36,793 |
+| sales last month per agent | query, answer | 47,004 | 27,014 |
+| sales last month per agent | describe x2, query, answer | 96,392 | 36,478 |
+| active customers of agent A | query, answer | 46,905 | 26,915 |
+| active customers of agent A | describe x2, query, answer | 95,373 | 35,343 |
 
 ## Token measurement (task item 5)
 
