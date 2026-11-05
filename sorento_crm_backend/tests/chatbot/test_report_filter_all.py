@@ -538,12 +538,13 @@ def _said(raw: str, said_as: str, typed: str) -> dict[str, Any]:
 
 
 @pytest.mark.usefixtures("all_on", "said_as_on")
+@pytest.mark.parametrize("held_company", [True, False], ids=["company-held", "after-clear-all"])
 @pytest.mark.parametrize("order", ["company-first", "brand-first"])
-def test_h8_a_name_said_once_as_company_and_once_as_brand_is_both(rbot, world, order) -> None:
+def test_h8_a_name_said_once_as_company_and_once_as_brand_is_both(rbot, world, order, held_company) -> None:
     """Crew gate step 8 "Sorento company, brands Sorento and Cabana" kept CABANA only; step 14 "Sorento company, Sorento
     brand" kept the brand only. The parser's two entities for the word say company and brand: both (owner rule)."""
     sorento, _m = world
-    _hold(rbot, sorento, group_by="channel")
+    _hold(rbot, sorento if held_company else None, group_by="channel")  # step 14 follows a clear-all: no company held
     ents = [_said("Sorento", "company", "company"), _said("Sorento", "brand", "brands")]
     if order == "brand-first":
         ents.reverse()
