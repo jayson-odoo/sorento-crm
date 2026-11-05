@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { numberFieldError } from '@/lib/number-field';
+import { FEATURE_ICONS_KEY, kitLibraryClient } from '@/lib/dealer-kit/kit-library-cache';
 import {
   seedValuesFor,
   seedWordsFor,
@@ -52,6 +53,8 @@ export interface SpecKeyDraft {
   valueIcons: Record<string, string[]>;
   /** Input string for the spec's Icon order; '' clears it. */
   iconOrder: string;
+  /** Set by a refused Save; follows the field from then on. */
+  iconOrderError?: string;
   rules: SpecDerivationRule[];
 }
 
@@ -163,6 +166,9 @@ function changedValueIcons(
   return same ? null : next;
 }
 
+/** Icon order: a whole number 1..999, or blank (last). */
+export const ICON_ORDER_RULES = { min: 1, max: 999, integer: true, optional: true } as const;
+
 export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
   const { user_synonyms, suppressed_synonyms } = wordPayload(row, {
     words: draft.words,
@@ -251,6 +257,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
       setDraftState((current) => (current ? { ...current, maxValueError } : current));
       return false;
     }
+    const iconOrderError = numberFieldError(draft.iconOrder, ICON_ORDER_RULES);
+    if (iconOrderError) {
+      setDraftState((current) => (current ? { ...current, iconOrderError } : current));
+      return false;
+    }
     try {
       const body = buildPatchBody(row, draft);
       const updated = await update.mutateAsync({ specKey: row.spec_key, body });
@@ -279,6 +290,11 @@ export function useSpecKeyRecord(row: SpecRegistryKey | undefined): UseSpecKeyRe
       // products it changed; there is nothing left to press, so the toast reports
       // the count and stops - every time, "Saved. 0 products updated." included,
       // never a bare "Saved." that leaves the reader guessing whether it re-read.
+      // The price tag designer caches the spec-value icon list in its own client: a save that
+      // changed icons or their order must reach it (review S1).
+      if ('value_icons' in body || 'icon_order' in body) {
+        void kitLibraryClient.invalidateQueries({ queryKey: FEATURE_ICONS_KEY });
+      }
       toast.success(
         `Saved. ${updated.products_updated} product${updated.products_updated === 1 ? '' : 's'} updated.`,
       );

@@ -84,7 +84,7 @@ function iconsLayer(props: Record<string, unknown> = {}): TagLayer {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 2, align: 'left', order: [], ...props },
+    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 2, align: 'left', ...props },
   } as unknown as TagLayer;
 }
 

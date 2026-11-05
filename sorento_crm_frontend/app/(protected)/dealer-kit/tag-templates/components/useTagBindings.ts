@@ -25,7 +25,11 @@ import type {
   TagBindingData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
-import { kitLibraryClient, resetKitLibraryCache } from '@/lib/dealer-kit/kit-library-cache';
+import {
+  FEATURE_ICONS_KEY,
+  kitLibraryClient,
+  resetKitLibraryCache,
+} from '@/lib/dealer-kit/kit-library-cache';
 import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   ensureFontsLoaded,
@@ -200,7 +204,7 @@ const libraryClient = kitLibraryClient;
 const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
 const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
 /** Feature icons: the spec-value icon list the print page gets too, with signed URLs. */
-export const FEATURE_ICONS_KEY = ['dealer-kit', 'library', 'feature-icons'] as const;
+export { FEATURE_ICONS_KEY };
 const NO_FEATURE_ICONS: FeatureIconWithUrl[] = [];
 const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
 export { resetKitLibraryCache };

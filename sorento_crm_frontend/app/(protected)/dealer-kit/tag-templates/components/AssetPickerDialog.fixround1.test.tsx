@@ -86,6 +86,26 @@ describe('AssetPickerDialog managing the icon library', () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
+  it('names its close button as the host asks (Done while managing icons)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetPickerDialog
+          open
+          productImages={[]}
+          allowProductPhotos={false}
+          libraryKind="icon"
+          closeLabel="Done"
+          onCancel={vi.fn()}
+          onPick={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTitle('Hot')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
   it('offers no "Show when" on any icon', async () => {
     mount();
     await waitFor(() => expect(screen.getByTitle('Hot')).toBeInTheDocument());

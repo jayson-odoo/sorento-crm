@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
 import { ChevronLeft, ChevronRight, MoreHorizontal, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { AssetPickerDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog';
-import { useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
+import { ICON_LIBRARY_QUERY_KEY, useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
 import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
@@ -100,6 +101,12 @@ export function ValuesAndWordsTab({
   const canManageIcons = useHasPermission('dealer_kit.library.manage');
   const { data: iconLibrary } = useIconLibraryQuery(canManageIcons);
   const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  // An icon uploaded inside the picker is not in the list the cell names icons from until it
+  // is read again (review S2).
+  const refreshIconLibrary = () => {
+    void queryClient.invalidateQueries({ queryKey: ICON_LIBRARY_QUERY_KEY });
+  };
   const iconAssets = useMemo(() => {
     const map = new Map<string, { name: string; thumb: string | null }>();
     for (const [id, name] of Object.entries(row.value_icon_names ?? {})) map.set(id, { name, thumb: null });
@@ -411,11 +418,11 @@ export function ValuesAndWordsTab({
                       type="button"
                       size="icon"
                       variant="ghost"
-                      className="size-5"
+                      className="size-7"
                       aria-label={`Move ${name} earlier`}
                       onClick={() => moveIcon(value, index, -1)}
                     >
-                      <ChevronLeft className="size-3" />
+                      <ChevronLeft className="size-3.5" />
                     </Button>
                   )}
                   {editIcons && index < ids.length - 1 && (
@@ -423,11 +430,11 @@ export function ValuesAndWordsTab({
                       type="button"
                       size="icon"
                       variant="ghost"
-                      className="size-5"
+                      className="size-7"
                       aria-label={`Move ${name} later`}
                       onClick={() => moveIcon(value, index, 1)}
                     >
-                      <ChevronRight className="size-3" />
+                      <ChevronRight className="size-3.5" />
                     </Button>
                   )}
                   {editIcons && (
@@ -435,11 +442,11 @@ export function ValuesAndWordsTab({
                       type="button"
                       size="icon"
                       variant="ghost"
-                      className="size-5"
+                      className="size-7"
                       aria-label={`Remove ${name}`}
                       onClick={() => setIcons(value, (list) => list.filter((other) => other !== id))}
                     >
-                      <X className="size-3" />
+                      <X className="size-3.5" />
                     </Button>
                   )}
                 </span>
@@ -636,20 +643,25 @@ export function ValuesAndWordsTab({
           <DataGridTable />
         </DataGrid>
       </div>
-      {/* The Dealer Kit icon library: upload or pick; a pick appends to the choice's icons. */}
+      {/* The Dealer Kit icon library: upload or pick. Each pick appends to the choice's icons
+          and the picker stays open, so hot and cold go in one go; Done closes it. */}
       <AssetPickerDialog
         open={iconPickerFor !== null}
         productImages={[]}
         allowProductPhotos={false}
         libraryKind="icon"
+        closeLabel="Done"
         title={iconPickerFor ? `Icons for ${displayName(iconPickerFor)}` : 'Icons'}
-        onCancel={() => setIconPickerFor(null)}
+        onCancel={() => {
+          setIconPickerFor(null);
+          refreshIconLibrary();
+        }}
         onPick={(source) => {
           if (iconPickerFor && source.type === 'asset') {
             const assetId = source.assetId;
             setIcons(iconPickerFor, (ids) => (ids.includes(assetId) ? ids : [...ids, assetId]));
+            refreshIconLibrary();
           }
-          setIconPickerFor(null);
         }}
       />
     </div>

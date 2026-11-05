@@ -246,7 +246,7 @@ interface InspectorPanelProps {
   specSheet?: boolean;
   /** The spec registry keys, for the "Show only when spec is Yes" picker. */
   specKeys?: SpecKeyOption[];
-  /** Feature icons: open the icon library (upload icons, set their Show when rules). */
+  /** Feature icons: open the icon library (upload, rename); the rules live on the spec values. */
   onManageIcons?: () => void;
 }
 

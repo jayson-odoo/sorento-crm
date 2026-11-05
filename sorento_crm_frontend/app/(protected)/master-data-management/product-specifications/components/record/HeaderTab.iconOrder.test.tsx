@@ -20,7 +20,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-function row(icon_order: number | null): SpecRegistryKey {
+function row(icon_order: number | null, over: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   return {
     spec_key: 'water_supply',
     label: 'Water supply',
@@ -45,6 +45,7 @@ function row(icon_order: number | null): SpecRegistryKey {
     match_decay: 0,
     is_active: true,
     icon_order,
+    ...over,
   } as unknown as SpecRegistryKey;
 }
 
@@ -80,6 +81,46 @@ describe('HeaderTab Icon order', () => {
     expect(latest?.iconOrder).toBe('1');
     fireEvent.change(input, { target: { value: '' } });
     expect(latest?.iconOrder).toBe('');
+  });
+});
+
+describe('HeaderTab Icon order, fix round', () => {
+  it('is not offered on a spec that cannot carry icons (free text, no fixed values)', () => {
+    render(
+      withQuery(
+        <HeaderTab
+          row={row(null, { data_type: 'text', allowed_values: [] })}
+          mode="view"
+          draft={null}
+          setDraft={() => {}}
+        />,
+      ),
+    );
+    expect(screen.queryByText('Icon order')).toBeNull();
+  });
+
+  it('is offered on a yes/no spec', () => {
+    render(
+      withQuery(
+        <HeaderTab row={row(1, { data_type: 'boolean', allowed_values: [] })} mode="view" draft={null} setDraft={() => {}} />,
+      ),
+    );
+    expect(screen.getByText('Icon order')).toBeInTheDocument();
+  });
+
+  it('shows the inline error once a refused save set one, and clears it when fixed', () => {
+    function Refused() {
+      const [draft, setDraft] = useState<SpecKeyDraft>(() => ({
+        ...projectSpecKeyDraft(row(2)),
+        iconOrder: '0',
+        iconOrderError: 'Enter a whole number between 1 and 999, or leave it blank.',
+      }));
+      return <HeaderTab row={row(2)} mode="edit" draft={draft} setDraft={(u) => setDraft((d) => u(d))} />;
+    }
+    render(withQuery(<Refused />));
+    expect(screen.getByText(/whole number between 1 and 999/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Icon order'), { target: { value: '3' } });
+    expect(screen.queryByText(/whole number between 1 and 999/)).toBeNull();
   });
 });
 

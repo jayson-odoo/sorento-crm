@@ -55,12 +55,14 @@ interface AssetPickerDialogProps {
   /** What an upload from this dialog is filed as. */
   uploadKind?: AssetKind;
   /**
-   * Manage ONE kind (the icon library, from a Feature icons layer): the library lists only that
+   * Manage ONE kind (the icon library, from a Feature icons layer or a spec value): the library lists only that
    * kind, an upload is filed as it, and the new asset stays in the list instead of being picked,
-   * so its Show when rule can be set next.
+   * so the next one can be added straight away.
    */
   libraryKind?: AssetKind;
   title?: string;
+  /** The footer button's words: "Cancel" when picking one, "Done" when adding several. */
+  closeLabel?: string;
   onCancel: () => void;
   onPick: (source: ImageSource) => void;
 }
@@ -72,6 +74,7 @@ export function AssetPickerDialog({
   uploadKind: uploadKindProp = 'decorative',
   libraryKind,
   title = 'Choose an image',
+  closeLabel = 'Cancel',
   onCancel,
   onPick,
 }: AssetPickerDialogProps) {
@@ -293,7 +296,7 @@ export function AssetPickerDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            Cancel
+            {closeLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

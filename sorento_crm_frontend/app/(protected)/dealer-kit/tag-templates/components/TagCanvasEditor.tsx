@@ -4970,7 +4970,8 @@ export function TagCanvasEditor({
         onPick={handleImagePicked}
       />
 
-      {/* Feature icons: the icon library, managed from the layer (upload, Show when rules). */}
+      {/* Feature icons: the icon library, managed from the layer (upload, rename). Which icons a
+          value shows is set on the spec value, in Product Specifications. */}
       <AssetPickerDialog
         open={iconLibraryOpen}
         productImages={[]}

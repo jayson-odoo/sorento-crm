@@ -56,12 +56,17 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog
   AssetPickerDialog: (props: {
     open: boolean;
     libraryKind?: string;
+    closeLabel?: string;
+    onCancel: () => void;
     onPick: (s: { type: 'asset'; assetId: string }) => void;
   }) =>
     props.open ? (
       <div data-testid="icon-picker" data-kind={props.libraryKind}>
         <button type="button" onClick={() => props.onPick({ type: 'asset', assetId: 'i-new' })}>
           Pick Steam
+        </button>
+        <button type="button" onClick={props.onCancel}>
+          {props.closeLabel ?? 'Cancel'}
         </button>
       </div>
     ) : null,
@@ -171,6 +176,29 @@ describe('ValuesAndWordsTab icons column', () => {
     expect(within(mixerCell()).getByTitle('Hot')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /choose icons/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /remove hot/i })).toBeNull();
+  });
+});
+
+describe('ValuesAndWordsTab icon picker, fix round', () => {
+  it('stays open after a pick so several icons go in at once, and Done closes it', () => {
+    const spy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    render(withClient(<EditHarness row={waterSupply()} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Mixer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Steam' }));
+    expect(screen.getByTestId('icon-picker')).toBeInTheDocument();
+    spy.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByTestId('icon-picker')).toBeNull();
+    // An icon uploaded in the picker must reach the list the cell names icons from.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['dealer-kit', 'icon-library'] });
+    spy.mockRestore();
+  });
+
+  it('gives each move and remove button a 28px hit area', () => {
+    render(withClient(<EditHarness row={waterSupply()} />));
+    const remove = within(mixerCell()).getByRole('button', { name: 'Remove Hot' });
+    expect(remove.className).toMatch(/\bsize-7\b/);
+    expect(within(mixerCell()).getByRole('button', { name: 'Move Hot later' }).className).toMatch(/\bsize-7\b/);
   });
 });
 

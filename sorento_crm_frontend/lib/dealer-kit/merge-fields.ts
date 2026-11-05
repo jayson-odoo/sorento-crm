@@ -71,12 +71,6 @@ export interface SpecKeyOption {
   key: string;
   label: string;
   unit?: string | null;
-  /** Feature icons' Show when editor: the key's type and its fixed values, with their labels. */
-  data_type?: string | null;
-  allowed_values?: string[];
-  value_labels?: Record<string, string>;
-  /** Each pickable value with the label a tag prints for it (server: `display_spec_value`). */
-  value_options?: { value: string; label: string }[];
 }
 
 /**
