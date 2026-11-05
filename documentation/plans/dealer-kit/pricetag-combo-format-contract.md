@@ -159,3 +159,12 @@ always escaped (`& < > "`). Idempotent.
   combo description (422 over it, the row unchanged); the raw 20000 limit sits on `ProductCreate` /
   `ProductUpdate` only, never on `ProductBase` / `ProductResponse`, so a response can never fail on length.
   `import_price_tag_descriptions.py` refuses (reports) a row that sanitises over 5000.
+- R15 (reviewer re-check N1, 5 Nov): pasted HTML loses only the `color`, `background-color`, `background`
+  and `text-align` declarations; every other declaration (font-weight, font-style, text-decoration, ...)
+  stays so tiptap's Bold / Italic / Underline / Strike paste rules keep working (Google Docs wraps a paste in
+  `<b style="font-weight:normal">`).
+- R16 (reviewer re-check R1): the canvas inline editor (double-click a layer, `contentFor` / `editingContent`
+  in TagCanvasEditor.tsx) opens a layer bound to a description slot read-only, showing `richPlainText`, same
+  rule as the Inspector Content box; it never saves typed-over markup.
+- Nits: drop the unreachable rich re-pass after the plain-text loop (or mark it defensive); a raw-SQL test
+  guards the read-side `fits()` filter in `_defaults_for`.
