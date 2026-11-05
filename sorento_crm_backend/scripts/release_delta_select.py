@@ -9,7 +9,8 @@ BACKEND IMPORT GRAPH. Nodes are the `.py` files under the backend's `app/`, `scr
   - module-level: an `import` / `from ... import` statement that runs when the file is imported
     (at the top, or inside a module-level `if` / `try` / class body);
   - lazy: an import inside a function, and, in files under `tests/` only, a dotted
-    `app.x.y` / `scripts.x` / `tests.x` string (a `mock.patch` / `monkeypatch.setattr` target).
+    `app.x.y` / `scripts.x` / `tests.x` in a string literal (a `mock.patch` /
+    `monkeypatch.setattr` target).
 Resolution: relative imports against the file's package; `from pkg import name` points at
 `pkg.name` when that is a module, else at the module `pkg/__init__.py` re-exports `name` from
 (`from app.models import User` -> app/models/user.py), else at `pkg`; any other dotted name at
@@ -91,7 +92,7 @@ from pathlib import Path
 BACKEND_PREFIX = "sorento_crm_backend/"
 FRONTEND_PREFIX = "sorento_crm_frontend/"
 SOURCE_DIRS = ("app", "scripts", "tests")
-GRAPH_VERSION = 3
+GRAPH_VERSION = 4
 SAFE_TEST_RE = re.compile(r"^tests/([A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_.-]*\.py$")
 DOTTED_RE = re.compile(r"(?<![\w.])((?:app|scripts|tests)(?:\.[A-Za-z_]\w*)+)")
 MIGRATION_TEST_RE = re.compile(r"^tests/test_migration_[A-Za-z0-9_.-]*\.py$")
@@ -253,8 +254,11 @@ def file_edges(rel: str, text: str, modules: dict[str, str],
             else:
                 add(base, at_top)
     if rel.startswith("tests/"):
-        for name in DOTTED_RE.findall(text):
-            add(name, False)
+        # String literals only: the regex over the raw text would also read the import lines.
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for name in DOTTED_RE.findall(node.value):
+                    add(name, False)
     return top, lazy - top
 
 
