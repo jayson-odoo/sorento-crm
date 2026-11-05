@@ -357,11 +357,19 @@ export function SpecSheetReader({
       ),
     [chunks, visible, railVisible],
   );
+  // Which template versions the pages are drawn from (Templates, Use latest templates change it).
+  const templateSig = (['cover', 'page', 'single'] as const)
+    .map((part) => {
+      const t = detail?.templates[part];
+      return t ? `${t.id}@${t.version_no}` : '-';
+    })
+    .join('|');
   const previews = useSpecSheetPreviews(
     projectId,
     documentId,
     sheetId,
     windowChunks,
+    templateSig,
   );
 
   // key -> the payload that holds its sheet, for every page whose chunk has arrived. One payload
@@ -704,13 +712,6 @@ export function SpecSheetReader({
     : [];
 
   const activeNumber = activeKey ? numbers.get(activeKey) : undefined;
-  // Which template versions the pages are drawn from; a live page restarts when this changes.
-  const templateSig = (['cover', 'page', 'single'] as const)
-    .map((part) => {
-      const t = detail.templates[part];
-      return t ? `${t.id}@${t.version_no}` : '-';
-    })
-    .join('|');
   // Outside full screen the app chrome and the page header sit above the editor; in full screen
   // only the overlay's padding and the toolbar do. The side panels lose their title row too.
   const stackHeight = focus
@@ -994,7 +995,6 @@ export function SpecSheetReader({
                     sheetIndex={drawn.get(page.key)?.index}
                     live={liveKeys.has(page.key)}
                     epoch={restarts[page.key] ?? 0}
-                    templateSig={templateSig}
                     selectedLayerId={
                       selection?.pageKey === page.key ? selection.layerId : null
                     }

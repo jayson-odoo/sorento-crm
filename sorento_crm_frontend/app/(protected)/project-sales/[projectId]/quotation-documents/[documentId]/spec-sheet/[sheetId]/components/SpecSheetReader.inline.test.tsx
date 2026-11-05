@@ -1308,6 +1308,80 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     );
   });
 
+  it('a page whose chunk was cached BEFORE a template switch draws the new template when it comes back into view', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [{ id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 }],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    // k13 is read (its chunk is cached with the old template), then the reader moves away.
+    report(['k13']);
+    expect(await screen.findByTestId('live-canvas-k13')).toHaveAttribute(
+      'data-layers',
+      'logo,area',
+    );
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    await waitFor(() => expect(screen.queryByTestId('live-canvas-k13')).toBeNull());
+
+    const switched = {
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page: { id: 'tp2', name: 'Item with accessories', version_no: 3 },
+      },
+    };
+    updateSpecSheet.mockResolvedValue(switched);
+    getSpecSheet.mockResolvedValue(switched);
+    // The new template's previews answer slowly, so a stale cached chunk would draw first.
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const out = previewFor(keys);
+        for (const sheet of out.doc.sheets)
+          sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+
+    // Back to k13: never seeded from the old template's cached chunk.
+    report(['k13']);
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k13')).toHaveAttribute('data-layers', 'title'),
+    );
+    const seen: string[] = [];
+    const watch = setInterval(() => {
+      const el = screen.queryByTestId('live-canvas-k13');
+      if (el) seen.push(el.getAttribute('data-layers') ?? '');
+    }, 5);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    clearInterval(watch);
+    expect(seen.every((v) => v === 'title')).toBe(true);
+  });
+
   it('a phone has no toolbar format bar (the Properties sheet formats text), so the toolbar has no blank rows', async () => {
     mobile = true;
     renderReader();

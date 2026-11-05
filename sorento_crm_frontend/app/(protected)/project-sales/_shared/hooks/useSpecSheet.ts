@@ -104,18 +104,28 @@ export function useSpecSheetPreview(
 /**
  * One preview query per chunk of pages. A chunk's key is its own sorted keys, so scrolling back to
  * a chunk already fetched is a cache hit and a fast scroll costs one call per chunk, not per page.
+ *
+ * `templates` names the template versions the sheet prints from. It is part of the key so a
+ * template switch can never draw a chunk cached from the old templates, not even for the moment
+ * a stale cache entry shows before its refetch: a live page seeds its canvas from the first
+ * payload it gets and would keep the old layers.
  */
 export function useSpecSheetPreviews(
   projectId: string,
   documentId: string,
   sheetId: string,
   chunks: string[][],
+  templates = '',
 ) {
   return useQueries({
     queries: chunks.map((keys) => {
       const sorted = [...keys].sort();
       return {
-        queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
+        queryKey: [
+          ...specSheetPreviewPrefix(documentId, sheetId),
+          sorted,
+          templates,
+        ],
         queryFn: () =>
           getSpecSheetPreview(projectId, documentId, sheetId, sorted),
         enabled: sorted.length > 0,
