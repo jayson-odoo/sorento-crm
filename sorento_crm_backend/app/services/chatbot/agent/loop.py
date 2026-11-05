@@ -13,6 +13,7 @@ import dataclasses
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -73,6 +74,9 @@ FINAL_GRACE = 10.0
 #: Below this many seconds left, compaction and the repair round are skipped.
 SIDE_CALL_MIN = 10.0
 CATALOG_TTL_SECONDS = 300
+#: After a failed refresh, the last catalogue is served this long before the next try.
+CATALOG_RETRY_SECONDS = 30
+_CATALOG_LOCK = threading.Lock()
 
 
 @dataclass
@@ -844,13 +848,29 @@ _CATALOG_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def catalog_cached(fetch: Callable[[], dict], *, now: Callable[[], float] = time.monotonic, key: str = "mcp") -> dict:
-    """The MCP tool catalogue, fetched at most once per CATALOG_TTL_SECONDS per process."""
+    """The MCP tool catalogue, fetched at most once per CATALOG_TTL_SECONDS per process.
+
+    One fetch at a time (parallel turns on an expired entry wait for it instead of each calling the single
+    MCP process at once), and a failed refresh serves the last catalogue this process fetched: it lists the
+    same tools, and a stale list beats a turn that fails with "the CRM tools are not reachable"
+    (crew pass, 5 Nov: 4 parallel sessions). With nothing fetched yet, the failure stands."""
     hit = _CATALOG_CACHE.get(key)
     if hit is not None and hit[0] > now():
         return hit[1]
-    value = fetch()
-    _CATALOG_CACHE[key] = (now() + CATALOG_TTL_SECONDS, value)
-    return value
+    with _CATALOG_LOCK:
+        hit = _CATALOG_CACHE.get(key)
+        if hit is not None and hit[0] > now():
+            return hit[1]
+        try:
+            value = fetch()
+        except Exception:
+            if hit is None:
+                raise
+            logger.warning("agent: tool catalogue refresh failed; serving the last one", exc_info=True)
+            _CATALOG_CACHE[key] = (now() + CATALOG_RETRY_SECONDS, hit[1])
+            return hit[1]
+        _CATALOG_CACHE[key] = (now() + CATALOG_TTL_SECONDS, value)
+        return value
 
 
 def _fetch_catalog() -> dict:
@@ -1494,6 +1514,7 @@ def _run(
                 ledger[call_id] = {
                     "name": name, "status": out.status,
                     "args": args if isinstance(args, dict) else {}, "data": out.data,
+                    "display": getattr(out, "display", None),
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))

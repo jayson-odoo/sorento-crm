@@ -156,3 +156,150 @@ def test_the_scope_note_is_added_once_and_iso_dates_become_dd_mm_yyyy():
     # a code that only looks like a date, and an impossible date, are left alone
     kept, _ = final_reply({"text": "SO-2026-10-01 and 2026-13-45"}, [], [], ledger={})
     assert kept == "SO-2026-10-01 and 2026-13-45"
+
+
+# ------------------------------------------------------------------ crew pass on 56d774bd: a code-rendered table (5 Nov)
+
+
+def _orders_per_agent(db, t: str, agents: int, *, cancelled_extra: bool = True) -> None:
+    for i in range(agents):
+        for n in range(i % 3 + 1):
+            db.add(Order(id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, order_number=f"{t}-{i}-{n}", debtor_code=t,
+                         agent=f"AGENT {i:02d}", order_date=date(2026, 10, 1 + n), is_cancelled=False,
+                         total_amount=Decimal("100.50")))
+    if cancelled_extra:
+        db.add(Order(id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, order_number=f"{t}-X", debtor_code=t,
+                     agent="AGENT 00", order_date=date(2026, 10, 2), is_cancelled=True, total_amount=Decimal("999")))
+    db.flush()
+
+
+def _per_agent_spec(t: str, **extra) -> dict:
+    return {"entity": "order", "group_by": ["agent"],
+            "aggregates": [{"fn": "count"}, {"fn": "sum", "field": "total_amount"}],
+            "filters": [{"field": "debtor_code", "op": "eq", "value": t},
+                        {"field": "order_date", "op": "between", "value": ["2026-10-01", "2026-10-31"]}], **extra}
+
+
+def _tool(db, contact, args, *, panel):
+    from app.services.chatbot.agent import writes
+    from tests.chatbot.agent._ported_reads_support import make_ctx
+
+    ctx = make_ctx(contact["user_id"])
+    if panel:
+        with panel_turn(contact["user_id"]):
+            return writes.run_user_read(db, ctx, QUERY, args, set())
+    return writes.run_user_read(db, ctx, QUERY, args, set())
+
+
+def test_a_long_grouped_result_is_a_code_rendered_table_on_the_panel(db):
+    import json
+    import re
+
+    t = "ZZT" + uuid.uuid4().hex[:6].upper()
+    _orders_per_agent(db, t, 12)
+    contact = agent_contact(db, "order_management.orders.view")
+    out = _tool(db, contact, _per_agent_spec(t), panel=True)
+    assert out.status == "ok"
+    card = out.display
+    assert card.splitlines()[0] == "Delivery orders by agent, Order date 01/10/2026 to 31/10/2026"
+    assert card.splitlines()[1] == "| Agent | Delivery orders | Total |"
+    body = [line for line in card.splitlines() if line.startswith("| AGENT ")]
+    assert len(body) == 12 and body[0] == "| AGENT 00 | 1 | 100.50 |"
+    assert "| Total | 24 | 2,412 |" in card
+    assert card.splitlines()[-1] == "Cancelled orders excluded."
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", card)
+    # the model is not given the rows to retype: totals, the period, the note and a sample of three
+    sent = json.loads(out.to_json())
+    assert "groups" not in sent["data"] and "display" not in sent
+    assert sent["data"]["totals"] == {"count": 24, "sum_total_amount": 2412.0}
+    assert sent["data"]["total_groups"] == 12 and len(sent["data"]["sample"]) == 3
+    assert sent["data"]["scope_note"] == "Cancelled orders excluded."
+    assert sent["data"]["period_display"] == "Order date 01/10/2026 to 31/10/2026"
+
+
+def test_on_whatsapp_the_table_is_one_line_per_group(db):
+    t = "ZZT" + uuid.uuid4().hex[:6].upper()
+    _orders_per_agent(db, t, 11)
+    contact = agent_contact(db, "order_management.orders.view")
+    card = _tool(db, contact, _per_agent_spec(t), panel=False).display
+    assert "|" not in card
+    assert "- AGENT 00: Delivery orders 1, Total 100.50" in card
+    assert "Total: Delivery orders 21, Total 2,110.50" in card
+    assert card.splitlines()[-1] == "Cancelled orders excluded."
+
+
+def test_ten_groups_or_fewer_are_read_by_the_model_as_they_are(db):
+    t = "ZZT" + uuid.uuid4().hex[:6].upper()
+    _orders_per_agent(db, t, 10)
+    contact = agent_contact(db, "order_management.orders.view")
+    out = _tool(db, contact, _per_agent_spec(t), panel=True)
+    assert out.display is None and len(out.data["groups"]) == 10
+
+
+def test_the_scope_note_stands_when_the_query_excludes_cancelled_orders_itself(db):
+    t = "ZZT" + uuid.uuid4().hex[:6].upper()
+    _orders_per_agent(db, t, 12)
+    contact = agent_contact(db, "order_management.orders.view")
+    spec = _per_agent_spec(t)
+    spec["filters"].append({"field": "is_cancelled", "op": "eq", "value": False})
+    out = _tool(db, contact, spec, panel=True)
+    assert out.data["scope_note"] == "Cancelled orders excluded."
+    assert out.display.splitlines()[-1] == "Cancelled orders excluded."
+
+
+def test_the_reply_is_the_models_one_line_then_the_whole_table_whatever_the_model_retyped(db):
+    """Crew runs 2, 4 and 5: the model retyped the table, cut it ("omitted for brevity") and dropped the note."""
+    t = "ZZT" + uuid.uuid4().hex[:6].upper()
+    _orders_per_agent(db, t, 12)
+    contact = agent_contact(db, "order_management.orders.view")
+    # what a model retypes from the three sample rows it was given, then cuts
+    retyped = (
+        "There were 24 delivery orders in October.\n- AGENT 00: 1\n- AGENT 01: 2\n- AGENT 02: 3\n"
+        "(Additional agents omitted for brevity)"
+    )
+    reply = turn(db, contact, [asks(QUERY, _per_agent_spec(t)), answer(retyped)],
+                 "delivery orders per agent last month", panel=True).reply_text
+    assert reply.startswith("There were 24 delivery orders in October.\n\nDelivery orders by agent, Order date 01/10/2026")
+    assert "omitted" not in reply
+    assert len([line for line in reply.splitlines() if line.startswith("| AGENT ")]) == 12
+    assert reply.endswith("Cancelled orders excluded.")
+
+
+def test_tool_result_json_never_carries_the_display_block():
+    import json
+
+    from app.services.chatbot.agent.tools import ToolResult
+
+    sent = json.loads(ToolResult("ok", data={"a": 1}, display="| secret table |").to_json("c1"))
+    assert "display" not in sent and "secret table" not in json.dumps(sent)
+
+
+def test_the_catalogue_is_fetched_once_for_parallel_turns_and_a_failed_refresh_serves_the_last_one():
+    import threading
+    import time as _time
+
+    from app.services.chatbot.agent import loop
+
+    key = "zzt-" + uuid.uuid4().hex
+    calls = []
+
+    def slow():
+        calls.append(1)
+        _time.sleep(0.2)
+        return {"tool": {}}
+
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(loop.catalog_cached(slow, key=key))) for _ in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert len(calls) == 1 and results == [{"tool": {}}] * 4
+
+    def broken():
+        raise TimeoutError("mcp busy")
+
+    clock = [_time.monotonic() + loop.CATALOG_TTL_SECONDS + 1]  # the entry has expired
+    assert loop.catalog_cached(broken, key=key, now=lambda: clock[0]) == {"tool": {}}
+    with pytest.raises(TimeoutError):
+        loop.catalog_cached(broken, key="zzt-never-" + uuid.uuid4().hex)

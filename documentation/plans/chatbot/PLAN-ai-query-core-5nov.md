@@ -152,3 +152,29 @@ registry entities.
   (`tests/chatbot/agent/test_ai_query_reply.py`); disconnecting `shape_reply` fails 9 of its 10 tests.
 - Live check x3 not run from the cloud sandbox: the OpenAI account behind it answers 429 "no credits remaining",
   and the dev copy's Gemini key is not reachable from here. Crew's 3-run re-pass on the dev copy is the live check.
+
+## Crew pass on 56d774bd (5 Nov): a code-rendered table for long results
+
+- Step 6 passed 3 of 3. Step 3 failed 2 of 5, every time while the MODEL retyped a 68-line table: "the model
+  provider failed" at about 49.9k prompt tokens, "20 of 68 omitted for brevity", the cancelled note dropped.
+- Over `CARD_MIN_ROWS` (10) rows or groups, `query_tools.as_card` renders the table in code (heading with the
+  period in dd/mm/yyyy, the rows, a totals row, "Showing n of m" when cut, the scope note); markdown table on
+  the panel, one line per row on WhatsApp. It rides on `ToolResult.display`, which `to_json` never sends to the
+  model. The model gets the totals, the period, the note, the counts and three sample rows, and is told to write
+  one line. `shape_reply` makes the reply the model's first line plus the turn's LAST table, verbatim: the rule
+  of AGENT-REPORTS' report card (`report_state.with_cards`, PR #2201, not on main yet, so not importable here;
+  when both are on main the two rules are one function and whichever merges second folds into the other).
+- Measured on a 68-agent month (OpenAI token count, gpt-4.1 tokenizer): the tool result the model reads drops
+  from 1,996 to 246 tokens, and the reply no longer makes the model write 68 lines.
+- The ~50k prompt: each model call carries about 14k tokens of tool schemas (the offered MCP catalogue tools,
+  about 42k characters, the largest `crm_report_ask` at 7k; plus 13k characters of in-process schemas), then the
+  system prompt and the growing tool results; a describe, query, answer turn makes three calls, so the turn's
+  prompt total lands near 50k. The catalogue part is outside this lane.
+- 4 parallel sessions, "the CRM tools are not reachable": the MCP server is one uvicorn process
+  (`sorento_crm_mcp/__main__.py:30`), and the catalogue cache (`loop.catalog_cached`) had no single flight and no
+  fallback, so on a cold or expired entry every parallel turn called `tools/list` at once with a 10 s timeout
+  (`loop._fetch_catalog`) and any that timed out failed its turn. Now one fetch at a time per process, and a
+  failed refresh serves the last catalogue (retry after 30 s).
+- The scope note also stands when the query itself excludes cancelled orders (crew run 5).
+- Live check x3 still not possible from the cloud sandbox (OpenAI 429 "no credits remaining"; no Gemini key);
+  crew's re-pass is the live check.

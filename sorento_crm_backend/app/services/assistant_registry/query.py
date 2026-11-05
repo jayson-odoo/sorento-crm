@@ -438,6 +438,9 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         if field not in named:
             filters.append(_filter(paths, {"field": field, "op": op, "value": value}))
             notes.append(note)
+        elif any(isinstance(f, dict) and f.get("field") == field and f.get("op") == op and f.get("value") == value
+                 for f in asked):
+            notes.append(note)  # the query asked for the same exclusion itself: it is still said
     period = _period_display(paths, asked)
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
@@ -530,55 +533,69 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
             item["label"] = parts[0] if len(parts) == 1 else f"{parts[0]}: {' '.join(parts[1:])}"
         item.update({f: _plain(data[f]) for f in shown if f not in entity.name_by})
         out_rows.append(item)
+    columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
+        {"key": f, "label": paths.resolve(f)[1].label} for f in shown if f not in entity.name_by
+    ]
     return {
         "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
-        "restricted": restricted,
+        "restricted": restricted, "columns": columns,
     }
 
 
-def _group_key(paths: _Paths, item: Any) -> tuple[str, Any]:
+def _group_key(paths: _Paths, item: Any) -> tuple[str, Any, str]:
+    """(name, expression, column label)."""
     if isinstance(item, str):
-        return item, paths.resolve(item)[0]
+        column, field, _kind = paths.resolve(item)
+        return item, column, field.label
     if isinstance(item, dict) and not (set(item) - {"field", "bucket"}):
         path, bucket = item.get("field"), item.get("bucket")
-        column, _f, kind = paths.resolve(path)
+        column, field, kind = paths.resolve(path)
         if bucket is None:
-            return path, column
+            return path, column, field.label
         if bucket not in BUCKETS:
             raise QueryRefused("invalid", f"Unknown bucket {bucket!r}. Buckets: {', '.join(BUCKETS)}.")
         if kind not in ("date", "datetime"):
             raise QueryRefused("invalid", f"A bucket needs a date field; `{path}` is {kind}.")
-        return f"{path}_{bucket}", cast(func.date_trunc(bucket, _local(column, kind)), Date)
+        expr = cast(func.date_trunc(bucket, _local(column, kind)), Date)
+        return f"{path}_{bucket}", expr, f"{field.label} ({bucket} starting)"
     raise QueryRefused("invalid", "Each group_by item is a field name or {field, bucket}.")
 
 
-def _aggregate(paths: _Paths, item: Any) -> tuple[str, Any]:
+_FN_WORDS = {"count": "Count of", "count_distinct": "Distinct", "sum": "Total", "avg": "Average", "min": "Lowest", "max": "Highest"}
+
+
+def _aggregate(paths: _Paths, item: Any, entity: EntityDef) -> tuple[str, Any, str]:
+    """(alias, expression, column label)."""
     if not isinstance(item, dict) or set(item) - {"fn", "field"}:
         raise QueryRefused("invalid", "Each aggregate is {fn, field}.")
     fn, path = item.get("fn"), item.get("field")
     if fn not in FNS:
         raise QueryRefused("invalid", f"Unknown fn {fn!r}. Fns: {', '.join(FNS)}.")
     if fn == "count" and path is None:
-        return "count", func.count()
-    column, _f, kind = paths.resolve(path)
+        return "count", func.count(), entity.label
+    column, field, kind = paths.resolve(path)
     alias = f"{fn}_{path.replace('.', '_')}"
+    label = f"{_FN_WORDS[fn]} {field.label.lower()}"
+    if fn == "sum" and field.label.lower().startswith("total"):
+        label = field.label  # "Total", not "Total total"
     if fn in ("sum", "avg") and kind != "number":
         raise QueryRefused("invalid", f"`{fn}` needs a number field; `{path}` is {kind}.")
     if fn == "count":
-        return alias, func.count(column)
+        return alias, func.count(column), label
     if fn == "count_distinct":
-        return alias, func.count(distinct(column))
-    return alias, getattr(func, fn)(column)
+        return alias, func.count(distinct(column)), label
+    return alias, getattr(func, fn)(column), label
 
 
 def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates, spec) -> dict:
-    keys = [_group_key(paths, g) for g in group_by]
-    aggs = [_aggregate(paths, a) for a in (aggregates or [{"fn": "count"}])]
-    names = [k for k, _ in keys] + [a for a, _ in aggs]
+    key_rows = [_group_key(paths, g) for g in group_by]
+    agg_rows = [_aggregate(paths, a, entity) for a in (aggregates or [{"fn": "count"}])]
+    keys = [(name, expr) for name, expr, _label in key_rows]
+    names = [k for k, _ in keys] + [a for a, _e, _l in agg_rows]
     if len(set(names)) != len(names):
         raise QueryRefused("invalid", "Two groups or aggregates share a name; name each once.")
     root = entity.model
-    labelled = {name: expr for name, expr in [*keys, *aggs]}
+    labelled = {name: expr for name, expr, _label in [*key_rows, *agg_rows]}
     total = func.count().over().label("__total")
     stmt = select(*(expr.label(name) for name, expr in labelled.items()), total).select_from(root)
     stmt = _base(db, user_id, entity, own_only, stmt, paths)
@@ -599,7 +616,21 @@ def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates,
     rows = _run(db, stmt.limit(limit))
     total_groups = int(rows[0]._mapping["__total"]) if rows and keys else len(rows)
     groups = [{name: _plain(row._mapping[name]) for name in labelled} for row in rows]
-    return {"entity": entity.key, "groups": groups, "total_groups": total_groups, "truncated": total_groups > len(groups)}
+    truncated = total_groups > len(groups)
+    # Column totals of the counts and sums, over every group (only when none was cut off).
+    totals = {}
+    if keys and not truncated:
+        for alias, _expr, _label in agg_rows:
+            if alias == "count" or alias.startswith(("count_", "sum_")):
+                totals[alias] = round(sum(float(g[alias] or 0) for g in groups), 2)
+                if alias == "count" or alias.startswith("count_"):
+                    totals[alias] = int(totals[alias])
+    return {
+        "entity": entity.key, "groups": groups, "total_groups": total_groups, "truncated": truncated,
+        "columns": [{"key": name, "label": label, "group": True} for name, _expr, label in key_rows]
+        + [{"key": alias, "label": label} for alias, _expr, label in agg_rows],
+        "totals": totals,
+    }
 
 
 # ------------------------------------------------------------------ describe

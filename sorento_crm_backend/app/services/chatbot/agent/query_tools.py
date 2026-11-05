@@ -14,6 +14,7 @@ from typing import Any
 
 from app.services.assistant_registry import ENTITIES
 from app.services.assistant_registry.query import MAX_GROUPS, MAX_ROWS, QueryRefused, describe, run_query
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.tools import TOOL_LABELS, ToolResult, cap_result
 
@@ -68,7 +69,98 @@ def _as_user(db, ctx, name: str, fn) -> ToolResult:
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
-    return _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args))
+    out = _as_user(db, ctx, QUERY, lambda user_id: run_query(db, user_id, args))
+    if out.status == "ok" and isinstance(out.data, dict):
+        return as_card(out.data, panel=staff_principal.current() is not None) or out
+    return out
+
+
+# ------------------------------------------------------------------ the table block (crew pass on 56d774bd)
+
+#: More rows or groups than this and the table is rendered by code and shown to the user under the model's one
+#: line; the model gets totals and a sample, never the rows to retype (it cut 68 lines to 20, dropped the note,
+#: and its output ran the turn out of time). The same rule as the report card of AGENT-REPORTS (#2201,
+#: `report_state.with_cards`): a code-rendered block passed to the user verbatim.
+CARD_MIN_ROWS = 10
+SAMPLE_ROWS = 3
+CARD_INSTRUCTION = (
+    "The full table is shown to the user under your reply by the system. Write ONE short line (the headline "
+    "figure from totals), do not list or repeat the rows, and do not repeat the period or note."
+)
+
+
+def _cell(value: Any) -> str:
+    if value is None or value == "":
+        return "-"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, int):
+        return f"{value:,}"
+    if isinstance(value, float):
+        return f"{value:,.0f}" if value.is_integer() else f"{value:,.2f}"
+    return " ".join(str(value).split()).replace("|", "/")
+
+
+def render_card(data: dict, *, title: str, panel: bool) -> str:
+    """The rows or groups as the user reads them: a heading with the period, the table (markdown on the panel,
+    one line per row on WhatsApp), the totals, then the scope note and what was cut off."""
+    columns = data.get("columns") or []
+    items = data.get("groups") if "groups" in data else data.get("rows")
+    items = items or []
+    # No bold markers: the reply's formatting pass rewrites them, and a table needs none.
+    heading = title
+    if data.get("period_display"):
+        heading += f", {data['period_display']}"
+    lines = [heading]
+    totals = data.get("totals") or {}
+    if panel:
+        lines.append("| " + " | ".join(c["label"] for c in columns) + " |")
+        lines.append("|" + "|".join("---" for _ in columns) + "|")
+        for item in items:
+            lines.append("| " + " | ".join(_cell(item.get(c["key"])) for c in columns) + " |")
+        if totals:
+            cells = [_cell(totals[c["key"]]) if c["key"] in totals else "" for c in columns]
+            cells[0] = cells[0] or "Total"
+            lines.append("| " + " | ".join(cells) + " |")
+    else:
+        first, rest = (columns[0], columns[1:]) if columns else ({"key": ""}, [])
+        for item in items:
+            values = ", ".join(f"{c['label']} {_cell(item.get(c['key']))}" for c in rest)
+            lines.append(f"- {_cell(item.get(first['key']))}: {values}" if values else f"- {_cell(item.get(first['key']))}")
+        if totals:
+            lines.append("Total: " + ", ".join(f"{c['label']} {_cell(totals[c['key']])}" for c in columns if c["key"] in totals))
+    shown, whole = len(items), data.get("total_groups", data.get("total"))
+    if data.get("truncated") and whole:
+        lines.append(f"Showing {shown:,} of {int(whole):,}.")
+    if data.get("scope_note"):
+        lines.append(data["scope_note"])
+    return "\n".join(lines)
+
+
+def as_card(data: dict, *, panel: bool) -> ToolResult | None:
+    """A result over CARD_MIN_ROWS as a code-rendered block for the user plus a summary for the model; None
+    for a short result, which the model reads whole."""
+    items = data.get("groups") if "groups" in data else data.get("rows")
+    if not isinstance(items, list) or len(items) <= CARD_MIN_ROWS:
+        return None
+    entity = ENTITIES.get(str(data.get("entity")))
+    title = entity.label if entity is not None else "Results"
+    if "groups" in data:
+        keys = [c["label"] for c in data.get("columns") or [] if c.get("group")]
+        title = f"{title} by {', '.join(k.lower() for k in keys)}" if keys else title
+    summary = {
+        "entity": data.get("entity"),
+        "shown_to_user": True,
+        "instruction": CARD_INSTRUCTION,
+        "period_display": data.get("period_display"),
+        "scope_note": data.get("scope_note"),
+        "truncated": data.get("truncated"),
+        "sample": items[:SAMPLE_ROWS],
+    }
+    for key in ("total", "total_groups", "totals", "restricted"):
+        if key in data:
+            summary[key] = data[key]
+    return ToolResult("ok", data=summary, display=render_card(data, title=title, panel=panel))
 
 
 def _describe(db, ctx, args: dict) -> ToolResult:
@@ -154,6 +246,8 @@ TOOL_LABELS.setdefault(QUERY, "reading CRM records, totals and groupings")
 TOOL_LABELS.setdefault(DESCRIBE, "listing the CRM records you can read")
 
 
+#: The model's line kept above a table block.
+MAX_LINE_CHARS = 300
 _ISO_DATE = re.compile(r"(?<![\w-])(\d{4})-(\d{2})-(\d{2})(?![\w-])")
 
 
@@ -170,6 +264,15 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
+    # A code-rendered table (`as_card`): the model's first line, then the turn's LAST table verbatim (a later
+    # query corrected an earlier one), as `report_state.with_cards` does for the report card.
+    cards = [e.get("display") for e in (ledger or {}).values() if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display")]
+    if cards:
+        card = cards[-1]
+        if card not in text:
+            line = next((part.strip() for part in text.splitlines() if part.strip()), "")
+            text = f"{line[:MAX_LINE_CHARS]}\n\n{card}".strip() if line else card
+        return _ISO_DATE.sub(_dmy, text)
     lowered = text.lower()
     notes: list[str] = []
     for entry in (ledger or {}).values():
