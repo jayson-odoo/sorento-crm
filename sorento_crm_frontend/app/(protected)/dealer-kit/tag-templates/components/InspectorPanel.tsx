@@ -1128,12 +1128,14 @@ function ImageInspector({
             a tap photo can face the other way without a second upload. */}
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Flip</Label>
-          <div className="flex gap-1">
+          {/* Stacked, full width: side by side the second label was cut off
+              in the narrow inspector at 1280 px (crew browser pass, 5 Nov). */}
+          <div className="flex flex-col gap-1">
             <Button
               type="button"
               variant={props.flipX ? 'secondary' : 'outline'}
               size="sm"
-              className="h-7 flex-1 text-xs"
+              className="h-7 w-full justify-start text-xs"
               aria-pressed={props.flipX === true}
               onClick={() => onChange({ ...props, flipX: !props.flipX })}
             >
@@ -1144,7 +1146,7 @@ function ImageInspector({
               type="button"
               variant={props.flipY ? 'secondary' : 'outline'}
               size="sm"
-              className="h-7 flex-1 text-xs"
+              className="h-7 w-full justify-start text-xs"
               aria-pressed={props.flipY === true}
               onClick={() => onChange({ ...props, flipY: !props.flipY })}
             >
