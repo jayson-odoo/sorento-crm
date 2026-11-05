@@ -8,7 +8,7 @@ describe('clickToken', () => {
     vi.stubGlobal('crypto', {});
     const a = clickToken();
     const b = clickToken();
-    expect(a).toMatch(/^t-/);
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(a).not.toBe(b);
   });
 });

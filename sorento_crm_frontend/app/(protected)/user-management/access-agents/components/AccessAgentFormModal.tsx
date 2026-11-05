@@ -1,5 +1,6 @@
 'use client';
 
+import { randomId } from '@/lib/id';
 import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -117,7 +118,7 @@ export default function AccessAgentFormModal({
     for (const assignment of fromServer) {
       const code = String(assignment.code ?? '').trim();
       if (!grouped.has(code)) {
-        grouped.set(code, { id: crypto.randomUUID(), code, policy_id: null, rows: [] });
+        grouped.set(code, { id: randomId(), code, policy_id: null, rows: [] });
       }
       const grp = grouped.get(code);
       // Rows of a group share one policy_id; take the first non-null seen.
@@ -125,7 +126,7 @@ export default function AccessAgentFormModal({
         grp.policy_id = String(assignment.policy_id);
       }
       grouped.get(code)?.rows.push({
-        id: crypto.randomUUID(),
+        id: randomId(),
         tier:
           assignment.tier != null && Number(assignment.tier) >= 1 && Number(assignment.tier) <= 3
             ? Number(assignment.tier)
@@ -441,7 +442,7 @@ export default function AccessAgentFormModal({
                                 onClick={() => {
                                   const next = [...assignmentGroups];
                                   next[groupIdx].rows.push({
-                                    id: crypto.randomUUID(),
+                                    id: randomId(),
                                     tier: null,
                                     team_id: teamsList[0]?.id ?? '',
                                     notify_on_extension: true,
@@ -464,10 +465,10 @@ export default function AccessAgentFormModal({
                           setAssignmentGroups([
                             ...assignmentGroups,
                             {
-                              id: crypto.randomUUID(),
+                              id: randomId(),
                               code: '',
                               policy_id: null,
-                              rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '', notify_on_extension: true }],
+                              rows: [{ id: randomId(), tier: null, team_id: teamsList[0]?.id ?? '', notify_on_extension: true }],
                             },
                           ])
                         }
