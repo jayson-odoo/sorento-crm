@@ -119,7 +119,7 @@ after done answers done ("Already in AutoCount.") with no call.
 3. A header quotation reference on SO create (today only per-line `fromQuotation`), for SOs whose lines were not copied from an AutoCount QT.
 4. Resume or `GET` by actionId for QT / SO writes, so a 202 can be confirmed without waiting for the next sync.
 5. `dtlKey` of the new row in the add-line answer (today the CRM diffs `document.Details`).
-6. `/write-capabilities` returns a top-level `book` (string, e.g. `"db3"`) so the CRM can allow Update / Cancel on adopted orders (R7).
+6. `/write-capabilities` returns a top-level `book` (string, e.g. `"db3"`) so the CRM can allow Update / Cancel on adopted orders (R7). Done on SS: #223 merged on SS main as cab276b3 (5 Nov), top-level `book`, null when writes are off or the book is refused; not live until crew releases SS. The CRM reads exactly that field; null or missing keeps adopted orders waiting.
 
 ## Questions for the owner
 
