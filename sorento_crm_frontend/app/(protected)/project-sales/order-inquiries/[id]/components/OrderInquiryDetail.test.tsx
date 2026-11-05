@@ -735,3 +735,20 @@ describe('Send to purchasing from the detail page (OI-RESEND-PURCHASING)', () =>
     ).toBeInTheDocument();
   });
 });
+
+describe('owner hand test (5 Nov 2026): the sales order is named in the header card', () => {
+  it('shows the SO number beside "Raised by", linking to the sales order', async () => {
+    renderDetail('oi-1');
+    const link = await screen.findByTestId('oi-header-so-link');
+    expect(link).toHaveTextContent('SO123456');
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/so-1');
+  });
+
+  it('prints the SO number as plain text when the sales order has no id to link to', async () => {
+    mockGetOrderInquiryHeader.mockResolvedValue({ ...HEADER, sales_order_id: undefined });
+    renderDetail('oi-1');
+    const plain = await screen.findByTestId('oi-header-so');
+    expect(plain).toHaveTextContent('SO123456');
+    expect(screen.queryByTestId('oi-header-so-link')).toBeNull();
+  });
+});
