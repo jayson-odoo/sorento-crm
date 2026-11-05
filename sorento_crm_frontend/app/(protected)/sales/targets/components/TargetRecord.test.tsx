@@ -173,7 +173,7 @@ vi.mock('../actions', async (importOriginal) => ({
   }),
 }));
 
-import TargetRecord, { rateText } from './TargetRecord';
+import TargetRecord, { additionalText, rateText } from './TargetRecord';
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const PRODUCT_ID = '6f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f';
@@ -591,7 +591,9 @@ describe('TargetRecord round 3, F2: commission tiers in Edit mode only', () => {
     fireEvent.click(within(commission).getByRole('button', { name: 'Add tier' }));
     fireEvent.change(within(commission).getByLabelText('Tier 2 from %'), { target: { value: '100' } });
     fireEvent.change(within(commission).getByLabelText('Tier 2 rate (% of RM)'), { target: { value: '4' } });
-    fireEvent.change(within(commission).getByLabelText('Tier 2 bonus (RM)'), { target: { value: '500' } });
+    // The RM Additional is the tier's Bonus (lane TARGET-TIER-ADDITIONAL).
+    fireEvent.change(within(commission).getByLabelText('Tier 2 additional'), { target: { value: '500' } });
+    fireEvent.change(within(commission).getByLabelText('Tier 2 additional in'), { target: { value: 'amount' } });
     expect((within(commission).getByLabelText('How tiers pay') as HTMLSelectElement).value).toBe('marginal');
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalledTimes(1));
@@ -876,14 +878,16 @@ describe('TargetRecord: the one engine on an agent target', () => {
     fireEvent.change(screen.getByLabelText('Round to'), { target: { value: 'ringgit' } });
     fireEvent.change(screen.getByLabelText(/Tier 1 from \(rm\)/i), { target: { value: '500000' } });
     fireEvent.change(screen.getByLabelText(/Tier 1 rate/), { target: { value: '1.5' } });
-    fireEvent.change(screen.getByLabelText('Tier 1 type'), { target: { value: 'additional' } });
+    // No "+ Additional" row type any more: the tier carries its own Additional (owner, 5 Nov).
+    expect(screen.queryByLabelText('Tier 1 type')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Tier 1 additional'), { target: { value: '0.5' } });
     fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalled());
     const sent = patchHeader.mutateAsync.mock.calls[0][0];
     expect(sent.threshold_unit).toBe('amount');
     expect(sent.rounding).toBe('ringgit');
     expect(sent.tiers).toEqual([
-      { threshold: 500000, rate: 1.5, bonus_amount: null, is_additional: true },
+      { threshold: 500000, rate: 1.5, bonus_amount: null, additional_rate: 0.5 },
     ]);
   });
 });
@@ -981,5 +985,81 @@ describe('rateText', () => {
     expect(rateText([{ label: 'A/C I', rate: 2 }, { label: 'A/C III', rate: 3.5 }], 'amount')).toBe('A/C I 2.00%, A/C III 3.50%');
     expect(rateText([{ label: null, rate: 1.5 }], 'quantity')).toBe('RM 1.50/unit');
     expect(rateText([], 'amount')).toBe('');
+  });
+});
+
+// ----------------------------------------------------------------------------------------
+// Lane TARGET-TIER-ADDITIONAL: a tier's Additional sits on the tier (owner, 5 Nov)
+// ----------------------------------------------------------------------------------------
+
+describe('TargetRecord: tier Additional (lane TARGET-TIER-ADDITIONAL)', () => {
+  /** A CRAFT IDEA A/C I, 2026 Q1: tier 2 (75,000) at 6% + 1% on 76,793.92. */
+  function aCraft() {
+    const base = tgt8();
+    const q1 = {
+      ...base.periods[0],
+      achieved_value: 76793.92,
+      achieved_pct: 128,
+      tier_reached: 2,
+      commission_earned: 5375.58,
+      tier_rates: [{ label: 'A/C I', rate: 6 }],
+      tier_additional: { kind: 'pct', value: 1 },
+    };
+    return {
+      ...base,
+      commission_method: 'retroactive',
+      threshold_unit: 'amount',
+      tiers_per_period: true,
+      periods: [q1, ...base.periods.slice(1)],
+      tiers: [
+        { threshold: 60000, rate: 5, bonus_amount: null, additional_rate: 1, period_start: '2026-01-01' },
+        { threshold: 75000, rate: 6, bonus_amount: null, additional_rate: 1, period_start: '2026-01-01' },
+        { threshold: 85000, rate: 7, bonus_amount: 250, additional_rate: null, period_start: '2026-01-01' },
+      ],
+    };
+  }
+
+  it('Periods shows the reached tier rate plus its Additional: A/C I 6.00% + 1.00%', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: aCraft(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Periods');
+    const q1 = screen.getByText('01/01/2026 - 31/03/2026').closest('tr') as HTMLElement;
+    expect(within(q1).getByText('A/C I 6.00% + 1.00%')).toBeTruthy();
+    expect(within(q1).getByText('5,375.58')).toBeTruthy();
+  });
+
+  it('the Commission tab shows each tier with its Additional, % or RM, and no "+ Additional" rows', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: aCraft(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    const commission = screen.getByRole('region', { name: 'Commission' });
+    expect(within(commission).getAllByText('+ 1.00%')).toHaveLength(2);
+    expect(within(commission).getByText('+ RM 250.00')).toBeTruthy();
+    expect(within(commission).queryByText(/\+ Additional from/)).toBeNull();
+  });
+
+  it('Edit reads a % Additional back into the tier and saves it unchanged', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: aCraft(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openEdit();
+    openTab('Commission');
+    expect((screen.getByLabelText('Tier 2 additional') as HTMLInputElement).value).toBe('1');
+    expect((screen.getByLabelText('Tier 3 additional in') as HTMLSelectElement).value).toBe('amount');
+    fireEvent.change(screen.getByLabelText('Tier 2 additional'), { target: { value: '1.5' } });
+    fireEvent.click(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(patchHeader.mutateAsync).toHaveBeenCalled());
+    const sent = patchHeader.mutateAsync.mock.calls[0][0];
+    expect(sent.tiers.map((t: { additional_rate?: number; bonus_amount: number | null }) => [t.additional_rate, t.bonus_amount])).toEqual([
+      [1, null], [1.5, null], [undefined, 250],
+    ]);
+  });
+});
+
+describe('additionalText', () => {
+  it('formats a % Additional, an RM Additional and a quantity Additional', () => {
+    expect(additionalText({ kind: 'pct', value: 1 }, 'amount')).toBe('+ 1.00%');
+    expect(additionalText({ kind: 'amount', value: 500 }, 'amount')).toBe('+ RM 500.00');
+    expect(additionalText({ kind: 'pct', value: 0.5 }, 'quantity')).toBe('+ RM 0.50/unit');
+    expect(additionalText(null, 'amount')).toBe('');
   });
 });

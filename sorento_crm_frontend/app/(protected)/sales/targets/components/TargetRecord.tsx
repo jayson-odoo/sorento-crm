@@ -100,6 +100,8 @@ const ROUNDING_OPTIONS = (Object.keys(ROUNDING_LABEL) as Rounding[]).map((value)
   value,
   label: ROUNDING_LABEL[value],
 }));
+/** A tier's Additional is a % on top of its rate, or a fixed RM (owner, 5 Nov). */
+type AdditionalKind = 'pct' | 'amount';
 const TIER_TYPE_OPTIONS = [
   { value: 'main', label: 'Tier' },
   { value: 'additional', label: '+ Additional' },
@@ -148,7 +150,10 @@ interface TierDraft {
   key: number;
   from: string;
   rate: string;
-  bonus: string;
+  /** The tier's Additional: a % (`additional_rate`) or a fixed RM (`bonus_amount`). */
+  addValue: string;
+  addKind: AdditionalKind;
+  /** A legacy "+ Additional" row. */
   additional: boolean;
   /** Tiers per period: the period's start. */
   period: string;
@@ -170,7 +175,11 @@ function tierDraft(tier?: CommissionTier, from = '', accounts: string[] = []): T
     key: nextTierKey,
     from: threshold === null || threshold === undefined ? from : String(threshold),
     rate: tier && tier.rate !== null && tier.rate !== undefined ? String(tier.rate) : '',
-    bonus: tier?.bonus_amount === null || tier?.bonus_amount === undefined ? '' : String(tier.bonus_amount),
+    ...(tier?.additional_rate !== null && tier?.additional_rate !== undefined
+      ? { addValue: String(tier.additional_rate), addKind: 'pct' as const }
+      : tier?.bonus_amount !== null && tier?.bonus_amount !== undefined
+        ? { addValue: String(tier.bonus_amount), addKind: 'amount' as const }
+        : { addValue: '', addKind: 'pct' as const }),
     additional: !!tier?.is_additional,
     period: tier?.period_start ?? '',
     accountRates,
@@ -311,7 +320,8 @@ function tiersOf(draft: Draft): CommissionTier[] {
   return draft.tiers.map((t) => ({
     ...(draft.thresholdUnit === 'pct' ? { from_pct: Number(t.from) } : { threshold: Number(t.from) }),
     ...(dealer ? dealerRates(t, draft.accountIds) : { rate: Number(t.rate) }),
-    bonus_amount: t.bonus.trim() === '' ? null : Number(t.bonus),
+    bonus_amount: t.addKind === 'amount' && t.addValue.trim() !== '' ? Number(t.addValue) : null,
+    ...(t.addKind === 'pct' && t.addValue.trim() !== '' && !t.additional ? { additional_rate: Number(t.addValue) } : {}),
     ...(t.additional ? { is_additional: true } : {}),
     ...(draft.perPeriod ? { period_start: t.period || null } : {}),
   }));
@@ -329,7 +339,7 @@ function tierProblem(draft: Draft): string {
     text.trim() === '' ? required : !Number.isFinite(Number(text)) || Number(text) < 0;
   const dealer = draft.kind === 'dealer';
   const unit = THRESHOLD_LABEL[draft.thresholdUnit];
-  if (draft.tiers.some((t) => bad(t.from, true) || bad(t.bonus, false))) {
+  if (draft.tiers.some((t) => bad(t.from, true) || bad(t.addValue, false))) {
     return draft.thresholdUnit === 'pct' ? 'Type a from % for every tier.' : `Type the threshold (${unit}) of every tier.`;
   }
   if (dealer) {
@@ -1130,8 +1140,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                             <td className="whitespace-nowrap px-3 py-2">
                               {future ? '-' : p.tier_reached ? `Tier ${p.tier_reached}` : 'None'}
                             </td>
-                            <td className="max-w-[10rem] truncate px-3 py-2 text-end tabular-nums" title={rateText(p.tier_rates, target.metric)}>
-                              {future ? '-' : rateText(p.tier_rates, target.metric) || '-'}
+                            <td className="max-w-[12rem] truncate px-3 py-2 text-end tabular-nums" title={reachedRateText(p, target.metric)}>
+                              {future ? '-' : reachedRateText(p, target.metric) || '-'}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                               {future || paid === null ? '-' : formatMoney(paid)}
@@ -1314,6 +1324,20 @@ function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
 }
 
 /** `6.00%`, or `A/C I 2.00%, A/C III 3.00%`; RM per unit on a quantity target. */
+/** `+ 1.00%`, `+ RM 1.00/unit` or `+ RM 500.00`: a tier's Additional; `''` when it has none. */
+export function additionalText(add: TierAdditional | null | undefined, metric: TargetMetric): string {
+  if (!add || !add.value) return '';
+  if (add.kind === 'amount') return `+ RM ${formatMoney(add.value)}`;
+  return metric === 'quantity' ? `+ RM ${formatMoney(add.value)}/unit` : `+ ${formatMoney(add.value)}%`;
+}
+
+/** The reached tier's rate(s) and its Additional: `A/C I 6.00% + 1.00%`. */
+export function reachedRateText(p: SalesTargetPeriod, metric: TargetMetric): string {
+  const rates = rateText(p.tier_rates, metric);
+  const add = additionalText(p.tier_additional, metric);
+  return rates && add ? `${rates} ${add}` : rates;
+}
+
 export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMetric): string {
   return (entries ?? [])
     .filter((e) => e.rate !== null && e.rate !== undefined)
@@ -2080,7 +2104,7 @@ function CommissionTiers({
                 ) : (
                   <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
                 )}
-                <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
+                <th className="px-3 py-2 text-end font-medium">Additional</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -2102,7 +2126,16 @@ function CommissionTiers({
                   ) : (
                     <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.rate)}</td>
                   )}
-                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.bonus_amount)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
+                    {additionalText(
+                      t.additional_rate
+                        ? { kind: 'pct', value: t.additional_rate }
+                        : t.bonus_amount
+                          ? { kind: 'amount', value: t.bonus_amount }
+                          : null,
+                      target?.metric ?? 'amount',
+                    ) || '-'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2188,6 +2221,12 @@ function CommissionTiers({
     );
   }
   const fromLabel = draft.thresholdUnit === 'pct' ? 'From (%)' : `From (${THRESHOLD_LABEL[draft.thresholdUnit]})`;
+  // Legacy "+ Additional" rows not yet folded onto their tier keep their Type column.
+  const legacy = draft.tiers.some((t) => t.additional);
+  const addKindOptions = [
+    { value: 'pct', label: draft.metric === 'quantity' ? 'RM/unit' : '%' },
+    { value: 'amount', label: 'RM' },
+  ];
   const periodOptions = periodStarts.map((p) => ({ value: p.start, label: periodLabel(p.start) }));
   return (
     <>
@@ -2199,7 +2238,7 @@ function CommissionTiers({
           <thead className="bg-muted/40 text-xs text-muted-foreground">
             <tr>
               {draft.perPeriod ? <th className="px-3 py-2 text-start font-medium">Period</th> : null}
-              <th className="px-3 py-2 text-start font-medium">Type</th>
+              {legacy ? <th className="px-3 py-2 text-start font-medium">Type</th> : null}
               <th className="px-3 py-2 text-start font-medium">{fromLabel}</th>
               {dealer ? (
                 accounts.map((a) => (
@@ -2208,7 +2247,7 @@ function CommissionTiers({
               ) : (
                 <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
               )}
-              <th className="px-3 py-2 text-end font-medium">Bonus (RM)</th>
+              <th className="px-3 py-2 text-end font-medium">Additional</th>
               <th className="w-10 px-3 py-2">
                 <span className="sr-only">Remove</span>
               </th>
@@ -2229,15 +2268,17 @@ function CommissionTiers({
                     />
                   </td>
                 ) : null}
-                <td className="px-3 py-1.5">
-                  <SearchableSelect
-                    value={t.additional ? 'additional' : 'main'}
-                    onChange={(v) => setTier(t.key, { additional: v === 'additional' })}
-                    options={TIER_TYPE_OPTIONS}
-                    triggerClassName="h-8 w-36"
-                    aria-label={`Tier ${i + 1} type`}
-                  />
-                </td>
+                {legacy ? (
+                  <td className="px-3 py-1.5">
+                    <SearchableSelect
+                      value={t.additional ? 'additional' : 'main'}
+                      onChange={(v) => setTier(t.key, { additional: v === 'additional' })}
+                      options={TIER_TYPE_OPTIONS}
+                      triggerClassName="h-8 w-36"
+                      aria-label={`Tier ${i + 1} type`}
+                    />
+                  </td>
+                ) : null}
                 <td className="px-3 py-1.5">
                   <NumberInput
                     min={0}
@@ -2278,14 +2319,25 @@ function CommissionTiers({
                   </td>
                 )}
                 <td className="px-3 py-1.5">
-                  <NumberInput
-                    min={0}
-                    step="any"
-                    aria-label={`Tier ${i + 1} bonus (RM)`}
-                    value={t.bonus}
-                    onChange={(e) => setTier(t.key, { bonus: e.target.value })}
-                    className="ms-auto h-8 w-28 text-end"
-                  />
+                  {t.additional ? null : (
+                    <div className="flex items-center justify-end gap-1.5">
+                      <NumberInput
+                        min={0}
+                        step="any"
+                        aria-label={`Tier ${i + 1} additional`}
+                        value={t.addValue}
+                        onChange={(e) => setTier(t.key, { addValue: e.target.value })}
+                        className="h-8 w-20 text-end"
+                      />
+                      <SearchableSelect
+                        value={t.addKind}
+                        onChange={(v) => setTier(t.key, { addKind: (v as AdditionalKind) || 'pct' })}
+                        options={addKindOptions}
+                        triggerClassName="h-8 w-24"
+                        aria-label={`Tier ${i + 1} additional in`}
+                      />
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-1.5 text-end">
                   <Button
