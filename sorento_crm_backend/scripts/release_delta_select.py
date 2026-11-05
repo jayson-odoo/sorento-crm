@@ -351,12 +351,15 @@ def _frontend(changed: list[str], fe_root: Path, res: Result) -> None:
     stems = {Path(r).with_suffix("").name for r in deleted if re.search(r"\.[cm]?[jt]sx?$", r)}
     if stems:
         rx = re.compile(r"""[/'"](%s)['"]""" % "|".join(re.escape(x) for x in sorted(stems)))
-        for path in fe_root.rglob("*.test.*"):
-            rel = path.relative_to(fe_root).as_posix()
-            if rel.split("/", 1)[0] in ("node_modules", ".next", "e2e") or not path.is_file():
-                continue
-            if rx.search(path.read_text(encoding="utf-8", errors="replace")):
-                importers.append(rel)
+        for dirpath, dirnames, filenames in os.walk(fe_root):
+            # Pruned, not filtered: node_modules alone is tens of thousands of directories.
+            dirnames[:] = [d for d in dirnames if d not in ("node_modules", ".next", "e2e", ".git")]
+            for name in filenames:
+                if ".test." not in name:
+                    continue
+                path = Path(dirpath) / name
+                if rx.search(path.read_text(encoding="utf-8", errors="replace")):
+                    importers.append(path.relative_to(fe_root).as_posix())
     res.vitest_files = sorted(set(present) | set(importers))
     res.vitest = "related"
     res.vitest_reason = (f"vitest related on {len(present)} changed frontend files, "
