@@ -1322,7 +1322,7 @@ function featureIconsDisplay(
   assetUrls: Record<string, string>,
   featureIcons: readonly FeatureIcon[] | undefined,
 ): { id: string; url: string }[] {
-  const matched = featureIconsFor(subjectSpecs(data, { props }), featureIcons ?? [], props.order ?? []);
+  const matched = featureIconsFor(subjectSpecs(data, { props }), featureIcons ?? []);
   const out: { id: string; url: string }[] = [];
   for (const icon of matched) {
     const url = assetUrls[icon.id];

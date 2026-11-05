@@ -67,7 +67,7 @@ function iconsLayer(props: Record<string, unknown> = {}): TagLayer {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1, align: 'left', order: [], ...props },
+    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1, align: 'left', ...props },
   } as unknown as TagLayer;
 }
 
@@ -96,12 +96,12 @@ describe('layerDisplay for a feature_icons layer', () => {
     expect(display?.icons).toEqual([{ id: 'cold', url: 'https://cdn/cold.png' }]);
   });
 
-  it('honours the designer order', () => {
+  it('keeps the sequence the icons came in (no per-layer order)', () => {
     const display = layerDisplay(
-      iconsLayer({ subjectSlot: { kind: 'fixed', index: 0 }, order: ['hot'] }),
+      iconsLayer({ subjectSlot: { kind: 'fixed', index: 0 } }),
       lineWith(),
       URLS,
-      ICONS,
+      [...ICONS].reverse(),
     );
     expect(display?.icons?.map((i) => i.id)).toEqual(['hot', 'cold']);
   });

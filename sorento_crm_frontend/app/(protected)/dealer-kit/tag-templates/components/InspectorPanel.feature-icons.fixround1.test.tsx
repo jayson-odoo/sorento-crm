@@ -1,6 +1,7 @@
 /**
  * Feature icons review fix round 1: B2 the inspector opens the icon library ("Manage icons"),
- * N3 alignment is one single-choice group, and the order list moves an icon.
+ * N3 alignment is one single-choice group. Owner 21:0x: no per-layer icon order any more (the
+ * spec's Icon order decides), so the inspector lists no icons and moves none.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -26,13 +27,9 @@ const layer = {
   visible: true,
   slot_binding: null,
   text_override: null,
-  props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'center', order: [] },
+  props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'center' },
 } as unknown as TagLayer;
 
-const ICONS = [
-  { id: 'cold', name: 'Cold', spec_key: 'water_supply', values: ['cold_only'] },
-  { id: 'hot', name: 'Hot', spec_key: 'water_supply', values: ['mixer'] },
-];
 
 describe('Inspector feature icons, fix round 1', () => {
   it('"Manage icons" asks the host to open the icon library', () => {
@@ -42,7 +39,6 @@ describe('Inspector feature icons, fix round 1', () => {
         layer={layer}
         onUpdate={vi.fn()}
         onUpdateProps={vi.fn()}
-        featureIcons={ICONS}
         onManageIcons={onManageIcons}
       />,
     );
@@ -56,12 +52,9 @@ describe('Inspector feature icons, fix round 1', () => {
     expect(screen.getByRole('radio', { name: /^left$/i })).toHaveAttribute('aria-checked', 'false');
   });
 
-  it('moving an icon down writes the whole order', () => {
-    const onUpdateProps = vi.fn();
-    render(
-      <InspectorPanel layer={layer} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} featureIcons={ICONS} />,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Move Cold down' }));
-    expect(onUpdateProps).toHaveBeenCalledWith('fi1', expect.objectContaining({ order: ['hot', 'cold'] }));
+  it('offers no per-layer icon order', () => {
+    render(<InspectorPanel layer={layer} onUpdate={vi.fn()} onUpdateProps={vi.fn()} onManageIcons={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^move .* (up|down)$/i })).toBeNull();
+    expect(screen.queryByText('Order')).toBeNull();
   });
 });

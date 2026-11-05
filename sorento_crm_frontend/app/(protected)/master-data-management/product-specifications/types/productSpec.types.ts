@@ -328,6 +328,8 @@ export interface SpecRegistryKey {
   value_icons?: Record<string, string[]>;
   /** asset id -> name for every icon in `value_icons`, so the screen never shows an id. */
   value_icon_names?: Record<string, string>;
+  /** This spec's place in a price tag's one feature icon sequence (1 first); null = last. */
+  icon_order?: number | null;
   /** What this field means to the chatbot: one line the parser sees. Null when unset. */
   parser_hint: string | null;
   /** True once staff edited the Name: the seed repair leaves it alone. */

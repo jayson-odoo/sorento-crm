@@ -46,7 +46,7 @@ function docWith(props: Record<string, unknown> = {}): TagSheetDoc {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 2, align: 'left', order: [], ...props },
+    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 2, align: 'left', ...props },
   } as unknown as TagLayer;
   return {
     kind: 'tag_sheet',
@@ -82,9 +82,9 @@ const ASSETS = {
   sus: 'https://cdn.test/sus.png',
 };
 
-function renderIt(doc: TagSheetDoc, data: ResolvedLineData) {
+function renderIt(doc: TagSheetDoc, data: ResolvedLineData, icons = FEATURE_ICONS) {
   // `featureIcons` is the new TagSheetMedia member (contract B7).
-  const extra = { featureIcons: FEATURE_ICONS } as Record<string, unknown>;
+  const extra = { featureIcons: icons } as Record<string, unknown>;
   return render(
     <TagSheetRenderer doc={doc} resolvedData={{ [TAG_ID]: data }} assets={ASSETS} {...extra} />,
   );
@@ -101,8 +101,8 @@ describe('TagSheetRenderer feature icons', () => {
     expect(imgs.every((i) => parseFloat(i.style.width) === 8)).toBe(true);
   });
 
-  it('honours the order saved on the layer', () => {
-    const { container } = renderIt(docWith({ order: ['hot'] }), resolved());
+  it('prints in the sequence the icons came in (no per-layer order)', () => {
+    const { container } = renderIt(docWith(), resolved(), [...FEATURE_ICONS].reverse());
     const imgs = Array.from(container.querySelectorAll('img'));
     expect(imgs.map((i) => i.getAttribute('alt'))).toEqual(['Hot', 'Cold']);
   });

@@ -468,6 +468,8 @@ export async function updateSpecKey(
     /** value -> Dealer Kit icon ids in display order (feature icons). An empty list drops the
      * value's entry; validated server-side (icons only, at most 10 per value). */
     value_icons?: Record<string, string[]>;
+    /** The spec's place in the tag's feature icon sequence, 1..999; null clears it. */
+    icon_order?: number | null;
   },
 ): Promise<SpecRegistryKeyUpdateResult> {
   const response = await apiFetch(

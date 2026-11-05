@@ -27,7 +27,7 @@ function iconsLayer(props: Record<string, unknown> = {}): TagLayer {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left', order: ['a1'], ...props },
+    props: { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left', ...props },
   } as unknown as TagLayer;
 }
 
@@ -49,7 +49,7 @@ describe('Inspector feature icons', () => {
     fireEvent.change(screen.getByLabelText(/icon size/i), { target: { value: '12' } });
     expect(onUpdateProps).toHaveBeenCalledWith(
       'fi1',
-      expect.objectContaining({ kind: 'feature_icons', iconSize_mm: 12, gap_mm: 1.5, order: ['a1'] }),
+      expect.objectContaining({ kind: 'feature_icons', iconSize_mm: 12, gap_mm: 1.5, align: 'left' }),
     );
   });
 

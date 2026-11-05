@@ -174,6 +174,25 @@ describe('ValuesAndWordsTab icons column', () => {
   });
 });
 
+describe('ValuesAndWordsTab icons on a yes/no specification', () => {
+  it("lets the Yes value carry icons (Pull-out shower = Yes)", () => {
+    const pullOut = {
+      ...waterSupply(),
+      spec_key: 'has_pull_out_shower',
+      label: 'Pull-out shower',
+      data_type: 'boolean',
+      allowed_values: [],
+      value_labels: {},
+      value_icons: {},
+      value_icon_names: {},
+    } as unknown as SpecRegistryKey;
+    render(withClient(<EditHarness row={pullOut} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Yes' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Steam' }));
+    expect(latest?.valueIcons.true).toEqual(['i-new']);
+  });
+});
+
 describe('buildPatchBody value_icons', () => {
   it('sends value_icons when they changed, with empty lists dropped', () => {
     const row = waterSupply();

@@ -4895,7 +4895,6 @@ export function TagCanvasEditor({
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}
-              featureIcons={library.featureIcons}
               onManageIcons={() => setIconLibraryOpen(true)}
             />
           </ResizablePanel>

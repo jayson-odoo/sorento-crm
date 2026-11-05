@@ -50,17 +50,30 @@ describe('featureIconsFor', () => {
     expect(out.map((i) => i.id)).toEqual(['hot']);
   });
 
-  it('puts ids in `order` first, in that order, then the rest in the order they came (never by name)', () => {
-    // Owner ruling 5 Nov 20:4x: the default is the order the admin set on the spec value.
+  it('keeps the order the icons came in, never by name (the registry sends the one sequence)', () => {
+    // Owner 5 Nov 21:0x: spec Icon order, then the value's own list; no per-layer order.
     const a = icon('a', 'alpha', 'k', ['x']);
     const b = icon('b', 'Bravo', 'k', ['x']);
     const c = icon('c', 'charlie', 'k', ['x']);
     const d = icon('d', 'Delta', 'k', ['x']);
-    const out = featureIconsFor([spec('k', 'X', 'x')], [d, c, b, a], ['c', 'missing', 'a']);
-    expect(out.map((i) => i.id)).toEqual(['c', 'a', 'd', 'b']);
+    const out = featureIconsFor([spec('k', 'X', 'x')], [d, c, b, a]);
+    expect(out.map((i) => i.id)).toEqual(['d', 'c', 'b', 'a']);
   });
 
-  it("keeps a value's own icon order [b, a] when the layer names no order", () => {
+  it('Pull-out (Icon order 1) then Water supply Mixer (2) reads [pull-out, hot, cold]', () => {
+    // The backend's one sequence: pull-out's true, then water supply's cold_only, then mixer.
+    const sequence = [
+      icon('pull', 'Pull-out', 'has_pull_out_shower', ['true']),
+      icon('cold', 'Cold', 'water_supply', ['cold_only']),
+      icon('hot', 'Hot', 'water_supply', ['mixer']),
+      icon('cold', 'Cold', 'water_supply', ['mixer']),
+    ];
+    const both = [spec('has_pull_out_shower', 'Yes', 'true'), spec('water_supply', 'Mixer', 'mixer')];
+    expect(featureIconsFor(both, sequence).map((i) => i.id)).toEqual(['pull', 'hot', 'cold']);
+    expect(featureIconsFor([both[1]], sequence).map((i) => i.id)).toEqual(['hot', 'cold']);
+  });
+
+  it("keeps a value's own icon order [b, a]", () => {
     const b = icon('b', 'Bravo', 'k', ['x']);
     const a = icon('a', 'Alpha', 'k', ['x']);
     expect(featureIconsFor([spec('k', 'X', 'x')], [b, a]).map((i) => i.id)).toEqual(['b', 'a']);
@@ -91,16 +104,6 @@ describe('featureIconsFor', () => {
     expect(out.map((i) => i.id)).toEqual(['hot', 'cold']);
   });
 
-  it('lists an icon at most once even when the order repeats it', () => {
-    const out = featureIconsFor([spec('water_supply', 'Mixer', 'mixer')], [HOT, COLD], ['hot', 'hot', 'cold']);
-    expect(out.map((i) => i.id)).toEqual(['hot', 'cold']);
-  });
-
-  it('does not show an icon in `order` whose rule does not match', () => {
-    const out = featureIconsFor([spec('water_supply', 'Cold Only', 'cold_only')], [HOT, COLD], ['hot']);
-    expect(out.map((i) => i.id)).toEqual(['cold']);
-  });
-
   it('handles no specs and no icons', () => {
     expect(featureIconsFor([], [COLD])).toEqual([]);
     expect(featureIconsFor([spec('water_supply', 'Mixer', 'mixer')], [])).toEqual([]);
@@ -121,7 +124,6 @@ describe('featureIconRow', () => {
     iconSize_mm: 8,
     gap_mm: 2,
     align: 'left' as const,
-    order: [],
     ...over,
   });
   const close = (got: number[], want: number[]) => {

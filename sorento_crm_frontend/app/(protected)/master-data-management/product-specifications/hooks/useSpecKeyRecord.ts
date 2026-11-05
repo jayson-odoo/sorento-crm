@@ -50,6 +50,8 @@ export interface SpecKeyDraft {
   valueLabels: Record<string, string>;
   /** value -> Dealer Kit icon ids, in display order (feature icons). */
   valueIcons: Record<string, string[]>;
+  /** Input string for the spec's Icon order; '' clears it. */
+  iconOrder: string;
   rules: SpecDerivationRule[];
 }
 
@@ -121,6 +123,7 @@ export function projectSpecKeyDraft(row: SpecRegistryKey): SpecKeyDraft {
     words,
     droppedWords,
     valueLabels: { ...(row.value_labels ?? {}) },
+    iconOrder: row.icon_order === null || row.icon_order === undefined ? '' : String(row.icon_order),
     valueIcons: Object.fromEntries(
       Object.entries(row.value_icons ?? {}).map(([value, ids]) => [value, [...ids]]),
     ),
@@ -192,6 +195,7 @@ export function buildPatchBody(row: SpecRegistryKey, draft: SpecKeyDraft) {
     suppressed_values,
     value_labels: trimmedValueLabels(draft.valueLabels),
     ...(valueIcons ? { value_icons: valueIcons } : {}),
+    icon_order: draft.iconOrder.trim() === '' ? null : Number(draft.iconOrder.trim()),
     derivation_rules: draft.rules,
   };
 }

@@ -125,6 +125,29 @@ export function HeaderTab({ row, mode, draft, setDraft, wordError }: HeaderTabPr
         </Field>
       )}
 
+      {/* Owner 5 Nov 21:0x: where this spec's feature icons sit on a price tag (1 first). */}
+      <Field label="Icon order">
+        {mode === 'edit' && draft ? (
+          <NumberInput
+            step="1"
+            min="1"
+            max="999"
+            placeholder="last"
+            className="h-8 w-40"
+            aria-label="Icon order"
+            value={draft.iconOrder}
+            onChange={(event) => {
+              const iconOrder = event.target.value;
+              setDraft((d) => ({ ...d, iconOrder }));
+            }}
+          />
+        ) : (
+          <span className="text-sm" data-testid="icon-order-value">
+            {row.icon_order === null || row.icon_order === undefined ? '-' : row.icon_order}
+          </span>
+        )}
+      </Field>
+
       <Field label="What this means to the chatbot">
         {mode === 'edit' && draft ? (
           <div className="flex flex-col gap-1">

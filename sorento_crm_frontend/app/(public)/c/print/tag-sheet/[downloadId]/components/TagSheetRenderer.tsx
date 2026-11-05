@@ -1204,11 +1204,9 @@ function renderFeatureIconsLayer(
   const props = layer.props;
   if (props.kind !== 'feature_icons') return null;
 
-  const icons = featureIconsFor(
-    subjectSpecs(binding, layer),
-    media.featureIcons ?? [],
-    props.order ?? [],
-  ).filter((icon) => media.assets?.[icon.id]);
+  const icons = featureIconsFor(subjectSpecs(binding, layer), media.featureIcons ?? []).filter(
+    (icon) => media.assets?.[icon.id],
+  );
   const xs = featureIconRow(icons.length, props, layer.width_mm);
   if (xs.length === 0) return null;
   const top = (layer.height_mm - props.iconSize_mm) / 2;

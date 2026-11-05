@@ -329,16 +329,15 @@ export interface BarcodeLayerProps {
 }
 
 /**
- * PRICETAG-DESIGNER-GAPS item 3: one packed row of the library icons whose "show when" rule
- * matches the subject's specs (`featureIconsFor`). `order` holds icon asset ids the designer put
- * first; the rest follow by name.
+ * PRICETAG-DESIGNER-GAPS item 3: one packed row of the icons the subject's spec values carry
+ * (`featureIconsFor`), in the spec registry's one sequence (spec Icon order, then the value's own
+ * list). The layer has no order of its own (owner, 5 Nov 21:0x).
  */
 export interface FeatureIconsLayerProps {
   kind: 'feature_icons';
   iconSize_mm: number;
   gap_mm: number;
   align: 'left' | 'center' | 'right';
-  order: string[];
   /** D7 - see `TextLayerProps.subjectPart`. */
   subjectPart?: number;
   /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
@@ -979,7 +978,7 @@ export function defaultBadgeProps(): BadgeLayerProps {
 }
 
 export function defaultFeatureIconsProps(): FeatureIconsLayerProps {
-  return { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left', order: [] };
+  return { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left' };
 }
 
 export function defaultBarcodeProps(): BarcodeLayerProps {
