@@ -58,5 +58,7 @@ register(
         screen_path="/finance/billing-documents/{id}",
         pages=("/finance/billing-documents",),
         routes=("GET /api/v1/finance/billing-documents",),
+        # Totals and lines of every brand: refused on a brand-scoped contact's turn (security review B1).
+        brand_blind=True,
     ),
 )

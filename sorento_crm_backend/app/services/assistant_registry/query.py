@@ -99,7 +99,17 @@ def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef,
         )
     if _module_blocked(db, user_id, entity.module):
         raise QueryRefused("module_disabled", f"The {entity.label} module is not enabled.")
+    if entity.brand_blind and _brand_scoped(db):
+        raise QueryRefused(
+            "restricted", f"{entity.label} cover every brand, so they are not shown for this contact's brands."
+        )
     return entity, reach == "own"
+
+
+def _brand_scoped(db) -> bool:
+    from app.models.base import get_brand_scope
+
+    return bool(get_brand_scope(db))
 
 
 # ------------------------------------------------------------------ fields and paths
@@ -160,7 +170,10 @@ class _Paths:
         if len(parts) - 1 > MAX_HOPS:
             raise QueryRefused("too_deep", f"`{path}` goes through {len(parts) - 1} relations; at most {MAX_HOPS}.")
         entity, table, prefix = self.entity, self.entity.model.__table__, ""
+        self.lookup_only = False
         for name in parts[:-1]:
+            if self.lookup_only:
+                raise QueryRefused("restricted", f"`{path}` goes through {entity.label.lower()}, which this user may not list.")
             if name not in entity.relations:
                 raise QueryRefused(
                     "unknown_field",
@@ -180,6 +193,9 @@ class _Paths:
                 self._aliases[prefix] = alias
                 self.joins.append((alias, onclause))
             entity, table = target, self._aliases[prefix]
+            # A related record with a list screen of its own (customers) is a lookup to someone without that
+            # screen's slug: the fields it is named by, and nothing past it (security review, wave 2).
+            self.lookup_only = target.view_permission is not None and _readable(target, self.slugs) is None
         return entity, table, parts[-1]
 
     def resolve(self, path: Any) -> tuple[Any, FieldDef, str]:
@@ -192,16 +208,17 @@ class _Paths:
             )
         if field.permission and field.permission not in self.slugs:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
+        if self.lookup_only and name not in entity.name_by:
+            raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
         if field.whole_document and self.brand_scoped:
             raise QueryRefused(
                 "restricted", f"`{path}` covers lines of brands outside this contact's brands, so it is not shown here."
             )
         if field.expr is not None:
-            column = field.expr()
             if table is not entity.model.__table__:
-                from sqlalchemy.sql.util import ClauseAdapter
-
-                column = ClauseAdapter(table).traverse(column)
+                # The service's expression correlates to the model itself, not to a join alias.
+                raise QueryRefused("invalid", f"`{path}` is read on {entity.label.lower()} itself, not through a relation.")
+            column = field.expr()
             return column, field, _kind(column)
         column = table.c[field.column or name]
         return column, field, _kind(column)
@@ -367,13 +384,18 @@ def _execute(db, stmt):
 
 
 def _run(db, stmt) -> list:
-    """`stmt` under the statement timeout, inside a savepoint: a timeout rolls back to it (and with it the
-    `SET LOCAL`), so the caller's transaction stays usable."""
+    """`stmt` under the statement timeout (`timed`)."""
+    return timed(db, lambda: _execute(db, stmt))
+
+
+def timed(db, work):
+    """`work()` under the statement timeout, inside a savepoint: a timeout rolls back to it (and with it the
+    `SET LOCAL`), so the caller's transaction stays usable. Also wraps a computed entity's service call."""
     savepoint = db.begin_nested()
     try:
         previous = db.execute(text("SHOW statement_timeout")).scalar() or "0"
         db.execute(text(f"SET LOCAL statement_timeout = {int(STATEMENT_TIMEOUT_MS)}"))
-        rows = _execute(db, stmt)
+        rows = work()
         db.execute(text("SELECT set_config('statement_timeout', :v, true)"), {"v": str(previous)})
     except DBAPIError as exc:
         savepoint.rollback()
@@ -675,6 +697,7 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
             for e in ENTITIES.values()
             if _readable(e, slugs) == "all" or (_readable(e, slugs) == "own" and e.own_clause is not None)
             if not _module_blocked(db, user_id, e.module)
+            if not (e.brand_blind and _brand_scoped(db))
         ]
         return {"entities": listed}
     from app.models.base import get_brand_scope
@@ -685,6 +708,11 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
     for name, (target_key, _fk) in found.relations.items():
         target = ENTITIES[target_key]
         if _module_blocked(db, user_id, target.module):
+            continue
+        if target.view_permission is not None and _readable(target, slugs) is None:
+            # A lookup to this user: the fields it is named by, nothing past it (`_Paths._target`).
+            fields = [r for r in _field_rows(target, slugs, brand_scoped) if r["field"] in target.name_by]
+            relations[name] = {"label": target.label, "fields": fields, "relations": []}
             continue
         relations[name] = {
             "label": target.label, "fields": _field_rows(target, slugs, brand_scoped), "relations": list(target.relations),

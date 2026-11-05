@@ -41,5 +41,7 @@ register(
         pages=("/scm/sales-orders",),
         routes=("GET /api/v1/scm/sales-orders",),
         scope=_screen_rules,
+        # Totals and lines of every brand: refused on a brand-scoped contact's turn (security review B1).
+        brand_blind=True,
     ),
 )

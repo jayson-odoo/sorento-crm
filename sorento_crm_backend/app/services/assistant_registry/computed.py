@@ -37,6 +37,8 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 
 #: The most periods one call reads before its filters: past it the window is too wide to compute in a turn.
 MAX_COMPUTED_ROWS = 2000
+#: The widest date window one call computes (security review, wave 2: "all payouts ever" is not a chat question).
+MAX_WINDOW_DAYS = 731
 
 
 def _today() -> dt.date:
@@ -103,6 +105,8 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
     high = high or low
     if low > high:
         raise QueryRefused("invalid", f"The `{key}` window ends before it starts.")
+    if (high - low).days >= MAX_WINDOW_DAYS:
+        raise QueryRefused("invalid", f"The `{key}` window is longer than two years; ask for a shorter one.")
     shown = _display_date(low.isoformat(), "date"), _display_date(high.isoformat(), "date")
     period = f"{label} {shown[0]}" if low == high else f"{label} {shown[0]} to {shown[1]}"
     return low, high, rest, period
@@ -290,9 +294,11 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     agg_rows = [_aggregate(entity, slugs, a) for a in (aggregates or ([{"fn": "count"}] if group_by else []))]
     sort = _sort_items(spec)
 
-    computed = entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS + 1)
-    if len(computed) > MAX_COMPUTED_ROWS:
-        raise QueryRefused("timeout", f"More than {MAX_COMPUTED_ROWS} {entity.label.lower()} in that window; narrow it.")
+    from app.services.assistant_registry.query import timed
+
+    # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
+    # BEFORE computing (a count first).
+    computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
     rows = [r for r in computed if all(t(r) for t in tests)]
 
     if key_rows or agg_rows:

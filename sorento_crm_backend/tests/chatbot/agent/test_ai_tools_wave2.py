@@ -333,3 +333,92 @@ def test_C1_customers_list_per_agent_without_contact_fields(api, grant):
 
     assert not {"email", "phone_number", "mobile_number", "billing_address", "ar_outstanding"} & set(ENTITIES["customer"].fields)
     assert refused(db, {"entity": "customer", "fields": ["email"]}).code == "unknown_field"
+
+
+# ------------------------------------------------------------------ security review round (B1, S1, S2, S3, N1)
+
+
+def _company_b(db) -> str:
+    from app.models.company import Company
+
+    row = Company(id=str(uuid.uuid4()), name=f"ZZT Co {uuid.uuid4().hex[:6]}", code=unique_code("ZB")[:20])
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def test_R1_brand_scoped_turn_cannot_read_every_brands_money(sales, grant):
+    """A linked user's WhatsApp turn keeps the contact's brand scope: invoices, targets and sales orders cover every
+    brand, so they are refused and not listed."""
+    from app.models.base import get_brand_scope, set_brand_scope
+    from app.services.assistant_registry.query import describe
+
+    db, _company, _s = sales
+    grant(BILLING_VIEW, TARGETS_VIEW, SO_VIEW, CUSTOMERS_VIEW)
+    before = get_brand_scope(db)
+    set_brand_scope(db, frozenset({str(uuid.uuid4())}))
+    try:
+        for entity in ("billing_document", "sales_target", "sales_order"):
+            assert refused(db, {"entity": entity}).code == "restricted", entity
+        listed = {e["entity"] for e in describe(db, str(uuid.uuid4()))["entities"]}
+        assert not {"billing_document", "sales_target", "sales_order"} & listed
+        assert "customer" in listed
+    finally:
+        set_brand_scope(db, before)
+    assert run(db, {"entity": "billing_document", "aggregates": [{"fn": "count"}]})["groups"][0]["count"] >= 5
+
+
+def test_R2_a_related_customer_is_a_lookup_without_the_customers_slug(sales, grant):
+    db, _company, s = sales
+    grant(BILLING_VIEW)
+    mine = {"field": "debtor_code", "op": "eq", "value": s["cust"].customer_code}
+    out = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["customer.code", "customer.region"], "limit": 1})
+    assert out["rows"][0]["customer.code"] == s["cust"].customer_code
+    assert "customer.region" in out["restricted"] and "customer.region" not in out["rows"][0]
+    assert refused(db, {"entity": "billing_document", "filters": [{"field": "customer.agent.code", "op": "eq", "value": "X"}]}).code == "restricted"
+    assert refused(db, {"entity": "billing_document", "group_by": ["customer.region"]}).code == "restricted"
+    from app.services.assistant_registry.query import describe
+
+    shown = describe(db, str(uuid.uuid4()), "billing_document")["relations"]["customer"]
+    assert {f["field"] for f in shown["fields"]} == {"code", "name"} and shown["relations"] == []
+    grant(BILLING_VIEW, CUSTOMERS_VIEW)
+    out = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["customer.region"], "limit": 1})
+    assert out["restricted"] == []
+
+
+def test_R3_wide_windows_and_too_many_periods_are_refused_before_computing(targets, monkeypatch):
+    from app.services.assistant_registry import computed
+    from app.services.sales import target_service
+
+    db, _c, _t = targets
+    assert refused(db, {"entity": "sales_target", "filters": [{"field": "period", "op": "between", "value": ["01/01/1900", "31/12/2100"]}]}).code == "invalid"
+    calls = []
+    monkeypatch.setattr(target_service, "period_figures", lambda *a, **k: calls.append(1) or [])
+    monkeypatch.setattr(computed, "MAX_COMPUTED_ROWS", 3)
+    year = {"field": "period", "op": "between", "value": ["01/07/2026", "31/12/2026"]}
+    assert refused(db, {"entity": "sales_target", "filters": [year]}).code == "timeout"
+    assert calls == []
+
+
+def test_R4_another_companys_targets_and_documents_stay_out(targets, grant):
+    from app.models.base import company_scope
+
+    db, client, t = targets
+    other = _company_b(db)
+    with company_scope(db, frozenset({other})):
+        b_agent = _agent(db, "OTHER", "Other Co Agent", company_id=other)
+        res = client.post(BASE, json={
+            "subject_kind": "agent", "sales_agent_id": b_agent.id, "name": "ZZT other co", "metric": "amount",
+            "basis": "ordered", "product_scope": "all", "start_date": "2026-09-01", "end_date": "2026-09-30",
+            "target_value": 1,
+        })
+        assert res.status_code == 201, res.text
+        _doc(db, other, "invoice", "123456", date(2026, 10, 3))
+    year = {"field": "period", "op": "between", "value": ["01/07/2026", "31/12/2026"]}
+    out = run(db, {"entity": "sales_target", "filters": [year], "fields": ["agent"], "limit": 50})
+    assert b_agent.sales_agent not in {r.get("agent") for r in out["rows"]}
+    assert f"/sales/targets/{res.json()['id']}" not in {r["link"] for r in out["rows"]}
+    assert len(out["rows"]) == 14  # this company's 6 + 6 + 2 periods only
+    grant(BILLING_VIEW)
+    docs = run(db, {"entity": "billing_document", "filters": [{"field": "net_total", "op": "eq", "value": 123456}]})
+    assert docs["rows"] == []

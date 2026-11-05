@@ -29,14 +29,20 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     overlapping = select(SalesTargetPeriod.target_id).where(
         SalesTargetPeriod.period_start <= date_to, SalesTargetPeriod.period_end >= date_from
     )
-    # The session's company scope (stamped by `run_as_user`) narrows SalesTarget to the user's company.
-    targets = (
-        db.query(SalesTarget)
-        .filter(SalesTarget.id.in_(overlapping))
-        .order_by(SalesTarget.target_no)
-        .limit(limit)
-        .all()
+    # The session's company scope (stamped by `run_as_user`) narrows SalesTarget and its periods to the user's
+    # company. The periods are counted before anything is computed: past `limit` the window is refused.
+    periods = (
+        db.query(SalesTargetPeriod.id)
+        .join(SalesTarget, SalesTarget.id == SalesTargetPeriod.target_id)
+        .filter(SalesTargetPeriod.period_start <= date_to, SalesTargetPeriod.period_end >= date_from)
+        .limit(limit + 1)
+        .count()
     )
+    if periods > limit:
+        from app.services.assistant_registry.query import QueryRefused
+
+        raise QueryRefused("timeout", f"More than {limit} target periods in that window; narrow it (a month, an agent).")
+    targets = db.query(SalesTarget).filter(SalesTarget.id.in_(overlapping)).order_by(SalesTarget.target_no).all()
     if not targets:
         return []
     agent_ids = {t.sales_agent_id for t in targets if t.sales_agent_id}
@@ -104,6 +110,8 @@ register(
         label="Sales agents",
         # The sales agents master's module (`/master-data`), so a lookup is gated with the screen that holds it.
         module="product",
+        # Not company scoped (a shared master, `company_id` NULL): reached only by the foreign key of a company
+        # scoped row, so the join needs no company predicate of its own. Deliberate; not a missing filter.
         model=SalesAgent,
         view_permission=None,
         fields={
@@ -165,5 +173,7 @@ register(
         routes=("GET /api/v1/sales/targets",),
         compute=_target_rows,
         window_field="period",
+        # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).
+        brand_blind=True,
     ),
 )
