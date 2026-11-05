@@ -51,11 +51,15 @@ def _make(client, project, document, record):
     )
 
 
-def test_make_quotation_route_refuses_a_project_that_is_not_won(env):
-    client, _, _, _, project, document, _, record = env
+def test_make_quotation_route_refuses_a_lost_project(env):
+    """#2197: the old project_not_won gate is gone (an open project may make one); Lost still refuses."""
+    client, db, _, _, project, document, _, record = env
+    project.outcome = "lost"
+    project.loss_reason = "price"
+    db.commit()
     response = _make(client, project, document, record)
     assert response.status_code == 409, response.text
-    assert response.json()["code"] == "project_not_won"
+    assert response.json()["code"] == "project_lost"
 
 
 def test_make_quotation_route_returns_the_quotation_and_links_both_ways(env):
