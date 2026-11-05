@@ -279,3 +279,74 @@ def test_import_a_craft_reads_each_tier_with_its_additional_and_tier_3_4_as_one(
         (D("75000"), [D("6")], D("1"), False),
         (D("85000"), [D("7")], D("1"), False),
     ]
+
+
+# ------------------------------------------------------------------ fold script
+
+
+def test_fold_script_reports_a_craft_old_and_new_then_applies(api):
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fold_tier_additionals", Path(__file__).resolve().parents[1] / "scripts" / "fold_tier_additionals.py"
+    )
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a1 = _customer(db, company_id, "ZZT A CRAFT LEGACY", level=1)
+    _sale(db, company_id, a1, str(Q1_ACHIEVED), date(2026, 2, 10), product_id=pid)
+    _sale(db, company_id, a1, str(Q2_ACHIEVED), date(2026, 5, 10), product_id=pid)
+    legacy = _a_craft_tiers(add_q1=False) + [
+        {"period_start": "2026-01-01", "threshold": t, "rate": 1, "is_additional": True}
+        for t in (60000, 75000, 85000)
+    ]
+    created = client.post(BASE, json=_dealer_body([a1], tiers=legacy))
+    assert created.status_code == 201, created.text
+    body = created.json()
+    # Live today: 6% + 1% + 1%, each line rounded on its own.
+    assert _period(body, "2026-01-01")["commission_earned"] == 6143.52
+
+    (entry,) = [e for e in script.report(db) if e["target_id"] == body["id"]]
+    assert entry["additional_rows"] == 3
+    assert len(entry["moves"]) == 3
+    assert entry["skipped"] == []
+    q1, q2 = entry["periods"][0], entry["periods"][1]
+    assert (q1["old_commission"], q1["new_commission"], q1["delta"]) == (D("6143.52"), D("5375.58"), D("-767.94"))
+    assert (q2["old_commission"], q2["new_commission"], q2["delta"]) == (D("3090.25"), D("3090.25"), D("0"))
+
+    assert script.apply(db, [entry]) == 3
+    db.expire_all()
+    after = client.get(f"{BASE}/{body['id']}").json()
+    q1_tiers = [t for t in after["tiers"] if t["period_start"] == "2026-01-01"]
+    assert [(t["threshold"], t["rate"], t["additional_rate"], t["is_additional"]) for t in q1_tiers] == [
+        (60000, 5, 1, False), (75000, 6, 1, False), (85000, 7, 1, False),
+    ]
+    assert _period(after, "2026-01-01")["commission_earned"] == 5375.58
+
+
+def test_fold_script_reports_bonus_stacking_change(api):
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fold_tier_additionals", Path(__file__).resolve().parents[1] / "scripts" / "fold_tier_additionals.py"
+    )
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+
+    client, db, company_id = api
+    pid = _product_id(db, company_id)
+    a1 = _customer(db, company_id, "ZZT BONUS LEGACY", level=1)
+    _sale(db, company_id, a1, str(Q1_ACHIEVED), date(2026, 2, 10), product_id=pid)
+    tiers = [
+        {"period_start": "2026-01-01", "threshold": 60000, "rate": 5, "bonus_amount": 300},
+        {"period_start": "2026-01-01", "threshold": 75000, "rate": 6, "bonus_amount": 500},
+    ]
+    body = client.post(BASE, json=_dealer_body([a1], tiers=tiers)).json()
+    (entry,) = [e for e in script.report(db) if e["target_id"] == body["id"]]
+    assert entry["bonus_tiers"] == 2
+    q1 = entry["periods"][0]
+    assert (q1["old_bonus"], q1["new_bonus"], q1["delta"]) == (D("800"), D("500.00"), D("-300.00"))
