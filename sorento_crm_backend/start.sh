@@ -45,6 +45,10 @@ if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
   # timed out (app/utils/online_index.py). In the background so it never delays the health
   # check; a no-op once the indexes are VALID; it never exits non-zero.
   python -m scripts.ensure_goods_chain_indexes &
+  # POLH-BACKFILL-ASYNC: the PO line "first seen" history rows, out of the migration (it kept the
+  # 5 Nov deploy unhealthy past the 240 s wait). One commit per batch, resumable, advisory-locked;
+  # inserts nothing once every linked line is seeded; never exits non-zero.
+  python -m scripts.backfill_po_link_seen &
 else
   echo "SKIP_MIGRATIONS=1; skipping alembic upgrade head"
 fi
