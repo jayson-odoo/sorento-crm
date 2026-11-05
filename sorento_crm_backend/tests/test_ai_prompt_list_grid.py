@@ -77,7 +77,9 @@ def test_every_column_sorts_server_side(api, field):
     def key(row):
         if field == "status":
             return 0 if row["active"] else 1
-        return row[field]
+        v = row[field]
+        # Text sorts case-insensitively, the way a person reads an A-Z list.
+        return v.lower() if isinstance(v, str) else v
 
     present_asc = [key(r) for r in asc if key(r) is not None]
     present_desc = [key(r) for r in desc if key(r) is not None]
