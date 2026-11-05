@@ -4,26 +4,28 @@ import * as React from 'react';
 import Link from 'next/link';
 import { SquarePen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
 import { useQuotationFeedback } from '../../../../_shared/hooks/useQuotationDocuments';
-import { OutcomePill } from '../../../../_shared/components/OutcomePill';
-import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { isLockedForApproval } from '../../../../_shared/lib/quotationDecision';
 import { QuotationScopeTabs } from './QuotationScopeTabs';
 
 /**
- * The Lines tab (the owner renamed Scopes to Lines, #1341): the scope strip and the priced lines
- * under whichever scope is open.
+ * The lines, under the letterhead on the Header tab (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026:
+ * "for quotation I think the lines better be same page with Header"): the area strip and the
+ * priced lines under whichever area is open.
  *
  * A READ (#1341). The owner: "editing of scope should be done by 'Edit Quotation', not a separate
  * button like this, Edit quotation means I edit the whole quotation". So there is no per-scope
  * Edit scope, no instant Add a scope and no "Press Edit" hint: a scope's name, series and lines
- * change in the form page opened from the gear. Record outcome, Recheck alerts and Revise stay,
- * because they are acts on the scope, not edits of it.
+ * change in the form page opened from the gear.
+ *
+ * No row above the lines either (owner, 5 Nov 2026): the area's name is already its open tab, the
+ * version is the chip in the record header, and Recheck alerts / Revise are gear items there.
+ * Record outcome is not on this page at all ("we only need per project outcome"; its own lane).
  *
  * The document itself is not fetched here - it comes from the layout, so the tabs cannot end up
  * with two answers about the same quotation.
@@ -37,12 +39,12 @@ export function QuotationScopesTab() {
     canEdit,
     activeScopeId,
     selectScope,
+    versionNo,
+    recheckResults,
+    dismissRecheck,
   } = useQuotationDocumentScreen();
   const quotations = useQuotations(projectId);
 
-  const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(
-    null,
-  );
 
   // Open customer feedback, marked on the lines it names (PS-QUOTE-MATRIX, mock frame 5). The
   // same query as the Customer feedback tab and its badge.
@@ -96,36 +98,6 @@ export function QuotationScopesTab() {
 
       {activeQuotation ? (
         <Card>
-          {/* The scope's own commercial result, beside the lines it applies to. Outcome is per
-              SCOPE and the project's outcome is derived from it. */}
-          <CardHeader className="flex flex-col items-start gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <CardTitle className="min-w-0 break-words text-sm">
-                {activeQuotation.scope_label}
-              </CardTitle>
-              <OutcomePill outcome={activeQuotation.outcome} />
-              {/* Which series this scope is quoted from, stated rather than assumed: a scope
-                  naming no series checks nothing, and its lines look identically clean. */}
-              <span className="text-xs text-muted-foreground">
-                {activeQuotation.series_name || 'No series'}
-              </span>
-              {activeQuotation.loss_reason_label && (
-                <span className="text-xs text-muted-foreground">
-                  {activeQuotation.loss_reason_label}
-                </span>
-              )}
-            </div>
-            {canEdit && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setDecidingScopeId(activeQuotation.id)}
-              >
-                Record outcome
-              </Button>
-            )}
-          </CardHeader>
           {/* min-w-0 is load-bearing: CardContent is a flex item, and without it the line grid
               stretches the Card and the whole PAGE scrolls sideways at phone width. */}
           <CardContent className="min-w-0 py-5">
@@ -139,6 +111,13 @@ export function QuotationScopesTab() {
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
               feedback={openFeedback}
+              headerVersion={{
+                versionNo,
+                // Keyed by the version id each recheck ran on; the editor shows the one for the
+                // version it is reading, so a frozen version never shows the current one's answer.
+                recheckResults,
+                onDismissRecheck: dismissRecheck,
+              }}
             />
           </CardContent>
         </Card>
@@ -158,13 +137,6 @@ export function QuotationScopesTab() {
         </Card>
       )}
 
-      {decidingScopeId && activeQuotation && (
-        <QuotationOutcomeDialog
-          project={project}
-          quotation={activeQuotation}
-          onDone={() => setDecidingScopeId(null)}
-        />
-      )}
     </div>
   );
 }

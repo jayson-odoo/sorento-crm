@@ -2,20 +2,24 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { FileText, ListOrdered, Mail, Plus, ScrollText } from 'lucide-react';
+import { FileText, Mail, Plus, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
+import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
+  useProjectQuotationVersions,
   useProjectSeries,
   useQuotations,
   useQuotationVersions,
 } from '../../../_shared/hooks/useProjects';
+import { quotationStanding } from '../../../_shared/lib/quotationDecision';
 import {
   useQuotationDocument,
   useQuotationCoverPreview,
@@ -37,7 +41,6 @@ import type {
   QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
-import { OutcomePill } from '../../../_shared/components/OutcomePill';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
@@ -82,11 +85,13 @@ type FormScope = {
   matrix_columns?: MatrixHeader[];
 };
 
-type FormTab = 'header' | 'lines' | 'cover-letter' | 'terms';
+type FormTab = 'header' | 'cover-letter' | 'terms';
 
 /**
  * The form's tabs, the read page's minus Signatures (#1341, owner: "header stays in header tab").
- * Same order, same labels, same icons, so view and edit read as one layout.
+ * Same order, same labels, same icons, so view and edit read as one layout. No Lines tab
+ * (PROPOSAL-HEADER-LAYOUT, owner hand test 5 Nov 2026: "the Lines also should be align with the
+ * view page"): the lines sit on the Header tab under the letterhead, as on the view page.
  */
 const FORM_TABS: {
   key: FormTab;
@@ -94,7 +99,6 @@ const FORM_TABS: {
   icon: React.ComponentType<{ className?: string }>;
 }[] = [
   { key: 'header', title: 'Header', icon: FileText },
-  { key: 'lines', title: 'Lines', icon: ListOrdered },
   { key: 'cover-letter', title: 'Cover letter', icon: Mail },
   { key: 'terms', title: 'Terms', icon: ScrollText },
 ];
@@ -508,7 +512,7 @@ export function QuotationFormClient({
     setError(problem);
     // Every refusal is about a scope or a line, so show the tab it is on.
     if (problem) {
-      setTab('lines');
+      setTab('header');
       return;
     }
     setIsSaving(true);
@@ -542,6 +546,21 @@ export function QuotationFormClient({
       setIsSaving(false);
     }
   }
+
+  /**
+   * The version for the record card: the highest current version across the kept areas. No
+   * Recheck alerts here (owner hand test, 5 Nov 2026): it lives in the view page's gear.
+   */
+  const keptQuotations = React.useMemo(
+    () => (quotations.data ?? []).filter((row) => keptScopes.some((scope) => scope.id === row.id)),
+    [quotations.data, keptScopes],
+  );
+  const keptVersions = useProjectQuotationVersions(keptQuotations);
+  const currentVersionNo = keptVersions.rows.reduce<number | null>(
+    (max, row) =>
+      row.version.is_current ? Math.max(max ?? 0, row.version.version_no) : max,
+    null,
+  );
 
   const loading =
     project.isLoading ||
@@ -588,6 +607,29 @@ export function QuotationFormClient({
         </p>
       )}
 
+      {/* The view page's record card (PROPOSAL-HEADER-LAYOUT): number, status and version, the
+          title under them. A new proposal has none of these yet. */}
+      {isEdit && saved.data && !failed && (
+        <RecordHeaderCard
+          title={saved.data.document_no}
+          badges={
+            <>
+              <span
+                className={`${STATUS_PILL_BASE} ${statusPillClass(quotationStanding(saved.data).label)}`}
+              >
+                {quotationStanding(saved.data).label}
+              </span>
+              {currentVersionNo !== null && (
+                <span className="inline-flex h-6 items-center rounded-md border border-border px-2 text-xs font-medium">
+                  {`v${currentVersionNo}`}
+                </span>
+              )}
+            </>
+          }
+          subtitle={header?.subject_title ?? saved.data.subject_title}
+        />
+      )}
+
       {failed ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
           <h2 className="text-sm font-semibold text-destructive">
@@ -613,8 +655,8 @@ export function QuotationFormClient({
             </TabsList>
           </div>
 
-          {/* Every panel stays mounted and is only hidden: a saved scope's lines load inside the
-              Lines tab, and Save must be able to wait for them without that tab being opened. */}
+          {/* Every panel stays mounted and is only hidden: the letter editors and the staged
+              lines survive a tab switch, and Save can wait on them from any tab. */}
           <FormPanel open={tab === 'header'} label="Header">
             <QuotationDocumentHeader
               document={shownDocument}
@@ -626,10 +668,10 @@ export function QuotationFormClient({
                 setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
               }}
             />
-          </FormPanel>
 
-          <FormPanel open={tab === 'lines'} label="Lines">
+            {/* The lines, under the letterhead on the same tab, as on the view page. */}
             {project.data && (
+              <div className="mt-5">
               <FormLines
                 project={project.data}
                 scopes={scopes ?? []}
@@ -657,6 +699,7 @@ export function QuotationFormClient({
                   setActiveKey(null);
                 }}
               />
+              </div>
             )}
 
             {/* The quotation page's own Add a scope dialog. It names the scope, which is staged
@@ -922,8 +965,7 @@ function FormLines({
 
   return (
     <div className="space-y-3">
-      {/* The strip, with the open saved scope's outcome at its right: the one piece of the old
-          scope header that is not already on the tab. */}
+      {/* The strip alone: no per-area outcome (owner, 5 Nov 2026: outcome is per project). */}
       <div className="flex min-w-0 items-center justify-between gap-3">
         <QuotationScopeTabs
           scopes={strip}
@@ -942,11 +984,6 @@ function FormLines({
             key === active.key ? canRemove : !scopes.find((row) => row.key === key)?.id
           }
         />
-        {savedRow && (
-          <span className="shrink-0">
-            <OutcomePill outcome={savedRow.outcome} />
-          </span>
-        )}
       </div>
 
       {/* No card and no header (QUOTE-SCOPE-COMPACT, owner 4 Nov: "why do I need a section for
@@ -965,6 +1002,9 @@ function FormLines({
             seriesId={active.series_id || null}
             edit={scopeEditing}
             feedback={feedback}
+            // The version is the record card's (PROPOSAL-HEADER-LAYOUT): no version row here, and
+            // the form always works on the current version.
+            headerVersion={{ versionNo: null }}
             // Copy columns from: the document's other saved scopes, as their versions hold them...
             siblingScopes={scopes
               .filter((scope) => scope.id && scope.id !== active.id)

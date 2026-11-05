@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { useWishlist } from '../hooks/useAIUsage';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { NoToolAsksCard } from './NoToolAsksCard';
 
 const PERMISSION = 'system.ai_assistant_settings.view';
 
@@ -42,6 +43,7 @@ export default function AIWishlistPage() {
         <PageHeader title="AI Feature Wishlist" />
       </Container>
       <Container className="space-y-4">
+        <NoToolAsksCard />
         <Card>
           <CardHeader>
             <CardTitle>Clusters</CardTitle>
