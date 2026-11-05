@@ -222,3 +222,32 @@ def test_r18_a_combo_of_another_company_leaks_nothing(env):
         for line in res.json()["lines"]:
             assert line["combo"] is None, "the other company's combo must not be resolved"
             assert foreign_combo.name not in str(line)
+
+
+# --------------------------------------------------------------------------- R18 security round
+def test_r18_a_part_with_more_than_50_candidates_is_422(env):
+    """Security review: one part listing every product id would force a full product resolution
+    per id in one synchronous request. A choice group's options are a handful; 50 is the ceiling."""
+    db, c, _ = env
+    host, combo, template_id = _world(db)
+    body = _body(host, combo, template_id)
+    body["lines"][0]["parts"] = [
+        {"product_id": None, "role": "Tap", "candidates": [str(uuid.uuid4()) for _ in range(51)]}
+    ]
+    res = c.post(STAFF_PREVIEW, json=body)
+    assert res.status_code == 422, res.text
+
+    body["lines"][0]["parts"][0]["candidates"] = [str(uuid.uuid4()) for _ in range(50)]
+    assert c.post(STAFF_PREVIEW, json=body).status_code == 200
+
+
+def test_r18_the_staff_route_refuses_a_request_id(env):
+    """The staff route previews unsaved lines only; a request_id would need the per-request
+    permission check the portal route does, so it is refused rather than silently ignored."""
+    db, c, _ = env
+    host, combo, template_id = _world(db)
+    body = _body(host, combo, template_id)
+    body["request_id"] = str(uuid.uuid4())
+    res = c.post(STAFF_PREVIEW, json=body)
+    assert res.status_code == 422, res.text
+    assert "lines" not in res.json() or not res.json().get("lines")

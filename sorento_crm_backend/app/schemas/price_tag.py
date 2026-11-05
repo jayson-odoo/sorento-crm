@@ -41,7 +41,9 @@ class LinePartIn(BaseModel):
 
     product_id: Optional[str] = None
     role: Optional[str] = None
-    candidates: list[str] = Field(default_factory=list)
+    # A choice group's options are a handful; the ceiling stops one part from forcing a full
+    # product resolution per id in a single preview (security review, PRICETAG-COMBO-FORMAT).
+    candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
 class PriceTagRequestLineCreate(BaseModel):

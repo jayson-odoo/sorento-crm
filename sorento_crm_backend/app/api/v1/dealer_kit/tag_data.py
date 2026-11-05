@@ -252,8 +252,18 @@ def staff_tag_preview(
     _user: dict = Depends(_VIEW),
 ):
     """The portal's live tag preview for staff (product page combo preview): the same
-    `product_tag_template_service.preview` the request form calls, under the caller's own company
-    scope and the staff viewer, so the staff and portal answers cannot drift. Writes nothing."""
+    `product_tag_template_service.preview` the request form calls, with the staff viewer, so the
+    staff and portal answers cannot drift. Company scope is the caller's, set by the global
+    `apply_company_scope` dependency like every other staff dealer-kit route. Writes nothing.
+
+    Unsaved lines only: a `request_id` would need the per-request permission check the portal
+    route does (`_require_own_request`), so it is refused rather than silently ignored."""
+    if payload.request_id:
+        raise AppException(
+            status_code=422,
+            message="The staff preview takes unsaved lines only, not a saved request.",
+            code="REQUEST_ID_NOT_SUPPORTED",
+        )
     result = product_tag_template_service.preview(
         db,
         price_mode=payload.price_mode,
