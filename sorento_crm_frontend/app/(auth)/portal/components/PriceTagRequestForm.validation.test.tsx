@@ -313,11 +313,10 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     expect(
       await screen.findByText('Select the dealer these tags are for.'),
     ).toBeInTheDocument();
-    // The lines error renders inside "Sales Order & Lines", collapsed on a
-    // blank form - opened by hand to read it (AC-P10 promises the offending
-    // section opens itself; not asserted here, see PR notes).
-    openSalesOrderSection();
-    expect(screen.getByText('Add at least one line.')).toBeInTheDocument();
+    // AC-P10 + crew pass 5 Nov (#2138): EVERY section with a problem opens,
+    // not only the first, so the lines error inside "Sales Order & Lines"
+    // shows without opening it by hand.
+    expect(await screen.findByText('Add at least one line.')).toBeInTheDocument();
     expect(screen.queryByText('Pick the date you need them by.')).toBeNull();
     // AC-S1-3: "Say who prints these tags." must never appear.
     expect(
