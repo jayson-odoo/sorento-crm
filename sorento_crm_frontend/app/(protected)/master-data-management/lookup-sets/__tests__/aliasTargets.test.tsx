@@ -6,6 +6,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomId } from '@/lib/id';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -40,7 +41,7 @@ function wrap(ui: React.ReactElement) {
 }
 
 const option = (value: string, orphaned: boolean) => ({
-  id: crypto.randomUUID(), set_id: SET_ID, value, label: value, sort_order: 0, is_active: true, description: null,
+  id: randomId(), set_id: SET_ID, value, label: value, sort_order: 0, is_active: true, description: null,
   keywords: [], created_at: '2026-10-29T00:00:00Z', updated_at: null, orphaned,
 });
 
