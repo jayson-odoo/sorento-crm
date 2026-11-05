@@ -77,7 +77,7 @@ td.num,th.num{text-align:right}
 <body>
 <div class="doc">
 <h1>Proposal / quotation detail header (PROPOSAL-HEADER-LAYOUT)</h1>
-<p class="sub">Mock v1, 5 Nov 2026. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
+<p class="sub"><b>Mock v2</b>, 5 Nov 2026 (owner 12:20 on v1: "in view i don't even need this", struck the area header row inside the lines: area name + Open pill + series + Record outcome. Gone in view; Record outcome moves into the gear, frame 2b). v1 text follows. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
 actions right). The customer line and the "customer holds this version" hint go. The printer sits beside the gear. The Lines tab
 goes; the lines sit on the Header tab under the letterhead card. Quotations use the same page, so they change too.
 Pink numbers map each element to the component it reuses (list on the right).</p>
@@ -132,9 +132,10 @@ Pink numbers map each element to the component it reuses (list on the right).</p
     </div>
   </div>
 
-  <div class="scopes"><span class="co">10</span><span class="pill blue">Main scope</span></div>
+  <div class="scopes"><span class="co">10</span><span class="pill blue">Townhouse $</span><span class="pill">Semi-D $</span></div>
+  <div class="strike" style="margin:0 0 6px"><span class="co">11</span> v1 area header row, gone in view: "Townhouse · Open · Project · [Record outcome]"</div>
   <div class="card" style="padding:0">
-    <div class="rrow" style="padding:12px 16px;border-bottom:1px solid var(--line)"><div class="rtitle" style="gap:8px"><b style="font-size:14px">Main scope</b><span class="pill">Won</span><span class="rsub" style="font-size:12px">No series</span></div><span class="btn">Record outcome</span></div>
+    <div class="rrow" style="padding:12px 16px;border-bottom:1px solid var(--line)"><div class="rtitle" style="gap:8px"><span class="pill blue">v1</span><span class="btn">Recheck alerts</span><span class="btn">Revise to v2</span></div><div class="rtitle" style="gap:8px"><span class="btn" style="width:200px;color:var(--muted)">Search lines</span><span class="btn">Columns</span></div></div>
     <div class="tblwrap" style="padding:12px 16px"><table>
       <thead><tr><th>#</th><th>Photo</th><th>Product</th><th>Description</th><th>Brand</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
       <tbody>
@@ -156,8 +157,30 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <li><span class="co">7</span><div><b>One primary</b>Send to Customer R3 (Email / WhatsApp), or Sign / Send for approval / Approve+Reject, exactly as today.<span class="ref">components/common/DetailActions.tsx (pager, gear, primary)</span></div></li>
   <li><span class="co">8</span><div><b>Lines tab removed</b>Old /lines links (and the feedback tab's "go to line") land on Header.<span class="ref">QuotationDocumentTabs.tsx:36, (view)/lines/page.tsx</span></div></li>
   <li><span class="co">9</span><div><b>Letterhead card</b>Unchanged, first on the Header tab.<span class="ref">QuotationDocumentHeader.tsx</span></div></li>
-  <li><span class="co">10</span><div><b>Lines, under the card</b>The whole former Lines tab as is: scope strip, Record outcome, the lines grid with its editing, sorting, totals and feedback marks.<span class="ref">QuotationScopesTab.tsx → QuotationVersionEditor.tsx → QuotationLinesGrid.tsx</span></div></li>
+  <li><span class="co">10</span><div><b>Lines, under the card</b>The whole former Lines tab minus the area header row (11): area tab strip, version strip, the lines grid with its editing, sorting, totals and feedback marks.<span class="ref">QuotationScopesTab.tsx → QuotationVersionEditor.tsx → QuotationLinesGrid.tsx</span></div></li>
+  <li><span class="co">11</span><div><b>Area header row removed (v2)</b>Owner: "in view i don't even need this". Area name is already the open tab; the Open/Won/Lost pill and series go with it. Record outcome is NOT lost: it moves into the gear (frame 2b). Row starts at the version strip (v1, Recheck alerts, Revise to v2, Search lines, Columns), unchanged.<span class="ref">QuotationScopesTab.tsx:97-128 (CardHeader removed); QuotationOutcomeDialog.tsx reused as is</span></div></li>
 </ol></div>
+</div>
+
+<h2 class="ft">2b. v2: where Record outcome lives now (gear open)</h2>
+<div class="layout">
+<div class="frame" style="width:560px;flex:none"><div class="content">
+  <div class="rcard" style="margin-bottom:0">
+    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span></div><span class="rsub">test · <u>Not viewed yet</u></span></div>
+    <div class="acts"><span class="btn icon" style="outline:2px solid var(--primary)">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div></div>
+  </div>
+  <div class="card" style="width:260px;margin:6px 0 0 150px;padding:6px 0;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px">
+    <div style="padding:6px 12px">Edit proposal</div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Record outcome: Townhouse</b> <span class="co">12</span></div>
+    <div style="padding:6px 12px">Make quotation</div>
+    <div style="padding:6px 12px">Download PDF</div>
+    <div style="padding:6px 12px">Download Excel</div>
+    <div style="padding:6px 12px">Copy counter-sign link</div>
+    <div style="border-top:1px solid var(--line);margin:4px 0"></div>
+    <div style="padding:6px 12px;color:var(--red)">Delete</div>
+  </div>
+</div></div>
+<div class="notes"><ol><li><span class="co">12</span><div><b>Record outcome, in the gear</b>Acts on the area tab that is open, and names it, so with Townhouse open it reads "Record outcome: Townhouse" (switch tab for Semi-D). Opens the same outcome dialog as today; "Change outcome" once recorded, same rule as before. Only for users who can edit the project, as today. Gear items besides it are unchanged; list is illustrative.<span class="ref">QuotationOutcomeDialog.tsx; gear: quotation-documents/actions.tsx useQuotationDocumentActions</span></div></li></ol></div>
 </div>
 
 <h2 class="ft">3. After, 375 px (no sideways page scroll; the lines grid scrolls inside its card)</h2>
@@ -177,7 +200,8 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <div class="card"><div class="kv">
     <div><span>To</span>1 LIVING DEPOT SDN BHD [A/C I]</div><div><span>Our Ref</span>PRJQ-2026-0005-R2</div><div><span>Date</span>05/11/2026</div><div><span>Total</span><b>RM 350.00</b></div>
   </div></div>
-  <div class="card" style="padding:0"><div class="tblwrap" style="padding:10px 12px"><table style="min-width:560px">
+  <div class="scopes"><span class="pill blue">Townhouse $</span><span class="pill">Semi-D $</span></div>
+  <div class="card" style="padding:0"><div class="rtitle" style="gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)"><span class="pill blue">v1</span><span class="btn">Recheck alerts</span><span class="btn">Revise to v2</span></div><div class="tblwrap" style="padding:10px 12px"><table style="min-width:560px">
     <thead><tr><th>#</th><th>Product</th><th>Description</th><th class="num">Qty</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
     <tbody><tr><td>1</td><td>SAMPLE-001</td><td>Basin mixer</td><td class="num">2</td><td class="num">100.00</td><td class="num">200.00</td></tr>
     <tr><td>2</td><td>SAMPLE-002</td><td>Shower set</td><td class="num">1</td><td class="num">150.00</td><td class="num">150.00</td></tr></tbody>
@@ -186,7 +210,7 @@ Pink numbers map each element to the component it reuses (list on the right).</p
 <div class="notes"><ol><li><span class="co">i</span><div><b>Wrap</b>The actions wrap under the identity at 375 (D6, same as OI). The tab strip scrolls in its own gutter, as today.</div></li></ol></div>
 </div>
 
-<h2 class="ft">4. Behaviour card: 5 questions, each with a recommendation</h2>
+<h2 class="ft">4. Behaviour card v2: 5 questions, each with a recommendation (Q1-Q4 still open from v1; Q5 new)</h2>
 <div class="qa">
   <h3>Q1. Pager: should proposals get one, over what list?</h3>
   <p>They already have one: prev/next over this project's proposals and quotations, shown once the project has two or more (QuotationDocumentClient.tsx:350). People reach the page from the project's Proposals tab, so the project's own list is the right one, not a global list.</p>
@@ -200,9 +224,10 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <h3>Q4. The two other hint lines under the buttons ("With a manager for approval", "You can read this quotation but not change it.")</h3>
   <p>You struck only the "customer holds" hint. These two still matter (the first explains why there is no Send button while approval is pending).</p>
   <p class="rec">Recommend: move them onto the subtitle line ("test · Not viewed yet · With a manager for approval"), so nothing hangs under the buttons.</p>
-  <h3>Q5. Order Inquiry card</h3>
-  <p>OI switches to the shared card too (same look, no visible change), so the two cannot drift apart.</p>
-  <p class="rec">Recommend: yes. The other ~12 pages that copy the same card are left for later, not in this PR.</p>
+  <h3>Q5. Record outcome (new in v2): where does it go now the area header row is gone in view?</h3>
+  <p>(a) In the gear, "Record outcome: &lt;open area&gt;", acting on the open area tab (frame 2b). (b) In the area tab's own menu (right-click, or the ⋯ on a phone), the way the edit form already offers Rename / Remove scope (QuotationScopeTabs.tsx). (b) is hidden on a desktop until you right-click.</p>
+  <p class="rec">Recommend: (a), the gear, because that is where every other secondary action on this page lives and it is visible on desktop and phone alike.</p>
+  <p style="margin-top:12px;color:var(--muted)">Default, not a question: Order Inquiry also switches to the shared header card (no visible change) so the two cannot drift; the ~12 other pages that copy it wait for later.</p>
 </div>
 </div>
 </body>
