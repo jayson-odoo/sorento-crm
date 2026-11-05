@@ -412,6 +412,9 @@ def _linked(db, combo):
 
 
 def test_link_templates_links_every_published_template_that_fits(db, catalogue, tmp_path):
+    """A main-only template is a plain template: it fits every combo and prints the combo as one
+    product, fixed parts included (owner ruling 5 Nov 2026, PRICETAG-COMBO-FIT-HOTFIX #2203), so
+    it links too. A template that reads more fixed parts or a group the combo lacks does not."""
     fits_one = _template_with(db, "ZZT one fixed", {"kind": "fixed", "index": 0})
     fits_main = _template_with(db, "ZZT main", {"kind": "main"})
     too_many = _template_with(db, "ZZT three fixed", {"kind": "fixed", "index": 2})
@@ -422,8 +425,7 @@ def test_link_templates_links_every_published_template_that_fits(db, catalogue, 
     e = entry("S2", shapes.S2_HOST, "ZZT S2", components=[shapes.S2_FIXED])
     _code, _out, _rows = _run(db, tmp_path, [e], "--apply", "--link-templates")
     combo = _combo(db, "ZZT S2", shapes.S2_HOST)
-    assert _linked(db, combo) == {fits_one}
-    assert fits_main not in _linked(db, combo)  # M1: it would leave the fixed part off
+    assert _linked(db, combo) == {fits_one, fits_main}
     assert too_many not in _linked(db, combo) and needs_group not in _linked(db, combo)
 
 

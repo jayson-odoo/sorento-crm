@@ -25,6 +25,7 @@ import type {
 import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
+import { konvaFlip } from '@/lib/dealer-kit/image-flip';
 import {
   barcodeSvg,
   barcodeSymbologyFor,
@@ -263,6 +264,8 @@ function LayerContent({
           fit={props.fit}
           maskShape={props.maskShape ?? 'none'}
           cropRect={props.cropRect}
+          flipX={props.flipX}
+          flipY={props.flipY}
         />
       );
 
@@ -482,6 +485,8 @@ function ImageContent({
   fit,
   maskShape,
   cropRect,
+  flipX,
+  flipY,
 }: {
   w: number;
   h: number;
@@ -489,6 +494,9 @@ function ImageContent({
   fit: 'cover' | 'contain' | 'stretch';
   maskShape: 'none' | 'circle';
   cropRect?: CropRect;
+  /** PRICETAG-DESIGNER-GAPS item 1: mirror the picture in place. */
+  flipX?: boolean;
+  flipY?: boolean;
 }) {
   const image = useHtmlImage(url);
 
@@ -527,7 +535,12 @@ function ImageContent({
   const crop = cropPixels(cropRect, image);
   const draw = fittedCropDraw(cropRect, image, fit, w, h);
 
-  const body = (
+  // Mirroring wraps ONLY the picture, inside any clip below: both clips
+  // (circle, cover's box) are symmetric about the box, so the clipped area is
+  // the same either way. No wrapper at all when unflipped, so an old document
+  // draws the exact same node tree it always did.
+  const mirror = konvaFlip({ flipX, flipY }, w, h);
+  const picture = (
     <KonvaImage
       image={image}
       crop={crop}
@@ -537,6 +550,7 @@ function ImageContent({
       height={draw.height}
     />
   );
+  const body = mirror ? <Group {...mirror}>{picture}</Group> : picture;
 
   if (maskShape === 'circle') {
     return (

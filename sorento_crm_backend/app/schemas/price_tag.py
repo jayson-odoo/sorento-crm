@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -640,6 +641,9 @@ class ImageLayerPropsDoc(_StrictProps):
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    #: PRICETAG-DESIGNER-GAPS item 1: mirror about the layer box. Absent = not flipped.
+    flipX: Optional[bool] = None
+    flipY: Optional[bool] = None
     subjectSlot: Optional[SubjectSlotDoc] = None
 
 
@@ -839,9 +843,15 @@ class TagTemplateCreate(BaseModel):
     price_type: Optional[Literal["list", "selling", "both"]] = None
 
 
+#: A template setting that is trimmed and must not be blank (item 4).
+_SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+_SettingText50 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+
+
 class TagTemplateUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=255)
-    family: Optional[str] = Field(default=None, max_length=50)
+    #: PRICETAG-DESIGNER-GAPS item 4: editable after create, never blank.
+    name: Optional[_SettingText255] = None
+    family: Optional[_SettingText50] = None
     doc: Optional[dict] = None
     print_size: Optional[dict] = None
     #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
