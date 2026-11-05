@@ -252,9 +252,12 @@ def test_an_item_with_no_links_at_all_keeps_todays_behaviour(env):
 
 def test_a_line_that_has_a_fitting_template_submits(env):
     db, c, _ = env
-    product = _product(db, _reference(db))
-    _link(db, product, _typed(db, "LP", "list"), _typed(db, "SP", "selling"))
-    body = _draft(c, [_line(product, "selling"), _line(product, "list")])
+    ref = _reference(db)
+    sp_item, lp_item = _product(db, ref), _product(db, ref)
+    _link(db, sp_item, _typed(db, "LP", "list"), _typed(db, "SP", "selling"))
+    _link(db, lp_item, _typed(db, "LP2", "list"), _typed(db, "SP2", "selling"))
+    # two different products: the same product twice is the DUPLICATE_LINE rule, not this gate
+    body = _draft(c, [_line(sp_item, "selling"), _line(lp_item, "list")])
     assert _submit(c, body["id"]).status_code == 200
 
 
