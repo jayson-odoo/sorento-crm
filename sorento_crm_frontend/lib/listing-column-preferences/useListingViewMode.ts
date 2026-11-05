@@ -46,6 +46,8 @@ export function useListingViewMode<T extends ListViewMode>({
   const [applied, setApplied] = useState(false);
   const appliedRef = useRef(false);
   const allowedRef = useRef(allowed);
+  // The view on screen once known, so re-clicking it writes nothing.
+  const shownRef = useRef<T | null>(null);
 
   useEffect(() => {
     if (appliedRef.current) return;
@@ -54,8 +56,9 @@ export function useListingViewMode<T extends ListViewMode>({
       typeof v === 'string' && (allowedRef.current as readonly string[]).includes(v);
     const stored = saved?.config?.view;
     const legacy = legacyStorageKey ? localStore.getItem(legacyStorageKey) : null;
-    if (isAllowed(stored)) setViewState(stored);
-    else if (isAllowed(legacy)) setViewState(legacy);
+    const initial = isAllowed(stored) ? stored : isAllowed(legacy) ? legacy : null;
+    if (initial) setViewState(initial);
+    shownRef.current = initial ?? null;
     appliedRef.current = true;
     setApplied(true);
   }, [saved, loadFailed, legacyStorageKey]);
@@ -70,6 +73,8 @@ export function useListingViewMode<T extends ListViewMode>({
 
   const setView = useCallback(
     (next: T) => {
+      if (shownRef.current === next) return;
+      shownRef.current = next;
       // A pick made before the stored value arrived wins over it.
       appliedRef.current = true;
       setApplied(true);

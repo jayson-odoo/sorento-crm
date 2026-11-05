@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../_shared/types/project.types';
 
@@ -163,7 +163,7 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
 
 import { PipelineClient } from './PipelineClient';
 
-const KEY = 'projects.projects.view::pipeline';
+const KEY = 'projects.projects.view::pipeline-view';
 
 function renderClient() {
   // A fresh client per render is a fresh page load: nothing survives but the server row.
@@ -222,12 +222,39 @@ describe('PipelineClient remembers the view per user', () => {
     for (const [params] of listProjects.mock.calls) expect(params).toMatchObject({ limit: 50 });
   });
 
-  it("does not change another user's view", async () => {
-    serverRows.set(`u1|${KEY}`, { view: 'grid' });
-    currentUser = 'u2';
+  it('does not share a row with the grid columns, so Reset columns cannot forget the view', async () => {
     renderClient();
     await waitFor(() => expect(listProjects).toHaveBeenCalled());
-    expect(boardButton()).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(gridButton());
+    await waitFor(() => expect(putConfig).toHaveBeenCalled());
+    expect(KEY).not.toBe('projects.projects.view::pipeline');
+    expect(putConfig.mock.calls.every(([key]) => key === KEY)).toBe(true);
+  });
+
+  it('a pick made before the stored view arrives wins over it', async () => {
+    serverRows.set(`u1|${KEY}`, { view: 'board' });
+    let release: () => void = () => {};
+    getConfig.mockImplementationOnce(
+      (key: string) =>
+        new Promise((resolve) => {
+          release = () => resolve({ listing_key: key, config: { view: 'board' } });
+        }),
+    );
+    renderClient();
+    fireEvent.click(gridButton());
+    release();
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(gridButton()).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('clicking the view already shown writes nothing', async () => {
+    serverRows.set(`u1|${KEY}`, { view: 'grid' });
+    renderClient();
+    await waitFor(() => expect(gridButton()).toHaveAttribute('aria-pressed', 'true'));
+    fireEvent.click(gridButton());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(putConfig).not.toHaveBeenCalled();
   });
 
   it('keeps a pick an older build stored in this browser when the server has none', async () => {

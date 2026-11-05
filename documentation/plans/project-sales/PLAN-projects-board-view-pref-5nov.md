@@ -19,7 +19,7 @@ board/list choice per user so Projects opens in list view for the owner.
 
 ## Change
 1. BE: add optional `view` (`board` | `grid` | `list`) to `UserListColumnConfigPayload`. JSONB, no migration.
-2. FE: Pipeline reads `config.view` from the same row (same query key), applies it once, writes
+2. FE: Pipeline reads `config.view` from its own row `projects.projects.view::pipeline-view` (not the grid's `::pipeline` row, whose Reset columns DELETEs the whole row), applies it once, writes
    `{ view }` on toggle. Default for a user with nothing stored stays Board. The old localStorage
    value is used only as a fallback when the server has nothing (so nobody loses their pick).
 3. Board card code + title: drop `hover:underline`, use the grid's link hover style.

@@ -49,8 +49,11 @@ type StartAction = 'upload-po' | 'upload-schedule' | null;
 
 /** The browser key an older build kept the view in; read only when the server holds none. */
 const LEGACY_VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
-/** The grid's own column-config row, which now also carries the view (one row per user). */
-const PIPELINE_LISTING_KEY = 'projects.projects.view::pipeline';
+/**
+ * The view's own per-user column-config row. Not the grid's `::pipeline` row: the grid's
+ * "Reset columns" DELETEs that whole row, which would also forget the view.
+ */
+const PIPELINE_VIEW_LISTING_KEY = 'projects.projects.view::pipeline-view';
 const PIPELINE_VIEWS = ['board', 'grid'] as const;
 
 type PipelineView = (typeof PIPELINE_VIEWS)[number];
@@ -78,7 +81,7 @@ export function PipelineClient() {
     setView: switchView,
     isLoading: viewLoading,
   } = useListingViewMode<PipelineView>({
-    listingKey: PIPELINE_LISTING_KEY,
+    listingKey: PIPELINE_VIEW_LISTING_KEY,
     allowed: PIPELINE_VIEWS,
     defaultView: 'board',
     legacyStorageKey: LEGACY_VIEW_STORAGE_KEY,
