@@ -69,3 +69,42 @@ def test_the_combo_link_save_refuses_a_non_fitting_template(env):  # noqa: F811
     assert "Prints 1 of this combo's 2 fixed parts" in res.text
     ok = c.put(f"{DK}/combos/{s['combo'].id}/tag-templates", json={"template_ids": [fits]})
     assert ok.status_code == 200, ok.text
+
+
+def _hide_part_products_from_the_staff_scope(db, combo):
+    """The catalogue part in another company's books, as on the shared dev copy: the joined
+    `part_product` comes back None under a scoped session."""
+    from app.models.base import company_scope
+    from app.models.company import Company
+    from app.models.product import Product
+    from tests.test_product_tag_templates import MOCHA
+    from tests.conftest import unique_code
+
+    if db.get(Company, MOCHA) is None:
+        db.add(Company(id=MOCHA, name="ZZT Mocha", code=unique_code("MCH")[:20], is_active=True))
+        db.flush()
+    with company_scope(db, None):
+        for part in combo.parts:
+            db.get(Product, part.part_product_id).company_id = MOCHA
+    db.commit()
+    db.expire_all()
+
+
+def test_r1_the_save_refusal_counts_the_combos_fixed_parts_by_rows(env):  # noqa: F811
+    db, c, _ = env
+    s = shapes.s4(db)  # two fixed parts
+    short = _published(db, "ZZT one fixed r1", _doc(*ONE_FIXED))
+    _hide_part_products_from_the_staff_scope(db, s["combo"])
+    res = c.put(f"{DK}/combos/{s['combo'].id}/tag-templates", json={"template_ids": [short]})
+    assert res.status_code == 422, res.text
+    assert "Prints 1 of this combo's 2 fixed parts" in res.text, res.text
+    assert "this combo has 0" not in res.text
+
+
+def test_r1_the_read_path_and_the_save_path_share_one_shape(env):  # noqa: F811
+    from app.services.dealer_kit.template_needs import combo_shape
+
+    db, c, _ = env
+    s = shapes.s4(db)
+    _hide_part_products_from_the_staff_scope(db, s["combo"])
+    assert combo_shape(db.get(type(s["combo"]), s["combo"].id))["fixed"] == 2
