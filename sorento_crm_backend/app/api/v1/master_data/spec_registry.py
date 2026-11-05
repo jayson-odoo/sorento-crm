@@ -92,7 +92,52 @@ def _also_on(row, owners: dict) -> dict[str, list[str]]:
     return out
 
 
-def _serialise(row, owners: Optional[dict] = None) -> dict:
+def _visible_icons(rows) -> dict[str, tuple[dict, dict]]:
+    """``{spec_key: (value_icons, {asset id: name})}``, as the CALLER may see them, for many rows
+    in one asset query.
+
+    The registry is shared by every company and assets are not: another company's icons, and
+    any icon since deleted, never reach the client (security review S1/S3).
+    """
+    from sqlalchemy.orm import object_session
+
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+    from app.services.dealer_kit.asset_service import ICON, _uuid_text
+
+    rows = [row for row in rows if row.value_icons]
+    ids = {
+        ident
+        for row in rows
+        for listed in (row.value_icons or {}).values()
+        for ident in (_uuid_text(x) for x in listed or [])
+        if ident
+    }
+    session = object_session(rows[0]) if rows else None
+    names: dict[str, str] = {}
+    if ids and session is not None:
+        names = {
+            asset.id: asset.name
+            for asset in session.query(Asset)
+            .join(Attachment, Attachment.id == Asset.attachment_id)
+            .filter(Asset.id.in_(ids), Asset.kind == ICON, Attachment.is_deleted.is_(False))
+            .all()
+        }
+    out: dict[str, tuple[dict, dict]] = {}
+    for row in rows:
+        icons: dict[str, list[str]] = {}
+        for value, listed in (row.value_icons or {}).items():
+            kept = [i for i in (_uuid_text(x) for x in listed or []) if i in names]
+            if kept:
+                icons[value] = kept
+        out[row.spec_key] = (icons, {i: names[i] for ids in icons.values() for i in ids})
+    return out
+
+
+def _serialise(row, owners: Optional[dict] = None, icons: Optional[dict] = None) -> dict:
+    if icons is None:
+        icons = _visible_icons([row])
+    value_icons, icon_names = icons.get(row.spec_key, ({}, {}))
     if owners is None:
         from sqlalchemy.orm import object_session
 
@@ -152,6 +197,14 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         # value -> display label ("pp" -> "PP"), purely cosmetic (#423, D/E). Editable
         # on seed AND user rows, like user_synonyms.
         "value_labels": row.value_labels or {},
+        # value -> [Dealer Kit icon asset id, ...], in the admin's order (feature icons).
+        # Only the caller's own live icons: the registry is shared, the assets are not.
+        "value_icons": value_icons,
+        # asset id -> name, so the screen names an icon rather than showing its id, without
+        # the reader holding the Dealer Kit library permission.
+        "value_icon_names": icon_names,
+        # Where this spec's icons sit in the tag's one icon sequence (null: last).
+        "icon_order": row.icon_order,
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -175,7 +228,8 @@ def get_spec_registry(
     try:
         rows = active_registry(db)
         owners = vocabulary_owners(db)
-        keys = [_serialise(row, owners) for row in rows]
+        icons = _visible_icons(rows)
+        keys = [_serialise(row, owners, icons) for row in rows]
         stamps = [r.updated_at or r.created_at for r in rows]
         updated_at = max(stamps).isoformat() if stamps else None
 
@@ -244,6 +298,12 @@ class SpecKeyUpdate(BaseModel):
     # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on ANY
     # row, seed or user - staff-owned like user_synonyms, never seed-repaired.
     value_labels: Optional[dict[str, str]] = None
+    # value -> [Dealer Kit icon asset id, ...] in display order: the feature icons a price tag
+    # shows for a product holding that value. Staff-owned like value_labels, never
+    # seed-repaired; an empty list removes the value's entry.
+    value_icons: Optional[dict[str, list[str]]] = None
+    # The spec's place in the tag's one feature icon sequence (1 first); null clears it.
+    icon_order: Optional[int] = Field(default=None, ge=1, le=999)
     # Which products may carry this key at all, as {other_key: [permitted values]}.
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
@@ -1032,6 +1092,21 @@ def update_spec_key(
                     detail="Permission required: master_data.spec_registry.edit",
                 )
 
+        # Feature icons are Dealer Kit artwork: choosing them needs the library too, on the
+        # server and not only in the UI (review S2). `icon_order` is registry-only.
+        if "value_icons" in fields:
+            from fastapi import HTTPException
+
+            from app.services.user_service import UserPermissionService
+
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "dealer_kit.library.manage"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Permission required: dealer_kit.library.manage",
+                )
+
         # The meaning and the cross-field word guard are judged before anything below is
         # applied, so a refused save stores nothing.
         hint = None
@@ -1193,6 +1268,20 @@ def update_spec_key(
             # tracked by SQLAlchemy, so `row.value_labels[key] = ...` would silently
             # not persist.
             row.value_labels = cleaned_labels
+
+        if "value_icons" in fields:
+            from app.services.dealer_kit.asset_service import clean_value_icons
+
+            # Reassigned, never mutated in place (JSONB, see value_labels above).
+            row.value_icons = clean_value_icons(db, row, fields["value_icons"] or {})
+        if "suppressed_values" in fields or "user_values" in fields:
+            from app.services.dealer_kit.asset_service import prune_value_icons
+
+            # A value taken away takes its icons with it (review B1).
+            prune_value_icons(row)
+
+        if "icon_order" in fields:
+            row.icon_order = fields["icon_order"]
 
         if "value_weights" in fields:
             row.value_weights = {

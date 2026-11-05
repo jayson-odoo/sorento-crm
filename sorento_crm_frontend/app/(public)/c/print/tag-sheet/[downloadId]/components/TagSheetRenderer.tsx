@@ -58,6 +58,8 @@ import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
+import { featureIconRow, featureIconsFor, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,6 +135,8 @@ export interface ResolvedLineData {
 export interface TagSheetMedia {
   assets?: Record<string, string>;
   images?: Record<string, string>;
+  /** Rule-carrying library icons, for `feature_icons` layers (contract B7). */
+  featureIcons?: FeatureIcon[];
 }
 
 interface TagSheetRendererProps extends TagSheetMedia {
@@ -1029,6 +1033,7 @@ function TagRenderer({
           {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}
           {layer.type === 'badge' && renderBadgeLayer(layer, media)}
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
+          {layer.type === 'feature_icons' && renderFeatureIconsLayer(layer, media, binding)}
         </div>
       ))}
     </div>
@@ -1197,11 +1202,12 @@ export default function TagSheetRenderer({
   resolvedData,
   assets,
   images,
+  featureIcons,
   preview = false,
   previewScale = 0.3,
 }: TagSheetRendererProps) {
   const imposition = doc.imposition;
-  const media: TagSheetMedia = { assets, images };
+  const media: TagSheetMedia = { assets, images, featureIcons };
 
   if (preview) {
     return (
@@ -1249,5 +1255,61 @@ export default function TagSheetRenderer({
         />
       ))}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * The subject's matched icons as `<img alt=name>`, packed by `featureIconRow` - the SAME two
+ * functions the canvas draws with. An icon with no signed URL is skipped and takes no space; no
+ * match prints nothing (the designer's dashed outline has no business on a physical tag).
+ */
+function renderFeatureIconsLayer(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+) {
+  const props = layer.props;
+  if (props.kind !== 'feature_icons') return null;
+
+  const icons = featureIconsFor(subjectSpecs(binding, layer), media.featureIcons ?? []).filter(
+    (icon) => media.assets?.[icon.id],
+  );
+  const xs = featureIconRow(icons.length, props, layer.width_mm);
+  if (xs.length === 0) return null;
+  const top = (layer.height_mm - props.iconSize_mm) / 2;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${layer.width_mm}mm`,
+        height: `${layer.height_mm}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        overflow: 'hidden',
+      }}
+    >
+      {xs.map((x, i) => (
+        <img
+          key={`${icons[i].id}-${i}`}
+          src={media.assets?.[icons[i].id]}
+          alt={icons[i].name}
+          style={{
+            position: 'absolute',
+            left: `${x}mm`,
+            top: `${top}mm`,
+            width: `${props.iconSize_mm}mm`,
+            height: `${props.iconSize_mm}mm`,
+            objectFit: 'contain',
+          }}
+        />
+      ))}
+    </div>
   );
 }
