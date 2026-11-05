@@ -510,7 +510,7 @@ class OpenAIProvider:
                 "type": "json_schema",
                 "json_schema": {
                     "name": json_schema_name or "structured_result",
-                    "schema": json_schema,
+                    "schema": _without_property_ordering(json_schema),
                     "strict": True,
                 },
             }
@@ -915,7 +915,7 @@ class AnthropicProvider:
                 "tools": [{
                     "name": tool_name,
                     "description": "Emit the structured result.",
-                    "input_schema": json_schema,
+                    "input_schema": _without_property_ordering(json_schema),
                 }],
                 "tool_choice": {"type": "tool", "name": tool_name},
             }
@@ -1233,6 +1233,28 @@ _GEMINI_TYPE_KEYS = {
     "integer": {"minimum", "maximum", "format"},
 }
 _GEMINI_BRANCH_KEYS = set().union(*_GEMINI_TYPE_KEYS.values())
+
+
+def _without_property_ordering(schema: Any) -> Any:
+    """`schema` without Gemini's `propertyOrdering` keyword (a generation-order hint only Gemini reads; OpenAI strict
+    mode refuses a keyword it does not know). A schema that carries none is returned as it is."""
+    if '"propertyOrdering"' not in json.dumps(schema, default=str):
+        return schema
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, list):
+            return [strip(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            if key == "propertyOrdering":
+                continue
+            # A `properties` map's keys are field names, never keywords: only its values are schemas.
+            out[key] = {name: strip(prop) for name, prop in value.items()} if key == "properties" and isinstance(value, dict) else strip(value)
+        return out
+
+    return strip(schema)
 
 
 def _gemini_schema(schema: Any) -> Any:

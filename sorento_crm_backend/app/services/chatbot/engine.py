@@ -1409,6 +1409,54 @@ def _known_account_types(db: Session, parser_config: Any, contact_respond_id: An
     return _guarded(db, read, [])
 
 
+def _contact_companies(db: Session, parser_config: Any, contact_respond_id: Any) -> list[Any]:
+    """CHATBOT-TOTALS-FILTERS: every company the contact holds, as the report lane reads them
+    (`sales_company_ask._companies`: id, name, code), read once per turn for a prompt that names the `Known companies`
+    line, or carries the report ask and defines `said_as` (`report_ask.from_object` reads them for it). Empty otherwise
+    or on a failure."""
+    uses_said_as = getattr(parser_config, "report_ask", False) and getattr(parser_config, "said_as", False)
+    if not (getattr(parser_config, "known_companies", False) or uses_said_as):
+        return []
+
+    def read() -> list[Any]:
+        from app.services.chatbot.lanes.business import sales_company_ask
+
+        return list(sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db)))
+
+    return _guarded(db, read, [])
+
+
+def _known_companies(db: Session, parser_config: Any, contact_respond_id: Any, held: Any = None) -> list[str] | None:
+    """CHATBOT-TOTALS-FILTERS: the display names of the companies the contact holds for the `Known companies:` line, read
+    as the report lane reads every company the contact holds (`sales_company_ask._companies`), so the parser can tell a
+    brand name that is also a company. None for a prompt that does not name the line; empty for a contact who holds
+    fewer than two (no company to tell apart). `held`: the turn's own read of them (`_contact_companies`), if any."""
+    if not getattr(parser_config, "known_companies", False):
+        return None
+
+    def read() -> list[str]:
+        from app.services.chatbot.lanes.business import sales_company_ask
+
+        if held is None:
+            rows = sales_company_ask._companies(db, contact_respond_id, business_services.fetch_space_id(db))
+        else:
+            rows = held
+        if len(rows) < 2:
+            return []
+        return [str(c[1]).strip() for c in rows if isinstance(c, (list, tuple)) and len(c) >= 2 and str(c[1] or "").strip()]
+
+    return _guarded(db, read, [])
+
+
+def _candidate_companies(parser_config: Any, known: list[str] | None) -> list[str] | None:
+    """CHATBOT-TOTALS-FILTERS HT1-1: the companies the lookup lists offer as Company rows: the `Known companies` names
+    (`_known_companies`, read once per turn), only for a prompt that names the block (`ParserConfig.company_candidates`)
+    and a contact holding two or more. None otherwise: the rows and the blocks are today's."""
+    if not getattr(parser_config, "company_candidates", False) or len(known or ()) < 2:
+        return None
+    return list(known or ())
+
+
 def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
@@ -1514,13 +1562,14 @@ def _lookup_visibility(
 def _lookup_lines(
     db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
+    companies: list[str] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
     (`held`, CHAT-V66-REGRESSIONS), plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
-    database error in one drops only that block (fail closed)."""
+    database error in one drops only that block (fail closed). `companies` (`_candidate_companies`): the Company rows."""
     group = bool(getattr(config, "category_pick", False))
     try:
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
@@ -1533,7 +1582,7 @@ def _lookup_lines(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
-                include_suppliers=include_suppliers,
+                include_suppliers=include_suppliers, companies=companies,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1629,10 +1678,11 @@ def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
     group_categories: bool = False, row_ids: bool = False, span_override: str | None = None,
-    supplier_ids: bool = False,
+    supplier_ids: bool = False, companies: list[str] | None = None,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
-    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails.
+    `companies` (`_candidate_companies`): the Company rows, offered by the near-exact spelling pass only."""
     try:
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
@@ -1644,7 +1694,7 @@ def _span_prep(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
-                include_suppliers=include_suppliers,
+                include_suppliers=include_suppliers, companies=companies,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -1955,8 +2005,9 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
       verdict as a supplier entity carrying the row id; the id binds the span's whole group
       (`resolve_gate.bind_span_suppliers`), so a near tie is still asked.
     * Fix round 4 (crew sweep, owner turn 1 repeated 5 times on v194): the parser named it (its raw, as typed) but as a
-      customer, so the turn went to the order report ("Undelivered orders or pending delivery?"), or as a supplier with
-      no row id, so nothing bound it ("couldn't find a supplier"). That entity becomes the supplier with the row id.
+      customer, so the turn went to the order report (its kind question, then "Undelivered orders or pending
+      delivery?"), or as a supplier with no row id, so nothing bound it ("couldn't find a supplier"). That entity
+      becomes the supplier with the row id.
     An entity already carrying an id of the span's group is left as it is."""
     spans = prep.supplier_spans if prep is not None else {}
     kinds_of = (getattr(prep, "span_kinds", None) or {}) if prep is not None else {}
@@ -2041,7 +2092,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
             try:
-                all_rows = [*prep.rows, *prep.spec_key_rows]
+                # HT1-1: a Company row is parser input only, never a span's match (the near-exact pass below offers it).
+                all_rows = [*(r for r in prep.rows if r.list_name != "company"), *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
                 event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
                 # Fix round 7: how many row texts the vector cache held for this turn (a share under 100% reads the
@@ -3576,11 +3628,13 @@ def _positions_read_elsewhere(state: Any) -> bool:
     return bool(ideation.get("pending_media"))
 
 
-def _held_report_line(focus: Any) -> str | None:
-    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`)."""
+def _held_report_line(focus: Any, config: Any = None) -> str | None:
+    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`), in the
+    keys the prompt in use defines (`parser.report_ask_keys`)."""
+    from app.services.chatbot.head.parser import report_ask_keys
     from app.services.chatbot.lanes.business import report_ask
 
-    return report_ask.held_report(focus)
+    return report_ask.held_report(focus, report_ask_keys(getattr(config, "report_ask_defined", ())))
 
 
 def run_turn(
@@ -5933,6 +5987,8 @@ def _run_stages_body(  # noqa: PLR0915
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
         account_types = _known_account_types(db, parser_config, contact_respond_id)
+        own_companies = _contact_companies(db, parser_config, contact_respond_id)
+        known_companies = _known_companies(db, parser_config, contact_respond_id, held=own_companies)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
@@ -5958,13 +6014,14 @@ def _run_stages_body(  # noqa: PLR0915
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
                 group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
                 span_override=_span_override(db, envelope, dry_run=dry_run),
-                supplier_ids=parser_config.supplier_ids,
+                supplier_ids=parser_config.supplier_ids, companies=_candidate_companies(parser_config, known_companies),
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
             lookup_lines, lookup_event = _lookup_lines(
                 db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)),
+                companies=_candidate_companies(parser_config, known_companies),
             )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
@@ -6039,6 +6096,7 @@ def _run_stages_body(  # noqa: PLR0915
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,
         account_types=account_types,
+        companies=known_companies,
         promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
@@ -6053,7 +6111,7 @@ def _run_stages_body(  # noqa: PLR0915
         state_block=state_block,
         # SALES-ACCOUNT-TYPE semantic carry (A2): the held report in words, only for a prompt carrying the report ask
         # marker (`ParserConfig.report_ask`); every other text's user block is unchanged.
-        held_report=_held_report_line(state_in.focus) if getattr(parser_config, "report_ask", False) else None,
+        held_report=_held_report_line(state_in.focus, parser_config) if getattr(parser_config, "report_ask", False) else None,
     )
     user_block, context_report = context_mod.assemble(context_layers)
     # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
@@ -6307,7 +6365,8 @@ def _run_stages_body(  # noqa: PLR0915
     # is the whole report ask; its slots become the fresh ask's own fields here, before any report seam reads them.
     # Without the marker the key is dropped and the turn is today's.
     verdict = _report_ask_basis.from_object(
-        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending
+        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending,
+        companies=own_companies, said_as_text=bool(getattr(parser_config, "said_as_text", False)),
     )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
@@ -6860,7 +6919,12 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if carried_rule:
                 turn_trace.add("so_list", {"verdict_rule": carried_rule})
-        verdict, so_list_rule = so_status_mod.so_list_verdict(
+        # CHATBOT-TOTALS-FILTERS (owner wording, 4 Nov): the report ask's outstanding kind question offers "Sales order";
+        # a reply to it that the parser wrote as the report ask object is that answer, never the SO list's words.
+        answers_kind = semantic_ask and (asked_before or {}).get("ask") == report_ask.ASK_NAME and bool(
+            ((asked_before or {}).get("extras") or {}).get("kind_ask")
+        )
+        verdict, so_list_rule = (verdict, None) if answers_kind else so_status_mod.so_list_verdict(
             verdict, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )
         if so_list_rule:

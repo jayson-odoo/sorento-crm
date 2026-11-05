@@ -101,7 +101,7 @@ def test_the_kind_question_is_stated_to_the_parser_as_a_pick_of_three_that_owes_
     )
     shown = question.of_required_ask(out.slot)
     assert shown["kind"] == "pick_one" and shown["owed"] == ["basis"], shown
-    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery"], shown  # owner 29 Oct: unpaid is not offered
+    assert [o["code"] for o in shown["options"]] == ["Sales order", "Delivery order"], shown  # owner 29 Oct: unpaid is not offered
 
 
 def test_the_kind_answered_by_the_parsers_pick_position_runs_that_kind_with_no_dates(bot) -> None:
@@ -230,7 +230,7 @@ def test_the_kind_question_is_not_answered_by_a_basis_outside_the_offered_kinds(
     text, calls = bot.say(
         _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis=basis), basis
     )
-    assert calls == [] and "Undelivered orders" in text, (calls, text)  # the kind is asked again
+    assert calls == [] and "Sales order" in text, (calls, text)  # the kind is asked again
 
 
 def test_the_kind_question_with_a_null_basis_and_no_declared_answer_runs_nothing(bot) -> None:
@@ -308,7 +308,7 @@ def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_keeps_th
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
     text, calls = bot.say(_bare_outstanding(), "outstanding")
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    assert calls == [] and "Sales order" in text, (text, calls)
     text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
@@ -319,7 +319,7 @@ def test_a_flagged_refine_to_outstanding_never_infers_the_kind_but_keeps_the_per
     the kind is still asked, never inferred from the held delivered basis."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     text, calls = bot.say(_bare_outstanding(ranking_refine=True), "outstanding")
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    assert calls == [] and "Sales order" in text, (text, calls)
     text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
@@ -387,7 +387,7 @@ def test_p1_a_new_outstanding_axis_after_a_delivered_ranking_asks_the_kind_and_r
     text, calls = bot.say(_product_ranking(), "top 5 products 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
     text, calls = bot.say(_bare_outstanding(group_by="customer"), "outstanding by customer")
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    assert calls == [] and "Sales order" in text, (text, calls)
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
@@ -436,7 +436,7 @@ def test_held_sales_total_then_an_outstanding_ask_keeps_the_period_and_asks_the_
         _bare_outstanding(group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
         "outstanding by customer",
     )
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    assert calls == [] and "Sales order" in text, (text, calls)
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
@@ -459,7 +459,7 @@ def test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_t
 
 
 def _no_kind_question_or_basis_refusal(text: str) -> None:
-    assert "Undelivered orders" not in text and "as a basis" not in text, text
+    assert "Sales order" not in text and "as a basis" not in text, text
 
 
 def test_b2a_a_fresh_sales_ask_naming_basis_and_period_under_the_kind_question_runs_that_ask(bot) -> None:
@@ -511,7 +511,7 @@ def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_cus
     """Kind option 2 is Pending delivery; a position pick AND a customer bound this turn keeps the customer."""
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     low = text.lower()
-    assert low.index("pending delivery") > low.index("undelivered orders") and "unpaid" not in low, text
+    assert low.index("delivery order") > low.index("sales order") and "unpaid" not in low, text
     reply = _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, by_words=None, reference_positions=[2],
         entities=[_e(CUSTOMER_NAME, "customer")],
@@ -528,7 +528,7 @@ def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_cus
 def _kind_with_customer(bot, *, declared=None, positions=(), basis=None):
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     low = text.lower()
-    assert low.index("undelivered orders") < low.index("pending delivery") and "unpaid" not in low, text
+    assert low.index("sales order") < low.index("delivery order") and "unpaid" not in low, text
     extra = {"basis": basis} if basis else {}
     reply = _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, by_words=None,
