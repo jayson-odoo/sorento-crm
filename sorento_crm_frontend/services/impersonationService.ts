@@ -39,8 +39,13 @@ export async function startImpersonation(targetUserId: string): Promise<Imperson
   return _adapt(await response.json());
 }
 
-export async function stopImpersonation(): Promise<void> {
-  const response = await apiFetch(`${BASE}/stop`, { method: 'POST' });
+/** `sessionId`: the view-as this tab holds, so a stale tab never ends a newer one elsewhere. */
+export async function stopImpersonation(sessionId?: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(sessionId ? { session_id: sessionId } : {}),
+  });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to stop impersonation'));
 }
 
