@@ -1261,6 +1261,8 @@ function RecordIdentity({
   target: SalesTargetDetail | undefined;
   canOpenAgent: boolean;
 }) {
+  // A `sales.targets.view_own` holder cannot open the team target their agent target is part of.
+  const canOpenParent = useHasPermission('sales.targets.view');
   if (!target) {
     return (
       <div className="flex min-w-0 flex-col gap-1.5">
@@ -1296,9 +1298,13 @@ function RecordIdentity({
         {target.parent ? (
           <span className="min-w-0 truncate">
             {'Agent target, part of '}
-            <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
-              {target.parent.name}
-            </Link>
+            {canOpenParent ? (
+              <Link href={`/sales/targets/${target.parent.id}`} className="text-primary hover:underline">
+                {target.parent.name}
+              </Link>
+            ) : (
+              target.parent.name
+            )}
           </span>
         ) : null}
         {isTeam ? (

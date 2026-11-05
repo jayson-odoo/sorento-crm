@@ -189,7 +189,7 @@ export default function SalesTargetsView() {
           </Tabs>
           {/* One grid per tab (keyed): the two tabs have different columns, and a shared table
               instance carried the Teams tab's column order into the Agents tab's saved layout. */}
-          <TargetsGrid key={tab} tab={tab} teamFilter={teamFilter} onTeamFilter={changeTeam} />
+          <TargetsGrid key={tab} tab={tab} teamFilter={teamFilter} onTeamFilter={changeTeam} ownOnly={ownOnly} />
         </div>
       </Container>
     </>
@@ -201,10 +201,13 @@ function TargetsGrid({
   tab,
   teamFilter,
   onTeamFilter,
+  ownOnly,
 }: {
   tab: TargetSubjectKind;
   teamFilter: string;
   onTeamFilter: (value: string) => void;
+  /** `sales.targets.view_own` only: no Team filter (the server returns them no team). */
+  ownOnly: boolean;
 }) {
   const {
     value: searchQuery,
@@ -228,7 +231,7 @@ function TargetsGrid({
     ...(debouncedSearch ? { query: debouncedSearch } : {}),
   });
   // The Team filter's choices: the teams that have a target (usually already cached).
-  const { data: teamList } = useSalesTargets({ all: true, subject: 'team' }, tab === 'agent');
+  const { data: teamList } = useSalesTargets({ all: true, subject: 'team' }, tab === 'agent' && !ownOnly);
   const rows = useMemo(() => (data?.rows ?? []).filter((r) => r.target_id), [data]);
 
   const teamOptions = useMemo(() => {
@@ -468,7 +471,7 @@ function TargetsGrid({
               />
             }
             filters={
-              tab === 'agent'
+              tab === 'agent' && !ownOnly
                 ? {
                     kind: 'custom',
                     active: filterActive,

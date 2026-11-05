@@ -63,7 +63,9 @@ def scene(world):
     me_user = own.user(db, "Me", me_contact.id)
     mine = own.agent(db, company_id, "MINE", me_contact.id)
     other = _agent(db, "OTHER", "Other Agent")
-    admin, originals = _client_as(db, own.uid(), [VIEW, "sales.targets.add", "sales.targets.edit"])
+    admin, originals = _client_as(
+        db, own.uid(), [VIEW, "sales.targets.add", "sales.targets.edit", "sales.teams.view", "sales.teams.add"]
+    )
     try:
         tiers = [{"from_pct": 80, "rate": 2}, {"from_pct": 100, "rate": 3}]
         t_mine, t_other = _agent_target(admin, mine, tiers), _agent_target(admin, other, tiers)
@@ -72,9 +74,24 @@ def scene(world):
             _so_line(db, company_id, agent_id=agent.id, order_date=date(2026, 9, 10), line_total=Decimal("12000"), product_id=pid)
         dealer = _customer(db, company_id, "ZZT OWN DEALER", level=1)
         t_dealer = admin.post(BASE, json=_dealer_body([dealer])).json()
+        # A team target with MY agent as a member: the plausible leak to an own-only holder.
+        team = admin.post("/api/v1/sales/teams", json={"name": f"ZZT Own Team {own.uid()[:6]}", "sales_agent_ids": [mine.id, other.id]}).json()
+        t_team = admin.post(BASE, json={
+            "subject_kind": "team", "sales_team_id": team["id"], "name": "ZZT own team target", "metric": "amount",
+            "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+            "agent_figures": [{"sales_agent_id": mine.id, "target_value": 600}, {"sales_agent_id": other.id, "target_value": 400}],
+        })
+        assert t_team.status_code == 201, t_team.text
+        # Sales with no agent this month: the company-wide "unassigned" figure of the dated list.
+        _so_line(db, company_id, agent_id=None, order_date=date(2026, 10, 3), line_total=Decimal("500"), product_id=pid)
     finally:
         _restore(originals)
-    return db, me_user, {"mine": t_mine, "other": t_other, "dealer": t_dealer, "agent_mine": mine}
+    # The team target's child for MY agent is an agent target of mine: an own holder sees it (Oct only).
+    my_child = next(c["target_id"] for c in t_team.json()["children"] if c["sales_agent_id"] == mine.id)
+    return db, me_user, {
+        "mine": t_mine, "other": t_other, "dealer": t_dealer, "team": t_team.json(), "agent_mine": mine,
+        "my_child": my_child,
+    }
 
 
 @pytest.fixture
@@ -98,18 +115,24 @@ def test_O1_list_agent_tab_shows_only_my_agents_targets(as_own):
     client, _db, _u, t = as_own
     res = client.get(BASE, params={"all": "true", "subject": "agent"})
     assert res.status_code == 200, res.text
-    assert _ids(res.json()) == {t["mine"]["id"]}
+    assert _ids(res.json()) == {t["mine"]["id"], t["my_child"]}
 
 
 def test_O2_team_and_dealer_tabs_are_empty_for_an_own_holder(as_own):
-    client, _db, _u, _t = as_own
+    client, _db, _u, t = as_own
     for subject in ("team", "dealer"):
-        res = client.get(BASE, params={"all": "true", "subject": subject})
-        assert res.status_code == 200, res.text
-        assert _ids(res.json()) == set(), subject
+        for params in ({"all": "true", "subject": subject}, {"subject": subject}):
+            res = client.get(BASE, params=params)
+            assert res.status_code == 200, res.text
+            assert _ids(res.json()) == set(), params
+            assert all(r.get("sales_team_id") is None for r in res.json()["rows"]), params
+            # The company-wide figures are not theirs to see.
+            assert res.json()["unassigned_amount"] == 0 and res.json()["no_team_count"] == 0, params
     res = client.get(BASE, params={"subject": "agent"})  # the dated view too
     assert res.status_code == 200
-    assert {r.get("sales_agent_id") for r in res.json()["rows"]} <= {_t["agent_mine"].id}
+    assert {r.get("sales_agent_id") for r in res.json()["rows"]} <= {t["agent_mine"].id}
+    assert res.json()["unassigned_amount"] == 0
+    assert client.get(f"{BASE}/{t['team']['id']}").status_code == 404
 
 
 def test_O3_detail_of_my_target_with_commission_others_are_not_found(as_own):
@@ -143,8 +166,22 @@ def test_O6_view_holder_still_sees_everything(scene):
     try:
         assert _ids(client.get(BASE, params={"all": "true", "subject": "agent"}).json()) >= {t["mine"]["id"], t["other"]["id"]}
         assert client.get(f"{BASE}/{t['other']['id']}").status_code == 200
+        dated = client.get(BASE, params={"subject": "team"}).json()
+        assert dated["unassigned_amount"] > 0
+        assert t["team"]["id"] in _ids(dated)
     finally:
         _restore(originals)
+
+
+def test_O12_the_period_cap_counts_only_my_periods(as_own, monkeypatch):
+    """7 periods are mine (6 months and the team child's October), far more are the company's: an own holder under
+    a cap of 8 is answered."""
+    from app.services.assistant_registry import computed
+
+    _client_, db, me_user, t = as_own
+    monkeypatch.setattr(computed, "MAX_COMPUTED_ROWS", 8)
+    out = _query(db, me_user, {VIEW_OWN}, {"entity": "sales_target", "filters": [YEAR], "limit": 50})
+    assert len(out["rows"]) == 7
 
 
 # ------------------------------------------------------------------ crm_query, and the two agree
@@ -165,8 +202,8 @@ def test_O7_crm_query_own_holder_reads_only_their_targets_and_the_screen_agrees(
     client, db, me_user, t = as_own
     out = _query(db, me_user, {VIEW_OWN}, {"entity": "sales_target", "filters": [YEAR], "fields": ["payout"], "limit": 50})
     links = {r["link"] for r in out["rows"]}
-    assert links == {f"/sales/targets/{t['mine']['id']}"}
-    assert len(out["rows"]) == 6
+    assert links == {f"/sales/targets/{t['mine']['id']}", f"/sales/targets/{t['my_child']}"}
+    assert len(out["rows"]) == 6 + 1
     sep = next(r for r in out["rows"] if r["payout"])
     assert sep["payout"] == 360.0
     screen = _ids(client.get(BASE, params={"all": "true", "subject": "agent"}).json())

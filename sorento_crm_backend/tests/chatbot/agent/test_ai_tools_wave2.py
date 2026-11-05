@@ -141,6 +141,8 @@ def test_T2_every_figure_equals_the_target_page(targets):
             assert row["bonus"] == mine["bonus_earned"]
             checked += 1
     assert checked == 6 + 6 + 2  # six months per agent target, Q3 and Q4 of the dealer
+    # A single account's dealer target is named without its ledger marker, as the chat target lines are.
+    assert all("[A/C" not in r["label"] for r in by_target[t["dealer"]["target_no"]])
     dealer_q3 = next(r for r in by_target[t["dealer"]["target_no"]] if r["period_start"] == "01/07/2026")
     assert dealer_q3["commission"] == 3500.0  # 70,000 at 5%
 
@@ -552,12 +554,19 @@ def test_E3_window_ops_name_the_exact_days(world, monkeypatch):
     seen = []
     entity = _fake([])
     entity = type(entity)(**{**entity.__dict__, "compute": lambda db, u, o, low, high, **k: seen.append((low, high)) or []})
-    for op, value, expected in (
-        ("eq", "15/09/2026", (date(2026, 9, 15), date(2026, 9, 15))),
-        ("gt", "15/09/2026", (date(2026, 9, 16), date(2026, 9, 16))),
-        ("lt", "15/09/2026", (date(2026, 9, 14), date(2026, 9, 14))),
-        ("between", SEP, (date(2026, 9, 1), date(2026, 9, 30))),
-    ):
+    def window(*filters):
         seen.clear()
-        computed.run_computed(db, "u", entity, False, {TARGETS_VIEW}, {"entity": "sales_target", "filters": [{"field": "period", "op": op, "value": value}]})
-        assert seen == [expected], op
+        computed.run_computed(db, "u", entity, False, {TARGETS_VIEW}, {"entity": "sales_target", "filters": list(filters)})
+        return seen[0]
+
+    period = lambda op, value: {"field": "period", "op": op, "value": value}  # noqa: E731
+    assert window(period("eq", "15/09/2026")) == (date(2026, 9, 15), date(2026, 9, 15))
+    assert window(period("between", SEP)) == (date(2026, 9, 1), date(2026, 9, 30))
+    assert window(period("gt", "15/09/2026"), period("lt", "20/09/2026")) == (date(2026, 9, 16), date(2026, 9, 19))
+    assert window(period("gte", "15/09/2026"), period("lte", "20/09/2026")) == (date(2026, 9, 15), date(2026, 9, 20))
+    from app.services.assistant_registry.query import QueryRefused
+
+    for alone in (period("gte", "01/07/2026"), period("lt", "01/07/2026")):
+        with pytest.raises(QueryRefused) as info:
+            window(alone)
+        assert info.value.code == "invalid" and "both ends" in info.value.message

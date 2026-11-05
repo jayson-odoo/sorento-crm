@@ -107,8 +107,9 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
             )
         today = _today()
         return today, today, rest, None
-    low = low or high
-    high = high or low
+    if low is None or high is None:
+        # "Since July" alone would read one day's periods; the window is always both ends (code review round 2).
+        raise QueryRefused("invalid", f"Give `{key}` both ends: between [from, to] (or gte and lte together).")
     if low > high:
         raise QueryRefused("invalid", f"The `{key}` window ends before it starts.")
     if (high - low).days >= MAX_WINDOW_DAYS:
