@@ -168,3 +168,19 @@ always escaped (`& < > "`). Idempotent.
   rule as the Inspector Content box; it never saves typed-over markup.
 - Nits: drop the unreachable rich re-pass after the plain-text loop (or mark it defensive); a raw-SQL test
   guards the read-side `fits()` filter in `_defaults_for`.
+
+## Crew browser pass fixes (5 Nov, on b4ce98a9)
+
+- R17 (combo photo "No inline preview"): `product_combo_service._serialize_image` returns
+  `{attachment_id, url, file_name, mime_type}` (`Attachment.original_filename`, `Attachment.mime_type`);
+  `ProductCombosSection` passes `name: image.file_name` to `AttachmentPreviewModal` (falls back to
+  `combo.name` only when file_name is missing), so `kindOf(name)` sees the real extension.
+- R18 (combo live preview shows only the code + "Text"): `ComboTagPreview` hand-built a
+  `ResolvedLineData` with no `slots` / `parts` / `images`, so position-bound layers (#2172 `subjectSlot`)
+  and the price badge resolved nothing. New staff route `POST /api/v1/dealer-kit/tag-preview` (gate `_VIEW`
+  of tag_data.py, staff viewer, caller's company scope) takes the existing `TagPreviewIn` and returns
+  `TagPreviewOut` by calling the SAME `product_tag_template_service.preview(...)` the portal preview uses.
+  `ComboTagPreview` posts one line `{key, line_type: 'product', product_id: host, combo_id,
+  tag_template_id: <default link id>, price_type: 'selling' if the default is the SP default else 'list'}`
+  and draws the returned line + template + images through `DesignViewer`, overriding only
+  `combo.description` with the editor's unsaved draft. One pipeline: the request preview and PDF.
