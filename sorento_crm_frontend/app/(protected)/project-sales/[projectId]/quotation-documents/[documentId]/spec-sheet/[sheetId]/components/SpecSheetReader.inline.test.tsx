@@ -1218,7 +1218,10 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     renderReader();
     await screen.findByTestId('spec-page-k29');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: 'Pick templates' })).toBeInTheDocument();
     await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
@@ -1249,10 +1252,12 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
   });
 
-  it('a viewer who cannot edit gets no Templates button', async () => {
+  it('a viewer who cannot edit gets no Templates action', async () => {
     getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false });
     renderReader();
     await screen.findByTestId('spec-page-k29');
-    expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Templates' })).toBeNull();
+    expect(screen.queryByText('Templates')).toBeNull();
   });
+
 });

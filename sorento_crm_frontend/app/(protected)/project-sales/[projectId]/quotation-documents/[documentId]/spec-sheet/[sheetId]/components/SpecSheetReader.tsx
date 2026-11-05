@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   FileDown,
+  LayoutTemplate,
   Minus,
   Plus,
   Redo2,
@@ -678,6 +679,19 @@ export function SpecSheetReader({
 
   const menu: RecordAction[] = canEdit
     ? [
+        // The sheet's cover / page / single item templates, picked again: the same dialog the
+        // sheet is created with, in its re-pick mode. Rows and page edits stay. While a template
+        // is missing the same dialog is the page's primary button instead.
+        ...(blocked
+          ? []
+          : [
+              {
+                key: 'quotation_spec_sheet.templates',
+                label: 'Templates',
+                icon: LayoutTemplate,
+                run: () => setPicking(true),
+              },
+            ]),
         {
           key: 'quotation_spec_sheet.delete',
           label: 'Delete',
@@ -723,13 +737,6 @@ export function SpecSheetReader({
       />
       {/* The system's detail-page group (DetailActions): pager, gear, then the one primary. */}
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {canEdit && !blocked && (
-          // The sheet's cover / page / single item templates, picked again: the same dialog the
-          // sheet is created with, in its re-pick mode. Rows and page edits stay.
-          <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
-            Templates
-          </Button>
-        )}
         {canEdit && detail.newer_templates && (
           <Button
             size="sm"
@@ -851,10 +858,12 @@ export function SpecSheetReader({
             <Button size="sm" variant="outline" onClick={() => zoomTo(null)}>
               Fit width
             </Button>
+            {/* Icon only: the toolbar keeps one row even with the format bar showing. */}
             <FocusToggle
               active={focus}
               onToggle={setFocus}
               label="spec sheet"
+              iconOnly
             />
             {canEdit && (
               <>
