@@ -26,6 +26,25 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => permission.canEdit,
 }));
 
+// PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
+// tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
+// keep pinning what they always did.
+vi.mock('@/components/ui/rich-text-editor', () => {
+  const Stand = (props: {
+    value?: string;
+    onChange: (v: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  );
+  return { RichTextEditor: Stand, default: Stand };
+});
+vi.mock('./ComboTagPreview', () => ({ ComboTagPreview: () => null }));
+
 vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
 
 vi.mock('./AddComboModal', () => ({
@@ -151,7 +170,7 @@ describe('Combos card, combo fields (AC-6.1)', () => {
 
     expect(scope.getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
     expect(scope.getByLabelText(/^Sell price \(RM\)/i)).toHaveValue(1999);
-    expect(scope.getByLabelText(/^Description/i)).toHaveValue('Cabinet, mirror and basin');
+    expect(scope.getByLabelText(/^Description/i)).toHaveValue('<p>Cabinet, mirror and basin</p>');
     expect(scope.getByLabelText(/^Free items/i)).toHaveValue('Tap, waste');
   });
 

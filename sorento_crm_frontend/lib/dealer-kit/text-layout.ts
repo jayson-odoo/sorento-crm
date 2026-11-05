@@ -16,6 +16,7 @@
  */
 
 import type { TextLayerProps } from './tag-template-types';
+import type { RichAlign, RichBlock, RichRun } from './rich-text';
 import { paddedBox } from './text-reflow';
 
 /** mm of type per point, on both surfaces. The canvas's own figure (every
@@ -200,10 +201,29 @@ export function textLayerLines(
   width_mm: number,
   height_mm: number,
   measure?: MeasureText | null,
-): string[] {
+): string[];
+/** A rich description (parsed blocks): lines of runs, each measured in its own face. */
+export function textLayerLines(
+  props: TextLayerProps,
+  blocks: RichBlock[],
+  width_mm: number,
+  height_mm: number,
+  measureFor?: MeasureFor | null,
+): RichLine[];
+export function textLayerLines(
+  props: TextLayerProps,
+  source: string | RichBlock[],
+  width_mm: number,
+  height_mm: number,
+  measure?: MeasureText | MeasureFor | null,
+): string[] | RichLine[] {
+  if (Array.isArray(source)) {
+    return richLayerLines(props, source, width_mm, height_mm, measure as MeasureFor | null | undefined);
+  }
+  const text = source;
   const face = textFace(props);
   const px = LAYOUT_PX_PER_MM;
-  const m = measure === undefined ? canvasMeasure(canvasFont(face, px)) : measure;
+  const m = measure === undefined ? canvasMeasure(canvasFont(face, px)) : (measure as MeasureText | null);
   if (!m) return text.split('\n');
   const box = paddedBox(width_mm, height_mm, props.padding);
   return wrapTextLines(
@@ -217,4 +237,214 @@ export function textLayerLines(
     },
     m,
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// Rich description (PRICETAG-COMBO-FORMAT S3)
+// ---------------------------------------------------------------------------
+
+/** A measure for one font string; null where there is no canvas (server render). */
+export type MeasureFor = (font: string) => MeasureText | null;
+
+/** Hanging indent of a list item per level, and the indent of a quote, in mm. */
+export const LIST_INDENT_MM = 3.5;
+export const QUOTE_INDENT_MM = 3;
+const MONOSPACE = 'ui-monospace, Menlo, Consolas, monospace';
+
+/** A run placed on its line. Positions are mm from the padded box's top-left. */
+export type LayoutRun = RichRun & {
+  sizeFactor: number;
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  /** One line box, the same for every run on the line. */
+  lineHeight_mm: number;
+  align: RichAlign;
+  /** Where the line's text starts (the marker hangs to the left of it). */
+  indent_mm: number;
+  /** The bullet or number of a list item's first line. */
+  marker?: boolean;
+};
+export type RichLine = LayoutRun[];
+
+/** The face a run draws in: the layer's, plus the run's bold / italic / code and its block's
+ * size factor. Family and base size are never taken from the description. */
+export function runFace(props: TextLayerProps, run: RichRun, sizeFactor: number, blockBold = false): TextFace {
+  const baseWeight = props.fontWeight || 400;
+  const bold = !!run.bold || blockBold;
+  return textFace({
+    fontFamily: run.code ? MONOSPACE : props.fontFamily,
+    fontSize: props.fontSize * sizeFactor,
+    fontWeight: bold ? Math.max(700, baseWeight) : baseWeight,
+    italic: !!props.italic || !!run.italic,
+    letterSpacing: props.letterSpacing,
+  });
+}
+
+interface Piece {
+  run: number;
+  text: string;
+  width: number;
+}
+interface Group {
+  space: Piece[];
+  words: Piece[];
+}
+
+const TOKEN = /\n|[ \t]+|[^\s-]*-|[^\s-]+/g;
+
+export function richLayerLines(
+  props: TextLayerProps,
+  blocks: RichBlock[],
+  width_mm: number,
+  height_mm: number,
+  measureFor?: MeasureFor | null,
+): RichLine[] {
+  const px = LAYOUT_PX_PER_MM;
+  const box = paddedBox(width_mm, height_mm, props.padding);
+  const maxWidth = box.width * px * (1 - FIT_HEADROOM);
+  const maxHeight = box.height * px * (1 + HEIGHT_TOLERANCE);
+  const fontMeasure = (font: string) => (measureFor === undefined ? canvasMeasure(font) : measureFor?.(font) ?? null);
+  const measurable = fontMeasure(canvasFont(textFace(props), px)) !== null;
+  const lines: RichLine[] = [];
+  let top = 0;
+
+  for (const entry of blocks) {
+    const factor = entry.sizeFactor || 1;
+    const level = entry.level ?? 1;
+    const indentMm = entry.kind === 'li' ? level * LIST_INDENT_MM : entry.kind === 'quote' ? QUOTE_INDENT_MM : 0;
+    const indent = indentMm * px;
+    const available = Math.max(maxWidth - indent, 1);
+    const align: RichAlign = entry.align ?? props.align ?? 'left';
+    const runs = entry.runs.length ? entry.runs : [{ text: '' } as RichRun];
+    const faces = runs.map((run) => runFace(props, run, factor, entry.bold));
+    const widthOf = (pieceText: string, index: number): number => {
+      if (!measurable) return 0;
+      const face = faces[index];
+      const measure = fontMeasure(canvasFont(face, px));
+      return (measure ? measure(pieceText) : 0) + face.letterSpacing_mm * px * pieceText.length;
+    };
+
+    // Tokens -> groups (a group never breaks inside: words glued across runs, up to a space or hyphen).
+    const lineSets: Piece[][] = [];
+    let line: Piece[] = [];
+    let lineWidth = 0;
+    const endLine = () => {
+      lineSets.push(line);
+      line = [];
+      lineWidth = 0;
+    };
+    const groups: Array<Group | 'break'> = [];
+    let space: Piece[] = [];
+    let current: Group | null = null;
+    const closeGroup = () => {
+      if (current) groups.push(current);
+      current = null;
+    };
+    runs.forEach((run, index) => {
+      for (const token of run.text.match(TOKEN) ?? []) {
+        if (token === '\n') {
+          closeGroup();
+          space = [];
+          groups.push('break');
+        } else if (/^[ \t]+$/.test(token)) {
+          closeGroup();
+          space.push({ run: index, text: token, width: widthOf(token, index) });
+        } else {
+          if (!current) {
+            current = { space, words: [] };
+            space = [];
+          }
+          current.words.push({ run: index, text: token, width: widthOf(token, index) });
+          if (token.endsWith('-')) closeGroup();
+        }
+      }
+    });
+    closeGroup();
+
+    for (const group of groups) {
+      if (group === 'break') {
+        endLine();
+        continue;
+      }
+      const groupWidth = group.words.reduce((sum, piece) => sum + piece.width, 0);
+      const spaceWidth = lineWidth > 0 ? group.space.reduce((sum, piece) => sum + piece.width, 0) : 0;
+      if (measurable && lineWidth > 0 && lineWidth + spaceWidth + groupWidth > available) endLine();
+      if (measurable && groupWidth > available && lineWidth === 0) {
+        // A word wider than the line: cut it where it overflows.
+        for (const piece of group.words) {
+          for (const char of Array.from(piece.text)) {
+            const charWidth = widthOf(char, piece.run);
+            if (lineWidth > 0 && lineWidth + charWidth > available) endLine();
+            line.push({ run: piece.run, text: char, width: charWidth });
+            lineWidth += charWidth;
+          }
+        }
+        continue;
+      }
+      if (lineWidth > 0) {
+        line.push(...group.space);
+        lineWidth += spaceWidth;
+      }
+      line.push(...group.words);
+      lineWidth += groupWidth;
+    }
+    endLine();
+
+    const lineHeight = props.lineHeight * textFace({ ...props, fontSize: props.fontSize * factor }).fontSize_mm * px;
+    for (let at = 0; at < lineSets.length; at += 1) {
+      // Always draw the first line; later ones only while they fit the box.
+      if (measurable && lines.length > 0 && top + lineHeight > maxHeight) return lines;
+      const pieces = lineSets[at];
+      const merged: Array<{ run: number; text: string; width: number }> = [];
+      for (const piece of pieces) {
+        const last = merged[merged.length - 1];
+        if (last && last.run === piece.run) {
+          last.text += piece.text;
+          last.width += piece.width;
+        } else merged.push({ ...piece });
+      }
+      if (merged.length === 0) merged.push({ run: 0, text: '', width: 0 });
+      const total = merged.reduce((sum, piece) => sum + piece.width, 0);
+      const free = Math.max(box.width * px - indent - total, 0);
+      let x = indent + (align === 'center' ? free / 2 : align === 'right' ? free : 0);
+      const placed: LayoutRun[] = [];
+      if (at === 0 && entry.kind === 'li' && entry.marker) {
+        const markerRun: RichRun = { text: entry.marker, bold: entry.bold };
+        const markerWidth = widthOf(entry.marker, 0);
+        placed.push({
+          ...markerRun,
+          marker: true,
+          sizeFactor: factor,
+          // Hangs just left of the line's text, wherever alignment puts it (as on print).
+          x_mm: (x - LIST_INDENT_MM * px) / px,
+          y_mm: top / px,
+          width_mm: markerWidth / px,
+          lineHeight_mm: lineHeight / px,
+          align,
+          indent_mm: indentMm,
+        });
+      }
+      for (const piece of merged) {
+        const source = runs[piece.run];
+        placed.push({
+          ...source,
+          bold: !!source.bold || !!entry.bold,
+          text: piece.text,
+          sizeFactor: factor,
+          x_mm: x / px,
+          y_mm: top / px,
+          width_mm: piece.width / px,
+          lineHeight_mm: lineHeight / px,
+          align,
+          indent_mm: indentMm,
+        });
+        x += piece.width;
+      }
+      lines.push(placed);
+      top += lineHeight;
+    }
+  }
+  return lines;
 }

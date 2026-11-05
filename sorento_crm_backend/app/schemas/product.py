@@ -232,7 +232,9 @@ class ProductBase(BaseModel):
 
 
 class ProductCreate(ProductBase):
-    pass
+    # Raw cap before sanitising; the stored value is capped at 5000 in the service. Not on the
+    # base: a response must never fail on a stored value's length.
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
 
 class ProductUpdate(BaseModel):
@@ -268,7 +270,7 @@ class ProductUpdate(BaseModel):
     # S5: None means "not sent", same convention as the other planning flags on this schema.
     exclude_from_planning: Optional[bool] = None
     # PLAN-price-tag-r10.md S4: None = untouched by this PUT (AC-S4-2/S4-9).
-    price_tag_description: Optional[str] = None
+    price_tag_description: Optional[str] = Field(default=None, max_length=20000)
 
     @field_validator("currency", mode="before")
     @classmethod
