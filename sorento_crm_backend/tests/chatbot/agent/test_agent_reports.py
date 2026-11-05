@@ -116,7 +116,7 @@ def system_text(provider) -> str:
     return provider.seen[0]["messages"][0]["content"]
 
 
-def seed_held(db, contact, state, *, minutes_ago=5):
+def seed_held(db, contact, state, *, minutes_ago=5, reply="earlier"):
     """A finished agent turn of the contact's newest conversation that holds `state`."""
     from app.services.chatbot.agent import memory
     from app.services.chatbot.agent.access import build_context, grants_hash
@@ -131,7 +131,7 @@ def seed_held(db, contact, state, *, minutes_ago=5):
         is_test=True,
         status="done",
         envelope={"text": "earlier", "agent_conversation_id": str(conv.id)},
-        response={"reply_text": "earlier", "tool_digest": [], "status": "answered", "report_state": state},
+        response={"reply_text": reply, "tool_digest": [], "status": "answered", "report_state": state},
         created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
     )
     db.add(turn)
