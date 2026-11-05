@@ -8,7 +8,7 @@ and only after the caller proved it holds the MCP token. A valid proof makes the
 (crew pass, 5 Nov: the act-as user's missing sales report reveal refused a staff member who holds it).
 
 The proof is an HMAC over the staff id and an expiry, keyed from JWT_SECRET with its own label, so the MCP server,
-n8n or a log reader cannot mint one; it lives five minutes.
+n8n or a log reader cannot mint one; it lives one minute.
 """
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ import hmac
 import time
 from typing import Optional
 
-TTL_SECONDS = 300
+#: Minted per call, so a minute is plenty (security review: a shorter replay window).
+TTL_SECONDS = 60
 _LABEL = b"sorento-staff-identity-proof/v1"
 
 
@@ -45,6 +46,6 @@ def verify(staff_id: Optional[str], proof: Optional[str], *, now: Optional[float
         return False
     expires = int(parts[1])
     current = time.time() if now is None else now
-    if expires < current or expires > current + TTL_SECONDS + 60:
+    if expires < current or expires > current + TTL_SECONDS + 5:
         return False
     return hmac.compare_digest(parts[2], _sign(str(staff_id), expires))

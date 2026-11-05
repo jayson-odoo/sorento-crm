@@ -113,7 +113,7 @@ Per call the in-process schemas grow 662 -> 1,100 tokens (the index); one descri
    member AND the key's act-as user (`user_service.gate_user_ids`, used by `report_ask.py:432`), so the dev act-as
    user without the sales report reveal refused a staff member who holds it. The act-as half stays for anyone else
    holding the key; the backend's own panel agent now proves who it answers: `app/services/staff_proof.py` (HMAC over
-   staff id + expiry, key derived from JWT_SECRET under its own label, 5 minutes), sent by the panel MCP client as
+   staff id + expiry, key derived from JWT_SECRET under its own label, 60 seconds), sent by the panel MCP client as
    `X-MCP-Staff-Proof` (`ai_assistant_service.MCPRuntimeClient._headers`), stripped by the MCP server from a caller
    without the bearer token (`auth.AUTHENTICATED_ONLY_HEADERS`), relayed as `X-Staff-Proof` only beside a forwarded
    `X-Staff-User` (`scope.forwarded_staff_proof`, `http_client`), verified in `dependencies._apply_staff_identity`
