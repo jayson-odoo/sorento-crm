@@ -17,14 +17,6 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# Three string constants, not the ORM: the outcome rank below has to speak the same
-# vocabulary the quotation model does, and retyping the strings here is how the two
-# would silently diverge.
-from app.models.projects import (
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_OPEN,
-    QUOTATION_OUTCOME_WON,
-)
 from app.models.project_so import ProjectPOLine
 from app.services.error_handler import AppException
 
@@ -122,16 +114,6 @@ _SIGNATURE_WORDS = ("signature", "signed", "chop", "initial")
 _AMEND_WORDS = ("amend", "change", "revise", "correct", "replace", "update")
 
 _HEADER_TOTAL_KEYS = ("total", "grand_total", "total_amount", "po_total", "amount_total")
-
-# How good a quotation scope is as the thing a confirmed PO should be checked against. A
-# won scope is what a PO follows from; a lost one is still a document the customer was
-# given, so it is a last resort rather than no candidate at all.
-_OUTCOME_RANK = {
-    QUOTATION_OUTCOME_WON: 0,
-    QUOTATION_OUTCOME_OPEN: 1,
-    QUOTATION_OUTCOME_LOST: 2,
-}
-_OUTCOME_RANK_DEFAULT = 1
 
 # Where the extractor's header keys land on our own header block.
 _HEADER_ALIASES = {

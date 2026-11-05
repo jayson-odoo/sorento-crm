@@ -30,14 +30,7 @@ from app.models.lookup import LookupOption, LookupSet
 from app.models.product import Product
 from app.models.product_set import ProductSet
 from app.models.projects import (
-    OUTCOME_DORMANT,
-    OUTCOME_LOST,
-    OUTCOME_OPEN,
-    OUTCOME_WON,
     QUOTATION_LOSS_REASON_SET_KEY,
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_OPEN,
-    QUOTATION_OUTCOME_WON,
     UNIT_TYPES,
     Project,
     ProjectQuotation,
@@ -49,14 +42,6 @@ from app.models.projects import (
 from app.services import project_pricing_service as pricing
 from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
-
-OUTCOME_OPEN_Q = QUOTATION_OUTCOME_OPEN
-OUTCOME_WON_Q = QUOTATION_OUTCOME_WON
-OUTCOME_LOST_Q = QUOTATION_OUTCOME_LOST
-QUOTATION_OUTCOMES = (OUTCOME_OPEN_Q, OUTCOME_WON_Q, OUTCOME_LOST_Q)
-
-# Re-exported so callers read one name for "open" rather than importing from two places.
-OUTCOME_OPEN = QUOTATION_OUTCOME_OPEN
 
 _CENTS = Decimal("0.01")
 
@@ -318,7 +303,6 @@ def create_quotation(
         scope_label=scope_label,
         series_id=payload.get("series_id"),
         notes=payload.get("notes"),
-        outcome=OUTCOME_OPEN_Q,
         created_by=actor_user_id,
     )
     db.add(quotation)
@@ -477,14 +461,10 @@ def recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
 
 
 def delete_quotation(db: Session, quotation: ProjectQuotation) -> None:
-    """Hard delete, cascading to versions and lines. The project's derived outcome is
-    recomputed, because removing the only lost scope reopens the project."""
+    """Hard delete, cascading to versions and lines."""
     assert_scope_unlocked(db, quotation)
-    project = db.query(Project).filter(Project.id == quotation.project_id).first()
     db.delete(quotation)
     db.flush()
-    if project:
-        sync_project_outcome(db, project)
 
 
 # ---------------------------------------------------------------------- lines
@@ -1421,99 +1401,6 @@ def _assert_loss_reason(db: Session, reason: Optional[str]) -> str:
     return reason
 
 
-def set_outcome(
-    db: Session,
-    *,
-    quotation: ProjectQuotation,
-    outcome: str,
-    loss_reason: Optional[str] = None,
-) -> ProjectQuotation:
-    """Win, lose or reopen ONE scope, then re-derive the project's outcome (AC-E10).
-
-    The project's STATUS is deliberately untouched (AC-E10a): status is a funnel
-    position and outcome is the commercial result, and a service that moved both would
-    make the board disagree with the pipeline.
-    """
-    if outcome not in QUOTATION_OUTCOMES:
-        raise AppException(
-            status_code=422,
-            message=f"Unknown outcome '{outcome}'.",
-            code="quotation_outcome_invalid",
-        )
-
-    if outcome == OUTCOME_LOST_Q:
-        quotation.loss_reason = _assert_loss_reason(db, loss_reason)
-    else:
-        quotation.loss_reason = None
-
-    quotation.outcome = outcome
-    quotation.decided_at = (
-        datetime.utcnow() if outcome != OUTCOME_OPEN_Q else None
-    )
-    db.flush()
-
-    project = db.query(Project).filter(Project.id == quotation.project_id).first()
-    if project:
-        sync_project_outcome(db, project)
-    return quotation
-
-
-# A project parked on one of these funnel rungs has been decided by a person, and that
-# decision is its outcome whatever its quotations say (PROJECT-CLASH-LOST): a project on
-# the Lost rung read "Won" in the list because one scope had been won earlier, and a
-# project cannot be Lost and Won at once. Keyed on the rung's stable key, as the seeded
-# funnel defines it (project_seed_service.DEFAULT_FUNNEL).
-_OUTCOME_BY_TERMINAL_STATUS_KEY = {"lost": OUTCOME_LOST, "dormant": OUTCOME_DORMANT}
-
-
-def terminal_status_outcome(db: Session, project: Project) -> Optional[str]:
-    if not project.status_id:
-        return None
-    from app.models.status import Status
-
-    key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
-    return _OUTCOME_BY_TERMINAL_STATUS_KEY.get(key)
-
-
-def derive_project_outcome(db: Session, project: Project) -> str:
-    """The project's stage, when it sits on Lost or Dormant; otherwise its quotations:
-    won if ANY quotation is won, lost only when ALL are lost, otherwise open.
-
-    No quotations at all is OPEN, not lost: nothing has been decided yet, and a project
-    registered this morning is not a loss.
-    """
-    decided = terminal_status_outcome(db, project)
-    if decided is not None:
-        return decided
-    rows = (
-        db.query(ProjectQuotation.outcome, func.count(ProjectQuotation.id))
-        .filter(ProjectQuotation.project_id == project.id)
-        .group_by(ProjectQuotation.outcome)
-        .all()
-    )
-    counts = {row[0]: row[1] for row in rows}
-    if counts.get(OUTCOME_WON_Q):
-        return OUTCOME_WON
-    total = sum(counts.values())
-    if total and counts.get(OUTCOME_LOST_Q, 0) == total:
-        return OUTCOME_LOST
-    return OUTCOME_OPEN
-
-
-def sync_project_outcome(db: Session, project: Project) -> str:
-    """Write the derived outcome onto the project.
-
-    Stored rather than computed on read because the pipeline list, the forecast and the
-    board all filter on it, and a correlated subquery per row would be the N+1 that
-    makes the board slow.
-    """
-    outcome = derive_project_outcome(db, project)
-    if project.outcome != outcome:
-        project.outcome = outcome
-        db.flush()
-    return outcome
-
-
 # ----------------------------------------------------------------- serialize
 
 
@@ -1575,8 +1462,6 @@ def serialize_quotations(
             for row in db.query(ProjectSeries).filter(ProjectSeries.id.in_(series_ids)).all()
         }
 
-    labels = {row["value"]: row["label"] for row in loss_reasons(db)}
-
     # PS-PROPOSAL-QUOTATION: which document each scope sits on, so a reader (the bot included)
     # can tell a proposal's figure from the quotation's.
     from app.models.projects import ProjectQuotationDocument
@@ -1605,10 +1490,6 @@ def serialize_quotations(
                 "series_id": quotation.series_id,
                 "series_name": series_names.get(quotation.series_id or ""),
                 "notes": quotation.notes,
-                "outcome": quotation.outcome,
-                "loss_reason": quotation.loss_reason,
-                "loss_reason_label": labels.get(quotation.loss_reason or ""),
-                "decided_at": quotation.decided_at,
                 "version_count": counts.get(quotation.id, 0),
                 "current_version_id": version.id if version else None,
                 "current_version_no": version.version_no if version else None,

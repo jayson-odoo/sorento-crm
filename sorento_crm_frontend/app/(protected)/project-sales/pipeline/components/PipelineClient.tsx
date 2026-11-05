@@ -38,6 +38,7 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
+import { ProjectLossDialog } from '../../[projectId]/components/ProjectLossDialog';
 import { POIntakeUploadDialog } from '../../[projectId]/components/POIntakeUploadDialog';
 import { DeliveryScheduleUploadDialog } from '../../[projectId]/components/DeliveryScheduleUploadDialog';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -140,6 +141,8 @@ export function PipelineClient() {
   const developers = useProjectParties({ party_type: 'developer', limit: 200 }, { enabled: canStart });
   const types = useProjectTypes({ enabled: canStart });
   const move = useChangeProjectStatus();
+  // A drop on the Lost column asks for the reason first; nothing moves until Save.
+  const [losingTo, setLosingTo] = React.useState<{ projectId: string; toStatusId: string } | null>(null);
 
   const listParams = React.useMemo(
     () => ({
@@ -466,6 +469,10 @@ export function PipelineClient() {
           onMove={(projectId, toStatusId) => {
             const project = rows.find((row) => row.id === projectId);
             if (!project || project.status_id === toStatusId) return;
+            if (statuses.find((status) => status.id === toStatusId)?.key === 'lost') {
+              setLosingTo({ projectId, toStatusId });
+              return;
+            }
             move.mutate({ projectId, toStatusId });
           }}
         />
@@ -525,6 +532,13 @@ export function PipelineClient() {
         <DeliveryScheduleUploadDialog
           onDone={() => setStartAction(null)}
           pipelineListQuery={detailSearch}
+        />
+      )}
+      {losingTo && (
+        <ProjectLossDialog
+          projectId={losingTo.projectId}
+          toStatusId={losingTo.toStatusId}
+          onDone={() => setLosingTo(null)}
         />
       )}
     </div>

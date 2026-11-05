@@ -9,7 +9,7 @@ import { useSalesTarget } from '../hooks/useSalesTargets';
  * should go back to dealer target tab"). Back to targets and the Targets crumb open the list
  * on the tab the record belongs to, its subject kind, so a direct link returns there too. The
  * list state the row click handed over rides along (`useBackToListHref`), the same way the
- * quotation page names its project tab (`project-sales/[projectId]/quotations/[quotationId]`).
+ * quotation document page names its project tab.
  */
 export default function TargetPageHeader({ id }: { id: string }) {
   const { data: target } = useSalesTarget(id);

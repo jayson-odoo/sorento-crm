@@ -713,7 +713,7 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'Full detail for ONE project sales pursuit: registration facts (developer, '
             'registered company / SPV, location, architect, main contractor, brands, '
             'estimated value, launch date, expected delivery window), the funnel stage and '
-            'derived outcome, the owner, the critical flag with its management notes, '
+            'outcome (open / won / lost) with the loss reason when lost, the owner, the critical flag with its management notes, '
             'activity recency and the derived next action, plus the staleness rung. USE '
             "after crm_projects_list when the user asks about one named project ('what is "
             "the status of Residensi Damai', 'who owns PRJ-000142', 'when does <project> "
@@ -755,9 +755,9 @@ REUSED_TOOLS: tuple[dict, ...] = (
         "name": 'crm_project_quotations_list',
         "description": (
             'List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with '
-            "each scope's current version number, current total, outcome (open / won / lost) "
-            "and loss reason. USE for 'what did we quote on <project>', 'how much is "
-            "<project> worth', 'did we win the common area', 'why did we lose <project>'. A "
+            "each scope's current version number and current total. Scopes carry no outcome: "
+            "won or lost is on the project. USE for 'what did we quote on <project>', 'how much is "
+            "<project> worth'. For 'why did we lose <project>' use crm_project_detail. A "
             'project has MANY quotations, one per scope, and each quotation has versions -- '
             "the total returned is the CURRENT version's, which is the only figure that "
             'should be quoted back. INVOCATION: `project_id` is the canonical project UUID.'
@@ -780,7 +780,7 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'project registration still waiting for approval (or rejected) is not a project '
             'yet and is left out, so every row carries a project_code.\n\nEach row returns '
             'project_code, title, '
-            'developer_name, type_name, status_label, outcome (open / won / lost / partial), '
+            'developer_name, type_name, status_label, outcome (open / won / lost), '
             'owner_name, estimated_sales_value, launch_date, days_since_last_activity, '
             'next_action_date, next_action_overdue, stale_level (0 fine, 1 nudged, 2 warned, '
             '3 unattended) and is_unattended.\n\nALL FILTERS OPTIONAL. FILTER BY UUID: '
@@ -794,8 +794,8 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'answered about the wrong person.\n  * `status_key` -- funnel rung by stable key (from the status graph): '
             'identified, registered, specified (Spec In), sample_submission, '
             'final_negotiation, sponsorship_form, po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n  * `outcome` -- '
-            'open | won | lost | partial. Commercial result, DERIVED from the quotations; a '
-            "project can sit at 'final_negotiation' with outcome 'partial' when one scope is won.\n  "
+            'open | won | lost. The project\'s one commercial result, set on the project itself. '
+            "A project can sit at 'final_negotiation' while still open.\n  "
             "* `only_critical=true` -- the critical flag (management actively involved), independent of the final_negotiation stage; for 'projects in final negotiation' use status_key=final_negotiation instead.\nSORT KEYS: "
             'created_at, updated_at, title, project_code, estimated_sales_value, '
             'last_meaningful_activity_at; combine with dir=asc|desc.'

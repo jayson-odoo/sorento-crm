@@ -175,9 +175,11 @@ def _issue(db, document, owner):
 
 
 def _win(db, scope) -> None:
-    from app.services import project_quotation_service as quotes
+    from app.models.projects import Project
 
-    quotes.set_outcome(db, quotation=scope, outcome="won")
+    project = db.get(Project, scope.project_id)
+    project.outcome = "won"
+    db.flush()
 
 
 def _won_issued_proposal(db):
@@ -303,16 +305,36 @@ def test_3_a_changed_unit_price_alerts_management_and_a_qty_only_change_does_not
 # ------------------------------------------------------------------ 4. make_quotation refusals (AC-5)
 
 
-def test_4a_make_quotation_is_refused_when_the_project_is_not_won():
+def test_4a_make_quotation_is_refused_when_the_project_is_lost():
+    """BE5: Lost refuses with project_lost; the old project_not_won gate is gone."""
+    from app.models.projects import Project
+
     with blank_session() as db:
         _, owner, product, _, document, scope = _setup(db)
         _price(db, scope, product, owner, "100.00")
-        record = _issue(db, document, owner)  # scope stays open
+        record = _issue(db, document, owner)
+        project = db.get(Project, scope.project_id)
+        project.outcome = "lost"
+        project.loss_reason = "price"
+        db.flush()
 
         with pytest.raises(AppException) as refused:
             _make(db, document, record, owner)
         assert refused.value.status_code == 409
-        assert refused.value.code == "project_not_won"
+        assert refused.value.code == "project_lost"
+        assert "Re-open" in refused.value.message
+
+
+def test_4a2_make_quotation_is_allowed_on_an_open_project():
+    """BE5 / owner Q3: it does not need to be a warm project."""
+    with blank_session() as db:
+        _, owner, product, project, document, scope = _setup(db)
+        _price(db, scope, product, owner, "100.00")
+        record = _issue(db, document, owner)
+        assert project.outcome == "open"
+
+        quotation = _make(db, document, record, owner)
+        assert quotation.kind == "quotation"
 
 
 def test_4b_make_quotation_is_refused_when_the_source_is_itself_a_quotation():
@@ -355,7 +377,7 @@ def test_4d_make_quotation_is_refused_for_an_issue_that_is_not_on_the_document()
 # ------------------------------------------------------------------ 5. make_quotation copy (AC-5)
 
 
-def test_5_make_quotation_copies_the_picked_revision_and_skips_lost_scopes():
+def test_5_make_quotation_copies_the_picked_revision_with_every_area():
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_service as quotes
 
@@ -402,7 +424,6 @@ def test_5_make_quotation_copies_the_picked_revision_and_skips_lost_scopes():
         db.flush()
 
         _win(db, won_scope)
-        quotes.set_outcome(db, quotation=lost_scope, outcome="lost", loss_reason="price")
         assert project.outcome == "won"
 
         quotation = _make(db, proposal, record, owner)
@@ -430,10 +451,11 @@ def test_5_make_quotation_copies_the_picked_revision_and_skips_lost_scopes():
         assert quotation.signatory_signature_id is None
 
         scopes = qdocs.list_scopes(db, quotation)
-        assert [s.scope_label for s in scopes] == [f"{MARKER} Townhouse"]
-        assert scopes[0].id != won_scope.id
-        assert scopes[0].outcome == "won"
-        assert scopes[0].decided_at is not None
+        assert sorted(s.scope_label for s in scopes) == sorted(
+            [f"{MARKER} Townhouse", f"{MARKER} Lost block"]
+        )
+        assert all(s.id not in (won_scope.id, lost_scope.id) for s in scopes)
+        scopes = [s for s in scopes if s.scope_label == f"{MARKER} Townhouse"]
 
         version = quotes.current_version(db, scopes[0].id)
         assert version.version_no == 1

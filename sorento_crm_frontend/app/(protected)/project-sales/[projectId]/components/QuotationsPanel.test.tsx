@@ -117,7 +117,6 @@ function scope(overrides: Partial<ProjectQuotation> = {}): ProjectQuotation {
     id: 'q1',
     project_id: 'p1',
     scope_label: 'House Units',
-    outcome: 'open',
     version_count: 1,
     current_version_id: 'v1',
     current_version_no: 1,

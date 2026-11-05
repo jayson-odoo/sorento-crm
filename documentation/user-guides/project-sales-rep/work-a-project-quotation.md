@@ -10,8 +10,8 @@ Quotations** screen is a different module.
 
 ## Proposals and the quotation
 
-What you send while the project is still being negotiated is a **proposal**. Once the project is
-**Won**, you turn one proposal revision into the project's **quotation**. The customer's POs are
+What you send while the project is still being negotiated is a **proposal**. When the customer
+agrees, you turn one proposal revision into the project's **quotation**. The customer's POs are
 checked against the quotation, not against the proposals.
 
 * A proposal can go to any party on the project: the tender party, a trading house, the main
@@ -69,16 +69,31 @@ lines, on the **Header** tab under the letterhead. Reading a proposal and **New 
   that was already sent to the customer, and for a saved scope when you do not have the right to
   delete one.
 
-## Make the quotation (project Won)
+## Won, Lost and Re-open (the project's outcome)
 
-1. The project becomes Won when the customer signs a proposal.
-2. Open the proposal the customer agreed to and choose **Make quotation** from the actions menu.
-   It only shows on a sent proposal of a Won project that has no quotation yet.
-3. Pick the revision (newest first) and click **Make quotation**.
-4. The quotation opens. It carries that revision's party, letter, terms and lines; lost scopes are
-   left out. Its header shows **From** with a link back to the proposal revision, and the proposal
+A project has one outcome: **Open**, **Won** or **Lost**. Scopes do not have their own.
+
+* **Won**: the project wins when a PO arrives (the stage moves to **PO Received**), when the
+  customer signs a proposal online, or when you choose **Mark won** from the project's gear menu.
+  Mark won does not move the stage; a green **Won** tag shows next to it.
+* **Lost**: choose **Mark lost** from the gear menu (or drop the card on **Lost** on the pipeline
+  board) and pick the reason. The stage moves to **Lost**.
+* **Re-open**: on a Won or Lost project, choose **Re-open** from the gear menu. A Lost project goes
+  back to the stage it was on before.
+
+A customer signing a proposal on a Lost project is recorded, but the project stays Lost. A project
+on the **Dormant** stage reads Dormant; Mark won and Re-open are not offered there.
+
+## Make the quotation
+
+1. Open the proposal the customer agreed to and choose **Make quotation** from the actions menu.
+   It shows on a sent proposal of an Open or Won project that has no quotation yet. It does not
+   show on a Lost or Dormant project.
+2. Pick the revision (newest first) and click **Make quotation**.
+3. The quotation opens. It carries that revision's party, letter, terms and every scope's lines.
+   Its header shows **From** with a link back to the proposal revision, and the proposal
    shows **Quotation** with a link to it.
-5. Sign it and send it like a proposal. The customer can sign it on the same kind of link.
+4. Sign it and send it like a proposal. The customer can sign it on the same kind of link.
 
 A project has one quotation. If you picked the wrong revision, delete the quotation before it is
 sent and make it again.
