@@ -487,8 +487,8 @@ export interface TargetRecordPreset {
  * (Target, What counts, Dates, Figure), **Periods**, **Agents** (a team target only) and
  * **Commission**. Edit is the primary button (owner, 5 Nov; it was a gear item after the 27 Sep
  * hand test); Duplicate and Delete stay in the gear. The edit view is the same tabs with each
- * value swapped for its input in place, and Cancel and Save in the header card. A new target opens in that edit view,
- * empty, with the defaults Amount, Ordered, All products, today to month end, split off.
+ * value swapped for its input in place, and Cancel and Save in the header card. A new target
+ * opens in that edit view, empty, with the defaults Amount, Ordered, All products, today to month end, split off.
  *
  * Every single pick is `SearchableSelect`, every multi pick `SearchableMultiSelect`, and a
  * picked category, product or brand always shows its "CODE - Name" (F5): the record's own scope
