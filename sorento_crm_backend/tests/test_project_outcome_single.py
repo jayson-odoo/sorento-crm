@@ -89,7 +89,37 @@ def _project(db, company_id: str, owner: str, *, status_key: str | None = None) 
     if status_key:
         project.status_id = _status_id(db, status_key)
         db.flush()
+    if status_key == "registered":
+        _attach_requirements(db, company_id, project)
     return project
+
+
+def _attach_requirements(db, company_id: str, project: Project) -> None:
+    """Registered -> Spec In needs a live document (project_requirements_missing), so the
+    walk tests that leave Registered give the project one."""
+    from app.models.resources import Attachment, AttachmentType
+
+    kind = db.query(AttachmentType).filter(AttachmentType.code == "zzt_req").first()
+    if kind is None:
+        kind = AttachmentType(
+            id=_uid(), code="zzt_req", type_name="Requirements", allowed_extensions="pdf"
+        )
+        db.add(kind)
+        db.flush()
+    db.add(
+        Attachment(
+            id=_uid(),
+            company_id=company_id,
+            attachment_type_id=kind.id,
+            original_filename="zzt-req.pdf",
+            stored_filename=f"zzt-{_uid()}.pdf",
+            file_path="zzt/req.pdf",
+            entity_type="project",
+            entity_id=str(project.id),
+            is_deleted=False,
+        )
+    )
+    db.flush()
 
 
 def _move(db, project, owner, key: str, **extra):
