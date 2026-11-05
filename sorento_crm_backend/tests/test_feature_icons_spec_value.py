@@ -3,9 +3,9 @@
 Each spec value carries its own ordered list of Dealer Kit icons on the registry row
 (`product_spec_registry.value_icons`, `{value: [asset id, ...]}`), set on Master Data > Product
 Specifications > a spec > Values and words. The designer's Feature icons layer pulls the icons for
-the product's values: `feature_icon_rules` emits one entry per (key, value, icon), keys in
-`spec_key` order (the registry's own `active_registry` order), values in the key's value order,
-icons in the order the admin set on the value. Postgres only, own seed chain.
+the product's values: `feature_icon_rules` emits one entry per (key, value, icon), specs by their
+Icon order (blank last, ties by label then spec_key), values in the key's value order, icons in
+the order the admin set on the value. Postgres only, own seed chain.
 """
 from __future__ import annotations
 
@@ -42,6 +42,9 @@ def reg():
 
     with blank_session() as db:
         _seed(db)
+        # Saving value_icons also needs the Dealer Kit library (review S2, fix round).
+        _grant(db, _ADMIN_ROLE, ["dealer_kit.library.manage"])
+        db.commit()
         set_company_scope(db, frozenset({SORENTO}))
 
         def _override_get_db():

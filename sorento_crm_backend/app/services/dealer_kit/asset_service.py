@@ -532,18 +532,97 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
     return out
 
 
+def _uuid_text(value) -> Optional[str]:
+    try:
+        return str(uuid.UUID(str(value).strip()))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _icon_status(db: Session, ids: set[str]) -> tuple[set[str], set[str]]:
+    """``(visible, hidden)`` live icons among ``ids``.
+
+    ``visible``: an existing, non-deleted icon the caller's company scope can see. ``hidden``: the
+    same, but owned by a company the caller cannot see. The registry is shared by every company
+    while assets are not, so a save must carry another company's icons forward rather than read
+    them as missing. Anything else (gone, deleted, not an icon) is in neither set.
+    """
+    from app.models.base import company_scope
+
+    wanted = {i for i in ids if i}
+    if not wanted:
+        return set(), set()
+
+    def live() -> set[str]:
+        return {
+            asset.id
+            for asset in db.query(Asset)
+            .join(Attachment, Attachment.id == Asset.attachment_id)
+            .filter(Asset.id.in_(wanted), Asset.kind == ICON, Attachment.is_deleted.is_(False))
+            .all()
+        }
+
+    visible = live()
+    with company_scope(db, None):
+        everyone = live()
+    return visible, everyone - visible
+
+
+def visible_value_icons(db: Session, row) -> dict[str, list[str]]:
+    """The key's ``value_icons`` as the caller may see them: only live icons of its own company.
+
+    The registry read sends this, so another company's ids never reach the client (and the screen
+    never shows a chip for an icon it cannot name).
+    """
+    stored = row.value_icons or {}
+    ids = {i for listed in stored.values() for i in (_uuid_text(x) for x in listed or []) if i}
+    visible, _hidden = _icon_status(db, ids)
+    out: dict[str, list[str]] = {}
+    for value, listed in stored.items():
+        kept = [i for i in (_uuid_text(x) for x in listed or []) if i in visible]
+        if kept:
+            out[value] = kept
+    return out
+
+
 def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
     """A ``value_icons`` save, validated (registry PATCH): ``{value: [icon id, ...]}``.
 
-    Each value must be one of the key's values; each id an existing, non-deleted Dealer Kit
-    asset of kind icon visible to the caller; at most ``MAX_ICONS_PER_VALUE`` per value. Ids are
-    de-duplicated in order and an empty list drops the value's entry.
+    The payload replaces what the caller can SEE; what it cannot see is kept:
+
+    * a value the key no longer holds is dropped silently if the key ever named it (an open
+      draft may still name a choice taken away since), refused if it never did;
+    * an id the caller can see must be a live icon; a NEW one that is not is refused, a stored one
+      that has since been deleted is dropped;
+    * another company's live icon (the registry is shared, assets are not) is carried forward in
+      its stored position whether or not the payload named it.
+
+    Ids are de-duplicated in order, an empty list drops the value's entry, and a value holds at
+    most ``MAX_ICONS_PER_VALUE``.
     """
-    valid = set(spec_value_keys(row))
-    cleaned: dict[str, list[str]] = {}
+    live_values = spec_value_keys(row)
+    stored = {
+        str(value): [i for i in (_uuid_text(x) for x in listed or []) if i]
+        for value, listed in (row.value_icons or {}).items()
+    }
+    stored_ids = {i for listed in stored.values() for i in listed}
+    # Every value the key has ever named: shipped (taken away or not), staff-added, stored.
+    known_values = {
+        str(v)
+        for v in [
+            *(row.allowed_values or []),
+            *(row.suppressed_values or []),
+            *(row.user_values or []),
+            *stored,
+        ]
+    }
+
+    sent: dict[str, list[str]] = {}
     for value, ids in (value_icons or {}).items():
         value = str(value).strip()
-        if value not in valid:
+        if value not in live_values:
+            if value in known_values:
+                continue  # a choice taken away since the draft was opened
             raise AppException(
                 status_code=422,
                 message=f'"{value}" is not one of {row.label}\'s values.',
@@ -556,45 +635,55 @@ def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
                 message=f"At most {MAX_ICONS_PER_VALUE} icons per value.",
                 code="spec_registry_icon_too_many",
             )
-        if unique:
-            cleaned[value] = unique
+        sent[value] = unique
 
-    wanted = {i for ids in cleaned.values() for i in ids}
-    if wanted:
-        import uuid as _uuid
-
-        def _is_uuid(text: str) -> bool:
-            try:
-                _uuid.UUID(text)
-                return True
-            except ValueError:
-                return False
-
-        good = {i for i in wanted if _is_uuid(i)}
-        found = (
-            {
-                asset.id
-                for asset in db.query(Asset)
-                .join(Attachment, Attachment.id == Asset.attachment_id)
-                .filter(
-                    Asset.id.in_(good),
-                    Asset.kind == ICON,
-                    Attachment.is_deleted.is_(False),
-                )
-                .all()
-            }
-            if good
-            else set()
+    sent_ids = {i for ids in sent.values() for i in ids}
+    visible, hidden = _icon_status(
+        db, {i for i in (_uuid_text(x) for x in sent_ids) if i} | stored_ids
+    )
+    for ident in sent_ids:
+        canonical = _uuid_text(ident)
+        if canonical in visible or canonical in hidden:
+            continue
+        if canonical in stored_ids:
+            continue  # stored before, gone since: dropped below
+        raise AppException(
+            status_code=422,
+            message="Choose Dealer Kit icons only. One of the chosen pictures is not an icon "
+            "or no longer exists.",
+            code="spec_registry_icon_not_an_icon",
         )
-        missing = wanted - found
-        if missing:
+
+    cleaned: dict[str, list[str]] = {}
+    for value in live_values:
+        mine = [
+            i
+            for i in (_uuid_text(x) for x in sent.get(value, []))
+            if i in visible or i in hidden
+        ]
+        mine = list(dict.fromkeys(mine))
+        # Another company's icons keep their stored places.
+        for index, ident in enumerate(stored.get(value, [])):
+            if ident in hidden and ident not in mine:
+                mine.insert(min(index, len(mine)), ident)
+        if len(mine) > MAX_ICONS_PER_VALUE:
             raise AppException(
                 status_code=422,
-                message="Choose Dealer Kit icons only. One of the chosen pictures is not an icon "
-                "or no longer exists.",
-                code="spec_registry_icon_not_an_icon",
+                message=f"At most {MAX_ICONS_PER_VALUE} icons per value.",
+                code="spec_registry_icon_too_many",
             )
+        if mine:
+            cleaned[value] = mine
     return cleaned
+
+
+def prune_value_icons(row) -> None:
+    """Drop the icons of values the key no longer holds (suppressed or removed)."""
+    live = set(spec_value_keys(row))
+    current = row.value_icons or {}
+    kept = {value: ids for value, ids in current.items() if value in live}
+    if kept != current:
+        row.value_icons = kept
 
 
 def background_asset_ids(doc: Optional[dict]) -> set[str]:

@@ -1538,6 +1538,9 @@ def _remove_value(db: Session, spec_key: str, value: str) -> dict:
             return {"spec_key": spec_key, "value": value, "products_updated": updated}
     elif value in shipped:
         suppressed = [str(v) for v in (row.suppressed_values or [])]
+        # Its icons go with it (review B1): left behind, an open draft resends them and the
+        # key's every icon save is refused.
+        row.value_icons = {k: w for k, w in (row.value_icons or {}).items() if k != value}
         if value not in suppressed:
             fingerprint_before = product_spec_rederive.rules_fingerprint(db)
             row.suppressed_values = [*suppressed, value]

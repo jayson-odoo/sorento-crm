@@ -1303,26 +1303,12 @@ class SpecValue(BaseModel):
     raw: Optional[str] = None
 
 
-class SpecValueOption(BaseModel):
-    """A pickable spec value and the words a tag prints for it."""
-
-    value: str
-    label: str
-
-
 class SpecKeyItem(BaseModel):
     """One key the merge-field catalogue offers under Specs."""
 
     key: str
     label: str
     unit: Optional[str] = None
-    #: Feature icons' Show when editor reads these (contract F6), behind the editor's permission.
-    data_type: Optional[str] = None
-    allowed_values: list[str] = []
-    value_labels: dict[str, str] = {}
-    #: Every pickable value with the label a tag prints for it (`display_spec_value`, title
-    #: case), so the Show when list reads "Cold Only", never "cold_only". Booleans: Yes / No.
-    value_options: list[SpecValueOption] = []
 
 
 class TagComboOption(BaseModel):
