@@ -133,6 +133,11 @@ export interface ReaderPageProps {
   live: boolean;
   /** Bumped when the host replaced this page's layers from the server, so the canvas starts over. */
   epoch: number;
+  /**
+   * The template versions the sheet prints from. When they change (Templates, Use latest
+   * templates) the canvas starts over from the first payload that arrives after the change.
+   */
+  templateSig: string;
   /** The layer selected on THIS page, if any. */
   selectedLayerId: string | null;
   /** The host's local copy of this page's layers, if it has one. */
@@ -206,6 +211,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   sheetIndex,
   live,
   epoch,
+  templateSig,
   selectedLayerId,
   draftLayers,
   externalLayers,
@@ -252,6 +258,22 @@ export const ReaderPage = React.memo(function ReaderPage({
       : [];
   const px = (mm: number) => mm * PX_PER_MM * scale;
 
+  // A template switch redraws every page the server draws from the template, but a live canvas
+  // only reads its document when it mounts. Restart it once the payload drawn AFTER the switch is
+  // here: the detail (and so `templateSig`) changes first, the previews are fetched again after,
+  // so the payload that arrives while the signature differs from the one seeded is the new one.
+  // A payload refetched for any other reason (an autosave) keeps the canvas as it is.
+  const seededSig = React.useRef(templateSig);
+  const [reseed, setReseed] = React.useState(0);
+  React.useEffect(() => {
+    if (payload && templateSig !== seededSig.current) {
+      seededSig.current = templateSig;
+      setReseed((n) => n + 1);
+    }
+    // Only a new payload may restart the canvas; see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload]);
+
   // The canvas reads its document once, when it mounts; later changes come back through
   // `externalLayers`.
   const liveDoc = React.useMemo(
@@ -265,7 +287,7 @@ export const ReaderPage = React.memo(function ReaderPage({
         : null,
     // The document is a starting point: only a new payload arriving or a restart replaces it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload === null, epoch, pageMm.width_mm, pageMm.height_mm],
+    [payload === null, epoch, reseed, pageMm.width_mm, pageMm.height_mm],
   );
   const bound = React.useMemo<TagBindingData | null>(() => {
     const row = payload?.resolvedData?.[page.key] as unknown as
@@ -457,7 +479,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                 data-testid={`spec-page-live-${page.key}`}
               >
                 <TagCanvasEditor
-                  key={epoch}
+                  key={`${epoch}:${reseed}`}
                   doc={liveDoc}
                   onChange={NOOP}
                   onLayersChange={onLayersChange}

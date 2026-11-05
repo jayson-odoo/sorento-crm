@@ -267,6 +267,7 @@ vi.mock(
         <div
           data-testid={`live-canvas-${key}`}
           data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
+          data-layers={layers.map((l) => l.id).join(',')}
         >
           <button type="button" onClick={() => props.embedded.onSelect('logo')}>
             {`select ${key}`}
@@ -1250,6 +1251,78 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
       expect(screen.queryByRole('textbox', { name: 'Area' })).toBeNull(),
     );
     expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
+  });
+
+  it('after a template switch an unedited LIVE page redraws from the new template, no reload', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [{ id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 }],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    const before = await screen.findByTestId('live-canvas-k1');
+    expect(before).toHaveAttribute('data-layers', 'logo,area');
+
+    // The server now draws every unedited page from the other template.
+    const switched = {
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page: { id: 'tp2', name: 'Item with accessories', version_no: 3 },
+      },
+    };
+    updateSpecSheet.mockResolvedValue(switched);
+    getSpecSheet.mockResolvedValue(switched);
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        const out = previewFor(keys);
+        for (const sheet of out.doc.sheets)
+          sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+  });
+
+  it('a phone has no toolbar format bar (the Properties sheet formats text), so the toolbar has no blank rows', async () => {
+    mobile = true;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(
+      document.querySelector('[role="group"][aria-label="Text formatting"]'),
+    ).toBeNull();
+  });
+
+  it('the "Press Esc" hint is hidden on a touch screen', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+    const hint = screen.getByText('Press Esc to exit full screen');
+    expect(hint.className).toContain('pointer-coarse:hidden');
   });
 
   it('a viewer who cannot edit gets no Templates action', async () => {

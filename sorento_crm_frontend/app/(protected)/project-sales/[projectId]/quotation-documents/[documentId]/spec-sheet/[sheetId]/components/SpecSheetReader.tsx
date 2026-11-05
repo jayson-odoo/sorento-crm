@@ -704,6 +704,13 @@ export function SpecSheetReader({
     : [];
 
   const activeNumber = activeKey ? numbers.get(activeKey) : undefined;
+  // Which template versions the pages are drawn from; a live page restarts when this changes.
+  const templateSig = (['cover', 'page', 'single'] as const)
+    .map((part) => {
+      const t = detail.templates[part];
+      return t ? `${t.id}@${t.version_no}` : '-';
+    })
+    .join('|');
   // Outside full screen the app chrome and the page header sit above the editor; in full screen
   // only the overlay's padding and the toolbar do. The side panels lose their title row too.
   const stackHeight = focus
@@ -888,10 +895,14 @@ export function SpecSheetReader({
                 </Button>
                 {/* Always the same bar (hidden unless a text layer is picked): the toolbar keeps
                     one height whatever is selected, so the pages never slide under the pointer. */}
-                <FormatBar
-                  layer={selectedLayer}
-                  onProps={changeSelectedProps}
-                />
+                {/* Not on a phone: the hidden bar wraps into blank toolbar rows there, and the
+                    Properties sheet carries the same text formatting. */}
+                {!isMobile && (
+                  <FormatBar
+                    layer={selectedLayer}
+                    onProps={changeSelectedProps}
+                  />
+                )}
                 <span
                   // Fixed width, one line: "Saving..." is wider than "Saved", and a toolbar that
                   // rewraps on every autosave moves every page down and back.
@@ -983,6 +994,7 @@ export function SpecSheetReader({
                     sheetIndex={drawn.get(page.key)?.index}
                     live={liveKeys.has(page.key)}
                     epoch={restarts[page.key] ?? 0}
+                    templateSig={templateSig}
                     selectedLayerId={
                       selection?.pageKey === page.key ? selection.layerId : null
                     }

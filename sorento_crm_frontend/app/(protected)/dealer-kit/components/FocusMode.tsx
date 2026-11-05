@@ -127,7 +127,8 @@ export function FocusShell({
         covers Save is worse than no hint.
       */}
       {active ? (
-        <div className="pointer-events-none absolute bottom-3 end-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm">
+        // Not on a touch screen: there is no Esc key to press there.
+        <div className="pointer-events-none absolute bottom-3 end-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm pointer-coarse:hidden">
           Press Esc to exit full screen
         </div>
       ) : null}
