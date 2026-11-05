@@ -2146,3 +2146,180 @@ describe('Cover letter tab preview (read)', () => {
     expect(body).toMatchObject({ document_id: 'd1' });
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026; mock documentation/plans/project-sales/mockups/
+// proposal-header-layout-05nov.html v4): the record header is the Order Inquiry card, the lines
+// sit on the Header tab, and the per-area / per-version rows above the lines are gone.
+// ---------------------------------------------------------------------------------------------
+describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LAYOUT)', () => {
+  const issuedOneScope = () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([version({ is_issued: true, is_editable: false })]);
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '9000.00',
+        scopes: [scope()],
+        is_issued: true,
+        issue_count: 2,
+        current_issue_no: 2,
+        customer_decision: 'accepted',
+        signatory_signature: signature(),
+      }),
+    );
+    listQuotationIssues.mockResolvedValue([
+      {
+        id: 'i2',
+        document_id: 'd1',
+        issue_no: 2,
+        our_ref_text: 'SRT/Q/2026/0141-R2',
+        issued_at: '2026-11-05T02:00:00',
+        issued_by: 'u1',
+        issued_by_name: 'Ahmad',
+        grand_total: '9000.00',
+        scope_count: 1,
+      },
+    ]);
+  };
+
+  async function headerCard() {
+    return screen.findByTestId('record-header-card');
+  }
+
+  it('H1: the document number and the status pill share the card title row', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(within(row).getByText('SRT/Q/2026/0141')).toBeInTheDocument();
+    expect(within(row).getByText('Accepted')).toBeInTheDocument();
+  });
+
+  it('H2: no customer line in the header card (the letterhead To says it)', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
+  });
+
+  it('H3: neither copy of "the customer holds this version" hint is shown', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
+    expect(screen.queryByText(/Edit opens the next/i)).toBeNull();
+  });
+
+  it('H4: actions read gear, printer, primary, left to right', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const gear = await screen.findByRole('button', { name: 'Proposal actions' });
+    const printer = await screen.findByTitle('View downloads for SRT/Q/2026/0141-R2');
+    const send = await screen.findByRole('button', { name: /^Send to Customer/ });
+    expect(gear.compareDocumentPosition(printer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(printer.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('H5: the Header tab carries the letterhead AND the lines; there is no Lines tab', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByText('Our Ref')).toBeInTheDocument();
+    const strip = screen.getByTestId('quotation-document-tab-strip');
+    expect(within(strip).getByRole('link', { name: /Header/ })).toBeInTheDocument();
+    expect(within(strip).queryByRole('link', { name: /^Lines$/ })).toBeNull();
+  });
+
+  it('H6: no area header row and no Record outcome anywhere on the page (owner 12:20, 12:28)', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Record outcome/ })).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /outcome/i })).toBeNull();
+  });
+
+  it('H7: the version is a chip in the header card, and the version row above the lines is gone', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(await within(row).findByText('v2')).toBeInTheDocument();
+    // The old pills were buttons carrying aria-current; none remain below the card.
+    expect(screen.queryAllByRole('button', { name: /^v\d/ }).filter((b) => b.hasAttribute('aria-current'))).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revise to v/ })).toBeNull();
+  });
+
+  it('H8: with two versions the chip switches the lines to the frozen one', async () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([
+      version(),
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [line({ id: 'l0', version_id: 'v1', description: 'Old WC' })]
+        : [line()],
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const chip = await screen.findByRole('button', { name: /^Version v2/ });
+    fireEvent.pointerDown(chip, { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /v1 \(frozen\)/ }));
+
+    expect(await screen.findByText('Old WC')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Version v1 \(frozen\)/ })).toBeInTheDocument();
+  });
+
+  it('H9: Recheck alerts and Revise to vN are gear items; Revise asks first, then revises every area', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+
+    expect(await screen.findByRole('heading', { name: 'Revise to v3' })).toBeInTheDocument();
+    expect(reviseQuotation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
+  });
+
+  it('H10: while locked for approval the gear offers no Revise to vN and no Recheck alerts', async () => {
+    seedOneScope();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /Revise to v/ })).toBeNull();
+    expect(within(menu).queryByRole('menuitem', { name: 'Recheck alerts' })).toBeNull();
+  });
+
+  it('H11: hints sit on their own line in the card, never joined with a middle dot', async () => {
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { signatory_signature: signature() }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    expect(await within(card).findByText('With a manager for approval')).toBeInTheDocument();
+    expect(card.textContent).not.toContain('·');
+  });
+});
