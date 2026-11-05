@@ -293,9 +293,9 @@ def test_m1_a_template_must_print_every_fixed_part(db):
     shape = _shape(db, shapes.s4)
     assert (
         _mod().fit_reason({"fixed": 1, "groups": [], "upgrades": 0}, shape)
-        == "Needs 1 fixed part; this combo has 2"
+        == "Prints 1 of this combo's 2 fixed parts"
     )
     assert (
         _mod().fit_reason({"fixed": 0, "groups": [], "upgrades": 0}, shape)
-        == "Needs 0 fixed parts; this combo has 2"
+        == "Prints 0 of this combo's 2 fixed parts"
     )

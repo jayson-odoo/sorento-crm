@@ -81,7 +81,9 @@ def fit_reason(needs: dict, shape: dict) -> Optional[str]:
 
     Fixed parts are always in the box, so a template must print every one (`==`); a choice group
     and the upgrades are at most what the combo has (a pick of k from n, an offer)."""
-    if needs["fixed"] != shape["fixed"]:
+    if needs["fixed"] < shape["fixed"]:
+        return f"Prints {needs['fixed']} of this combo's {_plural(shape['fixed'], 'fixed part')}"
+    if needs["fixed"] > shape["fixed"]:
         return f"Needs {_plural(needs['fixed'], 'fixed part')}; this combo has {shape['fixed']}"
     for index, need in enumerate(needs["groups"]):
         if need <= 0:

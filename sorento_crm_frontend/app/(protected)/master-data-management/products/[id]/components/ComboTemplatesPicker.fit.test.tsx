@@ -129,7 +129,7 @@ describe('ComboTemplatesPicker with the combo parts', () => {
   it('M1: a combo with more fixed parts than the template prints is disabled with the reason', () => {
     templates.mockReturnValue([tpl('a', { fixed: 2, groups: [], upgrades: 0 })]);
     draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
-    expect(description('a')).toBe('Needs 2 fixed parts; this combo has 4');
+    expect(description('a')).toBe("Prints 2 of this combo's 4 fixed parts");
     expect(row('a').dataset.disabled).toBe('true');
   });
 
