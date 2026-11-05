@@ -78,11 +78,6 @@ OUTCOME_WON = "won"
 OUTCOME_LOST = "lost"
 OUTCOME_DORMANT = "dormant"
 
-# Only an OPEN project blocks a new registration. A lost or dormant match is shown
-# as context ("previously pursued by Ali, lost on price") but must not block a
-# re-tender three years later.
-BLOCKING_OUTCOMES = (OUTCOME_OPEN,)
-
 # A portal registration IS a project row, waiting for approval (PROJECT-REG-PORTAL R1).
 # NULL = a staff-registered project, which never needed approving. A draft / pending /
 # rejected row has no code yet and is kept out of every internal path (R4) until Approve.

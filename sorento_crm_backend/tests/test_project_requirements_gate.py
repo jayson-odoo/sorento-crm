@@ -76,9 +76,10 @@ def _at(w, key: str):
 
 
 def _move(w, project, to_key: str):
-    return as_user(w, w.owner).post(
-        f"{STAFF}/{project.id}/status", json={"to_status_id": _stage(w.db, to_key).id}
-    )
+    body = {"to_status_id": _stage(w.db, to_key).id}
+    if to_key == "lost":
+        body["loss_reason"] = "price"  # BE1: the Lost rung needs a reason
+    return as_user(w, w.owner).post(f"{STAFF}/{project.id}/status", json=body)
 
 
 def _status_key(w, project) -> str:

@@ -64,7 +64,6 @@ export type QuotationScope = {
   id: string;
   scope_label: string;
   sort_order: number;
-  outcome: string;
   current_version_id: string | null;
   current_version_no: number | null;
   line_count: number;

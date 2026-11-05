@@ -262,7 +262,9 @@ function ProjectCard({
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={draggable ? onDragEnd : undefined}
       className={cn(
-        'rounded-md border border-border bg-background p-2.5 shadow-xs transition-opacity',
+        // Hover tints the card the way the grid tints a row (`hover:bg-muted/40`,
+        // components/ui/data-grid-table.tsx); the text never underlines, same as the grid.
+        'rounded-md border border-border bg-background p-2.5 shadow-xs transition-[opacity,background-color] hover:bg-muted/40',
         draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
         isMoving && 'opacity-50',
       )}
@@ -277,7 +279,7 @@ function ProjectCard({
         <div className="min-w-0 flex-1 space-y-1.5">
           <Link
             href={`/project-sales/${project.id}`}
-            className="block space-y-0.5 hover:underline"
+            className="block space-y-0.5"
           >
             <span className="text-xs text-muted-foreground">
               {projectCodeLabel(project)}

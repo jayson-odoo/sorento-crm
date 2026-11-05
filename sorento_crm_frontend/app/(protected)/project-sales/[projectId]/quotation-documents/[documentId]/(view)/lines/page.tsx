@@ -1,15 +1,14 @@
-import { Metadata } from 'next';
-import { QuotationScopesTab } from '../../components/QuotationScopesTab';
-
-export const metadata: Metadata = {
-  title: 'Quotation lines',
-  description: 'The parts of the development priced under this quotation.',
-};
+import { redirect } from 'next/navigation';
 
 /**
- * The Lines tab (#1341: the owner wrote "Lines" over the old Scopes label): the scope strip and
- * the priced lines under whichever scope is open. The data model keeps "scope".
+ * The Lines tab is gone (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026): the lines sit on the Header
+ * tab under the letterhead. An old link or bookmark to /lines lands there.
  */
-export default function ProjectQuotationLinesPage() {
-  return <QuotationScopesTab />;
+export default async function ProjectQuotationLinesPage({
+  params,
+}: {
+  params: Promise<{ projectId: string; documentId: string }>;
+}) {
+  const { projectId, documentId } = await params;
+  redirect(`/project-sales/${projectId}/quotation-documents/${documentId}`);
 }

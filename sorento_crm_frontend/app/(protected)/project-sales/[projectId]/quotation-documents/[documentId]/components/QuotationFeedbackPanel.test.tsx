@@ -74,6 +74,9 @@ function renderPanel(selectScope = vi.fn()) {
           sorentoSignature: null,
           activeScopeId: null,
           selectScope,
+          versionNo: null,
+          recheckResults: {},
+          dismissRecheck: vi.fn(),
         }}
       >
         <QuotationFeedbackPanel />
@@ -100,7 +103,8 @@ describe('QuotationFeedbackPanel Show in Lines', () => {
     const selectScope = renderPanel();
     fireEvent.click(await screen.findByRole('button', { name: 'Show in Lines' }));
     expect(selectScope).toHaveBeenCalledWith('scope-2');
-    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1/lines');
+    // The lines sit on the Header tab now (PROPOSAL-HEADER-LAYOUT); there is no /lines tab.
+    expect(push).toHaveBeenCalledWith('/project-sales/p1/quotation-documents/d1');
   });
 
   it('falls back to the label when the row carries no scope id', async () => {

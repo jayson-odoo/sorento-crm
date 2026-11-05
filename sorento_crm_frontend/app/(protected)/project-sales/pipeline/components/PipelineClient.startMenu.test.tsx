@@ -107,6 +107,14 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 import { PipelineClient } from './PipelineClient';
 
+// The remembered Board/Grid view is read from the per-user column-config row; no row here.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({ listing_key: key, config: null })),
+  upsertUserListColumnConfig: vi.fn(async (key: string) => ({ listing_key: key, config: null })),
+  resetUserListColumnConfig: vi.fn(async () => {}),
+}));
+
+
 function project(overrides: Partial<Project> = {}): Project {
   return {
     id: 'p1',

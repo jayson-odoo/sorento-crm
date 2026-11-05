@@ -53,6 +53,7 @@ import {
   projectsPagerQuery,
   useApproveProject,
   useChangeProjectStatus,
+  useSetProjectOutcome,
   useDeleteProject,
   useProject,
   useRejectProject,
@@ -72,6 +73,8 @@ import {
   splitStatusMoves,
 } from './ProjectStatusAction';
 import { ProjectStatusPill } from './ProjectStatusPill';
+import { ProjectLossDialog } from './ProjectLossDialog';
+import { OutcomePill } from '../../_shared/components/OutcomePill';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectDocumentsPanel, UploadDialog } from './ProjectDocumentsPanel';
 import { projectDocumentsKey, useProjectDocuments } from '../../_shared/hooks/useProjectDocuments';
@@ -138,6 +141,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const { data: project, isLoading, isError, error } = useProject(projectId);
   const graph = useProjectStatusGraph('project', project?.template_id ?? null);
   const move = useChangeProjectStatus();
+  const setOutcome = useSetProjectOutcome();
+  // The Lost rung it was dropped on asks for a reason first; nothing moves until Save.
+  const [losingTo, setLosingTo] = React.useState<string | null>(null);
   const documents = useProjectDocuments(projectId, {
     enabled: project?.status_key === 'registered',
   });
@@ -231,9 +237,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     narrowed && (isDraft || project.approval_state === 'rejected');
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
+  const canMarkWon = !waiting && project.outcome === 'open';
+  const canReopen =
+    !waiting &&
+    (project.outcome === 'won' || project.outcome === 'lost') &&
+    project.status_key !== 'po_received';
   const hasGearItems =
     !narrowed &&
-    (showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem);
+    (showEditItem ||
+      isManager ||
+      secondaryMoves.length > 0 ||
+      showDeleteItem ||
+      canMarkWon ||
+      canReopen);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -243,6 +259,10 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
    */
   function moveTo(toStatusId: string) {
     const target = moves.find((option) => option.toStatusId === toStatusId);
+    if (target?.toKey === 'lost') {
+      setLosingTo(toStatusId);
+      return;
+    }
     move.mutate(
       { projectId: project!.id, toStatusId },
       {
@@ -305,6 +325,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 <Clock className="size-3" aria-hidden />
                 {stale.label}
               </Badge>
+            )}
+            {project.outcome === 'won' && project.status_key !== 'po_received' && (
+              <OutcomePill outcome="won" />
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
@@ -380,6 +403,22 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     {option.label}
                   </DropdownMenuItem>
                 ))}
+                {canMarkWon && (
+                  <DropdownMenuItem
+                    disabled={setOutcome.isPending}
+                    onSelect={() => setOutcome.mutate({ projectId: project.id, outcome: 'won' })}
+                  >
+                    Mark won
+                  </DropdownMenuItem>
+                )}
+                {canReopen && (
+                  <DropdownMenuItem
+                    disabled={setOutcome.isPending}
+                    onSelect={() => setOutcome.mutate({ projectId: project.id, outcome: 'open' })}
+                  >
+                    Re-open
+                  </DropdownMenuItem>
+                )}
                 {/* An unapproved registration is Rejected, not deleted, unless a manager
                     removes it (security S2): the server refuses anyone else with 403. */}
                 {showDeleteItem && (
@@ -593,6 +632,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </TabsContent>
       </Tabs>
 
+      {losingTo && (
+        <ProjectLossDialog
+          projectId={project.id}
+          toStatusId={losingTo}
+          onDone={() => setLosingTo(null)}
+        />
+      )}
       {reassigning && (
         <ReassignProjectDialog project={project} onDone={() => setReassigning(false)} />
       )}

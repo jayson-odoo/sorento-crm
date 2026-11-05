@@ -96,6 +96,8 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
   },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
   useChangeProjectStatus: () => ({ mutate: vi.fn(), isPending: false }),
+  useSetProjectOutcome: () => ({ mutate: vi.fn(), isPending: false }),
+  useQuotationLossReasons: () => ({ data: [{ value: 'price', label: 'Price' }] }),
   useDeleteProject: () => ({ mutateAsync: vi.fn() }),
   useUpdateProject: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useCollaborators: () => ({ data: [], isLoading: false }),

@@ -51,7 +51,6 @@ import type {
   QuotationLine,
   QuotationLineBody,
   QuotationLineBulkItem,
-  QuotationOutcomeBody,
   QuotationRecomputeResult,
   QuotationVersion,
   ImportJobStatus,
@@ -282,14 +281,33 @@ export async function updateProject(
 export async function changeProjectStatus(
   projectId: string,
   toStatusId: string,
+  lossReason?: string,
 ): Promise<Project> {
   const response = await apiFetch(`${BASE}/projects/${projectId}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to_status_id: toStatusId }),
+    body: JSON.stringify({
+      to_status_id: toStatusId,
+      ...(lossReason ? { loss_reason: lossReason } : {}),
+    }),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to move the project'));
+  return response.json();
+}
+
+/** Mark a project won, or re-open a won or lost one. Lost goes through the status move. */
+export async function setProjectOutcome(
+  projectId: string,
+  outcome: 'won' | 'open',
+): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/outcome`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ outcome }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to update the outcome'));
   return response.json();
 }
 
@@ -918,19 +936,6 @@ export async function deleteQuotation(quotationId: string): Promise<void> {
   const response = await apiFetch(`${BASE}/quotations/${quotationId}`, { method: 'DELETE' });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to delete the quotation'));
-}
-
-export async function setQuotationOutcome(
-  quotationId: string,
-  body: QuotationOutcomeBody,
-): Promise<ProjectQuotation> {
-  const response = await apiFetch(`${BASE}/quotations/${quotationId}/outcome`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to record the outcome'));
-  return response.json();
 }
 
 export async function listQuotationVersions(

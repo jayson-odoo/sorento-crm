@@ -19,7 +19,9 @@ import {
 } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
 import { explicitDefaultId } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 
-function ComboTemplatesEditor({ comboId }: { comboId: string }) {
+type Parts = React.ComponentProps<typeof ComboTemplatesPicker>['parts'];
+
+function ComboTemplatesEditor({ comboId, parts }: { comboId: string; parts?: Parts }) {
   const linked = useComboTagTemplates(comboId);
   const save = useSetComboTagTemplates();
   const rows = linked.data ?? [];
@@ -48,6 +50,7 @@ function ComboTemplatesEditor({ comboId }: { comboId: string }) {
     <div className="border-b p-3">
       <ComboTemplatesPicker
         idPrefix={`combo-${comboId}`}
+        parts={parts}
         value={current}
         defaultId={explicitDefaultId(rows) ?? ''}
         selectedOptions={rows.map((row) => ({ value: row.id, label: row.name }))}
@@ -77,9 +80,9 @@ function ComboTemplatesEditor({ comboId }: { comboId: string }) {
   );
 }
 
-export function ComboTemplatesField({ comboId }: { comboId: string }) {
+export function ComboTemplatesField({ comboId, parts }: { comboId: string; parts?: Parts }) {
   const canManage = useHasPermission('dealer_kit.tag_templates.manage');
-  return canManage ? <ComboTemplatesEditor comboId={comboId} /> : null;
+  return canManage ? <ComboTemplatesEditor comboId={comboId} parts={parts} /> : null;
 }
 
 export default ComboTemplatesField;

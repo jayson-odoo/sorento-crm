@@ -170,6 +170,7 @@ async function addLine() {
 async function startWithALine() {
   render(<PriceTagRequestForm />);
   await selectOption('Debtor', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   await addLine();
 }
 

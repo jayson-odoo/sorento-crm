@@ -111,7 +111,17 @@ export function designPayloadFromResponse(
 
   const images: Record<string, string> = { ...(body.images ?? {}) };
   for (const line of lines) {
-    for (const image of line.images ?? []) {
+    // A combo position draws its own part's photos, which are signed on the part and not on the
+    // line: left out, the picture of every fixed part, pick and upgrade came back empty.
+    const slots = line.slots;
+    const parts = [
+      ...(line.parts ?? []),
+      ...(slots?.main ? [slots.main] : []),
+      ...(slots?.fixed ?? []),
+      ...(slots?.groups ?? []).flatMap((group) => group.picks),
+      ...(slots?.upgrades ?? []),
+    ];
+    for (const image of [...(line.images ?? []), ...parts.flatMap((part) => part.images ?? [])]) {
       if (image.url) images[image.attachment_id] = image.url;
     }
   }

@@ -336,6 +336,12 @@ class ProjectRegistrationInfo(BaseModel):
 class ProjectStatusChangeRequest(BaseModel):
     to_status_id: str
     note: Optional[str] = None
+    # Mandatory (and checked against the configured list) when the move lands on Lost.
+    loss_reason: Optional[str] = None
+
+
+class ProjectOutcomeChangeRequest(BaseModel):
+    outcome: str = Field(description="won | open")
 
 
 class ProjectResponse(BaseModel):
@@ -1259,11 +1265,6 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     document_no: Optional[str] = None
     document_kind: Optional[str] = None
 
-    outcome: str = "open"
-    loss_reason: Optional[str] = None
-    loss_reason_label: Optional[str] = None
-    decided_at: Optional[datetime] = None
-
     version_count: int = 0
     # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
     # MAX(version_no) at read time and is safe to render.
@@ -1583,17 +1584,6 @@ class QuotationColumnsWrite(BaseModel):
 class QuotationColumnsResponse(BaseModel):
     version: ProjectQuotationVersionResponse
     lines: List[ProjectQuotationLineResponse] = Field(default_factory=list)
-
-
-class ProjectQuotationOutcomeRequest(BaseModel):
-    outcome: str = Field(description="open | won | lost")
-    loss_reason: Optional[str] = Field(
-        None,
-        description=(
-            "Mandatory when outcome is lost, and must be a value from the "
-            "`project_quotation_loss_reason` lookup set."
-        ),
-    )
 
 
 # --------------------------------------------------- S4 samples and customer POs
@@ -2103,7 +2093,6 @@ class ProjectQuotationScopeSummary(BaseModel):
     id: str
     scope_label: str
     sort_order: int = 0
-    outcome: str = "open"
     current_version_id: Optional[str] = None
     current_version_no: Optional[int] = None
     line_count: int = 0
