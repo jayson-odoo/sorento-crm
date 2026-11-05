@@ -25,11 +25,13 @@ from tests._ac_write_support import (
     EDIT,
     VIEW,
     WRITE,
+    WAITING,
     add_issue,
     api_fixture,
     detail,
     done_body,
     fake_ss,  # noqa: F401  (fixture)
+    find_dicts,
     myt_today_candidates,
     refused_body,
 )
@@ -292,3 +294,66 @@ def test_a_stale_quotation_update_says_open_compare_first(api, fake_ss):
     assert body["message"] == "Changed in AutoCount since 21/10/2026, open Compare first."
     db.refresh(world.document)
     assert world.document.autocount_last_modified == "2026-10-21T08:00:00"
+
+
+# --------------------------------------------------------------------------- U17: how an update matches lines
+
+
+def test_an_update_matches_lines_by_item_code_in_order(api, fake_ss):
+    """Coordinator ruling (Q8): quotation lines are matched to the AutoCount document by itemCode.
+
+    * a matched line whose qty or price changed goes in the PATCH (by its dtlKey);
+    * a matched line that did not change is not sent;
+    * a new item code goes to POST lines;
+    * a code AutoCount holds that the new revision no longer quotes goes to `waiting`
+      (there is no delete_line), and is never deleted.
+
+    The CRM learns what AutoCount holds from a GET of the document (path assumed to be
+    `GET /documents/quotations/{docKey}` answering the usual `document` envelope).
+    """
+    from app.models.projects import ProjectQuotationLine
+
+    client, db, world = api
+    _mark_sent(db, world)
+    p_new = _new_product(db, world)
+    lines = {
+        l.product_code_snapshot: l
+        for l in db.query(ProjectQuotationLine).filter(ProjectQuotationLine.version_id == world.version.id)
+    }
+    lines[world.p1.product_code].quantity = Decimal("12")           # qty 10 -> 12: PATCH
+    db.add(
+        ProjectQuotationLine(
+            id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=world.version.id,
+            product_id=p_new.id, product_code_snapshot=p_new.product_code, description_snapshot="New item",
+            unit_price=Decimal("75.00"), quantity=Decimal("3"), uom="UNIT",
+            line_total=Decimal("225.00"), sort_order=9,
+        )
+    )
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+
+    held = _read_back(world) + [detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)]
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held))
+    after = held + [detail(5, p_new.product_code, "3", "75.00", "BRW-BB", None, 5)]
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (200, done_body(doc_key=QT_KEY, details=after))
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = (200, done_body(doc_key=QT_KEY, details=after))
+
+    body = client.post(_url(world)).json()
+
+    [patch] = fake_ss.to("PATCH", QT_DOC_PATH)
+    patched = fake_ss.body(patch)["lines"]
+    assert [(str(l["dtlKey"]), D(l["qty"])) for l in patched] == [("1", D(12))], (
+        "only the matched line that changed rides the PATCH"
+    )
+    [post] = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
+    assert find_dicts(fake_ss.body(post), itemCode=p_new.product_code, qty="3"), fake_ss.body(post)
+    assert "ZZT-OLD-CODE" in str(body["waiting"])
+    assert WAITING in str(body["waiting"])
+    assert all("ZZT-OLD-CODE" not in r.content.decode() for r in fake_ss.writes())
+    assert [r for r in fake_ss.calls if r.method == "DELETE"] == []
+
+
+def _new_product(db, world):
+    from tests.test_project_so_draft import _product, _uid
+
+    return _product(db, f"ZZT-NEW-{_uid()[:6]}")

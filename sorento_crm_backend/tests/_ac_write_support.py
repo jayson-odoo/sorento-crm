@@ -552,10 +552,10 @@ def restore_client(originals) -> None:
     app.dependency_overrides.clear()
 
 
-def api_fixture(kind: str, permissions, *, switch: bool = True, **world_kw: Any):
+def api_fixture(which: str, permissions, *, switch: bool = True, **world_kw: Any):
     """Generator behind the per-file `api` fixtures.
 
-    Yields `(client, db, world)`. `kind` is "so" or "qt". The fake SS must be requested by the
+    Yields `(client, db, world)`. `which` is "so" or "qt". The fake SS must be requested by the
     test (or fixture) alongside, so the transport is patched before any call.
     """
     from app.models.base import company_scope
@@ -566,7 +566,7 @@ def api_fixture(kind: str, permissions, *, switch: bool = True, **world_kw: Any)
         owner = _user(db, f"{MARKER} CS")
         world = (
             build_so_world(db, company_id, owner, **world_kw)
-            if kind == "so"
+            if which == "so"
             else build_qt_world(db, company_id, owner, **world_kw)
         )
         seed_foundryx_connection(db, base_url=SS_BASE_URL, api_key=SS_API_KEY)
