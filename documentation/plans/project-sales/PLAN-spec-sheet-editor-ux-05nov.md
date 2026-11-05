@@ -1,6 +1,6 @@
 # PLAN: spec sheet page editor UX (full screen, collapsible panels, Apply-to control)
 
-Status: in progress (small fix track: FE only, no migration, no auth/RBAC change)
+Status: in review, PR #2193 (small fix track: FE only, no migration, no auth/RBAC change). Template switching moved to the header gear menu (Templates), see the UAC.
 
 Lane: SPEC-SHEET-EDITOR-UX. Owner ask, 5 Nov 2026: full-screen the spec sheet page editor like the
 price tag designer, collapsible left (pages) and right (Inspector) panels, and explain why his
