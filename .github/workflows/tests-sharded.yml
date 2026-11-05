@@ -29,7 +29,7 @@ on:
   # removed before the lane is done.
   push:
     branches: [claude/ci-parallel-actions-sharding-9u25cp]
-    paths: [.github/workflows/tests-sharded.yml]
+    paths: [.github/workflows/tests-sharded.yml, sorento_crm_backend/scripts/sharded_tests_*.py]
   workflow_dispatch:
     inputs:
       mode:
