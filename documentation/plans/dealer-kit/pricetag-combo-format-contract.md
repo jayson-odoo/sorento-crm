@@ -112,3 +112,38 @@ always escaped (`& < > "`). Idempotent.
   `"<label>: No SP template linked"`.
 - Combo photo: button `aria-label="Preview photo of <combo name>"` opening
   `components/common/AttachmentPreviewModal.tsx` with `items=[{ id: image.attachment_id, name: combo.name, url: image.url }]`.
+
+## Fix round 1 (reviewer + security-reviewer, 5 Nov): rulings
+
+- R1 (B1) A saved default flag counts only while its template fits that type (`fits(template, type)`); GET
+  reports `default_list` / `default_selling` only for fitting templates. When a template PUT changes
+  `price_type`, flags it no longer fits are cleared on every link.
+- R2 (B2, sec S1) Plain-text mode loops until the output stops changing (max 5 passes); if the result
+  `is_rich`, it goes through the rich sanitiser. Output is idempotent for every input; no stored value ever
+  holds a tag outside the allow-list.
+- R3 (sec S2) Raw input limit before sanitising: `max_length=20000` on combo create/update `description`
+  and product create/update `price_tag_description` (422 at the schema); the 5000 limit after sanitising
+  stays. End-tag matching in the rich parser is O(1) per tag (counts, not a list scan).
+- R4 (sec L2) `\x00` and other C0 control characters except `\n` `\t` are stripped in both modes.
+- R5 (gate) A line keeping its stored template (unchanged pick, unchanged price type) passes Submit and
+  Approve even if that template no longer fits and nothing fitting is linked (AC-37 wins over AC-36 for
+  kept picks). `NO_TEMPLATE_FOR_PRICE_TYPE` applies to lines without a kept pick.
+- R6 (S1) The form keeps a line's saved `tag_template_id` on load even when it no longer fits; it shows in
+  the select (labelled with its name) and is re-sent unchanged. Only a user change (pick or LP/SP flip)
+  re-filters.
+- R7 (S2) Flipping the request's "Preferred Default" applies `templateAfterFlip` to every line whose own
+  `price_type` is null.
+- R8 (S3) Every non-tag display of the two columns uses `plain_text` (backend) / `richPlainText` (FE):
+  the "Product data changed" review (tag_data_service diff values), the designer Content box for a layer
+  bound to a description slot (read-only plain text), and product/combo API payloads read by MCP and the
+  chatbot (grep list recorded in the plan). The tag payload (`tag_data_service` tag data) keeps rich.
+- R9 (S4, sec L3) Shared editor: `editorProps.transformPastedHTML` strips `style` attributes from pasted
+  HTML (colour/align only come from the toolbar); `normaliseEditorHtml` operates on element style
+  attributes via a parsed DOM, never on the string (text is never rewritten).
+- R10 (S5) Escape inside a toolbar popover closes the popover only; the description edit is kept.
+- R11 (S6) Print uses the same run face as the canvas (`runFace` weight `max(700, base)`).
+- R12 (nits) price type set from the list goes through a hook (`useSetTemplatePriceType`) that invalidates
+  tag template + link queries; legacy `default_template_id` sets only the types it fits (no 422);
+  `ComboTagPreview` says "No published price tag template" when the default exists but is unpublished, and
+  drops the `as never` casts; list markers follow block alignment on canvas the same as print; highlight
+  box height matches print (font box).
