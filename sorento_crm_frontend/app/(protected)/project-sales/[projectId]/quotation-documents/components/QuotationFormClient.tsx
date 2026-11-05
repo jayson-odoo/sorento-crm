@@ -37,7 +37,6 @@ import type {
   QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
-import { OutcomePill } from '../../../_shared/components/OutcomePill';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
@@ -912,7 +911,6 @@ function FormLines({
       id: scope.key,
       scope_label: scopeTitle(scope, index),
       sort_order: index,
-      outcome: saved?.outcome ?? 'open',
       current_version_id: saved?.current_version_id ?? null,
       current_version_no: saved?.current_version_no ?? null,
       line_count: saved?.line_count ?? 0,
@@ -922,8 +920,6 @@ function FormLines({
 
   return (
     <div className="space-y-3">
-      {/* The strip, with the open saved scope's outcome at its right: the one piece of the old
-          scope header that is not already on the tab. */}
       <div className="flex min-w-0 items-center justify-between gap-3">
         <QuotationScopeTabs
           scopes={strip}
@@ -942,11 +938,6 @@ function FormLines({
             key === active.key ? canRemove : !scopes.find((row) => row.key === key)?.id
           }
         />
-        {savedRow && (
-          <span className="shrink-0">
-            <OutcomePill outcome={savedRow.outcome} />
-          </span>
-        )}
       </div>
 
       {/* No card and no header (QUOTE-SCOPE-COMPACT, owner 4 Nov: "why do I need a section for

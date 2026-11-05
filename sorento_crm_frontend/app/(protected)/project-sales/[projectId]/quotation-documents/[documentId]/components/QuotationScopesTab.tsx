@@ -8,8 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
 import { useQuotationFeedback } from '../../../../_shared/hooks/useQuotationDocuments';
-import { OutcomePill } from '../../../../_shared/components/OutcomePill';
-import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
 import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 import { isLockedForApproval } from '../../../../_shared/lib/quotationDecision';
@@ -22,7 +20,7 @@ import { QuotationScopeTabs } from './QuotationScopeTabs';
  * A READ (#1341). The owner: "editing of scope should be done by 'Edit Quotation', not a separate
  * button like this, Edit quotation means I edit the whole quotation". So there is no per-scope
  * Edit scope, no instant Add a scope and no "Press Edit" hint: a scope's name, series and lines
- * change in the form page opened from the gear. Record outcome, Recheck alerts and Revise stay,
+ * change in the form page opened from the gear. Recheck alerts and Revise stay,
  * because they are acts on the scope, not edits of it.
  *
  * The document itself is not fetched here - it comes from the layout, so the tabs cannot end up
@@ -39,10 +37,6 @@ export function QuotationScopesTab() {
     selectScope,
   } = useQuotationDocumentScreen();
   const quotations = useQuotations(projectId);
-
-  const [decidingScopeId, setDecidingScopeId] = React.useState<string | null>(
-    null,
-  );
 
   // Open customer feedback, marked on the lines it names (PS-QUOTE-MATRIX, mock frame 5). The
   // same query as the Customer feedback tab and its badge.
@@ -96,35 +90,17 @@ export function QuotationScopesTab() {
 
       {activeQuotation ? (
         <Card>
-          {/* The scope's own commercial result, beside the lines it applies to. Outcome is per
-              SCOPE and the project's outcome is derived from it. */}
           <CardHeader className="flex flex-col items-start gap-3 border-b border-border sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <CardTitle className="min-w-0 break-words text-sm">
                 {activeQuotation.scope_label}
               </CardTitle>
-              <OutcomePill outcome={activeQuotation.outcome} />
               {/* Which series this scope is quoted from, stated rather than assumed: a scope
                   naming no series checks nothing, and its lines look identically clean. */}
               <span className="text-xs text-muted-foreground">
                 {activeQuotation.series_name || 'No series'}
               </span>
-              {activeQuotation.loss_reason_label && (
-                <span className="text-xs text-muted-foreground">
-                  {activeQuotation.loss_reason_label}
-                </span>
-              )}
             </div>
-            {canEdit && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setDecidingScopeId(activeQuotation.id)}
-              >
-                Record outcome
-              </Button>
-            )}
           </CardHeader>
           {/* min-w-0 is load-bearing: CardContent is a flex item, and without it the line grid
               stretches the Card and the whole PAGE scrolls sideways at phone width. */}
@@ -158,13 +134,6 @@ export function QuotationScopesTab() {
         </Card>
       )}
 
-      {decidingScopeId && activeQuotation && (
-        <QuotationOutcomeDialog
-          project={project}
-          quotation={activeQuotation}
-          onDone={() => setDecidingScopeId(null)}
-        />
-      )}
     </div>
   );
 }
