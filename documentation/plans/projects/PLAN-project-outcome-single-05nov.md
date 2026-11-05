@@ -84,3 +84,88 @@ against the quotation. No? Don't need to fix existing data. This is not rolled o
 2. Coder: BE (status hook, mark won/re-open endpoints, forecast, make quotation, PO ranking,
    accept path, remove W1/W2), FE (gear items, dialog, pill removal, delete FE2).
 3. Reviewer + kill test; cloud browser pass; hand-test script; guide update.
+
+## Build contract (tester and coder work from this, verbatim)
+
+### Backend
+
+- **BE1 Mark lost = stage move.** `POST /api/v1/projects/projects/{id}/status` (route
+  `api/v1/projects/projects.py:637`). `ProjectStatusChangeRequest` (`schemas/projects.py:336`) gains
+  `loss_reason: Optional[str] = None`. In `project_service.change_status` (`:1468`), after the
+  transition check, branch on the TARGET status key:
+  - `lost`: `loss_reason` is validated with `project_quotation_service._assert_loss_reason` (same
+    lookup set and the same 422 codes: `quotation_loss_reason_required`,
+    `quotation_loss_reason_invalid`, `quotation_loss_reasons_unconfigured`), checked BEFORE
+    `status_id` is written (a refusal writes nothing). Sets `project.outcome = "lost"`,
+    `project.loss_reason = reason`.
+  - `po_received`: `outcome = "won"`, `loss_reason = None`.
+  - any other key: outcome and loss_reason untouched.
+- **BE2 First PO.** `project_po_service._advance_to_po_received` (`:460`): when it moves the status,
+  it also sets `outcome = "won"`, `loss_reason = None`. When it does not move (no edge, already
+  there), outcome is untouched.
+- **BE3 Mark won / Re-open.** New `POST /api/v1/projects/projects/{id}/outcome`, body
+  `{"outcome": "won" | "open"}` (a new `ProjectOutcomeChangeRequest`), permission EDIT +
+  `assert_can_write_project`, returns `ProjectResponse` like the status route. New service
+  `project_service.set_project_outcome(db, project, *, outcome, actor_user_id, permissions)`:
+  - `won`: from `open` only. From `lost`: 409 `project_lost` ("Re-open the project first.").
+    From `won`: no-op, 200. Status untouched. `loss_reason = None`.
+  - `open` (Re-open): from `won` or `lost`; from `open`: no-op, 200. `loss_reason = None`. If the
+    project's status key is `lost`, `status_id` returns to the rung it held before Lost: the
+    `to_status_id` of the newest `activity_events` row (entity_type `project`, this id,
+    `system_template = 'stage_changed'`) that is older than the newest such row whose
+    `to_status_id` is the current Lost status; no such row means the graph's initial status
+    (`status_service.initial_status`). This is a direct write, not a graph edge (terminal rungs
+    have no outgoing edges by design, `status_service.py:374`), and it records a
+    `stage_changed` event. Any other status key: status untouched.
+  - Every real change records a project event, template `outcome_changed`, payload
+    `{"outcome": <new>}`.
+  - Any other value: 422 `project_outcome_invalid`.
+- **BE4 Customer accept** (`project_quotation_document_service.py:1684`): `_win_the_scopes_on`
+  goes. On accept, if `project.outcome == "open"` it becomes `won` (loss_reason None); `won` or
+  `lost` is left alone. The acceptance itself is recorded either way. No area outcome is written.
+- **BE5 Make quotation** (`:912`): refused with 409 `project_lost` ("This project is lost. Re-open
+  it before making its quotation.") when `project.outcome == "lost"`; allowed on `open` and
+  `won`. The `project_not_won` check goes. Every area of the chosen revision is copied (the
+  lost-area skip goes); copies get no outcome (column default).
+- **BE6 Forecast pipeline** (`project_forecast_service._open_quotation_totals`, `:139`): counts
+  only projects whose `outcome == "open"`; no `ProjectQuotation.outcome` filter. For such a
+  project, if it holds a quotation document (`project_quotation_document_service.project_quotation`),
+  only the areas of that document count; otherwise all its areas. Each area counts its highest
+  version, as today. Won or lost: 0 pipeline (Committed unchanged).
+- **BE7 Loss-reasons report** (`loss_reason_counts`, `:394`): counts LOST projects
+  (`Project.outcome == "lost"`, approved, this company) grouped by `Project.loss_reason`; same
+  return shape.
+- **BE8 PO intake ranking** (`project_po_reading.py:129-134`, `project_po_confirm.py:333-337`): the
+  `_OUTCOME_RANK` goes. Candidates are the project's areas (filtered to the held quotation
+  document when there is one, as today); exactly one candidate binds, two or more stays unbound
+  (as a tie is today).
+- **BE9 Removals.** `project_quotation_service.set_outcome`, `derive_project_outcome`,
+  `sync_project_outcome`, the sync on area delete (`:486`), the route
+  `POST /quotations/{id}/outcome` (`api/v1/projects/quotations.py:213`) and its request schema.
+  Area serializers and response schemas stop returning `outcome`, `loss_reason`, `decided_at`.
+  `GET /config/loss-reasons` stays (the Mark lost dialog reads it). The `ProjectQuotation`
+  columns stay in the model and DB, unused (owner Q5: no migration).
+
+### Frontend
+
+- **FE1 Mark lost dialog.** A new `[projectId]/components/ProjectLossDialog.tsx` (built from
+  `QuotationOutcomeDialog`'s reason picker: `SearchableSelect` over `useQuotationLossReasons`, Save
+  disabled until a reason is chosen). Selecting a gear move whose `toKey === 'lost'` on the project
+  page opens it instead of moving; Save calls the status change with `loss_reason`. Same on the
+  pipeline board: a drop onto the Lost column opens the dialog (`PipelineClient.tsx:451`).
+  `changeProjectStatus` / `useChangeProjectStatus` take an optional `lossReason`.
+- **FE2 Gear items** (`ProjectDetailClient.tsx` DetailActionsMenu, `:351`): "Mark won" when
+  `project.outcome === 'open'`; "Re-open" when `won` or `lost`; both only when `can_edit` and
+  the project is approved (not `waiting`). Service `setProjectOutcome(projectId, outcome)` +
+  hook `useSetProjectOutcome` (invalidate project + toast, extracted error on failure).
+  Note: the gear menu shows only when `hasGearItems`; include these items in that count.
+- **FE3 Header Won pill.** A `Badge` reading "Won" (success tone, via OutcomePill if it fits) beside
+  the status pill when `outcome === 'won'` and `status_key !== 'po_received'`.
+- **FE4 Removals.** Per-area pill + Record outcome in `QuotationScopesTab.tsx:97-128` (coordinate
+  with #2194), the pill on the area strip in `QuotationFormClient.tsx:947`, the route folder
+  `[projectId]/quotations/[quotationId]/`, `QuotationOutcomeDialog.tsx`, `setQuotationOutcome`,
+  `decide` in `useQuotationMutations`, `QuotationOutcome` / `QuotationOutcomeBody` types and the
+  area `outcome`/`loss_reason`/`decided_at` fields.
+- **FE5 Make quotation** (`quotation-documents/actions.tsx:157`): offered when
+  `projectOutcome !== 'lost'` (was `=== 'won'`).
+- Project-level OutcomePill in the projects grid stays.
