@@ -332,6 +332,13 @@ describe('linePickProblems', () => {
     expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
+  it('M2: with a promotion picked the reason says to clear it, since no price can be typed', () => {
+    const l = line({ price_type: 'selling', promotion_id: 'promo-1' });
+    expect(api.linePickProblems([l], { l1: { list_price: 2500, sell_price: null } })).toEqual([
+      'No combo selling price for line 1. Clear the promotion and type the selling price, or escalate it to marketing.',
+    ]);
+  });
+
   it('follows the request mode for SP too, and a line with no combo is never blocked', () => {
     const l = line();
     expect(api.linePickProblems([l], { l1: { sell_price: null } }, 'selling')).toHaveLength(1);

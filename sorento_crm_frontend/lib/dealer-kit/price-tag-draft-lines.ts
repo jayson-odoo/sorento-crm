@@ -556,7 +556,12 @@ export function linePickProblems(
         if (pricing.list_price == null) out.push(`No combo list price for line ${n}. Escalate it to marketing.`);
       } else if (pricing.sell_price === null && line.manual_sell_price == null) {
         // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
-        out.push(`No combo selling price for line ${n}. Type the selling price or escalate it to marketing.`);
+        // No price box shows while a promotion is picked, so the way out starts by clearing it.
+        out.push(
+          line.promotion_id
+            ? `No combo selling price for line ${n}. Clear the promotion and type the selling price, or escalate it to marketing.`
+            : `No combo selling price for line ${n}. Type the selling price or escalate it to marketing.`,
+        );
       }
     }
   });
