@@ -1,6 +1,6 @@
 # PLAN: deploy migrate step (DEPLOY-MIGRATE-STEP, 5 Nov 2026)
 
-Status: in progress (Build). Track: small fix track by size, but it touches the prod deploy
+Status: in progress (Review round 1 folded in). Track: small fix track by size, but it touches the prod deploy
 path, so reviewer + security-reviewer both run and crew merges only on the owner's go.
 
 ## Problem (measured)
@@ -62,3 +62,22 @@ failure (no start, no swap, old-head report), timeout (killed, sessions terminat
 report), health failure after the step (schema note), rollback skip, ordering.
 `tests/test_po_link_history.py`: backfill over rows in the old migration's shape inserts nothing;
 start.sh runs the backfill whatever SKIP_MIGRATIONS says.
+
+## Review round 1 (reviewer READY; security-reviewer: no blockers, two should-fix)
+
+- The container is bounded on its own: entrypoint `timeout --signal=TERM --kill-after=30
+  <MIGRATE_TIMEOUT_SECONDS> alembic upgrade head`; the script's deadline is a backstop
+  `MIGRATE_KILL_GRACE_SECONDS` (60) later. The release SSH action has no pty, so a cut session
+  sends no HUP: this is what bounds the step then.
+- The step's output goes to a temp file, shown afterwards, so a broken SSH pipe cannot kill the
+  compose client mid-step. PIPE joined HUP/INT/TERM in the trap; the handler cleans up first.
+- A non-zero client exit removes the container and ends the sessions before reading the schema
+  (the client can die while the container runs on).
+- Session name per run (`sorento_deploy_migrate_<tag>_<random>`), matched by prefix (pgbouncer's
+  `application_name_add_host`) and database; "no session matched" is said plainly.
+- "no revision was committed" wording (an autocommit block may have run).
+- `MIGRATE_TIMEOUT_SECONDS` at least 1; `--preflight` warns above 3600.
+- `SKIP_MIGRATIONS=1` on a schema not at the image head: WARNING.
+- EXIT trap prints the schema line on any failed exit after the step and before the swap.
+- `alembic/env.py`: `hide_parameters=True`, so a failing data migration prints no row values into
+  the release log.

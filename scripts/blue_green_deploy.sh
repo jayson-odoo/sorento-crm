@@ -110,9 +110,12 @@ SNAPSHOT_KEEP_MINUTES="${SNAPSHOT_KEEP_MINUTES:-2880}"   # 48 h
 SNAPSHOT_MIN_FREE_MB="${SNAPSHOT_MIN_FREE_MB:-10240}"
 # The migrate step's own limit, separate from the health wait (DEPLOY-MIGRATE-STEP).
 MIGRATE_TIMEOUT_SECONDS="${MIGRATE_TIMEOUT_SECONDS:-1200}"   # 20 min
-# Marks the step's Postgres session(s) (libpq reads PGAPPNAME), so a timeout can end them.
-MIGRATE_APP_NAME="sorento_deploy_migrate"
-NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB MIGRATE_TIMEOUT_SECONDS"
+# Backstop past the in-container `timeout` (which TERMs, then KILLs 30 s later).
+MIGRATE_KILL_GRACE_SECONDS="${MIGRATE_KILL_GRACE_SECONDS:-60}"
+# Marks the step's Postgres session(s) (libpq reads PGAPPNAME), so a timeout can end them and
+# nothing else: per run (image tag + random), after .deploy.env so it cannot be overridden.
+MIGRATE_APP_NAME="sorento_deploy_migrate_$(printf '%s' "${IMAGE_TAG:-none}" | tr -cd '0-9A-Za-z' | cut -c1-12)_${RANDOM}${RANDOM}"
+NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB MIGRATE_TIMEOUT_SECONDS MIGRATE_KILL_GRACE_SECONDS"
 
 ACTIVE=$(cat .active_color 2>/dev/null || echo blue)
 if [ "$ACTIVE" = "blue" ]; then
@@ -298,6 +301,12 @@ preflight() {
     fi
   fi
 
+  if is_number MIGRATE_TIMEOUT_SECONDS && [ "$MIGRATE_TIMEOUT_SECONDS" -gt 3600 ]; then
+    pf WARN MIGRATE_TIMEOUT_SECONDS "${MIGRATE_TIMEOUT_SECONDS}s is past 60 min: the release SSH step's 120m budget may cut it"
+  elif is_number MIGRATE_TIMEOUT_SECONDS && [ "$MIGRATE_TIMEOUT_SECONDS" -lt 1 ]; then
+    pf FAIL MIGRATE_TIMEOUT_SECONDS "must be at least 1"
+  fi
+
   if ha_msgs=$(ha_checks); then
     pf PASS "ha checks" "ok (HA mode: ${HA_MODE})"
   else
@@ -372,6 +381,9 @@ if [ "$MODE" = preflight ]; then
 fi
 
 for knob in $NUMERIC_KNOBS; do require_number "$knob"; done
+if [ "$MIGRATE_TIMEOUT_SECONDS" -lt 1 ]; then
+  echo "ERROR: MIGRATE_TIMEOUT_SECONDS must be at least 1 (check .deploy.env)"; exit 1
+fi
 
 # Held from here to exit, before anything is changed. Released by the trap as well as by
 # exit, because a child that inherited fd 9 would otherwise keep it held.
@@ -391,7 +403,22 @@ if ! flock -w "$DEPLOY_LOCK_WAIT_SECONDS" 9; then
   exit 1
 fi
 tag_tmp=""
-trap 'flock -u 9; if [ -n "$tag_tmp" ]; then rm -f "$tag_tmp"; fi' EXIT
+# On a failed exit after the migrate step moved the schema and before the swap (a `set -e`
+# exit included), say where the schema is unless an abort branch already did.
+SCHEMA_REV=""
+SCHEMA_NOTED=""
+SWAPPED=""
+on_exit() {
+  local rc=$?
+  if [ "$rc" != 0 ] && [ -n "$SCHEMA_REV" ] && [ -z "$SWAPPED" ] && [ -z "$SCHEMA_NOTED" ]; then
+    echo "ERROR: deploy FAILED (exit ${rc}) after the migrate step;" || true
+    schema_note || true
+  fi
+  flock -u 9
+  if [ -n "$tag_tmp" ]; then rm -f "$tag_tmp"; fi
+  if [ -n "${MIGRATE_LOG:-}" ]; then rm -f "$MIGRATE_LOG"; fi
+}
+trap on_exit EXIT
 
 DEPLOY_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -513,14 +540,22 @@ schema_rev() {
   if r=$(db_revisions) && [ -n "$r" ]; then echo "${r//$'\n'/ }"; else echo unknown; fi
 }
 
-# A timed-out step: its client is gone, but Postgres keeps running the current statement (and
-# holding its locks) until it next talks to the client. Terminate the step's session(s) so the
-# open transaction rolls back now, then wait for them to be gone before reading the schema.
+# After a timeout or an interruption. The step's client is already gone (killed inside the
+# container by `timeout`, or here), and Postgres normally rolls its transaction back when it
+# notices; but a long statement keeps running, and holding its locks, until it next talks to
+# the client. Terminate this run's session(s) so the rollback happens now, then wait for them
+# to be gone before reading the schema. Matched by prefix (pgbouncer's application_name_add_host
+# appends to the name) and by database; the name carries a per-run suffix.
 end_migrate_sessions() {
-  local q="pg_stat_activity where application_name = '${MIGRATE_APP_NAME}' and pid <> pg_backend_pid()"
+  local q="pg_stat_activity where application_name like '${MIGRATE_APP_NAME}%' and datname = '${DB_NAME}' and pid <> pg_backend_pid()"
   local n i=0
   n=$(db_query "select count(pg_terminate_backend(pid)) from ${q}" || echo "?")
-  echo "    migrate step: terminated ${n:-?} Postgres session(s) named ${MIGRATE_APP_NAME}"
+  if [ "$n" = 0 ]; then
+    echo "    migrate step: no Postgres session named ${MIGRATE_APP_NAME} was open (already gone, or the name"
+    echo "                  never reached Postgres): check pg_stat_activity for a long statement before re-dispatching"
+  else
+    echo "    migrate step: terminated ${n:-?} Postgres session(s) named ${MIGRATE_APP_NAME}"
+  fi
   while [ $i -lt 30 ]; do
     n=$(db_query "select count(*) from ${q}" || echo "?")
     if [ "$n" = 0 ]; then return 0; fi
@@ -536,7 +571,8 @@ report_schema_after_failure() {
   if [ "$now" != unknown ] && [ "$now" = "$START_REVS" ] && [ "$now" = "$IMAGE_HEADS" ]; then
     echo "    Database is at ${now}, which was already the image head before the step (nothing was pending)."
   elif [ "$now" != unknown ] && [ "$now" = "$START_REVS" ]; then
-    echo "    Database is at the OLD head ${now}: nothing was committed."
+    echo "    Database is at the OLD head ${now}: no revision was committed (an autocommit block, e.g. a"
+    echo "    CONCURRENTLY index, may still have run: check for INVALID indexes)."
   elif [ "$now" != unknown ] && [ "$now" = "$IMAGE_HEADS" ]; then
     echo "    Database is at the NEW head ${now}: the migration COMMITTED. ${ACTIVE} (old code) is serving on the new schema."
   else
@@ -545,59 +581,93 @@ report_schema_after_failure() {
   echo "    ${NEW} was not started and nginx was not swapped; ${ACTIVE} keeps serving."
 }
 
-# Set while the step's container may be running: a signal to this script (the SSH session
-# cut, a cancelled run) removes it and ends its sessions instead of leaving it to commit after
-# the release was already reported failed (the 5 Nov shape).
+# The step's output goes to this file, never to the Actions pipe while it runs: a cut SSH
+# session then cannot kill the `docker compose run` client by a broken pipe. Shown afterwards.
+MIGRATE_LOG=""
+show_migrate_log() {
+  if [ -n "$MIGRATE_LOG" ] && [ -s "$MIGRATE_LOG" ]; then
+    echo "    --- migrate step output (last 100 lines) ---"
+    tail -n 100 "$MIGRATE_LOG" | sed 's/^/    | /'
+  fi
+}
+
+# Set while the step's container may be running. A signal to this script (INT/TERM from a
+# cancelled manual run, HUP, or PIPE) removes it and ends its sessions instead of leaving it to
+# commit after the release was reported failed (the 5 Nov shape). The release's SSH action has
+# no pty, so a cut session sends no HUP; what bounds the container then is `timeout` inside it,
+# and its output going to a file means no broken pipe kills the client mid-step.
 MIGRATE_RUNNING=""
+MIGRATE_PID=""
 on_signal_during_migrate() {
-  trap - HUP INT TERM
-  echo "ERROR: deploy interrupted during the migrate step; removing ${MIGRATE_RUNNING}"
-  pkill -TERM -P "$MIGRATE_PID" 2>/dev/null || true
-  kill -TERM "$MIGRATE_PID" 2>/dev/null || true
-  docker rm -f "$MIGRATE_RUNNING" >/dev/null 2>&1 || true
+  trap - HUP INT TERM PIPE
+  trap '' PIPE   # the report below may write to a dead pipe: keep going, do the cleanup
+  set +e
+  # Cleanup first, report second: the report may be writing to a pipe nobody reads.
+  pkill -TERM -P "$MIGRATE_PID" 2>/dev/null
+  kill -TERM "$MIGRATE_PID" 2>/dev/null
+  docker rm -f "$MIGRATE_RUNNING" >/dev/null 2>&1
+  echo "ERROR: deploy interrupted during the migrate step; removed ${MIGRATE_RUNNING}"
   end_migrate_sessions
+  show_migrate_log
   report_schema_after_failure "$(schema_rev)"
   exit 1
 }
 
 # Runs `alembic upgrade head` in a one-off container of the NEW image under its own timeout.
 # Sets SCHEMA_REV on success; on failure or timeout reports the schema and exits 1.
-MIGRATE_PID=""
 migrate_step() {
-  local name="sorento_migrate_${NEW}" pid rc=0 started secs timed_out=0 now
+  local name="sorento_migrate_${NEW}" pid rc=0 started secs timed_out=0 now deadline
   START_REVS=$(schema_rev); if [ "$START_REVS" = unknown ]; then START_REVS=""; fi
-  echo "    migrate step: start revision ${START_REVS:-unknown}, image head ${IMAGE_HEADS:-unknown}, timeout ${MIGRATE_TIMEOUT_SECONDS}s"
+  echo "    migrate step: start revision ${START_REVS:-unknown}, image head ${IMAGE_HEADS:-unknown}, timeout ${MIGRATE_TIMEOUT_SECONDS}s, session ${MIGRATE_APP_NAME}"
   docker rm -f "$name" >/dev/null 2>&1 || true   # a leftover of an earlier killed run
+  MIGRATE_LOG=$(mktemp)
   started=$SECONDS
   # --entrypoint skips start.sh; --no-deps starts nothing else; no ports are published.
+  # `timeout` inside the container bounds alembic even if this script dies (TERM, then KILL
+  # 30 s later); this script's own deadline is a backstop MIGRATE_KILL_GRACE_SECONDS later.
   docker compose --profile "$NEW" run --rm --no-deps -T --name "$name" \
-    -e PGAPPNAME="$MIGRATE_APP_NAME" --entrypoint alembic "backend_${NEW}" upgrade head &
+    -e PGAPPNAME="$MIGRATE_APP_NAME" --entrypoint timeout "backend_${NEW}" \
+    --signal=TERM --kill-after=30 "$MIGRATE_TIMEOUT_SECONDS" alembic upgrade head \
+    > "$MIGRATE_LOG" 2>&1 < /dev/null &
   pid=$!
   MIGRATE_PID=$pid; MIGRATE_RUNNING=$name
-  trap on_signal_during_migrate HUP INT TERM
+  trap on_signal_during_migrate HUP INT TERM PIPE
+  deadline=$((MIGRATE_TIMEOUT_SECONDS + MIGRATE_KILL_GRACE_SECONDS))
   while kill -0 "$pid" 2>/dev/null; do
-    if [ $((SECONDS - started)) -ge "$MIGRATE_TIMEOUT_SECONDS" ]; then timed_out=1; break; fi
+    if [ $((SECONDS - started)) -ge "$deadline" ]; then timed_out=1; break; fi
     sleep 1
   done
   if [ "$timed_out" = 1 ]; then
-    trap - HUP INT TERM
-    MIGRATE_RUNNING=""
     pkill -TERM -P "$pid" 2>/dev/null || true
     kill -TERM "$pid" 2>/dev/null || true
     docker rm -f "$name" >/dev/null 2>&1 || true
     wait "$pid" 2>/dev/null || true
-    secs=$((SECONDS - started))
-    echo "ERROR: migrate step timed out after ${secs}s (MIGRATE_TIMEOUT_SECONDS=${MIGRATE_TIMEOUT_SECONDS}); killed container ${name}"
+    rc=124
+  elif wait "$pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  trap - HUP INT TERM PIPE
+  MIGRATE_RUNNING=""
+  secs=$((SECONDS - started))
+  show_migrate_log
+  # 124: `timeout` in the container ran out (or this script's backstop did); 137: its KILL.
+  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+    echo "ERROR: migrate step timed out after ${secs}s (MIGRATE_TIMEOUT_SECONDS=${MIGRATE_TIMEOUT_SECONDS}); container ${name} killed"
+    docker rm -f "$name" >/dev/null 2>&1 || true
     end_migrate_sessions
     now=$(schema_rev)
-    echo "    migrate step: ${START_REVS:-unknown} -> ${now} in ${secs}s (timed out, rolled back unless the report below says otherwise)"
+    echo "    migrate step: ${START_REVS:-unknown} -> ${now} in ${secs}s (timed out)"
     report_schema_after_failure "$now"
     exit 1
   fi
-  if wait "$pid"; then rc=0; else rc=$?; fi
-  trap - HUP INT TERM
-  MIGRATE_RUNNING=""
-  secs=$((SECONDS - started))
+  if [ "$rc" != 0 ]; then
+    # The exit code is the compose CLIENT's: if the client died (OOM, a crash) the container
+    # may still be running and could commit after this report. Make sure it is gone first.
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    end_migrate_sessions
+  fi
   now=$(schema_rev)
   echo "    migrate step: ${START_REVS:-unknown} -> ${now} in ${secs}s (alembic exit ${rc})"
   if [ "$rc" != 0 ]; then
@@ -618,8 +688,8 @@ migrate_step() {
 }
 
 # The tail of every abort after the new colour was started: where the schema is, who serves.
-SCHEMA_REV=""
 schema_note() {
+  SCHEMA_NOTED=1
   echo "    schema at ${SCHEMA_REV:-unknown}, old code still serving (${OLD}; nginx was never swapped)"
 }
 
@@ -679,6 +749,10 @@ check_memory
 if [ "${SKIP_MIGRATIONS:-0}" = 1 ]; then
   echo "==> Migrate step skipped (SKIP_MIGRATIONS=1)"
   SCHEMA_REV=$(schema_rev)
+  if [ -n "$IMAGE_HEADS" ] && [ "$SCHEMA_REV" != unknown ] && [ "$SCHEMA_REV" != "$IMAGE_HEADS" ]; then
+    echo "    WARNING: database at ${SCHEMA_REV}, image head ${IMAGE_HEADS}: ${NEW} starts on a schema it was not built for."
+    echo "             Expected for a rollback; anything else: unset SKIP_MIGRATIONS (it is not a .deploy.env knob)."
+  fi
 else
   echo "==> Migrate step"
   migrate_step
@@ -750,6 +824,7 @@ sudo install -m 0644 "$TMP_UPSTREAM" "$UPSTREAMS_FILE"
 rm -f "$TMP_UPSTREAM"
 sudo nginx -t
 sudo nginx -s reload
+SWAPPED=1
 
 # 5. Drain — let nginx finish in-flight requests on OLD color
 echo "==> Draining ${DRAIN_SECONDS}s"

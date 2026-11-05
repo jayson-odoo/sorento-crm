@@ -84,6 +84,9 @@ if args[0] == "compose":
         sys.stdout.write(rd("image_heads"))
     elif cmd == "run" and "upgrade" in rest:
         # The migrate step (DEPLOY-MIGRATE-STEP): `alembic upgrade head` in the new image.
+        if os.path.exists(os.path.join(d, "migrate_timeout_inside")):
+            sys.stderr.write("(timeout ran out inside the container)\n")
+            sys.exit(124)
         if os.path.exists(os.path.join(d, "migrate_hang")):
             import time
             time.sleep(60)
@@ -1123,11 +1126,14 @@ def test_migrate_step_runs_in_a_one_off_container_after_the_snapshot_and_before_
     assert len(ups) == 1, calls
     run = ups[0]
     assert "--profile green run --rm --no-deps -T --name sorento_migrate_green" in run, run
-    assert "-e PGAPPNAME=sorento_deploy_migrate" in run, run
-    assert run.endswith("--entrypoint alembic backend_green upgrade head"), run
+    assert "-e PGAPPNAME=sorento_deploy_migrate_abc123_" in run, run
+    assert run.endswith(
+        "--entrypoint timeout backend_green --signal=TERM --kill-after=30 1200 alembic upgrade head"
+    ), run
     dump, step, up = _index(calls, "pg_dump"), calls.index(run), _index(calls, "up -d --no-deps backend_")
     assert -1 < dump < step < up, calls
-    assert f"migrate step: start revision {OLD_REV}, image head {NEW_REV}, timeout 1200s" in r.stdout, r.stdout
+    assert f"migrate step: start revision {OLD_REV}, image head {NEW_REV}, timeout 1200s, session sorento_deploy_migrate_abc123_" in r.stdout, r.stdout
+    assert "| INFO  [alembic.runtime.migration] Running upgrade" in r.stdout, "the step's output is shown after it"
     assert f"migrate step: {OLD_REV} -> {NEW_REV} in " in r.stdout and "s (alembic exit 0)" in r.stdout, r.stdout
     assert "Deploy complete" in r.stdout
 
@@ -1146,10 +1152,17 @@ def test_a_failed_migrate_step_stops_the_deploy_and_says_the_db_is_at_the_old_he
     r = _run(box)
     assert r.returncode != 0
     assert "migrate step failed (alembic exit 1)" in r.stdout, r.stdout
-    assert f"Database is at the OLD head {OLD_REV}: nothing was committed." in r.stdout, r.stdout
+    assert f"Database is at the OLD head {OLD_REV}: no revision was committed" in r.stdout, r.stdout
     assert "green was not started and nginx was not swapped; blue keeps serving." in r.stdout
     calls = _calls(box)
     assert not _started_new_colour(calls), calls
+    # Reviewer round 1: a non-zero exit is the compose CLIENT's; the container is removed and
+    # its sessions ended before the schema is read, so an orphan cannot commit after the report.
+    step = calls.index(_upgrade_calls(calls)[0])
+    rm = next(i for i, l in enumerate(calls) if i > step and l == "rm -f sorento_migrate_green")
+    term = next(i for i, l in enumerate(calls) if "pg_terminate_backend" in l)
+    read = max(i for i, l in enumerate(calls) if "version_num" in l)
+    assert step < rm < term < read, calls
     assert not _swapped(calls)
     assert not (box["root"] / ".active_color").exists()
 
@@ -1176,25 +1189,27 @@ def test_a_migrate_step_past_its_timeout_is_killed_rolled_back_and_reported(box)
     _pending(box, lands_at=None)
     (box["stub"] / "migrate_hang").write_text("1")
     started = time.monotonic()
-    r = _run(box, MIGRATE_TIMEOUT_SECONDS="2", timeout=60)
+    r = _run(box, MIGRATE_TIMEOUT_SECONDS="2", MIGRATE_KILL_GRACE_SECONDS="0", timeout=60)
     took = time.monotonic() - started
     assert r.returncode != 0
     assert took < 30, f"the step must not wait out the hanging container ({took:.0f}s)"
     assert "migrate step timed out after" in r.stdout and "MIGRATE_TIMEOUT_SECONDS=2" in r.stdout, r.stdout
+    assert "(timed out)" in r.stdout
     calls = _calls(box)
     step = calls.index(_upgrade_calls(calls)[0])
     killed = next(i for i, l in enumerate(calls) if i > step and l == "rm -f sorento_migrate_green")
     terminate = next(i for i, l in enumerate(calls) if "pg_terminate_backend" in l)
     assert step < killed < terminate, calls
-    assert "application_name = 'sorento_deploy_migrate'" in calls[terminate], calls[terminate]
-    assert "terminated 1 Postgres session(s) named sorento_deploy_migrate" in r.stdout, r.stdout
-    assert f"Database is at the OLD head {OLD_REV}: nothing was committed." in r.stdout, r.stdout
+    assert "application_name like 'sorento_deploy_migrate_abc123_" in calls[terminate], calls[terminate]
+    assert "datname = 'sorento_app'" in calls[terminate], calls[terminate]
+    assert "terminated 1 Postgres session(s) named sorento_deploy_migrate_abc123_" in r.stdout, r.stdout
+    assert f"Database is at the OLD head {OLD_REV}: no revision was committed" in r.stdout, r.stdout
     assert not _started_new_colour(calls)
     assert not _swapped(calls)
 
 
 def test_the_migrate_timeout_can_be_set_in_deploy_env(box):
-    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=1\n")
+    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=1\nMIGRATE_KILL_GRACE_SECONDS=0\n")
     _pending(box, lands_at=None)
     (box["stub"] / "migrate_hang").write_text("1")
     r = _run(box, timeout=60)
@@ -1268,7 +1283,7 @@ def test_ha_mode_terminates_the_step_sessions_as_the_postgres_user(box):
     _ha_box(box)
     _pending(box, lands_at=None)
     (box["stub"] / "migrate_hang").write_text("1")
-    r = _run(box, IMAGE_TAG=SHA, MIGRATE_TIMEOUT_SECONDS="1", timeout=60)
+    r = _run(box, IMAGE_TAG=SHA, MIGRATE_TIMEOUT_SECONDS="1", MIGRATE_KILL_GRACE_SECONDS="0", timeout=60)
     assert r.returncode != 0
     line = next(l for l in _calls(box) if "pg_terminate_backend" in l)
     assert "exec -T -u postgres" in line and "-U postgres" in line, line
@@ -1305,7 +1320,7 @@ def test_a_signal_during_the_migrate_step_removes_the_container_and_ends_its_ses
     p.send_signal(signal.SIGTERM)
     out, _ = p.communicate(timeout=60)
     assert p.returncode != 0
-    assert "deploy interrupted during the migrate step; removing sorento_migrate_green" in out, out
+    assert "deploy interrupted during the migrate step; removed sorento_migrate_green" in out, out
     calls = _calls(box)
     step = calls.index(_upgrade_calls(calls)[0])
     assert any(i > step and l == "rm -f sorento_migrate_green" for i, l in enumerate(calls)), calls
@@ -1313,3 +1328,80 @@ def test_a_signal_during_the_migrate_step_removes_the_container_and_ends_its_ses
     assert f"Database is at the OLD head {OLD_REV}" in out, out
     assert not _started_new_colour(calls)
     assert _lock_is_free(box["lock"])
+
+
+def test_a_timeout_inside_the_container_is_reported_as_a_timeout(box):
+    """The normal timeout path: `timeout` in the container exits 124 before the backstop."""
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_timeout_inside").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0
+    assert "migrate step timed out after" in r.stdout, r.stdout
+    assert any("pg_terminate_backend" in l for l in _calls(box))
+    assert f"Database is at the OLD head {OLD_REV}" in r.stdout
+    assert not _started_new_colour(_calls(box))
+
+
+def test_the_session_name_is_per_run(box):
+    names = []
+    for _ in range(2):
+        (box["stub"] / "calls.log").unlink(missing_ok=True)
+        _pending(box)
+        r = _run(box)
+        assert r.returncode == 0, r.stdout + r.stderr
+        run = _upgrade_calls(_calls(box))[0]
+        names.append(run.split("PGAPPNAME=")[1].split()[0])
+    assert names[0] != names[1], names
+    assert all(len(n) <= 63 for n in names), names
+
+
+def test_no_matching_session_is_said_plainly_not_claimed_as_rolled_back(box):
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_timeout_inside").write_text("1")
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    (box["stub"] / "docker_stub.py").write_text(stub.replace(
+        'print("1" if "pg_terminate_backend" in joined', 'print("0" if "pg_terminate_backend" in joined'))
+    r = _run(box)
+    assert r.returncode != 0
+    assert "no Postgres session named sorento_deploy_migrate_abc123_" in r.stdout, r.stdout
+    assert "check pg_stat_activity" in r.stdout
+
+
+def test_a_zero_migrate_timeout_fails_closed(box):
+    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=0\n")
+    r = _run(box, timeout=30)
+    assert r.returncode != 0
+    assert "MIGRATE_TIMEOUT_SECONDS must be at least 1" in r.stdout, r.stdout
+    assert _upgrade_calls(_calls(box)) == []
+
+
+def test_preflight_warns_on_a_migrate_timeout_past_an_hour(box):
+    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=7200\n")
+    r = _run(box, args=("--preflight",), IMAGE_TAG="")
+    assert any(l.startswith("WARN") and "MIGRATE_TIMEOUT_SECONDS" in l for l in r.stdout.splitlines()), r.stdout
+
+
+def test_a_skipped_step_on_a_schema_the_image_does_not_match_is_warned_about(box):
+    _migrations(box, heads=HEAD, db=OLD_REV + "\n")
+    r = _run(box, SKIP_MIGRATIONS="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert f"WARNING: database at {OLD_REV}, image head {NEW_REV}" in r.stdout, r.stdout
+
+
+def test_an_unexpected_exit_after_the_step_still_names_the_schema(box):
+    """A `set -e` exit between the step and the swap (here `nginx -t` failing)."""
+    _pending(box)
+    bash_env = box["stub"] / "bash_env.sh"
+    bash_env.write_text(bash_env.read_text().replace(
+        "return 0; }", 'case "$*" in "nginx -t") return 1;; esac; return 0; }', 1))
+    r = _run(box)
+    assert r.returncode != 0
+    assert f"schema at {NEW_REV}, old code still serving" in r.stdout, r.stdout
+
+
+def test_the_migration_output_never_goes_to_the_callers_pipe_while_it_runs(box):
+    script = (box["root"] / "scripts" / "blue_green_deploy.sh").read_text()
+    run = script[script.index('docker compose --profile "$NEW" run --rm --no-deps -T --name "$name"'):]
+    run = run[: run.index("pid=$!")]
+    assert '> "$MIGRATE_LOG" 2>&1 < /dev/null &' in run, run
+    assert "trap on_signal_during_migrate HUP INT TERM PIPE" in script

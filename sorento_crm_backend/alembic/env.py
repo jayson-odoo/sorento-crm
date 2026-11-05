@@ -103,6 +103,9 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # A failing data migration must not print row values into the release log (the deploy's
+        # migrate step shows its output there); same setting as app/database.py.
+        hide_parameters=True,
     )
 
     with connectable.connect() as connection:
