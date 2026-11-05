@@ -63,7 +63,7 @@ portal routes).
 ### Matching (S3)
 
 - `services/npa_match_service.py`: `matches_for_line(db, line) -> {exact, similar}`. Exact = normalized code
-  equality (proposed_code, reference product code). Similar = `entity_resolver` product probe over the line text,
+  equality on proposed_code only; the reference product seeds the ranking (its family ranked up). Similar = `entity_resolver` product probe over the line text,
   trigram then embedding, active products, company-scoped, top 5, `exact` excluded. Computed on read, never
   stored.
 - Rep: `use-match` / `reject-matches` routes (staff + portal), owner only, on an unlocked application (draft

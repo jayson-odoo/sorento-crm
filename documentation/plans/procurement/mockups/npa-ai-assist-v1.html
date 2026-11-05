@@ -1,0 +1,593 @@
+<title>NPA AI Assist Mock</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<!-- NPA-AI-ASSIST mock v1 (5 Nov 2026). Clickable Phase 1 mock for PLAN-npa-ai-assist-04nov.md.
+     Every name, number and code is invented (public repo). Mirrors existing components:
+     StockInquiryDetail.tsx, NewProductApplicationLines.tsx, NewProductApplicationDetail.tsx (OpenedAs). -->
+<style>
+/* Layout: CRM shell (sidebar + content) for staff, slim portal shell for the rep; a test bar on top drives the flow. */
+:root{
+  --bg:#f4f4f5;--card:#ffffff;--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--soft:#f4f4f5;
+  --primary:#1b84ff;--primary-soft:#e9f3ff;--ok:#166534;--ok-soft:#dcfce7;--warn:#92400e;--warn-soft:#fef3c7;
+  --bad:#dc2626;--bad-soft:#fee2e2;--info:#1e40af;--info-soft:#dbeafe;--violet:#6d28d9;--violet-soft:#ede9fe;
+  --wa:#075e54;--wa-bg:#ece5dd;--wa-in:#ffffff;--wa-out:#dcf8c6;--test:#0f172a;--test-fg:#f8fafc;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0b0b0e;--card:#16161a;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2a2a31;--soft:#1f1f25;
+  --primary:#4a9dff;--primary-soft:#14263d;--ok:#86efac;--ok-soft:#12301d;--warn:#fcd34d;--warn-soft:#3a2a0b;
+  --bad:#f87171;--bad-soft:#3b1414;--info:#93c5fd;--info-soft:#14223d;--violet:#c4b5fd;--violet-soft:#261c42;
+  --wa:#1f2c33;--wa-bg:#0b141a;--wa-in:#1f2c33;--wa-out:#005c4b;--test:#1e293b;--test-fg:#f1f5f9;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b0b0e;--card:#16161a;--fg:#f4f4f5;--muted:#a1a1aa;--border:#2a2a31;--soft:#1f1f25;
+  --primary:#4a9dff;--primary-soft:#14263d;--ok:#86efac;--ok-soft:#12301d;--warn:#fcd34d;--warn-soft:#3a2a0b;
+  --bad:#f87171;--bad-soft:#3b1414;--info:#93c5fd;--info-soft:#14223d;--violet:#c4b5fd;--violet-soft:#261c42;
+  --wa:#1f2c33;--wa-bg:#0b141a;--wa-in:#1f2c33;--wa-out:#005c4b;--test:#1e293b;--test-fg:#f1f5f9;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}.mono{font-family:var(--mono);font-size:12.5px}
+
+/* test bar */
+.testbar{background:var(--test);color:var(--test-fg);padding-block:10px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.testbar .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.testbar .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.7}
+.seg{display:inline-flex;border:1px solid rgba(255,255,255,.25);border-radius:8px;overflow:hidden}
+.seg button{background:transparent;border:0;color:var(--test-fg);padding:6px 12px;cursor:pointer}
+.seg button.on{background:var(--primary);color:#fff}
+.tctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tbtn{background:transparent;border:1px solid rgba(255,255,255,.3);color:var(--test-fg);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12.5px}
+.tbtn:hover{background:rgba(255,255,255,.08)}
+.tchk{display:inline-flex;gap:6px;align-items:center;font-size:12.5px}
+.steps{display:flex;gap:6px;margin-top:10px;overflow-x:auto;padding-bottom:2px}
+.step{flex:1 0 150px;border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 9px;font-size:12px;cursor:pointer;background:transparent;color:var(--test-fg);text-align:left}
+.step .n{font-weight:700;margin-right:4px}
+.step.done{opacity:.55}.step.now{border-color:var(--primary);background:rgba(27,132,255,.18)}
+.step .who{display:block;opacity:.7;font-size:11px}
+
+/* shells */
+.shell{display:flex;min-height:calc(100vh - 120px)}
+.side{width:228px;flex:none;border-right:1px solid var(--border);background:var(--card);padding:16px 10px;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 16px}
+.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin:14px 8px 6px}
+.side button{display:block;width:100%;text-align:left;background:none;border:0;padding:7px 8px;border-radius:6px;cursor:pointer}
+.side button.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+.side .dim{padding:7px 8px;color:var(--muted)}
+.main{flex:1;min-width:0;padding-block:20px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:16px}
+.portalhdr{background:var(--card);border-bottom:1px solid var(--border);padding-block:12px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.portalhdr .brand{font-weight:700}
+.portalhdr nav{display:flex;gap:4px;flex-wrap:wrap}
+.portalhdr nav button{background:none;border:0;padding:6px 10px;border-radius:6px;cursor:pointer}
+.portalhdr nav button.on{background:var(--primary-soft);color:var(--primary);font-weight:600}
+@media (max-width:820px){.side{display:none}.mnav{display:flex!important}}
+.mnav{display:none;gap:6px;flex-wrap:wrap}
+.mnav button{border:1px solid var(--border);background:var(--card);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:13px}
+.mnav button.on{border-color:var(--primary);color:var(--primary)}
+
+/* page parts */
+.crumb{font-size:12px;color:var(--muted)}
+.phdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.phdr h1{font-size:20px;font-weight:600;margin:2px 0 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.meta b{color:var(--fg);font-weight:500}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px;min-width:0}
+.card h2{font-size:15px;margin:0 0 10px;font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.out{background:var(--card);color:var(--fg);border-color:var(--border)}
+.btn.ghost{background:none;border-color:transparent;color:var(--primary);padding:4px 6px}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn.danger{background:var(--card);color:var(--bad);border-color:var(--border)}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600;background:var(--soft);color:var(--muted);white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.info{background:var(--info-soft);color:var(--info)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.violet{background:var(--violet-soft);color:var(--violet)}
+.kv{display:grid;grid-template-columns:180px 1fr;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.kv>div{padding:8px 12px;border-bottom:1px solid var(--border);min-width:0}
+.kv>div:nth-last-child(-n+2){border-bottom:0}
+.kv .k{background:var(--soft);font-weight:600;font-size:13px}
+@media (max-width:640px){.kv{grid-template-columns:1fr}.kv .k{border-bottom:0;padding-bottom:2px;background:none;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}.kv>div:nth-last-child(2){border-bottom:0}}
+.empty{border:1px dashed var(--border);border-radius:8px;padding:16px;text-align:center}
+.empty .h{font-weight:600}
+.thumbs{display:flex;gap:10px;flex-wrap:wrap}
+.thumb{width:130px;height:96px;border:1px solid var(--border);border-radius:8px;display:flex;align-items:flex-end;padding:6px;font-size:11px;color:var(--muted);background:linear-gradient(135deg,var(--soft),var(--card))}
+.notice{border:1px solid var(--border);background:var(--soft);border-radius:8px;padding:8px 12px;font-size:13px}
+.notice.ai{border-color:var(--violet-soft);background:var(--violet-soft);color:var(--violet)}
+.resp{white-space:pre-wrap}
+
+/* tables */
+.tscroll{overflow-x:auto;max-width:100%;border:1px solid var(--border);border-radius:8px}
+table.grid{border-collapse:collapse;width:100%;min-width:980px;table-layout:fixed}
+table.grid th{background:var(--soft);text-align:left;font-size:12px;font-weight:600;padding:8px;border-bottom:1px solid var(--border);white-space:nowrap}
+table.grid td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;font-size:13px}
+table.grid tr:last-child td{border-bottom:0}
+table.grid input,table.grid select,.field input,.field select,.field textarea{width:100%;border:1px solid var(--border);border-radius:6px;padding:6px 8px;background:var(--card);min-height:32px}
+table.grid input.aifill,.field textarea.aifill,.field input.aifill{border-color:var(--violet);background:var(--violet-soft)}
+.req{color:var(--bad)}
+.field{display:grid;gap:4px}
+.field label{font-size:12px;font-weight:600}
+.fgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.err{color:var(--bad);font-size:12px}
+.sk{height:14px;border-radius:4px;background:linear-gradient(90deg,var(--soft),var(--border),var(--soft));background-size:200% 100%;animation:sh 1.2s linear infinite}
+@keyframes sh{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
+.mcell{display:grid;gap:4px}
+.mrow{display:flex;gap:6px;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:6px;padding:4px 6px}
+.mrow.rej{opacity:.6}.mrow.rej .t{text-decoration:line-through}
+.mrow .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.opened{border:1px solid var(--ok-soft);background:var(--ok-soft);color:var(--ok);border-radius:6px;padding:5px 8px;font-size:12.5px}
+.reserved{border:1px solid var(--warn-soft);background:var(--warn-soft);color:var(--warn);border-radius:6px;padding:5px 8px;font-size:12.5px}
+
+/* dialogs */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:max(24px,env(safe-area-inset-top,0px)) 12px 24px;overflow-y:auto;z-index:40}
+.dlg{background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:640px;padding:18px;display:grid;gap:12px}
+.dlg.wide{max-width:860px}
+.dlg h3{margin:0;font-size:16px}
+.dlg .foot{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.mline{border:1px solid var(--border);border-radius:10px;padding:12px;display:grid;gap:8px}
+.mopt{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;flex-wrap:wrap}
+.mopt.sel{border-color:var(--primary);background:var(--primary-soft)}
+.mopt .t{min-width:0;flex:1 1 200px}
+.tag{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+
+/* whatsapp */
+.wa{max-width:460px;margin:0 auto;border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--wa-bg)}
+.wa .hd{background:var(--wa);color:#fff;padding:10px 14px;font-weight:600}
+.wa .body{padding:12px;display:grid;gap:8px;min-height:320px;align-content:start}
+.bub{max-width:85%;border-radius:10px;padding:8px 10px;font-size:13.5px;white-space:pre-wrap;box-shadow:0 1px 0 rgba(0,0,0,.08)}
+.bub.in{background:var(--wa-in);justify-self:start}
+.bub.out{background:var(--wa-out);justify-self:end}
+.bub a{color:var(--primary);cursor:pointer;text-decoration:underline;word-break:break-all}
+.bub .tm{display:block;text-align:right;font-size:10.5px;opacity:.6;margin-top:2px}
+
+.toast{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:max(16px,env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:8px;font-size:13px;z-index:60;max-width:calc(100vw - 32px)}
+</style>
+
+<div id="app"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- invented data ---------- */
+var CATALOGUE = [
+  {code:'CB-4012-GR', name:'Concrete round basin 400 x 120 mm, grey', brand:'Sorento'},
+  {code:'CB-4012-WH', name:'Concrete round basin 400 x 120 mm, white', brand:'Sorento'},
+  {code:'CB-4515-GR', name:'Concrete round basin 450 x 150 mm, grey', brand:'Sorento'},
+  {code:'CB-4013-TZ', name:'Concrete round basin 400 x 130 mm, terrazzo', brand:'Sorento'},
+  {code:'CS-5040-GR', name:'Concrete square basin 500 x 400 mm, grey', brand:'Sorento'},
+  {code:'DC-0032-CH', name:'Pop-up drain cap 32 mm, chrome', brand:'Aqualine'},
+  {code:'DC-0032-BK', name:'Pop-up drain cap 32 mm, matt black', brand:'Aqualine'},
+  {code:'DC-0040-CH', name:'Pop-up drain cap 40 mm, chrome', brand:'Aqualine'},
+  {code:'SS-8045-BR', name:'Stainless steel sink, 2 bowl 800 x 450 mm, brushed', brand:'Sorento'},
+  {code:'SS-6045-BK', name:'Stainless steel sink, 1 bowl 600 x 450 mm, black nano', brand:'Sorento'}
+];
+var RESERVED_ELSEWHERE = [{code:'CB-4213-TZ', app:'NPA-000031', line:1}];
+var BRANDS = ['Sorento','Aqualine','Other'];
+var REP = 'Aiman Hakim';
+var PURCH = 'Siti Purchasing';
+
+function freshState(){
+  return {
+    role:'purchasing', view:'si', aiFail:false,
+    si:{no:'SI26-0412', status:'pending_purchasing', response:'', requested:false, requestedBy:null, requestedAt:null},
+    wa:[{dir:'out', text:'Hi, any stock for a 420 mm concrete round basin in terrazzo finish? 30 pcs for Taman Seri Murni, need by end Jan. Photo attached.', tm:'09:12'},
+        {dir:'in', text:'Thanks Aiman, your stock inquiry SI26-0412 has been received.', tm:'09:12'}],
+    npa:null, dlg:null, toast:null, loading:false
+  };
+}
+var S = freshState();
+
+/* ---------- helpers ---------- */
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function norm(c){return String(c||'').replace(/\s+/g,'').toUpperCase();}
+function prod(code){for(var i=0;i<CATALOGUE.length;i++){if(CATALOGUE[i].code===code)return CATALOGUE[i];}return null;}
+function nowTm(){var d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+var STOP={mm:1,per:1,pcs:1,pc:1,the:1,and:1,with:1,for:1,'x':1};
+function toks(s){return String(s||'').toLowerCase().replace(/ø/g,'').split(/[^a-z0-9]+/).filter(function(t){return t.length>=2&&!STOP[t];});}
+function toast(msg){S.toast=msg;render();clearTimeout(toast._t);toast._t=setTimeout(function(){S.toast=null;render();},3200);}
+
+function statusPill(st){
+  var m={pending_purchasing:['Pending purchasing','info'],responded:['Responded','ok'],draft:['Draft',''],submitted:['Submitted','info'],approved:['Approved','violet'],completed:['Completed','ok']};
+  var v=m[st]||[st,''];return '<span class="pill '+v[1]+'">'+v[0]+'</span>';
+}
+
+/* AI draft (mocked): what the LLM would return for SI26-0412 */
+function aiDraft(){
+  return {
+    remark:'Customer wants a round concrete basin about 420 mm across in a terrazzo finish, close to our CB-4012 grey basin but larger and terrazzo. 30 pcs for Taman Seri Murni, needed by end January. A matching 32 mm drain cap in a terrazzo-look finish is also wanted.',
+    lines:[
+      {ref:'CB-4012-GR', code:'', desc:'Concrete round basin', dim:'420 x 130 mm', mat:'Concrete, terrazzo finish', thk:'12 mm', pack:'1 pc / carton', brand:'Sorento', qty:'30'},
+      {ref:'', code:'', desc:'Pop-up drain cap', dim:'32 mm', mat:'Brass, terrazzo-look insert', thk:'', pack:'1 pc / box', brand:'', qty:'30'}
+    ]
+  };
+}
+function copyDraft(){
+  return {remark:'', lines:[{ref:'', code:'', desc:'420mm concrete round basin terrazzo', dim:'', mat:'', thk:'', pack:'', brand:'', qty:'30'}]};
+}
+function newLine(){return {ref:'',code:'',desc:'',dim:'',mat:'',thk:'',pack:'',brand:'',qty:'',decision:null,usedCode:null,rejected:[],opened:null,openedBy:null,reserved:null};}
+
+/* matching (mocked ranker): exact on proposed code, similar by shared tokens + reference family */
+function matchesFor(line){
+  var exact=null;
+  if(line.code){CATALOGUE.forEach(function(p){if(norm(p.code)===norm(line.code))exact=p;});}
+  var refP=line.ref?prod(line.ref):null;
+  var text=[line.desc,line.dim,line.mat,line.thk,line.brand,refP?refP.name:''].join(' ');
+  var lt=toks(text), fam=refP?refP.code.split('-')[0]:null;
+  var scored=CATALOGUE.filter(function(p){return !exact||p.code!==exact.code;}).map(function(p){
+    var pt=toks(p.name+' '+p.brand), sc=0;
+    pt.forEach(function(t){if(lt.indexOf(t)>=0)sc+=1;});
+    if(fam&&p.code.split('-')[0]===fam)sc+=2;
+    return {p:p,sc:sc};
+  }).filter(function(x){return x.sc>=3;}).sort(function(a,b){return b.sc-a.sc;}).slice(0,5).map(function(x){return x.p;});
+  return {exact:exact, similar:scored};
+}
+
+/* ---------- step tracker ---------- */
+function currentStep(){
+  if(!S.si.requested)return 1;
+  if(!S.npa||S.npa.status==='draft')return 2;
+  if(S.npa.status==='submitted'||S.npa.status==='approved'){
+    var anyRes=S.npa.lines.some(function(l){return l.reserved&&!l.opened;});
+    return anyRes?5:4;
+  }
+  return 6;
+}
+var STEPS=[
+  ['Purchasing asks','Purchasing: Edit purchasing response, tick the box, Update & Reply'],
+  ['Rep creates (AI draft)','Rep: open the WhatsApp link, check the AI draft'],
+  ['Rep checks matches','Rep: Submit, pick an existing product or "None of these"'],
+  ['Purchasing reviews','Purchasing: Approve, then Link or Reserve new code'],
+  ['AutoCount sync','Test bar: Simulate AutoCount sync']
+];
+
+/* ---------- render ---------- */
+function render(){
+  var a=document.getElementById('app');
+  var y=window.scrollY;
+  a.innerHTML=testbar()+(S.role==='purchasing'?staffShell():portalShell())+dialog()+(S.toast?'<div class="toast" role="status">'+esc(S.toast)+'</div>':'');
+  window.scrollTo(0,y);
+  if(S.focus){var el=document.getElementById(S.focus);if(el){el.focus();if(el.setSelectionRange&&el.value!=null){var n=el.value.length;try{el.setSelectionRange(n,n);}catch(e){}}}S.focus=null;}
+}
+
+function testbar(){
+  var cs=currentStep();
+  var steps=STEPS.map(function(s,i){
+    var n=i+1,cls=n<cs?'done':(n===cs?'now':'');
+    return '<button class="step '+cls+'" data-act="goto-step" data-step="'+n+'"><span class="n">'+n+'</span>'+esc(s[0])+'<span class="who">'+esc(s[1])+'</span></button>';
+  }).join('');
+  var anyRes=S.npa&&S.npa.lines.some(function(l){return l.reserved&&!l.opened;});
+  return '<div class="testbar"><div class="row">'+
+    '<div class="tctl"><span class="lbl">Mock test bar</span><div class="seg" role="group" aria-label="View as">'+
+      '<button data-act="role" data-role="purchasing" class="'+(S.role==='purchasing'?'on':'')+'">Purchasing (CRM)</button>'+
+      '<button data-act="role" data-role="rep" class="'+(S.role==='rep'?'on':'')+'">Sales rep (portal)</button></div></div>'+
+    '<div class="tctl">'+
+      '<label class="tchk"><input type="checkbox" id="t-aifail" data-act="aifail" '+(S.aiFail?'checked':'')+'> Simulate AI failure</label>'+
+      (anyRes?'<button class="tbtn" data-act="sync">Simulate AutoCount sync</button>':'')+
+      '<button class="tbtn" data-act="reset">Reset flow</button></div>'+
+  '</div><div class="steps">'+steps+(cs===6?'<span class="step now" style="cursor:default">Done: application completed</span>':'')+'</div></div>';
+}
+
+/* staff */
+function staffShell(){
+  var nav=[['si','Stock Inquiries'],['npa','New Product Applications']];
+  var side='<aside class="side"><div class="brand">Sorento CRM</div><div class="grp">Procurement</div>'+
+    nav.map(function(n){return '<button data-act="nav" data-view="'+n[0]+'" class="'+(S.view===n[0]?'on':'')+'">'+n[1]+'</button>';}).join('')+
+    '<div class="dim">Purchase Requests</div><div class="dim">Suppliers</div><div class="grp">Master data</div><div class="dim">Products</div></aside>';
+  var mnav='<div class="mnav">'+nav.map(function(n){return '<button data-act="nav" data-view="'+n[0]+'" class="'+(S.view===n[0]?'on':'')+'">'+n[1]+'</button>';}).join('')+'</div>';
+  var body=S.view==='npa'?staffNpa():staffSi();
+  return '<div class="shell">'+side+'<main class="main"><div class="wrap">'+mnav+body+'</div></main></div>';
+}
+
+function siDetailsKv(){
+  return '<div class="kv">'+
+    '<div class="k">Salesperson</div><div>'+REP+'</div>'+
+    '<div class="k">Product code</div><div class="muted">Not given</div>'+
+    '<div class="k">Item description</div><div>420 mm concrete round basin, terrazzo finish</div>'+
+    '<div class="k">Project / customer</div><div>Taman Seri Murni / Seri Murni Development Sdn Bhd</div>'+
+    '<div class="k">Quantity</div><div>30 pcs</div>'+
+    '<div class="k">Delivery date</div><div>31 Jan 2027</div>'+
+    '<div class="k">Remark</div><div>Customer likes our grey CB-4012 basin but wants it bigger and in terrazzo. Needs a matching drain cap.</div>'+
+  '</div>';
+}
+
+function npaRowCard(forRep){
+  var body;
+  if(S.npa&&S.npa.status!=='draft'){
+    body='<div class="mrow"><span class="t"><b>'+S.npa.no+'</b> &middot; '+S.npa.lines.length+' products</span>'+statusPill(S.npa.status)+
+      '<button class="btn sm out" data-act="nav" data-view="'+(forRep?'rnpa':'npa')+'">Open</button></div>';
+  } else {
+    body='<div class="empty"><div class="h">No new product applications</div><div class="muted xs">Applications raised from this inquiry show here.</div></div>';
+  }
+  return '<section class="card"><h2>New product applications</h2>'+body+'</section>';
+}
+
+function staffSi(){
+  var si=S.si, canResp=si.status==='pending_purchasing'||si.status==='responded';
+  var marker=si.requested&&!(S.npa&&S.npa.status!=='draft')?'<span class="pill warn">New product application requested</span>':'';
+  return '<div><div class="crumb">Procurement / Stock Inquiries</div><div class="phdr"><h1>'+si.no+' '+statusPill(si.status)+' '+marker+'</h1>'+
+    '<div class="actions">'+(canResp?'<button class="btn" data-act="open-resp">Edit purchasing response</button>':'')+'<button class="btn out" disabled>Reject</button></div></div>'+
+    '<div class="meta"><span>Requested by <b>'+REP+'</b></span><span>Created <b>4 Nov 2026, 09:12</b></span>'+(si.requestedBy?'<span>Application asked by <b>'+esc(si.requestedBy)+'</b> at <b>'+esc(si.requestedAt)+'</b></span>':'')+'</div></div>'+
+    '<section class="card"><h2>Inquiry details</h2>'+siDetailsKv()+'</section>'+
+    '<section class="card"><h2>Attachments</h2><div class="thumbs"><div class="thumb">site-photo.jpg</div><div class="thumb">reference-basin.jpg</div></div></section>'+
+    '<section class="card"><h2>Purchasing response</h2>'+(si.response?'<div class="resp">'+esc(si.response)+'</div><div class="muted xs" style="margin-top:6px">Sent by '+PURCH+'</div>':'<div class="empty"><div class="h">No response yet</div><div class="muted xs">The answer to the rep shows here.</div></div>')+'</section>'+
+    npaRowCard(false);
+}
+
+function staffNpa(){
+  var n=S.npa;
+  if(!n||n.status==='draft'){
+    return '<div><div class="crumb">Procurement / New Product Applications</div><div class="phdr"><h1>New Product Applications</h1></div></div>'+
+      '<section class="card"><div class="empty"><div class="h">No applications yet</div><div class="muted xs">Applications submitted by reps show here.</div></div></section>';
+  }
+  var act='';
+  if(n.status==='submitted')act='<button class="btn" data-act="approve">Approve</button><button class="btn out" disabled>Reject</button>';
+  var rows=n.lines.map(function(l,i){
+    var mc='';
+    if(!l.opened&&!l.reserved){
+      var m=matchesFor(l), list=(m.exact?[m.exact]:[]).concat(m.similar);
+      var canAct=n.status==='approved';
+      mc='<div class="mcell">'+(list.length?list.map(function(p){
+        var rej=l.rejected.indexOf(p.code)>=0;
+        return '<div class="mrow'+(rej?' rej':'')+'"><span class="t" title="'+esc(p.code+' - '+p.name)+'"><span class="mono">'+p.code+'</span> '+esc(p.name)+'</span>'+
+          (rej?'<span class="xs muted" style="text-decoration:none;white-space:nowrap">Rep: none of these</span>':'')+
+          '<button class="btn sm out" data-act="link" data-i="'+i+'" data-code="'+p.code+'" '+(canAct?'':'disabled')+'>Link</button></div>';
+      }).join(''):'<span class="muted xs">No similar products</span>')+
+      '<div><button class="btn sm" data-act="open-reserve" data-i="'+i+'" '+(canAct?'':'disabled')+'>Reserve new code</button>'+(canAct?'':' <span class="xs muted">Approve first</span>')+'</div></div>';
+    } else mc='<span class="muted xs">Settled</span>';
+    var op;
+    if(l.opened)op='<div class="opened"><span class="mono">'+l.opened+'</span><br>'+esc((prod(l.opened)||{}).name||'')+'<br><span class="xs">'+esc(l.openedBy)+'</span></div>';
+    else if(l.reserved)op='<div class="reserved">Reserved: <span class="mono">'+esc(l.reserved)+'</span><br>Waiting for AutoCount</div><button class="btn ghost sm" data-act="undo" data-i="'+i+'">Undo</button>';
+    else op='<span class="muted xs">Not opened</span>';
+    var ref=l.ref?'<span class="mono">'+l.ref+'</span>':'<span class="muted">None</span>';
+    return '<tr><td>'+(i+1)+'</td><td><b>'+esc(l.desc)+'</b><div class="xs muted">'+esc([l.dim,l.mat,l.thk,l.pack].filter(Boolean).join(' \u00b7 '))+'</div><div class="xs muted">Brand: '+esc(l.brand||'-')+'</div></td><td>'+ref+'</td><td>'+esc(l.qty)+'</td><td>'+mc+'</td><td>'+op+'</td></tr>';
+  }).join('');
+  return '<div><div class="crumb">Procurement / New Product Applications</div><div class="phdr"><h1>'+n.no+' '+statusPill(n.status)+'</h1><div class="actions">'+act+'</div></div>'+
+    '<div class="meta"><span>Sales person <b>'+REP+'</b></span><span>Stock inquiry <b>'+S.si.no+'</b></span><span>Submitted <b>'+esc(n.submittedAt)+'</b></span></div></div>'+
+    '<section class="card"><h2>Application</h2><div class="kv"><div class="k">Customer</div><div>Seri Murni Development Sdn Bhd</div><div class="k">Project</div><div>Taman Seri Murni</div><div class="k">Target delivery</div><div>31 Jan 2027</div><div class="k">Remark</div><div class="resp">'+esc(n.remark)+'</div></div></section>'+
+    '<section class="card"><h2>Products</h2><div class="tscroll"><table class="grid"><colgroup><col style="width:44px"><col style="width:240px"><col style="width:110px"><col style="width:60px"><col><col style="width:200px"></colgroup>'+
+    '<thead><tr><th>No.</th><th>Product</th><th>Reference</th><th>Qty</th><th>Matches</th><th>Opened as</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+}
+
+/* portal */
+function portalShell(){
+  var nav=[['wa','WhatsApp'],['rsi','My stock inquiries'],['rnpa','My new product applications']];
+  var v=S.view; if(['wa','rsi','rnpa','form'].indexOf(v)<0)v='wa';
+  var hdr='<div class="portalhdr"><span class="brand">Sorento portal</span><nav>'+nav.map(function(n){return '<button data-act="nav" data-view="'+n[0]+'" class="'+((v===n[0]||(v==='form'&&n[0]==='rnpa'))?'on':'')+'">'+n[1]+'</button>';}).join('')+'</nav><span class="muted xs" style="margin-left:auto">'+REP+'</span></div>';
+  var body=v==='wa'?waView():v==='rsi'?repSi():v==='form'?repForm():repNpa();
+  return hdr+'<main class="main"><div class="wrap">'+body+'</div></main>';
+}
+
+function waView(){
+  var b=S.wa.map(function(m){
+    var t=esc(m.text);
+    if(m.link)t+='\n<a data-act="wa-link">'+esc(m.link)+'</a>';
+    return '<div class="bub '+m.dir+'">'+t+'<span class="tm">'+m.tm+'</span></div>';
+  }).join('');
+  return '<div class="wa"><div class="hd">Sorento Support</div><div class="body">'+b+'</div></div>';
+}
+
+function repSi(){
+  var si=S.si, canCreate=si.status==='responded'&&si.requested&&!(S.npa&&S.npa.status!=='draft');
+  return '<div><div class="phdr"><h1>'+si.no+' '+statusPill(si.status)+(si.requested&&canCreate?' <span class="pill warn">New product application requested</span>':'')+'</h1>'+
+    '<div class="actions">'+(canCreate?'<button class="btn" data-act="create-npa">'+(S.npa?'Continue new product application':'Create new product application')+'</button>':'')+'</div></div></div>'+
+    '<section class="card"><h2>Inquiry details</h2>'+siDetailsKv()+'</section>'+
+    '<section class="card"><h2>Purchasing response</h2>'+(si.response?'<div class="resp">'+esc(si.response)+'</div>':'<div class="empty"><div class="h">Waiting for purchasing</div></div>')+'</section>'+
+    npaRowCard(true);
+}
+
+function inp(id,val,attrs){return '<input id="'+id+'" value="'+esc(val)+'" '+(attrs||'')+'>';}
+
+function repForm(){
+  var n=S.npa;
+  if(S.loading){
+    var sk='<div class="sk" style="width:60%"></div><div class="sk" style="width:90%"></div><div class="sk" style="width:75%"></div>';
+    return '<div><div class="crumb">My new product applications / New</div><div class="phdr"><h1>New product application</h1></div></div>'+
+      '<section class="card" aria-busy="true"><div style="display:grid;gap:10px">'+sk+sk+'</div></section>';
+  }
+  var ai=n.draftedBy==='ai';
+  var notice=ai?'<div class="notice ai">Drafted from '+S.si.no+'. Check before you submit.</div>':'<div class="notice">Copied from '+S.si.no+'.</div>';
+  var cls=function(f){return ai&&n.aiFields[f]?' class="aifill"':'';};
+  var opts=function(sel){return '<option value="">None</option>'+CATALOGUE.map(function(p){return '<option value="'+p.code+'" '+(p.code===sel?'selected':'')+'>'+p.code+' - '+esc(p.name)+'</option>';}).join('');};
+  var bopts=function(sel){return '<option value="">-</option>'+BRANDS.map(function(b){return '<option '+(b===sel?'selected':'')+'>'+b+'</option>';}).join('');};
+  var rows=n.lines.map(function(l,i){
+    var a=ai&&l.ai;
+    var c=function(f){return a&&l.ai[f]?'class="aifill"':'';};
+    return '<tr><td>'+(i+1)+'</td>'+
+      '<td><select id="l'+i+'-ref" data-bind="ref" data-i="'+i+'" '+c('ref')+' aria-label="Reference product">'+opts(l.ref)+'</select></td>'+
+      '<td>'+inp('l'+i+'-code',l.code,'data-bind="code" data-i="'+i+'" placeholder="If known" aria-label="Product code"')+'</td>'+
+      '<td>'+inp('l'+i+'-desc',l.desc,'data-bind="desc" data-i="'+i+'" '+c('desc')+' aria-label="Product type"')+(S.submitTry&&!l.desc.trim()?'<div class="err">Enter the product type.</div>':'')+'</td>'+
+      '<td>'+inp('l'+i+'-dim',l.dim,'data-bind="dim" data-i="'+i+'" '+c('dim')+' aria-label="Dimension"')+'</td>'+
+      '<td>'+inp('l'+i+'-mat',l.mat,'data-bind="mat" data-i="'+i+'" '+c('mat')+' aria-label="Material"')+'</td>'+
+      '<td>'+inp('l'+i+'-thk',l.thk,'data-bind="thk" data-i="'+i+'" '+c('thk')+' aria-label="Thickness"')+'</td>'+
+      '<td>'+inp('l'+i+'-pack',l.pack,'data-bind="pack" data-i="'+i+'" '+c('pack')+' aria-label="Packing"')+'</td>'+
+      '<td><select id="l'+i+'-brand" data-bind="brand" data-i="'+i+'" '+c('brand')+' aria-label="Brand">'+bopts(l.brand)+'</select></td>'+
+      '<td>'+inp('l'+i+'-qty',l.qty,'data-bind="qty" data-i="'+i+'" inputmode="decimal" '+c('qty')+' aria-label="Qty"')+'</td>'+
+      '<td>'+(n.lines.length>1?'<button class="btn ghost sm" data-act="rm-line" data-i="'+i+'" aria-label="Remove product '+(i+1)+'">Remove</button>':'')+'</td></tr>';
+  }).join('');
+  return '<div><div class="crumb">My new product applications / New</div><div class="phdr"><h1>New product application '+statusPill('draft')+'</h1>'+
+    '<div class="actions"><button class="btn out" data-act="save-draft">Save draft</button><button class="btn" data-act="submit">Submit</button></div></div></div>'+
+    notice+
+    '<section class="card"><h2>Application</h2><div class="fgrid">'+
+      '<div class="field"><label>Stock inquiry</label><input value="'+S.si.no+'" disabled></div>'+
+      '<div class="field"><label>Customer</label><input value="Seri Murni Development Sdn Bhd" disabled></div>'+
+      '<div class="field"><label>Project</label><input value="Taman Seri Murni" disabled></div>'+
+      '<div class="field"><label>Target delivery</label><input value="31 Jan 2027" disabled></div>'+
+    '</div><div class="field" style="margin-top:12px"><label for="f-remark">Remark</label><textarea id="f-remark" rows="4" data-bind="remark"'+cls('remark')+'>'+esc(n.remark)+'</textarea></div></section>'+
+    '<section class="card"><h2>Products</h2><div class="tscroll"><table class="grid"><colgroup><col style="width:40px"><col style="width:190px"><col style="width:110px"><col style="width:170px"><col style="width:120px"><col style="width:160px"><col style="width:80px"><col style="width:110px"><col style="width:110px"><col style="width:64px"><col style="width:80px"></colgroup>'+
+    '<thead><tr><th>No.</th><th>Reference product</th><th>Product code</th><th>Product type <span class="req">*</span></th><th>Dimension</th><th>Material</th><th>Thickness</th><th>Packing</th><th>Brand</th><th>Qty</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+    '<div style="margin-top:10px"><button class="btn out sm" data-act="add-line">Add product</button></div></section>';
+}
+
+function repNpa(){
+  var n=S.npa;
+  if(!n||n.status==='draft'){
+    return '<div class="phdr"><h1>My new product applications</h1></div><section class="card"><div class="empty"><div class="h">No applications yet</div><div class="muted xs">'+(n?'Your draft is waiting in the stock inquiry.':'Applications you raise show here.')+'</div></div></section>';
+  }
+  var rows=n.lines.map(function(l,i){
+    var out=l.opened?'<div class="opened"><span class="mono">'+l.opened+'</span> '+esc((prod(l.opened)||{}).name||'')+'</div>':l.reserved?'<span class="pill warn">Code being opened</span>':'<span class="pill info">With purchasing</span>';
+    return '<tr><td>'+(i+1)+'</td><td><b>'+esc(l.desc)+'</b><div class="xs muted">'+esc([l.dim,l.mat].filter(Boolean).join(' \u00b7 '))+'</div></td><td>'+esc(l.qty)+'</td><td>'+out+'</td></tr>';
+  }).join('');
+  return '<div><div class="phdr"><h1>'+n.no+' '+statusPill(n.status)+'</h1></div><div class="meta"><span>Stock inquiry <b>'+S.si.no+'</b></span></div></div>'+
+    '<section class="card"><h2>Remark</h2><div class="resp">'+esc(n.remark)+'</div></section>'+
+    '<section class="card"><h2>Products</h2><div class="tscroll"><table class="grid" style="min-width:560px"><colgroup><col style="width:44px"><col><col style="width:60px"><col style="width:240px"></colgroup><thead><tr><th>No.</th><th>Product</th><th>Qty</th><th>Outcome</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+}
+
+/* dialogs */
+function dialog(){
+  var d=S.dlg; if(!d)return '';
+  if(d.kind==='resp'){
+    return '<div class="ov" data-act="ov"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dr-h"><h3 id="dr-h">Edit purchasing response</h3>'+
+      '<div class="muted xs">Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.</div>'+
+      '<div class="field"><label for="dr-text">Purchasing response</label><textarea id="dr-text" rows="5" data-bind="dresp">'+esc(d.text)+'</textarea></div>'+
+      '<label class="tchk" style="font-size:14px"><input type="checkbox" id="dr-ask" data-bind="dask" '+(d.ask?'checked':'')+'> Ask for a new product application</label>'+
+      '<div class="foot"><button class="btn out" data-act="close">Cancel</button><button class="btn out" data-act="resp-save">Save only</button><button class="btn" data-act="resp-reply">Update &amp; Reply</button></div></div></div>';
+  }
+  if(d.kind==='match'){
+    var n=S.npa, all=true;
+    var cards=n.lines.map(function(l,i){
+      if(!l.ref)return '';
+      var m=matchesFor(l), ch=d.choice[i];
+      if(ch==null)all=false;
+      var opt=function(p,tag){
+        var sel=ch===p.code;
+        return '<div class="mopt'+(sel?' sel':'')+'"><div class="t"><span class="tag">'+tag+'</span><div><span class="mono">'+p.code+'</span> '+esc(p.name)+'</div><div class="xs muted">'+esc(p.brand)+'</div></div>'+
+          '<button class="btn sm '+(sel?'':'out')+'" data-act="m-use" data-i="'+i+'" data-code="'+p.code+'">'+(sel?'Using this':'Use this')+'</button></div>';
+      };
+      var list=(m.exact?opt(m.exact,'Exact match'):'')+m.similar.map(function(p){return opt(p,'Similar');}).join('');
+      if(!list)list='<div class="muted xs">No similar products in the list.</div>';
+      return '<div class="mline"><div><b>Product '+(i+1)+': '+esc(l.desc)+'</b><div class="xs muted">'+esc([l.dim,l.mat].filter(Boolean).join(' \u00b7 '))+' &middot; like <span class="mono">'+l.ref+'</span></div></div>'+list+
+        '<div class="mopt'+(ch==='none'?' sel':'')+'"><div class="t"><b>None of these</b><div class="xs muted">Purchasing will open a new code</div></div><button class="btn sm '+(ch==='none'?'':'out')+'" data-act="m-none" data-i="'+i+'">'+(ch==='none'?'Selected':'None of these')+'</button></div></div>';
+    }).join('');
+    return '<div class="ov" data-act="ov"><div class="dlg wide" role="dialog" aria-modal="true" aria-labelledby="dm-h"><h3 id="dm-h">Check matches</h3>'+
+      '<div class="muted xs">These products are already in the list.</div>'+cards+
+      '<div class="foot"><button class="btn out" data-act="close">Back to form</button><button class="btn" data-act="m-submit" '+(all?'':'disabled')+'>Submit</button></div></div></div>';
+  }
+  if(d.kind==='reserve'){
+    var l=S.npa.lines[d.i];
+    return '<div class="ov" data-act="ov"><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dv-h"><h3 id="dv-h">Reserve new code</h3>'+
+      '<div class="xs muted">Product '+(d.i+1)+': '+esc(l.desc)+' &middot; '+esc(l.dim)+'</div>'+
+      '<div class="field"><label for="dv-code">New product code</label><input id="dv-code" data-bind="dcode" value="'+esc(d.code)+'" placeholder="e.g. CB-4213-TZB" autocomplete="off">'+(d.err?'<div class="err">'+esc(d.err)+'</div>':'')+'</div>'+
+      '<div class="foot"><button class="btn out" data-act="close">Cancel</button><button class="btn" data-act="reserve-ok" '+(d.code.trim()?'':'disabled')+'>Reserve</button></div></div></div>';
+  }
+  return '';
+}
+
+/* ---------- actions ---------- */
+function allResolved(){return S.npa.lines.every(function(l){return !!l.opened;});}
+
+function startNpa(){
+  S.view='form';
+  if(S.npa){render();return;}
+  S.loading=true; render();
+  setTimeout(function(){
+    var ai=!S.aiFail, d=ai?aiDraft():copyDraft();
+    S.npa={no:'NPA-000047', status:'draft', draftedBy:ai?'ai':'copy', remark:d.remark, aiFields:{remark:ai&&!!d.remark},
+      lines:d.lines.map(function(x){var l=newLine();for(var k in x)l[k]=x[k];
+        if(ai){l.ai={};['ref','desc','dim','mat','thk','pack','brand','qty'].forEach(function(f){if(x[f])l.ai[f]=1;});}
+        return l;})};
+    S.loading=false; render();
+  },1200);
+}
+
+function doSubmit(){
+  var n=S.npa;
+  n.lines.forEach(function(l,i){
+    var ch=S.dlg&&S.dlg.choice?S.dlg.choice[i]:null;
+    if(l.ref&&ch&&ch!=='none'){l.opened=ch;l.openedBy='Chosen by '+REP;}
+    if(l.ref&&ch==='none'){var m=matchesFor(l);l.rejected=(m.exact?[m.exact.code]:[]).concat(m.similar.map(function(p){return p.code;}));}
+  });
+  n.submittedAt='5 Nov 2026, '+nowTm();
+  S.dlg=null; S.submitTry=false;
+  if(allResolved()){n.status='completed';S.view='rnpa';toast('All products found in the list. '+n.no+' is completed.');}
+  else{n.status='submitted';S.view='rnpa';toast(n.no+' submitted to purchasing.');}
+}
+
+document.addEventListener('click',function(e){
+  var t=e.target.closest('[data-act]'); if(!t)return;
+  var act=t.getAttribute('data-act'), i=+t.getAttribute('data-i');
+  if(act==='ov'){if(e.target===t){S.dlg=null;render();}return;}
+  switch(act){
+    case 'role': S.role=t.getAttribute('data-role'); S.view=S.role==='purchasing'?'si':(S.si.requested?'wa':'rsi'); S.dlg=null; render(); break;
+    case 'nav': S.view=t.getAttribute('data-view'); render(); break;
+    case 'reset': S=freshState(); render(); break;
+    case 'goto-step':
+      var st=+t.getAttribute('data-step');
+      if(st===1||st===4){S.role='purchasing';S.view=st===1?'si':'npa';}
+      else if(st===2){S.role='rep';S.view=S.npa?'form':'wa';}
+      else if(st===3){S.role='rep';S.view=S.npa&&S.npa.status==='draft'?'form':'rnpa';}
+      else {S.role='purchasing';S.view='npa';}
+      S.dlg=null; render(); break;
+    case 'sync':
+      var linked=[];
+      S.npa.lines.forEach(function(l,k){if(l.reserved&&!l.opened){
+        if(!prod(l.reserved))CATALOGUE.push({code:l.reserved,name:l.desc+' '+l.dim+', '+l.mat,brand:l.brand||'Sorento'});
+        l.opened=l.reserved;l.openedBy='Linked automatically when AutoCount synced';linked.push(l.reserved+' (product '+(k+1)+')');}});
+      if(allResolved())S.npa.status='completed';
+      toast('AutoCount sync: '+linked.join(', ')+' arrived and linked.'+(S.npa.status==='completed'?' Application completed.':''));
+      break;
+    case 'open-resp': S.dlg={kind:'resp',text:S.si.response||'We do not carry the 420 mm round basin in a terrazzo finish. The closest is CB-4013-TZ (400 x 130 mm). If that does not work, please raise a new product application so we can source it.',ask:true}; S.focus='dr-text'; render(); break;
+    case 'close': S.dlg=null; render(); break;
+    case 'resp-save': S.si.response=S.dlg.text; S.dlg=null; toast('Response saved. Nothing sent.'); break;
+    case 'resp-reply':
+      var d=S.dlg; S.si.response=d.text; S.si.status='responded';
+      var msg={dir:'in',text:'Purchasing reply for '+S.si.no+':\n'+d.text,tm:nowTm()};
+      if(d.ask&&!S.si.requested){S.si.requested=true;S.si.requestedBy=PURCH;S.si.requestedAt='5 Nov 2026, '+nowTm();}
+      if(d.ask){msg.text+='\n\nStart your new product application here:';msg.link='portal.sorento.example/npa/new?si='+S.si.no;}
+      S.wa.push(msg); S.dlg=null;
+      toast('Reply sent to '+REP+'.'+(d.ask?' New product application requested.':''));
+      break;
+    case 'wa-link': case 'create-npa': startNpa(); break;
+    case 'add-line': S.npa.lines.push(newLine()); render(); break;
+    case 'rm-line': S.npa.lines.splice(i,1); render(); break;
+    case 'save-draft': toast('Draft saved.'); break;
+    case 'submit':
+      S.submitTry=true;
+      if(S.npa.lines.some(function(l){return !l.desc.trim();})){render();toast('Enter the product type for every product.');break;}
+      if(S.npa.lines.some(function(l){return l.ref;})){S.dlg={kind:'match',choice:{}};render();}
+      else {S.dlg=null;doSubmit();}
+      break;
+    case 'm-use': S.dlg.choice[i]=t.getAttribute('data-code'); render(); break;
+    case 'm-none': S.dlg.choice[i]='none'; render(); break;
+    case 'm-submit': doSubmit(); break;
+    case 'approve': S.npa.status='approved'; toast(S.npa.no+' approved. Link or reserve a code for each product.'); break;
+    case 'link':
+      var l=S.npa.lines[i]; l.opened=t.getAttribute('data-code'); l.openedBy='Linked by '+PURCH;
+      if(allResolved())S.npa.status='completed'; toast('Product '+(i+1)+' linked to '+l.opened+'.'+(S.npa.status==='completed'?' Application completed.':'')); break;
+    case 'open-reserve': S.dlg={kind:'reserve',i:i,code:'',err:''}; S.focus='dv-code'; render(); break;
+    case 'reserve-ok':
+      var c=norm(S.dlg.code), p=null, r=null;
+      CATALOGUE.forEach(function(x){if(norm(x.code)===c)p=x;});
+      RESERVED_ELSEWHERE.forEach(function(x){if(norm(x.code)===c)r=x;});
+      S.npa.lines.forEach(function(x,k){if(k!==S.dlg.i&&norm(x.reserved)===c)r={app:S.npa.no,line:k+1};});
+      if(p){S.dlg.err='Already used by '+p.code+' - '+p.name;render();break;}
+      if(r){S.dlg.err='Reserved on '+r.app+' line '+r.line;render();break;}
+      S.npa.lines[S.dlg.i].reserved=c; var li=S.dlg.i; S.dlg=null; toast(c+' reserved for product '+(li+1)+'. Open it in AutoCount.'); break;
+    case 'undo': S.npa.lines[i].reserved=null; toast('Reservation removed.'); break;
+  }
+});
+
+document.addEventListener('input',function(e){
+  var t=e.target, b=t.getAttribute&&t.getAttribute('data-bind'); if(!b)return;
+  if(b==='remark'){S.npa.remark=t.value;return;}
+  if(b==='dresp'){S.dlg.text=t.value;return;}
+  if(b==='dcode'){S.dlg.code=t.value;S.dlg.err='';var btn=document.querySelector('[data-act="reserve-ok"]');if(btn)btn.disabled=!t.value.trim();return;}
+  if(b==='dask')return;
+  var i=+t.getAttribute('data-i'); S.npa.lines[i][b]=t.value;
+  if(S.npa.lines[i].ai)delete S.npa.lines[i].ai[b];
+  t.classList.remove('aifill');
+});
+document.addEventListener('change',function(e){
+  var t=e.target;
+  if(t.id==='t-aifail'){S.aiFail=t.checked;return;}
+  if(t.getAttribute('data-bind')==='dask'){S.dlg.ask=t.checked;return;}
+  var b=t.getAttribute('data-bind');
+  if(t.tagName==='SELECT'&&b){var i=+t.getAttribute('data-i');S.npa.lines[i][b]=t.value;if(S.npa.lines[i].ai)delete S.npa.lines[i].ai[b];render();}
+});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&S.dlg){S.dlg=null;render();}});
+
+render();
+})();
+</script>

@@ -104,11 +104,13 @@ only checks it is free. Backlog entry: BL-072 in `documentation/backlogs/backlog
 - **AC-NAI-40 [BE]** `GET /new-product-applications/{id}/lines/{line_id}/matches` (and the portal twin, own
   application only) returns `{exact: Product|null, similar: Product[<=5]}` for the line, company-scoped,
   active products only, never including `exact` again in `similar`.
-- **AC-NAI-41 [BE]** Exact = a product whose code equals the line's `proposed_code`, or the reference
-  product's code, compared case- and whitespace-insensitively. Similar = ranked by the existing resolver
-  tiers over the line text (description + dimension + material + thickness + packing + brand + the reference
-  product's name): trigram first, embedding fallback. Golden set: a fixture catalogue of 10 products and 6
-  line texts with expected top-1 written as failing tests before the ranker is wired.
+- **AC-NAI-41 [BE]** Exact = a product whose code equals the line's `proposed_code`, compared case- and
+  whitespace-insensitively. The reference product is never an exact match by itself (the rep said "like this
+  one"); it seeds the similar ranking. Similar = ranked by the existing resolver tiers over the line text
+  (description + dimension + material + thickness + packing + brand + the reference product's name), with
+  products in the reference product's family ranked up: trigram first, embedding fallback. Golden set: a
+  fixture catalogue of 10 products and 6 line texts with expected top-1 written as failing tests before the
+  ranker is wired.
 - **AC-NAI-42 [BE]** `POST /{id}/lines/{line_id}/use-match {product_id}` by the owner on an unlocked (draft or
   rejected) application's line that has a reference product sets `opened_product_id`, `resolved_by` = the rep (portal: the contact's act-as
   user), `resolved_at`; the product must be one of that line's matches (else 422).
