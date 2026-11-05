@@ -22,6 +22,8 @@
 # Release (crew, after the nightly's green line on #2176):
 #   gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
 #     -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
+name: Tests (sharded)
+
 on:
   # TEMPORARY (measurement on main HEAD before the file is on main, where dispatch needs it);
   # removed before the lane is done.
@@ -91,7 +93,8 @@ jobs:
         with:
           ref: ${{ env.HEAD_REF }}
           path: head
-          fetch-depth: 0
+          # The delta diffs base..head; a full sweep needs only the head.
+          fetch-depth: ${{ env.MODE == 'full' && 1 || 0 }}
       - name: Resolve the head sha
         id: head
         working-directory: head
@@ -233,6 +236,12 @@ jobs:
               run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" -m "not serial_ddl" "${FILES[@]}"
               ;;
             serial)
+              # release-delta.sh's schema checks: one alembic head, and upgrade head on the
+              # database bootstrapped from this head is clean.
+              heads="$(alembic heads 2>/dev/null | grep -c '(head)' || true)"
+              echo "alembic heads: $heads"
+              [ "$heads" -eq 1 ] || { echo "::error::alembic has $heads heads"; rc=1; }
+              alembic upgrade head || { echo "::error::alembic upgrade head failed"; rc=1; }
               mapfile -t MIG < ../plan/migrations.txt
               mapfile -t MAIN < ../plan/main.txt
               mapfile -t SCM < ../plan/scm.txt
