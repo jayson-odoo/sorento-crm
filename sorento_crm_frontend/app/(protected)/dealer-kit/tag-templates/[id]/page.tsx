@@ -82,7 +82,7 @@ import {
   updateTemplate,
   updateTemplateSettings,
 } from '../../services/tagTemplateService';
-import { layersCutOff } from '@/lib/dealer-kit/layer-bounds';
+import { layersOutside } from '@/lib/dealer-kit/layer-bounds';
 import {
   TemplateSettingsDialog,
   type TemplateSettingsValues,
@@ -275,7 +275,6 @@ export default function TagTemplateEditorPage() {
   // current.doc` at fire time, which by then already has the new size.
   const handleResizeTemplate = useCallback(
     (width_mm: number, height_mm: number) => {
-      const before = templateRef.current?.doc;
       setTemplate((prev) =>
         prev
           ? {
@@ -291,9 +290,7 @@ export default function TagTemplateEditorPage() {
       scheduleAutosave(draftLayers);
       // Layers keep their place on a resize (AC-S1-5), so say when the new
       // size cuts some off (item 4). The settings dialog says it before Save.
-      const cutOff = before
-        ? layersCutOff(draftLayers, before, { width_mm, height_mm })
-        : 0;
+      const cutOff = layersOutside(draftLayers, width_mm, height_mm);
       if (cutOff > 0) {
         toast.warning(
           `${cutOff === 1 ? '1 layer sits' : `${cutOff} layers sit`} outside ${width_mm} x ${height_mm} mm and may need moving`,
