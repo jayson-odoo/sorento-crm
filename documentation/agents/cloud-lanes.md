@@ -226,6 +226,32 @@ The second range is not a defect of the rule: a changed User model is imported, 
 through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
 old one-level regex missed 1,459 of those dependents.
 
+### The same on GitHub Actions, sharded (CI-PARALLEL-ACTIONS, owner 5 Nov 2026)
+
+`.github/workflows/tests-sharded.yml` runs the nightly full sweep and the release delta on
+GitHub-hosted runners in parallel instead of serially in one sandbox (4 cores, 2 h command cap):
+
+```
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
+  -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main
+```
+
+`select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
+test file (the nightly), mode=delta is the selector above. The backend runs one runner per
+(pool, shard): the main tree on 20 runners, `tests/scm/` on 4, and one `serial` runner (alembic
+heads == 1, `alembic upgrade head`, the migration tests, both pools' `serial_ddl`); pytest-split
+balances each pool by the committed `.test_durations`. A delta pool gets its share of the full
+pool's recorded seconds in runners (a 10% delta gets 2 of 20). vitest: `--shard=i/6` on a full
+run, one runner with `vitest related` + the source guards on a related delta. `summary` posts one
+`crew-tests:` comment (per-shard results, failing ids, wall clock, billable minutes) on
+`comment_on`, or on #2176 for the scheduled nightly, which stays off until crew sets the
+repository variable `TESTS_SHARDED_NIGHTLY=on`.
+
+**Nightly-only tests.** `sorento_crm_backend/tests/nightly_only.txt` (the reorder-planning tests,
+owner 5 Nov: "reorder planning are not really in use") is the one list: the release delta
+selector and `scripts/crew-tests.sh` never run its entries; the full sweep does.
+
 `scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
 #2171), each of which shows up as reds that CI does not have:
 
