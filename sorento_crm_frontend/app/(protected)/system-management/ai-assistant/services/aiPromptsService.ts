@@ -48,7 +48,8 @@
  */
 import { apiFetch } from '@/lib/api';
 import type { ChatbotTurn } from '../../chat-history/types/chatbotTurn.types';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import {
   MOCK_PROMPT_KEYS,
   MOCK_VERSIONS,
@@ -86,6 +87,22 @@ export interface PromptKeySummary {
   model: string | null;
   /** How hard that model thinks. null = the agent's own default. */
   reasoning_effort?: string | null;
+}
+
+/** One row of `GET .../prompts/list`: the key summary plus `id` (= name) for the record pager. */
+export interface PromptListRow extends PromptKeySummary {
+  id: string;
+}
+
+/** The prompts list on the standard DataGrid envelope, plus the models in use for the filter. */
+export interface PromptListPage extends DataGridApiResponse<PromptListRow> {
+  model_options: string[];
+}
+
+/** The list query: the DataGrid's own params plus the two multi-select filters. */
+export interface PromptListParams extends DataGridApiFetchParams {
+  status?: string[];
+  model?: string[];
 }
 
 export interface PromptVersionRow {
@@ -219,6 +236,18 @@ export async function listPromptKeys(): Promise<PromptKeySummary[]> {
   if (USE_PROMPT_MOCKS) return structuredClone(MOCK_PROMPT_KEYS);
   const r = await apiFetch(BASE);
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load prompt keys'));
+  return r.json();
+}
+
+/**
+ * GET /api/v1/system/ai-assistant/prompts/list?page&limit&sort&dir&query&status&model
+ *   -> PromptListPage. Every column sorts server-side; status (active|dormant) and model
+ *   (a model id, or `default`) are multi-select, sent as repeated params.
+ */
+export async function getPromptList(params: PromptListParams): Promise<PromptListPage> {
+  const search = buildDataGridParams(params, { status: params.status, model: params.model });
+  const r = await apiFetch(`${BASE}/list?${search.toString()}`);
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load prompts'));
   return r.json();
 }
 

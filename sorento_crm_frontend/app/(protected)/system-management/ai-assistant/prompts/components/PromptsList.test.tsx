@@ -45,9 +45,10 @@ vi.mock('../../hooks/usePromptBlocksStatus', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),
 }));
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/system-management/ai-assistant/prompts',
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn(), prefetch: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -190,10 +191,10 @@ describe('PromptsList (standard DataGrid)', () => {
     ['Edited by', 'updated_by_name'],
   ])('sorts by %s on the server', async (title, sortId) => {
     renderList();
-    pointer(screen.getByRole('button', { name: `Column options for ${title}` }));
-    const desc = await screen.findByRole('menuitem', { name: /Desc/ });
-    fireEvent.click(desc);
-    await waitFor(() => expect(lastParams().sorting).toEqual([{ id: sortId, desc: true }]));
+    // The list opens sorted by name A-Z, so the first press on Prompt flips it to Z-A and on
+    // any other header sorts that column A-Z.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${title}$`) }));
+    await waitFor(() => expect(lastParams().sorting).toEqual([{ id: sortId, desc: sortId === 'name' }]));
   });
 
   it('passes the search box through to the list query', async () => {
@@ -230,12 +231,14 @@ describe('PromptsList (standard DataGrid)', () => {
   });
 
   it('opens the prompt from the row, carrying the list state for Back and the pager', () => {
+    push.mockReset();
     renderList();
-    const link = screen
-      .getAllByRole('link')
-      .find((a) => a.getAttribute('href')?.startsWith('/system-management/ai-assistant/prompts/reformulator'));
-    expect(link).toBeTruthy();
-    expect(link!.getAttribute('href')).toMatch(/page=1/);
+    fireEvent.click(screen.getByText('Rewrite turn'));
+    expect(push).toHaveBeenCalledTimes(1);
+    const href = String(push.mock.calls[0][0]);
+    expect(href.startsWith('/system-management/ai-assistant/prompts/reformulator?')).toBe(true);
+    expect(href).toMatch(/page=1/);
+    expect(href).toMatch(/sort=name/);
   });
 
   it('offers Odoo-style row selection', () => {

@@ -1,10 +1,14 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { splitMulti } from '@/lib/list-filters/multiValue';
 import {
   dryRunPrompt,
   getPromptArchitecture,
   getPromptVersion,
+  getPromptList,
   getPromptVersions,
   getRegistryVariables,
   listPromptKeys,
@@ -12,6 +16,7 @@ import {
   setAgentModel,
   setLabel,
   type DryRunPayload,
+  type PromptListParams,
   type SaveVersionPayload,
   type SetAgentModelPayload,
   type SetLabelPayload,
@@ -23,6 +28,50 @@ const versionKey = (name: string, v: number) => ['ai-prompts', name, 'version', 
 
 export function usePromptKeys() {
   return useQuery({ queryKey: KEYS, queryFn: listPromptKeys });
+}
+
+/**
+ * The prompts list's React Query key. Under `ai-prompts`, so a save, publish or model change
+ * (which invalidate that prefix) refreshes the list too. The detail page's pager rebuilds the
+ * SAME key from the URL, so it walks the page the list already fetched.
+ */
+export function promptListQueryKey(params: PromptListParams): QueryKey {
+  return [
+    ...KEYS,
+    'list',
+    params.pageIndex,
+    params.pageSize,
+    params.sorting,
+    params.searchQuery,
+    params.status ?? [],
+    params.model ?? [],
+  ];
+}
+
+/** The list query a detail URL describes: the filters ride comma-joined, like the list writes them. */
+export function promptListParamsFromUrl(params: ListPagerParams): PromptListParams {
+  return {
+    pageIndex: params.pageIndex,
+    pageSize: params.pageSize,
+    sorting: params.sorting,
+    searchQuery: params.searchQuery,
+    status: splitMulti(params.filters.status),
+    model: splitMulti(params.filters.model),
+  };
+}
+
+/** The record pager's two hooks into the prompts list. */
+export const promptsPagerQuery = {
+  listQueryKey: (params: ListPagerParams): QueryKey => promptListQueryKey(promptListParamsFromUrl(params)),
+  fetchPage: (params: ListPagerParams): Promise<ListPagerPage> => getPromptList(promptListParamsFromUrl(params)),
+};
+
+export function usePromptList(params: PromptListParams) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: promptListQueryKey(params),
+    queryFn: () => getPromptList(params),
+  });
 }
 
 export function usePromptVersions(name: string) {
