@@ -207,8 +207,7 @@ def sanitise_tag_html(value: Optional[str]) -> Optional[str]:
     if "<" not in value:
         return value
     # Plain-text mode removes tags, and removing one can leave another behind (`<<b>p>`): repeat
-    # until nothing changes. A value that has become rich goes through the rich pass; one that
-    # will not settle loses its `<` outright, so no tag outside the allow-list is ever stored.
+    # until nothing changes; one that will not settle loses its `<` outright, so no tag outside the allow-list is ever stored.
     current = value
     for _ in range(5):
         nxt = _text_pass(current)
@@ -217,8 +216,6 @@ def sanitise_tag_html(value: Optional[str]) -> Optional[str]:
         current = nxt
     else:
         current = current.replace("<", "")
-    if is_rich(current):
-        return _rich_pass(current)
     return current if current.strip() else None
 
 

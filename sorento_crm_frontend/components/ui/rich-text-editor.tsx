@@ -115,11 +115,22 @@ export function normaliseEditorHtml(html: string): string {
   return doc.body.innerHTML;
 }
 
-/** Pasted HTML keeps no inline style: colour and alignment come only from the toolbar. */
+/** Declarations a paste may not carry: colour, highlight and alignment come only from the toolbar. */
+const PASTE_DROPPED = /^(color|background-color|background|text-align)$/i;
+
+/** Pasted HTML loses those declarations; the rest (font-weight, font-style, text-decoration) stay
+ * so a word-processor paste keeps its real bold / italic / underline. */
 export function stripPastedStyles(html: string): string {
   if (typeof DOMParser === 'undefined') return html;
   const doc = new DOMParser().parseFromString(html, 'text/html');
-  doc.body.querySelectorAll('[style]').forEach((el) => el.removeAttribute('style'));
+  doc.body.querySelectorAll<HTMLElement>('[style]').forEach((el) => {
+    const kept = (el.getAttribute('style') ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part && !PASTE_DROPPED.test(part.split(':')[0].trim()));
+    if (kept.length) el.setAttribute('style', kept.join('; '));
+    else el.removeAttribute('style');
+  });
   return doc.body.innerHTML;
 }
 
@@ -574,7 +585,22 @@ export function RichTextEditor({
       Placeholder.configure({ placeholder: placeholder || 'Type here...' }),
       // Colour, highlight and alignment. They emit inline `style` only when a button is used,
       // so content saved before they existed round-trips unchanged.
-      TextStyle,
+      // Only a span that carries a colour or highlight is a text style; a bare styled span
+      // (what a word processor wraps text in) is just its text, and its bold / italic /
+      // underline come from their own marks.
+      TextStyle.extend({
+        parseHTML() {
+          return [
+            {
+              tag: 'span',
+              getAttrs: (element) => {
+                const el = element as HTMLElement;
+                return el.style.color || el.style.backgroundColor ? {} : false;
+              },
+            },
+          ];
+        },
+      }),
       Color,
       BackgroundColor,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
