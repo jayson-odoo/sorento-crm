@@ -691,6 +691,18 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 raise _unprocessable(
                     "A rate names an account this target does not count.", "INVALID_TIERS"
                 )
+    # A tier that carries its own Additional cannot also keep a legacy "+ Additional" row on its
+    # threshold: both would pay (review, lane TARGET-TIER-ADDITIONAL).
+    def _at(t: dict):
+        return (t["period_start"], (t["from_pct"] if unit == "pct" else t["threshold"]).quantize(Decimal("0.01")))
+
+    carrying = {_at(t) for t in tiers if not t["is_additional"] and (t["additional_rate"] or t["bonus"])}
+    if any(t["is_additional"] and _at(t) in carrying for t in tiers):
+        raise _unprocessable(
+            "A tier has its own Additional and a \"+ Additional\" row on the same threshold: "
+            "remove the row.",
+            "INVALID_TIERS",
+        )
     target.commission_method = method
     target.threshold_unit = unit
     target.rounding = rounding

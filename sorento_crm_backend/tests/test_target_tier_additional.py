@@ -350,3 +350,24 @@ def test_fold_script_reports_bonus_stacking_change(api):
     assert entry["bonus_tiers"] == 2
     q1 = entry["periods"][0]
     assert (q1["old_bonus"], q1["new_bonus"], q1["delta"]) == (D("800"), D("500.00"), D("-300.00"))
+
+
+def test_api_refuses_a_tier_additional_beside_a_legacy_row_on_its_threshold(api):
+    client, db, company_id = api
+    a1 = _customer(db, company_id, "ZZT DOUBLE", level=1)
+    res = client.post(BASE, json=_dealer_body([a1], tiers=[
+        {"period_start": "2026-01-01", "threshold": 75000, "rate": 6, "additional_rate": 1},
+        {"period_start": "2026-01-01", "threshold": 75000, "rate": 1, "is_additional": True},
+    ]))
+    assert res.status_code == 422, res.text
+    assert "remove the row" in res.text
+
+
+def test_statement_rate_cell_carries_the_additional():
+    from app.services.sales.commission_statement_xlsx import _reached_rate
+
+    p = {"tier_rates": [{"label": "A/C I", "rate": 6.0}], "tier_additional": {"kind": "pct", "value": 1.0}}
+    assert _reached_rate(p, "amount") == "A/C I 6.00% + 1.00%"
+    p["tier_additional"] = {"kind": "amount", "value": 500.0}
+    assert _reached_rate(p, "amount") == "A/C I 6.00% + RM 500.00"
+    assert _reached_rate({"tier_rates": [{"label": None, "rate": 5.0}], "tier_additional": None}, "amount") == "5.00%"

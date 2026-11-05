@@ -326,7 +326,7 @@ function tiersOf(draft: Draft): CommissionTier[] {
   return draft.tiers.map((t) => ({
     ...(draft.thresholdUnit === 'pct' ? { from_pct: Number(t.from) } : { threshold: Number(t.from) }),
     ...(dealer ? dealerRates(t, draft.accountIds) : { rate: Number(t.rate) }),
-    bonus_amount: t.addKind === 'amount' && t.addValue.trim() !== '' ? Number(t.addValue) : null,
+    bonus_amount: t.addKind === 'amount' && t.addValue.trim() !== '' && !t.additional ? Number(t.addValue) : null,
     ...(t.addKind === 'pct' && t.addValue.trim() !== '' && !t.additional ? { additional_rate: Number(t.addValue) } : {}),
     ...(t.additional ? { is_additional: true } : {}),
     ...(draft.perPeriod ? { period_start: t.period || null } : {}),
@@ -345,9 +345,10 @@ function tierProblem(draft: Draft): string {
     text.trim() === '' ? required : !Number.isFinite(Number(text)) || Number(text) < 0;
   const dealer = draft.kind === 'dealer';
   const unit = THRESHOLD_LABEL[draft.thresholdUnit];
-  if (draft.tiers.some((t) => bad(t.from, true) || bad(t.addValue, false))) {
+  if (draft.tiers.some((t) => bad(t.from, true))) {
     return draft.thresholdUnit === 'pct' ? 'Type a from % for every tier.' : `Type the threshold (${unit}) of every tier.`;
   }
+  if (draft.tiers.some((t) => !t.additional && bad(t.addValue, false))) return 'An Additional is not a number.';
   if (dealer) {
     if (draft.tiers.some((t) => Object.values(t.accountRates).some((v) => bad(v, false)))) return 'A rate is not a number.';
     if (draft.tiers.some((t) => !draft.accountIds.some((id) => (t.accountRates[id] ?? '').trim() !== ''))) {
@@ -2396,7 +2397,9 @@ function TiersGrid({
     if (dealer) {
       for (const a of accounts) {
         out.push({
-          id: `rate-${a.id}`,
+          // By label, so a hidden "A/C I rate" stays hidden on the next target too (by id when
+          // two accounts share a label).
+          id: accounts.filter((x) => x.label === a.label).length > 1 ? `rate-${a.id}` : `rate-${a.label}`,
           accessorFn: (r) => r.tier.account_rates?.find((x) => x.customer_id === a.id)?.rate ?? r.tier.rate ?? null,
           header: ({ column }) => <DataGridColumnHeader title={`${a.label} rate`} column={column} />,
           cell: ({ row }) => {
