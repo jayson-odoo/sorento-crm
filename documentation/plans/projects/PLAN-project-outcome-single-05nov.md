@@ -1,7 +1,6 @@
 # PLAN: One Won/Lost outcome per project (drop per-area outcome)
 
-Status: Plan, behaviour card posted as crew-ask on PR #2197, waiting for owner answers.
-Track: standard (touches forecast, PO intake and the customer accept path; no migration if Q5 = keep).
+Status: Build (owner answered 5 Nov ~12:40). Track: standard, size M, no migration.
 
 Lane: PROJECT-OUTCOME-SINGLE. Owner ruling 5 Nov 2026 12:28 MYT: "we don't need per area
 outcome" / "we only need per project outcome, simple as that".
@@ -53,7 +52,8 @@ Rules:
 5. Forecast: an Open project's pipeline is the latest version of every area on its proposals;
    Won or Lost contributes no pipeline (Committed still counts POs, lost projects included).
    The loss-reasons report counts projects by `Project.loss_reason`.
-6. Make quotation: still needs the project Won; copies every area of the chosen revision.
+6. Make quotation: allowed on an Open or Won project, refused on a Lost one; copies every area
+   of the chosen revision.
 7. PO intake: no outcome ranking. Project has a quotation: the PO checks against it (unchanged).
    Otherwise: one area binds to it, two or more is the person's call (left unbound, as a tie is
    today).
@@ -67,7 +67,17 @@ Edge cases:
 - Deleting an area no longer recomputes anything.
 - Dormant rung: outcome stays as it is (out of scope; ruling says Open/Won/Lost).
 
-Questions: see the crew-ask comment on PR #2197 (copied below once answered).
+## Owner answers (5 Nov ~12:40, verbatim)
+"One loss is set at the project level. Yeah, we can reuse the stage move. Forecast A. Make
+quotation. No, allow it on an open project. It doesn't need to be a warm project. The PO is checked
+against the quotation. No? Don't need to fix existing data. This is not rolled out yet."
+
+- Q1 (a) reuse the stage moves + gear Mark won / Re-open.
+- Q2 (a) forecast as proposed.
+- Q3 (b) Make quotation on an Open project too; still refused on Lost (stated in the PR).
+- Q4 (a) PO checks against the quotation; the won/open/lost area ranking goes.
+- Q5 (b) no data fix, no migration (project sales not rolled out). Per-area columns stay, unused.
+- Unlinked per-area page: deleted.
 
 ## Steps (after answers)
 1. Tester: red pytest for rules 2-8 + vitest for the gear items / dialog / removed pills.
