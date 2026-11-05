@@ -257,6 +257,27 @@ describe('PipelineClient remembers the view per user', () => {
     expect(putConfig).not.toHaveBeenCalled();
   });
 
+  it('while the stored view loads, neither view is shown or pressed (crew pass: no Board flash)', async () => {
+    serverRows.set(`u1|${KEY}`, { view: 'grid' });
+    let release: () => void = () => {};
+    getConfig.mockImplementationOnce(
+      (key: string) =>
+        new Promise((resolve) => {
+          release = () => resolve({ listing_key: key, config: { view: 'grid' } });
+        }),
+    );
+    renderClient();
+    expect(boardButton()).toHaveAttribute('aria-pressed', 'false');
+    expect(gridButton()).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('pipeline-view-loading')).toBeInTheDocument();
+    // No board scaffolding (its own search + Filters row) while unknown.
+    expect(screen.queryByRole('button', { name: /filters/i })).toBeNull();
+    release();
+    await waitFor(() => expect(gridButton()).toHaveAttribute('aria-pressed', 'true'));
+    expect(boardButton()).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByTestId('pipeline-view-loading')).toBeNull();
+  });
+
   it('keeps a pick an older build stored in this browser when the server has none', async () => {
     window.localStorage.setItem('project-sales.pipeline.view', 'grid');
     renderClient();

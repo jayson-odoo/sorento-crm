@@ -8,6 +8,7 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   DropdownMenu,
@@ -169,6 +170,9 @@ export function PipelineClient() {
   // Held until the remembered view is known, so the list is fetched once, in that view.
   const projects = useProjects(listParams, { enabled: !viewLoading });
   const listLoading = viewLoading || projects.isLoading;
+  // Neither view is drawn or pressed until the remembered one is known: a Grid user
+  // must never see the board flash first (crew browser pass, 5 Nov 2026).
+  const shownView: PipelineView | null = viewLoading ? null : view;
 
   /**
    * Carried into the record URL so the project page's pager walks the SAME
@@ -355,9 +359,9 @@ export function PipelineClient() {
               <Button
                 type="button"
                 size="sm"
-                variant={view === 'board' ? 'primary' : 'ghost'}
+                variant={shownView === 'board' ? 'primary' : 'ghost'}
                 onClick={() => switchView('board')}
-                aria-pressed={view === 'board'}
+                aria-pressed={shownView === 'board'}
                 aria-label="Board view"
                 title="Board view"
                 mode="icon"
@@ -367,9 +371,9 @@ export function PipelineClient() {
               <Button
                 type="button"
                 size="sm"
-                variant={view === 'grid' ? 'primary' : 'ghost'}
+                variant={shownView === 'grid' ? 'primary' : 'ghost'}
                 onClick={() => switchView('grid')}
-                aria-pressed={view === 'grid'}
+                aria-pressed={shownView === 'grid'}
                 aria-label="Grid view"
                 title="Grid view"
                 mode="icon"
@@ -409,7 +413,7 @@ export function PipelineClient() {
       {/* Board has no grid toolbar to host them, so it carries the same two controls in
           the same order the toolbar uses. Grid view feeds them into the toolbar instead,
           so the filters never sit in a second card above the table. */}
-      {view === 'board' && (
+      {shownView === 'board' && (
         <div className="flex flex-wrap items-center gap-2">
           {searchSlot}
           <DropdownMenu>
@@ -431,12 +435,17 @@ export function PipelineClient() {
         </div>
       )}
 
-      {view === 'board' && !listLoading && projects.error && total === 0 ? (
+      {shownView === null ? (
+        <div data-testid="pipeline-view-loading" aria-busy="true" className="space-y-3">
+          <Skeleton className="h-9 w-full max-w-md" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      ) : shownView === 'board' && !listLoading && projects.error && total === 0 ? (
         // A failed read is not "no projects registered yet" (lever L2).
         <div className="rounded-lg border px-4 py-6 text-sm">
           <ListLoadFailure error={projects.error} onRetry={() => void projects.refetch()} />
         </div>
-      ) : view === 'board' && !listLoading && total === 0 ? (
+      ) : shownView === 'board' && !listLoading && total === 0 ? (
         hasFilters ? (
           <EmptyState
             title="No projects match these filters"
@@ -448,7 +457,7 @@ export function PipelineClient() {
             body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
-      ) : view === 'board' ? (
+      ) : shownView === 'board' ? (
         <PipelineBoard
           statuses={statuses}
           projects={rows}
