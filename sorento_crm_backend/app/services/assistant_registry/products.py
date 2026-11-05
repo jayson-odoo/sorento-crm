@@ -1,0 +1,55 @@
+"""Products (`/master-data-management/products`), with their brand and category.
+
+Cost price needs `procurement.cost_price_changes.view` here, stricter than the product page, which shows it to
+every product viewer: the assistant answers in chat, where a figure travels further than a screen.
+"""
+from __future__ import annotations
+
+from app.models.product import Brand, Product, ProductCategory
+from app.services.assistant_registry import register
+from app.services.assistant_registry.types import EntityDef, FieldDef
+
+COST_PRICE_VIEW = "procurement.cost_price_changes.view"
+
+register(
+    EntityDef(
+        key="brand",
+        label="Brands",
+        module="product",
+        model=Brand,
+        view_permission=None,
+        fields={"code": FieldDef("Brand code", column="brand_code"), "name": FieldDef("Brand", column="brand_name")},
+    ),
+    EntityDef(
+        key="category",
+        label="Product categories",
+        module="product",
+        model=ProductCategory,
+        view_permission=None,
+        fields={
+            "code": FieldDef("Category code", column="category_code"),
+            "name": FieldDef("Category", column="category_name"),
+        },
+    ),
+    EntityDef(
+        key="product",
+        label="Products",
+        module="product",
+        model=Product,
+        view_permission="master_data.products.view",
+        fields={
+            "product_code": FieldDef("Product code"),
+            "product_name": FieldDef("Product name"),
+            "list_price": FieldDef("List price"),
+            "cost_price": FieldDef("Cost price", permission=COST_PRICE_VIEW),
+            "currency": FieldDef("Currency"),
+            "is_active": FieldDef("Active"),
+            "is_discontinued": FieldDef("Discontinued"),
+            "created_at": FieldDef("Created at"),
+        },
+        relations={"brand": ("brand", "brand_id"), "category": ("category", "category_id")},
+        screen_path="/master-data-management/products/{id}",
+        pages=("/master-data-management/products",),
+        routes=("GET /api/v1/master-data/products/",),
+    ),
+)

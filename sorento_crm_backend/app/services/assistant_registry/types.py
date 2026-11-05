@@ -1,0 +1,51 @@
+"""What the assistant may read: one `EntityDef` per list screen (PLAN-ai-tools-standard-5nov.md section 2.1).
+
+The registry states what nothing else enforces on a direct query: the screen's view slug, its "only mine"
+narrowing, the field allowlist and the field-level slugs. Company isolation is not stated here: every
+`CompanyScopedMixin` model is filtered by `do_orm_execute` on the session that `run_as_user` stamps.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+
+@dataclass(frozen=True)
+class FieldDef:
+    label: str
+    #: An extra slug needed to read this field (cost price, phone, margin); None = the entity's slug is enough.
+    permission: str | None = None
+    #: The model attribute; None = the field key itself.
+    column: str | None = None
+
+
+@dataclass(frozen=True)
+class EntityDef:
+    key: str
+    label: str
+    #: Module key for `require_module_enabled` ("scm").
+    module: str
+    model: type
+    #: The list screen's slug. None = a lookup entity: reachable only through a relation, read under the
+    #: parent entity's slugs, never listed or queried on its own.
+    view_permission: str | None
+    #: The screen's ".view_own" slug; a holder of it without `view_permission` sees only `own_clause` rows.
+    own_permission: str | None = None
+    #: (own_scope.Me) -> SQL clause of the rows that are theirs; None = this entity has no "only mine" rule,
+    #: so an own-only holder is refused.
+    own_clause: Callable[[Any], Any] | None = None
+    #: ALLOWLIST: what the screen shows. Nothing else is readable.
+    fields: dict[str, FieldDef] = field(default_factory=dict)
+    #: name -> (entity key, fk column on this model), for lookups and joins.
+    relations: dict[str, tuple[str, str]] = field(default_factory=dict)
+    #: "/scm/purchase-orders/{id}", for row links; "" = no detail page.
+    screen_path: str = ""
+    #: Path prefixes where this module's actions load first (ACT-CORE).
+    pages: tuple[str, ...] = ()
+    #: The list routes this entity answers for ("GET /api/v1/scm/purchase-orders"), read by the CI gate.
+    routes: tuple[str, ...] = ()
+    #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
+    scope: Callable[[Any], list] | None = None
+
+    def column_name(self, key: str) -> str:
+        return self.fields[key].column or key

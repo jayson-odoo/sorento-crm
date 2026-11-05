@@ -2664,3 +2664,9 @@ WRITES[CREATE_TICKET] = WriteDef(
         "Say this is a proposal and that confirming creates a draft ticket."
     ),
 )
+
+
+# ------------------------------------------------------------------ AI-QUERY-CORE: the general read
+
+# Registers `crm_query` and `crm_describe` in USER_READS; imported last because it builds on this module.
+from app.services.chatbot.agent import query_tools  # noqa: E402,F401
