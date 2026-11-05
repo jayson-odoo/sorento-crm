@@ -69,7 +69,7 @@ import {
 import {
   renderMergeFields,
   soleMergeField,
-  type MergeFieldGroup,
+  PRICE_TAG_FIELD_GROUPS,
 } from '@/lib/dealer-kit/merge-fields';
 import {
   moveEdge,
@@ -558,7 +558,6 @@ interface DragSession {
  * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
  * page data exists. Three, the most the owner's sample prints on one page.
  */
-const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
 
 const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
   code: `Accessory ${n}`,

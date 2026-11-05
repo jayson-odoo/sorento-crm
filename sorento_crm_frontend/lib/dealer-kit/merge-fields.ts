@@ -145,6 +145,9 @@ function parseSlotToken(path: string): { slot: SubjectSlot; field: string } | nu
   return null;
 }
 
+/** The groups a price tag template offers in Insert field (the spec sheet's own are for its templates). */
+export const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions'];
+
 /** How each fixed path is named in the dialog. */
 const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = [
   { path: 'product.code', label: 'Code', group: 'Product' },
