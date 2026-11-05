@@ -96,3 +96,16 @@ F6. Asset library (`AssetPickerDialog`, library tab): an icon asset shows "Show 
 
 Warranty and anti-bacteria (static assets, Q3/Q4), a separate rules screen, per-template rule
 copies, hot-only taps (no data).
+
+## Revision 5 Nov ~20:35 (owner ruling: link on the spec value)
+
+Replaces B1, B2, B3 and F6:
+- B1': migration `dkfi_0001_spec_value_icons`: `product_spec_registry.value_icons JSONB NOT NULL
+  DEFAULT '{}'`. No asset columns (the dev DB's unused `asset.show_when_*` are left in place).
+- B3': `PATCH /api/v1/master-data/spec-registry/{spec_key}` accepts `value_icons {value: [asset ids]}`
+  (each value one of the key's values; each id an icon asset; max 10 per value; empty list removes).
+  The asset show-when route is removed.
+- B5 unchanged in shape: `feature_icons` entries `{id, name, spec_key, values}` are now derived from
+  the registry (`values` = every value of that key mapped to that icon).
+- F6': the Values and words grid gets an Icons column (view thumbnails, edit with AssetPickerDialog in
+  icon-library mode). The canvas reads the icon list from `GET /api/v1/dealer-kit/feature-icons`.

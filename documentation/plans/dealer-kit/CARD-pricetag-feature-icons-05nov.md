@@ -105,3 +105,13 @@ B3. Layer kind `feature_icons`: props `iconSize_mm`, `gap_mm`, `align` (left / c
 B4. One pure function `featureIconsFor(product specs, icon library, order)` picks the icons; the
     canvas, the request preview and the print page all call it. Icon pictures reach the print page
     through the same asset URL map every other asset layer uses.
+
+## Owner ruling 5 Nov ~20:35 (supersedes Q1 and B1 above)
+
+The icon <-> spec link moves from the icon to the SPEC VALUE ("more intuitive"). Admins set it
+where spec values are managed: Master Data > Product Specifications > a spec > Values and words,
+an "Icons" column per value (Water supply = Mixer -> hot + cold; Cold Only -> cold; Steel grade
+304 -> 304 icon), picked from the Dealer Kit icon library with the existing asset picker. Stored as
+`product_spec_registry.value_icons` JSONB `{value: [asset ids]}` beside `value_labels` (staff-owned,
+never seed-repaired); migration additive only. "Show when" is removed from the icon screen. The
+designer side is unchanged: one Feature icons layer, close-up, adjustable, follows the combo position.
