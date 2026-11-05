@@ -1,5 +1,7 @@
 'use client';
 
+import AccessDenied from '@/app/components/common/AccessDenied';
+import { isAccessDenied } from '@/lib/api-client';
 import * as React from 'react';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
@@ -121,7 +123,8 @@ export function OrderInquiryDocumentDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl" data-testid={`document-detail-${document}`}>
-        <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0">
+        {/* `pe-8`: room for the dialog's own close X, which sat on the Go to button. */}
+        <DialogHeader className="flex-row items-start justify-between gap-3 space-y-0 pe-8">
           <div>
             <DialogTitle className="tabular-nums">{document}</DialogTitle>
             <DialogDescription>
@@ -595,6 +598,9 @@ function PoBody({
     );
   }
   if (isLoading) return <LoadingBody />;
+  // SO-LINE-OI-STATUS-UNIFY crew pass 2: a reader without projects access (an SCM-only user
+  // opening a chip on the Sales Order) gets the shared in-place refusal, never the raw slug.
+  if (isAccessDenied(error)) return <AccessDenied inline />;
   if (isError || !data) {
     return (
       <p className="text-sm text-destructive">
@@ -738,7 +744,9 @@ function SpoBody({
   /** Crew fix (3): whether the loaded lines hold the go-to target. */
   onTargetPresent?: (present: boolean) => void;
 }) {
-  const { data, isLoading, isError } = useOrderInquirySpoDetail(spoNumber, { enabled: open });
+  const { data, isLoading, isError, error } = useOrderInquirySpoDetail(spoNumber, {
+    enabled: open,
+  });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   useGoToHighlightedLine(containerRef, goToNonce);
 
@@ -769,6 +777,8 @@ function SpoBody({
   }, [targetPresent]);
 
   if (isLoading) return <LoadingBody />;
+  // Crew pass 2: a refusal is not "could not be found" - same shared message as the PO body.
+  if (isAccessDenied(error)) return <AccessDenied inline />;
   if (isError || !data) {
     // A number no allocation carries answers 404, which is the honest reading of a
     // document this system does not hold - a shipping order the book has never named.

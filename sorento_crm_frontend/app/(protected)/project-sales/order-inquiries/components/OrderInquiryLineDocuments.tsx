@@ -130,11 +130,19 @@ export function DocumentCell({
   // po-kind link behind it - `chip.poId` is the resolved identity instead.
   const derived = kind === 'po' && chip.via === 'spo';
   const row = chip.row;
+  const viaTag = chip.via ? (
+    <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
+      via {chip.via === 'po' ? 'PO' : 'SPO'}
+    </WorklistPill>
+  ) : null;
   return (
     <span
       className={`flex min-w-0 items-center gap-1 ${fit ? 'overflow-hidden' : ''}`}
       title={fit ? chip.document : undefined}
     >
+      {/* Crew pass 2: in a tight slot the tag goes first and stays whole ("via SPO", never
+          clipped to "via"); the document number after it is what truncates. */}
+      {fit ? viaTag : null}
       {derived ? (
         <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole={!fit} />
       ) : (
@@ -150,11 +158,7 @@ export function DocumentCell({
       {showLine && chip.lineLabel ? (
         <span className="shrink-0 text-2xs text-muted-foreground">{chip.lineLabel}</span>
       ) : null}
-      {chip.via ? (
-        <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
-          via {chip.via === 'po' ? 'PO' : 'SPO'}
-        </WorklistPill>
-      ) : null}
+      {chip.via && !fit ? viaTag : null}
       {/* LINKAGE-UNIFY U3 (AC-D4): the worklist's own document pills, the same piece. */}
       <DocumentStatePills
         receipts={chip.receipts}

@@ -1255,3 +1255,45 @@ describe('PO lightbox lines - the SPO each line moved onto (SUPPLY-SPO-LINK, moc
     expect(getOrderInquirySpoDetail).toHaveBeenCalledWith('SPO-2026/09-0107');
   });
 });
+
+describe('SO-LINE-OI-STATUS-UNIFY crew pass 2: a reader without projects access', () => {
+  it('the PO lightbox shows the shared no-access message, never the raw permission slug', async () => {
+    getOrderInquiryPoDetail.mockRejectedValue(
+      new Error('Permission required: projects.projects.view'),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202611-P0042" poId="po-42" open onOpenChange={vi.fn()} />,
+    );
+    expect(await screen.findByText("You don't have access to this")).toBeInTheDocument();
+    expect(screen.queryByText(/Permission required/)).toBeNull();
+    expect(screen.queryByText(/projects\.projects\.view/)).toBeNull();
+  });
+
+  it('the SPO lightbox shows the same no-access message on a refusal, not "could not be found"', async () => {
+    getOrderInquirySpoDetail.mockRejectedValue(
+      Object.assign(new Error('Permission required: projects.projects.view'), { status: 403 }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0041" open onOpenChange={vi.fn()} />,
+    );
+    expect(await screen.findByText("You don't have access to this")).toBeInTheDocument();
+    expect(screen.queryByText('This shipping order could not be found.')).toBeNull();
+    expect(screen.queryByText(/projects\.projects\.view/)).toBeNull();
+  });
+
+  it('the header keeps room for the close X, so it never sits on "Go to linked line"', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      lines: [{ id: 'line-1', sku: 'SKU-1', qty_ordered: '10', qty_received: '0', remaining: '10' }],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" poLineId="line-1" open onOpenChange={vi.fn()} />,
+    );
+    const button = await screen.findByTestId('document-detail-go-to-line');
+    expect(button.parentElement).toHaveClass('pe-8');
+  });
+});

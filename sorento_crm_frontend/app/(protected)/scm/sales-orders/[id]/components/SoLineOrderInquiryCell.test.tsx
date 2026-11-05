@@ -197,6 +197,32 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
     expect(screen.getByText('202609-S0086')).toBeInTheDocument();
   });
 
+  it('crew pass 2: a "via PO" tag keeps its whole width; the document number gives way first', () => {
+    renderCell([
+      oiRow({
+        state: 'placed',
+        links: [
+          {
+            id: 'derived-alloc-7',
+            kind: 'spo',
+            derived: true,
+            document: 'SPO-2026/09-0041',
+            qty: '4',
+            spo_allocation_id: 'alloc-7',
+            line_label: 'L7',
+          },
+        ] as never,
+      }),
+    ]);
+    const tag = screen.getByText('via PO');
+    const number = screen.getByText('SPO-2026/09-0041');
+    // The tag sits BEFORE the number, so the slot's clip edge falls on the number, which
+    // ellipsizes; the tag itself never shrinks.
+    expect(tag.compareDocumentPosition(number) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tag).toHaveClass('shrink-0');
+    expect(number).toHaveClass('truncate');
+  });
+
   it('crew fix (1): the cell and each OI entry clip rather than paint past their width', () => {
     renderCell([oiRow({ state: 'placed', links: [PO_LINK] as never })]);
     expect(screen.getByTestId('so-line-oi-core-32')).toHaveClass('overflow-hidden');
