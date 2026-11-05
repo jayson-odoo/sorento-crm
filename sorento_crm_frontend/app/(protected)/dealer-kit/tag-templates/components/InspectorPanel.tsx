@@ -50,6 +50,7 @@ import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic, slotLabel } from '@/lib/dealer-kit/product-block';
+import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -1592,11 +1593,6 @@ function SubjectInspector({
   );
 }
 
-const SLOT_PICKER_FIXED = 4;
-const SLOT_PICKER_GROUPS = 3;
-const SLOT_PICKER_PICKS = 5;
-const SLOT_PICKER_UPGRADES = 2;
-
 function slotValue(slot: SubjectSlot): string {
   switch (slot.kind) {
     case 'main':
@@ -1632,19 +1628,7 @@ function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean):
     });
   if (isPriceBadge) out.push({ value: 'default', label: 'Tag total' });
   add({ kind: 'main' });
-  const fixed = slots ? slots.fixed : Array.from({ length: SLOT_PICKER_FIXED }, () => null);
-  fixed.forEach((part, index) => add({ kind: 'fixed', index }, part?.code));
-  const groups = slots
-    ? slots.groups.map((g) => ({ role: g.role, picks: g.picks }))
-    : Array.from({ length: SLOT_PICKER_GROUPS }, (_, g) => ({
-        role: `Choice group ${g + 1}`,
-        picks: Array.from({ length: SLOT_PICKER_PICKS }, () => null),
-      }));
-  groups.forEach((group, g) =>
-    group.picks.forEach((part, index) => add({ kind: 'pick', group: g, index }, part?.code, group.role)),
-  );
-  const upgrades = slots ? slots.upgrades : Array.from({ length: SLOT_PICKER_UPGRADES }, () => null);
-  upgrades.forEach((part, index) => add({ kind: 'upgrade', index }, part?.code));
+  for (const position of comboPositions(slots)) add(position.slot, position.code, position.group);
   return out;
 }
 

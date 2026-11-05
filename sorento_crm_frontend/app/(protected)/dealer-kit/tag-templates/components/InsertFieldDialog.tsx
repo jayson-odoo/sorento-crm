@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;
@@ -78,7 +78,9 @@ export function InsertFieldDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups), [specKeys, groups]);
+  // The previewed combo's own positions, when the data carries them.
+  const slots = data?.kind === 'line' ? data.line.slots : data?.kind === 'product' ? data.product.slots : undefined;
+  const catalog = useMemo(() => mergeFieldCatalog(specKeys, groups, slots), [specKeys, groups, slots]);
 
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();

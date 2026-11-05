@@ -3,6 +3,7 @@
  * combo fits. Pure. The words match the backend's `template_needs.fit_reason` exactly.
  */
 import type { ComboPartOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type { SubjectSlot, TagSlots } from './tag-template-types';
 
 /** What a template reads: highest position per kind (from its published layers). */
 export interface TemplateNeeds {
@@ -79,4 +80,41 @@ export function needsText(needs: TemplateNeeds, shape: ComboShape | null): strin
 /** 0-based index of the group named `role`, -1 when the combo has none. */
 export function groupIndexOf(role: string, shape: ComboShape): number {
   return shape.groups.findIndex((g) => g.role === role);
+}
+
+/** How many positions the generic list offers when no combo is previewed. */
+export const SLOT_PICKER_FIXED = 4;
+export const SLOT_PICKER_GROUPS = 3;
+export const SLOT_PICKER_PICKS = 5;
+export const SLOT_PICKER_UPGRADES = 2;
+
+/** A position a layer or a merge field may read, with the product sitting there and its group. */
+export interface ComboPosition {
+  slot: SubjectSlot;
+  code?: string;
+  group?: string;
+}
+
+/**
+ * The positions after the main product: the previewed combo's own, else the generic counts. The
+ * Product select and the Insert field dialog both list positions from here.
+ */
+export function comboPositions(slots: TagSlots | null | undefined): ComboPosition[] {
+  const out: ComboPosition[] = [];
+  const fixed = slots ? slots.fixed : Array.from({ length: SLOT_PICKER_FIXED }, () => null);
+  fixed.forEach((part, index) => out.push({ slot: { kind: 'fixed', index }, code: part?.code }));
+  const groups = slots
+    ? slots.groups.map((g) => ({ role: g.role, picks: g.picks }))
+    : Array.from({ length: SLOT_PICKER_GROUPS }, (_, g) => ({
+        role: `Choice group ${g + 1}`,
+        picks: Array.from({ length: SLOT_PICKER_PICKS }, () => null),
+      }));
+  groups.forEach((group, g) =>
+    group.picks.forEach((part, index) =>
+      out.push({ slot: { kind: 'pick', group: g, index }, code: part?.code, group: group.role }),
+    ),
+  );
+  const upgrades = slots ? slots.upgrades : Array.from({ length: SLOT_PICKER_UPGRADES }, () => null);
+  upgrades.forEach((part, index) => out.push({ slot: { kind: 'upgrade', index }, code: part?.code }));
+  return out;
 }
