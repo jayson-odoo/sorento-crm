@@ -3,8 +3,8 @@ tier reached, commission, bonus), and the sales agent lookup.
 
 A target's achievement and commission are never stored (`models/sales.py` SalesTarget, SalesTargetCommissionTier):
 `compute` reads them from `target_service.period_figures`, the target page's own calls batched. The screen is
-all-or-nothing on `sales.targets.view` (`api/v1/sales/targets.py`), and so is this entity: no own-only rule
-(crew ruling, 5 Nov). An agent this reader cannot see is left out, as on the Agents tab
+`sales.targets.view` (everything) or `sales.targets.view_own` (the agent targets of the user's own sales agents,
+owner ruling 5 Nov 23:2x), and so is this entity: `own_scope.sales_target_clause` for both. An agent this reader cannot see is left out, as on the Agents tab
 (`target_service.list_all_targets`).
 """
 from __future__ import annotations
@@ -29,12 +29,18 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     overlapping = select(SalesTargetPeriod.target_id).where(
         SalesTargetPeriod.period_start <= date_to, SalesTargetPeriod.period_end >= date_from
     )
+    mine = []
+    if own_only:
+        # `sales.targets.view_own`: the screen's own rule (`api/v1/sales/targets.py` `_load`, `_own_rows`).
+        from app.services import own_scope
+
+        mine = [own_scope.sales_target_clause(own_scope.me(db, user_id))]
     # The session's company scope (stamped by `run_as_user`) narrows SalesTarget and its periods to the user's
     # company. The periods are counted before anything is computed: past `limit` the window is refused.
     periods = (
         db.query(SalesTargetPeriod.id)
         .join(SalesTarget, SalesTarget.id == SalesTargetPeriod.target_id)
-        .filter(SalesTargetPeriod.period_start <= date_to, SalesTargetPeriod.period_end >= date_from)
+        .filter(SalesTargetPeriod.period_start <= date_to, SalesTargetPeriod.period_end >= date_from, *mine)
         .limit(limit + 1)
         .count()
     )
@@ -42,7 +48,9 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
         from app.services.assistant_registry.query import QueryRefused
 
         raise QueryRefused("timeout", f"More than {limit} target periods in that window; narrow it (a month, an agent).")
-    targets = db.query(SalesTarget).filter(SalesTarget.id.in_(overlapping)).order_by(SalesTarget.target_no).all()
+    targets = (
+        db.query(SalesTarget).filter(SalesTarget.id.in_(overlapping), *mine).order_by(SalesTarget.target_no).all()
+    )
     if not targets:
         return []
     agent_ids = {t.sales_agent_id for t in targets if t.sales_agent_id}
@@ -104,6 +112,12 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     return rows
 
 
+def _own(me):
+    from app.services import own_scope
+
+    return own_scope.sales_target_clause(me)
+
+
 register(
     EntityDef(
         key="sales_agent",
@@ -125,6 +139,8 @@ register(
         module="sales",
         model=SalesTarget,
         view_permission=TARGETS_VIEW,
+        own_permission="sales.targets.view_own",
+        own_clause=_own,
         fields={
             "target_no": FieldDef("Target", kind="text"),
             "subject": FieldDef(

@@ -1,6 +1,7 @@
 """Sales Targets API (plan 3.1, 3.8, 16.3; UAC S1-1 to S1-29, S6-4 to S6-7).
 
-Slugs (S1-13): the list, a detail and the modal's options need `sales.targets.view`; create
+Slugs (S1-13): the list, a detail and the modal's options need `sales.targets.view`, or
+`sales.targets.view_own`, which narrows them to the user's own agents' agent targets (AI-TOOLS-WAVE2); create
 needs `.add`; a header edit, a period's figure, Duplicate and Add figure need `.edit`; DELETE
 needs `.delete`. Point ratios: read with `.view`, written with `.edit`; the dealer Excel import
 needs `.edit` for its dry run as well as the apply (lane SALES-TARGET-DEALER). Plain `def`
@@ -20,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.download import DownloadResponse
 from app.schemas.sales import (
     SalesPointRatioIn,
@@ -48,6 +49,10 @@ VIEW = "sales.targets.view"
 ADD = "sales.targets.add"
 EDIT = "sales.targets.edit"
 DELETE = "sales.targets.delete"
+#: Own-only (owner ruling 5 Nov, AI-TOOLS-WAVE2): without VIEW, only the agent targets of the user's own sales
+#: agents (`own_scope.sales_target_clause`); the assistant's `sales_target` entity reads the same rule.
+VIEW_OWN = "sales.targets.view_own"
+_READ = require_any_permission([VIEW, VIEW_OWN])
 
 
 def _reraise(db: Session, exc: Exception):
@@ -68,9 +73,33 @@ def _user_id(user: dict) -> Optional[str]:
     return str(user["id"]) if user and user.get("id") else None
 
 
-def _load(db: Session, target_id: str):
+def _load(db: Session, target_id: str, user: Optional[dict] = None):
     validate_uuid_path(target_id, resource="Target")
-    return target_service.get_target_or_404(db, target_id)
+    target = target_service.get_target_or_404(db, target_id)
+    own = _own_agents(db, user) if user else None
+    if own is not None and not (target.subject_kind == "agent" and target.sales_agent_id in own):
+        # Someone else's target reads as one that does not exist (the own-scope 404 rule).
+        raise AppException(status_code=404, message="Target not found.", code="NOT_FOUND")
+    return target
+
+
+def _own_agents(db: Session, user: dict) -> Optional[set]:
+    """The user's own agent ids when they hold only VIEW_OWN; None when they see every target."""
+    from app.services import own_scope
+
+    user_id = str(user["id"])
+    if not own_scope.user_is_limited(db, user_id, VIEW, VIEW_OWN):
+        return None
+    return set(own_scope.me(db, user_id).agent_ids)
+
+
+def _own_rows(body: dict, subject: str, own: Optional[set]) -> dict:
+    """The list cut to the user's own agents' agent targets; team and dealer lists empty, and the
+    company-wide summary figures (unassigned sales, agents with no team) not shown."""
+    if own is None:
+        return body
+    rows = [r for r in body["rows"] if subject == "agent" and r.get("sales_agent_id") in own]
+    return {**body, "rows": rows, "unassigned_amount": 0.0, "no_team_count": 0}
 
 
 @router.get("", response_model=SalesTargetList)
@@ -81,7 +110,7 @@ def list_targets(
     query: Optional[str] = Query(None),
     #: Every target of the kind, one row each, whole-range figures (Targets > Teams / Agents).
     all: bool = Query(False),
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
     # Several teams are OR-ed; `none` (agents in no team) is a pseudo-value beside real team ids.
@@ -92,13 +121,16 @@ def list_targets(
     ] or None
     try:
         # A dealer has no "No target" rows: its tab is always the whole list.
+        own = _own_agents(db, user)
         if all or subject == "dealer":
-            return target_service.list_all_targets(
+            body = target_service.list_all_targets(
                 db, subject=subject, sales_team_id=team_ids, query=query
             )
-        return target_service.list_targets(
-            db, on=on, subject=subject, sales_team_id=team_ids, query=query
-        )
+        else:
+            body = target_service.list_targets(
+                db, on=on, subject=subject, sales_team_id=team_ids, query=query
+            )
+        return _own_rows(body, subject, own)
     except Exception as exc:
         _reraise(db, exc)
 
@@ -106,7 +138,7 @@ def list_targets(
 # Before `/{target_id}`, which would otherwise capture it.
 @router.get("/options", response_model=SalesTargetOptions)
 def target_options(
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
     try:
@@ -121,7 +153,7 @@ def _ratio_out(row) -> dict:
 
 @router.get("/point-ratios", response_model=SalesPointRatioList)
 def list_point_ratios(
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
     try:
@@ -232,7 +264,7 @@ def statement_filename(targets, now: datetime) -> str:
 @router.post("/commission-statement", response_model=DownloadResponse)
 def commission_statement(
     payload: CommissionStatementRequest = Body(default_factory=CommissionStatementRequest),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
     """The commission statement (xlsx) of one or more targets, through My Downloads (owner hand
@@ -258,7 +290,7 @@ def commission_statement(
                 message=f"Pick at most {MAX_STATEMENT_TARGETS} targets per statement.",
                 code="TOO_MANY_TARGETS",
             )
-        targets = [target_service.get_target_or_404(db, target_id) for target_id in picked]
+        targets = [_load(db, target_id, current_user) for target_id in picked]
         # The worker has no request scope: the caller's own company travels with the job.
         company_id = acting_company_id(db)
         on = payload.on or target_service._today()
@@ -320,11 +352,11 @@ def create_target(
 def get_target(
     target_id: str,
     on: Optional[date] = Query(None),
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
     try:
-        return target_service.target_detail(db, _load(db, target_id), on=on)
+        return target_service.target_detail(db, _load(db, target_id, user), on=on)
     except Exception as exc:
         _reraise(db, exc)
 

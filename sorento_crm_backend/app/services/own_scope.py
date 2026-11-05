@@ -37,6 +37,8 @@ PROJECTS_VIEW = "projects.projects.view"
 PROJECTS_VIEW_OWN = "projects.projects.view_own"
 OPPORTUNITIES_VIEW = "sales.opportunities.view"
 OPPORTUNITIES_VIEW_OWN = "sales.opportunities.view_own"
+TARGETS_VIEW = "sales.targets.view"
+TARGETS_VIEW_OWN = "sales.targets.view_own"
 SAMPLE_REQUESTS_VIEW = "projects.sample_requests.view"
 SAMPLE_REQUESTS_VIEW_OWN = "projects.sample_requests.view_own"
 NPA_VIEW = "procurement.new_product_applications.view"
@@ -162,6 +164,15 @@ def opportunity_clause(m: Me):
     if not m.agent_ids:
         return false()
     return SalesOpportunity.sales_agent_id.in_(list(m.agent_ids))
+
+
+def sales_target_clause(m: Me):
+    """Agent targets of their own sales agents (`sales.targets.view_own`); never a team or dealer target."""
+    from app.models.sales import SalesTarget
+
+    if not m.agent_ids:
+        return false()
+    return (SalesTarget.subject_kind == "agent") & SalesTarget.sales_agent_id.in_(list(m.agent_ids))
 
 
 def sample_request_clause(m: Me):
