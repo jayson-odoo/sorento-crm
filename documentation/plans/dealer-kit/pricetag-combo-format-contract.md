@@ -150,3 +150,8 @@ always escaped (`& < > "`). Idempotent.
   `ComboTagPreview` says "No published price tag template" when the default exists but is unpublished, and
   drops the `as never` casts; list markers follow block alignment on canvas the same as print; highlight
   box height matches print (font box).
+- R13 (captain, 5 Nov, after fix round 1): the client matches R5. A line KEEPING its stored template
+  (loaded pick unchanged, price type unchanged) shows no "No SP/LP template linked" pill, its eye is
+  enabled, and no client-side Submit/Approve reason is raised for it. The pill, disabled eye and reason
+  apply only to a line with no kept pick (new line, user changed the pick, or user flipped LP/SP) whose item
+  has no fitting template.

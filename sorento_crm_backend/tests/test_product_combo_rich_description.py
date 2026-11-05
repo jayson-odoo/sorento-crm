@@ -157,7 +157,8 @@ def test_r3_a_raw_value_over_the_schema_limit_is_422_before_sanitising(db, monke
 def test_r3_the_raw_limit_is_20000_not_less(db, monkeypatch):
     """A 20000-character raw value that sanitises under 5000 still saves."""
     _host, combo, client = _setup(db, monkeypatch)
-    noisy = "<p>" + '<span class="c">x</span>' * 833 + "</p>"
+    # One long dropped attribute: ~19.9k raw, sanitises to "<p><span>x</span></p>".
+    noisy = '<p><span class="' + "c" * 19900 + '">x</span></p>'
     assert 19000 < len(noisy) <= 20000
     res = _patch(client, combo.id, description=noisy)
     assert res.status_code == 200, res.text
