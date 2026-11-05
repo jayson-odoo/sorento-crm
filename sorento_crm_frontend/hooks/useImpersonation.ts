@@ -17,10 +17,17 @@ import {
 export function useImpersonation() {
   const session = useImpersonationSession();
 
+  // Checks THIS tab's view-as against the server; never adopts the server's open row into a tab
+  // that did not start it (PORTAL-IMPERSONATION-ISOLATE). Every other tab and browser of the
+  // admin stays the admin.
   const hydrate = useCallback(async (): Promise<ImpersonationSession | null> => {
+    const mine = impersonationStore.getState();
+    if (!mine) return null;
     const current = await fetchCurrentImpersonation();
-    impersonationStore.setSession(current);
-    return current;
+    const stillOpen = current && current.targetUser.id === mine.targetUser.id ? current : null;
+    // Only act if the tab still holds what we checked (a stop or a new start may have raced us).
+    if (impersonationStore.getState() === mine) impersonationStore.setSession(stillOpen);
+    return stillOpen;
   }, []);
 
   const startMutation = useMutation({
