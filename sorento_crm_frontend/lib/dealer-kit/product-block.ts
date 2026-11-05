@@ -468,8 +468,12 @@ export function resolveSlotText(
         return subject.line.included_accessories;
       case 'barcode':
         return subject.line.barcode;
-      case 'price_tag_description':
-        return subject.line.price_tag_description ?? null;
+      case 'price_tag_description': {
+        // R19: on a combo line the line itself is the subject, and the combo's own description
+        // wins; without one the host's stands in. A part / position subject is a 'product'.
+        const own = subject.line.combo?.description;
+        return own && own.trim() ? own : (subject.line.price_tag_description ?? null);
+      }
       default:
         return null;
     }
@@ -664,8 +668,47 @@ export function layerRichBlocks(
           ? (comboOf(data)?.description ?? null)
           : null;
     if (isRich(value)) source = value as string;
+  } else if (!isRich(source)) {
+    const inline = richTokenInText(source, data, layer.props);
+    if (inline) {
+      const blocks = richBlocksWithFields(inline.value, data, mode, layer);
+      if (blocks && blocks.length > 0) {
+        const before = renderMergeFields(inline.before, data, mode, layer);
+        const after = renderMergeFields(inline.after, data, mode, layer);
+        const first = blocks[0];
+        const last = blocks[blocks.length - 1];
+        if (before) first.runs = [{ text: before }, ...first.runs];
+        if (after) last.runs = [...last.runs, { text: after }];
+        return blocks;
+      }
+    }
   }
   return richBlocksWithFields(source, data, mode, layer);
+}
+
+const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
+
+/** A rich description token inside other text: the text around it and the description itself.
+ *  Only a single such token with a rich value; anything else keeps the plain path. */
+function richTokenInText(
+  source: string,
+  data: TagBindingData | null | undefined,
+  props: TagLayerProps,
+): { before: string; after: string; value: string } | null {
+  const found = [...source.matchAll(RICH_TOKEN)];
+  if (found.length !== 1) return null;
+  const [match] = found;
+  const value =
+    match[1] === 'product.price_tag_description'
+      ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
+      : (comboOf(data)?.description ?? null);
+  if (!isRich(value)) return null;
+  const at = match.index ?? 0;
+  return {
+    before: source.slice(0, at),
+    after: source.slice(at + match[0].length),
+    value: value as string,
+  };
 }
 
 /** `value` as blocks with its merge fields resolved on the text runs; null when not rich. */

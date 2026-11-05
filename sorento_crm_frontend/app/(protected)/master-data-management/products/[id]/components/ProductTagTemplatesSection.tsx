@@ -78,12 +78,12 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
         value: template.id,
         label: template.name,
         description: [
+          typeText(template.price_type),
           sizeText(template.print_size.width_mm, template.print_size.height_mm),
           template.published_version_id ? null : 'Draft',
         ]
           .filter(Boolean)
           .join(' / '),
-        badgeText: typeText(template.price_type),
       })),
     [options.data],
   );
@@ -120,8 +120,9 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
             selectedOptions={rows.map((row) => ({
               value: row.id,
               label: row.name,
-              description: sizeText(row.width_mm, row.height_mm),
-              badgeText: typeText(row.price_type),
+              description: [typeText(row.price_type), sizeText(row.width_mm, row.height_mm)]
+                .filter(Boolean)
+                .join(' / '),
             }))}
             onChange={(ids) => {
               const current = rows.map((row) => row.id);
@@ -179,7 +180,11 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
                   onChange={(id) => saveDefaults({ ...defaults, [kind]: id })}
                   options={rows
                     .filter((row) => templateFitsLine(row.price_type, kind))
-                    .map((row) => ({ value: row.id, label: row.name }))}
+                    .map((row) => ({
+                      value: row.id,
+                      label: row.name,
+                      description: typeText(row.price_type),
+                    }))}
                   disabled={save.isPending}
                   placeholder={label}
                   emptyMessage="No templates."

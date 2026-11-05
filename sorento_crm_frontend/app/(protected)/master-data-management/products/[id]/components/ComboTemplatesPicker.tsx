@@ -56,15 +56,22 @@ export function ComboTemplatesPicker({
           : '';
       const needs = shape && template.needs ? template.needs : null;
       const reason = shape && needs ? fitReason(needs, shape) : null;
-      const typeText = template.price_type ? TEMPLATE_PRICE_TYPE_LABEL[template.price_type] : 'Not set';
+      // The price type leads the description; an older payload without the key shows none.
+      const typeText =
+        template.price_type === undefined
+          ? ''
+          : template.price_type
+            ? TEMPLATE_PRICE_TYPE_LABEL[template.price_type]
+            : 'Not set';
+      const detail =
+        reason ??
+        ((shape && needs ? [size, needsText(needs, shape)].filter(Boolean).join('. ') : size) || undefined);
       return {
         value: template.id,
         label: template.name,
-        description:
-          reason ??
-          ((shape && needs ? [size, needsText(needs, shape)].filter(Boolean).join('. ') : size) || undefined),
+        description: [typeText, detail].filter(Boolean).join(' / ') || undefined,
         disabled: reason ? true : undefined,
-        badgeText: reason ? `${typeText} / Does not fit` : typeText,
+        badgeText: reason ? 'Does not fit' : undefined,
       };
     });
   }, [templateOptions.data, parts]);
@@ -77,7 +84,15 @@ export function ComboTemplatesPicker({
   const defaultOptions = (kind: LinePriceType) =>
     value.flatMap((id) => {
       const found = options.find((o) => o.value === id) ?? selectedOptions?.find((o) => o.value === id);
-      return found && templateFitsLine(typeById.get(id) ?? null, kind) ? [{ value: found.value, label: found.label }] : [];
+      if (!found || !templateFitsLine(typeById.get(id) ?? null, kind)) return [];
+      const type = typeById.get(id);
+      return [
+        {
+          value: found.value,
+          label: found.label,
+          description: type ? TEMPLATE_PRICE_TYPE_LABEL[type] : 'Not set',
+        },
+      ];
     });
   const defaults: LinkDefaults = { list: defaultListId, selling: defaultSellingId };
   return (
@@ -89,7 +104,7 @@ export function ComboTemplatesPicker({
         value={value}
         selectedOptions={selectedOptions?.map((o) => ({
           ...o,
-          badgeText: (o as { badgeText?: string }).badgeText ?? options.find((x) => x.value === o.value)?.badgeText,
+          description: options.find((x) => x.value === o.value)?.description ?? o.description,
         }))}
         onChange={(ids) =>
           onChange(ids, {
