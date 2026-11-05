@@ -259,8 +259,8 @@ jobs:
               [ "$heads" -eq 1 ] || { echo "::error::alembic has $heads heads"; rc=1; }
               alembic upgrade head || { echo "::error::alembic upgrade head failed"; rc=1; }
               mapfile -t MIG < ../plan/migrations.txt
-              mapfile -t MAIN < ../plan/main.txt
-              mapfile -t SCM < ../plan/scm.txt
+              mapfile -t MAIN < ../plan/main_ddl.txt
+              mapfile -t SCM < ../plan/scm_ddl.txt
               [ ${#MIG[@]} -eq 0 ] || run serial-migrations -p no:xdist "${MIG[@]}"
               [ ${#MAIN[@]} -eq 0 ] || run serial-main-ddl -p no:xdist -m serial_ddl "${MAIN[@]}"
               [ ${#SCM[@]} -eq 0 ] || run serial-scm-ddl -p no:xdist -m serial_ddl "${SCM[@]}"

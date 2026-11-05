@@ -22,7 +22,8 @@ delta shard is as long as a full one and no constant needs calibrating twice. A 
 file gets no runner. pytest-split then balances the files of a pool across its runners by the
 same durations (`--splits N --group i`), each runner a separate job.
 
-Writes into --out: main.txt, scm.txt, migrations.txt (backend-relative test files),
+Writes into --out: main.txt, scm.txt, migrations.txt, main_ddl.txt / scm_ddl.txt (the files of
+each pool that name the `serial_ddl` marker; backend-relative test files),
 vitest_related.txt (frontend-relative), plan.txt (the human summary); and key=value lines on
 stdout (also appended to $GITHUB_OUTPUT when set): main_shards / scm_shards / vitest_shards (JSON
 lists of 1-based shard numbers, [] for none), main_n, scm_n, vitest_n, serial (true|false),
@@ -78,6 +79,13 @@ def pools(tests: list[str]) -> tuple[list[str], list[str], list[str]]:
     return main, scm, migrations
 
 
+def _text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def file_seconds(root: Path) -> dict[str, float]:
     try:
         durations = json.loads((root / ".test_durations").read_text(encoding="utf-8"))
@@ -124,9 +132,14 @@ def plan(mode: str, root: Path, *, base: str | None = None, head: str | None = N
                   f"{len(tests)} of {res.total} test files ({res.backend_reason}); "
                   f"vitest {res.vitest} ({res.vitest_reason})")
     main, scm, migrations = pools(tests)
+    # The serial runner's `-m serial_ddl` passes collect only the files that name the marker
+    # (it is applied in the test files themselves): collecting the whole main pool to run its
+    # ~110 serial_ddl tests took 949 s of the serial runner's 21 min (run 41977895392).
+    ddl = lambda files: [f for f in files if "serial_ddl" in _text(root / f)]  # noqa: E731
     n_vitest = vitest_shards if vitest == "full" else (1 if vitest == "related" else 0)
     return {
         "main": main, "scm": scm, "migrations": migrations, "vitest_related": related,
+        "main_ddl": ddl(main), "scm_ddl": ddl(scm),
         "main_n": n_main, "scm_n": n_scm, "vitest_n": n_vitest, "vitest": vitest,
         "serial": bool(main or scm or migrations), "reason": reason,
     }
@@ -150,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
              scm_shards=args.scm_shards, vitest_shards=args.vitest_shards)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    for name in ("main", "scm", "migrations", "vitest_related"):
+    for name in ("main", "scm", "migrations", "vitest_related", "main_ddl", "scm_ddl"):
         (out / f"{name}.txt").write_text("".join(f"{t}\n" for t in p[name]), encoding="utf-8")
     shards = lambda n: json.dumps(list(range(1, n + 1)))  # noqa: E731
     lines = [

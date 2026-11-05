@@ -240,3 +240,11 @@ def test_the_refreshed_durations_merge_every_shards_fresh_timings_over_the_base(
     (tmp_path / "junit-backend-scm-1" / "durations-scm-1.json").write_text('{"s::b": 3.0}')
     merged, fresh = sts.merge_durations({"t::a": 9.0, "s::b": 9.0, "old::c": 4.0}, tmp_path)
     assert merged == {"old::c": 4.0, "s::b": 3.0, "t::a": 2.0, "t::new": 1.0} and fresh == 3
+
+
+def test_the_serial_runner_collects_only_the_files_that_name_serial_ddl(tmp_path):
+    root = _tree(tmp_path)
+    (root / "tests" / "test_ddl.py").write_text("import pytest\npytestmark = pytest.mark.serial_ddl\n")
+    p = stp.plan("full", root)
+    assert p["main_ddl"] == ["tests/test_ddl.py"] and p["scm_ddl"] == []
+    assert "tests/test_ddl.py" in p["main"]
