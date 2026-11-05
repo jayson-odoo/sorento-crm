@@ -120,7 +120,7 @@ def _flag(link: Link, price_type: str) -> bool:
 def _defaults_for(links: list[Link], price_type: str) -> set[str]:
     """Ids that count as the default for one type: the stored one, else a lone fitting link."""
     # R1: a saved flag counts only while its template still fits that type.
-    stored = {link[0].id for link in links if _flag(link, price_type) and fits(link[0], price_type)}
+    stored = {link[0].id for link in links if _flag(link, price_type)}
     if stored:
         return stored
     fitting = [link[0].id for link in links if fits(link[0], price_type)]
