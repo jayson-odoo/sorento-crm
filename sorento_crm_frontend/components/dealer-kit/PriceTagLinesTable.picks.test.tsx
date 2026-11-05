@@ -288,16 +288,27 @@ describe('a discontinued fixed part (round 3)', () => {
   });
 });
 
-describe('S5: the "lists every option" hint only where the template uses none of the group', () => {
+describe('S5: the "lists every option" hint is only true for a template without positions', () => {
   const hint = 'The tag will list every option.';
 
-  it('is hidden when the chosen template uses positions from the group', () => {
+  it('is hidden when the chosen template uses a pick position', () => {
     renderTable();
     expect(screen.queryByText(hint)).toBeNull();
   });
 
-  it('shows when the chosen template uses no position from the group', () => {
+  it('is hidden when the chosen template uses only an upgrade position', () => {
     renderTable({ tag_templates: [tpl('t0', [0], 1), tpl('t1', [1])], tag_template_id: 't0' });
+    expect(screen.queryByText(hint)).toBeNull();
+  });
+
+  it('shows for a template with no positions', () => {
+    renderTable({ tag_templates: [tpl('t0', [0], 0), tpl('t1', [1])], tag_template_id: 't0' });
+    expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+
+  it('shows when the template needs are unknown', () => {
+    const unknown = { ...tpl('t0', [0], 0), needs: undefined };
+    renderTable({ tag_templates: [unknown, tpl('t1', [1])], tag_template_id: 't0' });
     expect(screen.getByText(hint)).toBeInTheDocument();
   });
 });
