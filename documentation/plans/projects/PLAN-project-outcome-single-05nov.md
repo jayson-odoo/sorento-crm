@@ -1,6 +1,6 @@
 # PLAN: One Won/Lost outcome per project (drop per-area outcome)
 
-Status: Build (owner answered 5 Nov ~12:40). Track: standard, size M, no migration.
+Status: Review (built; owner answered 5 Nov ~12:40). Track: standard, size M, no migration.
 
 Lane: PROJECT-OUTCOME-SINGLE. Owner ruling 5 Nov 2026 12:28 MYT: "we don't need per area
 outcome" / "we only need per project outcome, simple as that".
@@ -110,11 +110,11 @@ against the quotation. No? Don't need to fix existing data. This is not rolled o
   - `won`: from `open` only. From `lost`: 409 `project_lost` ("Re-open the project first.").
     From `won`: no-op, 200. Status untouched. `loss_reason = None`.
   - `open` (Re-open): from `won` or `lost`; from `open`: no-op, 200. `loss_reason = None`. If the
-    project's status key is `lost`, `status_id` returns to the rung it held before Lost: the
-    `to_status_id` of the newest `activity_events` row (entity_type `project`, this id,
-    `system_template = 'stage_changed'`) that is older than the newest such row whose
-    `to_status_id` is the current Lost status; no such row means the graph's initial status
-    (`status_service.initial_status`). This is a direct write, not a graph edge (terminal rungs
+    project's status key is `lost`, `status_id` returns to the rung it held before Lost. As
+    built: `change_status` now also writes `from_status_id` in the `stage_changed` payload, and
+    Re-open prefers the `from_status_id` of the newest event into Lost; for an older event without
+    it, the `to_status_id` of the newest `stage_changed` row older than that event; with neither,
+    the graph's initial status (`status_service.initial_status`). This is a direct write, not a graph edge (terminal rungs
     have no outgoing edges by design, `status_service.py:374`), and it records a
     `stage_changed` event. Any other status key: status untouched.
   - Every real change records a project event, template `outcome_changed`, payload

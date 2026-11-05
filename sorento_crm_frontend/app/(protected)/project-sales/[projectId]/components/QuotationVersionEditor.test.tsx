@@ -268,7 +268,6 @@ const QUOTATION: ProjectQuotation = {
   id: 'q1',
   project_id: 'p1',
   scope_label: 'House Units',
-  outcome: 'open',
   version_count: 2,
   current_version_id: 'v2',
   current_version_no: 2,
