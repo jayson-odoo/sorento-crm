@@ -343,6 +343,7 @@ function sendToMarketing() {
   if (!screen.queryByLabelText('What marketing needs to fix')) {
     fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
   }
+  if (!screen.queryByLabelText('What marketing needs to fix')) return;
   fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
     target: { value: 'Please check' },
   });

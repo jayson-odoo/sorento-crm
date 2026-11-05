@@ -219,6 +219,9 @@ StockDebtAssignedFrom = Annotated[
 
 
 class StockDebtDemandLine(BaseModel):
+    #: The SO line's number as staff know it (`so_line_no` rule: AutoCount's own `Seq` off
+    #: the core line, else the planning mirror's). The snapshot drill's Line column.
+    line_no: Optional[int] = None
     so_number: str
     agent_code: Optional[str] = None
     #: The bin the line is booked in - the drill's Bin column (AC-S2-7).

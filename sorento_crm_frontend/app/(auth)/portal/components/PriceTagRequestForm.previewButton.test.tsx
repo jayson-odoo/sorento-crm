@@ -244,6 +244,7 @@ describe('O4: no reason line under the buttons', () => {
   it('shows no approve-blocked paragraph, and Approve keeps the reason as its tooltip', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     const approve = screen.getByRole('button', { name: /^approve$/i });
     expect(screen.queryByTestId('approve-blocked')).toBeNull();
     expect(approve).toBeInTheDocument();

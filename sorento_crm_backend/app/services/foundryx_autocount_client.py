@@ -32,6 +32,8 @@ _BUILD_TIMEOUT_SECONDS = 15
 _STATUS_TIMEOUT_SECONDS = 15
 _ROWS_TIMEOUT_SECONDS = 30
 _PROBE_TIMEOUT_SECONDS = 5
+#: A write is up to two AutoCount writes plus a read-back on the SS side.
+_WRITE_TIMEOUT_SECONDS = 60
 
 #: `GET .../snapshots/{id}` on an id that can never exist - the Test action's probe.
 _NIL_SNAPSHOT_ID = "00000000-0000-0000-0000-000000000000"
@@ -218,6 +220,42 @@ class FoundryxAutocountClient:
                 total_pages = 1
             page += 1
         return rows
+
+    # ------------------------------------------------------- write-back (AC-LINK-CRM-UI)
+    # SS PR #191 `57-autocount-write-qtso-contract.md` + plan 55 relocate. A write answers
+    # one JSON shape (`outcome`, `errorCode`, ...) for every status; that answer is
+    # returned as-is so the caller shows what AutoCount said. A flat-body error (auth,
+    # company, parse) has no `outcome` and raises `FoundryxPullError` as every other call.
+
+    def write_capabilities(self, company_code: str) -> dict:
+        """``GET /api/v1/autocount/write-capabilities?companyCode=``."""
+        return self._request(
+            "GET",
+            "/api/v1/autocount/write-capabilities",
+            timeout=_STATUS_TIMEOUT_SECONDS,
+            params={"companyCode": company_code},
+        )
+
+    def write(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
+        """``POST`` one write route (``/po-links``, ``/po-links/unlink``,
+        ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``)."""
+        headers = self._headers()
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        try:
+            with self._client(_WRITE_TIMEOUT_SECONDS) as client:
+                response = client.post(f"/api/v1/autocount/{path}", headers=headers, json=body)
+        except httpx.HTTPError as exc:
+            raise FoundryxPullError(
+                code="UNREACHABLE", message="Could not reach AutoCount.", status=502
+            ) from exc
+        try:
+            answer = response.json()
+        except ValueError:
+            answer = None
+        if isinstance(answer, dict) and answer.get("outcome"):
+            return answer
+        return self._parse(response)
 
     def probe(self) -> tuple[int, Optional[dict]]:
         """``GET`` the nil-snapshot id, RAW - unlike ``_request``/``_parse``, a non-2xx

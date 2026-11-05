@@ -20,6 +20,8 @@ import type {
   SnapshotListResponse,
   SnapshotRow,
   SnapshotRowsResponse,
+  PoLinkOptions,
+  PoLinkResult,
 } from '../types/stockDebtSnapshot.types';
 
 const BASE = '/api/v1/project-sales/stock-debt/snapshots';
@@ -125,4 +127,86 @@ export async function exportSnapshot(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start the snapshot export'));
   return (await res.json()) as MyDownload;
+}
+
+/* ------------------------------------------------------------ PO link (AC-LINK-CRM-UI) */
+// All need `projects.stock_debt.link_po`; every write goes to AutoCount through the Shared
+// Service and answers per line what AutoCount said.
+
+const PO_LINK_BASE = '/api/v1/project-sales/stock-debt/po-link';
+
+function poLinkUrl(id: string, rowId: string, tail = ''): string {
+  return `${BASE}/${encodeURIComponent(id)}/rows/${encodeURIComponent(rowId)}/po-link${tail}`;
+}
+
+async function postJson<T>(url: string, body: unknown, fallback: string): Promise<T> {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, fallback));
+  return (await res.json()) as T;
+}
+
+export async function getPoLinkOptions(id: string, rowId: string): Promise<PoLinkOptions> {
+  const res = await apiFetch(poLinkUrl(id, rowId));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the PO lines'));
+  return (await res.json()) as PoLinkOptions;
+}
+
+export async function linkPoLines(
+  id: string,
+  rowId: string,
+  lines: Array<{ sales_order_line_id: string; po_line_id: string; qty: number }>,
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(poLinkUrl(id, rowId, '/link'), { lines }, 'Failed to link to PO');
+}
+
+/** Unlink exactly these PO lines (each linked to a line of the row). */
+export async function unlinkPoLines(
+  id: string,
+  rowId: string,
+  poLineIds: string[],
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(
+    poLinkUrl(id, rowId, '/unlink'),
+    { po_line_ids: poLineIds },
+    'Failed to unlink from PO',
+  );
+}
+
+export async function relinkPoLines(
+  id: string,
+  rowId: string,
+  moves: Array<{ po_line_id: string; to_sales_order_line_id: string }>,
+): Promise<{ results: PoLinkResult[] }> {
+  return postJson(poLinkUrl(id, rowId, '/relink'), { moves }, 'Failed to move the PO');
+}
+
+/** Move a linked PO line to its sales order line's location. */
+export async function relocatePoLine(poLineId: string): Promise<PoLinkResult> {
+  return postJson(`${PO_LINK_BASE}/relocate`, { po_line_id: poLineId }, 'Failed to move the PO line');
+}
+
+/** Ask the Shared Service to finish an operation it stopped (it re-reads AutoCount first). */
+export async function resumePoLink(input: {
+  operationId: string;
+  poLineId: string;
+  salesOrderLineId: string | null;
+}): Promise<PoLinkResult> {
+  return postJson(
+    `${PO_LINK_BASE}/operations/${encodeURIComponent(input.operationId)}/resume`,
+    { po_line_id: input.poLineId, sales_order_line_id: input.salesOrderLineId },
+    'Failed to resume',
+  );
+}
+
+/** Whether "AutoCount links from Stock Debt" is on (System Settings, owner 5 Nov), read off
+ *  the app-config projection every signed-in user may read. Off: no PO actions at all. */
+export async function getPoLinkSwitch(): Promise<boolean> {
+  const res = await apiFetch('/api/user-management/settings/app-config');
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load settings'));
+  const body = (await res.json()) as { stock_debt_po_link_enabled?: boolean };
+  return body.stock_debt_po_link_enabled === true;
 }

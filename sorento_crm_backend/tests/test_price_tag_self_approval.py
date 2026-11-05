@@ -5,7 +5,7 @@ nobody assigned, Approve carries the tag sheet he saw and saves it as the design
 version the PDF prints from, Edit (the revise path) returns the request to him with
 no cap, and Escalate hands it to the form SLA config's assignee with his note.
 
-Plan: documentation/plans/dealer-kit/PLAN-pricetag-self-approval-02nov.md (R1-R10),
+Plan: documentation/plans/_archive/dealer-kit/PLAN-pricetag-self-approval-02nov.md (R1-R10),
 UAC alongside (AC1-AC14).
 """
 from __future__ import annotations

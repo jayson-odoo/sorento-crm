@@ -18,7 +18,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.models.user import User
 from app.services import ai_prompt_registry
 from app.services.ai_prompt_registry import PROMPT_KEYS
-from app.services.error_handler import AppException
+from app.services.error_handler import AppException, handle_unprocessable
 
 LABELS = ("production", "staging")
 # What `ai_prompt_labels.reasoning_effort` may hold (the providers map each one; llm_provider.py).
@@ -139,6 +139,76 @@ class AIPromptService:
                 }
             )
         return summaries
+
+    #: Every column the prompts list can sort by (AI-PROMPTS-STD-VIEWS: all columns sort).
+    LIST_SORTS = (
+        "name",
+        "role",
+        "status",
+        "model",
+        "production_version",
+        "latest_version",
+        "updated_at",
+        "updated_by_name",
+    )
+
+    def list_keys_page(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 50,
+        sort: Optional[str] = None,
+        direction: str = "asc",
+        query: Optional[str] = None,
+        status_in: Optional[list[str]] = None,
+        model_in: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """The prompts list on the standard DataGrid contract.
+
+        The keys are code-defined (``PROMPT_KEYS``, a few dozen), so the page is cut from
+        ``list_keys()`` in Python rather than a SQL query. Blank values sort last both ways.
+        ``model_in`` takes ``default`` for the keys on the global assistant model.
+        """
+        sort = sort or "name"
+        if sort not in self.LIST_SORTS:
+            raise handle_unprocessable(f"sort: unknown column '{sort}'")
+        rows = self.list_keys()
+        model_options = sorted({r["model"] for r in rows if r["model"]})
+
+        needle = (query or "").strip().lower()
+        if needle:
+            rows = [r for r in rows if needle in r["name"].lower() or needle in (r["role"] or "").lower()]
+        if status_in:
+            wanted = set(status_in)
+            rows = [r for r in rows if ("active" if r["active"] else "dormant") in wanted]
+        if model_in:
+            wanted = set(model_in)
+            rows = [r for r in rows if (r["model"] or "default") in wanted]
+
+        def value(row: dict[str, Any]) -> Any:
+            if sort == "status":
+                return 0 if row["active"] else 1
+            v = row[sort]
+            return v.lower() if isinstance(v, str) else v
+
+        present = [r for r in rows if value(r) is not None]
+        blank = [r for r in rows if value(r) is None]
+        # Name breaks ties so a page boundary is stable between requests.
+        present.sort(key=lambda r: r["name"])
+        present.sort(key=value, reverse=direction == "desc")
+        ordered = present + sorted(blank, key=lambda r: r["name"])
+
+        total = len(ordered)
+        page = max(page, 1)
+        limit = max(limit, 1)
+        start = (page - 1) * limit
+        data = [{"id": r["name"], **r} for r in ordered[start : start + limit]]
+        return {
+            "data": data,
+            "empty": total == 0,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "model_options": model_options,
+        }
 
     def get_versions(self, name: str) -> dict[str, Any]:
         spec = PROMPT_KEYS[name]

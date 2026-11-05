@@ -27,7 +27,6 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import type { RecordAction } from '@/components/common/recordActions';
 import {
   SearchableMultiSelect,
   type SearchableMultiSelectOption,
@@ -484,11 +483,12 @@ export interface TargetRecordPreset {
  *
  * The standard record: a header card (the TGT number, the name, and in the meta strip who it
  * is for, its team target, the agent count, Created and Updated; prev/next and the gear on the
- * right), then line tabs in the order **Details** (Target, What counts, Dates, Figure),
- * **Periods**, **Agents** (a team target only) and **Commission**. Edit is an item in the gear
- * with Duplicate and Delete; the edit view is the same tabs with each value swapped for its
- * input in place, and Cancel and Save in the header card. A new target opens in that edit view,
- * empty, with the defaults Amount, Ordered, All products, today to month end, split off.
+ * right, then Edit as the one primary button), then line tabs in the order **Details**
+ * (Target, What counts, Dates, Figure), **Periods**, **Agents** (a team target only) and
+ * **Commission**. Edit is the primary button (owner, 5 Nov; it was a gear item after the 27 Sep
+ * hand test); Duplicate and Delete stay in the gear. The edit view is the same tabs with each
+ * value swapped for its input in place, and Cancel and Save in the header card. A new target
+ * opens in that edit view, empty, with the defaults Amount, Ordered, All products, today to month end, split off.
  *
  * Every single pick is `SearchableSelect`, every multi pick `SearchableMultiSelect`, and a
  * picked category, product or brand always shows its "CODE - Name" (F5): the record's own scope
@@ -521,7 +521,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const create = useCreateSalesTarget();
   const patchHeader = usePatchSalesTarget();
   const { actions: targetActions, pending } = useSalesTargetActions(target, {
-    onDeleted: () => router.push('/sales/targets'),
+    // Back to the list tab the deleted target sat on (owner, 5 Nov).
+    onDeleted: () => router.push(target ? `/sales/targets?tab=${target.subject_kind}` : '/sales/targets'),
   });
   const { data: siblings } = useSalesTargets(
     { all: true, subject: target?.subject_kind ?? 'agent' },
@@ -741,10 +742,13 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
     { value: 'commission', label: 'Commission', icon: CircleDollarSign },
   ];
 
-  const actions: RecordAction[] =
-    target && canEdit
-      ? [{ key: 'sales_target.edit', label: 'Edit', icon: SquarePen, run: () => { setShowErrors(false); setDraft(draftOf(target)); } }, ...targetActions]
-      : targetActions;
+  // Edit is the record's one primary button (owner, 5 Nov: "edit should be the CTA here"), the
+  // DetailActions primary slot as on the opportunity record; Duplicate and Delete stay in the gear.
+  const beginEdit = () => {
+    if (!target) return;
+    setShowErrors(false);
+    setDraft(draftOf(target));
+  };
   const index = target ? ids.indexOf(target.id) : -1;
 
   // A team period in Edit mode: the live sum of what is typed for its agents (T3, F1).
@@ -799,7 +803,15 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     ariaLabel="target"
                   />
                 }
-                actions={actions}
+                actions={targetActions}
+                primary={
+                  target && canEdit ? (
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={beginEdit}>
+                      <SquarePen className="size-4" />
+                      Edit
+                    </Button>
+                  ) : undefined
+                }
                 pendingAction={pending}
                 gearLabel="Target options"
               />
