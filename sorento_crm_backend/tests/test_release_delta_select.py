@@ -254,3 +254,41 @@ def test_release_delta_uses_the_selector():
     assert "release_delta_select.py" in text
     assert "vitest related" in text
     assert "selected $" in text or "selected ${" in text  # the crew-tests line carries "selected N of M"
+
+
+def test_module_level_chain_of_four_hops(tmp_path):
+    files = {
+        B + "app/services/a.py": "X = 1\n",
+        B + "app/services/b.py": "from app.services.a import X\n",
+        B + "app/services/c.py": "from app.services.b import X\n",
+        B + "app/services/d.py": "from app.services.c import X\n",
+        B + "tests/test_d_only.py": "from app.services.d import X\n",
+    }
+    res = _select(tmp_path, [B + "app/services/a.py"], files)
+    assert "tests/test_d_only.py" in res.tests
+
+
+def test_changed_package_init_reaches_every_module_of_the_package(tmp_path):
+    # `from app.models.user import User` runs app/models/__init__.py first.
+    files = {B + "tests/test_direct_user.py": "from app.models.user import User\n"}
+    res = _select(tmp_path, [B + "app/models/__init__.py"], files)
+    assert {"tests/test_direct_user.py", "tests/scm/test_scm_orders.py"} <= set(res.tests)
+    assert "tests/test_unrelated.py" not in res.tests
+
+
+def test_a_module_a_conftest_imports_reaches_the_tests_under_it(tmp_path):
+    files = {
+        B + "app/services/scope.py": "def install(): ...\n",
+        B + "tests/scm/conftest.py": "from app.services.scope import install\n",
+    }
+    res = _select(tmp_path, [B + "app/services/scope.py"], files)
+    assert {"tests/scm/test_scm_orders.py", "tests/scm/test_scm_other.py"} <= set(res.tests)
+    assert "tests/test_unrelated.py" not in res.tests
+
+
+def test_deleted_frontend_file_runs_the_tests_that_still_name_it(tmp_path):
+    files = {F + "lib/b.test.ts": "import { b } from './gone'\n",
+             F + "lib/c.test.ts": "import { a } from './a'\n"}
+    res = _select(tmp_path, [F + "lib/gone.ts"], files)
+    assert res.vitest == "related" and res.vitest_files == ["lib/b.test.ts"]
+    assert "1 deleted" in res.vitest_reason

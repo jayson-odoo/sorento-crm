@@ -54,17 +54,18 @@ venv/bin/alembic upgrade head > "$OUT/alembic_upgrade.log" 2>&1 || UPGRADE=FAILE
 # this checkout's copy, pointed at the head's tree.
 SELECTOR=scripts/release_delta_select.py
 [ -f "$SELECTOR" ] || SELECTOR="$SWEEP_REPO_ROOT/sorento_crm_backend/scripts/release_delta_select.py"
-SEL="$(venv/bin/python "$SELECTOR" --backend "$PWD" --base "$BASE" --head "$HEAD_SHA" --out "$OUT")" \
-  || SEL="backend=failed"
+SEL="$(venv/bin/python "$SELECTOR" --backend "$PWD" --base "$BASE" --head "$HEAD_SHA" --out "$OUT" \
+  2> "$OUT/selector.log")" || SEL="backend=failed"
 sel() { sed -n "s/^$1=//p" <<< "$SEL"; }
 if [ "$(sel backend)" = failed ]; then
-  sweep_log "the selector failed: running every test file"
+  sweep_log "the selector failed ($OUT/selector.log): running every test file"
   find tests -name 'test_*.py' | sed 's#^\./##' | sort | grep -vxF -f <(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt) \
     > "$OUT/selected.txt" || true
   SEL="backend=full
 backend_reason=selector failed
 backend_selected=$(grep -c . "$OUT/selected.txt" || true)
 backend_total=$(grep -c . "$OUT/selected.txt" || true)
+backend_scm=$(grep -c '^tests/scm/' "$OUT/selected.txt" || true)
 vitest=full
 vitest_reason=selector failed"
 fi

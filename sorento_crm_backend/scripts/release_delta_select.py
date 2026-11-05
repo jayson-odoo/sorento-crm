@@ -48,9 +48,11 @@ SELECTION. A changed path selects (backend-relative; all rules together):
      `app/models/` changed; any one the graph selects runs too;
   7. `tests/test_lessons_learnt_regressions.py` (the source-scanning regression guards) whenever
      any backend path changed.
-`tests/scm/` is selected only through these rules, like any other directory. conftest.py files
-are not graph nodes that select (a change to one is a full run). `tests/ci_excluded.txt`
-entries never run.
+A test file counts as importing, at module level, every conftest.py in its directory and above
+(pytest imports them first), so a module a conftest loads reaches the tests under it. A changed
+package `__init__.py` counts as a change to every module of that package (Python runs it before
+any of them). `tests/scm/` is selected only through these rules, like any other directory.
+`tests/ci_excluded.txt` entries never run.
 
 FULL backend suite (every test file) instead, with the reason printed, when the diff changes:
 any conftest.py; test infrastructure (`tests/__init__.py`, `tests/_xdist_crash_guard.py`,
@@ -59,7 +61,8 @@ any conftest.py; test infrastructure (`tests/__init__.py`, `tests/_xdist_crash_g
 `scripts/cloud-env-setup.sh` of the repo); or when the graph cannot be built (a file does not
 parse).
 
-FRONTEND. `vitest related --run <changed frontend files that exist at head>` plus the
+FRONTEND. `vitest related --run <changed frontend files that exist at head, and the test files
+that still name a deleted one>` plus the
 source-scanning guards (sorento_crm_frontend/scripts/source-guard-tests.sh) when a frontend file
 changed. FULL `vitest run` when shared config or test setup changed: `package.json`,
 `package-lock.json`, `vitest.config.*`, `vitest.setup.*`, `tsconfig*.json`, `test-mocks/`,
@@ -92,6 +95,7 @@ from pathlib import Path
 BACKEND_PREFIX = "sorento_crm_backend/"
 FRONTEND_PREFIX = "sorento_crm_frontend/"
 SOURCE_DIRS = ("app", "scripts", "tests")
+# Bump when the edge rules in file_edges change: the cache key is the tree sha only.
 GRAPH_VERSION = 4
 SAFE_TEST_RE = re.compile(r"^tests/([A-Za-z0-9_.-]+/)*test_[A-Za-z0-9_.-]*\.py$")
 DOTTED_RE = re.compile(r"(?<![\w.])((?:app|scripts|tests)(?:\.[A-Za-z_]\w*)+)")
@@ -338,11 +342,25 @@ def _frontend(changed: list[str], fe_root: Path, res: Result) -> None:
     if full_hit:
         res.vitest, res.vitest_reason = "full", f"shared config / test setup changed: {full_hit}"
         return
-    res.vitest_files = [p[len(FRONTEND_PREFIX):] for p in fe_changed
-                        if (fe_root / p[len(FRONTEND_PREFIX):]).is_file()]
+    rels = [p[len(FRONTEND_PREFIX):] for p in fe_changed]
+    present = [r for r in rels if (fe_root / r).is_file()]
+    deleted = [r for r in rels if r not in present]
+    # `vitest related` cannot follow a deleted file: the test files that still name it (an import
+    # path ending in its name without the extension) run directly.
+    importers: list[str] = []
+    stems = {Path(r).with_suffix("").name for r in deleted if re.search(r"\.[cm]?[jt]sx?$", r)}
+    if stems:
+        rx = re.compile(r"""[/'"](%s)['"]""" % "|".join(re.escape(x) for x in sorted(stems)))
+        for path in fe_root.rglob("*.test.*"):
+            rel = path.relative_to(fe_root).as_posix()
+            if rel.split("/", 1)[0] in ("node_modules", ".next", "e2e") or not path.is_file():
+                continue
+            if rx.search(path.read_text(encoding="utf-8", errors="replace")):
+                importers.append(rel)
+    res.vitest_files = sorted(set(present) | set(importers))
     res.vitest = "related"
-    res.vitest_reason = (f"vitest related on {len(res.vitest_files)} changed frontend files "
-                         f"({len(fe_changed) - len(res.vitest_files)} deleted) + source guards")
+    res.vitest_reason = (f"vitest related on {len(present)} changed frontend files, "
+                         f"{len(deleted)} deleted ({len(importers)} tests still name one) + source guards")
 
 
 def select(changed: list[str], root: Path, *, frontend: Path | None = None, cache_dir: Path | None = None,
@@ -383,6 +401,12 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
             if is_test_file(rel):
                 pick(rel, "changed")
             changed_mods.add(rel)
+            if rel.endswith("/__init__.py"):
+                # Importing any module of a package runs its __init__ first, and the graph has
+                # no parent-package edges: a changed __init__ counts as a change to every module
+                # of the package.
+                pkg_dir = rel[: -len("__init__.py")]
+                changed_mods.update(r for r in sources if r.startswith(pkg_dir))
         elif rel.endswith(".py") and rel.split("/", 1)[0] in SOURCE_DIRS and module_name(rel):
             # Rule 5: a deleted module; a test may still name it in a patch target.
             dotted = re.compile(rf"(?<![\w.]){re.escape(module_name(rel) or '')}(?!\w)")
@@ -420,6 +444,14 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
             importers_any.setdefault(t, set()).add(src)
         for t in edges["lazy"]:
             importers_any.setdefault(t, set()).add(src)
+    # pytest imports every conftest.py above a test file before the test: a module-level edge.
+    for t in all_tests:
+        parts = t.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            conftest = "/".join(parts[:i]) + "/conftest.py"
+            if conftest in sources:
+                importers_top.setdefault(conftest, set()).add(t)
+                importers_any.setdefault(conftest, set()).add(t)
     # Module-level importers first, transitively; then one lazy hop, which does not propagate.
     origin: dict[str, str] = {m: m for m in sorted(changed_mods)}
     queue = deque(sorted(origin))
@@ -468,7 +500,8 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
     if res.tests:
         res.backend = "selected"
         res.backend_reason = (f"affected by {len(changed_mods)} changed modules "
-                              f"({len(be_changed)} changed backend paths)")
+                              f"({len(be_changed)} changed backend paths)" if changed_mods else
+                              f"no test file reaches the {len(be_changed)} changed backend paths; regression guards only")
     elif be_changed:
         res.backend_reason = "no test file reaches the change"
     return res

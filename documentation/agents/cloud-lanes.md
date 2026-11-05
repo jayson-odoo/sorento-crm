@@ -173,7 +173,10 @@ cached selection under 2 s.
 | migration tests | `tests/test_migration_*.py` only when `alembic/`, `alembic.ini` or `app/models/` changed |
 | regression guards | `tests/test_lessons_learnt_regressions.py` on any backend change |
 
-`tests/scm/` runs only when these rules reach it. `tests/ci_excluded.txt` entries never run.
+A test file counts as importing, at module level, every `conftest.py` above it (pytest imports
+them first), and a changed package `__init__.py` counts as a change to every module of the package
+(Python runs it before any of them). `tests/scm/` runs only when these rules reach it.
+`tests/ci_excluded.txt` entries never run.
 The selection runs in the PR gate's split: main tree and `tests/scm/` each under xdist and then
 `-m serial_ddl`, the migration tests serially.
 
@@ -181,7 +184,10 @@ The selection runs in the PR gate's split: main tree and `tests/scm/` each under
 `tests/__init__.py`, `tests/_xdist_crash_guard.py`, `tests/ci_excluded.txt`, `pytest.ini`,
 `pyproject.toml`, `setup.cfg` or `requirements*.txt` changed; env bootstrap changed
 (`sorento_crm_backend/scripts/bootstrap_env.py`, `scripts/cloud-env-setup.sh`); the graph
-cannot be built (a file does not parse); or the selector itself failed.
+cannot be built (a file does not parse); or the selector itself failed (its stderr is in
+`selector.log`). A full run uses the same three sessions as a selection (main tree, `tests/scm/`,
+migrations), not the nightly's 10 pytest-split groups: one `-n auto` session over the main tree
+is what the PR gate's changed-files runner did.
 
 Why lazy imports stop after one hop (measured 5 Nov on `42d1a56c..019770c1`): following every
 import transitively selects ~95% of the test files from almost any change, because function-local
@@ -196,6 +202,18 @@ them); the FULL `vitest run` when `package.json`, `package-lock.json`, `vitest.c
 `vitest.setup.*`, `tsconfig*.json`, `test-mocks/` or a `__mocks__/` directory changed.
 
 What is not caught here is caught by the next nightly, which still runs everything.
+
+Measured on 5 Nov 2026 (selection only; estimated CPU seconds from the committed
+`sorento_crm_backend/.test_durations`, which holds 26,410 of the ~56k tests):
+
+| Range | Old selection | New selection |
+| --- | --- | --- |
+| `42d1a56c..019770c1` (18 commits, `po_link_history` + one alembic revision) | 526 files, 396 of them `tests/scm/`; est 4,894 CPU-s | 262 files, 21 `tests/scm/`; est 2,384 CPU-s |
+| `019770c1..30bbcc6a` (108 commits, incl. `app/models/user.py` and `procurement.py`) | 1,798 files, 397 `tests/scm/`; est 25,583 CPU-s | all 3,257 files; est 36,751 CPU-s |
+
+The second range is not a defect of the rule: a changed User model is imported, directly or
+through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
+old one-level regex missed 1,459 of those dependents.
 
 `scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
 #2171), each of which shows up as reds that CI does not have:
