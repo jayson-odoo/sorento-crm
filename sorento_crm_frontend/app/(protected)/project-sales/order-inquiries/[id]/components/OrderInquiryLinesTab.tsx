@@ -273,7 +273,12 @@ export function OrderInquiryLinesTab({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
+  function resetPage() {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  }
+
   function setSearch(next: string) {
+    resetPage();
     setSearchState(next);
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(
@@ -312,18 +317,21 @@ export function OrderInquiryLinesTab({
   }
 
   function handleSortingChange(updater: SortingState | ((old: SortingState) => SortingState)) {
+    resetPage();
     const next = typeof updater === 'function' ? updater(sorting) : updater;
     setSorting(next);
     writeView({ [VIEW_SORT_PARAM]: sortingToUrl(next) });
   }
 
   function handleStateFilterChange(next: string[]) {
+    resetPage();
     setStateFilter(next);
     // OI-UX-FILTER-SNAPSHOT: the State pick rides the URL as `view_state` (prev/next keeps it).
     writeView({ [VIEW_STATE_PARAM]: next.length ? next.join(',') : null }, requestParamToDrop());
   }
 
   function handleRequestFilterChange(next: string[]) {
+    resetPage();
     setRequestIds(next);
     // Request ids are this OI's own, so they never ride to the next OI as view state.
     const drop = requestParamToDrop();
@@ -364,6 +372,11 @@ export function OrderInquiryLinesTab({
     },
     state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
+    // SO-LINE-OI-STATUS-UNIFY crew fix (2): TanStack's auto reset snapped a deep-link
+    // landing (`?row=`) back to page 1 on the next row-model recompute, so a line past the
+    // first 25 never stayed in view. The page resets to 1 explicitly below instead, on the
+    // reader's own search, sort and filter changes, and is clamped when lines shrink.
+    autoResetPageIndex: false,
     onSortingChange: handleSortingChange,
     onExpandedChange: setExpanded,
     onRowSelectionChange: (updater) =>
@@ -386,6 +399,15 @@ export function OrderInquiryLinesTab({
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+
+  // With the auto reset off, a page that no longer exists (lines shrank) falls back to the
+  // last one rather than showing an empty grid.
+  const pageCount = table.getPageCount();
+  useEffect(() => {
+    if (pagination.pageIndex > 0 && pagination.pageIndex >= pageCount) {
+      setPagination((current) => ({ ...current, pageIndex: Math.max(pageCount - 1, 0) }));
+    }
+  }, [pageCount, pagination.pageIndex]);
 
   // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-4/10/11/12): a link from the SO detail's
   // own "Order inquiry" cell lands on this exact row (`?row=<id>`). S0: the row now sits

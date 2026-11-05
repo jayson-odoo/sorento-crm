@@ -12,7 +12,7 @@ from typing import List, Optional
 from sqlalchemy import Text, cast, func
 from sqlalchemy.orm import Session
 
-from app.models.projects import BLOCKING_OUTCOMES, Project, ProjectParty
+from app.models.projects import Project, ProjectParty
 
 # Surfacing and blocking are two separate bars, because the two mistakes are not
 # equally bad. A missed duplicate is silent and produces the two-people-on-one-tender
@@ -66,10 +66,12 @@ _TRGM_SCHEMA = "public"
 class ClashCandidate:
     """One existing project that resembles the one being registered.
 
-    ``blocks`` and ``similarity`` are separate on purpose. A lost project from
-    three years ago can be a perfect title match (similarity 1.0) and still not
-    block, because re-tendering it is legitimate. The UI shows every candidate as
-    context; only a blocking one stops the save.
+    ``blocks`` and ``similarity`` are separate on purpose: a lookalike above the surfacing
+    bar is context, a strong match blocks. Outcome plays no part (PROJECT-CLASH-LOST, owner
+    5 Nov: "if got match then should follow the same clash path"): a Won, Lost or Dormant
+    match blocks like an Open one, and re-tendering goes through the same secondary-lead
+    request, so a sales manager decides it. The UI shows every candidate; only a blocking
+    one stops the save.
     """
 
     project_id: str
@@ -281,9 +283,11 @@ def find_clashes(
             similarity=round(float(row.score), 4),
             developer_party_id=row.Project.developer_party_id,
             developer_name=developer_names.get(row.Project.developer_party_id),
-            # Four conditions, ALL required to stop a registration: same developer,
-            # similar enough to be the same development, still being pursued, and not
-            # a sibling phase. Anything else comes back as context.
+            # Three conditions, ALL required to stop a registration: same developer,
+            # similar enough to be the same development, and not a sibling phase. The
+            # project's outcome is NOT one of them (PROJECT-CLASH-LOST): a Won, Lost or
+            # Dormant match follows the same clash path as an Open one. Anything else
+            # comes back as context.
             blocks=(
                 # A different developer's project is never the same development, however
                 # alike the titles read. But a developer nobody has NAMED yet cannot be
@@ -300,7 +304,6 @@ def find_clashes(
                     # is the same development whatever the trigram score says.
                     or titles_overlap(row.Project.normalised_title, key)
                 )
-                and row.Project.outcome in BLOCKING_OUTCOMES
                 and not are_sibling_developments(row.Project.normalised_title, key)
             ),
         )

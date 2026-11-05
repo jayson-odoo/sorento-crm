@@ -69,7 +69,7 @@ class ProductCombo(Base):
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
     # PRICETAG-COMBO: the combo's own text and prices. A blank price means the
-    # tag's summed price, so a combo with none set behaves as before.
+    # tag prints no price at all (never a sum of the parts).
     description = Column(Text, nullable=True)
     free_items = Column(Text, nullable=True)
     list_price = Column(Numeric(12, 2), nullable=True)

@@ -373,3 +373,60 @@ def test_malformed_sorting_leaves_an_existing_config_untouched(api_client):
     stored = _stored_config(db, current_user["id"])
     assert stored["sorting"] == VIEW_KEYS["sorting"]
     assert stored["columnOrder"] == COLUMN_KEYS["columnOrder"]
+
+
+# --- PROJECTS-BOARD-VIEW-PREF: the board / grid / list toggle ----------------
+
+
+@pytest.mark.parametrize("mode", ["board", "grid", "list"])
+def test_view_mode_round_trips(api_client, mode):
+    client, current_user, db = api_client
+
+    r = client.put(_url(), json={"view": mode})
+    assert r.status_code == 200
+    assert r.json()["config"]["view"] == mode
+    assert client.get(_url()).json()["config"]["view"] == mode
+    assert _stored_config(db, current_user["id"])["view"] == mode
+
+
+def test_view_mode_write_preserves_every_other_key(api_client):
+    client, _, _ = api_client
+
+    client.put(_url(), json={"version": 1, **COLUMN_KEYS, **VIEW_KEYS, "pageSize": 25})
+    cfg = client.put(_url(), json={"view": "grid"}).json()["config"]
+    assert cfg["view"] == "grid"
+    assert cfg["columnOrder"] == COLUMN_KEYS["columnOrder"]
+    assert cfg["sorting"] == VIEW_KEYS["sorting"]
+    assert cfg["pageSize"] == 25
+
+    # ...and a column write afterwards does not wipe the view.
+    cfg2 = client.put(_url(), json={"version": 1, **COLUMN_KEYS}).json()["config"]
+    assert cfg2["view"] == "grid"
+
+
+@pytest.mark.parametrize("bad", ["kanban", "", 3, ["grid"]])
+def test_unknown_view_mode_is_rejected(api_client, bad):
+    client, current_user, db = api_client
+
+    r = client.put(_url(), json={"view": bad})
+    assert r.status_code == 422
+    assert _stored_config(db, current_user["id"]) is None
+
+
+def test_view_mode_is_per_user(api_client):
+    """Another user on the same listing keeps their own view (and the default)."""
+    client, current_user, db = api_client
+
+    assert client.put(_url(), json={"view": "grid"}).status_code == 200
+    first_user = current_user["id"]
+
+    other = str(uuid.uuid4())
+    _seed_rbac_and_user(
+        db, user_id=other, permission_slug=PERM_SLUG, role_id=f"{TEST_PREFIX}-role-granted"
+    )
+    current_user["id"] = other
+    assert client.get(_url()).json()["config"] is None
+    assert client.put(_url(), json={"view": "board"}).status_code == 200
+
+    assert _stored_config(db, first_user)["view"] == "grid"
+    assert _stored_config(db, other)["view"] == "board"

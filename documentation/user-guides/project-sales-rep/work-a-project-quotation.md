@@ -28,14 +28,36 @@ checked against the quotation, not against the proposals.
 1. Open **Project Sales > Projects** and open the project.
 2. Click the **Proposals** tab. Each proposal is listed with its number, the **Kind** column
    (**Proposal** or **Quotation**) and its latest revision. The project's quotation is listed first.
-3. Click one to open it. Its **Lines** tab holds the priced lines.
+3. Click one to open it. Its **Header** tab shows the letterhead and, under it, the priced lines.
 
 To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.
 
-## Scopes on the Lines tab
+## Reading a proposal
 
-A proposal is split into scopes (for example *Townhouse*, *Guard house*), one tab each across the
-top of the **Lines** tab. New proposal and Edit proposal work the same way.
+The card at the top reads like an order inquiry:
+
+* The proposal number, its status (for example **Draft**, **Issued**, **Accepted**) and its
+  version (for example **v2**). When the proposal has more than one version, click the version to
+  read an older one (**v1 (frozen)**); pick the current one to go back.
+* Under the number: the title, then how often the customer opened the link (once sent), then
+  anything that stops you right now, such as *With a manager for approval*.
+* On the right: **<** and **>** to step through this project's other proposals, the actions menu
+  (gear), the downloads (printer) with its count, and the one main button (for example **Send to
+  Customer**).
+* The actions menu also holds **Recheck alerts** (checks every line against today's series and
+  minimum prices) and **Revise to v3** (freezes the current version and opens the next one, for
+  every scope at once).
+
+The lines sit on the **Header** tab under the letterhead, one tab per scope above them, with
+**Search lines** and **Columns** on the table. **Edit proposal** shows the same card at the top
+(number, status, version); **Recheck alerts** is in the actions menu of the proposal itself, not
+on the edit page.
+
+## Scopes
+
+A proposal is split into scopes (for example *Townhouse*, *Guard house*), one tab each above the
+lines, on the **Header** tab under the letterhead. Reading a proposal and **New proposal** /
+**Edit proposal** look the same; in New and Edit you add and change the scopes and lines.
 
 * **Add a scope:** click **+** at the end of the tabs and name it.
 * **See a scope's value:** click the **$** on its tab.
@@ -46,12 +68,10 @@ top of the **Lines** tab. New proposal and Edit proposal work the same way.
   until you click **Save proposal**, so **Cancel** brings it back. It is greyed out for a scope
   that was already sent to the customer, and for a saved scope when you do not have the right to
   delete one.
-* A saved scope's outcome (**Open**, **Won**, **Lost**, **Dormant**) shows at the right of the
-  tabs.
 
 ## Make the quotation (project Won)
 
-1. Mark the project Won (the customer signing a proposal does this, or set the scope's outcome).
+1. The project becomes Won when the customer signs a proposal.
 2. Open the proposal the customer agreed to and choose **Make quotation** from the actions menu.
    It only shows on a sent proposal of a Won project that has no quotation yet.
 3. Pick the revision (newest first) and click **Make quotation**.
@@ -274,7 +294,7 @@ of a quotation can be laid out that way. A section with no grid stays exactly as
 
 ### Set up the columns
 
-On the section's **Lines** tab, while the revision is still a draft:
+In **Edit proposal**, on the **Header** tab under the section's tab, while the revision is still a draft:
 
 1. Click **+ Column header** under the table (once the grid exists it is also the narrow column at
    the far right) and type its name, for example *TYPE A - 1 BH* or *LEVEL 9*. Your lines' current quantities move into the
@@ -337,8 +357,8 @@ records it too.
    still open. Each note shows the item, the section and, for a grid box, the column (*TYPE C - 3
    BH / KITCHEN*), what the customer wrote and their hint next to today's value (*Suggested
    quantity 140 (now 133)*).
-2. Click **Show in Lines** to jump to that line. Open notes are marked on the Lines tab: an amber
-   corner on a grid box, a dot on an item.
+2. Click **Show in Lines** to jump to that line on the **Header** tab. Open notes are marked in
+   the lines: an amber corner on a grid box, a dot on an item.
 3. Change what you see fit in a new revision (revise, edit, send), exactly as for any change.
 4. Tick **Handled** on a note once you have dealt with it. Unticking opens it again.
 
