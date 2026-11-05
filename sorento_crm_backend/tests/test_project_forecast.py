@@ -502,14 +502,14 @@ def test_loss_reasons_are_counted_for_the_report(seeded):
     from app.services import project_forecast_service as fc
 
     db, company_id, owner = seeded
-    first = _project(db, company_id, owner, title=f"{MARKER} One")
-    second = _project(db, company_id, owner, title=f"{MARKER} Two")
-    third = _project(db, company_id, owner, title=f"{MARKER} Three")
+    first = _project(db, company_id, owner, title=f"{MARKER} One {_uid()[:8]}")
+    second = _project(db, company_id, owner, title=f"{MARKER} Two {_uid()[:8]}")
+    third = _project(db, company_id, owner, title=f"{MARKER} Three {_uid()[:8]}")
     for project, reason in ((first, "price"), (second, "lead_time"), (third, "price")):
         project.outcome = "lost"
         project.loss_reason = reason
     # An open project and an area-level reason must not be counted.
-    still_open = _project(db, company_id, owner, title=f"{MARKER} Four")
+    still_open = _project(db, company_id, owner, title=f"{MARKER} Four {_uid()[:8]}")
     still_open.loss_reason = "price"
     area, _ = _quote(db, still_open, owner, unit_price="100.00")
     area.loss_reason = "price"
