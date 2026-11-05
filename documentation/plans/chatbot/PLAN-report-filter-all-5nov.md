@@ -1,7 +1,7 @@
 # PLAN: report filters - explicit ALL, parser object final
 
-Status: Build round 3 (crew gate fixes) done, crew re-gate next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
-Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-e9421ded.md`.
+Status: Build round 4 (crew gate 6 Nov fixes) done, crew re-gate next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
+Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-5a58739a.md`.
 
 ## Owner pain
 
@@ -89,7 +89,7 @@ updated to the 3 Nov ruling.
 
 ## Prompt and gold
 
-Prompt candidate e9421ded (round 2; round 1 was 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-e9421ded.md`. The gold rows are in
+Prompt candidate 5a58739a (round 3; earlier e9421ded, 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-5a58739a.md`. The gold rows are in
 `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (28 rows, 16 of them EN / BM / ZH mixes of clear all and of one slot). Crew runs the eval gate (cap USD 0.70, ORG key,
 ledgered) and the #2156 replays on the Mac (crew Q5). Never published by the lane; only the owner moves the label.
 
@@ -111,3 +111,13 @@ moved to the company (tf-28).
 Not fixed here (found by the crew gate, outside this lane's rules): B2 / R2 "delivered" after "Sorento company ..." asks
 "SORENTO: brand, account type or company?" because the 1104 copy has a SORENTO account type (the existing ON-6 rule
 asks a word in both tables).
+
+## Crew gate round 2 (6 Nov, gate on e9421ded / d15853fa)
+
+| # | Gate finding | Code or parser | Fix |
+|---|---|---|---|
+| 1 | Company sticks: fa-30 `buang semua filter`, fa-32 `全部 la, 不要 filter`; steps 16-17 show Company Sorento for a brand answer | Parser. The object path writes the company only from the object's own company slot, the company / both pick of an open question (`kind_company`), the said_as company slot, or the held company when the object leaves it null (`_keep_held`). Replayed in the harness: a brand answer whose object leaves company null runs with no company on both the old three-way question and the new one (H15). The Held report line for the open question shows company null. So the stray company is written by the parser: it copies the held company on a clear-all, and it wrote Sorento into company on the 1104 three-way question's brand answer | prompt edit 8 (company and channel are filters like the lists), edit 9 (a brand answer never writes the company); the three-way question no longer exists for a company's name (item 5) |
+| 2 | Step 8: "Sorento company, brands Sorento and Cabana" kept CABANA only | Code: `_word_kinds` kept the FIRST entity per word (`named.setdefault`), so the word's company entity hid its brand entity | `said_as_of`: the word's said_as over every entity of this message; company and brand together are both (H8) |
+| 3 | Step 14: "Sorento company, Sorento brand" kept only the brand | same as 2 (the other entity order) | same (H8 brand-first) |
+| 4 | fa-13 `clear all filter`, fa-14 `buang semua filter`, fa-16 `tak payah filter apa2, semua`, fa-18 `全部 la, 不要 filter`, fa-20 `start over without any filter, same month` | Each: (a) the parser kept the held channel dealer and company Sorento (it cleared only the lists), and (b) a gold error of mine: those rows expected ALL in account_types and products, which the Held report holds empty and the prompt says to copy empty | (a) prompt edit 8; (b) gold corrected (also fa-06, fa-29..34) |
+| 5 | ON-6 "SORENTO: brand, account type or company?" (R2, step 15) | Code + data. Account types are the customers' stored `autocount_debtor_type` (AutoCount data, `parser.py:1487`, `ask_params.account_type_options`), not a seed. 1104 is a production copy, so production almost certainly stores the same SORENTO type (not verified: no prod access) | `_account_plan`: a brand word that is one of the contact's own companies (2+ companies, from data) is that company or its brand, never asked as an account type; `_company_or_brand` asks company or brand once (owner rule). "Sorento account type" (said) still reads the type. Tests C6-1(a), S2, C6-2(b), R1-b, R5-1, R5-1c updated (they set up the old three-way question; the last four only needed some kind question and now use a brand-and-type word that is no company) |

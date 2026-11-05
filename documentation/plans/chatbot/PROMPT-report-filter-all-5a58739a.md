@@ -2,8 +2,9 @@
 
 - Base: production v72, md5 `d29c19830b22aa47403a88ddcb8e817d`. This is the v202 text the owner published, less two v71
   lines; the exact file is `prompt-prod-v72-d29c1983.txt`.
-- Result: md5 `e9421dede66c100a5f75db1db7c6a1e2` (round 2, edits 1-7); the exact file is `prompt-report-filter-all.txt`.
-  Round 1 was md5 `698e137b692ff61ce48bf1c1e4aa7571` (edits 1-4), gated by crew on 5 Nov (below).
+- Result: md5 `5a58739ad208e2a2bc4d081c9087816c` (round 3, edits 1-9); the exact file is `prompt-report-filter-all.txt`.
+  Round 2 was md5 `e9421dede66c100a5f75db1db7c6a1e2` (edits 1-7) and round 1 was md5
+  `698e137b692ff61ce48bf1c1e4aa7571` (edits 1-4); crew gated both (below).
   `tests/chatbot/test_report_filter_all.py::test_p1_*` pins both md5s.
 - Not published: only the owner moves the production label.
 - Owner rule kept: these are slot rules only, with no gold-message examples and no word lists.
@@ -36,6 +37,13 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
 7. (round 2, crew gate tf-16: company "Mocha, Sorento" for "both") Before `The lists and company hold NAMES ...`:
    `company holds ONE company name, or ALL for every company the user holds (never two names joined).`
 
+8. (round 3, crew gate 6 Nov: fa-13/14/16/18/20/30/32 kept company and channel on a clear-all) Before the copy-first
+   bullet's `Every slot the message does not touch stays exactly as held: ...`:
+   `A message that asks for no filter touches every filter slot: the company and the channel are filters exactly like the lists, so they become ALL too although the Held report holds them (only slots the Held report already holds empty stay empty).`
+9. (round 3, crew gate step 16: "brand" to the company-or-brand question kept Company Sorento) In the one-name bullet,
+   `the word brand -> brands only (company stays as held);` becomes
+   `the word brand -> brands only (company stays as held; a reply that picks brand for a name the assistant asked about never writes that name in company);`
+
 ## Gate (crew runs it on the Mac; this sandbox has no Gemini key and no prod-copy DB)
 
 - Gold: `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl`, 28 rows. 16 of them are EN / BM / ZH mixes in the owner's style (clear every filter with no keyword, one slot to ALL). The other 12: clear brand, all brands, any agent, clear
@@ -50,6 +58,19 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
 | crew 5 Nov, x1, gemini-3.5-flash-lite | 698e137b | filter_all fa-01..28 | 21/28 raw (base 4/28) | fails fa-14/16/18/20 (clear all kept company + channel), fa-15, fa-03/fa-12 (axis moved) |
 | crew 5 Nov | 698e137b | totals_filters tf-01..34 | 16/34 raw, 25/34 effective (base 26/34) | most raw fails: ALL where the old gold wanted []; tf-27, tf-16 |
 | crew 5 Nov | 698e137b | semantic_carry sc-01..16 | 13/16 | |
+
+| crew 6 Nov, x1, gemini-3.5-flash-lite | e9421ded | filter_all fa-01..37 | 26/37 raw, 28/37 effective (base 5/37 raw, 20/37 effective) | fa-30, fa-32 write company Sorento; fa-13/14/16/18/20 keep channel + company; fa-34, fa-11/12, fa-36 |
+| crew 6 Nov | e9421ded | totals_filters tf-01..34 (ALL gold) | 23/34 raw, 26/34 effective | tf-03/04/08 channel ALL, tf-13/16/27/28, tf-25/26 |
+| crew 6 Nov | e9421ded | semantic_carry sc-01..16 | 13/16 | sc-01, sc-15, sc-16 |
+
+Crew spend 6 Nov: gate 0.336 + replays 0.207 + console pass 0.091 = USD 0.633 of 0.70, ledgered by crew.
+
+Gold corrections for round 3 (no live run from this sandbox):
+- fa-06, fa-13..20 and fa-29..34 expected ALL in slots the Held report holds EMPTY. The prompt says such a slot is copied
+  empty, never ALL, so those expectations were wrong and are now `[]` / null. Part of the 6 Nov fa-13/14/16/18/20/34 fails
+  was this gold error; the rest is the parser keeping company and channel (edit 8).
+- +3 rows: fa-38 (step 8, "Sorento company, brands Sorento and Cabana": both), fa-39 (step 14, "Sorento company,
+  Sorento brand": both), fa-40 (step 16, "brand" to the open company-or-brand question: brands only, company null).
 
 Crew spend 5 Nov: gate 0.367 + replays 0.117 + console pass 0.075 = USD 0.558 of 0.70, ledgered by crew.
 
