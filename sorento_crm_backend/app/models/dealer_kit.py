@@ -252,11 +252,6 @@ class Asset(Base, CompanyScopedMixin):
     __tablename__ = "asset"
     __table_args__ = (
         Index("ix_dealer_kit_asset_kind", "kind"),
-        # Feature icons: a rule is a key AND its values, never half of one.
-        CheckConstraint(
-            "(show_when_spec_key IS NULL) = (show_when_values IS NULL)",
-            name="ck_dealer_kit_asset_show_when_pair",
-        ),
         {"schema": SCHEMA},
     )
 
@@ -269,11 +264,6 @@ class Asset(Base, CompanyScopedMixin):
     name = Column(String(200), nullable=False)
     kind = Column(String(20), nullable=False, server_default="decorative")
     tags = Column(ARRAY(String), nullable=True)
-    #: Feature icons (PRICETAG-DESIGNER-GAPS item 3): an icon shows on a tag's
-    #: "Feature icons" layer when the product's spec ``show_when_spec_key`` has
-    #: a raw value in ``show_when_values``. Only an icon carries one.
-    show_when_spec_key = Column(String(64), nullable=True)
-    show_when_values = Column(ARRAY(Text), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()

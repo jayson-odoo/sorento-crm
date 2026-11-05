@@ -152,6 +152,8 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         # value -> display label ("pp" -> "PP"), purely cosmetic (#423, D/E). Editable
         # on seed AND user rows, like user_synonyms.
         "value_labels": row.value_labels or {},
+        # value -> [Dealer Kit icon asset id, ...], in the admin's order (feature icons).
+        "value_icons": row.value_icons or {},
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -244,6 +246,10 @@ class SpecKeyUpdate(BaseModel):
     # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on ANY
     # row, seed or user - staff-owned like user_synonyms, never seed-repaired.
     value_labels: Optional[dict[str, str]] = None
+    # value -> [Dealer Kit icon asset id, ...] in display order: the feature icons a price tag
+    # shows for a product holding that value. Staff-owned like value_labels, never
+    # seed-repaired; an empty list removes the value's entry.
+    value_icons: Optional[dict[str, list[str]]] = None
     # Which products may carry this key at all, as {other_key: [permitted values]}.
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
@@ -1193,6 +1199,12 @@ def update_spec_key(
             # tracked by SQLAlchemy, so `row.value_labels[key] = ...` would silently
             # not persist.
             row.value_labels = cleaned_labels
+
+        if "value_icons" in fields:
+            from app.services.dealer_kit.asset_service import clean_value_icons
+
+            # Reassigned, never mutated in place (JSONB, see value_labels above).
+            row.value_icons = clean_value_icons(db, row, fields["value_icons"] or {})
 
         if "value_weights" in fields:
             row.value_weights = {

@@ -1522,6 +1522,7 @@ def _remove_value(db: Session, spec_key: str, value: str) -> dict:
         row.user_values = [v for v in added if v != value]
         row.user_synonyms = {k: w for k, w in (row.user_synonyms or {}).items() if k != value}
         row.value_labels = {k: w for k, w in (row.value_labels or {}).items() if k != value}
+        row.value_icons = {k: w for k, w in (row.value_icons or {}).items() if k != value}
         # A rule setting a choice that is gone would keep writing it, and the next
         # rules save would refuse it (review N-R4). Only a stored list can hold one:
         # the shipped rules set shipped choices only.

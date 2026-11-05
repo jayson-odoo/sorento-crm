@@ -2,8 +2,8 @@
 
 Contract: documentation/plans/dealer-kit/pricetag-feature-icons-contract.md. Each block names the
 review item it pins: B1 portal previews forward the icons, B3 pins made before `raw` existed,
-B4 a tag SHEET document, S1 the dealer-kit spec vocabulary, S2 the request's own company, S3 the
-show-when request limits. Postgres only, own seed chain.
+B4 a tag SHEET document, S1 the dealer-kit spec vocabulary, S2 the request's own company. S3 (the
+asset show-when route's limits) went with that route: owner ruling 5 Nov 20:35. Postgres only.
 """
 from __future__ import annotations
 
@@ -16,11 +16,8 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
-from tests._ptag_r9_seed import seed_asset
 from tests.test_product_tag_templates import env  # noqa: F401  (fixture)
 from tests.test_feature_icons import (  # noqa: F401  (fixtures)
-    BASE,
-    _put,
     _registry,
     _ruled_icon,
     api,
@@ -254,69 +251,6 @@ def test_dealer_kit_spec_keys_carry_type_values_and_labels(api, client):
 
 # ---------------------------------------------------------------------------
 # S3: the show-when request limits
-# ---------------------------------------------------------------------------
-
-
-def test_a_malformed_asset_id_is_404(client):
-    res = _put(client, "not-a-uuid", {"spec_key": None, "values": []})
-    assert res.status_code == 404, res.text
-
-
-def _body_error(res, field: str) -> bool:
-    """A request-body validation refusal naming ``field`` (not a service-level code)."""
-    return res.status_code == 422 and any(
-        field in [str(part) for part in err.get("loc", [])] for err in res.json().get("detail", [])
-    )
-
-
-def test_a_spec_key_longer_than_64_is_refused(api, client):
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-    res = _put(client, icon.id, {"spec_key": "k" * 65, "values": ["a"]})
-    assert _body_error(res, "spec_key"), res.text
-
-
-def test_more_than_50_values_are_refused(api, client):
-    many = [f"v{i}" for i in range(51)]
-    key = _registry(api, allowed=many)
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-    res = _put(client, icon.id, {"spec_key": key, "values": many})
-    assert _body_error(res, "values"), res.text
-
-
-@pytest.mark.parametrize("value", ["", "x" * 101])
-def test_a_value_outside_1_to_100_chars_is_refused(api, client, value):
-    key = _registry(api, allowed=[value, "ok"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-    res = _put(client, icon.id, {"spec_key": key, "values": [value]})
-    assert _body_error(res, "values"), res.text
-
-
-def test_a_boolean_key_accepts_only_true_and_false(api, client):
-    key = _registry(api, data_type="boolean")
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    assert _put(client, icon.id, {"spec_key": key, "values": ["true"]}).status_code == 200
-    res = _put(client, icon.id, {"spec_key": key, "values": ["yes"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "UNKNOWN_SPEC_VALUE"
-
-
-def test_a_key_with_no_fixed_values_cannot_carry_a_rule(api, client):
-    key = _registry(api, allowed=[], data_type="text")
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": key, "values": ["anything"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "SPEC_NOT_RULEABLE"
-
-
-# ---------------------------------------------------------------------------
-# Crew pass 5 Nov: the Show when values read like the product screens
 # ---------------------------------------------------------------------------
 
 

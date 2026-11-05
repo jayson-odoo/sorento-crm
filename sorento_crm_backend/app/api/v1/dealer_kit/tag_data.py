@@ -23,6 +23,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.price_tag import (
     ComboSearchOut,
+    FeatureIconItem,
     ProductSearchItem,
     ProductSetSearchItem,
     ProductSetTagData,
@@ -170,6 +171,24 @@ def list_spec_keys(
         )
         for row in active_registry(db)
     ]
+
+
+@router.get("/feature-icons", response_model=list[FeatureIconItem])
+def list_feature_icons(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Every icon each spec value carries, in display order, with its signed URL.
+
+    The canvas's feature icons source (PRICETAG-DESIGNER-GAPS item 3): the same list
+    ``design_media`` sends the previews and the print page, behind the editor's own gate
+    rather than the master-data one, like ``/spec-keys`` above.
+    """
+    from app.services.dealer_kit import asset_service
+
+    rules = asset_service.feature_icon_rules(db)
+    urls = asset_service.urls_for(db, {rule["id"] for rule in rules})
+    return [FeatureIconItem(**rule, url=urls.get(rule["id"])) for rule in rules]
 
 
 @router.get(

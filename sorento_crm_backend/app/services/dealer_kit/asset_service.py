@@ -427,9 +427,11 @@ def _layer_asset_ids(layers) -> set[str]:
 # --------------------------------------------------------------------------- #
 # Feature icons (PRICETAG-DESIGNER-GAPS item 3)
 #
-# The rule lives ON the icon asset (owner ruling Q1): "show when <spec> is
-# <value(s)>". A tag's feature_icons layer shows every icon whose rule matches
-# its subject's specs; the matching itself is the frontend's one pure function
+# Owner ruling 5 Nov 20:35: the icon <-> spec link lives on the spec VALUE.
+# Each value of a registry key carries its own ordered icon list
+# (`product_spec_registry.value_icons`), set on Master Data > Product
+# Specifications. A tag's feature_icons layer shows the icons of its subject's
+# values; the matching itself is the frontend's one pure function
 # (`lib/dealer-kit/feature-icons.ts`), so canvas, preview and print agree.
 # --------------------------------------------------------------------------- #
 ICON = "icon"
@@ -447,115 +449,143 @@ def doc_has_feature_icons(doc: Optional[dict]) -> bool:
     return any((layer or {}).get("type") == FEATURE_ICONS_LAYER for layer in layers)
 
 
-def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
-    """Every icon asset carrying a rule, ordered by name: ``[{id, name, spec_key, values}]``.
+#: The most icons one spec value may carry.
+MAX_ICONS_PER_VALUE = 10
+BOOLEAN_VALUES = ("true", "false")
 
-    Scoped like any asset query; ``company_id`` narrows it further to one company, for a render
-    of a request (a staff session may span several companies, the request belongs to one).
+
+def spec_value_keys(row) -> list[str]:
+    """The values of a registry key an icon may be set on, in the key's own order.
+
+    A yes/no key reads ``true`` / ``false`` (what a tag's ``raw`` holds for a stored bool); any
+    other key its vocabulary (shipped + added - taken away).
     """
+    from app.services.product_spec_registry import merged_allowed_values
+
+    if row.data_type == "boolean":
+        return list(BOOLEAN_VALUES)
+    return [str(v) for v in merged_allowed_values(row)]
+
+
+def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
+    """The icons every spec value carries, as ``[{id, name, spec_key, values: [value]}]``.
+
+    One entry per (key, value, icon), in display order: keys in ``spec_key`` order (the
+    registry's own ``active_registry`` order), each key's values in its own order, each value's
+    icons in the order the admin set (owner, 5 Nov 20:4x). An icon on two values is two entries;
+    the frontend shows it once per product, at its first position.
+
+    Only an existing, non-deleted asset of kind icon counts, scoped like any asset query;
+    ``company_id`` narrows it to one company, for a render of a request (a staff session may
+    span several companies, the request belongs to one). Registry rows are shared.
+    """
+    from app.services.product_spec_registry import active_registry
+
+    rows = [row for row in active_registry(db) if row.value_icons]
+    wanted = {
+        str(asset_id)
+        for row in rows
+        for ids in (row.value_icons or {}).values()
+        for asset_id in ids or []
+    }
+    if not wanted:
+        return []
     statement = (
         db.query(Asset)
         .join(Attachment, Attachment.id == Asset.attachment_id)
         .filter(
+            Asset.id.in_(wanted),
             Asset.kind == ICON,
-            Asset.show_when_spec_key.isnot(None),
             Attachment.is_deleted.is_(False),
         )
     )
     if company_id:
         statement = statement.filter(Asset.company_id == company_id)
-    rows = statement.order_by(Asset.name, Asset.id).all()
-    return [
-        {
-            "id": asset.id,
-            "name": asset.name,
-            "spec_key": asset.show_when_spec_key,
-            "values": list(asset.show_when_values or []),
-        }
-        for asset in rows
-    ]
+    names = {asset.id: asset.name for asset in statement.all()}
+
+    out: list[dict] = []
+    for row in rows:
+        mapping = row.value_icons or {}
+        ordered = spec_value_keys(row)
+        # A value the key no longer lists keeps its icons (a product may still hold it).
+        ordered += sorted(value for value in mapping if value not in ordered)
+        for value in ordered:
+            for asset_id in mapping.get(value) or []:
+                if asset_id in names:
+                    out.append(
+                        {
+                            "id": asset_id,
+                            "name": names[asset_id],
+                            "spec_key": row.spec_key,
+                            "values": [value],
+                        }
+                    )
+    return out
 
 
-BOOLEAN_RULE_VALUES = ("true", "false")
+def clean_value_icons(db: Session, row, value_icons: dict) -> dict:
+    """A ``value_icons`` save, validated (registry PATCH): ``{value: [icon id, ...]}``.
 
-
-def rule_values(data_type: Optional[str], allowed_values) -> list[str]:
-    """The raw values a show-when rule may name for a spec key, or ``[]`` when none can."""
-    if data_type == "boolean":
-        return list(BOOLEAN_RULE_VALUES)
-    return [str(v) for v in (allowed_values or [])]
-
-
-def set_show_when(
-    db: Session, asset: Asset, spec_key: Optional[str], values: list[str]
-) -> Asset:
-    """Set or clear an icon's rule (contract B3). Flushes, never commits.
-
-    ``spec_key`` None clears both columns. Otherwise the key must be an ACTIVE registry key,
-    ``values`` non-empty (de-duplicated, order kept) and, when the key lists
-    ``allowed_values``, every value one of them.
+    Each value must be one of the key's values; each id an existing, non-deleted Dealer Kit
+    asset of kind icon visible to the caller; at most ``MAX_ICONS_PER_VALUE`` per value. Ids are
+    de-duplicated in order and an empty list drops the value's entry.
     """
-    from app.models.product_spec import ProductSpecRegistry
-    from app.services.product_spec_registry import merged_allowed_values
+    valid = set(spec_value_keys(row))
+    cleaned: dict[str, list[str]] = {}
+    for value, ids in (value_icons or {}).items():
+        value = str(value).strip()
+        if value not in valid:
+            raise AppException(
+                status_code=422,
+                message=f'"{value}" is not one of {row.label}\'s values.',
+                code="spec_registry_icon_unknown_value",
+            )
+        unique = list(dict.fromkeys(str(i).strip() for i in ids or [] if str(i).strip()))
+        if len(unique) > MAX_ICONS_PER_VALUE:
+            raise AppException(
+                status_code=422,
+                message=f"At most {MAX_ICONS_PER_VALUE} icons per value.",
+                code="spec_registry_icon_too_many",
+            )
+        if unique:
+            cleaned[value] = unique
 
-    if asset.kind != ICON:
-        raise AppException(
-            status_code=422,
-            message="Only an icon can have a show when rule.",
-            code="NOT_AN_ICON",
-        )
+    wanted = {i for ids in cleaned.values() for i in ids}
+    if wanted:
+        import uuid as _uuid
 
-    if spec_key is None:
-        asset.show_when_spec_key = None
-        asset.show_when_values = None
-        db.flush()
-        return asset
+        def _is_uuid(text: str) -> bool:
+            try:
+                _uuid.UUID(text)
+                return True
+            except ValueError:
+                return False
 
-    entry = (
-        db.query(ProductSpecRegistry)
-        .filter(
-            ProductSpecRegistry.spec_key == spec_key,
-            ProductSpecRegistry.is_active.is_(True),
+        good = {i for i in wanted if _is_uuid(i)}
+        found = (
+            {
+                asset.id
+                for asset in db.query(Asset)
+                .join(Attachment, Attachment.id == Asset.attachment_id)
+                .filter(
+                    Asset.id.in_(good),
+                    Asset.kind == ICON,
+                    Attachment.is_deleted.is_(False),
+                )
+                .all()
+            }
+            if good
+            else set()
         )
-        .first()
-    )
-    if entry is None:
-        raise AppException(
-            status_code=422,
-            message=f"'{spec_key}' is not an active product spec.",
-            code="UNKNOWN_SPEC",
-        )
-
-    cleaned = list(dict.fromkeys(v for v in values if v is not None))
-    if not cleaned:
-        raise AppException(
-            status_code=422,
-            message="Choose at least one value.",
-            code="VALUES_REQUIRED",
-        )
-
-    # The values a person may pick: a yes/no key reads `true` / `false` (what `raw` holds for a
-    # stored bool), any other key its registry vocabulary. A key with neither is free text and
-    # cannot carry a rule (the editor does not offer it either).
-    allowed = rule_values(entry.data_type, merged_allowed_values(entry))
-    if not allowed:
-        raise AppException(
-            status_code=422,
-            message=f"{entry.label} has no fixed values, so it cannot decide an icon.",
-            code="SPEC_NOT_RULEABLE",
-        )
-    unknown = [v for v in cleaned if v not in allowed]
-    if unknown:
-        raise AppException(
-            status_code=422,
-            message=f"Not a value of {entry.label}: {', '.join(unknown)}.",
-            code="UNKNOWN_SPEC_VALUE",
-        )
-
-    asset.show_when_spec_key = spec_key
-    asset.show_when_values = cleaned
-    db.flush()
-    return asset
+        missing = wanted - found
+        if missing:
+            raise AppException(
+                status_code=422,
+                message="Choose Dealer Kit icons only. One of the chosen pictures is not an icon "
+                "or no longer exists.",
+                code="spec_registry_icon_not_an_icon",
+            )
+    return cleaned
 
 
 def background_asset_ids(doc: Optional[dict]) -> set[str]:

@@ -1028,6 +1028,12 @@ class FeatureIconOut(BaseModel):
     values: list[str]
 
 
+class FeatureIconItem(FeatureIconOut):
+    """`GET /dealer-kit/feature-icons`: one icon of one spec value, with its signed URL."""
+
+    url: Optional[str] = None
+
+
 class DesignMediaMixin(BaseModel):
     """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
 
@@ -1625,9 +1631,6 @@ class AssetResponse(BaseModel):
     #: original. The picker grid draws this; ``url`` stays the original.
     thumb_url: Optional[str] = None
     mime_type: Optional[str] = None
-    #: Feature icons: an icon shows when this spec's raw value is one of these. Both or neither.
-    show_when_spec_key: Optional[str] = None
-    show_when_values: Optional[list[str]] = None
 
 
 # ---------------------------------------------------------------------------

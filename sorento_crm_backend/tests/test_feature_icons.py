@@ -1,7 +1,8 @@
 """Feature icons (PRICETAG-DESIGNER-GAPS item 3), backend half.
 
-Contract: documentation/plans/dealer-kit/pricetag-feature-icons-contract.md (B1-B6).
-Red tests written before the implementation. Postgres only, own seed chain.
+Contract: documentation/plans/dealer-kit/pricetag-feature-icons-contract.md (B1-B6), as revised
+by the owner ruling of 5 Nov 20:35: the icon <-> spec link lives on the spec VALUE
+(`product_spec_registry.value_icons`), not on the asset. Postgres only, own seed chain.
 """
 from __future__ import annotations
 
@@ -111,147 +112,25 @@ def _put(client, asset_id, body):
 
 
 # ---------------------------------------------------------------------------
-# B3: the show-when route
+# Owner ruling 5 Nov 20:35: the rule moved to the spec VALUE; the asset route is gone
 # ---------------------------------------------------------------------------
 
 
-def test_put_show_when_sets_the_rule_and_the_list_returns_it(api, client):
-    key = _registry(api, allowed=["cold_only", "mixer"])
+def test_the_asset_show_when_route_is_gone(api, client):
     icon = seed_asset(api, kind="icon")
     api.commit()
+    res = _put(client, icon.id, {"spec_key": None, "values": []})
+    assert res.status_code in (404, 405), res.text
 
-    res = _put(client, icon.id, {"spec_key": key, "values": ["mixer"]})
-    assert res.status_code == 200, res.text
-    assert res.json()["show_when_spec_key"] == key
-    assert res.json()["show_when_values"] == ["mixer"]
 
+def test_an_asset_no_longer_answers_show_when_fields(api, client):
+    icon = seed_asset(api, kind="icon")
+    api.commit()
     listed = client.get(BASE, params={"kind": "icon"})
     assert listed.status_code == 200, listed.text
     row = next(r for r in listed.json() if r["id"] == icon.id)
-    assert row["show_when_spec_key"] == key
-    assert row["show_when_values"] == ["mixer"]
-
-
-def test_null_spec_key_clears_both_columns(api, client):
-    key = _registry(api, allowed=["cold_only", "mixer"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-    assert _put(client, icon.id, {"spec_key": key, "values": ["mixer"]}).status_code == 200
-
-    res = _put(client, icon.id, {"spec_key": None, "values": []})
-    assert res.status_code == 200, res.text
-    assert res.json()["show_when_spec_key"] is None
-    assert res.json()["show_when_values"] is None
-
-
-def test_a_badge_cannot_carry_a_rule(api, client):
-    key = _registry(api, allowed=["mixer"])
-    badge = seed_asset(api, kind="badge")
-    api.commit()
-
-    res = _put(client, badge.id, {"spec_key": key, "values": ["mixer"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "NOT_AN_ICON"
-
-
-def test_an_unknown_spec_key_is_refused(api, client):
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": "zzt_no_such_key", "values": ["x"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "UNKNOWN_SPEC"
-
-
-def test_an_inactive_spec_key_is_refused(api, client):
-    key = _registry(api, allowed=["a"], active=False)
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": key, "values": ["a"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "UNKNOWN_SPEC"
-
-
-def test_a_value_outside_the_allowed_values_is_refused(api, client):
-    key = _registry(api, allowed=["cold_only", "mixer"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": key, "values": ["mixer", "lava"]})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "UNKNOWN_SPEC_VALUE"
-
-
-def test_a_spec_key_with_no_values_is_refused(api, client):
-    key = _registry(api, allowed=["cold_only", "mixer"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": key, "values": []})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "VALUES_REQUIRED"
-
-
-def test_an_unknown_asset_is_404(api, client):
-    res = _put(client, str(uuid.uuid4()), {"spec_key": None, "values": []})
-    assert res.status_code == 404, res.text
-    assert res.json()["code"] == "ASSET_NOT_FOUND"
-
-
-def test_duplicate_values_are_removed_keeping_order(api, client):
-    key = _registry(api, allowed=["a", "b", "c"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    res = _put(client, icon.id, {"spec_key": key, "values": ["b", "a", "b", "c", "a"]})
-    assert res.status_code == 200, res.text
-    assert res.json()["show_when_values"] == ["b", "a", "c"]
-
-
-def test_the_route_is_denied_without_the_library_permission(api, client):
-    from app.dependencies import get_current_user
-
-    key = _registry(api, allowed=["a"])
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    nobody = "6a2b3c4d-5e6f-5a1b-8c2d-3e4f5a6b7caa"
-    from app.models.user import User
-
-    api.add(User(id=nobody, email="zzt-icons-nobody@test.com", name="Nobody", status="ACTIVE"))
-    api.commit()
-    app.dependency_overrides[get_current_user] = lambda: {"id": nobody, "email": "n@test.com"}
-
-    res = _put(client, icon.id, {"spec_key": key, "values": ["a"]})
-    assert res.status_code in (401, 403), res.text
-
-
-# ---------------------------------------------------------------------------
-# B1: the pair CHECK
-# ---------------------------------------------------------------------------
-
-
-def test_only_one_of_the_two_rule_columns_violates_the_check(api):
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    icon.show_when_spec_key = "water_supply"
-    icon.show_when_values = None
-    with pytest.raises(IntegrityError):
-        api.flush()
-    api.rollback()
-
-
-def test_only_the_values_column_violates_the_check(api):
-    icon = seed_asset(api, kind="icon")
-    api.commit()
-
-    icon.show_when_spec_key = None
-    icon.show_when_values = ["mixer"]
-    with pytest.raises(IntegrityError):
-        api.flush()
-    api.rollback()
+    assert "show_when_spec_key" not in row
+    assert "show_when_values" not in row
 
 
 # ---------------------------------------------------------------------------
@@ -323,38 +202,43 @@ def _doc(with_icons_layer: bool) -> dict:
 
 
 def _ruled_icon(db, name: str, key: str, values: list[str]):
+    """An icon asset, appended to each named value's own icon list on the registry row."""
+    from app.models.product_spec import ProductSpecRegistry
+
     icon = seed_asset(db, kind="icon")
     icon.name = name
-    icon.show_when_spec_key = key
-    icon.show_when_values = values
+    row = db.query(ProductSpecRegistry).filter_by(spec_key=key).one()
+    mapping = {k: list(v) for k, v in (row.value_icons or {}).items()}
+    for value in values:
+        mapping.setdefault(value, []).append(icon.id)
+    row.value_icons = mapping
     db.flush()
     return icon
 
 
-def test_design_media_lists_every_ruled_icon_name_ordered_and_signs_their_urls(api, monkeypatch):
+def test_design_media_lists_icons_in_value_then_list_order_and_signs_their_urls(api, monkeypatch):
+    """Owner ruling (5 Nov 20:4x): one entry per (value, icon), values in the key's own order,
+    icons in the order the admin set on the value. Never by name."""
     from app.services.dealer_kit import asset_service, tag_sheet_export_service
 
     key = _registry(api, allowed=["cold_only", "mixer"])
     b = _ruled_icon(api, "ZZT b hot", key, ["mixer"])
     a = _ruled_icon(api, "ZZT a cold", key, ["cold_only", "mixer"])
-    plain = seed_asset(api, kind="icon")  # no rule: not listed
-
-    seen: list[set[str]] = []
+    plain = seed_asset(api, kind="icon")  # on no value: not listed
 
     def fake_urls(db, ids, **_kw):
-        ids = set(ids)
-        seen.append(ids)
-        return {i: f"https://signed.test/{i}" for i in ids}
+        return {i: f"https://signed.test/{i}" for i in set(ids)}
 
     monkeypatch.setattr(asset_service, "urls_for", fake_urls)
 
     _rows, media = tag_sheet_export_service.design_media(api, None, _doc(True), rows=[])
 
-    mine = [i for i in media["feature_icons"] if i["id"] in {a.id, b.id}]
-    assert [i["id"] for i in mine] == [a.id, b.id]
-    assert mine[0] == {
-        "id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["cold_only", "mixer"],
-    }
+    mine = [i for i in media["feature_icons"] if i["spec_key"] == key]
+    assert mine == [
+        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["cold_only"]},
+        {"id": b.id, "name": "ZZT b hot", "spec_key": key, "values": ["mixer"]},
+        {"id": a.id, "name": "ZZT a cold", "spec_key": key, "values": ["mixer"]},
+    ]
     assert plain.id not in {i["id"] for i in media["feature_icons"]}
     assert a.id in media["assets"] and b.id in media["assets"]
     assert plain.id not in media["assets"]
