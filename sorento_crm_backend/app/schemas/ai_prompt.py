@@ -34,6 +34,28 @@ class PromptKeySummary(BaseModel):
     updated_by_name: Optional[str] = None
 
 
+class PromptListRow(PromptKeySummary):
+    """One row of ``GET /ai-assistant/prompts/list``: the summary plus ``id`` (= name) for the pager."""
+
+    id: str
+
+
+class PromptListPagination(BaseModel):
+    total: int
+    page: int
+    limit: int
+
+
+class PromptListPage(BaseModel):
+    """The prompts list on the standard DataGrid envelope (AI-PROMPTS-STD-VIEWS)."""
+
+    data: list[PromptListRow]
+    empty: bool
+    pagination: PromptListPagination
+    #: Every model some agent runs on, for the "Runs on" filter (``default`` is implied).
+    model_options: list[str] = Field(default_factory=list)
+
+
 class PromptVersionRow(BaseModel):
     """One entry in a key's version history."""
 
