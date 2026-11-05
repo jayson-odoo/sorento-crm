@@ -144,16 +144,24 @@ print(passed, failed)
 PY
 }
 
-# sweep_vitest <frontend dir> <out>: prints "<passed> <failed>".
+# sweep_vitest <frontend dir> <out> [<log name> <vitest args...>]: prints "<passed> <failed>".
+# Default: the full `vitest run` into <out>/vitest.log. A run that found no test file (vitest
+# related on files no test imports, with --passWithNoTests) counts 0 0; any other run without a
+# "Tests" summary line counts -1 failed.
 sweep_vitest() {
-  local fe="$1" out="$2"
-  sweep_log "vitest"
-  (cd "$fe" && npx vitest run > "$out/vitest.log" 2>&1) || true
-  python3 - "$out/vitest.log" <<'PY'
+  local fe="$1" out="$2" name="${3:-vitest}"
+  local args=("${@:4}")
+  [ ${#args[@]} -gt 0 ] || args=(run)
+  sweep_log "vitest ${args[0]} ($name)"
+  (cd "$fe" && npx vitest "${args[@]}" > "$out/$name.log" 2>&1) || true
+  python3 - "$out/$name.log" <<'PY'
 import re, sys
 text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1], errors="replace").read())
 line = next((l for l in text.splitlines()[::-1] if l.strip().startswith("Tests ")), "")
 num = lambda word: int((re.search(rf"(\d+) {word}", line) or [0, 0])[1])
-print(num("passed"), num("failed") if line else -1)
+if not line and "No test files found" in text:
+    print(0, 0)
+else:
+    print(num("passed"), num("failed") if line else -1)
 PY
 }
