@@ -754,6 +754,16 @@ describe('QuotationFormClient edit', () => {
     expect(screen.getByRole('tab', { name: 'Terms' })).toBeInTheDocument();
   });
 
+  it('FE4: the saved-scope strip carries no outcome pill (one outcome per project)', async () => {
+    renderForm('d1');
+    await openSavedLines();
+
+    const pills = screen
+      .queryAllByText(/^(Won|Lost|Open|Still open)$/)
+      .filter((el) => el.className.includes('rounded-full'));
+    expect(pills).toHaveLength(0);
+  });
+
   it('AC-QF021: Save sends ONE PATCH with the header and every scope, lines included', async () => {
     renderForm('d1');
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));

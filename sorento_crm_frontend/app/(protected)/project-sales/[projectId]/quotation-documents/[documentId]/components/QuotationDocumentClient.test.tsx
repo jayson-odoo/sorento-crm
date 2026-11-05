@@ -11,7 +11,7 @@
  * Edit in the gear opens the form page, and this page is a read. The claims here are that the gear
  * leads there (after the existing revise prompt when the customer holds a version), that no
  * Save/Cancel pair or letterhead input appears on this page, and that the per-scope Edit scope
- * button is gone while Record outcome stays.
+ * button is gone, and so is Record outcome (PROJECT-OUTCOME-SINGLE: one outcome per project).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -1134,14 +1134,23 @@ describe('QuotationDocumentClient standing badge', () => {
  * user starts.
  */
 describe('QuotationDocumentClient scope series', () => {
-  it('AC-QF004: offers no per-scope Edit scope; Record outcome stays', async () => {
+  it('AC-QF004: offers no per-scope Edit scope, and no per-scope outcome (BE9/FE4)', async () => {
     // The owner: "editing of scope should be done by 'Edit Quotation', not a separate button".
+    // 5 Nov: "we only need per project outcome", so the scope carries no pill and no
+    // Record outcome either.
     seedOneScope();
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Record outcome' })).toBeInTheDocument();
+    await screen.findByText(/Wall-hung|Townhouse/);
+    expect(screen.queryByRole('button', { name: 'Record outcome' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
+    expect(
+      screen
+        .queryAllByText(/^(Won|Lost|Open|Still open)$/)
+        .filter((el) => el.className.includes('rounded-full')),
+    ).toHaveLength(0);
+    expect(screen.queryByRole('dialog', { name: /Outcome of/ })).toBeNull();
   });
 
   it('AC-QF036: an empty scope reads as an empty grid, with no Press Edit hint', async () => {
