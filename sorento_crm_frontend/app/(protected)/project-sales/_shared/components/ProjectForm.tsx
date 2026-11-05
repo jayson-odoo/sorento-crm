@@ -315,8 +315,13 @@ export function ProjectForm(props: ProjectFormProps) {
     title.trim().length > 0 && !leadSourceMissing && !wouldBlock && !pending;
   const canSaveDraft = title.trim().length > 0 && !pending;
   // The top blocking candidate: the footer's one primary becomes Register as secondary lead (D2).
+  // Any outcome blocks (PROJECT-CLASH-LOST), but the secondary-lead request should reach the
+  // live pursuit: an Open blocker wins over a Won / Lost / Dormant one listed before it.
   const blocker =
-    mode === 'create' && wouldBlock ? candidates.find((candidate) => candidate.blocks) : undefined;
+    mode === 'create' && wouldBlock
+      ? (candidates.find((candidate) => candidate.blocks && candidate.outcome === 'open') ??
+        candidates.find((candidate) => candidate.blocks))
+      : undefined;
 
   async function handleCheck() {
     const trimmed = title.trim();

@@ -263,7 +263,8 @@ def assert_no_blocking_clash(
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
 ) -> None:
-    """409 when an open project under the developer is the same development."""
+    """409 when an existing project under the developer, in any outcome, is the same
+    development (PROJECT-CLASH-LOST: Won / Lost / Dormant block like Open)."""
     blockers = [
         candidate
         for candidate in find_clashes(
@@ -301,7 +302,7 @@ def register_project(
 ) -> Project:
     """Claim a development for ``actor_user_id``.
 
-    Raises 409 when an open project under the same developer is the same
+    Raises 409 when a project under the same developer, in any outcome, is the same
     development. There is no override flag: the recourse is request-to-join or a
     dispute (ADR-0004), both of which leave a record, whereas a force-create flag
     would leave none and would become the default click.

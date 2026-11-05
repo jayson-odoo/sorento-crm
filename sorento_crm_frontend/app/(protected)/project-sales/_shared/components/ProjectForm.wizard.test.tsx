@@ -494,6 +494,23 @@ describe('AC-W2 / AC-W3 no blocking clash', () => {
   });
 });
 
+describe('PROJECT-CLASH-LOST the secondary-lead request goes to the live pursuit', () => {
+  it('prefers an Open blocker over a Lost one listed before it', async () => {
+    clashAnswer = () => ({
+      candidates: [
+        { ...BLOCKING, project_id: 'l1', project_code: 'PPF2611002', outcome: 'lost', similarity: 1 },
+        { ...BLOCKING, project_id: 'o1', project_code: 'PPF2611003', outcome: 'open', similarity: 0.9 },
+      ],
+      would_block: true,
+    });
+    renderForm();
+    await runCheck('Setia Alam Phase 3B CONTOH');
+    expect(
+      await screen.findByRole('button', { name: 'Register as secondary lead on PPF2611003' }),
+    ).toBeEnabled();
+  });
+});
+
 describe('AC-W4 blocking clash', () => {
   beforeEach(() => {
     clashAnswer = () => ({ candidates: [BLOCKING], would_block: true });
