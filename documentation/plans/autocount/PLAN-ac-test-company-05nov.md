@@ -39,3 +39,13 @@ Posted as the lane's crew-ask on PR #2202. Recommended shape:
    customers/suppliers by a script copying Sorento rows whose codes exist in db3.
 5. Switches: a test company ignores the global AutoCount write switches (writes on);
    live companies keep today's global switch (off).
+
+## Pre-build audit (read-only, 5 Nov)
+
+- 119 `company_scope(db|session, None)` call sites under `app/` (32 in `app/services`, 14 in
+  `app/tasks`, rest across dealer_kit, public API, scm, sales, reports, chatbot). Patching per
+  surface is not viable; Q3(a) is the only fence that covers them.
+- The fence point is two `scope is None` branches: `build_company_predicate`
+  (`app/services/company_scope.py:236-237`, returns no predicate) and `company_sql_predicate`
+  (`app/services/company_scope_sql.py:40`, returns ""). Under Q3(a) both return
+  `company_id NOT IN (SELECT id FROM companies WHERE is_test)`, shared tables keeping `IS NULL OR ...`.
