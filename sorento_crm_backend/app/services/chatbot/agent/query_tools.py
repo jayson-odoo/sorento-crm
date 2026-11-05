@@ -183,6 +183,7 @@ QUERY_SCHEMA = {
         "description": (
             "Read CRM records as their screens show them: rows, or totals with group_by. Delivery order counts "
             "and totals per agent, customer or month are this tool on entity order, not the sales report. "
+            "Sales targets, below target and commission payout: entity sales_target. "
             "Entity keys and fields come from crm_describe, whose notes say which field a list column is; a field "
             "may go through a relation (supplier.name). In the reply, show each row by its label exactly and "
             "say the result's period_display and scope_note. "
