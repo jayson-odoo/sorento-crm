@@ -103,6 +103,9 @@ export interface ImageLayerProps {
   fit: ImageFit;
   cropRect?: { x: number; y: number; width: number; height: number };
   maskShape?: ImageMaskShape;
+  /** Mirror left-right / top-bottom about the layer box (`image-flip.ts`). Absent = not flipped. */
+  flipX?: boolean;
+  flipY?: boolean;
   /**
    * Where the picture came from before S3b gave image layers a source
    * discriminator. Read by `imageSourceOf`, never written: a template saved by
