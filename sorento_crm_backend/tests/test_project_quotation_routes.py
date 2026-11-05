@@ -155,7 +155,7 @@ def test_creating_a_quotation_returns_it_with_version_one_already_open(api):
 
     assert quotation["current_version_no"] == 1
     assert quotation["version_count"] == 1
-    assert quotation["outcome"] == "open"
+    assert "outcome" not in quotation
     assert quotation["line_count"] == 0
 
 
@@ -334,7 +334,9 @@ def test_a_line_with_no_product_and_no_set_is_refused_whatever_its_description_s
     assert listed == []
 
 
-def test_marking_a_quotation_lost_requires_a_configured_reason(api):
+def test_loss_reasons_config_stays_and_the_area_outcome_route_is_gone(api):
+    """BE9. The Mark lost dialog still reads the reasons list; the per-area outcome route
+    is removed and the area carries no outcome fields."""
     client, _db, _company_id, _user_id, project = api
 
     reasons = client.get(f"{BASE}/config/loss-reasons")
@@ -342,42 +344,16 @@ def test_marking_a_quotation_lost_requires_a_configured_reason(api):
     assert "price" in {row["value"] for row in reasons.json()}
 
     quotation = _quotation(client, project.id)
+    for gone in ("outcome", "loss_reason", "loss_reason_label", "decided_at"):
+        assert gone not in quotation
 
-    refused = client.post(
-        f"{BASE}/quotations/{quotation['id']}/outcome",
-        json={"outcome": "lost", "loss_reason": "they hated us"},
-    )
-    assert refused.status_code == 422, refused.text
-
-    accepted = client.post(
+    removed = client.post(
         f"{BASE}/quotations/{quotation['id']}/outcome",
         json={"outcome": "lost", "loss_reason": "price"},
     )
-    assert accepted.status_code == 200, accepted.text
-    body = accepted.json()
-    assert body["outcome"] == "lost"
-    assert body["loss_reason_label"] == "Price"
-
-
-def test_winning_one_scope_makes_the_project_won_without_moving_its_status(api):
-    """AC-E10 + AC-E10a through HTTP."""
-    client, db, _company_id, _user_id, project = api
-    status_before = project.status_id
-
-    house = _quotation(client, project.id)
-    common = _quotation(client, project.id, scope_label="Common Area")
-
-    client.post(
-        f"{BASE}/quotations/{common['id']}/outcome",
-        json={"outcome": "lost", "loss_reason": "price"},
-    )
+    assert removed.status_code in (404, 405), removed.text
     detail = client.get(f"{BASE}/projects/{project.id}").json()
     assert detail["outcome"] == "open"
-
-    client.post(f"{BASE}/quotations/{house['id']}/outcome", json={"outcome": "won"})
-    detail = client.get(f"{BASE}/projects/{project.id}").json()
-    assert detail["outcome"] == "won"
-    assert detail["status_id"] == status_before
 
 
 def test_the_series_config_surface_is_reachable_and_reports_its_coverage(api):

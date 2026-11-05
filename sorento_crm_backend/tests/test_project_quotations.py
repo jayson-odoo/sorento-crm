@@ -121,7 +121,6 @@ def test_creating_a_quotation_opens_version_one():
         version = quotes.current_version(db, quotation.id)
         assert version.version_no == 1
         assert version.frozen_at is None
-        assert quotation.outcome == quotes.OUTCOME_OPEN
 
 
 def test_editing_the_current_version_saves_in_place_and_does_not_create_a_version():
@@ -579,11 +578,18 @@ def test_management_is_notified_on_entering_breach_and_not_on_every_save():
         assert len(quotes.pop_breach_events(line)) == 1
 
 
-# ------------------------------------------------- outcome, derived and not
+# ------------------------------------------------- outcome lives on the project
 
 
-def test_losing_a_quotation_requires_a_reason_from_the_lookup():
-    """AC-E9."""
+def test_the_per_area_outcome_machinery_is_gone():
+    """BE9. One outcome per project: no set_outcome, no derive, no sync."""
+    from app.services import project_quotation_service as quotes
+
+    for name in ("set_outcome", "derive_project_outcome", "sync_project_outcome"):
+        assert not hasattr(quotes, name), name
+
+
+def test_deleting_an_area_does_not_recompute_the_project_outcome():
     from app.services import project_quotation_service as quotes
 
     with blank_session() as db:
@@ -594,111 +600,13 @@ def test_losing_a_quotation_requires_a_reason_from_the_lookup():
         quotation = quotes.create_quotation(
             db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
         )
+        project.outcome = "won"
+        db.flush()
 
-        with pytest.raises(AppException) as missing:
-            quotes.set_outcome(db, quotation=quotation, outcome="lost", loss_reason=None)
-        assert missing.value.status_code == 422
-
-        with pytest.raises(AppException) as invented:
-            quotes.set_outcome(
-                db, quotation=quotation, outcome="lost", loss_reason="they hated us"
-            )
-        assert invented.value.status_code == 422
-
-        quotes.set_outcome(db, quotation=quotation, outcome="lost", loss_reason="price")
-        assert quotation.outcome == "lost"
-        assert quotation.loss_reason == "price"
-        assert quotation.decided_at is not None
-
-
-def test_winning_a_quotation_clears_any_loss_reason():
-    from app.services import project_quotation_service as quotes
-
-    with blank_session() as db:
-        company_id = _sorento(db)
-        project_seed_service.run(db, company_id=company_id)
-        owner = _user(db, f"{MARKER} Ali")
-        project = _project(db, company_id, owner)
-        quotation = quotes.create_quotation(
-            db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
-        )
-        quotes.set_outcome(db, quotation=quotation, outcome="lost", loss_reason="price")
-
-        quotes.set_outcome(db, quotation=quotation, outcome="won", loss_reason=None)
-
-        assert quotation.outcome == "won"
-        assert quotation.loss_reason is None
-
-
-def test_project_outcome_is_derived_won_if_any_lost_only_if_all():
-    """AC-E10. A project with one won scope and one open scope is still live."""
-    from app.services import project_quotation_service as quotes
-
-    with blank_session() as db:
-        company_id = _sorento(db)
-        project_seed_service.run(db, company_id=company_id)
-        owner = _user(db, f"{MARKER} Ali")
-        project = _project(db, company_id, owner)
-
-        # No quotations at all: open, not lost. Nothing has been decided.
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        house = quotes.create_quotation(
-            db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
-        )
-        common = quotes.create_quotation(
-            db, project=project, actor_user_id=owner, payload={"scope_label": "Common Area"}
-        )
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        quotes.set_outcome(db, quotation=house, outcome="lost", loss_reason="price")
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        quotes.set_outcome(db, quotation=common, outcome="lost", loss_reason="lead_time")
-        assert quotes.derive_project_outcome(db, project) == "lost"
-
-        # One win flips the whole project back to won, even alongside a loss.
-        quotes.set_outcome(db, quotation=house, outcome="won", loss_reason=None)
-        assert quotes.derive_project_outcome(db, project) == "won"
-
-
-def test_setting_a_quotation_outcome_updates_the_projects_derived_outcome():
-    from app.services import project_quotation_service as quotes
-
-    with blank_session() as db:
-        company_id = _sorento(db)
-        project_seed_service.run(db, company_id=company_id)
-        owner = _user(db, f"{MARKER} Ali")
-        project = _project(db, company_id, owner)
-        quotation = quotes.create_quotation(
-            db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
-        )
-
-        quotes.set_outcome(db, quotation=quotation, outcome="won", loss_reason=None)
+        quotes.delete_quotation(db, quotation)
 
         db.refresh(project)
         assert project.outcome == "won"
-
-
-def test_the_project_status_is_never_touched_by_an_outcome_change():
-    """AC-E10a: outcome and status are different axes. Moving one must not move the
-    other, or the board starts lying about where work actually is."""
-    from app.services import project_quotation_service as quotes
-
-    with blank_session() as db:
-        company_id = _sorento(db)
-        project_seed_service.run(db, company_id=company_id)
-        owner = _user(db, f"{MARKER} Ali")
-        project = _project(db, company_id, owner)
-        status_before = project.status_id
-
-        quotation = quotes.create_quotation(
-            db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
-        )
-        quotes.set_outcome(db, quotation=quotation, outcome="won", loss_reason=None)
-
-        db.refresh(project)
-        assert project.status_id == status_before
 
 
 # --------------------------------------------------------------------- audit

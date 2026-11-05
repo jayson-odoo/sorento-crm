@@ -99,12 +99,13 @@ describe('Make quotation action visibility', () => {
     expect(offered(doc({ kind: 'proposal' }))).toBe(true);
   });
 
-  it.each([['lost'], ['open'], [null], [undefined]])(
-    'is absent when the project outcome is %s',
-    (outcome) => {
-      expect(offered(doc(), { projectOutcome: outcome as string | null })).toBe(false);
-    },
-  );
+  it('is offered on an open project too (PROJECT-OUTCOME-SINGLE FE5)', () => {
+    expect(offered(doc(), { projectOutcome: 'open' })).toBe(true);
+  });
+
+  it('is absent on a lost project (PROJECT-OUTCOME-SINGLE FE5)', () => {
+    expect(offered(doc(), { projectOutcome: 'lost' })).toBe(false);
+  });
 
   it('is absent on a document that is already a quotation', () => {
     expect(offered(doc({ kind: 'quotation' }))).toBe(false);
