@@ -13,6 +13,8 @@
  *   `editor.chooseTemplate(key, id)`; the test accepts either carrying the SP default;
  * - the pill text is "No SP template linked" / "No LP template linked"; the eye keeps its
  *   "Preview tag for line N" name and is disabled;
+ * - R13: the no-fit scenarios use a line WITHOUT a kept pick (a new line, `tag_template_id: null`); a
+ *   loaded line keeping a stored template that no longer fits is in `...keptPick.test.tsx`;
  * - the Submit reason is `"<code>: No SP template linked"` from `lineProblemsOf` for a product line
  *   (the combo-name label is a server-side/FE-form case not covered here).
  */
@@ -136,14 +138,14 @@ describe('template select offers what fits the line (AC-35)', () => {
 
 describe('no template fits the line (AC-36)', () => {
   it('AC-36: an SP line whose links are all LP-only shows the pill and a disabled eye', () => {
-    renderTable(mk({ price_type: 'selling', tag_templates: [LP], tag_template_id: 'lp' }));
+    renderTable(mk({ price_type: 'selling', tag_templates: [LP], tag_template_id: null }));
 
     expect(screen.getByText('No SP template linked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Preview tag for line 1/ })).toBeDisabled();
   });
 
   it('AC-36: the LP mirror case says "No LP template linked"', () => {
-    renderTable(mk({ price_type: 'list', tag_templates: [SP], tag_template_id: 'sp' }));
+    renderTable(mk({ price_type: 'list', tag_templates: [SP], tag_template_id: null }));
 
     expect(screen.getByText('No LP template linked')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Preview tag for line 1/ })).toBeDisabled();
@@ -161,12 +163,12 @@ describe('no template fits the line (AC-36)', () => {
   });
 
   it('AC-36: Submit and Approve are refused with "<item>: No SP template linked"', () => {
-    const line = mk({ price_type: 'selling', tag_templates: [LP], tag_template_id: 'lp' });
+    const line = mk({ price_type: 'selling', tag_templates: [LP], tag_template_id: null });
     expect(lineProblemsOf(line, null, 'list')).toContain('ZZT-l1: No SP template linked');
   });
 
   it('AC-36: the LP reason reads "No LP template linked"', () => {
-    const line = mk({ price_type: 'list', tag_templates: [SP], tag_template_id: 'sp' });
+    const line = mk({ price_type: 'list', tag_templates: [SP], tag_template_id: null });
     expect(lineProblemsOf(line, null, 'list')).toContain('ZZT-l1: No LP template linked');
   });
 
