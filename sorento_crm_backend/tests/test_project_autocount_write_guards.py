@@ -187,13 +187,16 @@ def test_another_companys_quotation_answers_the_same_404_as_a_missing_id(qt_api,
 # --------------------------------------------------------------------------- authentication, ids
 
 
+# Fixed ids, not uuid4() at import: pytest-xdist workers each collect the module, and a random id
+# in a parametrize value gives every worker a different test list ("Different tests were collected").
+_ID = "00000000-0000-4000-8000-0000000000a1"
 ALL_ROUTES = [
     ("GET", f"{BASE}/autocount-write/capabilities"),
-    ("POST", f"{BASE}/sales-orders/{uuid.uuid4()}/autocount"),
-    ("POST", f"{BASE}/sales-orders/amendments/{uuid.uuid4()}/autocount"),
-    ("POST", f"{BASE}/sales-orders/{uuid.uuid4()}/autocount/cancel"),
-    ("POST", f"{BASE}/quotation-documents/{uuid.uuid4()}/autocount"),
-    ("POST", f"{BASE}/quotation-documents/{uuid.uuid4()}/autocount/cancel"),
+    ("POST", f"{BASE}/sales-orders/{_ID}/autocount"),
+    ("POST", f"{BASE}/sales-orders/amendments/{_ID}/autocount"),
+    ("POST", f"{BASE}/sales-orders/{_ID}/autocount/cancel"),
+    ("POST", f"{BASE}/quotation-documents/{_ID}/autocount"),
+    ("POST", f"{BASE}/quotation-documents/{_ID}/autocount/cancel"),
 ]
 
 
