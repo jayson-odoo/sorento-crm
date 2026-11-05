@@ -99,6 +99,12 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
         else:
             raise QueryRefused("invalid", f"`{key}` takes eq, between, gte, gt, lte or lt (a date window).")
     if low is None and high is None:
+        dated = [i.get("field") for i in rest if (entity.fields.get(i.get("field")) or FieldDef("")).kind == "date"]
+        if key and dated:
+            # Without a window only today's periods are read, so a date filter alone would find nothing.
+            raise QueryRefused(
+                "invalid", f"Pick the periods with `{key}` (between [from, to]); `{dated[0]}` only narrows within it."
+            )
         today = _today()
         return today, today, rest, None
     low = low or high
@@ -165,6 +171,8 @@ def _predicate(entity: EntityDef, slugs: set[str], item: dict):
         if not isinstance(value, list) or not value or len(value) > MAX_IN_VALUES:
             raise QueryRefused("invalid", f"`{op}` on `{path}` needs a list of 1 to {MAX_IN_VALUES} values.")
         values = {_coerce(v, kind, path) for v in value}
+        if None in values:
+            raise QueryRefused("invalid", f"`{op}` on `{path}` takes values; use is_null for an empty one.")
         if op == "in":
             return lambda row: _cmp(row.get(path), kind) in values
         return lambda row: row.get(path) is not None and _cmp(row.get(path), kind) not in values
@@ -172,6 +180,8 @@ def _predicate(entity: EntityDef, slugs: set[str], item: dict):
         if not isinstance(value, list) or len(value) != 2:
             raise QueryRefused("invalid", f"`between` on `{path}` needs [from, to].")
         low, high = (_coerce(v, kind, path) for v in value)
+        if low is None or high is None:
+            raise QueryRefused("invalid", f"`between` on `{path}` needs two values.")
         return lambda row: row.get(path) is not None and low <= _cmp(row.get(path), kind) <= high
     want = _coerce(value, kind, path)
     if want is None:
@@ -185,8 +195,7 @@ def _predicate(entity: EntityDef, slugs: set[str], item: dict):
         "gte": lambda got: got >= want,
     }
     test = tests[op]
-    if op == "ne":
-        return lambda row: row.get(path) is None or test(_cmp(row.get(path), kind))
+    # As SQL: a comparison, `ne` included, never matches an empty value.
     return lambda row: row.get(path) is not None and test(_cmp(row.get(path), kind))
 
 
@@ -236,6 +245,8 @@ def _aggregate(entity: EntityDef, slugs: set[str], item: Any):
     if fn in ("sum", "avg") and kind != "number":
         raise QueryRefused("invalid", f"`{fn}` needs a number field; `{path}` is {kind}.")
     label = f"{_FN_WORDS[fn]} {field.label.lower()}"
+    if fn == "sum" and field.label.lower().startswith("total"):
+        label = field.label  # "Total", not "Total total" (the SQL path's rule)
 
     def present(rows):
         return [r.get(path) for r in rows if r.get(path) is not None]

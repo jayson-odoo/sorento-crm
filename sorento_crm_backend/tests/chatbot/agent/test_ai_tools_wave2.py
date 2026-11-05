@@ -422,3 +422,142 @@ def test_R4_another_companys_targets_and_documents_stay_out(targets, grant):
     grant(BILLING_VIEW)
     docs = run(db, {"entity": "billing_document", "filters": [{"field": "net_total", "op": "eq", "value": 123456}]})
     assert docs["rows"] == []
+
+
+# ------------------------------------------------------------------ code review round: the harder target cases
+
+
+def _same_as_page(db, out, target_ids):
+    """Every row of `out` for `target_ids` carries `target_detail`'s own figures for its period."""
+    from app.services.sales import target_service
+
+    checked = 0
+    for target_id in target_ids:
+        target = target_service.get_target_or_404(db, target_id)
+        page = {p["period_start"].strftime("%d/%m/%Y"): p for p in target_service.target_detail(db, target)["periods"]}
+        for row in (r for r in out["rows"] if r["link"].endswith(target_id)):
+            mine = page[row["period_start"]]
+            assert row["achieved_value"] == mine["achieved_value"]
+            assert row["tier_reached"] == mine["tier_reached"]
+            assert row["commission"] == mine["commission_earned"]
+            assert row["bonus"] == mine["bonus_earned"]
+            assert row["replaced"] == mine["replaced"]
+            assert row["ratio_missing"] == mine["ratio_missing"]
+            if not mine["ratio_missing"]:
+                assert row["target_value"] == mine["target_value"]
+                assert row["achieved_pct"] == mine["achieved_pct"]
+            else:
+                assert row["target_value"] is None and row["achieved_pct"] is None and row["below_target"] is None
+            checked += 1
+    return checked
+
+
+def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
+    from tests.test_dealer_targets_api import RATIOS, _replacing_pair
+    from tests.test_sales_targets_s1 import TEAMS_BASE
+
+    client, db, company_id = api
+    grant(TARGETS_VIEW)
+    pid = _product_id(db, company_id)
+    # Points: ratios from 1 Jul only, so Q1 and Q2 have none (ratio missing) and Q3 / Q4 convert.
+    c = _customer(db, company_id, "ZZT POINTS")
+    _sale(db, company_id, c, 130000, date(2026, 8, 1), product_id=pid)
+    for effective_from, ratio in (("2026-07-01", 1.20), ("2026-10-01", 1.30)):
+        assert client.post(RATIOS, json={"effective_from": effective_from, "rm_per_point": ratio}).status_code in (200, 201)
+    points = client.post(BASE, json=_dealer_body([c], threshold_unit="points", tiers=[
+        {"period_start": "2026-07-01", "threshold": 100000, "rate": 4},
+        {"period_start": "2026-10-01", "threshold": 100000, "rate": 4},
+    ])).json()
+    # Replaced: the dealer's tier is reached, so the account's own target pays nothing.
+    dealer, replaced = _replacing_pair(client, db, company_id, 1300000)
+    # Team with children.
+    a, b = _agent(db, "TA", "Team A"), _agent(db, "TB", "Team B")
+    team = client.post(TEAMS_BASE, json={"name": f"ZZT W2 {unique_code('T')}", "sales_agent_ids": [a.id, b.id]}).json()
+    team_target = client.post(BASE, json={
+        "subject_kind": "team", "sales_team_id": team["id"], "name": "ZZT W2 team", "metric": "amount",
+        "basis": "ordered", "product_scope": "all", "start_date": "2026-10-01", "end_date": "2026-10-31",
+        "agent_figures": [{"sales_agent_id": a.id, "target_value": 600}, {"sales_agent_id": b.id, "target_value": 400}],
+    })
+    assert team_target.status_code == 201, team_target.text
+    _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 10, 2), line_total=Decimal("700"), product_id=pid)
+
+    out = run(db, {"entity": "sales_target", "filters": [{"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}],
+                   "limit": 50})
+    ids = [points["id"], dealer["id"], replaced["id"], team_target.json()["id"]]
+    assert _same_as_page(db, out, ids) == 4 + 1 + 1 + 1
+    rows = {r["link"].rsplit("/", 1)[1] + r["period_start"]: r for r in out["rows"]}
+    assert rows[replaced["id"] + "01/01/2026"]["replaced"] is True and rows[replaced["id"] + "01/01/2026"]["commission"] == 0
+    assert rows[points["id"] + "01/01/2026"]["ratio_missing"] is True
+    assert rows[points["id"] + "01/07/2026"]["commission"] == 5200
+    assert rows[team_target.json()["id"] + "01/10/2026"]["achieved_value"] == 700
+
+
+# ------------------------------------------------------------------ the computed engine alone (no database figures)
+
+
+def _fake(rows):
+    from app.services.assistant_registry import ENTITIES
+
+    entity = ENTITIES["sales_target"]
+    return type(entity)(**{**entity.__dict__, "compute": lambda *a, **k: [dict(r) for r in rows]})
+
+
+def _computed(db, rows, spec):
+    from app.services.assistant_registry.computed import run_computed
+
+    entity = _fake(rows)
+    return run_computed(db, "u", entity, False, {TARGETS_VIEW}, {"entity": "sales_target", **spec})
+
+
+ROWS = [
+    {"id": str(i), "target_id": str(i), "target_no": f"TGT-{i}", "subject": f"S{i}", "agent": agent,
+     "period": date(2026, 9, 1), "period_start": date(2026, 9, 1), "achieved_pct": pct, "below_target": below}
+    for i, (agent, pct, below) in enumerate([("A", 50.0, True), ("B", None, None), ("C", 100.0, False), ("D", 80.0, True)])
+]
+SEPW = {"field": "period", "op": "between", "value": SEP}
+
+
+def test_E1_truncation_total_and_sort_with_empty_values_last(world):
+    db, _company = world
+    out = _computed(db, ROWS, {"filters": [SEPW], "fields": ["achieved_pct"], "sort": [{"field": "achieved_pct", "dir": "desc"}], "limit": 2})
+    assert [r["achieved_pct"] for r in out["rows"]] == [100.0, 80.0]
+    assert out["total"] == 4 and out["truncated"] is True
+    out = _computed(db, ROWS, {"filters": [SEPW], "fields": ["achieved_pct"], "sort": [{"field": "achieved_pct", "dir": "asc"}]})
+    assert [r["achieved_pct"] for r in out["rows"]] == [50.0, 80.0, 100.0, None]
+    assert out["truncated"] is False
+
+
+def test_E2_between_inclusive_ne_and_booleans_as_sql(world):
+    db, _company = world
+    pick = lambda f: {r["agent"] for r in _computed(db, ROWS, {"filters": [SEPW, f], "fields": ["agent"]})["rows"]}  # noqa: E731
+    assert pick({"field": "achieved_pct", "op": "between", "value": [50, 80]}) == {"A", "D"}
+    assert pick({"field": "achieved_pct", "op": "ne", "value": 50}) == {"C", "D"}  # an empty value never matches
+    assert pick({"field": "below_target", "op": "eq", "value": "true"}) == {"A", "D"}
+    assert pick({"field": "below_target", "op": "eq", "value": "false"}) == {"C"}
+    assert pick({"field": "achieved_pct", "op": "not_in", "value": [50]}) == {"C", "D"}
+    for bad in ({"field": "achieved_pct", "op": "between", "value": [None, 5]},
+                {"field": "agent", "op": "in", "value": [None]},
+                {"field": "period_start", "op": "eq", "value": "01/09/2026"}):
+        from app.services.assistant_registry.query import QueryRefused
+
+        with pytest.raises(QueryRefused) as info:
+            _computed(db, ROWS, {"filters": [bad] if bad["field"] == "period_start" else [SEPW, bad]})
+        assert info.value.code == "invalid", bad
+
+
+def test_E3_window_ops_name_the_exact_days(world, monkeypatch):
+    from app.services.assistant_registry import computed
+
+    db, _company = world
+    seen = []
+    entity = _fake([])
+    entity = type(entity)(**{**entity.__dict__, "compute": lambda db, u, o, low, high, **k: seen.append((low, high)) or []})
+    for op, value, expected in (
+        ("eq", "15/09/2026", (date(2026, 9, 15), date(2026, 9, 15))),
+        ("gt", "15/09/2026", (date(2026, 9, 16), date(2026, 9, 16))),
+        ("lt", "15/09/2026", (date(2026, 9, 14), date(2026, 9, 14))),
+        ("between", SEP, (date(2026, 9, 1), date(2026, 9, 30))),
+    ):
+        seen.clear()
+        computed.run_computed(db, "u", entity, False, {TARGETS_VIEW}, {"entity": "sales_target", "filters": [{"field": "period", "op": op, "value": value}]})
+        assert seen == [expected], op

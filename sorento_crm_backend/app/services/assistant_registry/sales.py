@@ -77,7 +77,14 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
             subject = team.name if team else ""
         else:
             team = None
-            subject = ts.dealer_label(db, dealer_accounts.get(target.id, []))
+            # As the chat target lines (`period_progress`): no ledger marker on a single account's name.
+            from app.services.ledger_family import ledger_family_label
+
+            subject = ledger_family_label(ts.dealer_label(db, dealer_accounts.get(target.id, [])))
+        # A points target with no ratio on file has no RM figure (the page flags it, `period_progress` blanks it).
+        missing = fig["ratio_missing"]
+        goal = None if missing else fig["target_value"]
+        pct = None if missing else fig["achieved_pct"]
         commission = fig["commission_earned"]
         bonus = fig["bonus_earned"]
         has_commission = (target.commission_method or "none") != "none"
@@ -97,11 +104,12 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "is_current": period.period_start <= today <= period.period_end,
                 "metric": target.metric,
                 "basis": target.basis,
-                "target_value": fig["target_value"],
+                "target_value": goal,
                 "achieved_value": fig["achieved_value"],
-                "achieved_pct": fig["achieved_pct"],
-                "below_target": fig["achieved_pct"] is not None and fig["achieved_pct"] < 100,
-                "shortfall": round(max(fig["target_value"] - fig["achieved_value"], 0.0), 2),
+                "achieved_pct": pct,
+                "below_target": None if goal is None else fig["achieved_value"] < goal,
+                "shortfall": None if goal is None else round(max(goal - fig["achieved_value"], 0.0), 2),
+                "ratio_missing": missing,
                 "tier_reached": fig["tier_reached"],
                 "commission": commission if has_commission else None,
                 "bonus": bonus if has_commission else None,
@@ -177,6 +185,10 @@ register(
             "bonus": FieldDef("Bonus", kind="number"),
             "payout": FieldDef(
                 "Commission payout", kind="number", note="Commission plus bonus of the period; sum it for a payout.",
+            ),
+            "ratio_missing": FieldDef(
+                "Point ratio missing", kind="boolean",
+                note="A points target with no RM per point on file for the period: target and % are empty.",
             ),
             "replaced": FieldDef(
                 "Replaced by dealer target", kind="boolean",
