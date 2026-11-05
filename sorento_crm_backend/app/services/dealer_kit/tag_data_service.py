@@ -1650,6 +1650,7 @@ def resolve_request_line_data(
             if not terminal:
                 live = live_rows.get(tag.id)
                 if live is not None:
+                    _fill_missing_spec_raw(row, live)
                     if line.promotion_id not in promotion_live_by_id:
                         promotion_live_by_id[line.promotion_id] = _promotion_is_live(
                             db, line.promotion_id
@@ -1684,6 +1685,51 @@ def resolve_request_line_data(
         apply_auto_data_updates(db, request, to_apply, user_id=user_id)
 
     return rows
+
+
+def _fill_missing_spec_raw(row: dict, live: dict) -> None:
+    """Give a pin taken before `raw` existed the raw spec values, from the live row by key.
+
+    Feature icons match on `raw`; a deploy-day pin carries only the display `value`. Filled in
+    place on the host, every part and every combo position, matched by product id. A spec the
+    pin carries with its own `raw` is left alone, and nothing else on the pin changes.
+    """
+
+    def raw_by_key(specs) -> dict:
+        return {s.get("key"): s["raw"] for s in specs or [] if isinstance(s, dict) and "raw" in s}
+
+    def fill(target: Optional[dict], raws: dict) -> None:
+        if not isinstance(target, dict) or not raws:
+            return
+        specs = target.get("specs")
+        if not specs:
+            return
+        target["specs"] = [
+            {**s, "raw": raws[s.get("key")]}
+            if isinstance(s, dict) and "raw" not in s and s.get("key") in raws
+            else s
+            for s in specs
+        ]
+
+    def positions(source: dict) -> list:
+        slots = source.get("slots") or {}
+        return [
+            *(source.get("parts") or []),
+            *(source.get("own_parts") or []),
+            *([slots["main"]] if slots.get("main") else []),
+            *(slots.get("fixed") or []),
+            *(pick for group in slots.get("groups") or [] for pick in group.get("picks") or []),
+            *(slots.get("upgrades") or []),
+        ]
+
+    fill(row, raw_by_key(live.get("specs")))
+    live_parts: dict = {}
+    for part in positions(live):
+        if isinstance(part, dict) and part.get("product_id"):
+            live_parts.setdefault(part["product_id"], raw_by_key(part.get("specs")))
+    for part in positions(row):
+        if isinstance(part, dict):
+            fill(part, live_parts.get(part.get("product_id"), {}))
 
 
 def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> list[dict]:
@@ -1912,7 +1958,6 @@ def data_hash(row: dict) -> str:
             "name",
             "dimensions",
             "spec_lines",
-            "specs",
             "set_members",
             "list_price",
             "sell_price",
@@ -1920,6 +1965,17 @@ def data_hash(row: dict) -> str:
             "price_tag_description",
         )
     }
+    # Specs hash WITHOUT `raw` (feature icons): a Keep acked before `raw` existed must still
+    # match, and `raw` moves only when `value` does.
+    specs = _plain(row.get("specs"))
+    subject["specs"] = (
+        [
+            {k: v for k, v in spec.items() if k != "raw"} if isinstance(spec, dict) else spec
+            for spec in specs
+        ]
+        if isinstance(specs, list)
+        else specs
+    )
     # PRICETAG-COMBO AC-2.8: the combo's text, options and picks move the hash.
     # Only a row that has a combo carries the key, so a no-combo row hashes exactly as it
     # did before this lane and a stored Keep still matches (AC-0.2).

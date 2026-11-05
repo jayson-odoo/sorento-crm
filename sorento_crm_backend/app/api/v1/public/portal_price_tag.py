@@ -975,6 +975,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
                 assets=result["assets"],
                 images=result["images"],
                 fonts=result["fonts"],
+                feature_icons=result["feature_icons"],
             )
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             result = product_tag_template_service.preview(
@@ -989,6 +990,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             assets=result["assets"],
             images=result["images"],
             fonts=result["fonts"],
+            feature_icons=result["feature_icons"],
         )
 
 

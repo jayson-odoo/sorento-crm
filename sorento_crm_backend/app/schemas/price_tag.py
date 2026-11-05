@@ -1287,6 +1287,10 @@ class SpecKeyItem(BaseModel):
     key: str
     label: str
     unit: Optional[str] = None
+    #: Feature icons' Show when editor reads these (contract F6), behind the editor's permission.
+    data_type: Optional[str] = None
+    allowed_values: list[str] = []
+    value_labels: dict[str, str] = {}
 
 
 class TagComboOption(BaseModel):

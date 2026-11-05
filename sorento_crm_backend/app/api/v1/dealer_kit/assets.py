@@ -19,10 +19,10 @@ takes: one file store, one storage router, one signing rule.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -32,6 +32,7 @@ from app.models.resources import Attachment
 from app.schemas.price_tag import AssetResponse
 from app.services.dealer_kit import asset_service
 from app.services.error_handler import AppException
+from app.services.uuid_path_param import validate_uuid_path
 
 logger = logging.getLogger(__name__)
 
@@ -222,8 +223,10 @@ def rename_asset(
 
 
 class _ShowWhenRequest(BaseModel):
-    spec_key: Optional[str] = None
-    values: list[str] = []
+    spec_key: Optional[str] = Field(default=None, max_length=64)
+    values: list[Annotated[str, StringConstraints(min_length=1, max_length=100)]] = Field(
+        default_factory=list, max_length=50
+    )
 
 
 @router.put("/{asset_id}/show-when", response_model=AssetResponse)
@@ -237,6 +240,7 @@ def set_asset_show_when(
 
     ``spec_key`` null clears the rule.
     """
+    asset_id = validate_uuid_path(asset_id, resource="Asset")
     row = (
         db.query(Asset, Attachment)
         .join(Attachment, Attachment.id == Asset.attachment_id)

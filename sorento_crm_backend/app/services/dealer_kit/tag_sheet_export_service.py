@@ -517,8 +517,11 @@ def design_media(
 
     # Feature icons (contract B5): a feature_icons layer draws whichever library icons the
     # subject's specs match, so every rule-carrying icon travels with the media, signed.
+    # S2: a staff session may span companies; a request's render shows its OWN company's icons.
     feature_icons = (
-        asset_service.feature_icon_rules(db)
+        asset_service.feature_icon_rules(
+            db, company_id=request.company_id if request is not None else None
+        )
         if asset_service.doc_has_feature_icons(doc or {})
         else []
     )

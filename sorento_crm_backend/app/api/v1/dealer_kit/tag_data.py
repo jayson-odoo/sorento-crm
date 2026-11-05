@@ -136,10 +136,17 @@ def list_spec_keys(
     rest of the editor already uses. A key added to the registry therefore shows
     up in the dialog with no code change.
     """
-    from app.services.product_spec_registry import active_registry
+    from app.services.product_spec_registry import active_registry, merged_allowed_values
 
     return [
-        SpecKeyItem(key=row.spec_key, label=row.label, unit=row.unit)
+        SpecKeyItem(
+            key=row.spec_key,
+            label=row.label,
+            unit=row.unit,
+            data_type=row.data_type,
+            allowed_values=[str(v) for v in merged_allowed_values(row)],
+            value_labels={str(k): str(v) for k, v in (row.value_labels or {}).items()},
+        )
         for row in active_registry(db)
     ]
 

@@ -447,9 +447,13 @@ def doc_has_feature_icons(doc: Optional[dict]) -> bool:
     return any((layer or {}).get("type") == FEATURE_ICONS_LAYER for layer in layers)
 
 
-def feature_icon_rules(db: Session) -> list[dict]:
-    """Every icon asset carrying a rule, ordered by name: ``[{id, name, spec_key, values}]``."""
-    rows = (
+def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
+    """Every icon asset carrying a rule, ordered by name: ``[{id, name, spec_key, values}]``.
+
+    Scoped like any asset query; ``company_id`` narrows it further to one company, for a render
+    of a request (a staff session may span several companies, the request belongs to one).
+    """
+    statement = (
         db.query(Asset)
         .join(Attachment, Attachment.id == Asset.attachment_id)
         .filter(
@@ -457,9 +461,10 @@ def feature_icon_rules(db: Session) -> list[dict]:
             Asset.show_when_spec_key.isnot(None),
             Attachment.is_deleted.is_(False),
         )
-        .order_by(Asset.name, Asset.id)
-        .all()
     )
+    if company_id:
+        statement = statement.filter(Asset.company_id == company_id)
+    rows = statement.order_by(Asset.name, Asset.id).all()
     return [
         {
             "id": asset.id,
@@ -469,6 +474,16 @@ def feature_icon_rules(db: Session) -> list[dict]:
         }
         for asset in rows
     ]
+
+
+BOOLEAN_RULE_VALUES = ("true", "false")
+
+
+def rule_values(data_type: Optional[str], allowed_values) -> list[str]:
+    """The raw values a show-when rule may name for a spec key, or ``[]`` when none can."""
+    if data_type == "boolean":
+        return list(BOOLEAN_RULE_VALUES)
+    return [str(v) for v in (allowed_values or [])]
 
 
 def set_show_when(
@@ -481,6 +496,7 @@ def set_show_when(
     ``allowed_values``, every value one of them.
     """
     from app.models.product_spec import ProductSpecRegistry
+    from app.services.product_spec_registry import merged_allowed_values
 
     if asset.kind != ICON:
         raise AppException(
@@ -518,15 +534,23 @@ def set_show_when(
             code="VALUES_REQUIRED",
         )
 
-    allowed = [str(v) for v in (entry.allowed_values or [])]
-    if allowed:
-        unknown = [v for v in cleaned if v not in allowed]
-        if unknown:
-            raise AppException(
-                status_code=422,
-                message=f"Not a value of {entry.label}: {', '.join(unknown)}.",
-                code="UNKNOWN_SPEC_VALUE",
-            )
+    # The values a person may pick: a yes/no key reads `true` / `false` (what `raw` holds for a
+    # stored bool), any other key its registry vocabulary. A key with neither is free text and
+    # cannot carry a rule (the editor does not offer it either).
+    allowed = rule_values(entry.data_type, merged_allowed_values(entry))
+    if not allowed:
+        raise AppException(
+            status_code=422,
+            message=f"{entry.label} has no fixed values, so it cannot decide an icon.",
+            code="SPEC_NOT_RULEABLE",
+        )
+    unknown = [v for v in cleaned if v not in allowed]
+    if unknown:
+        raise AppException(
+            status_code=422,
+            message=f"Not a value of {entry.label}: {', '.join(unknown)}.",
+            code="UNKNOWN_SPEC_VALUE",
+        )
 
     asset.show_when_spec_key = spec_key
     asset.show_when_values = cleaned
