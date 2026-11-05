@@ -43,20 +43,25 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { ListLoadFailure } from '@/components/common/ListLoadFailure';
-import { localStore } from '@/lib/storage';
+import { useListingViewMode } from '@/lib/listing-column-preferences/useListingViewMode';
 
 type StartAction = 'upload-po' | 'upload-schedule' | null;
 
-const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
+/** The browser key an older build kept the view in; read only when the server holds none. */
+const LEGACY_VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
+/** The grid's own column-config row, which now also carries the view (one row per user). */
+const PIPELINE_LISTING_KEY = 'projects.projects.view::pipeline';
+const PIPELINE_VIEWS = ['board', 'grid'] as const;
 
-type PipelineView = 'board' | 'grid';
+type PipelineView = (typeof PIPELINE_VIEWS)[number];
 
 /**
  * Pipeline: Board and Grid over one dataset, one toggle (AC-G2).
  *
- * The choice is remembered per browser because it tracks the person's job rather than
- * the data: a salesperson works the board, a manager reads the grid, and re-picking
- * on every visit is friction with no upside.
+ * The choice is remembered PER USER, on the server, because it tracks the person's job
+ * rather than the data: a salesperson works the board, a manager reads the grid, and
+ * re-picking on every visit (or on every other device) is friction with no upside
+ * (PROJECTS-BOARD-VIEW-PREF). A user who never picked lands on the board.
  *
  * The board pulls a bigger page than the grid on purpose. A board that paginates is a
  * board that lies about its column counts, and the whole point of the view is seeing
@@ -68,7 +73,16 @@ export function PipelineClient() {
   const canStart = usePermissions().permissionSet.has('projects.projects.view');
   const canEdit = useHasPermission('projects.projects.edit');
   const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
-  const [view, setView] = React.useState<PipelineView>('board');
+  const {
+    view,
+    setView: switchView,
+    isLoading: viewLoading,
+  } = useListingViewMode<PipelineView>({
+    listingKey: PIPELINE_LISTING_KEY,
+    allowed: PIPELINE_VIEWS,
+    defaultView: 'board',
+    legacyStorageKey: LEGACY_VIEW_STORAGE_KEY,
+  });
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
     value: search,
@@ -104,11 +118,6 @@ export function PipelineClient() {
     setOnlyCritical(urlState.filters.only_critical === 'true');
     setApprovalFilter(urlState.filters.approval_state ?? '');
   });
-
-  React.useEffect(() => {
-    const stored = localStore.getItem(VIEW_STORAGE_KEY);
-    if (stored === 'board' || stored === 'grid') setView(stored);
-  }, []);
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one. Now that the filters live in the grid toolbar, landing on a
@@ -154,7 +163,9 @@ export function PipelineClient() {
     ],
   );
 
-  const projects = useProjects(listParams);
+  // Held until the remembered view is known, so the list is fetched once, in that view.
+  const projects = useProjects(listParams, { enabled: !viewLoading });
+  const listLoading = viewLoading || projects.isLoading;
 
   /**
    * Carried into the record URL so the project page's pager walks the SAME
@@ -204,11 +215,6 @@ export function PipelineClient() {
   );
   const total = projects.data?.pagination.total ?? 0;
   const rows = projects.data?.data ?? [];
-
-  function switchView(next: PipelineView) {
-    setView(next);
-    localStore.setItem(VIEW_STORAGE_KEY, next);
-  }
 
   const searchSlot = (
     <ListSearchInput
@@ -422,12 +428,12 @@ export function PipelineClient() {
         </div>
       )}
 
-      {view === 'board' && !projects.isLoading && projects.error && total === 0 ? (
+      {view === 'board' && !listLoading && projects.error && total === 0 ? (
         // A failed read is not "no projects registered yet" (lever L2).
         <div className="rounded-lg border px-4 py-6 text-sm">
           <ListLoadFailure error={projects.error} onRetry={() => void projects.refetch()} />
         </div>
-      ) : view === 'board' && !projects.isLoading && total === 0 ? (
+      ) : view === 'board' && !listLoading && total === 0 ? (
         hasFilters ? (
           <EmptyState
             title="No projects match these filters"
@@ -443,7 +449,7 @@ export function PipelineClient() {
         <PipelineBoard
           statuses={statuses}
           projects={rows}
-          isLoading={projects.isLoading || graph.isLoading}
+          isLoading={listLoading || graph.isLoading}
           movingProjectId={move.isPending ? move.variables?.projectId : null}
           onMove={(projectId, toStatusId) => {
             const project = rows.find((row) => row.id === projectId);
@@ -455,7 +461,7 @@ export function PipelineClient() {
         <ProjectsGrid
           projects={rows}
           total={total}
-          isLoading={projects.isLoading}
+          isLoading={listLoading}
           error={projects.error}
           isFetching={projects.isFetching}
           isPlaceholderData={projects.isPlaceholderData}
