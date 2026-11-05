@@ -218,6 +218,10 @@ files, no vitest because no frontend file changed). The 2 old reds were EXPLAIN-
 `tests/scm/test_container_request_product_index.py` (the planner picked another plan), a file that
 range does not reach.
 
+On the second range the frontend half ran for real: `vitest related` on its 55 changed files
+ran 316 test files (4,063 tests) in 763 s, and the source guards 62 files in 51 s, against
+2,290 files in 2,563 s for the full `vitest run` in the same sandbox.
+
 The second range is not a defect of the rule: a changed User model is imported, directly or
 through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
 old one-level regex missed 1,459 of those dependents.
