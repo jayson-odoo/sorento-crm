@@ -176,3 +176,14 @@ def test_the_route_refuses_a_user_without_the_wishlist_slug(db):
     with api_client(db, ["system.ai_assistant_chat.agent"]) as client:
         res = client.get(ROUTE)
     assert res.status_code == 403
+
+
+def test_a_turn_under_a_staff_principal_is_labelled_panel():
+    """The side panel sets the staff principal for its turn (`panel_service`), whatever `is_test` says."""
+    from app.services.chatbot.agent.loop import _channel
+    from tests.chatbot.agent._ported_reads_support import panel_turn
+
+    with panel_turn(str(uuid.uuid4())):
+        assert _channel(True) == "panel"
+        assert _channel(False) == "panel"
+    assert _channel(True) == "console" and _channel(False) == "whatsapp"

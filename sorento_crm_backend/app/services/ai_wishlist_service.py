@@ -77,7 +77,7 @@ class AiWishlistService:
         """GAP-SIGNAL: the asks the agent flagged as `no_tool` (no tool could do them), newest first.
 
         Read straight off `chatbot.turns.trace` (the `agent_no_tool` event the agent loop writes), so it
-        needs no clustering job and no embedding key.
+        needs no clustering job and no embedding key. `limit` caps TURNS; a turn holds at most five asks.
         """
         since = datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
         turns = (

@@ -74,8 +74,8 @@ from app.schemas.ai_assistant import (
     TraceSpanItem,
     UsageByDayItem,
     UsageSummaryResponse,
-    WishlistClusterItem,
     NoToolAskItem,
+    WishlistClusterItem,
 )
 from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService, MCPToolCallError
 from app.services.ai_wishlist_service import AiWishlistService
