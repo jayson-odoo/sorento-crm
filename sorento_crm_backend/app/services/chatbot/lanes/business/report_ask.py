@@ -2612,8 +2612,8 @@ def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
 
 def _widened(parse_output: dict[str, Any]) -> str | None:
     """The one held axis the parser widened to "all" this turn (`broaden_axis` with `broaden_to`
-    "all", template R-P3-09): the hold drops it and keeps the rest (the company: every company, the semantic carry,
-    `_carry`). Parser fields only."""
+    "all", template R-P3-09): the old hold path drops it and keeps the rest (the company: every company). The object
+    path does not read it (REPORT-FILTER-ALL: the object's ALL, `_read_all`). Parser fields only."""
     if parse_output.get("broaden_to") != "all":
         return None
     axis = jsc.js_string(parse_output.get("broaden_axis") or "").strip().lower()

@@ -446,8 +446,8 @@ def domain_in_message(verdict: dict[str, Any]) -> bool | None:
 def widened_kinds(verdict: dict[str, Any]) -> set[str]:
     """The entity kinds THIS parse widens to every row (R-P3-09 and its customer readings): `broaden_axis` with
     `broaden_to` "all" (as the kind's own hint), and the customer on a global drill ("overall") or a "my ..." ask
-    (`self_reference`). The ONE reader both the report ask's carry (`report_ask._carry`) and the open which-one customer
-    pick (`apply._which_one_keeps_its_ask`) use. Parser fields only."""
+    (`self_reference`). The open which-one customer pick (`apply._which_one_keeps_its_ask`) reads it, and the report ask
+    only on a prompt without ALL (`report_ask._legacy_all`, temporary). Parser fields only."""
     out: set[str] = set()
     if verdict.get("broaden_to") == "all":
         out = {str(verdict.get("broaden_axis") or "").strip().lower()} - {""}

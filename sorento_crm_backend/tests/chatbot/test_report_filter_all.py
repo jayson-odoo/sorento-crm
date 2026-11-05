@@ -305,3 +305,36 @@ def test_u4_keep_held_never_refills_the_axis_slot_or_a_name_the_object_moved() -
 )
 def test_u5_held_spelling(said, held, companies, want) -> None:
     assert report_ask._held_spelling(said, held, companies) == want
+
+
+# ------------------------------------------------------------------------------------------ the prompt candidate + gold
+
+_PLANS = __import__("pathlib").Path(__file__).resolve().parents[3] / "documentation" / "plans" / "chatbot"
+BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
+CANDIDATE_MD5 = "698e137b692ff61ce48bf1c1e4aa7571"
+
+
+def _md5(path) -> str:
+    import hashlib
+
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def test_p1_the_candidate_is_the_pinned_v72_base_plus_the_all_edits_and_turns_all_on() -> None:
+    base, cand = _PLANS / "prompt-prod-v72-d29c1983.txt", _PLANS / "prompt-report-filter-all.txt"
+    assert _md5(base) == BASE_MD5 and _md5(cand) == CANDIDATE_MD5
+    text = cand.read_text(encoding="utf-8")
+    assert parser_mod.REPORT_ASK_LINE in text and ALL in parser_mod.report_ask_defined_in(text)
+    assert ALL not in parser_mod.report_ask_defined_in(base.read_text(encoding="utf-8")), "v72 must stay on the adapter"
+    assert {"frame", "company_or_brand"} <= parser_mod.report_ask_defined_in(text), "the v72 keys stay defined"
+
+
+def test_p2_the_committed_filter_all_gold_file_loads_whole() -> None:
+    from pathlib import Path
+
+    from scripts.chatbot_eval import parser_gold as pg
+
+    path = Path(pg.__file__).parent / "gold" / "parser_report_filter_all.jsonl"
+    with open(path, encoding="utf-8") as fh:
+        want = sum(1 for ln in fh if ln.strip())
+    assert want >= 10 and len(pg.load_gold(path)) == want
