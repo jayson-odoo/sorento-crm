@@ -39,6 +39,11 @@ import type { SearchableSelectOption } from '@/components/common/SearchableSelec
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type {
+  PriceMode,
+  TagPreviewLineInput,
+  TagPreviewResponse,
+} from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type {
   ProductSetTagData,
   ProductTagData,
 } from '@/lib/dealer-kit/tag-template-types';
@@ -221,6 +226,30 @@ export async function resolvePreview(input: {
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to resolve preview'));
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Staff tag preview (the product page's combo preview)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/v1/dealer-kit/tag-preview`: the request form's live preview for staff. The same body
+ * and answer as the portal's `/lookups/tag-preview`, so the combo preview, the request preview and
+ * the PDF are one pipeline.
+ */
+export async function previewTags(
+  priceMode: PriceMode,
+  lines: TagPreviewLineInput[],
+): Promise<TagPreviewResponse> {
+  const response = await apiFetch(`${BASE}/tag-preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_mode: priceMode, lines }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to draw the preview'));
   }
   return response.json();
 }

@@ -31,6 +31,8 @@ class ProductComboPartOut(BaseModel):
 class ProductComboImageOut(BaseModel):
     attachment_id: str
     url: str
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class ProductComboOut(BaseModel):

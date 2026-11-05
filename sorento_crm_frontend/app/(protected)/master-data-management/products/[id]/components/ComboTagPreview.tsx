@@ -10,14 +10,14 @@ import { useMemo } from 'react';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import { useComboTagTemplates } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
-import { usePublishedTagTemplates } from '@/app/(protected)/dealer-kit/hooks/usePublishedTagTemplates';
+import { useTagPreview } from '@/app/(protected)/dealer-kit/hooks/useTagPreview';
 import { buildSingleTagSheet } from '@/lib/dealer-kit/request-tags';
-import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
+import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import type { TagPreviewLineInput } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { ProductTagTemplateItem } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 import type { ProductComboRow } from '../../types/productCombo.types';
 
-const TAG_ID = 'combo-preview';
+const KEY = 'combo-preview';
 
 /** The template a combo prints with by default: its SP default, else its LP default. */
 export function defaultLink(rows: ProductTagTemplateItem[]): ProductTagTemplateItem | null {
@@ -29,12 +29,6 @@ export function defaultLink(rows: ProductTagTemplateItem[]): ProductTagTemplateI
   );
 }
 
-function money(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
 export function ComboTagPreview({
   combo,
   description,
@@ -44,18 +38,34 @@ export function ComboTagPreview({
   description: string | null;
 }) {
   const links = useComboTagTemplates(combo.id);
-  const published = usePublishedTagTemplates();
   const link = defaultLink(links.data ?? []);
-  const template = link ? published.data?.find((row) => row.id === link.id) : undefined;
+  const line: TagPreviewLineInput = {
+    key: KEY,
+    line_type: 'product',
+    product_id: combo.host_product_id,
+    product_set_id: null,
+    combo_id: combo.id,
+    parts: [],
+    promotion_id: null,
+    manual_sell_price: null,
+    tag_template_id: link?.id ?? null,
+    price_type: link?.default_selling ? 'selling' : 'list',
+  };
+  // The server draws the line (slots, parts, photos, prices) exactly as the request preview and
+  // the PDF do; only a published default can be drawn.
+  const preview = useTagPreview(line, !!link && link.published);
 
   const payload = useMemo<TagSheetDesignPayload | null>(() => {
-    if (!template) return null;
+    const row = preview.data?.lines[0];
+    const template = preview.data?.templates[KEY];
+    if (!preview.data || !row || !template) return null;
+    const tagId = row.tag_id ?? row.line_id ?? KEY;
     const doc = buildSingleTagSheet(
       {
-        id: TAG_ID,
+        id: tagId,
         quantity: 1,
         line: {
-          id: TAG_ID,
+          id: row.line_id ?? KEY,
           line_type: 'product',
           product_id: combo.host_product_id,
           product_set_id: null,
@@ -65,43 +75,29 @@ export function ComboTagPreview({
       template,
       () => 'combo-preview-tag',
     );
-    const resolved: ResolvedLineData = {
-      tag_id: TAG_ID,
-      tag_label: '1',
-      line_id: TAG_ID,
-      code: combo.name,
-      name: combo.name,
-      dimensions: '',
-      spec_lines: '',
-      list_price: money(combo.list_price),
-      sell_price: money(combo.sell_price),
-      show_promo_price: false,
-      included_accessories: '',
-      quantity: 1,
-      parts: [],
-      price_tag_description: null,
+    // Only the description is the editor's unsaved draft; everything else is the server's.
+    const drawn = {
+      ...row,
       combo: {
         id: combo.id,
         name: combo.name,
-        description,
-        free_items: combo.free_items ?? null,
+        free_items: null,
         choices: [],
         upgrades: [],
+        ...(row.combo ?? {}),
+        description,
       },
     };
-    return {
-      page_id: TAG_ID,
-      version: 0,
-      source: 'draft',
+    return designPayloadFromResponse({
       doc,
-      resolvedData: { [TAG_ID]: resolved },
-      assets: {},
-      images: {},
-      fonts: [],
-    };
-  }, [template, combo, description]);
+      lines: [drawn],
+      assets: preview.data.assets,
+      images: preview.data.images,
+      fonts: preview.data.fonts,
+    });
+  }, [preview.data, combo, description]);
 
-  if (links.isLoading || published.isLoading) return <SectionSkeleton rows={4} />;
+  if (links.isLoading || (link?.published && preview.isLoading)) return <SectionSkeleton rows={4} />;
   if (!payload) {
     return (
       <div className="rounded-lg border border-dashed p-4 text-center">

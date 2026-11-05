@@ -423,7 +423,13 @@ function ComboImageControl({
           <AttachmentPreviewModal
             open={previewOpen}
             onOpenChange={setPreviewOpen}
-            items={[{ id: combo.image.attachment_id, name: combo.name, url: combo.image.url }]}
+            items={[
+              {
+                id: combo.image.attachment_id,
+                name: combo.image.file_name ?? combo.name,
+                url: combo.image.url,
+              },
+            ]}
           />
           {canEdit ? (
             <div className="flex gap-2">

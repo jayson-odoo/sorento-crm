@@ -29,7 +29,10 @@ from app.schemas.price_tag import (
     ProductTagData,
     ProductTagTemplateItem,
     ProductTagTemplatesUpdate,
+    ResolvedLineData,
     SpecKeyItem,
+    TagPreviewIn,
+    TagPreviewOut,
 )
 from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.error_handler import AppException
@@ -240,3 +243,27 @@ def set_combo_tag_templates(
         ProductTagTemplateItem(**item)
         for item in product_tag_template_service.linked_combo_items(db, combo_id)
     ]
+
+
+@router.post("/tag-preview", response_model=TagPreviewOut)
+def staff_tag_preview(
+    payload: TagPreviewIn,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The portal's live tag preview for staff (product page combo preview): the same
+    `product_tag_template_service.preview` the request form calls, under the caller's own company
+    scope and the staff viewer, so the staff and portal answers cannot drift. Writes nothing."""
+    result = product_tag_template_service.preview(
+        db,
+        price_mode=payload.price_mode,
+        lines=[line.model_dump() for line in payload.lines],
+        viewer=tag_data_service.staff_viewer(),
+    )
+    return TagPreviewOut(
+        lines=[ResolvedLineData.model_validate(row) for row in result["lines"]],
+        templates=result["templates"],
+        assets=result["assets"],
+        images=result["images"],
+        fonts=result["fonts"],
+    )

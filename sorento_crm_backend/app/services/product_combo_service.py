@@ -131,7 +131,12 @@ def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any
     )
     if not url:
         return None
-    return {"attachment_id": attachment.id, "url": url}
+    return {
+        "attachment_id": attachment.id,
+        "url": url,
+        "file_name": attachment.original_filename,
+        "mime_type": attachment.mime_type,
+    }
 
 
 def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
