@@ -23,6 +23,7 @@
  * other to have finished loading.
  */
 
+import { isRich, richPlainText } from './rich-text';
 import { comboPositions } from './combo-slots';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
 import type {
@@ -260,7 +261,7 @@ function resolvePath(
     if (!subject) return null;
     const raw = resolveSlotText({ slot_binding: 'price_tag_description', props: layer?.props }, data);
     if (raw == null) return null;
-    return renderPriceTagDescription(raw, subject, mode);
+    return renderPriceTagDescription(isRich(raw) ? richPlainText(raw) : raw, subject, mode);
   }
 
   if (path.startsWith('spec.')) {
@@ -273,7 +274,8 @@ function resolvePath(
     // Empty, never the raw token, on a line with no combo or an older payload (AC-4.2).
     const combo = comboOf(data);
     const field = path.slice('combo.'.length) as 'name' | 'description' | 'free_items';
-    return combo?.[field] ?? '';
+    const value = combo?.[field] ?? '';
+    return field === 'description' && isRich(value) ? richPlainText(value) : value;
   }
 
   if (path.startsWith('doc.')) {

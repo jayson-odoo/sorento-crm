@@ -1,0 +1,118 @@
+"""PRICETAG-COMBO-FORMAT S2: `products.price_tag_description` is sanitised on write.
+
+UAC: documentation/plans/dealer-kit/pricetag-combo-format-acceptance-criteria.md, AC-9, AC-10.
+
+Written test-FIRST (PRINCIPLES.md Phase 2). Harness reused from
+`tests/test_product_price_tag_description.py` (master-data PUT through the real routes).
+"""
+from __future__ import annotations
+
+from tests.test_product_price_tag_description import (  # noqa: F401  (fixtures)
+    STEM,
+    _scope_listeners,
+    api,
+    db,
+    world,
+)
+
+
+def _put(api, pid, text):
+    return api.put(f"/api/v1/master-data/products/{pid}", json={"price_tag_description": text})
+
+
+def test_a_script_in_the_price_tag_description_is_not_stored(api, world, db):
+    """AC-9."""
+    pid = world["product"](f"{STEM}-RICH1")
+    db.commit()
+
+    res = _put(api, pid, "<p>Solid brass<script>alert(1)</script></p>")
+    assert res.status_code == 200, res.text
+    assert res.json()["price_tag_description"] == "<p>Solid brass</p>"
+    detail = api.get(f"/api/v1/master-data/products/{pid}")
+    assert detail.json()["price_tag_description"] == "<p>Solid brass</p>"
+
+
+def test_a_merge_field_inside_bold_survives_sanitising(api, world, db):
+    """AC-9: `{{spec.width}}` is plain text to the sanitiser and must reach the tag intact."""
+    pid = world["product"](f"{STEM}-RICH2")
+    db.commit()
+
+    html = "<p><strong>{{spec.width}}</strong> wide</p>"
+    res = _put(api, pid, html)
+    assert res.status_code == 200, res.text
+    assert res.json()["price_tag_description"] == html
+
+
+def test_empty_markup_clears_the_description(api, world, db):
+    """AC-10."""
+    pid = world["product"](f"{STEM}-RICH3", price_tag_description="<p>old</p>")
+    db.commit()
+
+    res = _put(api, pid, "<p></p>")
+    assert res.status_code == 200, res.text
+    assert res.json()["price_tag_description"] is None
+
+
+def test_r3_a_raw_value_over_20000_characters_is_422(api, world, db):
+    """R3: product update `price_tag_description` has the same raw limit at the schema."""
+    pid = world["product"](f"{STEM}-RICH4")
+    db.commit()
+    assert _put(api, pid, "a" * 100_000).status_code == 422
+    assert _put(api, pid, "a" * 20_001).status_code == 422
+
+
+def test_r4_control_characters_are_stripped(api, world, db):
+    pid = world["product"](f"{STEM}-RICH5")
+    db.commit()
+    res = _put(api, pid, "<p>a\u0000b</p>")
+    assert res.status_code == 200, res.text
+    assert res.json()["price_tag_description"] == "<p>ab</p>"
+
+
+# --------------------------------------------------------------------------- R14 (security re-check)
+def _stored(db, pid):
+    from app.models.base import company_scope
+    from app.models.product import Product
+
+    db.expire_all()
+    with company_scope(db, None):
+        return db.query(Product.price_tag_description).filter(Product.id == pid).scalar()
+
+
+def test_r14_the_sanitised_value_is_capped_at_5000_like_the_combo(api, world, db):
+    """R14: 19,997 raw characters of `"` pass the raw 20000 limit but escape to ~120k stored; the
+    stored value is capped at 5000 (422) and the row stays as it was."""
+    pid = world["product"](f"{STEM}-R14A", price_tag_description="<p>old</p>")
+    db.commit()
+
+    nasty = "<p>" + '"' * 19990 + "</p>"
+    assert len(nasty) == 19997
+    res = _put(api, pid, nasty)
+    assert res.status_code == 422, res.text[:300]
+    assert _stored(db, pid) == "<p>old</p>"
+
+
+def test_r14_a_value_at_the_cap_saves_and_one_over_it_does_not(api, world, db):
+    pid = world["product"](f"{STEM}-R14B")
+    db.commit()
+    at_cap = "<p>" + "a" * 4993 + "</p>"
+    assert len(at_cap) == 5000
+    assert _put(api, pid, at_cap).status_code == 200
+    assert _put(api, pid, "<p>" + "a" * 4994 + "</p>").status_code == 422
+    assert _stored(db, pid) == at_cap
+
+
+def test_r14_a_stored_value_over_the_cap_still_reads_back(api, world, db):
+    """R14: the raw 20000 limit lives on the write schemas only, never on a response model, so a
+    row that already holds 25,000 characters does not turn the product page or the list into an
+    error."""
+    pid = world["product"](f"{STEM}-R14C", price_tag_description="a" * 25_000)
+    db.commit()
+
+    detail = api.get(f"/api/v1/master-data/products/{pid}")
+    assert detail.status_code == 200, detail.text[:300]
+    assert len(detail.json()["price_tag_description"]) == 25_000
+
+    listed = api.get("/api/v1/master-data/products/", params={"query": f"{STEM}-R14C"})
+    assert listed.status_code == 200, listed.text[:300]
+    assert [row["id"] for row in listed.json()["data"]] == [pid]

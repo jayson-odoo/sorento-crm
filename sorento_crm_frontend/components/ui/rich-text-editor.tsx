@@ -1,11 +1,16 @@
 'use client';
 
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Baseline,
   Bold,
   Code2,
   Heading1,
   Heading2,
   Heading3,
+  Highlighter,
   Italic,
   Link as LinkIcon,
   Link2Off,
@@ -14,6 +19,7 @@ import {
   Quote,
   Redo,
   Strikethrough,
+  Underline as UnderlineIcon,
   Undo,
 } from 'lucide-react';
 import {
@@ -25,6 +31,8 @@ import {
 import Link from '@tiptap/extension-link';
 import Mention from '@tiptap/extension-mention';
 import Placeholder from '@tiptap/extension-placeholder';
+import TextAlign from '@tiptap/extension-text-align';
+import { BackgroundColor, Color, TextStyle } from '@tiptap/extension-text-style';
 import StarterKit from '@tiptap/starter-kit';
 import {
   forwardRef,
@@ -34,6 +42,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { ColorPicker } from '@/components/common/ColorPicker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -74,6 +83,56 @@ export type RichTextEditorProps = {
   id?: string;
   'aria-labelledby'?: string;
 };
+
+const RGB = /rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/gi;
+
+/**
+ * The HTML the editor emits, with each inline `style` written the same way in every DOM:
+ * `prop: value` joined by `; `, no trailing `;`, colours as lower-case hex. The browser (and
+ * jsdom) re-serialise a style attribute as `color: rgb(107, 114, 128);`, which would make the
+ * stored value depend on where it was typed.
+ */
+export function normaliseEditorHtml(html: string): string {
+  // Text is never touched: with no style attribute there is nothing to normalise, and with one the
+  // work is on the parsed elements' attributes, not on the string.
+  if (!html.includes('style=') || typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.body.querySelectorAll('[style]').forEach((el) => {
+    const declarations = (el.getAttribute('style') ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) =>
+        part.replace(RGB, (_m, r, g, b) =>
+          `#${[r, g, b]
+            .map((n) => Math.min(255, Number(n)).toString(16).padStart(2, '0'))
+            .join('')}`,
+        ),
+      );
+    if (declarations.length) el.setAttribute('style', declarations.join('; '));
+    else el.removeAttribute('style');
+  });
+  return doc.body.innerHTML;
+}
+
+/** Declarations a paste may not carry: colour, highlight and alignment come only from the toolbar. */
+const PASTE_DROPPED = /^(color|background-color|background|text-align)$/i;
+
+/** Pasted HTML loses those declarations; the rest (font-weight, font-style, text-decoration) stay
+ * so a word-processor paste keeps its real bold / italic / underline. */
+export function stripPastedStyles(html: string): string {
+  if (typeof DOMParser === 'undefined') return html;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.body.querySelectorAll<HTMLElement>('[style]').forEach((el) => {
+    const kept = (el.getAttribute('style') ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .filter((part) => part && !PASTE_DROPPED.test(part.split(':')[0].trim()));
+    if (kept.length) el.setAttribute('style', kept.join('; '));
+    else el.removeAttribute('style');
+  });
+  return doc.body.innerHTML;
+}
 
 const ToolbarButton = ({
   active,
@@ -187,6 +246,49 @@ function LinkPopoverButton({ editor }: { editor: Editor }) {
 }
 
 
+function ColorPopoverButton({
+  editor,
+  kind,
+}: {
+  editor: Editor;
+  kind: 'color' | 'highlight';
+}) {
+  const [open, setOpen] = useState(false);
+  const label = kind === 'color' ? 'Text colour' : 'Highlight';
+  const attribute = kind === 'color' ? 'color' : 'backgroundColor';
+  const current = (editor.getAttributes('textStyle')[attribute] as string | undefined) ?? '';
+  const Icon = kind === 'color' ? Baseline : Highlighter;
+
+  function apply(hex: string) {
+    const chain = editor.chain().focus();
+    if (kind === 'color') chain.setColor(hex).run();
+    else chain.setBackgroundColor(hex).run();
+  }
+
+  function remove() {
+    const chain = editor.chain().focus();
+    if (kind === 'color') chain.unsetColor().run();
+    else chain.unsetBackgroundColor().run();
+    setOpen(false);
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Toggle size="sm" pressed={!!current} title={label} aria-label={label}>
+          <Icon className="size-4" />
+        </Toggle>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto space-y-2 p-3" align="start">
+        <ColorPicker value={current || '#000000'} onChange={apply} />
+        <Button type="button" variant="outline" size="sm" onClick={remove}>
+          Remove colour
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Toolbar({ editor }: { editor: Editor }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1">
@@ -211,6 +313,15 @@ function Toolbar({ editor }: { editor: Editor }) {
       >
         <Strikethrough className="size-4" />
       </ToolbarButton>
+      <ToolbarButton
+        title="Underline"
+        active={editor.isActive('underline')}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        <UnderlineIcon className="size-4" />
+      </ToolbarButton>
+      <ColorPopoverButton editor={editor} kind="color" />
+      <ColorPopoverButton editor={editor} kind="highlight" />
       <ToolbarButton
         title="Inline code"
         active={editor.isActive('code')}
@@ -241,6 +352,30 @@ function Toolbar({ editor }: { editor: Editor }) {
         onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
       >
         <Heading3 className="size-4" />
+      </ToolbarButton>
+
+      <Separator orientation="vertical" className="mx-1 h-5" />
+
+      <ToolbarButton
+        title="Align left"
+        active={editor.isActive({ textAlign: 'left' })}
+        onClick={() => editor.chain().focus().setTextAlign('left').run()}
+      >
+        <AlignLeft className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Align centre"
+        active={editor.isActive({ textAlign: 'center' })}
+        onClick={() => editor.chain().focus().setTextAlign('center').run()}
+      >
+        <AlignCenter className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Align right"
+        active={editor.isActive({ textAlign: 'right' })}
+        onClick={() => editor.chain().focus().setTextAlign('right').run()}
+      >
+        <AlignRight className="size-4" />
       </ToolbarButton>
 
       <Separator orientation="vertical" className="mx-1 h-5" />
@@ -448,6 +583,27 @@ export function RichTextEditor({
         },
       }),
       Placeholder.configure({ placeholder: placeholder || 'Type here...' }),
+      // Colour, highlight and alignment. They emit inline `style` only when a button is used,
+      // so content saved before they existed round-trips unchanged.
+      // Only a span that carries a colour or highlight is a text style; a bare styled span
+      // (what a word processor wraps text in) is just its text, and its bold / italic /
+      // underline come from their own marks.
+      TextStyle.extend({
+        parseHTML() {
+          return [
+            {
+              tag: 'span',
+              getAttrs: (element) => {
+                const el = element as HTMLElement;
+                return el.style.color || el.style.backgroundColor ? {} : false;
+              },
+            },
+          ];
+        },
+      }),
+      Color,
+      BackgroundColor,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ];
 
     if (mentionUsersFetcher) {
@@ -534,6 +690,7 @@ export function RichTextEditor({
     content: value || '',
     editable,
     editorProps: {
+      transformPastedHTML: stripPastedStyles,
       attributes: {
         ...(id ? { id } : {}),
         ...(labelledBy ? { 'aria-labelledby': labelledBy } : {}),
@@ -555,7 +712,7 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
-      const html = e.getHTML();
+      const html = normaliseEditorHtml(e.getHTML());
       onChange(html === '<p></p>' ? '' : html);
     },
   });
@@ -563,7 +720,7 @@ export function RichTextEditor({
   // Keep editor in sync if parent resets the value (e.g. after load from API).
   useEffect(() => {
     if (!editor) return;
-    const current = editor.getHTML();
+    const current = normaliseEditorHtml(editor.getHTML());
     const incoming = value || '';
     if (incoming !== current && !(incoming === '' && current === '<p></p>')) {
       editor.commands.setContent(incoming, { emitUpdate: false });

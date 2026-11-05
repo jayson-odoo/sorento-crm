@@ -10,6 +10,8 @@ Permission gates:
 """
 from __future__ import annotations
 
+from typing import Literal, Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
 
@@ -35,7 +37,7 @@ from app.schemas.price_tag import (
     TagTemplateVersionDetailResponse,
     TagTemplateVersionResponse,
 )
-from app.services.dealer_kit import tag_data_service, tag_template_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service, tag_template_service
 from app.services.dealer_kit.template_needs import template_needs
 from app.services.error_handler import AppException
 
@@ -92,6 +94,9 @@ def list_tag_templates(
             "pointer, and each one's PUBLISHED doc rather than its draft."
         ),
     ),
+    price_type: Optional[Literal["list", "selling", "both", "unset"]] = Query(
+        None, description="Filter by price type; `unset` = not set yet."
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -100,6 +105,10 @@ def list_tag_templates(
         .options(joinedload(TagTemplate.published_version))
         .filter(TagTemplate.archived_at.is_(None))
     )
+    if price_type == "unset":
+        query = query.filter(TagTemplate.price_type.is_(None))
+    elif price_type:
+        query = query.filter(TagTemplate.price_type == price_type)
     if published:
         query = query.filter(TagTemplate.published_version_id.isnot(None))
     templates = query.order_by(TagTemplate.family, TagTemplate.name).all()
@@ -228,6 +237,7 @@ def create_tag_template(
         family=payload.family,
         doc=payload.doc,
         print_size=payload.print_size,
+        price_type=payload.price_type,
         created_by=_user_id(user),
     )
     db.add(t)
@@ -250,6 +260,8 @@ def update_tag_template(
         setattr(t, key, value)
 
     db.flush()
+    if "price_type" in update_data:
+        product_tag_template_service.clear_unfit_defaults(db, t)
     db.commit()
     return _response_for(t)
 

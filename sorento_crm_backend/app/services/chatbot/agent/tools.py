@@ -272,6 +272,9 @@ class ToolResult:
     data: Any = None
     more: int = 0
     message: str = ""
+    #: A block rendered by code for the user (a `crm_query` table), put in the reply verbatim by
+    #: `query_tools.shape_reply`. Never sent to the model: `to_json` leaves it out.
+    display: str | None = None
 
     def to_json(self, call_id: str | None = None) -> str:
         body: dict[str, Any] = {"status": self.status, "data": _round_computed_floats(self.data), "more": self.more, "message": self.message}

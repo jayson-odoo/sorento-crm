@@ -44,7 +44,8 @@ import {
 import type { PriceBadgeInput } from './price-badge';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
-import { hasMergeField, renderMergeFields } from './merge-fields';
+import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
+import { isRich, parseRichText, type RichBlock } from './rich-text';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -467,8 +468,12 @@ export function resolveSlotText(
         return subject.line.included_accessories;
       case 'barcode':
         return subject.line.barcode;
-      case 'price_tag_description':
-        return subject.line.price_tag_description ?? null;
+      case 'price_tag_description': {
+        // R19: on a combo line the line itself is the subject, and the combo's own description
+        // wins; without one the host's stands in. A part / position subject is a 'product'.
+        const own = subject.line.combo?.description;
+        return own && own.trim() ? own : (subject.line.price_tag_description ?? null);
+      }
       default:
         return null;
     }
@@ -500,8 +505,14 @@ export function resolveSlotText(
       return product.spec_lines.join('\n');
     case 'barcode':
       return product.barcode;
-    case 'price_tag_description':
+    case 'price_tag_description': {
+      // R19 on the designer canvas: "Preview combo" binds the combo as `product.combo`; its own
+      // description wins, as on a request line. A part / position subject carries no combo.
+      const comboDescription = (product as { combo?: { description?: string | null } | null }).combo
+        ?.description;
+      if (comboDescription && comboDescription.trim()) return comboDescription;
       return product.price_tag_description ?? null;
+    }
     default:
       return null;
   }
@@ -634,6 +645,96 @@ export function layerText(
     resolveSlotText(layer, data) ??
     (layer.props.kind === 'text' ? layer.props.text : '');
   return renderMergeFields(raw, data, mode, layer);
+}
+
+/**
+ * A rich description's blocks (PRICETAG-COMBO-FORMAT), or null when this layer shows plain text.
+ *
+ * The rich value reaches here as the layer's final slot string, or as the only thing in a
+ * `{{product.price_tag_description}}` / `{{combo.description}}` layer. Merge fields are NOT
+ * substituted into that string: it is parsed first and the fields resolve on each text run, so a
+ * spec value holding `<b>x</b>` prints as those characters and never becomes markup. A block that
+ * held a field and came out empty is dropped, like an empty line of a plain description.
+ */
+export function layerRichBlocks(
+  layer: TagLayer,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode = 'editor',
+): RichBlock[] | null {
+  if (layer.props.kind !== 'text') return null;
+  let source =
+    layer.text_override ?? resolveSlotText(layer, data) ?? layer.props.text;
+  const sole = soleMergeField(source);
+  if (sole) {
+    const path = sole.slice(2, -2).trim();
+    const value =
+      path === 'product.price_tag_description'
+        ? resolveSlotText({ slot_binding: 'price_tag_description', props: layer.props }, data)
+        : path === 'combo.description'
+          ? (comboOf(data)?.description ?? null)
+          : null;
+    if (isRich(value)) source = value as string;
+  } else if (!isRich(source)) {
+    const inline = richTokenInText(source, data, layer.props);
+    if (inline) {
+      const blocks = richBlocksWithFields(inline.value, data, mode, layer);
+      if (blocks && blocks.length > 0) {
+        const before = renderMergeFields(inline.before, data, mode, layer);
+        const after = renderMergeFields(inline.after, data, mode, layer);
+        const first = blocks[0];
+        const last = blocks[blocks.length - 1];
+        if (before) first.runs = [{ text: before }, ...first.runs];
+        if (after) last.runs = [...last.runs, { text: after }];
+        return blocks;
+      }
+    }
+  }
+  return richBlocksWithFields(source, data, mode, layer);
+}
+
+const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
+
+/** A rich description token inside other text: the text around it and the description itself.
+ *  Only a single such token with a rich value; anything else keeps the plain path. */
+function richTokenInText(
+  source: string,
+  data: TagBindingData | null | undefined,
+  props: TagLayerProps,
+): { before: string; after: string; value: string } | null {
+  const found = [...source.matchAll(RICH_TOKEN)];
+  if (found.length !== 1) return null;
+  const [match] = found;
+  const value =
+    match[1] === 'product.price_tag_description'
+      ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
+      : (comboOf(data)?.description ?? null);
+  if (!isRich(value)) return null;
+  const at = match.index ?? 0;
+  return {
+    before: source.slice(0, at),
+    after: source.slice(at + match[0].length),
+    value: value as string,
+  };
+}
+
+/** `value` as blocks with its merge fields resolved on the text runs; null when not rich. */
+export function richBlocksWithFields(
+  value: string | null | undefined,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): RichBlock[] | null {
+  if (!isRich(value)) return null;
+  const out: RichBlock[] = [];
+  for (const entry of parseRichText(value)) {
+    const hadField = entry.runs.some((run) => hasMergeField(run.text));
+    const runs = entry.runs.map((run) =>
+      hasMergeField(run.text) ? { ...run, text: renderMergeFields(run.text, data, mode, layer) } : run,
+    );
+    if (hadField && runs.every((run) => run.text.trim() === '')) continue;
+    out.push({ ...entry, runs });
+  }
+  return out;
 }
 
 /**
@@ -1167,6 +1268,8 @@ export function buildAccessoriesStrip(
  */
 export interface TagLayerDisplay {
   text?: string;
+  /** A rich description, merge fields already resolved on its runs (`layerRichBlocks`). */
+  blocks?: RichBlock[];
   imageUrl?: string | null;
   price?: PriceBadgeInput;
   /**
@@ -1249,8 +1352,10 @@ export function layerDisplay(
   assetUrls: Record<string, string>,
 ): TagLayerDisplay | undefined {
   switch (layer.props.kind) {
-    case 'text':
-      return { text: layerText(layer, data) };
+    case 'text': {
+      const blocks = layerRichBlocks(layer, data);
+      return blocks ? { text: '', blocks } : { text: layerText(layer, data) };
+    }
 
     case 'price_badge':
       return { price: priceBadgeInput(data, layer) };

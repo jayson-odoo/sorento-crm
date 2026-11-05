@@ -16,6 +16,10 @@ import { Label } from '@/components/ui/label';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useSetComboTagTemplates } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
 import { ComboTemplatesPicker } from './ComboTemplatesPicker';
+import {
+  linksBody,
+  type LinkDefaults,
+} from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 import { useCreateProductCombo } from '../../hooks/useProductCombos';
 
 interface AddComboModalProps {
@@ -43,14 +47,14 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
   const canManageTemplates = useHasPermission('dealer_kit.tag_templates.manage');
   const saveLinks = useSetComboTagTemplates();
   const [templateIds, setTemplateIds] = useState<string[]>([]);
-  const [defaultId, setDefaultId] = useState('');
+  const [defaults, setDefaults] = useState<LinkDefaults>({ list: '', selling: '' });
 
   useEffect(() => {
     if (!open) return;
     setName('');
     setError(null);
     setTemplateIds([]);
-    setDefaultId('');
+    setDefaults({ list: '', selling: '' });
   }, [open]);
 
   const canSave = name.trim().length > 0 && !create.isPending && !saveLinks.isPending;
@@ -66,8 +70,7 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
         await saveLinks
           .mutateAsync({
             combo_id: combo.id,
-            template_ids: templateIds,
-            default_template_id: templateIds.includes(defaultId) ? defaultId : null,
+            ...linksBody(templateIds, defaults),
           })
           .catch(() => undefined);
       }
@@ -111,10 +114,11 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
               <ComboTemplatesPicker
                 idPrefix="new-combo"
                 value={templateIds}
-                defaultId={defaultId}
-                onChange={(ids, nextDefault) => {
+                defaultListId={defaults.list}
+                defaultSellingId={defaults.selling}
+                onChange={(ids, nextDefaults) => {
                   setTemplateIds(ids);
-                  setDefaultId(nextDefault);
+                  setDefaults(nextDefaults);
                 }}
               />
             ) : null}

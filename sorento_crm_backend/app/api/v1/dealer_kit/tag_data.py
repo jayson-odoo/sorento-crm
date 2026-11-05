@@ -29,7 +29,10 @@ from app.schemas.price_tag import (
     ProductTagData,
     ProductTagTemplateItem,
     ProductTagTemplatesUpdate,
+    ResolvedLineData,
     SpecKeyItem,
+    TagPreviewIn,
+    TagPreviewOut,
 )
 from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.error_handler import AppException
@@ -182,6 +185,8 @@ def set_product_tag_templates(
         product_id,
         payload.template_ids,
         user_id=(user or {}).get("id"),
+        default_list_template_id=payload.default_list_template_id,
+        default_selling_template_id=payload.default_selling_template_id,
         default_template_id=payload.default_template_id,
     )
     db.commit()
@@ -229,6 +234,8 @@ def set_combo_tag_templates(
         combo_id,
         payload.template_ids,
         user_id=(user or {}).get("id"),
+        default_list_template_id=payload.default_list_template_id,
+        default_selling_template_id=payload.default_selling_template_id,
         default_template_id=payload.default_template_id,
     )
     db.commit()
@@ -236,3 +243,37 @@ def set_combo_tag_templates(
         ProductTagTemplateItem(**item)
         for item in product_tag_template_service.linked_combo_items(db, combo_id)
     ]
+
+
+@router.post("/tag-preview", response_model=TagPreviewOut)
+def staff_tag_preview(
+    payload: TagPreviewIn,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The portal's live tag preview for staff (product page combo preview): the same
+    `product_tag_template_service.preview` the request form calls, with the staff viewer, so the
+    staff and portal answers cannot drift. Company scope is the caller's, set by the global
+    `apply_company_scope` dependency like every other staff dealer-kit route. Writes nothing.
+
+    Unsaved lines only: a `request_id` would need the per-request permission check the portal
+    route does (`_require_own_request`), so it is refused rather than silently ignored."""
+    if payload.request_id:
+        raise AppException(
+            status_code=422,
+            message="The staff preview takes unsaved lines only, not a saved request.",
+            code="REQUEST_ID_NOT_SUPPORTED",
+        )
+    result = product_tag_template_service.preview(
+        db,
+        price_mode=payload.price_mode,
+        lines=[line.model_dump() for line in payload.lines],
+        viewer=tag_data_service.staff_viewer(),
+    )
+    return TagPreviewOut(
+        lines=[ResolvedLineData.model_validate(row) for row in result["lines"]],
+        templates=result["templates"],
+        assets=result["assets"],
+        images=result["images"],
+        fonts=result["fonts"],
+    )

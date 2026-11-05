@@ -55,7 +55,8 @@ import { isDynamic, slotLabel } from '@/lib/dealer-kit/product-block';
 import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
-import { ColorPicker } from './ColorPicker';
+import { ColorPicker } from '@/components/common/ColorPicker';
+import { richPlainText } from '@/lib/dealer-kit/rich-text';
 
 // ---------------------------------------------------------------------------
 // Slot binding options
@@ -604,9 +605,16 @@ function TextInspector({
   // A typed-over layer holding a merge field is still following the product,
   // so it says so rather than showing the amber broken-link note (D57).
   const dynamic = isDynamic(layer);
-  const shown = bound
-    ? layer.text_override ?? resolvedText ?? props.text
-    : props.text;
+  // R8: a layer bound to a description slot shows the description as plain text, read-only; it
+  // is edited on the product / combo page, never as raw markup here.
+  const descriptionBound =
+    (layer.slot_binding === 'combo_description' || layer.slot_binding === 'price_tag_description') &&
+    layer.text_override == null;
+  const shown = descriptionBound
+    ? richPlainText(resolvedText ?? props.text)
+    : bound
+      ? layer.text_override ?? resolvedText ?? props.text
+      : props.text;
 
   const handleContent = (value: string) => {
     if (bound) onUpdate({ text_override: value });
@@ -652,6 +660,7 @@ function TextInspector({
           <textarea
             className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
             value={shown}
+            readOnly={descriptionBound}
             onChange={(e) => handleContent(e.target.value)}
           />
           {overridden && !dynamic && (

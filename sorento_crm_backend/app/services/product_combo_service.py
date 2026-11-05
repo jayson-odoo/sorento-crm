@@ -40,6 +40,7 @@ from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import AppException, handle_not_found
+from app.services.tag_description import clean_description
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -74,6 +75,9 @@ def _validated_image_ext(filename: str) -> str:
             message=f"{filename} is not an image (jpg, jpeg, png or webp).",
         )
     return ext
+
+
+_clean_description = clean_description
 
 
 def _dimensions(product: Optional[Product]) -> Optional[str]:
@@ -127,7 +131,12 @@ def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any
     )
     if not url:
         return None
-    return {"attachment_id": attachment.id, "url": url}
+    return {
+        "attachment_id": attachment.id,
+        "url": url,
+        "file_name": attachment.original_filename,
+        "mime_type": attachment.mime_type,
+    }
 
 
 def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
@@ -201,8 +210,16 @@ class ProductComboService:
 
     # ----------------------------------------------------------------- combos
 
-    def create(self, host_product_id: str, name: str, *, created_by: Optional[str]) -> Dict[str, Any]:
+    def create(
+        self,
+        host_product_id: str,
+        name: str,
+        *,
+        created_by: Optional[str],
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self._host_or_404(host_product_id)
+        cleaned_description = _clean_description(description)
         cleaned = (name or "").strip()
         if not cleaned:
             raise AppException(status_code=422, message="A combo needs a name")
@@ -234,6 +251,7 @@ class ProductComboService:
             host_product_id=host_product_id,
             name=cleaned,
             sort_order=next_order,
+            description=cleaned_description,
             created_by=created_by,
         )
         self.db.add(combo)
@@ -265,9 +283,10 @@ class ProductComboService:
         if payload.get("sort_order") is not None:
             combo.sort_order = int(payload["sort_order"])
         # Omitted = left alone; an explicit null clears (the payload is exclude_unset).
-        for field in ("description", "free_items"):
-            if field in payload:
-                setattr(combo, field, (payload[field] or "").strip() or None)
+        if "description" in payload:
+            combo.description = _clean_description(payload["description"])
+        if "free_items" in payload:
+            combo.free_items = (payload["free_items"] or "").strip() or None
         for field in ("list_price", "sell_price"):
             if field in payload:
                 setattr(combo, field, payload[field])

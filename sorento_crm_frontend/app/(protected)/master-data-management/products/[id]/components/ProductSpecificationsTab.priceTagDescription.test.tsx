@@ -22,6 +22,7 @@
  * yet - it renders "Product description" alone. Every test here is red on a
  * missing element.
  */
+import React from 'react';
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
@@ -80,6 +81,40 @@ vi.mock('../../hooks/useProducts', () => ({
   useProduct: (...a: unknown[]) => useProduct(...a),
   useUpdateProduct: () => ({ mutateAsync: updateMutateAsync, isPending: false }),
 }));
+
+// PRICETAG-COMBO-FORMAT AC-22: the description is the shared RichTextEditor (tiptap has its own
+// suite). A textarea stands in for it with the same value/onChange, and hands the tab a recording
+// editor through `onEditorReady`; "Insert field" now goes in through that editor, at the cursor.
+const insertedIntoEditor = vi.hoisted(() => ({ texts: [] as string[] }));
+vi.mock('@/components/ui/rich-text-editor', () => {
+  const Stand = (props: {
+    value?: string;
+    onChange: (v: string) => void;
+    onEditorReady?: (editor: unknown) => void;
+    'aria-labelledby'?: string;
+  }) => {
+    React.useEffect(() => {
+      const chain: Record<string, unknown> = {
+        focus: () => chain,
+        insertContent: (text: string) => {
+          insertedIntoEditor.texts.push(text);
+          return chain;
+        },
+        run: () => true,
+      };
+      props.onEditorReady?.({ chain: () => chain });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <textarea
+        aria-labelledby={props['aria-labelledby']}
+        value={props.value ?? ''}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    );
+  };
+  return { RichTextEditor: Stand, default: Stand };
+});
 
 const VERIFIED: VerificationBlock = {
   state: 'verified',
@@ -190,6 +225,7 @@ function renderTab() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  insertedIntoEditor.texts = [];
   usePermissions.mockReturnValue({ permissionSet: new Set(['master_data.products.edit']) });
   useProduct.mockReturnValue({ data: baseProduct(), isLoading: false });
 });
@@ -240,7 +276,8 @@ describe('Price tag description block on the Specifications tab (AC-S4-10, AC-S2
 
     fireEvent.click(editButton());
 
-    expect(descriptionTextarea().value).toBe('Stored template text');
+    // The editor holds the stored text as a paragraph (legacy plain text is wrapped on the way in).
+    expect(descriptionTextarea().value).toBe('<p>Stored template text</p>');
     expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
   });
@@ -309,7 +346,7 @@ describe('Insert field from the Specifications tab (AC-S4-11)', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByText('Material'));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^done$/i }));
 
-    expect(descriptionTextarea().value).toContain('{{spec.material}}');
+    expect(insertedIntoEditor.texts.join('')).toContain('{{spec.material}}');
   });
 
   it('offers only Product and Specs - no Line, Set or part group (a description cannot address a line)', () => {
@@ -482,11 +519,11 @@ describe('Multi-line templates (AC-S4-16)', () => {
     });
     renderTab();
 
-    const box = boxContaining('{{product.code}}');
-    expect(box.className).toMatch(/whitespace-pre-(line|wrap)/);
-    expect(box.textContent).toBe(
-      '{{product.code}}\n{{spec.product_type}}\nMade in Malaysia',
+    // Read-only is the formatted view now: each line is its own block, none collapsed into one.
+    const lines = ['{{product.code}}', '{{spec.product_type}}', 'Made in Malaysia'].map((line) =>
+      screen.getByText(line),
     );
+    expect(new Set(lines).size).toBe(3);
   });
 
   it('"Prints as:" resolves the same 3-line template as 3 lines, not collapsed', () => {
