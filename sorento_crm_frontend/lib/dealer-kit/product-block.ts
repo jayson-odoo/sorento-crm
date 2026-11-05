@@ -44,7 +44,8 @@ import {
 import type { PriceBadgeInput } from './price-badge';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
-import { hasMergeField, renderMergeFields } from './merge-fields';
+import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
+import { isRich, parseRichText, type RichBlock } from './rich-text';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -637,6 +638,57 @@ export function layerText(
 }
 
 /**
+ * A rich description's blocks (PRICETAG-COMBO-FORMAT), or null when this layer shows plain text.
+ *
+ * The rich value reaches here as the layer's final slot string, or as the only thing in a
+ * `{{product.price_tag_description}}` / `{{combo.description}}` layer. Merge fields are NOT
+ * substituted into that string: it is parsed first and the fields resolve on each text run, so a
+ * spec value holding `<b>x</b>` prints as those characters and never becomes markup. A block that
+ * held a field and came out empty is dropped, like an empty line of a plain description.
+ */
+export function layerRichBlocks(
+  layer: TagLayer,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode = 'editor',
+): RichBlock[] | null {
+  if (layer.props.kind !== 'text') return null;
+  let source =
+    layer.text_override ?? resolveSlotText(layer, data) ?? layer.props.text;
+  const sole = soleMergeField(source);
+  if (sole) {
+    const path = sole.slice(2, -2).trim();
+    const value =
+      path === 'product.price_tag_description'
+        ? resolveSlotText({ slot_binding: 'price_tag_description', props: layer.props }, data)
+        : path === 'combo.description'
+          ? (comboOf(data)?.description ?? null)
+          : null;
+    if (isRich(value)) source = value as string;
+  }
+  return richBlocksWithFields(source, data, mode, layer);
+}
+
+/** `value` as blocks with its merge fields resolved on the text runs; null when not rich. */
+export function richBlocksWithFields(
+  value: string | null | undefined,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): RichBlock[] | null {
+  if (!isRich(value)) return null;
+  const out: RichBlock[] = [];
+  for (const entry of parseRichText(value)) {
+    const hadField = entry.runs.some((run) => hasMergeField(run.text));
+    const runs = entry.runs.map((run) =>
+      hasMergeField(run.text) ? { ...run, text: renderMergeFields(run.text, data, mode, layer) } : run,
+    );
+    if (hadField && runs.every((run) => run.text.trim() === '')) continue;
+    out.push({ ...entry, runs });
+  }
+  return out;
+}
+
+/**
  * The two figures a price badge draws, taken off whichever thing is bound.
  *
  * `layer` is optional so a caller that already resolved the subject itself
@@ -1167,6 +1219,8 @@ export function buildAccessoriesStrip(
  */
 export interface TagLayerDisplay {
   text?: string;
+  /** A rich description, merge fields already resolved on its runs (`layerRichBlocks`). */
+  blocks?: RichBlock[];
   imageUrl?: string | null;
   price?: PriceBadgeInput;
   /**
@@ -1249,8 +1303,10 @@ export function layerDisplay(
   assetUrls: Record<string, string>,
 ): TagLayerDisplay | undefined {
   switch (layer.props.kind) {
-    case 'text':
-      return { text: layerText(layer, data) };
+    case 'text': {
+      const blocks = layerRichBlocks(layer, data);
+      return blocks ? { text: '', blocks } : { text: layerText(layer, data) };
+    }
 
     case 'price_badge':
       return { price: priceBadgeInput(data, layer) };

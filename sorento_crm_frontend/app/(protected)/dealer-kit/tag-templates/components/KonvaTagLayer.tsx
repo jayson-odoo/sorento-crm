@@ -36,7 +36,8 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
-import { canvasTextHeight, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { canvasTextHeight, runFace, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-text';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { useHtmlImage } from './useHtmlImage';
@@ -220,7 +221,23 @@ function LayerContent({
   display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
-    case 'text':
+    case 'text': {
+      const text = display?.text ?? props.text;
+      // A rich description is drawn run by run; plain text keeps its single Text node.
+      const blocks = display?.blocks ?? (isRich(text) ? parseRichText(text) : null);
+      if (blocks) {
+        return (
+          <RichTextContent
+            props={props}
+            w={w}
+            h={h}
+            widthMm={widthMm}
+            heightMm={heightMm}
+            scale={scale}
+            blocks={blocks}
+          />
+        );
+      }
       return (
         <TextContent
           props={props}
@@ -229,9 +246,10 @@ function LayerContent({
           widthMm={widthMm}
           heightMm={heightMm}
           scale={scale}
-          text={display?.text ?? props.text}
+          text={text}
         />
       );
+    }
 
     case 'shape':
       return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
@@ -612,6 +630,88 @@ function TextContent({
       letterSpacing={mm2px(face.letterSpacing_mm, scale)}
       wrap="none"
     />
+  );
+}
+
+/**
+ * A rich description (PRICETAG-COMBO-FORMAT): one Konva Text per run, in the run's own face,
+ * colour and decoration, on the lines `textLayerLines` breaks the blocks into - the SAME lines the
+ * print page prints. Family and base size stay the layer's; a heading is the layer size times its
+ * factor. A highlighted run gets a rectangle behind it. The transparent rectangle keeps the whole
+ * box clickable, as the plain Text node's full-size box does.
+ */
+function RichTextContent({
+  props,
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  blocks,
+}: {
+  props: TextLayerProps;
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  blocks: RichBlock[];
+}) {
+  const epoch = useFontsEpoch();
+  const lines = useMemo(() => {
+    void epoch; // re-measure once a face has loaded
+    return textLayerLines(props, blocks, widthMm, heightMm);
+  }, [props, blocks, widthMm, heightMm, epoch]);
+  const inset = paddedBox(w, h, props.padding, scale);
+
+  return (
+    <Group name="rich-text" key={epoch}>
+      <Rect width={w} height={h} fill="transparent" />
+      {lines.flatMap((line, lineIndex) =>
+        line
+          .filter((run) => run.text !== '')
+          .flatMap((run, runIndex) => {
+            const face = runFace(props, run, run.sizeFactor);
+            const x = inset.x + mm2px(run.x_mm, scale);
+            const y = inset.y + mm2px(run.y_mm, scale);
+            const decoration = [
+              (props.underline || run.underline) && 'underline',
+              (props.strikethrough || run.strike) && 'line-through',
+            ]
+              .filter(Boolean)
+              .join(' ');
+            const key = `${lineIndex}:${runIndex}`;
+            return [
+              ...(run.highlight
+                ? [
+                    <Rect
+                      key={`${key}:bg`}
+                      x={x}
+                      y={y}
+                      width={mm2px(run.width_mm, scale)}
+                      height={mm2px(run.lineHeight_mm, scale)}
+                      fill={run.highlight}
+                    />,
+                  ]
+                : []),
+              <Text
+                key={key}
+                x={x}
+                y={y}
+                text={run.text}
+                fontFamily={face.fontFamily}
+                fontSize={mm2px(face.fontSize_mm, scale)}
+                fontStyle={face.fontStyle}
+                textDecoration={decoration}
+                fill={run.color || props.color}
+                lineHeight={props.lineHeight}
+                letterSpacing={mm2px(face.letterSpacing_mm, scale)}
+                wrap="none"
+              />,
+            ];
+          }),
+      )}
+    </Group>
   );
 }
 

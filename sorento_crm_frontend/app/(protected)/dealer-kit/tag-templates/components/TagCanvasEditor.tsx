@@ -2280,7 +2280,10 @@ export function TagCanvasEditor({
       // so this cast is safe for exactly the nodes reaching this branch -
       // `findOne` only exists on a Container, and `Konva.Node` (what
       // `transformer.nodes()` is typed as) is not one.
-      const textNode = (node as unknown as Konva.Group).findOne('Text');
+      // A rich description is drawn as many runs; it re-lays itself out on commit.
+      const textNode = (node as unknown as Konva.Group).findOne('.rich-text')
+        ? null
+        : (node as unknown as Konva.Group).findOne('Text');
       if (textNode) {
         // The Text CHILD wraps inside the PADDED box (S3), not the Group's
         // raw one - `KonvaTagLayer`'s own render does the same fold on every
