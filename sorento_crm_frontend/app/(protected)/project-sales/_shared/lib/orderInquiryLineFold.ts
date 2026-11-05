@@ -79,8 +79,11 @@ export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
  * `oi_row_visibility.is_reservable_row`.
  */
 export function isReservableInquiryRow(row: OrderInquiryWorklistRow): boolean {
-  return isLiveInquiryRow(row) && ['raised', 'partly_linked', 'placed'].includes(row.state);
+  return isLiveInquiryRow(row) && NOT_DONE_STATES.includes(row.state);
 }
+
+/** The states a row's links decide (`INQUIRY_LINK_STATES`): a live row in one is not Done. */
+export const NOT_DONE_STATES = ['raised', 'partly_linked', 'placed'];
 
 /**
  * PR #1266 review S2 (G6 rationale: the header never sits Outstanding on a row nobody can
@@ -228,6 +231,22 @@ export function toLineRows(lines: OrderInquiryLine[]): OrderInquiryLineRow[] {
 
 export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
   return row.line ?? buildLine(foldKeyOf(row), [row]);
+}
+
+/**
+ * OI-RESERVE-ANY-ROW (crew, 5 Nov): ONE request per line per action. The lines among
+ * `allRows` that carry a picked row each give their primary row (`pickPrimary`: the
+ * reserve-bearing row, else the most urgent buy row, else the first live row), so a line whose
+ * ORDER and DELAY rows are both live never asks twice.
+ */
+export function reserveRowsOfLines(
+  allRows: OrderInquiryWorklistRow[],
+  isPicked: (row: OrderInquiryWorklistRow) => boolean,
+): OrderInquiryWorklistRow[] {
+  return foldInquiryLines(allRows)
+    .filter((line) => line.liveRows.some(isPicked))
+    .map((line) => line.primary)
+    .filter(isLiveInquiryRow);
 }
 
 /**

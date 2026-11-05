@@ -238,3 +238,26 @@ def test_oi_2609_0257_shape_serves_the_request_on_the_delay_row(api):
     assert listed[delay.id]["reserve_state"] == "requested"
     assert listed[order_row.id]["asked_reserve_qty"] == "0"
     assert listed[order_row.id]["ack_state"] == "awaiting"
+
+
+def test_owner_b_a_delay_row_beside_a_live_order_row_is_reservable_too(api):
+    """Owner (5 Nov, ~10:40 MYT, "more lenient"): no line restriction. Since S2 a date move
+    stamps the live buy row instead of raising a DELAY beside it, so the shape is legacy; if it
+    is there, each row is requestable on its own."""
+    _client, db, company_id = api
+    order = _Order(db, company_id)
+    product, _core, mirror = order.line(1, "33")
+    buy = order.row(mirror, product, "22")
+    delay = order.row(mirror, product, "33", verb=IV_DELAY, ack_state=ACK_ACKNOWLEDGED)
+    now = StockDebtSnapshotService(db)._oi_now([buy.id, delay.id])
+    assert (now[buy.id]["requestable"], now[delay.id]["requestable"]) == (True, True)
+    request = OrderInquiryReserveService(db).create_request(
+        inquiry_id=order.inquiry.id,
+        rows=[{"row_id": buy.id, "qty_requested": "22"}, {"row_id": delay.id, "qty_requested": "33"}],
+        note=None,
+        actor_user_id=None,
+    )
+    rows = db.query(OrderInquiryReserveRequestRow).filter_by(request_id=request.id).all()
+    assert sorted((r.row_id, r.qty_requested) for r in rows) == sorted(
+        [(buy.id, Decimal("22")), (delay.id, Decimal("33"))]
+    )

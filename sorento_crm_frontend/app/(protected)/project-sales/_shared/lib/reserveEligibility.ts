@@ -1,4 +1,4 @@
-import { isReservableInquiryRow } from './orderInquiryLineFold';
+import { isReservableInquiryRow, NOT_DONE_STATES } from './orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../types/orderInquiry.types';
 
 /** BLOCKER B1 (reviewer fix round): `linked_qty` deliberately EXCLUDES a reserve-kind
@@ -35,7 +35,7 @@ export function reserveIneligibleReason(row: OrderInquiryWorklistRow): string | 
   // OI-RESERVE-ANY-ROW (owner, 5 Nov 2026): any verb. `isReservableInquiryRow` is the rule
   // (live, not Done); the branches below say which half failed, in the server's order.
   if (!isReservableInquiryRow(row)) {
-    return ['raised', 'partly_linked', 'placed'].includes(row.state)
+    return NOT_DONE_STATES.includes(row.state)
       ? // OI-RESERVE-USED-ROW: the server refuses it too (`reserve_request_used_row`).
         `${item}: a used row, request on its line's live row`
       : `${item}: not open for a reserve request`;

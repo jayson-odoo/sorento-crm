@@ -1137,11 +1137,15 @@ describe('OI-RESERVE-ANY-ROW: reserve on a not-Done row of any verb counts on it
         <span data-testid="req7">{column('reserve_requested').cell({ row: { original: line7 } })}</span>
         <span data-testid="state7">{column('state').cell({ row: { original: line7 } })}</span>
         <span data-testid="req416">{column('reserve_requested').cell({ row: { original: line416 } })}</span>
+        <span data-testid="state416">{column('state').cell({ row: { original: line416 } })}</span>
       </>,
     );
     expect(screen.getByTestId('req7')).toHaveTextContent('33');
     expect(screen.getByTestId('state7')).toHaveTextContent(/Request to reserve 33/);
-    expect(screen.getByTestId('req416')).not.toHaveTextContent('33');
+    // Line 416 carries no request: the reserve column reads its empty dash, the State its own
+    // status (To order, ack awaiting).
+    expect(screen.getByTestId('req416')).toHaveTextContent(/^-$/);
+    expect(screen.getByTestId('state416')).toHaveTextContent(/To order/);
   });
 
   it('AC-AR-10: a DELAY row reserved 33 reads Reserved 33 and Taken 33', () => {

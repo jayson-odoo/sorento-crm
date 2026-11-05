@@ -19,7 +19,8 @@ whose OI row is not live (used, or cancelled: `oi_row_visibility`).
 WHAT IT WRITES (`--apply`)
 ---------------------------
 `row_id` of the request row moves to the ONE live row of the same OI on the same sales order
-line that is not Done (any verb, `oi_row_visibility.is_reservable_row`, OI-RESERVE-ANY-ROW), when that row has no open request of its own, is not already on this request, and its
+line that is not Done (any verb: `oi_row_visibility.is_reservable_row`, OI-RESERVE-ANY-ROW),
+when that row has no open request of its own, is not already on this request, and its
 requestable qty (`_requestable`) covers the qty asked. Qty, location, requester, request date and
 park state are untouched. One audit EVENT per moved row. Anything else is printed with the
 reason it is held and left for a person.

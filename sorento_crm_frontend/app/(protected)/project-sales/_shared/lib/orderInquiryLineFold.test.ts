@@ -10,6 +10,7 @@ import {
   foldInquiryLines,
   foldKeyOf,
   isReservableInquiryRow,
+  reserveRowsOfLines,
   lineConfirmationOf,
   lineFooterTotals,
   lineHistoryEntries,
@@ -624,5 +625,47 @@ describe('OI-RESERVE-ANY-ROW: the reserve-bearing row of any verb addresses the 
     expect(isReservableInquiryRow(row({ verb: 'DELAY', state: 'actioned' }))).toBe(false);
     expect(isReservableInquiryRow(row({ state: 'cancelled' }))).toBe(false);
     expect(isReservableInquiryRow(row({ verb: 'DELAY', redirected_to_pool: true }))).toBe(false);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW owner (b): ORDER and DELAY both live on one line, each reserve counted once', () => {
+  it('Requested stays the buy qty; Taken adds each row reserve once', () => {
+    const [line] = foldInquiryLines([
+      row({ id: 'order', so_line_id: 'sol-1', qty: '22', linked_qty: '0', reserved_qty: '10' }),
+      row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33', reserved_qty: '5' }),
+    ]);
+    expect(line.requested).toBe(22);
+    expect(line.taken).toBe(15);
+    expect(line.remaining).toBe(7);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW crew: one action on one line makes one request, on the primary row', () => {
+  const both = [
+    row({ id: 'used', so_line_id: 'sol-1', qty: '55', redirected_to_pool: true }),
+    row({ id: 'order', so_line_id: 'sol-1', qty: '22' }),
+    row({ id: 'delay', so_line_id: 'sol-1', verb: 'DELAY', qty: '33' }),
+    row({ id: 'other', so_line_id: 'sol-2', qty: '7' }),
+  ];
+
+  it('a ticked line with a live ORDER and a live DELAY row sends one row, the ORDER (primary)', () => {
+    const picked = new Set(['order', 'delay']);
+    expect(reserveRowsOfLines(both, (r) => picked.has(r.id)).map((r) => r.id)).toEqual(['order']);
+  });
+
+  it('picking only the DELAY row still sends the line once, on its primary', () => {
+    expect(reserveRowsOfLines(both, (r) => r.id === 'delay').map((r) => r.id)).toEqual(['order']);
+  });
+
+  it('OI-2609-0257 line 7: only the DELAY row is live, so it is the one sent', () => {
+    const rows = [
+      row({ id: 'used', so_line_id: 'sol-7', qty: '55', redirected_to_pool: true }),
+      row({ id: 'delay', so_line_id: 'sol-7', verb: 'DELAY', qty: '33' }),
+    ];
+    expect(reserveRowsOfLines(rows, (r) => r.id === 'delay').map((r) => r.id)).toEqual(['delay']);
+  });
+
+  it('two ticked lines send one row each', () => {
+    expect(reserveRowsOfLines(both, () => true).map((r) => r.id)).toEqual(['order', 'other']);
   });
 });

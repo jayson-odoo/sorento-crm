@@ -1,6 +1,6 @@
 # PLAN: OI reserve on any row that is not Done (OI-RESERVE-ANY-ROW)
 
-Status: Build (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: Review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 crew-lane: OI-RESERVE-ANY-ROW. UAC: `oi-reserve-any-row-05nov-acceptance-criteria.md` (alongside).
 
@@ -52,6 +52,15 @@ and its state is in `INQUIRY_LINK_STATES` (not Done). Any verb.
   `isLiveInquiryRow`; `reserveIneligibleReason` reads it (verb message removed).
 
 Requestable quantity is unchanged (`_requestable`: qty - open links - reserve links - bundled).
+
+## Both rows live on one line (review B1, owner ruling (b))
+
+The reviewer asked whether a DELAY row beside its line's live ORDER row should take a reserve
+(asking twice for one line). Owner, 5 Nov ~10:40 MYT: "I would rather make it more lenient":
+no line restriction. The shape is legacy: since S2 (`PLAN-board-oi-mechanical-22sep.md`) a date
+move on a line with a live buy row stamps that row (`_stamp_date_move`) instead of raising a
+DELAY row beside it, and `scripts/fold_oi_date_notices.py` folds older duplicates. Where it
+still exists, each row is requestable on its own and the grid counts each reserve once.
 
 ## Grid (OI page Lines tab, one line per SO line)
 
