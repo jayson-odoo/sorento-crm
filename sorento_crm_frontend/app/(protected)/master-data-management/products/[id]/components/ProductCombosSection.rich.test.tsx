@@ -56,47 +56,24 @@ vi.mock('@/app/(protected)/dealer-kit/hooks/useProductTagTemplates', () => ({
   usePriceTagTemplateOptions: () => ({ data: [], error: null, refetch: vi.fn() }),
 }));
 
-const template = {
+// R18: the live preview asks the staff preview service for the combo's line and draws the response
+// (its template, line and images) with only the description replaced by the draft.
+const TEMPLATE = {
   id: 'tpl-sp',
   name: 'Bathroom Furniture SP',
   family: 'ala_carte',
+  doc: { layers: [], width_mm: 85, height_mm: 58 },
   print_size: { width_mm: 85, height_mm: 58 },
   published_version_id: 'v1',
   published_version_no: 1,
-  doc: {
-    layers: [
-      {
-        id: 'desc',
-        type: 'text',
-        x_mm: 0,
-        y_mm: 0,
-        width_mm: 80,
-        height_mm: 40,
-        rotation_deg: 0,
-        z_index: 1,
-        locked: false,
-        visible: true,
-        slot_binding: 'combo_description',
-        text_override: null,
-        props: {
-          kind: 'text',
-          text: '',
-          fontFamily: 'DM Sans',
-          fontSize: 8,
-          fontWeight: 400,
-          color: '#000000',
-          align: 'left',
-          lineHeight: 1.2,
-          letterSpacing: 0,
-        },
-      },
-    ],
-  },
 };
-vi.mock('@/app/(protected)/dealer-kit/services/tagTemplateService', () => ({
-  getTemplate: vi.fn(async () => template),
-  listTemplates: vi.fn(async () => [template]),
-  listPublishedTemplates: vi.fn(async () => [template]),
+const previewTags = vi.hoisted(() => vi.fn());
+vi.mock('@/app/(protected)/dealer-kit/services/tagDataService', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  previewTags,
+}));
+vi.mock('@/app/(protected)/dealer-kit/hooks/usePublishedTagTemplates', () => ({
+  usePublishedTagTemplates: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 const preview = vi.hoisted(() => ({
@@ -167,6 +144,16 @@ function draw(row: ProductComboRow) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  previewTags.mockImplementation(async (...args: unknown[]) => {
+    const key = (JSON.parse(JSON.stringify(args)).flat(3).find((x: { key?: string }) => x && x.key) ?? { key: 'k' }).key;
+    return {
+      lines: [{ line_id: key, tag_id: key, code: '3 in 1', name: '3 in 1', images: [], combo: { id: 'combo-3', name: '3 in 1', description: null, choices: [], upgrades: [] } }],
+      templates: { [key]: TEMPLATE },
+      assets: {},
+      images: {},
+      fonts: [],
+    };
+  });
   permission.canEdit = true;
   links.rows = [];
   preview.open = [];
@@ -269,7 +256,13 @@ describe('read-only description (AC-24)', () => {
 });
 
 describe('combo photo preview (AC-40, AC-41, AC-42)', () => {
-  const image = { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' };
+  // R17: the serialised image names the file, so the viewer can tell what kind of file it is.
+  const image = {
+    attachment_id: 'att-combo-1',
+    url: 'https://cdn.example.test/combo.jpg',
+    file_name: 'cabinet.jpg',
+    mime_type: 'image/jpeg',
+  };
 
   it('AC-40: the thumbnail is a button named for the combo; click opens the preview with the item', () => {
     draw(combo({ image }));
@@ -282,8 +275,15 @@ describe('combo photo preview (AC-40, AC-41, AC-42)', () => {
 
     const modal = screen.getByTestId('preview-modal');
     expect(JSON.parse(modal.dataset.items!)).toEqual([
-      { id: 'att-combo-1', name: '3 in 1', url: 'https://cdn.example.test/combo.jpg' },
+      { id: 'att-combo-1', name: 'cabinet.jpg', url: 'https://cdn.example.test/combo.jpg' },
     ]);
+  });
+
+  it('R17: without a file name the item falls back to the combo name', () => {
+    draw(combo({ image: { attachment_id: 'att-combo-1', url: 'https://cdn.example.test/combo.jpg' } as never }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview photo of 3 in 1' }));
+    const items = JSON.parse(screen.getByTestId('preview-modal').dataset.items!);
+    expect(items[0].name).toBe('3 in 1');
   });
 
   it('AC-40: Escape closes it', () => {
