@@ -3339,6 +3339,13 @@ class ProjectSODraftService:
         customer = self._customer_for(order)
         if customer is None:
             return None, "The purchase order names no customer."
+        return self.derived_location_for_customer(customer)
+
+    def derived_location_for_customer(
+        self, customer: Customer
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """The agent-group chain of `derived_stock_location`, for a customer already known
+        (a quotation has no order to read it from)."""
         agent = customer.sales_agent
         if agent is None:
             return None, f"{customer.customer_name} has no sales agent."
@@ -3530,6 +3537,8 @@ class ProjectSODraftService:
             "id": order.id,
             "provisional_ref": order.provisional_ref,
             "autocount_doc_no": order.autocount_doc_no,
+            # AC-QTSO-CRM: presence only; the AutoCount key never leaves the server.
+            "in_autocount": bool(order.autocount_doc_key),
             "area_group": order.area_group,
             "status": order.status,
             "grouping_origin": order.grouping_origin,

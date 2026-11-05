@@ -476,6 +476,10 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     area_group = Column(String(80), nullable=True)
     provisional_ref = Column(String(80), nullable=False)
     autocount_doc_no = Column(String(80), nullable=True)
+    # AC-QTSO-CRM: written only by a `done` create/update answer. The key is never shown;
+    # `last_modified` is the raw string from the SS read-back, sent back as expectedLastModified.
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the

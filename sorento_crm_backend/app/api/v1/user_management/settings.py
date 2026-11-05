@@ -133,6 +133,9 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
+    # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
+    # Here, in the GET dict, and in AppConfigResponse below.
+    project_autocount_write_enabled: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -285,6 +288,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
+    #: salesperson who sends holds no `user_management.settings.view`.
+    project_autocount_write_enabled: bool = False
     #: Seconds a destructive action waits before it commits; the quotation column-removal
     #: countdown reads it. Not sensitive.
     deferred_delete_seconds: Optional[int] = None
@@ -475,6 +481,9 @@ def get_settings(
                 "sample_request_require_project": (
                     bool(getattr(settings, "sample_request_require_project", False)) if settings else False
                 ),
+                "project_autocount_write_enabled": (
+                    bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
+                ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -613,6 +622,9 @@ def get_app_config(
             ),
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
+            ),
+            project_autocount_write_enabled=bool(
+                getattr(settings, "project_autocount_write_enabled", False)
             ),
             # Same value and fallback as the admin GET above.
             deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
@@ -1225,7 +1237,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     )
 
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
-    for column in ("sample_request_require_project",):
+    for column in ("sample_request_require_project", "project_autocount_write_enabled"):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 

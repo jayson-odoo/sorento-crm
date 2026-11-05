@@ -693,6 +693,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.autocount.write",
+        "name": "Send quotations and sales orders to AutoCount",
+        "description": (
+            "Create, update or cancel a project quotation or sales order in AutoCount from "
+            "Project sales. Writes to AutoCount."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",

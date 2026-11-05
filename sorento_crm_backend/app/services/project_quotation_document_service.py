@@ -1237,6 +1237,18 @@ def serialize_document(
         # so it is resolved once here rather than re-expressed on the counter-sign page, the
         # Signatures badge, the document banner and the list column.
         "customer_decision": _customer_decision(latest),
+        # AC-QTSO-CRM: where the document stands in AutoCount. The key itself never leaves the
+        # server; the screen reads presence, the number, and whether a newer accepted
+        # revision is waiting to go as an update.
+        "in_autocount": bool(document.autocount_doc_key),
+        "autocount_doc_no": document.autocount_doc_no,
+        "latest_issue_accepted": bool(latest is not None and latest.accepted_at is not None),
+        "autocount_needs_update": bool(
+            document.autocount_doc_key
+            and latest is not None
+            and latest.accepted_at is not None
+            and document.autocount_issue_id != latest.id
+        ),
         # PS-QUOTE-VIEWS: the customer's counted opens of the revision they hold now. Older
         # revisions' opens are in the view log, not here.
         **_views.summary_for_issue(db, latest),

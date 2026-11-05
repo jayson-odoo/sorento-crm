@@ -2173,6 +2173,12 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     customer_decision: Optional[str] = None
+    # AC-QTSO-CRM: declared here as well as in `serialize_document`; the response model drops
+    # what it does not know.
+    in_autocount: bool = False
+    autocount_doc_no: Optional[str] = None
+    latest_issue_accepted: bool = False
+    autocount_needs_update: bool = False
     # PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link.
     view_count: int = 0
     last_viewed_at: Optional[datetime] = None

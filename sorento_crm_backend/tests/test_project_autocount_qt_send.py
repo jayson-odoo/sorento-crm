@@ -261,6 +261,7 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
         db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True
     )
     db.commit()
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world))
     fake_ss.answers[("PATCH", QT_DOC_PATH)] = (
         200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=_read_back(world),
                        last_modified="2026-11-06T09:00:00")
@@ -286,6 +287,7 @@ def test_a_stale_quotation_update_says_open_compare_first(api, fake_ss):
     _mark_sent(db, world)
     add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
     db.commit()
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world))
     fake_ss.answers[("PATCH", QT_DOC_PATH)] = (409, refused_body("DOC_STALE", "changed"))
 
     body = client.post(_url(world)).json()

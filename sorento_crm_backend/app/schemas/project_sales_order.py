@@ -90,6 +90,8 @@ class ProjectSalesOrderRow(BaseModel):
     id: str
     provisional_ref: str
     autocount_doc_no: Optional[str] = None
+    # AC-QTSO-CRM: the order lives in AutoCount (its key is set); the key itself is never sent.
+    in_autocount: bool = False
     area_group: Optional[str] = None
     status: str
     grouping_origin: Optional[str] = None

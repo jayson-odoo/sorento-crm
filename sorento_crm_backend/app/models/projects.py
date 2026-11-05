@@ -1201,6 +1201,13 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     your_ref = Column(String(120), nullable=True)
     doc_date = Column(Date, nullable=True)
 
+    # AC-QTSO-CRM: the AutoCount quotation this document became, written only by a `done`
+    # answer. `autocount_issue_id` is the accepted issue last sent (no FK: it is a marker).
+    autocount_doc_no = Column(String(80), nullable=True)
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
+    autocount_issue_id = Column(UUID(as_uuid=False), nullable=True)
+
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )

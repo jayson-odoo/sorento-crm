@@ -14,6 +14,7 @@ from app.api.v1.projects import (
     parties,
     planning_changes,
     po_intake,
+    project_autocount_write,
     projects,
     quotation_documents,
     quotation_templates,
@@ -85,6 +86,9 @@ router.include_router(fulfilment_planning.router, tags=["project-fulfilment-plan
 # OI-LINE-SPLIT: `/sales-orders/{pso_id}/line-splits`, ahead of the plain sales-order
 # router for the same reason fulfilment planning is.
 router.include_router(line_splits.router, tags=["project-fulfilment-planning"])
+# AutoCount write-back (AC-QTSO-CRM): `/sales-orders/amendments/{id}/autocount` is a longer path
+# than `/sales-orders/{pso_id}`, but declared ahead of the plain router like its neighbours.
+router.include_router(project_autocount_write.router, tags=["project-autocount-write"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is
 # root-mounted alongside sales orders. Its paths add a segment to the sales-order ones
