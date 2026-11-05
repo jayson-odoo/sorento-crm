@@ -99,6 +99,7 @@ import {
 import {
   draftLinesPayload,
   lineNeedsTemplate,
+  templateAfterFlip,
   lineToDraft,
   EMPTY_LINE,
   lineProblemsOf,
@@ -2255,6 +2256,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onChange={(mode) => {
               setPriceModeChosen(true);
               setPriceMode(mode);
+              // R7: a line that follows the header moves to the new type's template.
+              setLines((prev) =>
+                prev.map((l) => (l.price_type ? l : { ...l, ...templateAfterFlip(l, mode) })),
+              );
               // Direct call (review round 2): `setPriceMode('list')` is a
               // no-op on a fresh form (priceMode is already 'list'), so
               // React bails out of re-rendering and the auto-open effect

@@ -40,6 +40,7 @@ import {
   comboOfLine,
   partsAtListTitle,
   picksNeeded,
+  templateAfterFlip,
   type DraftLine,
   type DraftPart,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
@@ -213,18 +214,6 @@ interface LineRowProps {
  *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
  *  `sell_price` unconditionally showed the offer price in List mode too.
  *  Falls back to the bare code while pricing has not answered yet. */
-/**
- * What flipping a line to `mode` does to its template: a pick that still fits is kept (nothing
- * changes); otherwise it moves to that type's default, or is cleared when the item has none.
- */
-function templateAfterFlip(line: DraftLine, mode: PriceMode): { tag_template_id?: string | null } {
-  const options = line.tag_templates ?? [];
-  if (options.length === 0) return {};
-  const current = options.find((option) => option.id === line.tag_template_id);
-  if (current && templateFitsLine(current.price_type, mode)) return {};
-  return { tag_template_id: defaultOptionFor(options, mode)?.id ?? null };
-}
-
 /** Whether the line's chosen template reads any position (fixed part, pick or upgrade). */
 function templateUsesPositions(state: LineTemplateState): boolean {
   const needs = (state.kind === 'single' ? state.template : state.kind === 'many' ? state.picked : null)?.needs;

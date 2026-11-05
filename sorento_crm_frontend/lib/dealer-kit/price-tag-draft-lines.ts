@@ -17,7 +17,7 @@ import type {
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
-import { fittingOptions, lineTypeLabel } from '@/lib/dealer-kit/template-price-type';
+import { defaultOptionFor, fittingOptions, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 
 /**
  * One part row under a draft line (D2).
@@ -461,7 +461,11 @@ export function lineTemplateState(line: DraftLine, priceMode?: PriceMode | null)
   if (options.length === 0) return { kind: 'none' };
   // PRICETAG-COMBO-FORMAT: only the templates that fit the line's LP / SP are offered.
   const lineType = line.price_type ?? priceMode ?? null;
-  const fitting = fittingOptions(options, lineType);
+  let fitting = fittingOptions(options, lineType);
+  // R6 (AC-37): a loaded line keeps the template it was saved with even when it stopped fitting;
+  // it shows by name and is re-sent. Only a user change (pick or LP/SP flip) re-filters.
+  const saved = options.find((o) => o.id === line.tag_template_id);
+  if (saved && !fitting.includes(saved)) fitting = [...fitting, saved];
   if (fitting.length === 0) return { kind: 'mismatch', priceType: lineType as 'list' | 'selling' };
   if (fitting.length === 1) return { kind: 'single', template: fitting[0] };
   return {
@@ -670,4 +674,16 @@ export function pruneGuardError(guardError: string | null, holding: string[]): s
   if (!guardError) return null;
   const kept = guardError.split('\n').filter((message) => !isCheckMessage(message) || holding.includes(message));
   return kept.length > 0 ? kept.join('\n') : null;
+}
+
+/**
+ * What flipping a line to `mode` does to its template: a pick that still fits is kept (nothing
+ * changes); otherwise it moves to that type's default, or is cleared when the item has none.
+ */
+export function templateAfterFlip(line: DraftLine, mode: PriceMode): { tag_template_id?: string | null } {
+  const options = line.tag_templates ?? [];
+  if (options.length === 0) return {};
+  const current = options.find((option) => option.id === line.tag_template_id);
+  if (current && templateFitsLine(current.price_type, mode)) return {};
+  return { tag_template_id: defaultOptionFor(options, mode)?.id ?? null };
 }

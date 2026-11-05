@@ -21,7 +21,7 @@ import type {
   TagItemOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
-import { defaultOptionFor, fittingOptions } from '@/lib/dealer-kit/template-price-type';
+import { defaultOptionFor } from '@/lib/dealer-kit/template-price-type';
 import { distinctName } from '@/lib/product-display';
 import {
   emptyDraftLine,
@@ -298,7 +298,8 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
             // PRICETAG-COMBO-FORMAT: only a template that fits the line's LP / SP can stay or be
             // the default; the pick of a line of another type starts from that type's default.
             const lineType = l.price_type ?? priceMode;
-            const kept = fittingOptions(options, lineType).find((o) => o.id === l.tag_template_id);
+            // R6: a saved pick is kept even if it no longer fits; only a user change re-filters.
+            const kept = options.find((o) => o.id === l.tag_template_id);
             const fallback = defaultOptionFor(options, lineType);
             return {
               ...l,
