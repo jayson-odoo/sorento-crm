@@ -23,6 +23,11 @@ class FieldDef:
     #: of product codes): refused while the session carries a contact's brand scope, whose screen recomputes or
     #: cuts it to the in-scope lines only.
     whole_document: bool = False
+    #: () -> SQL expression over the model, taken from the module's own service (the owner's sales figure is
+    #: `invoiced_sales.signed_amount`), so the figure is never written twice. Read-only: no `column`.
+    expr: Callable[[], Any] | None = None
+    #: The field's type on a computed entity (no column to read it from): text, number, date, boolean.
+    kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,3 +63,11 @@ class EntityDef:
     routes: tuple[str, ...] = ()
     #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
     scope: Callable[[Any], list] | None = None
+    #: A computed entity (figures no table holds: a target's achievement and commission). (db, user_id, own_only,
+    #: date_from, date_to) -> rows as dicts keyed by field, built by the module's own service; filters, groups
+    #: and aggregates then run over them in code (`assistant_registry.computed`). The row's "id" and every
+    #: `screen_path` placeholder come from the dict.
+    compute: Callable[..., list[dict]] | None = None
+    #: A computed entity's date-window field: a filter on it picks which periods `compute` reads (overlap), it is
+    #: not a row filter. Without one the window is today, and the result's scope note says so.
+    window_field: str | None = None

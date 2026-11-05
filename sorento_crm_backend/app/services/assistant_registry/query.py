@@ -196,6 +196,13 @@ class _Paths:
             raise QueryRefused(
                 "restricted", f"`{path}` covers lines of brands outside this contact's brands, so it is not shown here."
             )
+        if field.expr is not None:
+            column = field.expr()
+            if table is not entity.model.__table__:
+                from sqlalchemy.sql.util import ClauseAdapter
+
+                column = ClauseAdapter(table).traverse(column)
+            return column, field, _kind(column)
         column = table.c[field.column or name]
         return column, field, _kind(column)
 
@@ -429,6 +436,10 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    if entity.compute is not None:
+        from app.services.assistant_registry.computed import run_computed
+
+        return run_computed(db, user_id, entity, own_only, slugs, spec)
     paths = _Paths(db, user_id, entity, slugs)
     asked = _list(spec, "filters", MAX_FILTERS)
     filters = [_filter(paths, f) for f in asked]
@@ -640,7 +651,13 @@ def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[
     columns = sa_inspect(entity.model).columns
     out = []
     for key, field in entity.fields.items():
-        row = {"field": key, "label": field.label, "type": _kind(columns[field.column or key])}
+        if field.kind:
+            kind = field.kind
+        elif field.expr is not None:
+            kind = _kind(field.expr())
+        else:
+            kind = _kind(columns[field.column or key])
+        row = {"field": key, "label": field.label, "type": kind}
         if field.note:
             row["note"] = field.note
         if (field.permission and field.permission not in slugs) or (field.whole_document and brand_scoped):
@@ -672,7 +689,7 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
         relations[name] = {
             "label": target.label, "fields": _field_rows(target, slugs, brand_scoped), "relations": list(target.relations),
         }
-    return {
+    out = {
         "entity": found.key,
         "label": found.label,
         "only_own_rows": own_only,
@@ -683,3 +700,9 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
         "aggregates": list(FNS),
         "limits": {"rows": MAX_ROWS, "groups": MAX_GROUPS, "group_by_fields": MAX_GROUP_FIELDS, "relation_hops": MAX_HOPS},
     }
+    if found.window_field:
+        out["window"] = (
+            f"`{found.window_field}` picks the periods read: between [from, to] keeps every period overlapping it, "
+            f"eq a date the period containing it; without it, the periods containing today."
+        )
+    return out

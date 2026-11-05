@@ -23,13 +23,28 @@ def _screen_rules(db) -> list:
 
 
 register(
+    # The Customers list (`/order-management/customers`, menu slug `order_management.customers.view`; company scope
+    # only, no own rule). Also the lookup behind every document's `customer` relation. Phone, email, address and
+    # the AR figures are left out (AI-TOOLS-WAVE2).
     EntityDef(
         key="customer",
         label="Customers",
         module="order",
         model=Customer,
-        view_permission=None,
-        fields={"code": FieldDef("Customer code", column="customer_code"), "name": FieldDef("Customer name", column="customer_name")},
+        view_permission="order_management.customers.view",
+        fields={
+            "code": FieldDef("Customer code", column="customer_code"),
+            "name": FieldDef("Customer name", column="customer_name"),
+            "is_active": FieldDef("Active"),
+            "region": FieldDef("Region"),
+            "debtor_type": FieldDef("Debtor type", column="autocount_debtor_type"),
+            "created_at": FieldDef("Created at"),
+        },
+        relations={"agent": ("sales_agent", "sales_agent_id")},
+        name_by=("code", "name"),
+        screen_path="/order-management/customers/{id}",
+        pages=("/order-management/customers",),
+        routes=("GET /api/v1/order-management/customers/",),
     ),
     EntityDef(
         key="order_status",
