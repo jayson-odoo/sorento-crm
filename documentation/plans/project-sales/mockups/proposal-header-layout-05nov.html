@@ -77,7 +77,7 @@ td.num,th.num{text-align:right}
 <body>
 <div class="doc">
 <h1>Proposal / quotation detail header (PROPOSAL-HEADER-LAYOUT)</h1>
-<p class="sub"><b>Mock v3</b>, 5 Nov 2026 (owner 12:22 on v2: "the version should be shown at the header tab la, don't need to show here", struck the version row: v1 pill, Recheck alerts, Revise to v2. The version moves into the header card as a chip (callout 13); Recheck alerts and Revise move into the gear (frame 2b). Lines block is now: area tabs, Search lines + Columns, table.) v2 note (owner 12:20 on v1: "in view i don't even need this", struck the area header row inside the lines: area name + Open pill + series + Record outcome. Gone in view; Record outcome moves into the gear, frame 2b). v1 text follows. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
+<p class="sub"><b>Mock v4</b>, 5 Nov 2026 (owner 12:25: version chip is just "v1", per proposal, callout 13. Owner answers 12:24: Q1 pager kept, Q2 "edit opens the next" text dropped in both places, Q3 one page for both, Q4 no "·" delimiter: title, view state and hint each on their own muted line (frame 2c), Q5 Record outcome leaves this page and goes to the project page (frame 5)). v3 note: <b>Mock v3</b>, 5 Nov 2026 (owner 12:22 on v2: "the version should be shown at the header tab la, don't need to show here", struck the version row: v1 pill, Recheck alerts, Revise to v2. The version moves into the header card as a chip (callout 13); Recheck alerts and Revise move into the gear (frame 2b). Lines block is now: area tabs, Search lines + Columns, table.) v2 note (owner 12:20 on v1: "in view i don't even need this", struck the area header row inside the lines: area name + Open pill + series + Record outcome. Gone in view; Record outcome moves into the gear, frame 2b). v1 text follows. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
 actions right). The customer line and the "customer holds this version" hint go. The printer sits beside the gear. The Lines tab
 goes; the lines sit on the Header tab under the letterhead card. Quotations use the same page, so they change too.
 Pink numbers map each element to the component it reuses (list on the right).</p>
@@ -109,8 +109,8 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <div class="rcard">
     <div class="rrow">
       <div class="rid">
-        <div class="rtitle"><span class="co">1</span><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="co">2</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">Townhouse v1 ▾</span><span class="co">13</span></div>
-        <span class="rsub"><span class="co">3</span> test · <u>Not viewed yet</u></span>
+        <div class="rtitle"><span class="co">1</span><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="co">2</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span><span class="co">13</span></div>
+        <span class="rsub"><span class="co">3</span> test</span><span class="rsub"><u>Not viewed yet</u></span>
       </div>
       <div class="acts">
         <span class="co">4</span><span class="pager">‹ 1 / 3 ›</span>
@@ -151,7 +151,7 @@ Pink numbers map each element to the component it reuses (list on the right).</p
 <div class="notes"><ol>
   <li><span class="co">1</span><div><b>Record card</b>The OI card: number + status inline, subtitle under, actions right. OI's card is inline today (and copied into ~14 detail pages), so it is extracted once as <code>RecordHeaderCard</code> and used by both OI and this page.<span class="ref">from app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx:767-971 → new components/common/RecordHeaderCard.tsx</span></div></li>
   <li><span class="co">2</span><div><b>Status badge, inline</b>Same reading as the project's proposal list (quotationStanding), so list and page never disagree. No more floating "Accepted" above the title.<span class="ref">app/(protected)/project-sales/_shared/lib/quotationDecision.ts quotationStanding + lib/status-pill.ts</span></div></li>
-  <li><span class="co">3</span><div><b>One subtitle line</b>"&lt;title&gt; · &lt;viewed state&gt;". The viewed part keeps its view-log popover, shown once sent ("Viewed 3 times, last 05/11/2026, 2:14 pm"). Customer line removed (it repeats To in the card below).<span class="ref">QuotationViewCount.tsx (viewCountText, formatDateTimeInMalaysia)</span></div></li>
+  <li><span class="co">3</span><div><b>Subtitle lines (v4: no "·")</b>The title on one muted line, the viewed state on the next, any hint on a third (2c). The viewed part keeps its view-log popover, shown once sent ("Viewed 3 times, last 05/11/2026, 2:14 pm"). Customer line removed (it repeats To in the card below).<span class="ref">QuotationViewCount.tsx (viewCountText, formatDateTimeInMalaysia)</span></div></li>
   <li><span class="co">4</span><div><b>Pager</b>Already exists: steps through this project's proposals and quotations, shown when the project has 2 or more. Unchanged.<span class="ref">components/common/RecordNavigation.tsx, QuotationDocumentClient.tsx:350</span></div></li>
   <li><span class="co">5</span><div><b>Gear</b>Unchanged menu (Edit, exports, delete...).<span class="ref">components/common/DetailActionsMenu.tsx, actions.tsx useQuotationDocumentActions</span></div></li>
   <li><span class="co">6</span><div><b>Printer + count, beside the gear</b>Moved left out of the primary slot. Still shown only once something has been sent.<span class="ref">components/my-downloads/EntityDownloadsButton.tsx</span></div></li>
@@ -159,24 +159,23 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <li><span class="co">8</span><div><b>Lines tab removed</b>Old /lines links (and the feedback tab's "go to line") land on Header.<span class="ref">QuotationDocumentTabs.tsx:36, (view)/lines/page.tsx</span></div></li>
   <li><span class="co">9</span><div><b>Letterhead card</b>Unchanged, first on the Header tab.<span class="ref">QuotationDocumentHeader.tsx</span></div></li>
   <li><span class="co">10</span><div><b>Lines, under the card</b>The whole former Lines tab minus the area header row (11): area tab strip, version strip, the lines grid with its editing, sorting, totals and feedback marks.<span class="ref">QuotationScopesTab.tsx → QuotationVersionEditor.tsx → QuotationLinesGrid.tsx</span></div></li>
-  <li><span class="co">11</span><div><b>Area header row removed (v2)</b>Owner: "in view i don't even need this". Area name is already the open tab; the Open/Won/Lost pill and series go with it. Record outcome is NOT lost: it moves into the gear (frame 2b). Since v3 the block starts at Search lines + Columns (see 14).<span class="ref">QuotationScopesTab.tsx:97-128 (CardHeader removed); QuotationOutcomeDialog.tsx reused as is</span></div></li>
-  <li><span class="co">13</span><div><b>Version, in the header card (v3)</b>"&lt;open area&gt; v&lt;n&gt;" chip on the number/badge line. It follows the open area tab. With one version it is a plain chip; with more it opens a menu "v2 (current)", "v1 (frozen)" and switches the lines below, the job the v1/v2 pills did. Reading a frozen one, the chip says "Townhouse v1 (frozen)".<span class="ref">was QuotationVersionEditor.tsx:669-687 (version pills); menu: components/ui/dropdown-menu</span></div></li>
+  <li><span class="co">11</span><div><b>Area header row removed (v2)</b>Owner: "in view i don't even need this". Area name is already the open tab; the Open/Won/Lost pill and series go with it. Record outcome is NOT lost: v4 moves it to the project page (frame 5). Since v3 the block starts at Search lines + Columns (see 14).<span class="ref">QuotationScopesTab.tsx:97-128 (CardHeader removed); QuotationOutcomeDialog.tsx reused as is</span></div></li>
+  <li><span class="co">13</span><div><b>Version, in the header card (v4: just "v1")</b>Owner 12:25: "should just be v1, version is per quotation / proposal". One "v&lt;n&gt;" chip for the whole proposal, no area name. Fact: the data stores a version per area (QuotationScope.current_version_no, quotationDocumentService.ts:69); Edit already revises every frozen area together (QuotationDocumentClient.tsx:299-311), so they normally match. The chip shows the highest current version across the areas. With more than one version it opens "v2 (current)", "v1 (frozen)" and switches the lines of every area to that version, the job the old pills did; reading a frozen one, it says "v1 (frozen)".<span class="ref">was QuotationVersionEditor.tsx:669-687 (version pills); menu: components/ui/dropdown-menu</span></div></li>
   <li><span class="co">14</span><div><b>Version row removed (v3)</b>Owner 12:22. The pills go to the chip (13); Recheck alerts and Revise to v2 go into the gear (2b). Each keeps today's rule for when it shows (can edit, open version, not locked for approval, no edit session). The recheck result panel still appears above the lines after a recheck. The "Frozen. Make changes on v2." line stays when reading a frozen version.<span class="ref">QuotationVersionEditor.tsx:689-735, 737-757</span></div></li>
 </ol></div>
 </div>
 
-<h2 class="ft">2b. v2 + v3: where Record outcome, Recheck alerts and Revise live now (gear open)</h2>
+<h2 class="ft">2b. Recheck alerts and Revise in the gear (gear open). v4: no Record outcome here</h2>
 <div class="layout">
 <div class="frame" style="width:560px;flex:none"><div class="content">
   <div class="rcard" style="margin-bottom:0">
-    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">Townhouse v1 ▾</span></div><span class="rsub">test · <u>Not viewed yet</u></span></div>
+    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span></div><span class="rsub">test</span><span class="rsub"><u>Not viewed yet</u></span></div>
     <div class="acts"><span class="btn icon" style="outline:2px solid var(--primary)">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div></div>
   </div>
   <div class="card" style="width:260px;margin:6px 0 0 150px;padding:6px 0;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px">
     <div style="padding:6px 12px">Edit proposal</div>
-    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Record outcome: Townhouse</b> <span class="co">12</span></div>
-    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Recheck alerts: Townhouse v1</b> <span class="co">15</span></div>
-    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Revise Townhouse to v2</b> <span class="co">15</span></div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Recheck alerts</b> <span class="co">15</span></div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Revise to v2</b> <span class="co">15</span></div>
     <div style="padding:6px 12px">Make quotation</div>
     <div style="padding:6px 12px">Download PDF</div>
     <div style="padding:6px 12px">Download Excel</div>
@@ -185,8 +184,42 @@ Pink numbers map each element to the component it reuses (list on the right).</p
     <div style="padding:6px 12px;color:var(--red)">Delete</div>
   </div>
 </div></div>
-<div class="notes"><ol><li><span class="co">12</span><div><b>Record outcome, in the gear</b>Acts on the area tab that is open, and names it, so with Townhouse open it reads "Record outcome: Townhouse" (switch tab for Semi-D). Opens the same outcome dialog as today; "Change outcome" once recorded, same rule as before. Only for users who can edit the project, as today. Gear items besides it are unchanged; list is illustrative.<span class="ref">QuotationOutcomeDialog.tsx; gear: quotation-documents/actions.tsx useQuotationDocumentActions</span></div></li>
-<li><span class="co">15</span><div><b>Recheck alerts, Revise to vN, in the gear (v3)</b>The header's existing pattern: one primary, every secondary action behind the gear (D6, components/common/DetailActions.tsx: pager, gear, primary; DESIGN-LANGUAGE.md D6). Both name the open area and version. Same dialogs as today (ReviseQuotationDialog), same show rules.<span class="ref">QuotationVersionEditor.tsx:697-733 → gear via useQuotationDocumentActions</span></div></li></ol></div>
+<div class="notes"><ol><li><span class="co">12</span><div><b>Record outcome: not on this page (v4)</b>Owner 12:24: "it should be at project level". Removed from this page entirely; it moves to the project page's Proposals list (frame 5).</div></li>
+<li><span class="co">15</span><div><b>Recheck alerts, Revise to vN, in the gear (v3, v4 per proposal)</b>The header's existing pattern: one primary, every secondary action behind the gear (D6, components/common/DetailActions.tsx: pager, gear, primary). v4: both act on the whole proposal, matching "version is per proposal": Revise to v2 opens v2 on every area (the same sequential loop Edit uses), Recheck alerts rechecks every area's open version. Same dialogs as today (ReviseQuotationDialog), same show rules (can edit, open version, not locked for approval, no edit session).<span class="ref">QuotationVersionEditor.tsx:697-733 → gear via useQuotationDocumentActions</span></div></li></ol></div>
+</div>
+
+<h2 class="ft">2c. v4: a hint, own line, no "·" (pending manager approval, sales user)</h2>
+<div class="layout">
+<div class="frame" style="width:860px;flex:none"><div class="content">
+  <div class="rcard" style="margin-bottom:0">
+    <div class="rrow"><div class="rid"><div class="rtitle"><b>PRJQ-2026-0006</b><span class="pill" style="background:#fffbeb;color:#b45309">Pending approval</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v2 ▾</span></div>
+      <span class="rsub">test</span><span class="rsub">With a manager for approval</span><span class="co">16</span></div>
+    <div class="acts"><span class="pager">‹ 2 / 3 ›</span><span class="btn icon">⚙</span></div></div>
+  </div>
+</div></div>
+<div class="notes"><ol><li><span class="co">16</span><div><b>Hints on their own line</b>The two hints that stay ("With a manager for approval", "You can read this quotation but not change it.") sit in the identity column as their own muted line, same text-sm muted style as the subtitle, never under the buttons and never joined with "·". No view state line here because nothing has been sent yet (as today). "The customer holds this version. Edit opens the next one." is gone (Q2).<span class="ref">hints from QuotationDocumentClient.tsx:265-271 and quotationDecision.ts:92-93</span></div></li></ol></div>
+</div>
+
+<h2 class="ft">5. v4: Record outcome on the project page (Proposals tab, row menu open)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame" style="width:1000px;flex:none"><div class="content">
+  <div class="tabs"><span>Overview</span><span class="on">Proposals</span><span>Orders</span><span>Documents</span></div>
+  <div class="card" style="padding:0"><table>
+    <thead><tr><th>Our Ref</th><th>Type</th><th>Title</th><th>To</th><th class="num">Areas</th><th>Status</th><th class="num">Total (RM)</th><th>Dated</th><th></th></tr></thead>
+    <tbody>
+      <tr><td>PRJQ-2026-0005-R2</td><td>Proposal</td><td>test</td><td>1 LIVING DEPOT SDN BHD [A/C I]</td><td class="num">2</td><td><span class="pill green">Accepted</span></td><td class="num">350.00</td><td>05/11/2026</td><td><span class="btn icon" style="outline:2px solid var(--primary)">⋯</span></td></tr>
+    </tbody>
+  </table>
+  <div class="card" style="width:260px;margin:4px 0 12px 690px;padding:6px 0;box-shadow:0 10px 30px rgba(0,0,0,.12);font-size:13px">
+    <div style="padding:6px 12px">Open</div>
+    <div style="padding:6px 12px">Download PDF</div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Record outcome: Townhouse</b> <span class="co">17</span></div>
+    <div style="padding:6px 12px;background:var(--primary-soft)"><b>Record outcome: Semi-D</b></div>
+    <div style="border-top:1px solid var(--line);margin:4px 0"></div>
+    <div style="padding:6px 12px;color:var(--red)">Delete</div>
+  </div></div>
+</div></div></div>
+<div class="notes"><ol><li><span class="co">17</span><div><b>Record outcome, project level</b>The project page offers no per-area outcome today: the dialog is only on the proposal page (QuotationScopesTab.tsx:117-128, 160-166) and the unlinked per-scope page. It matters: each area's Won/Lost drives the project's own outcome and the forecast (backend project_quotation_service.py:1460 derive_project_outcome). So it moves to the project's Proposals list, in each row's ⋯ menu, one item per area ("Change outcome: Semi-D" once recorded). Same dialog (QuotationOutcomeDialog.tsx), same rule: only for users who can edit the project. The row menu is built by the same actions hook as the page's gear, but these items appear only in the list.<span class="ref">QuotationsPanel.tsx:39-65 (QuotationRowActions → useQuotationDocumentActions); other gear items in the menu illustrative</span></div></li></ol></div>
 </div>
 
 <h2 class="ft">3. After, 375 px (no sideways page scroll; the lines grid scrolls inside its card)</h2>
@@ -196,8 +229,8 @@ Pink numbers map each element to the component it reuses (list on the right).</p
   <div class="rcard" style="padding:14px 16px">
     <div class="rrow">
       <div class="rid">
-        <div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">Townhouse v1 ▾</span></div>
-        <span class="rsub">test · <u>Not viewed yet</u></span>
+        <div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="btn" style="height:24px;font-size:12px;padding:0 8px">v1 ▾</span></div>
+        <span class="rsub">test</span><span class="rsub"><u>Not viewed yet</u></span>
       </div>
       <div class="acts"><span class="pager">‹ 1 / 3 ›</span><span class="btn icon">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div>
     </div>
@@ -216,25 +249,18 @@ Pink numbers map each element to the component it reuses (list on the right).</p
 <div class="notes"><ol><li><span class="co">i</span><div><b>Wrap</b>The actions wrap under the identity at 375 (D6, same as OI). The tab strip scrolls in its own gutter, as today.</div></li></ol></div>
 </div>
 
-<h2 class="ft">4. Behaviour card v3: 5 questions, each with a recommendation (still open)</h2>
+<h2 class="ft">4. Behaviour card v4: owner answers (12:24), built as</h2>
 <div class="qa">
-  <h3>Q1. Pager: should proposals get one, over what list?</h3>
-  <p>They already have one: prev/next over this project's proposals and quotations, shown once the project has two or more (QuotationDocumentClient.tsx:350). People reach the page from the project's Proposals tab, so the project's own list is the right one, not a global list.</p>
-  <p class="rec">Recommend: keep it as is, in the OI position (left of the gear).</p>
-  <h3>Q2. Should "Edit opens the next version" survive somewhere?</h3>
-  <p>Edit sits in the gear and, on a version the customer holds, already opens a prompt naming the scopes and the version it will create (ReviseToEditDialog.tsx). A tooltip does not work on a phone.</p>
-  <p>v3: the lines block carries a twin of it too ("The customer holds v1. Edit quotation opens v2 and leaves what was sent untouched.", QuotationVersionEditor.tsx:747-751); the same answer covers both.</p>
-  <p class="rec">Recommend: drop the text everywhere, both places; the Edit prompt already says it at the moment it matters.</p>
-  <h3>Q3. Quotation: same page as proposal, or separate?</h3>
-  <p>Same page. One route serves both; only the noun changes (documentNoun, app/(protected)/project-sales/_shared/services/quotationDocumentService.ts:213; tabs QuotationDocumentTabs.tsx:32). So both change in this PR. (The older per-scope page project-sales/[projectId]/quotations/[quotationId] has no link to it in the app and is not touched.)</p>
-  <p class="rec">Recommend: one change, both get it.</p>
-  <h3>Q4. The two other hint lines under the buttons ("With a manager for approval", "You can read this quotation but not change it.")</h3>
-  <p>You struck only the "customer holds" hint. These two still matter (the first explains why there is no Send button while approval is pending).</p>
-  <p class="rec">Recommend: move them onto the subtitle line ("test · Not viewed yet · With a manager for approval"), so nothing hangs under the buttons.</p>
-  <h3>Q5. Record outcome (new in v2): where does it go now the area header row is gone in view?</h3>
-  <p>(a) In the gear, "Record outcome: &lt;open area&gt;", acting on the open area tab (frame 2b). (b) In the area tab's own menu (right-click, or the ⋯ on a phone), the way the edit form already offers Rename / Remove scope (QuotationScopeTabs.tsx). (b) is hidden on a desktop until you right-click.</p>
-  <p class="rec">Recommend: (a), the gear, because that is where every other secondary action on this page lives and it is visible on desktop and phone alike.</p>
-  <p style="margin-top:12px;color:var(--muted)">Default, not a question: Order Inquiry also switches to the shared header card (no visible change) so the two cannot drift; the ~12 other pages that copy it wait for later.</p>
+  <p><b>Q1 Pager</b> "yes should": prev/next over this project's proposals and quotations, kept as is.</p>
+  <p><b>Q2 "Edit opens the next version"</b> "ok": dropped in both places (header hint, and its twin above the lines, QuotationVersionEditor.tsx:747-751). The Edit prompt still says it.</p>
+  <p><b>Q3 Quotation</b> "same": one page, one change.</p>
+  <p><b>Q4 Hints</b> "I don't want . as delimiter": each on its own muted line (frame 2c). The title and the view state are on separate lines too, so no "·" anywhere in the card.</p>
+  <p><b>Q5 Record outcome</b> "it should be at project level": removed from this page; on the project's Proposals list row menu, per area (frame 5).</p>
+  <p><b>12:25 note</b> "should just be v1": the header chip is "v1" for the whole proposal (callout 13); Revise and Recheck alerts in the gear act on the whole proposal (callout 15).</p>
+  <p><b>v1 default</b> Order Inquiry uses the same shared header card (no visible change).</p>
+  <h3>One new question (v4)</h3>
+  <p>Where on the project page should Record outcome sit? (a) The Proposals list row ⋯ menu, one item per area (frame 5). (b) The project header's gear, opening the dialog with an area picker.</p>
+  <p class="rec">Recommend: (a), because each area belongs to one proposal and the row already carries that proposal's actions; (b) makes you pick the proposal and area from a list again.</p>
 </div>
 </div>
 </body>

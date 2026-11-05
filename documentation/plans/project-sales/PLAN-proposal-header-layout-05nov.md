@@ -1,6 +1,6 @@
 # PLAN: Proposal / quotation detail header like Order Inquiry; lines on Header tab
 
-Status: Plan (mock v3 pending owner OK; 12:20 drop area header row in view, Record outcome to gear; 12:22 version to header chip, Recheck alerts + Revise to gear). Track: small fix track (FE only, no migration, no RBAC change).
+Status: Plan (mock v4 pending owner OK: owner answered Q1-Q5 at 12:24, version chip per proposal at 12:25, Record outcome to project page). Track: small fix track (FE only, no migration, no RBAC change).
 
 Lane: PROPOSAL-HEADER-LAYOUT. Owner request 5 Nov 2026 12:20 MYT.
 
