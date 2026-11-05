@@ -983,6 +983,37 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
     expect(screen.queryByText('Partly on PO/SPO')).not.toBeInTheDocument();
   });
 
+  it('SO-LINE-OI-STATUS-UNIFY: a placed but unconfirmed line reads To order, the word the SO line now reads too', () => {
+    render(<>{stateCell(linesRow({ id: 's5', core_line_id: 'cl-s5', state: 'placed', ack_state: 'awaiting' }))}</>);
+    expect(screen.getByText('To order')).toBeInTheDocument();
+    expect(screen.queryByText('On PO/SPO')).not.toBeInTheDocument();
+  });
+
+  it('SO-LINE-OI-STATUS-UNIFY (owner Q4): a rejected line reads Rejected with its reason, a click opens the lightbox', () => {
+    render(
+      <>
+        {stateCell(
+          linesRow({
+            id: 's6',
+            core_line_id: 'cl-s6',
+            state: 'raised',
+            ack_state: 'rejected',
+            rejected_reason: 'DISCON',
+            rejected_by_name: 'Joey',
+            rejected_at: '2026-10-13T08:32:00',
+          } as never),
+        )}
+      </>,
+    );
+    const badge = screen.getByTestId('lines-rejected-s6');
+    expect(badge).toHaveTextContent(/^RejectedDISCON$/);
+    fireEvent.click(badge);
+    const dialog = screen.getByTestId('lines-rejected-s6-dialog');
+    expect(dialog).toHaveTextContent('DISCON');
+    expect(dialog).toHaveTextContent('Joey');
+    expect(dialog).toHaveTextContent(/13\/10\/2026/);
+  });
+
   it('a done line reads Done, not On PO/SPO', () => {
     render(<>{stateCell(linesRow({ id: 's3', core_line_id: 'cl-s3', state: 'placed', ack_state: 'acknowledged' }))}</>);
     expect(screen.getByText('Done')).toBeInTheDocument();

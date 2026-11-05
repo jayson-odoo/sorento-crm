@@ -2657,7 +2657,8 @@ describe('FulfilmentBoardListView: a line purchasing refused (PR 1622)', () => {
     });
     renderView({ contributions: [refused] });
     const badge = await screen.findByTestId('oi-rejected-so-1:line-10');
-    expect(badge).toHaveTextContent(/^Rejected$/);
+    // SO-LINE-OI-STATUS-UNIFY (owner Q4): the pill with its reason beside it, everywhere.
+    expect(badge).toHaveTextContent(/^RejectedSupplier discontinued this finish$/);
     expect(badge.getAttribute('title')).toMatch(
       /^Rejected by Joey on 13\/10\/2026, 2:05\s?pm: Supplier discontinued this finish$/i,
     );

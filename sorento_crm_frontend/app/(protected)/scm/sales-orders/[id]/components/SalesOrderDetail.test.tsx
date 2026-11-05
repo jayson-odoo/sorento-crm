@@ -1629,6 +1629,22 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
    * Both columns therefore state their own absence rather than inheriting the header's
    * answer, and "-" is what that absence looks like on this grid.
    */
+  function oiRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'oi-row-9',
+      order_inquiry_id: 'oi-header-1',
+      inquiry_no: 'OI-000123',
+      so_line_id: 'mirror-1',
+      qty: '10',
+      verb: 'ORDER',
+      state: 'placed',
+      ack_state: 'awaiting',
+      redirected_to_pool: false,
+      links: [{ id: 'link-1', kind: 'po', document: '202611-P0042', qty: '10', po_id: 'po-42' }],
+      ...over,
+    } as never;
+  }
+
   function planned(over: Partial<SalesOrderLine> = {}): SalesOrder {
     return so({
       lines: [
@@ -1643,6 +1659,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
           line_status: 'open',
           required_date: '2026-08-30',
           order_inquiry: { inquiry_no: 'OI-000123', state: 'placed' },
+          // SO-LINE-OI-STATUS-UNIFY: the line's OI rows, which the cell folds. The owner's
+          // CKSW015 shape: linked to a PO (`placed`) but not confirmed (`awaiting`).
+          order_inquiry_rows: [oiRow()],
           decision_revision: 2,
           ...over,
         } as SalesOrderLine,
@@ -1658,10 +1677,12 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
-    // The same pill wording the order-inquiry worklist uses, so the state word cannot mean
-    // two things on two screens. S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's
-    // pick, 22 Sep 2026): `placed` now reads "On PO/SPO", not "Linked".
-    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
+    // SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026, SO429216 CKSW015): the OI Lines tab's
+    // own status. A row linked to a PO that purchasing has not confirmed reads "To order"
+    // on both screens, never "On PO/SPO" here and "To order" there; its PO chip shows.
+    expect(within(row).getByText('To order')).toBeInTheDocument();
+    expect(within(row).queryByText('On PO/SPO')).toBeNull();
+    expect(within(row).getAllByText('202611-P0042').length).toBeGreaterThanOrEqual(1);
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
@@ -1671,14 +1692,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
    */
   it('AC-B6-2: links the Order inquiry cell to the exact row once inquiry_id/row_id are on the line', () => {
     useSalesOrder.mockReturnValue({
-      data: planned({
-        order_inquiry: {
-          inquiry_no: 'OI-000123',
-          state: 'placed',
-          inquiry_id: 'oi-header-1',
-          row_id: 'oi-row-9',
-        },
-      }),
+      data: planned(),
       isLoading: false,
       isError: false,
     });
@@ -1702,16 +1716,16 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
   it('PR 1622: shows the open refusal as a Rejected badge with who, when and why', () => {
     useSalesOrder.mockReturnValue({
       data: planned({
-        order_inquiry: {
-          inquiry_no: 'OI-000123',
-          state: 'raised',
-          inquiry_id: 'oi-header-1',
-          row_id: 'oi-row-9',
-          ack_state: 'rejected',
-          rejected_reason: 'DISCON',
-          rejected_by_name: 'Joey',
-          rejected_at: '2026-10-13T08:32:00',
-        },
+        order_inquiry_rows: [
+          oiRow({
+            state: 'raised',
+            links: [],
+            ack_state: 'rejected',
+            rejected_reason: 'DISCON',
+            rejected_by_name: 'Joey',
+            rejected_at: '2026-10-13T08:32:00',
+          }),
+        ],
       }),
       isLoading: false,
       isError: false,
@@ -1721,8 +1735,9 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
     expect(within(row).getByText('OI-000123').closest('a')).not.toBeNull();
-    const badge = within(row).getByTestId('so-line-oi-rejected-l-planned');
-    expect(badge).toHaveTextContent(/^Rejected$/);
+    const badge = within(row).getByTestId('so-line-oi-l-planned-rejected');
+    // SO-LINE-OI-STATUS-UNIFY (owner Q4): the pill and the reason beside it.
+    expect(badge).toHaveTextContent(/^RejectedDISCON$/);
     expect(badge.getAttribute('title')).toMatch(
       /^Rejected by Joey on 13\/10\/2026, 4:32\s?pm: DISCON$/i,
     );
@@ -1732,7 +1747,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
   it('PR 1622: shows the plain state word again once the refusal is answered', () => {
     useSalesOrder.mockReturnValue({
       data: planned({
-        order_inquiry: { inquiry_no: 'OI-000123', state: 'placed', ack_state: null },
+        order_inquiry_rows: [oiRow({ ack_state: null })],
       }),
       isLoading: false,
       isError: false,
@@ -1741,12 +1756,16 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     openTab('Lines');
 
     const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    expect(within(row).getByText('On PO/SPO')).toBeInTheDocument();
-    expect(within(row).queryByTestId('so-line-oi-rejected-l-planned')).toBeNull();
+    expect(within(row).getByText('To order')).toBeInTheDocument();
+    expect(within(row).queryByTestId('so-line-oi-l-planned-rejected')).toBeNull();
   });
 
   it('AC-B6-2: stays plain text - no link - while inquiry_id/row_id are not yet on the line', () => {
-    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    useSalesOrder.mockReturnValue({
+      data: planned({ order_inquiry_rows: [oiRow({ order_inquiry_id: null })] }),
+      isLoading: false,
+      isError: false,
+    });
     renderDetail();
     openTab('Lines');
 
@@ -1820,7 +1839,7 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
 
   it('prints a dash on a line nothing has been raised or decided on', () => {
     useSalesOrder.mockReturnValue({
-      data: planned({ order_inquiry: null, decision_revision: null }),
+      data: planned({ order_inquiry: null, order_inquiry_rows: null, decision_revision: null }),
       isLoading: false,
       isError: false,
     });
