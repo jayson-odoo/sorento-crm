@@ -173,3 +173,14 @@ Check order: permission -> switch (403 `ac_write_switched_off` "AutoCount quotat
 
 ### Assumed, to confirm on the hand-test SS (8114)
 PATCH body field names (`lines[].dtlKey`, `expectedLastModified`) and `document.LastModified` / `document.Details[]` key casing. The tests pin the CRM side; a mismatch is a one-line mapping fix.
+
+## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
+
+Raised by the security review: pricing the main (driver) part at the set's rate times its qty per set overstates the money when the
+main part is more than one per set (set RM100 x 2 sets, main part 2 per set -> 4 x 100 = RM400, accepted RM200).
+- The main part's unit price = set rate / its qty per set, rounded to cents.
+- If qty x that price does not equal set rate x set qty, the remainder cents go on that part: it is sent as two lines of the
+  same item, (n - 1) at the rounded price and 1 at the price that makes the total exact. Example: RM100 a set, 3 per set,
+  2 sets = 6 units: 5 x 33.33 + 1 x 33.35 = RM200.00. Only `qty` and `unitPrice` are used, so no discount semantics are assumed.
+- The other parts stay at zero. The result note says the set went as its parts (unchanged).
+- The SO draft's set split (`project_so_draft_service.py:1237`) is NOT changed in this lane; crew decides a lane after the proof note.
