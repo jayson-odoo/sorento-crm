@@ -307,8 +307,8 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
-    // Approve waits for a drawn tag; Escalate is the path that checks a blank form.
-    expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
+    // Approve is live too; its click is what checks the tag (owner, 5 Nov).
+    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
     sendToMarketing();
 
     expect(

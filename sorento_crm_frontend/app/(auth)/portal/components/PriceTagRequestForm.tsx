@@ -100,7 +100,7 @@ import {
   draftLinesPayload,
   lineNeedsTemplate,
   lineToDraft,
-  linePickProblems,
+  lineProblemsOf,
   MISSING_TAG_TEMPLATE,
   linePriceType,
   partsFromCombo,
@@ -1385,39 +1385,62 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, homePath, client]);
 
+  const hasDrawableLine = lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id));
+
   // ---- Submit (D48b: the button is live, the click explains itself) ----
   /** Everything Approve / Escalate checks before anything is sent, marked on
    *  the form (field, row, section, scroll). True when nothing is missing.
    *  Escalate runs it BEFORE its dialog opens (owner hand test 5 Nov, #2138). */
-  const readyToFinish = useCallback((): boolean => {
+  const readyToFinish = useCallback((kind: 'approve' | 'escalate' = 'approve'): boolean => {
     const { next, emptyRows } = collectProblems();
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
     const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l) ? [index] : []));
-    if (Object.keys(next).length > 0 || emptyRows.length > 0 || templateRows.length > 0) {
+    // Approve also reads the facts that stop a tag being drawn (no combo price, a discontinued
+    // part, no template, a short pick). They are found HERE, on the click, and shown on the line;
+    // Escalate is the way out of them, so it does not ask (owner, 5 Nov; same mechanism as #2138).
+    const perLine = lines.map((l, index) => {
+      const found: string[] = [];
+      if (emptyRows.includes(index)) found.push(EMPTY_LINE);
+      else if (templateRows.includes(index)) found.push(MISSING_TAG_TEMPLATE);
+      if (kind === 'approve' && !emptyRows.includes(index)) {
+        found.push(...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode));
+        if (l.code && previewState.missing.includes(l.code)) found.push('No tag template yet.');
+      }
+      return found;
+    });
+    const rowsWithProblems = perLine.filter((found) => found.length > 0).length;
+    if (Object.keys(next).length > 0 || rowsWithProblems > 0) {
       setServerMessage(null);
       setFieldErrors(next);
       setLines((prev) =>
         prev.map((l, index) => ({
           ...l,
-          guard_error: emptyRows.includes(index)
-            ? EMPTY_LINE
-            : templateRows.includes(index)
-              ? MISSING_TAG_TEMPLATE
-              : null,
+          guard_error: perLine[index].length > 0 ? perLine[index].join('\n') : null,
         })),
       );
-      openSectionForProblems(next, emptyRows.length > 0 || templateRows.length > 0);
+      openSectionForProblems(next, rowsWithProblems > 0);
       scrollToFirstProblem();
       return false;
     }
+    if (kind === 'approve') {
+      // Request-level: nothing on a line to point at, so a message and no more.
+      if (previewState.failed) {
+        toast.error('The tag preview could not be drawn.');
+        return false;
+      }
+      if (hasDrawableLine && !previewState.drawn) {
+        toast.info('Drawing the tag preview...');
+        return false;
+      }
+    }
     return !numbersInvalid();
-  }, [collectProblems, lines, openSectionForProblems, numbersInvalid]);
+  }, [collectProblems, lines, openSectionForProblems, numbersInvalid, lineEditor.linePricing, priceMode, previewState, hasDrawableLine]);
 
   const handleFinish = useCallback(async (
     action: { kind: 'approve' } | { kind: 'escalate'; note: string; neededBy: string | null },
   ) => {
-    if (!readyToFinish()) return;
+    if (!readyToFinish(action.kind)) return;
 
     // The escalation dialog owns Need by now; the form keeps the value it sent.
     const neededBy = action.kind === 'escalate' ? action.neededBy : neededByDate || null;
@@ -1458,10 +1481,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         const preview = await service().lookupTagPreviewForRequest(created.id);
         const missing = linesWithoutTemplate(created.lines, preview);
         if (missing.length > 0) {
-          throw new Error(`No tag template yet for ${missing.join(', ')}. Escalate it to marketing.`);
+          throw new Error(`No tag template yet for ${missing.join(', ')}.`);
         }
         const built = buildSelfProof(created.lines, preview);
-        if (!built) throw new Error('The tag could not be drawn. Escalate it to marketing.');
+        if (!built) throw new Error('The tag could not be drawn.');
         await service().submitAndApprove(created.id, built.doc);
         toast.success('Tag approved');
       }
@@ -1493,24 +1516,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readyToFinish, applyFieldErrors, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
-
-  const hasDrawableLine = lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id));
-
-  /** Why Approve is off on the draft form, or null when the tag can be approved. */
-  const previewBlockedReason: string | null =
-    previewState.missing.length > 0
-      ? `No tag template yet for ${previewState.missing.join(', ')}. Escalate it to marketing.`
-      : previewState.failed
-        ? 'The tag preview could not be drawn. Escalate it to marketing.'
-        : !previewState.drawn
-          ? hasDrawableLine
-            ? 'Drawing the tag preview...'
-            : ''
-          : null;
-  // AC-C5, C6, D2: short picks, a discontinued pick, an LP line with no combo list price.
-  const pickProblems = linePickProblems(lines, lineEditor.linePricing, priceMode);
-  const approveBlockedReason: string | null =
-    previewBlockedReason ?? (pickProblems.length > 0 ? pickProblems.join(' ') : null);
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
@@ -2463,32 +2468,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <Button
             variant="outline"
             onClick={() => {
-              if (readyToFinish()) setDraftEscalateOpen(true);
+              if (readyToFinish('escalate')) setDraftEscalateOpen(true);
             }}
             disabled={submitting || saving}
           >
             <Send className="size-4 mr-1" />
             Escalate to marketing
           </Button>
-          {/* A disabled button fires no hover, so the full reason sits on its wrapper
-              as the tooltip. The visible line under the buttons is gone (owner, 5 Nov):
-              each line shows its own reasons instead. */}
-          {/* Full width in the stacked phone layout like its siblings; its own
-              width from sm up (crew pass: narrower than the others at 375). */}
-          <span
-            title={approveBlockedReason ?? undefined}
-            className="flex w-full sm:inline-flex sm:w-auto"
+          {/* Live like Escalate: the click checks and says what is wrong, on the line (owner,
+              5 Nov; same mechanism as #2138). Full width in the stacked phone layout like
+              its siblings; its own width from sm up (crew pass: narrower at 375). */}
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void handleFinish({ kind: 'approve' })}
+            disabled={submitting || saving}
           >
-            <Button
-              className="w-full sm:w-auto"
-              onClick={() => void handleFinish({ kind: 'approve' })}
-              disabled={submitting || saving || approveBlockedReason !== null}
-            >
-              {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-              <Check className="size-4 mr-1" />
-              Approve
-            </Button>
-          </span>
+            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+            <Check className="size-4 mr-1" />
+            Approve
+          </Button>
         </div>
       )}
       {!reviseMode && (

@@ -318,39 +318,37 @@ describe('S5: the "lists every option" hint is only true for a template without 
 });
 
 
-describe('O4: every reason shows on its own line, in the red sub-row', () => {
+describe('O4: blocking reasons show on the line only after Approve was clicked', () => {
   // The red sub-row: the anchor sits on its first reason, the others follow in the same cell.
   const anchor = () => document.querySelector('[data-error-anchor="line:0"]')?.parentElement;
 
-  it('a short pick count, once, without the Line prefix', () => {
-    renderTable();
-    expect(anchor()).toHaveTextContent('Kitchen tap: pick 3 more.');
+  it('shows no blocking reason up front, only the live pick hint', () => {
+    renderTable({ price_type: 'list' }, [], { l1: { list_price: null, sell_price: null, candidates: [], parts_at_list: [] } });
+    expect(document.querySelector('[data-error-anchor]')).toBeNull();
+    expect(screen.queryByText(/No combo list price/)).toBeNull();
+    expect(screen.queryByText(/No tag template yet/)).toBeNull();
     expect(screen.getAllByText('Kitchen tap: pick 3 more.')).toHaveLength(1);
   });
 
-  it('a line with no tag template', () => {
-    renderTable({ tag_templates: [], tag_template_id: null });
-    expect(anchor()).toHaveTextContent('No tag template yet');
-    expect(screen.getAllByText('No tag template yet')).toHaveLength(1);
+  it('shows what the click found, one message each, in the red row', () => {
+    renderTable({ guard_error: 'No combo list price.\nNo tag template yet.' });
+    expect(anchor()).toHaveTextContent('No combo list price.');
+    expect(anchor()).toHaveTextContent('No tag template yet.');
+    expect(screen.getAllByText('No combo list price.')).toHaveLength(1);
   });
 
-  it('an LP combo line with no combo list price', () => {
-    renderTable({ price_type: 'list' }, [], { l1: { list_price: null, sell_price: null, candidates: [], parts_at_list: [] } });
-    expect(anchor()).toHaveTextContent('No combo list price. Escalate it to marketing.');
-  });
-
-  it('an SP combo line with a promotion picked and no price says to clear it, on the line and in the cell', () => {
+  it('keeps the Selling price cell hint up front while a promotion blocks the typed price', () => {
     renderTable({ price_type: 'selling', promotion_id: 'promo-1' }, [], {
       l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] },
     });
-    expect(anchor()).toHaveTextContent(
-      'No combo selling price. Clear the promotion and type the selling price, or escalate it to marketing.',
-    );
     expect(screen.getByText('Clear the promotion to type a price')).toBeInTheDocument();
+    expect(document.querySelector('[data-error-anchor]')).toBeNull();
   });
 
   it('no hint in the cell while a price can be typed', () => {
-    renderTable({ price_type: 'selling', promotion_id: null }, [], { l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] } });
+    renderTable({ price_type: 'selling', promotion_id: null }, [], {
+      l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] },
+    });
     expect(screen.queryByText('Clear the promotion to type a price')).toBeNull();
   });
 });

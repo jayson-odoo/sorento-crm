@@ -261,17 +261,39 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     expect(toasts.success).toHaveBeenCalledWith('Tag approved');
   });
 
-  it('with an item that has no template, Approve is off and the reason is its tooltip only (owner, 5 Nov)', async () => {
+  it('with an item that has no template, Approve stays clickable; the click says so on the line and sends nothing (owner, 5 Nov)', async () => {
     previewReport.missing = ['CBF-1234'];
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
 
     const approve = screen.getByRole('button', { name: /^approve$/i });
-    expect(approve).toBeDisabled();
-    const reason = 'No tag template yet for CBF-1234. Escalate it to marketing.';
+    expect(approve).toBeEnabled();
+    expect(approve.parentElement).not.toHaveAttribute('title');
+    // Nothing is said until the click.
+    expect(document.querySelector('[data-error-anchor]')).toBeNull();
+
+    fireEvent.click(approve);
+
+    const anchor = await waitFor(() => {
+      const found = document.querySelector('[data-error-anchor="line:0"]');
+      expect(found).not.toBeNull();
+      return found as Element;
+    });
+    expect(anchor).toHaveTextContent('No tag template yet.');
+    expect(anchor.textContent).not.toMatch(/escalate/i);
     expect(screen.queryByTestId('approve-blocked')).toBeNull();
-    expect(screen.queryByText(reason)).toBeNull();
-    expect(approve.parentElement).toHaveAttribute('title', reason);
+    expect(submitAndApprove).not.toHaveBeenCalled();
+  });
+
+  it('Escalate does not ask for the facts Approve needs: it is the way out of them', async () => {
+    previewReport.missing = ['CBF-1234'];
+    render(<PriceTagRequestForm />);
+    await fillMinimalRequiredFields();
+
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+
+    expect(await screen.findByLabelText('What marketing needs to fix')).toBeInTheDocument();
+    expect(document.querySelector('[data-error-anchor]')).toBeNull();
   });
 
   it('Escalate sends the draft to marketing with the note in one call', async () => {
