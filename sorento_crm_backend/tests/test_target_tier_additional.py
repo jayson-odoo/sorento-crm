@@ -317,7 +317,16 @@ def test_fold_script_reports_a_craft_old_and_new_then_applies(api):
     assert (q1["old_commission"], q1["new_commission"], q1["delta"]) == (D("6143.52"), D("5375.58"), D("-767.94"))
     assert (q2["old_commission"], q2["new_commission"], q2["delta"]) == (D("3090.25"), D("3090.25"), D("0"))
 
-    assert script.apply(db, [entry]) == 3
+    # The count guard: no --expect, or a count that is not the dry run's, writes nothing.
+    import pytest
+
+    for wrong in (None, 2, 4):
+        with pytest.raises(script.ExpectMismatch):
+            script.apply(db, [entry], wrong)
+    db.expire_all()
+    still = client.get(f"{BASE}/{body['id']}").json()
+    assert sum(1 for t in still["tiers"] if t["is_additional"]) == 3
+    assert script.apply(db, [entry], 3) == 3
     db.expire_all()
     after = client.get(f"{BASE}/{body['id']}").json()
     q1_tiers = [t for t in after["tiers"] if t["period_start"] == "2026-01-01"]

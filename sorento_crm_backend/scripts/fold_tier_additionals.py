@@ -7,7 +7,10 @@ script moves each "+ Additional" row onto the main tier of the same period and t
 a Bonus, each period's commission and bonus before and after.
 
     python scripts/fold_tier_additionals.py            # dry run: report only, writes nothing
-    python scripts/fold_tier_additionals.py --apply    # owner-approved: write the fold
+    python scripts/fold_tier_additionals.py --apply --expect N   # owner-approved: write the fold
+
+`--apply` needs `--expect N`, the fold count the dry run printed; it writes nothing when the count
+found now differs (the data moved since the dry run the owner approved).
 
 "Before" is what the CRM paid until this lane: every reached "+ Additional" row stacked and every
 reached tier's Bonus added up. "After" is this lane's engine on the folded tiers. A row the fold
@@ -20,7 +23,7 @@ import argparse
 import os
 import sys
 from decimal import Decimal
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -135,9 +138,19 @@ def report(db) -> List[dict]:
     return out
 
 
-def apply(db, entries: List[dict]) -> int:
+class ExpectMismatch(RuntimeError):
+    """`--apply` found a different number of rows to fold than `--expect` names."""
+
+
+def apply(db, entries: List[dict], expect: Optional[int]) -> int:
     """Write the fold: each main tier takes its % Additional, each folded row is deleted (its
-    per-account rates go with it, ON DELETE CASCADE). Returns the rows folded."""
+    per-account rates go with it, ON DELETE CASCADE). Returns the rows folded. Refuses, writing
+    nothing, unless `expect` is the number of rows the fold moves now."""
+    found = sum(len(e["moves"]) for e in entries)
+    if expect is None or expect != found:
+        raise ExpectMismatch(
+            f"--expect {expect} but {found} rows would be folded now; re-run the dry run and pass its count"
+        )
     from app.models.base import get_company_scope, set_company_scope
     from app.models.sales import SalesTargetCommissionTier
 
@@ -180,6 +193,7 @@ def _print(entries: List[dict]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--apply", action="store_true", help="write the fold (owner-approved); omit for a dry run")
+    ap.add_argument("--expect", type=int, help="with --apply: the fold count the dry run printed")
     args = ap.parse_args()
 
     from app.database import SessionLocal
@@ -188,11 +202,17 @@ def main() -> int:
     try:
         entries = report(db)
         _print(entries)
+        moved = sum(len(e["moves"]) for e in entries)
         if not args.apply:
             db.rollback()
-            print("\nDry run: nothing written. Re-run with --apply once the owner approves.")
+            print(f"\nDry run: nothing written. Once the owner approves: --apply --expect {moved}")
             return 0
-        folded = apply(db, entries)
+        try:
+            folded = apply(db, entries, args.expect)
+        except ExpectMismatch as exc:
+            db.rollback()
+            print(f"\nNot applied: {exc}")
+            return 2
         db.commit()
         print(f"\nApplied: {folded} rows folded.")
         return 0
