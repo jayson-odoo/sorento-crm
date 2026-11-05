@@ -161,6 +161,7 @@ const hooks = vi.hoisted(() => ({
 vi.mock('../hooks/useSalesTargets', () => hooks);
 
 const duplicate = vi.hoisted(() => vi.fn());
+const actionsOverride = vi.hoisted(() => ({ pending: null as React.ReactNode }));
 vi.mock('../actions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../actions')>()),
   useSalesTargetActions: () => ({
@@ -169,7 +170,7 @@ vi.mock('../actions', async (importOriginal) => ({
       { key: 'sales_target.delete', label: 'Delete target', kind: 'destructive', run: vi.fn() },
     ],
     dialogs: null,
-    pending: null,
+    pending: actionsOverride.pending,
   }),
 }));
 
@@ -227,6 +228,7 @@ function tabNames() {
 }
 
 beforeEach(() => {
+  actionsOverride.pending = null;
   router.push.mockReset();
   perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit', 'sales.targets.delete']);
   for (const m of [create, patchHeader, patchPeriod, addChild]) {
@@ -343,17 +345,36 @@ describe('TargetRecord: create (F4)', () => {
 });
 
 describe('TargetRecord: view and edit (F4, F5)', () => {
-  it('heads the record, then tabs Details, Periods, Commission; Edit and Duplicate in the gear', () => {
+  it('heads the record, then tabs Details, Periods, Commission; Edit the primary, Duplicate in the gear', () => {
     render(<TargetRecord id="t1" />);
     const header = screen.getByTestId('record-header');
     expect(within(header).getByText('TGT-000001')).toBeTruthy();
     expect(within(header).getByRole('heading', { name: 'Ali Q4 basins' })).toBeTruthy();
     expect(tabNames()).toEqual(['Details', 'Periods', 'Commission']);
     const gear = screen.getByTestId('gear');
-    expect(within(gear).getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(within(gear).getByRole('button', { name: 'Duplicate' })).toBeTruthy();
+    expect(within(gear).queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  // TARGET-EDIT-CTA (owner, 5 Nov: "edit should be the CTA here").
+  it('shows Edit as the primary button in the action group, outside the gear, and it opens edit mode', () => {
+    render(<TargetRecord id="t1" />);
+    const group = screen.getByTestId('detail-actions');
+    const edit = within(group).getByRole('button', { name: 'Edit' });
+    expect(screen.getByTestId('gear').contains(edit)).toBe(false);
+    fireEvent.click(edit);
+    expect(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' })).toBeTruthy();
+    expect(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(screen.getByLabelText('Name')).toBeTruthy();
+  });
+
+  it('gives the primary slot back to the delete countdown: no Edit while a delete is pending', () => {
+    actionsOverride.pending = <span data-testid="countdown">Deleting</span>;
+    render(<TargetRecord id="t1" />);
+    expect(screen.getByTestId('countdown')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
   it('shows the picked products by code and name in read mode, never an id (F5)', () => {
@@ -365,14 +386,14 @@ describe('TargetRecord: view and edit (F4, F5)', () => {
 
   it('keeps the picked products named in edit mode, never an id (F5)', () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByTestId('chip').textContent).toBe('BSN-001 - Countertop basin');
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
   it('edits in place in the same tabs and saves only what changed', async () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(tabNames()).toEqual(['Details', 'Periods', 'Commission']);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ali Q4 all basins' } });
     fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'brands' } });
@@ -391,7 +412,7 @@ describe('TargetRecord: view and edit (F4, F5)', () => {
 
   it('refuses to save an edit whose range lost an end, in plain words (F6)', () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('End date'), { target: { value: '' } });
     expect(screen.getByText('Pick both a start date and an end date.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -450,7 +471,7 @@ function teamTarget(over: Record<string, unknown> = {}) {
 }
 
 function openEdit() {
-  fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 }
 
 describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
@@ -869,7 +890,7 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
 describe('TargetRecord: the one engine on an agent target', () => {
   it('an agent target offers Threshold in, Round to and own tiers per period, and sends them', async () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     openTab('Commission');
     fireEvent.click(screen.getByRole('button', { name: /Add tier/ }));
     fireEvent.change(screen.getByLabelText('Threshold in'), { target: { value: 'amount' } });
