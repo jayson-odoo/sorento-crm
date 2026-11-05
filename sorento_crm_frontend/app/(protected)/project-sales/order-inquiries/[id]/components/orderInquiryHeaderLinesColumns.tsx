@@ -684,6 +684,10 @@ export function useOrderInquiryHeaderLinesColumns({
           const primary = line.primary;
           // SO-LINE-OI-STATUS-UNIFY: the ONE line status, shared with the Sales Order's
           // Lines tab (`OrderInquiryLineStatusPill`).
+          // Review S1: a rejected line's reason truncates inside the cell, so the
+          // History, paperclip and reserve icons beside it stay in reach.
+          const pillWrap =
+            primary.ack_state === 'rejected' ? 'flex min-w-0 shrink' : 'shrink-0';
           const pill = (
             <OrderInquiryLineStatusPill
               line={line}
@@ -720,7 +724,7 @@ export function useOrderInquiryHeaderLinesColumns({
           if (!canReserve || line.liveRows.length === 0) {
             return (
               <div className="flex min-w-0 items-center gap-1">
-                <span className="shrink-0">{pill}</span>
+                <span className={pillWrap}>{pill}</span>
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -735,7 +739,7 @@ export function useOrderInquiryHeaderLinesColumns({
           }
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <span className="shrink-0">{pill}</span>
+              <span className={pillWrap}>{pill}</span>
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton

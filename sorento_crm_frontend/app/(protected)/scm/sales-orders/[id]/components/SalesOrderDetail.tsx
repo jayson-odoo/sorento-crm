@@ -83,7 +83,7 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
-import { SoLineOrderInquiryCell } from './SoLineOrderInquiryCell';
+import { SoLineOrderInquiryCell, soLineInquiryEntries } from './SoLineOrderInquiryCell';
 import {
   DeliveriesLoadError,
   DeliveriesTable,
@@ -1354,7 +1354,8 @@ export function SalesOrderDetail({
       },
       {
         id: 'order_inquiry',
-        accessorFn: (row) => row.order_inquiry_rows?.[row.order_inquiry_rows.length - 1]?.inquiry_no ?? '',
+        // Sorts on the OI number the cell shows (the newest OI with a live row).
+        accessorFn: (row) => soLineInquiryEntries(row.order_inquiry_rows)[0]?.inquiryNo ?? '',
         header: ({ column }) => (
           <DataGridColumnHeader title="Order inquiry" column={column} />
         ),

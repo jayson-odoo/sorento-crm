@@ -190,6 +190,30 @@ def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
     return [col.desc().nullslast(), SalesOrder.id.desc()]
 
 
+#: SO-LINE-OI-STATUS-UNIFY review S2: worklist row fields the SO line's Order inquiry cell
+#: never reads (notes, raise trail, suggestions, splits, the bundle narrative).
+_SO_LINE_OI_ROW_DROPPED = (
+    "note",
+    "raise_history",
+    "raise_event_kind",
+    "raise_event_by_name",
+    "raise_event_at",
+    "raised_by_name",
+    "suggested_links",
+    "splits",
+    "split_view",
+    "bundled_host_changes",
+    "previous_qty",
+    "previous_delivery_date",
+    "previous_item_code",
+    "project_customer",
+    "customer_name",
+    "project_title",
+    "agent_code",
+    "agent_label",
+)
+
+
 @dataclass
 class _LineUpsertResult:
     """`_upsert_lines`'s own before/after state, for `_propagate_planning_change` to diff
@@ -804,6 +828,11 @@ class SalesOrderService:
         out: dict[str, list[dict]] = {}
         for raw in page["data"]:
             row = OrderInquiryWorklistRow.model_validate(raw).model_dump(mode="json")
+            # Review S2: the SO read is gated on SCM view, not the OI worklist's own
+            # permission, so it carries only what the fold, the pill and the chips read;
+            # the purchasing-side narrative stays on the OI page.
+            for key in _SO_LINE_OI_ROW_DROPPED:
+                row.pop(key, None)
             core_id = core_by_row.get(str(row["id"]))
             if core_id:
                 out.setdefault(core_id, []).append(row)

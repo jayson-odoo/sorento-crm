@@ -1,6 +1,6 @@
 # PLAN: SO line Order inquiry status unified with the OI row (SO-LINE-OI-STATUS-UNIFY)
 
-Status: Plan (diagnosis done, waiting on owner answers to the short card). Track: small fix track expected (no migration, no auth change).
+Status: implemented, waiting on owner hand test (PR #2187). Track: small fix track (no migration, no permission change). The SO detail, gated on SCM view, now carries a trimmed copy of each line's OI rows; see review S2 below.
 
 ## Owner ask (5 Nov 2026, ~11:05 MYT)
 
@@ -59,7 +59,23 @@ WHERE oi.inquiry_no = 'OI-2611-0048'
 ORDER BY r.item_code, r.created_at;
 ```
 
-## Build (pending owner answers)
+## Owner answers (5 Nov ~11:10 MYT)
+
+Q1 (a) OI words; Q2 (a) the OI page's own PO / SPO chips with their click; Q3 (a) `ReserveText`;
+Q4 Rejected pill + reason, click opens a lightbox, ONE shared component on SO and OI; Q5 (a) one
+group per OI, one row, extra OIs behind "+N".
+
+## Built
+
+- BE `sales_order_service._line_inquiry_rows`: `order_inquiry_rows` per SO line, from
+  `OrderInquiryWorklistService.list_rows(include_cancelled=True, row_ids=...)`, minus the
+  narrative fields the cell never reads (review S2, `_SO_LINE_OI_ROW_DROPPED`).
+  `order_inquiry` stays on the payload for API readers.
+- FE `OrderInquiryLineStatusPill` (shared), `OrderInquiryLineDocuments.tsx` (chips moved out of
+  the OI columns file), `OrderInquiryRejectedBadge` (pill + reason, Dialog), and
+  `SoLineOrderInquiryCell`.
+
+## Design note (pre-answer)
 
 One shared FE function for "the status of a sales order line's OI rows" (the fold's
 `foldInquiryLines` + the State cell's pill choice, lifted out of
