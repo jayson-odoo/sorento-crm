@@ -188,3 +188,42 @@ def test_build_mixed_quotation_prices_the_set_by_the_rule_and_the_normal_line_as
         assert by_product[other.id].amount == D("0")
         assert (by_product[plain.id].qty, by_product[plain.id].unit_price) == (D("3"), D("12.5"))
         assert _money(lines) == D("237.50")
+
+
+def test_build_rate_only_set_line_splits_by_the_same_rule():
+    """A rate-only set line has no committed quantity: the PO's qty x the rate is the money."""
+    with blank_session() as db:
+        env = _env(db)
+        product_set, driver, other = _driver_set(db, env, "2")
+        quoted = _set_line(db, env, product_set, unit_price="100.00", quantity="1", is_rate_only=True)
+        assert quoted.is_rate_only is True
+        po, schedule_version = _so_chain(db, env, product_set, po_qty="3")
+        from app.services.project_so_draft_service import ProjectSODraftService
+
+        lines = _drafted_lines(db, ProjectSODraftService(db).build(po.id, schedule_version.id))
+
+        by_product = {line.product_id: line for line in lines}
+        assert (by_product[driver.id].qty, by_product[driver.id].unit_price) == (D("6"), D("50"))
+        assert by_product[other.id].amount == D("0")
+        assert _money(lines) == D("300.00")
+
+
+def test_build_prices_from_the_pos_quotation_version_even_when_it_was_never_issued():
+    """The draft reads `po.quotation_version_id` (project_so_draft_service.py `_quotation_version`),
+    which need not be an accepted issue: the fixture's version is a plain, never-issued one."""
+    from app.models.projects import ProjectQuotationIssueScope
+
+    with blank_session() as db:
+        env = _env(db)
+        assert (
+            db.query(ProjectQuotationIssueScope)
+            .filter(ProjectQuotationIssueScope.version_id == env["version"].id)
+            .count()
+            == 0
+        )
+        product_set, driver, _other = _driver_set(db, env, "4")
+        _po, lines = _build(db, env, product_set, rate="10.00", sets="3")
+
+        driver_lines = [line for line in lines if line.product_id == driver.id]
+        assert [(line.qty, line.unit_price) for line in driver_lines] == [(D("12"), D("2.5"))]
+        assert _money(lines) == D("30.00")
