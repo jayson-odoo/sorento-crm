@@ -1391,7 +1391,9 @@ class DocumentIngestService(MasterRefResolver):
         # `model_fields_set` presence check has to happen here. An omitted `line_number`
         # on a re-push must leave a stored `line_no` alone - proven by an explicit `null`,
         # which DOES clear, since `model_fields_set` is presence, not truthiness.
-        if spec.entity_type == "sales_orders" and "line_number" in line.model_fields_set:
+        if spec.entity_type in ("sales_orders", "purchase_orders") and "line_number" in line.model_fields_set:
+            # AC-LINK-CRM-UI: a purchase-order line keeps it too (`purchase_order_lines.line_no`),
+            # so the PO picker numbers lines as AutoCount does.
             values["line_no"] = line.line_number
         # V5 (AutoCount linkage widen, B2 review fix - uniform on both line
         # tables): raw pass-through onto `purchase_order_lines` - see the
