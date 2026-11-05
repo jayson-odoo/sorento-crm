@@ -33,25 +33,30 @@ if [ $# -gt 0 ]; then
   exec "$@"
 fi
 
-# Run migrations before serving. Alembic uses `alembic_version` + an advisory
-# lock, so concurrent blue/green starts are safe (the loser no-ops). Failure
-# here aborts the container start → healthcheck fails → blue/green swap aborts
-# → old color keeps serving. Set SKIP_MIGRATIONS=1 to bypass when manually
-# managing migrations (e.g. expand-contract two-phase rollouts).
+# Migrations. A prod release runs `alembic upgrade head` as its own step BEFORE this container
+# starts (DEPLOY-MIGRATE-STEP, scripts/blue_green_deploy.sh) and starts the colour with
+# SKIP_MIGRATIONS=1, so the health wait never includes a migration and a stop can never let
+# one commit after the release was reported failed. Dev, tests, CI and any box whose compose
+# does not pass SKIP_MIGRATIONS through still migrate here (a no-op after the deploy step).
+# Rollback also sets SKIP_MIGRATIONS=1: the older image's alembic does not know the newer head.
 if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
   echo "Running database migrations..."
   alembic upgrade head
-  # GOODSCHAIN-INDEX-QUERY: retry any index a migration let the deploy skip when its build
-  # timed out (app/utils/online_index.py). In the background so it never delays the health
-  # check; a no-op once the indexes are VALID; it never exits non-zero.
-  python -m scripts.ensure_goods_chain_indexes &
-  # POLH-BACKFILL-ASYNC: the PO line "first seen" history rows, out of the migration (it kept the
-  # 5 Nov deploy unhealthy past the 240 s wait). One commit per batch, resumable, advisory-locked;
-  # inserts nothing once every linked line is seeded; never exits non-zero.
-  python -m scripts.backfill_po_link_seen &
 else
-  echo "SKIP_MIGRATIONS=1; skipping alembic upgrade head"
+  echo "SKIP_MIGRATIONS=1; skipping alembic upgrade head (the deploy's migrate step owns it)"
 fi
+
+# Post-start jobs, on EVERY start whatever SKIP_MIGRATIONS says (in prod it is always 1 now).
+# Both are in the background so they never delay the health check, both are idempotent, and
+# neither ever exits non-zero.
+# GOODSCHAIN-INDEX-QUERY: retry any index a migration let the deploy skip when its build timed
+# out (app/utils/online_index.py); a no-op once the indexes are VALID.
+python -m scripts.ensure_goods_chain_indexes &
+# POLH-BACKFILL-ASYNC: the PO line "first seen" history rows, out of the migration (it kept the
+# 5 Nov deploy unhealthy past the 240 s wait). One commit per batch, resumable, advisory-locked;
+# skips every line that already has a seen/change event (the old inline migration's rows
+# included), so it inserts nothing once every linked line is seeded.
+python -m scripts.backfill_po_link_seen &
 
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8000}"

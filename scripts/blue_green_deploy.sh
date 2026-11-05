@@ -18,10 +18,16 @@
 # Guards (HA-MEM-DEPLOY-GUARD, documentation/runbooks/memory-and-deploy-guards.md):
 #   - memory: refuse to start the new colour when MemAvailable is below
 #     DEPLOY_MIN_AVAILABLE_MB (default 4500), so the overlap cannot OOM the box (10 Sep).
-#   - snapshot: pg_dump of the database before the new colour runs `alembic upgrade`;
+#   - snapshot: pg_dump of the database before the migrate step runs `alembic upgrade`;
 #     no snapshot, no migration. Kept SNAPSHOT_KEEP_MINUTES (default 48 h). Skipped only
 #     when the database is provably at the new image's alembic head already (nothing to
 #     migrate); any doubt takes the snapshot (DEPLOY-SKIP-SNAPSHOT, 3 Nov).
+#   - migrate step (DEPLOY-MIGRATE-STEP, 5 Nov): `alembic upgrade head` runs in a one-off
+#     container of the NEW image, under MIGRATE_TIMEOUT_SECONDS (default 20 min), BEFORE the new
+#     colour starts; the colour then starts with SKIP_MIGRATIONS=1, so the health wait never
+#     includes a migration. A failed or timed-out step stops the deploy with nothing started and
+#     says whether the database is at the old head or the new one. SKIP_MIGRATIONS=1 in the
+#     caller's env (rollback.yml) skips the step.
 #   - postgres: fail the deploy when the db container restarted, or Postgres crash-recovered
 #     (a killed backend makes the postmaster reinitialize WITHOUT a container restart), at
 #     any point during the deploy.
@@ -70,10 +76,12 @@ case "${COMPOSE_FILE:-}" in *compose.ha.yml*) HA_MODE=1 ;; esac
 # shellcheck disable=SC2016
 if [ "$HA_MODE" = 1 ]; then
   ALEMBIC_CMD='psql -U postgres -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  QUERY_CMD='psql -U postgres -d "$DUMP_DB" -Atc "$Q"'
   VERSIONS_CMD='psql -U postgres -d "$DUMP_DB" -Atc "select version_num from public.alembic_version"'
   DUMP_CMD='pg_dump -U postgres -d "$DUMP_DB" -Fc'
 else
   ALEMBIC_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  QUERY_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "$Q"'
   VERSIONS_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select version_num from public.alembic_version"'
   DUMP_CMD='pg_dump -U "$POSTGRES_USER" -d "$DUMP_DB" -Fc'
 fi
@@ -100,7 +108,11 @@ SNAPSHOT_DIR="${SNAPSHOT_DIR:-backups/pre-migrate}"
 SNAPSHOT_KEEP_MINUTES="${SNAPSHOT_KEEP_MINUTES:-2880}"   # 48 h
 # Free space the dump may not eat into: Postgres PANICs when its own disk fills (lesson 95).
 SNAPSHOT_MIN_FREE_MB="${SNAPSHOT_MIN_FREE_MB:-10240}"
-NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB"
+# The migrate step's own limit, separate from the health wait (DEPLOY-MIGRATE-STEP).
+MIGRATE_TIMEOUT_SECONDS="${MIGRATE_TIMEOUT_SECONDS:-1200}"   # 20 min
+# Marks the step's Postgres session(s) (libpq reads PGAPPNAME), so a timeout can end them.
+MIGRATE_APP_NAME="sorento_deploy_migrate"
+NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MINUTES SNAPSHOT_MIN_FREE_MB MIGRATE_TIMEOUT_SECONDS"
 
 ACTIVE=$(cat .active_color 2>/dev/null || echo blue)
 if [ "$ACTIVE" = "blue" ]; then
@@ -211,13 +223,19 @@ image_heads() {
 # Returns 0 only when the database is provably at the new image's head(s): nothing for
 # `alembic upgrade head` to run, so there is nothing a snapshot would protect. Any failure
 # or doubt returns 1 and the caller takes the snapshot (fail safe).
+# Also records IMAGE_HEADS and START_REVS (space-separated, empty when unreadable) for the
+# migrate step's report.
+IMAGE_HEADS=""
+START_REVS=""
 no_pending_migrations() {
   local heads current
-  if ! heads=$(image_heads); then
+  if heads=$(image_heads); then IMAGE_HEADS=${heads//$'\n'/ }; fi
+  if current=$(db_revisions) && [ -n "$current" ]; then START_REVS=${current//$'\n'/ }; fi
+  if [ -z "$IMAGE_HEADS" ]; then
     echo "    migration check: could not read alembic heads from backend_${NEW}; taking the snapshot"
     return 1
   fi
-  if ! current=$(db_revisions) || [ -z "$current" ]; then
+  if [ -z "$START_REVS" ]; then
     echo "    migration check: could not read public.alembic_version in '${DB_NAME}'; taking the snapshot"
     return 1
   fi
@@ -476,6 +494,135 @@ take_snapshot() {
   echo "    snapshot: ${file} of ${DB_NAME} ($(du -h "$file" | cut -f1))"
 }
 
+# --- migrate step (DEPLOY-MIGRATE-STEP) -------------------------------------------
+# 5 Nov: start.sh ran `alembic upgrade head` inside the new colour, the health wait gave up at
+# 240 s, and the `stop -t 160` that followed let the upgrade finish and COMMIT: the release
+# was reported failed while prod was on the new schema under old code for ~7 h.
+
+# One SQL query against the app's database inside the db container, as the admin user.
+db_query() {
+  local as_user=()
+  if [ "$HA_MODE" = 1 ]; then as_user=(-u postgres); fi
+  docker compose exec -T ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" -e Q="$1" "$DB_SERVICE" \
+    sh -c "$QUERY_CMD" 2>/dev/null
+}
+
+# The revision(s) in alembic_version, space-separated, or "unknown".
+schema_rev() {
+  local r
+  if r=$(db_revisions) && [ -n "$r" ]; then echo "${r//$'\n'/ }"; else echo unknown; fi
+}
+
+# A timed-out step: its client is gone, but Postgres keeps running the current statement (and
+# holding its locks) until it next talks to the client. Terminate the step's session(s) so the
+# open transaction rolls back now, then wait for them to be gone before reading the schema.
+end_migrate_sessions() {
+  local q="pg_stat_activity where application_name = '${MIGRATE_APP_NAME}' and pid <> pg_backend_pid()"
+  local n i=0
+  n=$(db_query "select count(pg_terminate_backend(pid)) from ${q}" || echo "?")
+  echo "    migrate step: terminated ${n:-?} Postgres session(s) named ${MIGRATE_APP_NAME}"
+  while [ $i -lt 30 ]; do
+    n=$(db_query "select count(*) from ${q}" || echo "?")
+    if [ "$n" = 0 ]; then return 0; fi
+    sleep "$TICK_SECONDS"
+    i=$((i + 1))
+  done
+  echo "    migrate step: WARNING: ${n:-?} session(s) named ${MIGRATE_APP_NAME} still open after $((30 * TICK_SECONDS))s"
+}
+
+# Says where the schema is after a failed step: old head, new head, or neither.
+report_schema_after_failure() {
+  local now=$1
+  if [ "$now" != unknown ] && [ "$now" = "$START_REVS" ] && [ "$now" = "$IMAGE_HEADS" ]; then
+    echo "    Database is at ${now}, which was already the image head before the step (nothing was pending)."
+  elif [ "$now" != unknown ] && [ "$now" = "$START_REVS" ]; then
+    echo "    Database is at the OLD head ${now}: nothing was committed."
+  elif [ "$now" != unknown ] && [ "$now" = "$IMAGE_HEADS" ]; then
+    echo "    Database is at the NEW head ${now}: the migration COMMITTED. ${ACTIVE} (old code) is serving on the new schema."
+  else
+    echo "    Database is at ${now}: neither the old head (${START_REVS:-unknown}) nor the new head (${IMAGE_HEADS:-unknown}). Check alembic_version and the snapshot by hand."
+  fi
+  echo "    ${NEW} was not started and nginx was not swapped; ${ACTIVE} keeps serving."
+}
+
+# Set while the step's container may be running: a signal to this script (the SSH session
+# cut, a cancelled run) removes it and ends its sessions instead of leaving it to commit after
+# the release was already reported failed (the 5 Nov shape).
+MIGRATE_RUNNING=""
+on_signal_during_migrate() {
+  trap - HUP INT TERM
+  echo "ERROR: deploy interrupted during the migrate step; removing ${MIGRATE_RUNNING}"
+  pkill -TERM -P "$MIGRATE_PID" 2>/dev/null || true
+  kill -TERM "$MIGRATE_PID" 2>/dev/null || true
+  docker rm -f "$MIGRATE_RUNNING" >/dev/null 2>&1 || true
+  end_migrate_sessions
+  report_schema_after_failure "$(schema_rev)"
+  exit 1
+}
+
+# Runs `alembic upgrade head` in a one-off container of the NEW image under its own timeout.
+# Sets SCHEMA_REV on success; on failure or timeout reports the schema and exits 1.
+MIGRATE_PID=""
+migrate_step() {
+  local name="sorento_migrate_${NEW}" pid rc=0 started secs timed_out=0 now
+  START_REVS=$(schema_rev); if [ "$START_REVS" = unknown ]; then START_REVS=""; fi
+  echo "    migrate step: start revision ${START_REVS:-unknown}, image head ${IMAGE_HEADS:-unknown}, timeout ${MIGRATE_TIMEOUT_SECONDS}s"
+  docker rm -f "$name" >/dev/null 2>&1 || true   # a leftover of an earlier killed run
+  started=$SECONDS
+  # --entrypoint skips start.sh; --no-deps starts nothing else; no ports are published.
+  docker compose --profile "$NEW" run --rm --no-deps -T --name "$name" \
+    -e PGAPPNAME="$MIGRATE_APP_NAME" --entrypoint alembic "backend_${NEW}" upgrade head &
+  pid=$!
+  MIGRATE_PID=$pid; MIGRATE_RUNNING=$name
+  trap on_signal_during_migrate HUP INT TERM
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ $((SECONDS - started)) -ge "$MIGRATE_TIMEOUT_SECONDS" ]; then timed_out=1; break; fi
+    sleep 1
+  done
+  if [ "$timed_out" = 1 ]; then
+    trap - HUP INT TERM
+    MIGRATE_RUNNING=""
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+    docker rm -f "$name" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+    secs=$((SECONDS - started))
+    echo "ERROR: migrate step timed out after ${secs}s (MIGRATE_TIMEOUT_SECONDS=${MIGRATE_TIMEOUT_SECONDS}); killed container ${name}"
+    end_migrate_sessions
+    now=$(schema_rev)
+    echo "    migrate step: ${START_REVS:-unknown} -> ${now} in ${secs}s (timed out, rolled back unless the report below says otherwise)"
+    report_schema_after_failure "$now"
+    exit 1
+  fi
+  if wait "$pid"; then rc=0; else rc=$?; fi
+  trap - HUP INT TERM
+  MIGRATE_RUNNING=""
+  secs=$((SECONDS - started))
+  now=$(schema_rev)
+  echo "    migrate step: ${START_REVS:-unknown} -> ${now} in ${secs}s (alembic exit ${rc})"
+  if [ "$rc" != 0 ]; then
+    echo "ERROR: migrate step failed (alembic exit ${rc}) after ${secs}s"
+    report_schema_after_failure "$now"
+    exit 1
+  fi
+  # alembic's exit 0 is the authority; a revision we can read and that is not the head is a
+  # contradiction, so fail closed on it. An unreadable one is only logged.
+  if [ "$now" = unknown ]; then
+    echo "    migrate step: WARNING: alembic_version unreadable after the step; trusting alembic's exit 0"
+  elif [ -n "$IMAGE_HEADS" ] && [ "$now" != "$IMAGE_HEADS" ]; then
+    echo "ERROR: migrate step exited 0 but the database is at ${now}, not the image head ${IMAGE_HEADS}"
+    report_schema_after_failure "$now"
+    exit 1
+  fi
+  SCHEMA_REV=$now
+}
+
+# The tail of every abort after the new colour was started: where the schema is, who serves.
+SCHEMA_REV=""
+schema_note() {
+  echo "    schema at ${SCHEMA_REV:-unknown}, old code still serving (${OLD}; nginx was never swapped)"
+}
+
 echo "==> Active=${ACTIVE} New=${NEW} IMAGE_TAG=${IMAGE_TAG}"
 
 # HA preflight (also run by --preflight): fail loudly, before anything is pulled, stopped or
@@ -512,7 +659,7 @@ docker compose pull worker worker_fast
 echo "==> Memory guard"
 check_memory
 
-# 1c. Snapshot before anything can migrate (start.sh runs `alembic upgrade head`). A release
+# 1c. Snapshot before anything can migrate (the migrate step, 1e). A release
 #     with no new migration has nothing to protect, and the dump is the slowest step (10+
 #     minutes on 3 Nov), so it is skipped only when the database is provably at the new
 #     image's head; any doubt takes it exactly as before.
@@ -526,14 +673,32 @@ fi
 # 1d. Memory again, right before the overlap starts: the dump took time.
 check_memory
 
-# 2. Bring up new color. start.sh runs `alembic upgrade head` before gunicorn
-#    so the new container only goes healthy after schema is at HEAD. If alembic
-#    fails the container exits → healthcheck fails → this script aborts at
-#    step 3 and OLD color keeps serving traffic. Set SKIP_MIGRATIONS=1 in
-#    backend env for manual two-phase (expand-contract) rollouts.
+# 1e. Migrate, as its own step, before the new colour exists. Its result decides the deploy.
+#     SKIP_MIGRATIONS=1 from the caller (rollback.yml: the older image's alembic does not know
+#     the newer head) skips it and leaves the schema as it is.
+if [ "${SKIP_MIGRATIONS:-0}" = 1 ]; then
+  echo "==> Migrate step skipped (SKIP_MIGRATIONS=1)"
+  SCHEMA_REV=$(schema_rev)
+else
+  echo "==> Migrate step"
+  migrate_step
+fi
+
+# 2. Bring up new color with SKIP_MIGRATIONS=1: the schema is already at the image head, so
+#    start.sh goes straight to gunicorn (plus its idempotent background jobs) and the health
+#    wait below measures app start only. The prod compose must pass SKIP_MIGRATIONS through
+#    to backend_blue/backend_green (runbook step 5); without it start.sh repeats a no-op
+#    `alembic upgrade head`, which is checked and warned about below.
+export SKIP_MIGRATIONS=1
 echo "==> Starting ${NEW} color"
 docker compose --profile "${NEW}" up -d --no-deps \
   "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}"
+new_be_cid=$(docker compose ps -q "backend_${NEW}" 2>/dev/null || true)
+if [ -n "$new_be_cid" ] && ! docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' "$new_be_cid" 2>/dev/null \
+     | grep -qx 'SKIP_MIGRATIONS=1'; then
+  echo "    WARNING: backend_${NEW} did not receive SKIP_MIGRATIONS=1 (the compose does not pass it through);"
+  echo "             its start.sh runs alembic upgrade head again, a no-op after the migrate step. Runbook step 5."
+fi
 
 # 3. Wait for all three new containers to be healthy
 echo "==> Waiting for healthchecks"
@@ -555,11 +720,12 @@ for svc in backend frontend mcp; do
   if [ "$state" != "healthy" ]; then
     echo "ERROR: ${svc}_${NEW} not healthy after $((HEALTH_WAIT_TICKS * TICK_SECONDS))s"
     docker compose logs --tail=200 "${svc}_${NEW}" || true
-    # Stop the new color so a hung `alembic upgrade` in start.sh is ended rather than left
-    # running (and committing) after the release has already been reported failed. OLD keeps
-    # serving; nginx was never swapped.
+    # The schema already moved in the migrate step (1e), so stopping the new colour changes
+    # nothing in the database: say where it is and who serves.
     echo "==> Stopping ${NEW} color after the failed health check"
     docker compose stop -t 160 "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+    echo "ERROR: deploy FAILED: ${svc}_${NEW} never got healthy;"
+    schema_note
     exit 1
   fi
 done
@@ -568,6 +734,7 @@ done
 if ! postgres_survived; then
   echo "==> Stopping ${NEW} color: Postgres went down during startup; ${OLD} keeps serving"
   docker compose stop -t 160 "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}" || true
+  schema_note
   exit 1
 fi
 

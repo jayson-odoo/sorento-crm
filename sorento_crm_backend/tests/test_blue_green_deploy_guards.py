@@ -52,6 +52,8 @@ with open(os.path.join(d, "calls.log"), "a") as f:
     f.write(" ".join(args) + "\n")
 with open(os.path.join(d, "stub_env"), "w") as f:
     f.write(os.environ.get("LD_LIBRARY_PATH", ""))
+with open(os.path.join(d, "skip_env.log"), "a") as f:
+    f.write(os.environ.get("SKIP_MIGRATIONS", "<unset>") + " " + " ".join(args) + "\n")
 if args[0] == "compose":
     rest = args[1:]
     while rest and rest[0] == "--profile":
@@ -80,6 +82,22 @@ if args[0] == "compose":
             sys.stderr.write("Error response from daemon: no such image\n")
             sys.exit(1)
         sys.stdout.write(rd("image_heads"))
+    elif cmd == "run" and "upgrade" in rest:
+        # The migrate step (DEPLOY-MIGRATE-STEP): `alembic upgrade head` in the new image.
+        if os.path.exists(os.path.join(d, "migrate_hang")):
+            import time
+            time.sleep(60)
+        # Where the db ends up: `migrate_lands_at` when scripted; else a success lands on the
+        # image head(s) as a real upgrade does, and a failure leaves the db where it was.
+        if os.path.exists(os.path.join(d, "migrate_lands_at")):
+            open(os.path.join(d, "db_versions"), "w").write(rd("migrate_lands_at"))
+        if os.path.exists(os.path.join(d, "migrate_fail")):
+            sys.stderr.write("sqlalchemy.exc.OperationalError: canceling statement due to lock timeout\n")
+            sys.exit(1)
+        heads = [l.split()[0] for l in rd("image_heads").splitlines() if l.endswith("(head)")]
+        if heads and not os.path.exists(os.path.join(d, "migrate_lands_at")):
+            open(os.path.join(d, "db_versions"), "w").write("".join(h + "\n" for h in sorted(heads)))
+        print("INFO  [alembic.runtime.migration] Running upgrade")
     elif cmd == "up":
         if "--no-deps" in rest and "--force-recreate" not in rest:
             fire("up")
@@ -115,6 +133,8 @@ if args[0] == "compose":
             if not data.startswith("PGDMP"):
                 sys.exit(1)
             sys.stdout.write("".join(data.splitlines(keepends=True)[1:]))
+        elif "psql" in joined and "pg_stat_activity" in joined:
+            print("1" if "pg_terminate_backend" in joined else rd("migrate_sessions_left", "0").strip())
         elif "psql" in joined:
             if os.path.exists(os.path.join(d, "psql_fail")):
                 sys.stderr.write('psql: error: database "x" does not exist\n')
@@ -131,7 +151,7 @@ if args[0] == "inspect":
     if ".Config.Env" in fmt:
         sys.stdout.write(rd("backend_env", "PATH=/usr/bin\nDATABASE_URL=postgresql://app:s3cret@pgbouncer:6432/sorento_app?sslmode=disable\nOTHER=1\n"))
     elif "Health.Status" in fmt:
-        print("healthy")
+        print("starting" if os.path.exists(os.path.join(d, "unhealthy")) else "healthy")
     elif "StartedAt" in fmt:
         print(rd("db_state", "0 2026-10-01T00:00:00Z").strip())
     elif "RestartCount" in fmt:
@@ -1068,3 +1088,228 @@ def test_a_failed_heads_read_logs_why(box):
     r = _run(box)
     assert "no such image" in r.stderr, r.stderr
     assert _index(_calls(box), "pg_dump") != -1
+
+
+# --- DEPLOY-MIGRATE-STEP: migrations run as their own step before the new colour -------
+# 5 Nov: run 41872253783 reported "backend_blue not healthy after 240s" while start.sh's
+# `alembic upgrade head` went on to COMMIT five revisions during the `stop -t 160`; old code
+# then ran on the new schema for ~7 h. Plan: documentation/plans/deploy/PLAN-deploy-migrate-step-05nov.md.
+
+OLD_REV = "0ld0ld0ld000"
+NEW_REV = "f00dfeed1234"
+
+
+def _pending(box, lands_at: str | None = NEW_REV + "\n"):
+    """A release with one pending migration; the step moves the db to `lands_at`."""
+    _migrations(box, heads=HEAD, db=OLD_REV + "\n")
+    if lands_at is not None:
+        (box["stub"] / "migrate_lands_at").write_text(lands_at)
+
+
+def _upgrade_calls(calls):
+    return [l for l in calls if l.startswith("compose") and " run " in f" {l} " and "upgrade head" in l]
+
+
+def _skip_env(box) -> list[str]:
+    return (box["stub"] / "skip_env.log").read_text().splitlines()
+
+
+def test_migrate_step_runs_in_a_one_off_container_after_the_snapshot_and_before_the_colour(box):
+    _pending(box)
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    ups = _upgrade_calls(calls)
+    assert len(ups) == 1, calls
+    run = ups[0]
+    assert "--profile green run --rm --no-deps -T --name sorento_migrate_green" in run, run
+    assert "-e PGAPPNAME=sorento_deploy_migrate" in run, run
+    assert run.endswith("--entrypoint alembic backend_green upgrade head"), run
+    dump, step, up = _index(calls, "pg_dump"), calls.index(run), _index(calls, "up -d --no-deps backend_")
+    assert -1 < dump < step < up, calls
+    assert f"migrate step: start revision {OLD_REV}, image head {NEW_REV}, timeout 1200s" in r.stdout, r.stdout
+    assert f"migrate step: {OLD_REV} -> {NEW_REV} in " in r.stdout and "s (alembic exit 0)" in r.stdout, r.stdout
+    assert "Deploy complete" in r.stdout
+
+
+def test_the_new_colour_starts_with_skip_migrations(box):
+    _pending(box)
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    up = [l for l in _skip_env(box) if " up -d --no-deps backend_green" in l]
+    assert up and all(l.startswith("1 ") for l in up), up
+
+
+def test_a_failed_migrate_step_stops_the_deploy_and_says_the_db_is_at_the_old_head(box):
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_fail").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0
+    assert "migrate step failed (alembic exit 1)" in r.stdout, r.stdout
+    assert f"Database is at the OLD head {OLD_REV}: nothing was committed." in r.stdout, r.stdout
+    assert "green was not started and nginx was not swapped; blue keeps serving." in r.stdout
+    calls = _calls(box)
+    assert not _started_new_colour(calls), calls
+    assert not _swapped(calls)
+    assert not (box["root"] / ".active_color").exists()
+
+
+def test_a_failed_step_whose_migrations_committed_says_the_db_is_at_the_new_head(box):
+    """A non-transactional tail (an online index build) fails after the version commit."""
+    _pending(box)
+    (box["stub"] / "migrate_fail").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0
+    assert f"Database is at the NEW head {NEW_REV}: the migration COMMITTED. blue (old code) is serving on the new schema." in r.stdout, r.stdout
+    assert not _started_new_colour(_calls(box))
+
+
+def test_a_failed_step_at_neither_head_says_so(box):
+    _pending(box, lands_at="halfway00001\n")
+    (box["stub"] / "migrate_fail").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0
+    assert f"Database is at halfway00001: neither the old head ({OLD_REV}) nor the new head ({NEW_REV})" in r.stdout, r.stdout
+
+
+def test_a_migrate_step_past_its_timeout_is_killed_rolled_back_and_reported(box):
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_hang").write_text("1")
+    started = time.monotonic()
+    r = _run(box, MIGRATE_TIMEOUT_SECONDS="2", timeout=60)
+    took = time.monotonic() - started
+    assert r.returncode != 0
+    assert took < 30, f"the step must not wait out the hanging container ({took:.0f}s)"
+    assert "migrate step timed out after" in r.stdout and "MIGRATE_TIMEOUT_SECONDS=2" in r.stdout, r.stdout
+    calls = _calls(box)
+    step = calls.index(_upgrade_calls(calls)[0])
+    killed = next(i for i, l in enumerate(calls) if i > step and l == "rm -f sorento_migrate_green")
+    terminate = next(i for i, l in enumerate(calls) if "pg_terminate_backend" in l)
+    assert step < killed < terminate, calls
+    assert "application_name = 'sorento_deploy_migrate'" in calls[terminate], calls[terminate]
+    assert "terminated 1 Postgres session(s) named sorento_deploy_migrate" in r.stdout, r.stdout
+    assert f"Database is at the OLD head {OLD_REV}: nothing was committed." in r.stdout, r.stdout
+    assert not _started_new_colour(calls)
+    assert not _swapped(calls)
+
+
+def test_the_migrate_timeout_can_be_set_in_deploy_env(box):
+    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=1\n")
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_hang").write_text("1")
+    r = _run(box, timeout=60)
+    assert r.returncode != 0
+    assert "MIGRATE_TIMEOUT_SECONDS=1" in r.stdout, r.stdout
+
+
+def test_a_non_numeric_migrate_timeout_fails_closed(box):
+    (box["root"] / ".deploy.env").write_text("MIGRATE_TIMEOUT_SECONDS=20m\n")
+    r = _run(box, timeout=30)
+    assert r.returncode != 0
+    assert "MIGRATE_TIMEOUT_SECONDS" in r.stdout, r.stdout
+    assert _upgrade_calls(_calls(box)) == []
+
+
+def test_a_step_that_exits_0_short_of_the_image_head_fails_closed(box):
+    _pending(box, lands_at=OLD_REV + "\n")
+    r = _run(box)
+    assert r.returncode != 0
+    assert f"exited 0 but the database is at {OLD_REV}, not the image head {NEW_REV}" in r.stdout, r.stdout
+    assert not _started_new_colour(_calls(box))
+
+
+def test_a_health_failure_after_the_step_names_the_schema_and_the_old_code(box):
+    _pending(box)
+    (box["stub"] / "unhealthy").write_text("1")
+    r = _run(box, HEALTH_WAIT_TICKS="2")
+    assert r.returncode != 0
+    assert "backend_green not healthy after 4s" in r.stdout, r.stdout
+    assert f"schema at {NEW_REV}, old code still serving (blue; nginx was never swapped)" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert _index(calls, "compose stop -t 160 backend_green") != -1, calls
+    assert not _swapped(calls)
+
+
+def test_a_postgres_abort_after_the_step_names_the_schema_too(box):
+    _pending(box)
+    _incident(box, "up", state="1 2026-10-14T09:16:09Z")
+    r = _run(box)
+    assert r.returncode != 0
+    assert f"schema at {NEW_REV}, old code still serving" in r.stdout, r.stdout
+
+
+def test_rollback_skips_the_migrate_step(box):
+    """rollback.yml passes SKIP_MIGRATIONS=1: the older image's alembic cannot run here."""
+    _migrations(box, heads="0ld0ld0ld000 (head)\n", db=NEW_REV + "\n")
+    r = _run(box, SKIP_MIGRATIONS="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "Migrate step skipped (SKIP_MIGRATIONS=1)" in r.stdout, r.stdout
+    assert _upgrade_calls(_calls(box)) == []
+    up = [l for l in _skip_env(box) if " up -d --no-deps backend_green" in l]
+    assert up and all(l.startswith("1 ") for l in up), up
+
+
+def test_a_compose_that_drops_skip_migrations_is_warned_about(box):
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "did not receive SKIP_MIGRATIONS=1" in r.stdout, r.stdout
+
+
+def test_no_warning_when_the_compose_passes_skip_migrations_through(box):
+    (box["stub"] / "backend_env").write_text(
+        "DATABASE_URL=postgresql://app:s3cret@pgbouncer:6432/sorento_app\nSKIP_MIGRATIONS=1\n"
+    )
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "did not receive SKIP_MIGRATIONS" not in r.stdout
+
+
+def test_ha_mode_terminates_the_step_sessions_as_the_postgres_user(box):
+    _ha_box(box)
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_hang").write_text("1")
+    r = _run(box, IMAGE_TAG=SHA, MIGRATE_TIMEOUT_SECONDS="1", timeout=60)
+    assert r.returncode != 0
+    line = next(l for l in _calls(box) if "pg_terminate_backend" in l)
+    assert "exec -T -u postgres" in line and "-U postgres" in line, line
+
+
+def test_start_sh_skips_alembic_only_under_the_flag():
+    start = (REPO / "sorento_crm_backend" / "start.sh").read_text()
+    gate = start.index('if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then')
+    upgrade = start.index("alembic upgrade head", gate)
+    fi = start.index("\nfi\n", gate)
+    assert gate < upgrade < fi
+
+
+def test_a_signal_during_the_migrate_step_removes_the_container_and_ends_its_sessions(box):
+    """The SSH session cut or the run cancelled mid-step: the step's container must not be left
+    running on, free to commit after the release was reported failed (the 5 Nov shape)."""
+    _pending(box, lands_at=None)
+    (box["stub"] / "migrate_hang").write_text("1")
+    env = {
+        "PATH": f"{box['bin']}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV,
+        "STUB_DIR": str(box["stub"]), "IMAGE_TAG": "abc123", "MEMINFO_FILE": str(box["meminfo"]),
+        "DEPLOY_LOCK_PATH": str(box["lock"]), "HOME": str(box["root"]),
+        "BASH_ENV": str(box["stub"] / "bash_env.sh"),
+    }
+    p = subprocess.Popen(
+        ["bash", str(box["root"] / "scripts" / "blue_green_deploy.sh")],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline and not _upgrade_calls(_calls(box)):
+        time.sleep(0.1)
+    assert _upgrade_calls(_calls(box)), "the step never started"
+    time.sleep(0.5)
+    p.send_signal(signal.SIGTERM)
+    out, _ = p.communicate(timeout=60)
+    assert p.returncode != 0
+    assert "deploy interrupted during the migrate step; removing sorento_migrate_green" in out, out
+    calls = _calls(box)
+    step = calls.index(_upgrade_calls(calls)[0])
+    assert any(i > step and l == "rm -f sorento_migrate_green" for i, l in enumerate(calls)), calls
+    assert any("pg_terminate_backend" in l for l in calls), calls
+    assert f"Database is at the OLD head {OLD_REV}" in out, out
+    assert not _started_new_colour(calls)
+    assert _lock_is_free(box["lock"])

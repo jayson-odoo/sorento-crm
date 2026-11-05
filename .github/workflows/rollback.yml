@@ -116,7 +116,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 2m
           # Same budget as the release step (worker stop grace, deploy lock wait, dump).
-          command_timeout: 100m
+          command_timeout: 120m
           script: |
             set -e
             cd /opt/sorento-crm2

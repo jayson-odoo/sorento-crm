@@ -200,6 +200,18 @@ inputs, visible in the run:
 - `-f allow_unswept=true`: EMERGENCY, ships the sha untested; the run summary says
   `UNSWEPT RELEASE` and the step logs a warning. Owner's call only.
 
+**Migrations in a release (DEPLOY-MIGRATE-STEP, 5 Nov 2026).** `scripts/blue_green_deploy.sh`
+runs `alembic upgrade head` as its own step, in a one-off container of the new image, BEFORE the
+new colour starts (timeout `MIGRATE_TIMEOUT_SECONDS`, default 20 min), and starts the colour with
+`SKIP_MIGRATIONS=1`. So a migration no longer counts against the 240 s health wait, and a red
+release says where the schema is: `Database is at the OLD head ...` (nothing committed),
+`... at the NEW head ... COMMITTED`, or, after a health failure, `schema at <rev>, old code still
+serving`. Read that line before re-dispatching; the owner steps are
+`documentation/runbooks/memory-and-deploy-guards.md` section 10. For a lane: a migration still
+has to finish well inside the step's timeout on the prod clone, and slow data work belongs in a
+post-start job (see `start.sh`, which runs those on every start whatever `SKIP_MIGRATIONS` says,
+so they must be idempotent).
+
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
 `*.md` or the PR template) runs only `Changed areas` and the `PR gate` fast-gate steps (alembic
 head, PII, gitleaks) on a PR, and `Changed areas` plus `Single alembic head` on a merge-queue entry: no image build, no test suite (owner ruling 29 Sep 2026;

@@ -2225,7 +2225,9 @@ jobs:
           # pull, the 4-minute health wait, the 30s drain and the 90s scheduler check.
           # 100m since HA-MEM-DEPLOY-GUARD: + up to 20m waiting on the shared deploy lock
           # (the weekly restore test) + the pre-migration pg_dump (runbook, step 3).
-          command_timeout: 100m
+          # 120m since DEPLOY-MIGRATE-STEP: + the migrate step's own 20m limit
+          # (MIGRATE_TIMEOUT_SECONDS), so the SSH session can never be cut mid-migration.
+          command_timeout: 120m
           script: |
             set -e
             cd /opt/sorento-crm2

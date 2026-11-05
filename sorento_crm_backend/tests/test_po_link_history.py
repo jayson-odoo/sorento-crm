@@ -556,6 +556,35 @@ class TestBackfill:
         assert len(seen) == 1
         assert seen[0].changed_at == datetime(2026, 9, 5, 1, 0)  # 09:00 MYT on 5 Sep, as UTC
 
+    def test_rows_the_old_inline_migration_wrote_make_a_start_time_run_a_no_op(self, env):
+        # DEPLOY-MIGRATE-STEP: prod ran polh_0001 at 42d1a56c, when the migration still seeded
+        # the rows itself; start.sh now runs this backfill on EVERY start. A row in that
+        # migration's exact shape (its INSERT ... SELECT columns and literals) must count as
+        # "already seen", so the first start-time run on prod inserts nothing for that line.
+        _, (seeded, fresh) = _pre_history_lines(
+            env, ["ZZT_BF:5:1", "ZZT_BF:5:2"], created_at=datetime(2026, 9, 10)
+        )
+        env.db.execute(
+            text(
+                "INSERT INTO audit_logs (id, entity_type, entity_id, action, event, actor_type, "
+                "changed_at, new_values, description, company_id, root_entity_type, root_entity_id) "
+                "SELECT gen_random_uuid(), 'purchase_order_lines', CAST(l.id AS text), 'EVENT', "
+                ":event, 'system', l.created_at, "
+                "jsonb_build_object('from_so_line_ref', l.from_so_line_ref), "
+                "'Line: S/O an S/O not held here first seen (linked on or before this date)', "
+                "l.company_id, 'purchase_orders', CAST(l.purchase_order_id AS text) "
+                "FROM purchase_order_lines l WHERE l.id = CAST(:id AS uuid)"
+            ),
+            {"event": SEEN, "id": seeded},
+        )
+        env.db.commit()
+
+        assert _run_backfill(env.db) == 1  # only the line the old migration never reached
+
+        assert len(_events(env, seeded, SEEN)) == 1
+        assert len(_events(env, fresh, SEEN)) == 1
+        assert _run_backfill(env.db) == 0
+
     def test_the_migration_no_longer_writes_the_backfill(self, env):
         # The deploy runs every pending revision in ONE transaction inside the 240 s health
         # wait: polh_0001 stays in the chain but seeds nothing.
@@ -669,6 +698,16 @@ def test_start_sh_runs_the_backfill_in_the_background_after_migrating():
     upgrade = start.index("alembic upgrade head")
     backfill = start.index("python -m scripts.backfill_po_link_seen &")
     assert upgrade < backfill < start.index("exec python -m gunicorn")
+
+
+def test_start_sh_runs_the_backfill_on_every_start_whatever_skip_migrations_says():
+    # DEPLOY-MIGRATE-STEP: prod deploys now start the colour with SKIP_MIGRATIONS=1 (the deploy
+    # migrates as its own step), so the post-start jobs must sit outside the flag's if-block.
+    start = (BACKEND / "start.sh").read_text()
+    gate = start.index('if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then')
+    gate_end = start.index("\nfi\n", gate)
+    for job in ("python -m scripts.backfill_po_link_seen &", "python -m scripts.ensure_goods_chain_indexes &"):
+        assert start.index(job) > gate_end, job
 
 
 # ============================================================== 5. Placed popup who/when

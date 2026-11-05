@@ -19,9 +19,10 @@ What the code now does on every release (no action needed for these):
 | Disk check: free space in the snapshot dir at least twice the newest dump and at least 10240 MB | same | deploy stops before the dump |
 | Pre-migration snapshot of the database the APP uses (`DEPLOY_DB_NAME`, else the active backend's `DATABASE_URL`; never the db container's own `POSTGRES_DB`). `pg_dump -Fc` must exit 0, the file must start with `PGDMP`, and `pg_restore -l` must list `TABLE DATA public alembic_version` | same | deploy stops before any migration; old colour keeps serving |
 | Snapshot skip (DEPLOY-SKIP-SNAPSHOT, 3 Nov): after the pull, `alembic heads` runs inside the NEW backend image (`docker compose run --rm --no-deps --entrypoint alembic backend_<new> heads`, no db connection, no `start.sh`) and is compared with `select version_num from public.alembic_version` in the app's database. Identical: the log says `no pending migrations: snapshot skipped` and the dump (and its disk check) is not taken. Different, or either read fails or prints anything that is not a revision id: the log says `migration check: ...` and the snapshot runs exactly as above. Every other guard runs either way | same | fail safe: any doubt takes the snapshot |
+| Migrate step (DEPLOY-MIGRATE-STEP, 5 Nov): after the snapshot and the second memory check, BEFORE the new colour starts, `alembic upgrade head` runs in a one-off container of the NEW image (`docker compose run --rm --no-deps --name sorento_migrate_<new> -e PGAPPNAME=sorento_deploy_migrate --entrypoint alembic backend_<new> upgrade head`) under `MIGRATE_TIMEOUT_SECONDS` (default 1200 = 20 min). The log names the start and end revision and the seconds: `migrate step: <old> -> <new> in <N>s (alembic exit 0)`. The new colour then starts with `SKIP_MIGRATIONS=1`, so the 240 s health wait covers app start only. Skipped when the caller sets `SKIP_MIGRATIONS=1` (rollback) | same | failure: deploy stops, nothing started or swapped, and the log says `Database is at the OLD head ...` / `at the NEW head ... COMMITTED` / `neither ...`. Timeout: the container is removed, every Postgres session named `sorento_deploy_migrate` is terminated (its transaction rolls back), then the same report. A health failure afterwards logs `schema at <rev>, old code still serving (<old colour>; ...)` |
 | Every number in `.deploy.env` must be a whole number | same | deploy stops; nothing changed |
 | Postgres check: db container restarted, replaced, or crash-recovered in place | same, before the nginx swap and at the end | before the swap: new colour stopped, old keeps serving. At the end: the run goes red |
-| `lock_timeout` 5s, `statement_timeout` 180s on every migration | `sorento_crm_backend/alembic/env.py` | migration fails, new colour never goes healthy, old keeps serving. **This changes behaviour: see step 9** |
+| `lock_timeout` 5s, `statement_timeout` 180s on every migration | `sorento_crm_backend/alembic/env.py` | the migrate step fails, the new colour is never started, old keeps serving. **This changes behaviour: see step 9** |
 | `blue_green_deploy.sh --preflight` checks all of the above on the box and changes nothing | same | exit 1 and a FAIL line per problem |
 | `/health` body names Redis and scheduler state (status code still DB only; a 503 body is `{"status":"unhealthy","database":"down"}`, no error text); `/health/deep` returns 503 when DB, Redis or the scheduler is not OK; both refresh their probes at most once per 10s per process | backend | `/health/deep` is for monitors only |
 | `Rollback production` workflow | `.github/workflows/rollback.yml` | see step 7 |
@@ -49,7 +50,7 @@ All box steps run as the user that GitHub Actions SSHes in as (the deploy user),
 | 2. Swap 6 GB, swappiness 10 | before the next release | 5 min |
 | 3. Run `--preflight`, set `.deploy.env`, time one dump | before the first release with these guards | 15 min |
 | 4. `mem_limit` lines in the prod compose | next quiet window | 20 min |
-| 5. `SKIP_MIGRATIONS` pass-through (makes rollback work across a migration) | with step 4 | 5 min |
+| 5. `SKIP_MIGRATIONS` pass-through (rollback across a migration; keeps migrations out of the colour's start) | before the next release | 5 min |
 | 6. Point a monitor at `/health/deep` | any time | 10 min |
 | 7. Rollback (when needed) | on a bad release | 10 min |
 | 8. Restore from a pre-migration snapshot (emergency only) | on a bad migration | 30 min |
@@ -180,6 +181,7 @@ cat > /opt/sorento-crm2/.deploy.env <<'KNOBS'
 # SNAPSHOT_MIN_FREE_MB=10240
 # DEPLOY_LOCK_WAIT_SECONDS=600
 # DEPLOY_LOCK_PATH=/opt/sorento-crm2/.deploy.lock
+# MIGRATE_TIMEOUT_SECONDS=1200
 KNOBS
 chmod 600 /opt/sorento-crm2/.deploy.env
 ```
@@ -291,10 +293,14 @@ docker update --memory 4g --memory-swap 8g "$(docker compose ps -q db)"
   Mirror the same edit into the local gitignored copy (`sorento_crm/docker-compose.yml` on your
   machine) so the two do not drift.
 
-## 5. `SKIP_MIGRATIONS` pass-through (for rollbacks across a migration)
+## 5. `SKIP_MIGRATIONS` pass-through (rollbacks, and every release since DEPLOY-MIGRATE-STEP)
 
 The rollback workflow runs the deploy script with `SKIP_MIGRATIONS=1`, because an older image's
-`alembic upgrade head` does not know a newer revision and would fail. The variable only reaches
+`alembic upgrade head` does not know a newer revision and would fail. Since DEPLOY-MIGRATE-STEP
+(5 Nov) every release also starts the new colour with `SKIP_MIGRATIONS=1`: the deploy has
+already migrated in its own step, so `start.sh` goes straight to gunicorn. Without this line
+`start.sh` repeats `alembic upgrade head` (a no-op then, so still safe) and the deploy log prints
+`WARNING: backend_<new> did not receive SKIP_MIGRATIONS=1`. The variable only reaches
 the container when the compose passes it through. In `<PROD_COMPOSE>`, under **both**
 `backend_blue` and `backend_green`, in the `environment:` list (create it if missing):
 
@@ -303,7 +309,8 @@ the container when the compose passes it through. In `<PROD_COMPOSE>`, under **b
       SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-0}
 ```
 
-A normal release does not set it, so migrations still run. Note: this line wins over any
+`start.sh` still runs its two post-start jobs (goods-chain index retry, PO link seen backfill)
+whatever the flag says; both are idempotent. Note: this line wins over any
 `SKIP_MIGRATIONS` in the backend `.env`; for a manual expand-contract rollout, set it in the
 shell instead (`SKIP_MIGRATIONS=1 docker compose ...`).
 
@@ -419,13 +426,14 @@ the release again.
 colour migrates: its backend, and both workers (they are recreated only after the nginx swap).
 Before this lane, a migration that needed a lock one of their transactions held simply queued
 behind it, and every other query on that table queued behind the migration: a silent stall for
-as long as the old transaction ran. Now the migration gives up after 5s: the new colour never goes
-healthy, the release fails, and the old colour keeps serving. Nothing half-migrated is left: the
+as long as the old transaction ran. Now the migration gives up after 5s: the new colour is never
+started, the release fails, and the old colour keeps serving. Nothing half-migrated is left: the
 migration's transaction rolls back (a migration with an `autocommit_block` commits its earlier
 part, and such migrations are written to be rerun).
 
-The deploy log shows `not healthy`, and the backend log printed above it has
-`canceling statement due to lock timeout`.
+The deploy log shows `ERROR: migrate step failed (alembic exit 1)` with
+`canceling statement due to lock timeout` just above it, then `Database is at the OLD head ...`.
+(Before DEPLOY-MIGRATE-STEP it showed `not healthy`.)
 
 **Retry** (usually enough): find what held the table, let it finish, dispatch the release again.
 
@@ -480,3 +488,27 @@ MIGRATION_LOCK_TIMEOUT=60s
 | `deploy FAILED: Postgres went down during the deploy` | same, after the swap | the new colour serves; check the app, then the same logs |
 | `canceling statement due to lock timeout` in the backend log | a migration waited more than 5s for a table the old colour held | step 9 |
 | `canceling statement due to statement timeout` | a migration statement ran more than 180s | the migration must raise its own limit (see `app/utils/migration_timeouts.py`), or set `MIGRATION_STATEMENT_TIMEOUT` in the backend `.env` for one release |
+
+## 10. The migrate step failed or timed out (DEPLOY-MIGRATE-STEP)
+
+The release run is red with `ERROR: migrate step failed` or `ERROR: migrate step timed out`.
+The new colour was never started and nginx was never swapped. Read the next line:
+
+- `Database is at the OLD head <rev>: nothing was committed.` Fix the cause (step 9 for a lock
+  timeout; a slow data migration belongs after start, as POLH-BACKFILL-ASYNC did), then dispatch
+  the release again. Nothing to roll back.
+- `Database is at the NEW head <rev>: the migration COMMITTED.` The old code is serving on the
+  new schema (a migration with an `autocommit_block` failed after its version commit). Dispatch
+  the release again: the step is then a no-op and the new colour starts.
+- `neither the old head ... nor the new head ...`: stop and check `alembic_version` and the
+  snapshot of this run (step 8) before anything else.
+
+A timeout also prints `terminated <n> Postgres session(s) named sorento_deploy_migrate`. If the
+next line warns that sessions are still open, run step 9's `pg_stat_activity` query and wait for
+them to go before dispatching again. Raise `MIGRATE_TIMEOUT_SECONDS` in `.deploy.env` only for a
+release whose migration was measured on the prod clone to need longer.
+
+A release that migrated and then failed its health check prints
+`schema at <rev>, old code still serving (<old colour>; nginx was never swapped)`: the schema is
+already at the new head. Dispatch the release again once the cause is fixed, or roll back (step
+7), which leaves the schema where it is.
