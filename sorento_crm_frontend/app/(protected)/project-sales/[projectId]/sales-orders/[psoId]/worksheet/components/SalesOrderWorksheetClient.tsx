@@ -32,6 +32,12 @@ import {
   useSalesOrderImportFile,
   useSalesOrderWorksheet,
 } from '../../../../../_shared/hooks/useProjectSalesOrders';
+import {
+  useAutocountWriteAccess,
+  useAutocountWriteCapabilities,
+  useCreateSalesOrderInAutocount,
+} from '../../../../../_shared/hooks/useProjectAutocountWrite';
+import { AutocountWriteButton } from '../../../../../_shared/components/AutocountWriteButton';
 import type {
   ProjectSalesOrderFinding,
   SalesOrderWorksheet,
@@ -151,6 +157,9 @@ function WorksheetView({
     pageSize: 50,
   });
   const importFile = useSalesOrderImportFile(psoId);
+  const writeAccess = useAutocountWriteAccess();
+  const capabilities = useAutocountWriteCapabilities(writeAccess);
+  const createInAutocount = useCreateSalesOrderInAutocount();
 
   const lines = worksheet.lines ?? [];
   const findings = worksheet.findings ?? [];
@@ -174,6 +183,10 @@ function WorksheetView({
         ? 'This worksheet cannot be exported yet'
         : undefined;
   const canExport = !exportHint;
+  // R2: the CSV stays beside it. Create shows only for an exportable order not yet in AutoCount.
+  const createCap = capabilities.data?.sales_orders?.create_doc;
+  const canCreateInAutocount =
+    writeAccess && isPublished && worksheet.can_export && !worksheet.autocount_doc_no;
 
   // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -390,6 +403,16 @@ function WorksheetView({
             <Download className="size-4" aria-hidden />
             Download CSV
           </Button>
+          {canCreateInAutocount && (
+            <AutocountWriteButton
+              label="Create in AutoCount"
+              pendingLabel="Creating…"
+              variant="primary"
+              run={() => createInAutocount.mutateAsync(psoId)}
+              disabled={createCap ? !createCap.enabled : false}
+              title={createCap && !createCap.enabled ? (createCap.reason ?? undefined) : undefined}
+            />
+          )}
         </div>
       </div>
 

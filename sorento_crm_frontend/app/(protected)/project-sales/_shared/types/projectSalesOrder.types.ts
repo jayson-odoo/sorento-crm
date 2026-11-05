@@ -69,6 +69,8 @@ export interface ProjectSalesOrderRow {
   id: string;
   provisional_ref: string;
   autocount_doc_no?: string | null;
+  /** AC-QTSO-CRM: the order lives in AutoCount (the server holds its key; the UI never sees it). */
+  in_autocount?: boolean;
   area_group?: string | null;
   status: SalesOrderStatus;
   grouping_origin: GroupingOrigin;

@@ -100,6 +100,8 @@ export interface SystemSetting {
 
   /** Sample requests (SR-CORE): submit needs a registered project / a quotation. Off by default. */
   sampleRequestRequireProject?: boolean;
+  /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
+  projectAutocountWriteEnabled?: boolean;
 
   /**
    * "Borrow from another order" (PLAN-borrow-location-only-8oct.md D1), off by default.

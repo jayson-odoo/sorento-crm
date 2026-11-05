@@ -202,6 +202,11 @@ export type QuotationDocument = {
    * the list ends up disagreeing with the document about a quotation that is already won.
    */
   customer_decision?: 'accepted' | 'changes_requested' | null;
+  /** AC-QTSO-CRM: where the document stands in AutoCount. */
+  in_autocount?: boolean;
+  autocount_doc_no?: string | null;
+  latest_issue_accepted?: boolean;
+  autocount_needs_update?: boolean;
   /** PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link. */
   view_count?: number;
   last_viewed_at?: string | null;

@@ -47,6 +47,15 @@ import { GROUPING_ORIGIN_LABEL, SalesOrderStatusPill } from './SalesOrderStatusP
 import { FINDING_SEVERITY_BADGE_VARIANT, FINDING_SEVERITY_LABEL } from '../../_shared/lib/findings';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
+import { AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT } from '@/lib/autocountWriteWording';
+import { AutocountDecideMenu } from '../../_shared/components/AutocountDecideMenu';
+import { AutocountWriteDialog } from '../../_shared/components/AutocountWriteDialog';
+import {
+  useAutocountWriteAccess,
+  useAutocountWriteCapabilities,
+  useCancelSalesOrderInAutocount,
+} from '../../_shared/hooks/useProjectAutocountWrite';
+import type { AutocountWriteResult } from '../../_shared/types/projectAutocountWrite.types';
 import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
@@ -125,6 +134,18 @@ export function SalesOrdersPanel({
   const removeOrder = useSalesOrderDelete(project.id);
   const removeSelected = useSalesOrderBulkDelete(project.id);
 
+  // AC-QTSO-CRM: an order in AutoCount is published, so its box is disabled by the delete rule;
+  // it must stay tickable for Decide. Delete is still governed by `salesOrderDeleteRefusal`.
+  const writeAccess = useAutocountWriteAccess();
+  const capabilities = useAutocountWriteCapabilities(writeAccess);
+  const cancelInAutocount = useCancelSalesOrderInAutocount();
+  const [cancelResult, setCancelResult] = React.useState<AutocountWriteResult | null>(null);
+  const tickable = React.useCallback(
+    (row: ProjectSalesOrderRow) =>
+      salesOrderDeleteRefusal(row) === undefined || Boolean(writeAccess && row.in_autocount),
+    [writeAccess],
+  );
+
   const rows = React.useMemo(() => salesOrders.data?.data ?? [], [salesOrders.data]);
   const total = salesOrders.data?.total ?? 0;
 
@@ -147,7 +168,7 @@ export function SalesOrdersPanel({
       ...(canWorkOnProject(project)
         ? [
             buildSelectColumn<ProjectSalesOrderRow>({
-              enableRow: (row) => salesOrderDeleteRefusal(row.original) === undefined,
+              enableRow: (row) => tickable(row.original),
               disabledReason: (row) => salesOrderDeleteRefusal(row.original),
               rowLabel: (row) =>
                 `Select ${row.original.autocount_doc_no || row.original.provisional_ref}`,
@@ -394,7 +415,7 @@ export function SalesOrdersPanel({
           ]
         : []),
     ],
-    [project.can_edit, project.approval_state, project.id, router],
+    [project.can_edit, project.approval_state, project.id, router, tickable],
   );
 
   const table = useReactTable({
@@ -411,7 +432,7 @@ export function SalesOrdersPanel({
      * The two existing callers of `buildSelectColumn` (the spec proposal review and the flyer
      * dimension review) pass the pair the same way.
      */
-    enableRowSelection: (row) => salesOrderDeleteRefusal(row.original) === undefined,
+    enableRowSelection: (row) => tickable(row.original),
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
@@ -423,6 +444,33 @@ export function SalesOrdersPanel({
   // Read off the TABLE, not off `rowSelection`, so a row that has since left the page (a
   // refetch, a page change) cannot leave its id behind in the request.
   const selectedIds = selectedRowIds(table);
+  const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
+  const undeletable = selectedRows.find((row) => salesOrderDeleteRefusal(row) !== undefined);
+
+  // Decide > Cancel in AutoCount: greyed with the feed's reason (R4), never hard-coded off.
+  const cancelCap = capabilities.data?.sales_orders?.cancel_doc;
+  const notInAutocount = selectedRows.some((row) => !row.in_autocount);
+  const cancelReason = notInAutocount
+    ? AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT
+    : cancelCap
+      ? cancelCap.reason
+      : 'Checking AutoCount…';
+  const cancelSelected = async () => {
+    const results: AutocountWriteResult[] = [];
+    for (const row of selectedRows) {
+      try {
+        results.push(await cancelInAutocount.mutateAsync(row.id));
+      } catch {
+        break; // toasted by the mutation; stop at the first CRM refusal
+      }
+    }
+    if (results.length === 0) return;
+    const failed = results.find((r) => r.outcome !== 'done');
+    setCancelResult({
+      ...(failed ?? results[results.length - 1]),
+      message: results.map((r) => r.message).join('. '),
+    });
+  };
 
   if (withoutPurchaseOrder && !salesOrders.isLoading && !salesOrders.isError && total === 0) {
     return null;
@@ -487,7 +535,8 @@ export function SalesOrdersPanel({
                   variant="outline"
                   size="sm"
                   className="gap-1.5 text-destructive hover:text-destructive"
-                  disabled={removeSelected.isPending}
+                  disabled={removeSelected.isPending || Boolean(undeletable)}
+                  title={undeletable ? salesOrderDeleteRefusal(undeletable) : undefined}
                   onClick={() => setConfirmBulkDelete(true)}
                 >
                   <Trash2 className="size-4" aria-hidden />
@@ -495,6 +544,20 @@ export function SalesOrdersPanel({
                     selectedIds.length === 1 ? '' : 's'
                   }`}
                 </Button>
+                {writeAccess && (
+                  <AutocountDecideMenu
+                    label={`Decide (${selectedIds.length})`}
+                    items={[
+                      {
+                        key: 'cancel',
+                        label: 'Cancel in AutoCount',
+                        enabled: !notInAutocount && Boolean(cancelCap?.enabled),
+                        reason: cancelReason,
+                        onSelect: cancelSelected,
+                      },
+                    ]}
+                  />
+                )}
                 <Button
                   type="button"
                   variant="ghost"
@@ -587,6 +650,15 @@ export function SalesOrdersPanel({
         }}
         onSuccess={() => setPendingDelete(null)}
         successMessage="Sales order deleted"
+      />
+
+      <AutocountWriteDialog
+        open={cancelResult !== null}
+        onOpenChange={(open) => {
+          if (!open) setCancelResult(null);
+        }}
+        title="Cancel in AutoCount"
+        result={cancelResult}
       />
 
       {building && (
