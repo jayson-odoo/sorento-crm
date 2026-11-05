@@ -46,10 +46,72 @@ def _fold_rows(target, tiers, rates):
     ]
 
 
+def _num(value: Decimal) -> str:
+    """`60,000`, `62,500.50`, `4`, `5.5`: no trailing zeros."""
+    value = Decimal(value)
+    if value == value.to_integral_value():
+        return f"{value:,.0f}"
+    return f"{value.normalize():,f}"
+
+
+def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str]) -> List[str]:
+    """Where, after the fold, reaching a higher tier pays a LOWER rate than the tier below
+    (owner ruling 5 Nov 12:10: an Additional pays only on its own tier, it never carries up), with
+    the Additional each tier needs to keep today's pay. Today's pay: the tier's rate plus every
+    "+ Additional" row at or below its threshold (they stacked). One line per period and account
+    with a drop. `rows` are `FoldRow`s; `labels` names an account key (None: every account)."""
+
+    def rate_on(row, account) -> Optional[Decimal]:
+        if row.account_rates is None:
+            return Decimal(row.rate or 0)
+        value = row.account_rates.get(account)
+        return None if value is None else Decimal(value)
+
+    out: List[str] = []
+    for period in sorted({r.period_start for r in rows}, key=lambda d: (d is not None, d)):
+        idx = [i for i, r in enumerate(rows) if r.period_start == period]
+        mains = sorted((i for i in idx if not rows[i].is_additional), key=lambda i: rows[i].threshold)
+        legacy = [i for i in idx if rows[i].is_additional]
+        accounts = {k for i in idx for k in (rows[i].account_rates or {})} or {None}
+        for account in sorted(accounts, key=lambda k: labels.get(k, str(k))):
+            old: Dict[int, Decimal] = {}
+            new: Dict[int, Decimal] = {}
+            for m in mains:
+                base = rate_on(rows[m], account)
+                if base is None:
+                    continue
+                own = Decimal(rows[m].additional_rate or 0)
+                stacked = [i for i in legacy if rows[i].threshold <= rows[m].threshold]
+                old[m] = base + own + sum((rate_on(rows[i], account) or 0 for i in stacked), Decimal("0"))
+                new[m] = base + Decimal(fold.rates.get(m, own)) + sum(
+                    (rate_on(rows[i], account) or 0 for i in stacked if i not in fold.moves), Decimal("0")
+                )
+            paying = [m for m in mains if m in new]
+            drops = [(a, b) for a, b in zip(paying, paying[1:]) if new[b] < new[a]]
+            if not drops:
+                continue
+            need: Dict[Decimal, List[int]] = {}
+            for m in paying:
+                if new[m] < old[m]:
+                    need.setdefault(old[m] - rate_on(rows[m], account), []).append(m)
+            at = lambda m: f"{_num(rows[m].threshold)}%" if pct else _num(rows[m].threshold)  # noqa: E731
+            who = f"{labels.get(account)} " if account is not None else ""
+            first_low, first_high = drops[0]
+            fix = "; ".join(
+                f"set Additional {_num(add)}% on {' and '.join(at(m) for m in ms)}" for add, ms in need.items()
+            )
+            out.append(
+                f"{period or 'every period'}: {who}tier {at(first_high)} pays {_num(new[first_high])}% "
+                f"vs {_num(new[first_low])}% at {at(first_low)} -> to keep today's pay {fix}"
+            )
+    return out
+
+
 def report(db) -> List[dict]:
     """One entry per target with a "+ Additional" row or a Bonus: its fold and each period's
     payout before and after. Writes nothing."""
     from app.models.base import get_company_scope, set_company_scope
+    from app.models.order import Customer
     from app.models.sales import SalesTarget, SalesTargetCommissionTier
     from app.services.sales import commission_service
     from app.services.sales import target_service as ts
@@ -75,7 +137,12 @@ def report(db) -> List[dict]:
         set_company_scope(db, frozenset({target.company_id}))
         tiers = ts._tiers(db, target.id)
         rates = ts._tier_rates(db, [t.id for t in tiers])
-        fold = commission_service.fold_additionals(_fold_rows(target, tiers, rates))
+        fold_rows = _fold_rows(target, tiers, rates)
+        fold = commission_service.fold_additionals(fold_rows)
+        codes = {k for r in fold_rows for k in (r.account_rates or {})}
+        labels = (
+            {c.id: c.customer_code for c in db.query(Customer).filter(Customer.id.in_(codes))} if codes else {}
+        )
         before = ts._engine_tiers(tiers, rates)
         after = [
             t._replace(additional_rate=fold.rates.get(i, t.additional_rate))
@@ -132,6 +199,10 @@ def report(db) -> List[dict]:
                 "broadened": [f"{tiers[m].period_start} from {tiers[m].threshold or tiers[m].from_pct:,.2f}" for m in fold.broadened],
                 "narrowed": [f"{tiers[m].period_start} from {tiers[m].threshold or tiers[m].from_pct:,.2f}" for m in fold.narrowed],
                 "periods": rows,
+                "ladder_drops": [
+                    f"{target.target_no} {target.name}, {line}"
+                    for line in ladder_drops(fold_rows, fold, (target.threshold_unit or "pct") == "pct", labels)
+                ],
             }
         )
     set_company_scope(db, scope)
@@ -173,6 +244,11 @@ def _print(entries: List[dict]) -> None:
     moved = sum(len(e["moves"]) for e in entries)
     print(f"{len(entries)} targets; {rows} '+ Additional' rows, {moved} fold onto their tier; "
           f"{sum(e['bonus_tiers'] for e in entries)} tiers carry a Bonus")
+    drops = [line for e in entries for line in e["ladder_drops"]]
+    print(f"\nLADDER DROPS ({len(drops)}): after the fold a higher tier pays less than the tier below. "
+          "An Additional pays only on its own tier; set these before --apply.")
+    for line in drops:
+        print(f"  {line}")
     for e in entries:
         print(f"\n{e['target_no']}  {e['name']}  (+Additional rows {e['additional_rows']}, "
               f"folded {len(e['moves'])}, Bonus tiers {e['bonus_tiers']})")

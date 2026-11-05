@@ -313,6 +313,7 @@ def test_fold_script_reports_a_craft_old_and_new_then_applies(api):
     assert entry["additional_rows"] == 3
     assert len(entry["moves"]) == 3
     assert entry["skipped"] == []
+    assert entry["ladder_drops"] == []
     q1, q2 = entry["periods"][0], entry["periods"][1]
     assert (q1["old_commission"], q1["new_commission"], q1["delta"]) == (D("6143.52"), D("5375.58"), D("-767.94"))
     assert (q2["old_commission"], q2["new_commission"], q2["delta"]) == (D("3090.25"), D("3090.25"), D("0"))
@@ -380,3 +381,49 @@ def test_statement_rate_cell_carries_the_additional():
     p["tier_additional"] = {"kind": "amount", "value": 500.0}
     assert _reached_rate(p, "amount") == "A/C I 6.00% + RM 500.00"
     assert _reached_rate({"tier_rates": [{"label": None, "rate": 5.0}], "tier_additional": None}, "amount") == "5.00%"
+
+
+def _script():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "fold_tier_additionals", Path(__file__).resolve().parents[1] / "scripts" / "fold_tier_additionals.py"
+    )
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    return script
+
+
+def test_ladder_drops_beaufort_shape_names_the_fix():
+    # Owner ruling 5 Nov 12:10: no carry-up. 50,000 at 3% + "+ Additional 5% from 50,000", then
+    # 60,000 at 4% and 80,000 at 5%: today they pay 8 / 9 / 10 %, after the fold 8 / 4 / 5 %.
+    script = _script()
+    rows = [_row(50000, 3), _row(60000, 4), _row(80000, 5), _row(50000, 5, additional=True)]
+    lines = script.ladder_drops(rows, fold_additionals(rows), False, {})
+    assert lines == [
+        "2026-01-01: tier 60,000 pays 4% vs 8% at 50,000 -> to keep today's pay "
+        "set Additional 5% on 60,000 and 80,000"
+    ]
+
+
+def test_ladder_drops_none_when_every_tier_has_its_own():
+    script = _script()
+    rows = [
+        _row(60000, 5), _row(75000, 6), _row(85000, 7),
+        _row(60000, 1, additional=True), _row(75000, 1, additional=True), _row(85000, 1, additional=True),
+    ]
+    assert script.ladder_drops(rows, fold_additionals(rows), False, {}) == []
+
+
+def test_ladder_drops_per_account_names_the_account():
+    script = _script()
+    rows = [
+        _row(80000, 0, accounts={A1: 4}), _row(100000, 0, accounts={A1: 5}),
+        _row(80000, 0, additional=True, accounts={A1: 5}),
+    ]
+    lines = script.ladder_drops(rows, fold_additionals(rows), False, {A1: "300-B001"})
+    assert lines == [
+        "2026-01-01: 300-B001 tier 100,000 pays 5% vs 9% at 80,000 -> to keep today's pay "
+        "set Additional 5% on 100,000"
+    ]
