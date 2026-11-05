@@ -1,7 +1,7 @@
 # PLAN: report filters - explicit ALL, parser object final
 
-Status: Build done, Review next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
-Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-698e137b.md`.
+Status: Build round 3 (crew gate fixes) done, crew re-gate next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
+Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-e9421ded.md`.
 
 ## Owner pain
 
@@ -89,6 +89,25 @@ updated to the 3 Nov ruling.
 
 ## Prompt and gold
 
-Prompt candidate 698e137b, on the v72 base d29c1983: `PROMPT-report-filter-all-698e137b.md`. The gold rows are in
+Prompt candidate e9421ded (round 2; round 1 was 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-e9421ded.md`. The gold rows are in
 `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (28 rows, 16 of them EN / BM / ZH mixes of clear all and of one slot). Crew runs the eval gate (cap USD 0.70, ORG key,
 ledgered) and the #2156 replays on the Mac (crew Q5). Never published by the lane; only the owner moves the label.
+
+## Crew gate round (5 Nov evening, gate on 698e137b / ee34327b)
+
+| # | Gate finding | Cause | Fix |
+|---|---|---|---|
+| 1 | "clear all" lost the period and basis and asked again (T5, X EN) | the keep rule covered filter slots only; the parser left date_from / date_to / basis null | `_keep_held_report`: the same rule over every slot of the held report (period, basis, measure, frame, axis, count). Null keeps, a value replaces, ALL clears; an explicit total still drops the axis (G1, G1b) |
+| 2 | BM / mixed "clear all" kept the brand or company | parser miss | prompt edit 5 (clear every filter in any language or wording, the company and brands included), gold fa-29..34 |
+| 3 | ZH 清除所有筛选 parsed all ALL, replied chit-chat | the parse had no report status, so `from_object` set the object aside | on the ALL prompt an object of the held report's kind is that report's follow-up (`follow_up`, G3) |
+| 4 | step 1: no Dealer / Project rows | parser miss (frame total, channel ALL) | prompt edit 6 (side-by-side values are a breakdown, even beside "total"; never ALL), gold fa-36 |
+| 5 | steps 8 / 12: "couldn't find a supplier called Sorento" | the span supplier rewrite (`engine._with_span_suppliers`) and the supplier scope (`_supplier_scope`, fed by the span model's `supplier_typed`) ran on report turns | both stand down on a kept report object (G5). Bare Sorento keeps its one company-or-brand question (ON-3, HT1-5) |
+| 6 | steps 13-15 asked the basis | the script gave none | the hand test now says "delivered" |
+
+Also in this round: tf-16 "both" as company "Mocha, Sorento" (prompt edit 7: company holds one name or ALL, gold
+fa-37). The totals-filters gold now expects `["ALL"]` where it expected `[]` for a clear (tf-17..20) and for the only brand
+moved to the company (tf-28).
+
+Not fixed here (found by the crew gate, outside this lane's rules): B2 / R2 "delivered" after "Sorento company ..." asks
+"SORENTO: brand, account type or company?" because the 1104 copy has a SORENTO account type (the existing ON-6 rule
+asks a word in both tables).

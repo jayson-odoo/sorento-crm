@@ -375,7 +375,7 @@ def test_u5b_a_company_this_message_typed_is_never_read_as_an_echo() -> None:
 
 _PLANS = __import__("pathlib").Path(__file__).resolve().parents[3] / "documentation" / "plans" / "chatbot"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
-CANDIDATE_MD5 = "698e137b692ff61ce48bf1c1e4aa7571"
+CANDIDATE_MD5 = "e9421dede66c100a5f75db1db7c6a1e2"
 
 
 def _md5(path) -> str:

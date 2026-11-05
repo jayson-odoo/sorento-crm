@@ -27,5 +27,9 @@ unless it names another file.
 | U5 / U5b | | Company spellings | An own close name and a typed name or code are never echoes |
 | K1 | An outstanding list open | A report object turn saying "all brands" / "clear the brand" / "no brand" / a bare brand word | No keyword rule fires; the object decides (the plain order list keeps its own clear) |
 | K2 | | | The report lane imports no regex |
-| P1 | | | The candidate text is the v72 base (d29c1983) plus the ALL edits, md5 698e137b, and defines ALL; v72 does not |
-| G-1..28 (gold, crew-run) | `parser_report_filter_all.jsonl` | clear brand, all brands, any agent, clear company, all companies, clear all, remove one of two brands, all customers, all channels, two forgotten-echo controls, an ALL no-op; 16 EN / BM / ZH mixes ("buang semua filter", "清除所有筛选", "全部 la, 不要 filter", "semua brand", "所有公司", "any agent pun boleh" ...) | The parser writes ALL exactly there and keeps every other held slot |
+| G1 | All 8 kinds held, delivered Sep month breakdown | "clear all": every filter ALL, period, basis, frame, axis left null | No filter; delivered, Sep and month stay; nothing asked |
+| G1b | Same | Every filter ALL, frame total | No axis; delivered and Sep stay |
+| G3 | Same | The ZH clear-all parse: every filter ALL, no report status, message type casual or null | The report runs (delivered, Sep, no filters), never chit-chat |
+| G5 | | A report object turn whose name the span list placed on suppliers | No supplier scope line; without a report object the supplier line still stands |
+| P1 | | | The candidate text is the v72 base (d29c1983) plus the ALL edits, md5 e9421ded, and defines ALL; v72 does not |
+| G-1..37 (gold, crew-run) | `parser_report_filter_all.jsonl` | clear brand, all brands, any agent, clear company, all companies, clear all, remove one of two brands, all customers, all channels, two forgotten-echo controls, an ALL no-op; 16 EN / BM / ZH mixes ("buang semua filter", "清除所有筛选", "全部 la, 不要 filter", "semua brand", "所有公司", "any agent pun boleh" ...) | The parser writes ALL exactly there and keeps every other held slot |

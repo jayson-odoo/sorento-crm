@@ -2,7 +2,8 @@
 
 - Base: production v72, md5 `d29c19830b22aa47403a88ddcb8e817d`. This is the v202 text the owner published, less two v71
   lines; the exact file is `prompt-prod-v72-d29c1983.txt`.
-- Result: md5 `698e137b692ff61ce48bf1c1e4aa7571`, 115,587 bytes; the exact file is `prompt-report-filter-all.txt`.
+- Result: md5 `e9421dede66c100a5f75db1db7c6a1e2` (round 2, edits 1-7); the exact file is `prompt-report-filter-all.txt`.
+  Round 1 was md5 `698e137b692ff61ce48bf1c1e4aa7571` (edits 1-4), gated by crew on 5 Nov (below).
   `tests/chatbot/test_report_filter_all.py::test_p1_*` pins both md5s.
 - Not published: only the owner moves the production label.
 - Owner rule kept: these are slot rules only, with no gold-message examples and no word lists.
@@ -27,6 +28,14 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
 4. One-name bullet. `the word company -> company only (brands stays without it);` becomes
    `the word company -> company only (brands stays without it, ["ALL"] when it was the only brand);`
 
+5. (round 2, crew gate: BM / mixed "clear all" kept the company or brand, fa-03 / fa-12 moved the axis) The ALL
+   bullet's clear-every-filter sentence becomes: `A message that asks for the report with no filter at all, in any language or wording, clears every filter at once: it writes ALL in company, channel, sales_agents, account_types, brands, categories, customers and products, the company and the brands included even when an earlier turn named them, and keeps basis, date_from, date_to, frame, group_by and top_n as held. Writing ALL never changes frame, group_by or top_n.`
+6. (round 2, crew gate step 1: "show dealer and project" gave one total with channel ALL) In the frame bullet,
+   `... is a breakdown on that slot's group_by.` becomes
+   `... is a breakdown on that slot's group_by (frame breakdown), even beside a word for total; that slot itself stays as held, never ALL.`
+7. (round 2, crew gate tf-16: company "Mocha, Sorento" for "both") Before `The lists and company hold NAMES ...`:
+   `company holds ONE company name, or ALL for every company the user holds (never two names joined).`
+
 ## Gate (crew runs it on the Mac; this sandbox has no Gemini key and no prod-copy DB)
 
 - Gold: `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl`, 28 rows. 16 of them are EN / BM / ZH mixes in the owner's style (clear every filter with no keyword, one slot to ALL). The other 12: clear brand, all brands, any agent, clear
@@ -36,6 +45,17 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
   candidate. Their clear rows (written for `[]`) now expect ALL for the cleared slot.
 - Spend cap: USD 0.70 total on the ORG key, ledgered by crew.
 
-| Run | Rows | Pass | USD | Ledger |
+| Run | Text | Set | Pass | Note |
 |---|---|---|---|---|
-| (crew) | | | | |
+| crew 5 Nov, x1, gemini-3.5-flash-lite | 698e137b | filter_all fa-01..28 | 21/28 raw (base 4/28) | fails fa-14/16/18/20 (clear all kept company + channel), fa-15, fa-03/fa-12 (axis moved) |
+| crew 5 Nov | 698e137b | totals_filters tf-01..34 | 16/34 raw, 25/34 effective (base 26/34) | most raw fails: ALL where the old gold wanted []; tf-27, tf-16 |
+| crew 5 Nov | 698e137b | semantic_carry sc-01..16 | 13/16 | |
+
+Crew spend 5 Nov: gate 0.367 + replays 0.117 + console pass 0.075 = USD 0.558 of 0.70, ledgered by crew.
+
+Gold changes for round 2 (to re-gate on e9421ded; no live run from this sandbox, the ORG key is near its daily cap):
+- `parser_report_filter_all.jsonl` +9 rows (fa-29..37): the crew's exact failing clear-all phrasings over the hand-test
+  report (EN, BM, ZH, mixed), T5's shape (company + brand + category held), T8 "all brand all category", step 1's
+  fresh "show dealer and project" (a breakdown, never ALL) and "both companies" (ALL).
+- `parser_report_totals_filters.jsonl`: tf-17, tf-18, tf-19, tf-20 (clears) and tf-28 (the only brand moved to the
+  company) now expect `["ALL"]` where they expected `[]`: the new semantics, where `[]` means "not touched".
