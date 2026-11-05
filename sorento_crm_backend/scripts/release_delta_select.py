@@ -52,7 +52,8 @@ A test file counts as importing, at module level, every conftest.py in its direc
 (pytest imports them first), so a module a conftest loads reaches the tests under it. A changed
 package `__init__.py` counts as a change to every module of that package (Python runs it before
 any of them). `tests/scm/` is selected only through these rules, like any other directory.
-`tests/ci_excluded.txt` entries never run.
+`tests/ci_excluded.txt` entries never run, nor do `tests/nightly_only.txt` entries (the
+reorder-planning tests; the nightly full sweep runs them, CI-PARALLEL-ACTIONS 5 Nov 2026).
 
 FULL backend suite (every test file) instead, with the reason printed, when the diff changes:
 any conftest.py; test infrastructure (`tests/__init__.py`, `tests/_xdist_crash_guard.py`,
@@ -326,12 +327,21 @@ class Result:
     graph_source: str = ""
 
 
-def _excluded(root: Path) -> set[str]:
+def _path_list(root: Path, name: str) -> set[str]:
     try:
-        lines = (root / "tests" / "ci_excluded.txt").read_text(encoding="utf-8").splitlines()
+        lines = (root / "tests" / name).read_text(encoding="utf-8").splitlines()
     except OSError:
         return set()
     return {line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")}
+
+
+def _excluded(root: Path) -> set[str]:
+    return _path_list(root, "ci_excluded.txt")
+
+
+def nightly_only(root: Path) -> set[str]:
+    """tests/nightly_only.txt: the nightly full sweep runs these, a release delta never does."""
+    return _path_list(root, "nightly_only.txt")
 
 
 def _frontend(changed: list[str], fe_root: Path, res: Result) -> None:
@@ -373,7 +383,8 @@ def select(changed: list[str], root: Path, *, frontend: Path | None = None, cach
     changed = sorted({p.strip() for p in changed if p.strip()})
     _frontend(changed, frontend or root.parent / FRONTEND_PREFIX.rstrip("/"), res)
 
-    excluded = _excluded(root)
+    # A nightly-only test (CI-PARALLEL-ACTIONS) is never selected, even on a full fallback.
+    excluded = _excluded(root) | nightly_only(root)
     sources = source_files(root)
     all_tests = sorted(r for r in sources if SAFE_TEST_RE.match(r) and r not in excluded)
     res.total = len(all_tests)
