@@ -261,7 +261,7 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     expect(toasts.success).toHaveBeenCalledWith('Tag approved');
   });
 
-  it('with an item that has no template, Approve is off and the reason sits beside it', async () => {
+  it('with an item that has no template, Approve is off and the reason is its tooltip only (owner, 5 Nov)', async () => {
     previewReport.missing = ['CBF-1234'];
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
@@ -269,7 +269,8 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     const approve = screen.getByRole('button', { name: /^approve$/i });
     expect(approve).toBeDisabled();
     const reason = 'No tag template yet for CBF-1234. Escalate it to marketing.';
-    expect(screen.getByTestId('approve-blocked')).toHaveTextContent(reason);
+    expect(screen.queryByTestId('approve-blocked')).toBeNull();
+    expect(screen.queryByText(reason)).toBeNull();
     expect(approve.parentElement).toHaveAttribute('title', reason);
   });
 

@@ -108,11 +108,15 @@ const tpl = (tid: string, groups: number[], upgrades = 0) => ({
   needs: { fixed: 0, groups, upgrades },
 });
 
-function renderTable(patch: Partial<DraftLine> & Record<string, unknown> = {}, discontinued: string[] = []) {
+function renderTable(
+  patch: Partial<DraftLine> & Record<string, unknown> = {},
+  discontinued: string[] = [],
+  linePricing: Record<string, unknown> = {},
+) {
   const resolvePicks = vi.fn();
   const resolvePart = vi.fn();
   const chooseTemplate = vi.fn();
-  const editor = new Proxy({ linePricing: {}, resolvePicks, resolvePart, chooseTemplate }, {
+  const editor = new Proxy({ linePricing, resolvePicks, resolvePart, chooseTemplate }, {
     get: (target, key) => (key in target ? (target as never)[key] : vi.fn()),
   }) as never;
   const l = {
@@ -310,5 +314,43 @@ describe('S5: the "lists every option" hint is only true for a template without 
     const unknown = { ...tpl('t0', [0], 0), needs: undefined };
     renderTable({ tag_templates: [unknown, tpl('t1', [1])], tag_template_id: 't0' });
     expect(screen.getByText(hint)).toBeInTheDocument();
+  });
+});
+
+
+describe('O4: every reason shows on its own line, in the red sub-row', () => {
+  // The red sub-row: the anchor sits on its first reason, the others follow in the same cell.
+  const anchor = () => document.querySelector('[data-error-anchor="line:0"]')?.parentElement;
+
+  it('a short pick count, once, without the Line prefix', () => {
+    renderTable();
+    expect(anchor()).toHaveTextContent('Kitchen tap: pick 3 more.');
+    expect(screen.getAllByText('Kitchen tap: pick 3 more.')).toHaveLength(1);
+  });
+
+  it('a line with no tag template', () => {
+    renderTable({ tag_templates: [], tag_template_id: null });
+    expect(anchor()).toHaveTextContent('No tag template yet');
+    expect(screen.getAllByText('No tag template yet')).toHaveLength(1);
+  });
+
+  it('an LP combo line with no combo list price', () => {
+    renderTable({ price_type: 'list' }, [], { l1: { list_price: null, sell_price: null, candidates: [], parts_at_list: [] } });
+    expect(anchor()).toHaveTextContent('No combo list price. Escalate it to marketing.');
+  });
+
+  it('an SP combo line with a promotion picked and no price says to clear it, on the line and in the cell', () => {
+    renderTable({ price_type: 'selling', promotion_id: 'promo-1' }, [], {
+      l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] },
+    });
+    expect(anchor()).toHaveTextContent(
+      'No combo selling price. Clear the promotion and type the selling price, or escalate it to marketing.',
+    );
+    expect(screen.getByText('Clear the promotion to type a price')).toBeInTheDocument();
+  });
+
+  it('no hint in the cell while a price can be typed', () => {
+    renderTable({ price_type: 'selling', promotion_id: null }, [], { l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] } });
+    expect(screen.queryByText('Clear the promotion to type a price')).toBeNull();
   });
 });

@@ -521,49 +521,75 @@ export function trimPicksToTemplate(line: DraftLine): DraftLine {
   };
 }
 
+/** One reason a line blocks Approve: `text` as the line itself shows it, `full` as Approve's tooltip. */
+export interface LineProblem {
+  text: string;
+  full: string;
+}
+
+type PricingByKey = Record<
+  string,
+  Partial<Pick<LinePricingResult, 'list_price' | 'sell_price'>> | null | undefined
+>;
+
+/** The reasons one line blocks Approve (AC-C5, AC-C6, AC-D2); `index` is its 0-based place in the request. */
+export function lineProblemsOf(
+  line: DraftLine,
+  index: number,
+  pricing: PricingByKey[string],
+  priceMode: PriceMode = 'list',
+): LineProblem[] {
+  const out: LineProblem[] = [];
+  const n = index + 1;
+  const combo = comboOfLine(line);
+  for (const part of line.parts) {
+    const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
+    const k = picksNeeded(line, part.role);
+    if (k >= 2 && picked.length < k) {
+      const text = `${part.role}: pick ${k - picked.length} more.`;
+      out.push({ text, full: `Line ${n}: ${text}` });
+    }
+    for (const id of picked) {
+      const option = combo?.parts.find((p) => p.product_id === id);
+      if (option?.is_discontinued) {
+        // A fixed part has nothing to pick instead.
+        const text = part.role
+          ? `${option.code} is discontinued. Pick another or escalate it to marketing.`
+          : `${option.code} is discontinued. Escalate it to marketing.`;
+        out.push({ text, full: text });
+      }
+    }
+  }
+  if (line.combo_id && pricing) {
+    if (linePriceType(line, priceMode) === 'list') {
+      if (pricing.list_price == null) {
+        out.push({
+          text: 'No combo list price. Escalate it to marketing.',
+          full: `No combo list price for line ${n}. Escalate it to marketing.`,
+        });
+      }
+    } else if (pricing.sell_price === null && line.manual_sell_price == null) {
+      // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
+      // No price box shows while a promotion is picked, so the way out starts by clearing it.
+      const way = line.promotion_id
+        ? 'Clear the promotion and type the selling price, or escalate it to marketing.'
+        : 'Type the selling price or escalate it to marketing.';
+      out.push({ text: `No combo selling price. ${way}`, full: `No combo selling price for line ${n}. ${way}` });
+    }
+  }
+  return out;
+}
+
 /**
- * Why Approve is blocked on the picks and the combo price (AC-C5, AC-C6, AC-D2), in line
- * order. `priceMode` is the request's mode, used when a line has no price type of its own.
+ * Why Approve is blocked on the picks and the combo price, in line order. `priceMode` is the
+ * request's mode, used when a line has no price type of its own.
  */
 export function linePickProblems(
   lines: DraftLine[],
-  pricingByKey: Record<string, Partial<Pick<LinePricingResult, 'list_price' | 'sell_price'>> | null | undefined>,
+  pricingByKey: PricingByKey,
   priceMode: PriceMode = 'list',
 ): string[] {
-  const out: string[] = [];
-  lines.forEach((line, index) => {
-    const n = index + 1;
-    const combo = comboOfLine(line);
-    for (const part of line.parts) {
-      const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
-      const k = picksNeeded(line, part.role);
-      if (k >= 2 && picked.length < k) out.push(`Line ${n}: ${part.role}: pick ${k - picked.length} more.`);
-      for (const id of picked) {
-        const option = combo?.parts.find((p) => p.product_id === id);
-        if (option?.is_discontinued) {
-          // A fixed part has nothing to pick instead.
-          out.push(
-            part.role
-              ? `${option.code} is discontinued. Pick another or escalate it to marketing.`
-              : `${option.code} is discontinued. Escalate it to marketing.`,
-          );
-        }
-      }
-    }
-    const pricing = pricingByKey[line.key];
-    if (line.combo_id && pricing) {
-      if (linePriceType(line, priceMode) === 'list') {
-        if (pricing.list_price == null) out.push(`No combo list price for line ${n}. Escalate it to marketing.`);
-      } else if (pricing.sell_price === null && line.manual_sell_price == null) {
-        // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
-        // No price box shows while a promotion is picked, so the way out starts by clearing it.
-        out.push(
-          line.promotion_id
-            ? `No combo selling price for line ${n}. Clear the promotion and type the selling price, or escalate it to marketing.`
-            : `No combo selling price for line ${n}. Type the selling price or escalate it to marketing.`,
-        );
-      }
-    }
-  });
-  return out;
+  return lines.flatMap((line, index) =>
+    lineProblemsOf(line, index, pricingByKey[line.key], priceMode).map((problem) => problem.full),
+  );
 }

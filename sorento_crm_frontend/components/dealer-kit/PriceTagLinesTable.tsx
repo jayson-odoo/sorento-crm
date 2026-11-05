@@ -32,6 +32,7 @@ import {
   isOpenPart,
   itemValue,
   linePriceType,
+  lineProblemsOf,
   lineTemplateState,
   type LineTemplateState,
   packageWarningFor,
@@ -438,6 +439,11 @@ function LineRow({
   // A product with a finished lookup and no published template has nothing to draw.
   const noTemplate = !isSet && !!line.product_id && templateState.kind === 'none';
   const canPreview = !!(isSet ? line.product_set_id : line.product_id) && !noTemplate;
+  const reasons = [
+    ...(line.guard_error ? [line.guard_error] : []),
+    ...(noTemplate ? ['No tag template yet'] : []),
+    ...lineProblemsOf(line, index, pricing, priceMode).map((problem) => problem.text),
+  ];
   const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
     (option) => ({
       value: option.id,
@@ -532,6 +538,11 @@ function LineRow({
           title={partsAtListTitle(line, pricing)}
         >
           {formatRM(pricing?.sell_price)}
+          {pricing?.sell_price == null ? (
+            <div className="text-2xs font-normal text-muted-foreground">
+              Clear the promotion to type a price
+            </div>
+          ) : null}
         </div>
       ) : (
         <NumberInput
@@ -582,9 +593,6 @@ function LineRow({
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
           />
-          {noTemplate ? (
-            <p className="mt-1 text-xs text-muted-foreground">No tag template yet</p>
-          ) : null}
           {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so
@@ -674,18 +682,22 @@ function LineRow({
           </div>
         </td>
       </tr>
-      {line.guard_error && (
+      {reasons.length > 0 && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">
             {/* The anchor the form's Submit scrolls to (`scrollToFirstProblem`): a
                 row's own refusal, the missing-template one included, sits below
-                the fold on a long request (crew browser pass). */}
-            <p
-              data-error-anchor={`line:${index}`}
-              className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
-            >
-              {line.guard_error}
-            </p>
+                the fold on a long request (crew browser pass). Every reason that
+                blocks Approve for this line shows here too (owner, 5 Nov). */}
+            {reasons.map((reason, at) => (
+              <p
+                key={reason}
+                {...(at === 0 ? { 'data-error-anchor': `line:${index}` } : {})}
+                className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
+              >
+                {reason}
+              </p>
+            ))}
           </td>
         </tr>
       )}
@@ -772,20 +784,6 @@ function LineRow({
             onResolvePicks={onResolvePicks}
             onRemovePart={onRemovePart}
           />
-          {/* AC-C5: how many picks a multi-pick group still lacks. */}
-          {(() => {
-            const k = picksByPart.get(part.key) ?? 0;
-            const held = part.product_ids?.length ?? (part.product_id ? 1 : 0);
-            return k >= 2 && part.candidates.length > 1 && held < k ? (
-              <tr>
-                <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-                  <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
-                    {`${part.role}: pick ${k - held} more.`}
-                  </p>
-                </td>
-              </tr>
-            ) : null;
-          })()}
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
           {part.key === lastOpenPartKey && !templateUsesPositions(templateState) && (
             <tr>

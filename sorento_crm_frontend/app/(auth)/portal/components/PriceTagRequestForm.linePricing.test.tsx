@@ -303,7 +303,10 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(lineRow).toBeTruthy();
     expect(within(lineRow!).getByText('RM 850')).toBeInTheDocument();
 
-    expect(document.querySelector('td[colspan]')).toBeNull();
+    // (the red reasons sub-row is not a pricing row)
+    expect(
+      Array.from(document.querySelectorAll('td[colspan]')).filter((td) => !td.querySelector('[data-error-anchor]')),
+    ).toEqual([]);
   });
 
   it('Selling mode: the header has List price, Promotion, Selling price columns in order between Qty (tags) and Remarks, and the line row (not a colSpan sub-row) holds the select and value (AC-S1-3)', async () => {
@@ -334,7 +337,10 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(lineRow!.querySelector('select[id^="promotion-"]')).toBeTruthy();
     expect(within(lineRow!).getByText('RM 723')).toBeInTheDocument();
 
-    expect(document.querySelector('td[colspan]')).toBeNull();
+    // (the red reasons sub-row is not a pricing row)
+    expect(
+      Array.from(document.querySelectorAll('td[colspan]')).filter((td) => !td.querySelector('[data-error-anchor]')),
+    ).toEqual([]);
   });
 
   // ----------------------------------------------------------- kill: subRowSpan

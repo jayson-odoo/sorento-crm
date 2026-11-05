@@ -48,6 +48,12 @@ interface Props {
   lineKey?: string;
   /** One-line mode: the lightbox was closed. */
   onClose?: () => void;
+  /**
+   * Popup mode (the request form's Preview button): no inline card. The lookup and `onReadyChange`
+   * still run so Approve knows whether every tag can be drawn; the sheet itself shows in the
+   * lightbox only while `open`.
+   */
+  popup?: { open: boolean; onClose: () => void };
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -132,6 +138,7 @@ export function PriceTagLivePreview({
   onReadyChange,
   lineKey,
   onClose,
+  popup,
 }: Props) {
   const sent = useMemo(
     () =>
@@ -224,6 +231,20 @@ export function PriceTagLivePreview({
           if (!next) onClose?.();
         }}
         title={`${oneLine.code || docNumber || 'Preview'} - ${linePriceType(oneLine, priceMode) === 'selling' ? 'SP' : 'LP'}`}
+        payload={payload}
+      />
+    );
+  }
+
+  if (popup) {
+    if (!popup.open || failed || payload === null) return null;
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={(next) => {
+          if (!next) popup.onClose();
+        }}
+        title={docNumber || 'Preview'}
         payload={payload}
       />
     );

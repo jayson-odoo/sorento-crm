@@ -91,7 +91,7 @@ import {
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
 import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
-import { PriceTagLivePreview } from '@/components/dealer-kit/PriceTagLivePreview';
+import { PriceTagLivePreview, previewLines } from '@/components/dealer-kit/PriceTagLivePreview';
 import {
   usePriceTagLineEditor,
   type PriceTagLineLookups,
@@ -334,6 +334,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [priceMode, setPriceMode] = useState<PriceMode>('list');
   // PRICETAG-LPSP: the line whose tag the eye icon opened.
   const [previewLineKey, setPreviewLineKey] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -2255,7 +2256,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
 
         <div className="space-y-1.5">
-          <Label>Lines</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label>Lines</Label>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={previewLines(lines, priceMode).length === 0}
+              onClick={() => setPreviewOpen(true)}
+            >
+              Preview
+            </Button>
+          </div>
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
               No lines yet.
@@ -2283,14 +2294,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </Button>
         </div>
 
-        {/* PRICETAG-TEMPLATE-PER-PRODUCT R5: the tags as they will look, from
-            the first item on, redrawn as the lines change. */}
+        {/* The whole request's tags open from the Preview button above. The lookup keeps
+            running so Approve knows whether every tag can be drawn (O2). */}
         <PriceTagLivePreview
           lines={lines}
           priceMode={priceMode}
           lookupTagPreview={previewLookup}
           docNumber={request?.doc_number}
           onReadyChange={setPreviewState}
+          popup={{ open: previewOpen, onClose: () => setPreviewOpen(false) }}
         />
         {/* PRICETAG-LPSP: one line's tag, from the row's eye icon, in the viewer's lightbox. */}
         {previewLineKey !== null ? (
@@ -2439,9 +2451,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <Send className="size-4 mr-1" />
             Escalate to marketing
           </Button>
-          {/* A disabled button fires no hover, so the reason sits on its wrapper
-              AND beside it (owner ruling 3 Nov: next to the button, not 1,600 px
-              down under the preview). */}
+          {/* A disabled button fires no hover, so the full reason sits on its wrapper
+              as the tooltip. The visible line under the buttons is gone (owner, 5 Nov):
+              each line shows its own reasons instead. */}
           <span title={approveBlockedReason ?? undefined} className="inline-flex">
             <Button
               onClick={() => void handleFinish({ kind: 'approve' })}
@@ -2454,13 +2466,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </span>
         </div>
       )}
-      {!reviseMode && (approveBlockedReason || draftEscalateOpen) && (
+      {!reviseMode && draftEscalateOpen && (
         <div className="space-y-2 sm:text-right">
-          {approveBlockedReason && (
-            <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
-              {approveBlockedReason}
-            </p>
-          )}
           {draftEscalateOpen && (
             <EscalateNote
               onEscalate={(note) => handleFinish({ kind: 'escalate', note })}
