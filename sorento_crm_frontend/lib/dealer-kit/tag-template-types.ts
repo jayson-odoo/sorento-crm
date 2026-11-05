@@ -479,6 +479,8 @@ export interface TagTemplate {
   published_version_no?: number | null;
   /** What the published layers read from a combo (PRICETAG-COMBO-RENDER K4). */
   needs?: TemplateNeeds | null;
+  /** Hand-picked LP / SP / both; null or absent = not set (offered on both kinds of line). */
+  price_type?: 'list' | 'selling' | 'both' | null;
 }
 
 // ---------------------------------------------------------------------------

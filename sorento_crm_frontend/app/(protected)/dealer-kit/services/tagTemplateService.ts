@@ -34,6 +34,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { printSizeOf } from '@/lib/dealer-kit/request-tags';
 import { isSpecSheetFamily } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplatePriceType } from '@/lib/dealer-kit/template-price-type';
 
 const BASE = '/api/v1/dealer-kit/tag-templates';
 
@@ -41,8 +42,14 @@ const BASE = '/api/v1/dealer-kit/tag-templates';
 // Service functions
 // ---------------------------------------------------------------------------
 
-export async function listTemplates(): Promise<TagTemplate[]> {
-  const response = await apiFetch(BASE);
+export interface TemplateListFilter {
+  /** `unset` = templates with no price type yet. */
+  price_type?: TemplatePriceType | 'unset';
+}
+
+export async function listTemplates(filter: TemplateListFilter = {}): Promise<TagTemplate[]> {
+  const query = filter.price_type ? `?price_type=${encodeURIComponent(filter.price_type)}` : '';
+  const response = await apiFetch(`${BASE}${query}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load tag templates'));
   }
@@ -61,6 +68,7 @@ export async function createTemplate(input: {
   name: string;
   family: TagTemplateFamily;
   print_size: { width_mm: number; height_mm: number };
+  price_type?: TemplatePriceType | null;
 }): Promise<TagTemplate> {
   const doc = {
     width_mm: input.print_size.width_mm,
@@ -77,10 +85,28 @@ export async function createTemplate(input: {
       // Derived from the SAME doc rather than `input.print_size` a second
       // time (S1), so the create path cannot ever state two different sizes.
       print_size: printSizeOf(doc),
+      price_type: input.price_type ?? null,
     }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to create template'));
+  }
+  return response.json();
+}
+
+/** Set (or clear, with null) the template's price type. A template fact, not a version fact: no
+ * republish. */
+export async function setTemplatePriceType(
+  id: string,
+  priceType: TemplatePriceType | null,
+): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_type: priceType }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the price type'));
   }
   return response.json();
 }

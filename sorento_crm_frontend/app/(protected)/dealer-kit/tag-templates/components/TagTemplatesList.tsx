@@ -19,7 +19,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Link2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -36,7 +36,19 @@ import {
 } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
-import { listTemplates } from '../../services/tagTemplateService';
+import { listTemplates, setTemplatePriceType } from '../../services/tagTemplateService';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  TEMPLATE_PRICE_TYPE_LABEL,
+  TEMPLATE_PRICE_TYPE_OPTIONS,
+  type TemplatePriceType,
+} from '@/lib/dealer-kit/template-price-type';
 import { TagTemplateDialog } from './TagTemplateDialog';
 import { AssignTemplateDialog } from './AssignTemplateDialog';
 import {
@@ -44,8 +56,59 @@ import {
   type TemplateAssignFilter,
 } from '../../services/productTagTemplateService';
 
+const PRICE_TYPE_FILTER_OPTIONS = [
+  ...TEMPLATE_PRICE_TYPE_OPTIONS,
+  { value: 'unset', label: 'Not set' },
+];
+
+/** The price type cell: the type as a badge, or "Set price type" while it is unset. Opens a menu to
+ * change it (a template fact, so no republish). */
+function PriceTypeCell({
+  template,
+  onChange,
+}: {
+  template: TagTemplate;
+  onChange: (next: TemplatePriceType | null) => void;
+}) {
+  const current = template.price_type ?? null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Change price type of ${template.name}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {current ? (
+            <Badge variant="secondary" className="font-normal">
+              {TEMPLATE_PRICE_TYPE_LABEL[current]}
+            </Badge>
+          ) : (
+            <Badge variant="warning" className="font-normal">
+              Set price type
+            </Badge>
+          )}
+          <ChevronDown className="size-3 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" onClick={(e) => e.stopPropagation()}>
+        {TEMPLATE_PRICE_TYPE_OPTIONS.map((option) => (
+          <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)}>
+            {option.label}
+          </DropdownMenuItem>
+        ))}
+        {current ? (
+          <DropdownMenuItem onSelect={() => onChange(null)}>Clear</DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function TagTemplatesList() {
   const router = useRouter();
+  const [priceFilter, setPriceFilter] = useState<'' | TemplatePriceType | 'unset'>('');
 
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -87,7 +150,7 @@ export function TagTemplatesList() {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await listTemplates();
+      const data = await listTemplates(priceFilter ? { price_type: priceFilter } : {});
       setTemplates(data);
       hasRowsRef.current = data.length > 0;
       setLoadError(null);
@@ -101,11 +164,24 @@ export function TagTemplatesList() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [priceFilter]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const changePriceType = useCallback(
+    async (template: TagTemplate, next: TemplatePriceType | null) => {
+      try {
+        await setTemplatePriceType(template.id, next);
+        toast.success(next ? `${template.name}: ${TEMPLATE_PRICE_TYPE_LABEL[next]}` : `${template.name}: price type cleared`);
+        await fetchData();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not save the price type.');
+      }
+    },
+    [fetchData],
+  );
 
   // Delete selected (D26, S11): the backend validates and deletes the whole
   // selection ATOMICALLY (a foreign/missing id refuses everything, nothing
@@ -187,6 +263,17 @@ export function TagTemplatesList() {
           <Badge variant="secondary" className="font-normal">
             {familyLabel(row.original.family)}
           </Badge>
+        ),
+      },
+      {
+        id: 'price_type',
+        header: 'Price type',
+        size: 140,
+        cell: ({ row }) => (
+          <PriceTypeCell
+            template={row.original}
+            onChange={(next) => void changePriceType(row.original, next)}
+          />
         ),
       },
       {
@@ -279,7 +366,7 @@ export function TagTemplatesList() {
         ),
       },
     ],
-    [router, deletion],
+    [router, deletion, changePriceType],
   );
 
   const table = useReactTable({
@@ -320,6 +407,16 @@ export function TagTemplatesList() {
     <>
       <Card>
         <CardHeader className="block">
+          <div className="mb-3 w-full sm:w-56">
+            <SearchableSelect
+              aria-label="Price type"
+              clearable
+              value={priceFilter}
+              onChange={(value) => setPriceFilter((value || '') as '' | TemplatePriceType | 'unset')}
+              options={PRICE_TYPE_FILTER_OPTIONS}
+              placeholder="Price type"
+            />
+          </div>
           <DataGridListToolbar
             table={table}
             showColumns={false}

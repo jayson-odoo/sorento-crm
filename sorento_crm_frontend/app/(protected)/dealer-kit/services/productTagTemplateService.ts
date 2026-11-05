@@ -2,7 +2,7 @@
  * Which tag templates a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT).
  *
  *   GET  /api/v1/dealer-kit/products/{id}/tag-templates            -> ProductTagTemplateItem[]
- *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids, default_template_id } -> same
+ *   PUT  /api/v1/dealer-kit/products/{id}/tag-templates            { template_ids, default_list_template_id, default_selling_template_id } -> same
  *   GET|PUT /api/v1/dealer-kit/combos/{id}/tag-templates           same shapes, for a combo (PRICETAG-LPSP)
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign/preview      filter -> { matched, already_linked }
  *   POST /api/v1/dealer-kit/tag-templates/{id}/assign              filter + { action } -> { changed }
@@ -32,18 +32,42 @@ export interface ProductTagTemplateItem {
   default_selling?: boolean;
 }
 
-/** The wire body of a links save. `default_template_id` must be one of `template_ids`. */
+/**
+ * The wire body of a links save. Each default must be one of `template_ids` and fit its type
+ * (an LP-only template cannot be the SP default).
+ */
 export interface TagTemplateLinks {
   template_ids: string[];
-  default_template_id: string | null;
+  default_list_template_id: string | null;
+  default_selling_template_id: string | null;
+}
+
+/** The default LP and SP the user chose, as ids ('' = none). */
+export interface LinkDefaults {
+  list: string;
+  selling: string;
 }
 
 /**
- * The default to send back on a save: only one the user chose. The server reports a lone link
- * as the default for display, so with fewer than two links nothing was chosen and nothing is sent.
+ * The defaults to send back on a save: only ones the user chose. The server reports a lone fitting
+ * link as the default for display, so with fewer than two links nothing was chosen and nothing is
+ * sent.
  */
-export function explicitDefaultId(rows: ProductTagTemplateItem[]): string | null {
-  return rows.length > 1 ? (rows.find((row) => row.is_default)?.id ?? null) : null;
+export function explicitDefaults(rows: ProductTagTemplateItem[]): LinkDefaults {
+  if (rows.length < 2) return { list: '', selling: '' };
+  return {
+    list: rows.find((row) => row.default_list)?.id ?? '',
+    selling: rows.find((row) => row.default_selling)?.id ?? '',
+  };
+}
+
+/** The wire body for `ids` with `defaults` (a default no longer linked is dropped). */
+export function linksBody(ids: string[], defaults: LinkDefaults): TagTemplateLinks {
+  return {
+    template_ids: ids,
+    default_list_template_id: ids.includes(defaults.list) ? defaults.list : null,
+    default_selling_template_id: ids.includes(defaults.selling) ? defaults.selling : null,
+  };
 }
 
 export interface TemplateAssignFilter {
