@@ -1097,9 +1097,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   *  page send the same line shape (`draftLinesPayload`). */
   const payloadLines = (): PriceTagRequestLineInput[] => draftLinesPayload(lines, priceMode);
 
-  // AC-P10: a failed Submit opens the first offending section, top to bottom,
-  // so the inline error it just set is visible rather than sitting inside a
-  // section still collapsed from a moment ago. `toggleSection` (not
+  // AC-P10: a failed Submit opens EVERY offending section (crew pass 5 Nov,
+  // #2138: opening only the first left "Add at least one line." hidden under
+  // a counted summary); the caller scrolls to the first. So each inline error
+  // it just set is visible rather than sitting inside a section still
+  // collapsed from a moment ago. `toggleSection` (not
   // `openSectionOnce`) because this must fire every time, even for a section
   // the reader already closed by hand.
   const openSectionForProblems = useCallback(
@@ -1111,13 +1113,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       },
       hasRowProblems: boolean,
     ) => {
-      if (fields.debtor) {
-        toggleSection('customer', true);
-      } else if (fields.lines || hasRowProblems) {
-        toggleSection('sales_order', true);
-      } else if (fields.neededBy) {
-        toggleSection('need_by', true);
-      }
+      if (fields.debtor) toggleSection('customer', true);
+      if (fields.lines || hasRowProblems) toggleSection('sales_order', true);
+      if (fields.neededBy) toggleSection('need_by', true);
     },
     [toggleSection],
   );
