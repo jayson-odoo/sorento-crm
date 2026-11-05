@@ -60,6 +60,10 @@ def _serialize(asset, attachment, urls: dict, thumbs: Optional[dict] = None) -> 
         url=urls.get(asset.id),
         thumb_url=(thumbs or {}).get(asset.id),
         mime_type=attachment.mime_type,
+        show_when_spec_key=asset.show_when_spec_key,
+        show_when_values=(
+            list(asset.show_when_values) if asset.show_when_values is not None else None
+        ),
     )
 
 
@@ -215,6 +219,44 @@ def rename_asset(
 
     urls = asset_service.urls_for(db, [asset.id])
     return _serialize(asset, attachment, urls)
+
+
+class _ShowWhenRequest(BaseModel):
+    spec_key: Optional[str] = None
+    values: list[str] = []
+
+
+@router.put("/{asset_id}/show-when", response_model=AssetResponse)
+def set_asset_show_when(
+    asset_id: str,
+    body: _ShowWhenRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Set or clear an icon's "show when" rule (feature icons, contract B3).
+
+    ``spec_key`` null clears the rule.
+    """
+    row = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id == asset_id, Attachment.is_deleted.is_(False))
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404,
+            message="Asset not found. Someone might have deleted it already.",
+            code="ASSET_NOT_FOUND",
+        )
+    asset, attachment = row
+
+    asset_service.set_show_when(db, asset, body.spec_key, body.values)
+    db.commit()
+    db.refresh(asset)
+
+    urls = asset_service.urls_for(db, [asset.id])
+    return _serialize(asset, attachment, urls, asset_service.screen_urls_for(db, [asset.id]))
 
 
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)

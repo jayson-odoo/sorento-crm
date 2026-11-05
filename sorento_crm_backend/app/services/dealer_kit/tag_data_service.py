@@ -293,9 +293,18 @@ def product_specs(db: Session, product: Product, spec_row=None) -> list[dict]:
                 "label": key.label,
                 "value": _spec_display_value(raw, key.value_labels),
                 "unit": key.unit,
+                # Feature icons match on the STORED value, never the label (contract B4).
+                "raw": _spec_raw_text(raw),
             }
         )
     return specs
+
+
+def _spec_raw_text(raw) -> str:
+    """A stored spec value as text: a bool reads `true` / `false`, anything else `str()`."""
+    if isinstance(raw, bool):
+        return "true" if raw else "false"
+    return str(raw)
 
 
 def dimensions_text(product: Product, spec_row=None) -> str:

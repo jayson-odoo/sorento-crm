@@ -424,6 +424,116 @@ def _layer_asset_ids(layers) -> set[str]:
     return ids
 
 
+# --------------------------------------------------------------------------- #
+# Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+#
+# The rule lives ON the icon asset (owner ruling Q1): "show when <spec> is
+# <value(s)>". A tag's feature_icons layer shows every icon whose rule matches
+# its subject's specs; the matching itself is the frontend's one pure function
+# (`lib/dealer-kit/feature-icons.ts`), so canvas, preview and print agree.
+# --------------------------------------------------------------------------- #
+ICON = "icon"
+FEATURE_ICONS_LAYER = "feature_icons"
+
+
+def doc_has_feature_icons(doc: Optional[dict]) -> bool:
+    """Whether a tag template or tag sheet document has any feature_icons layer."""
+    if not doc:
+        return False
+    layers = list(doc.get("layers", []) or [])
+    for sheet in doc.get("sheets", []) or []:
+        for tag in (sheet or {}).get("tags", []) or []:
+            layers.extend((tag or {}).get("layers", []) or [])
+    return any((layer or {}).get("type") == FEATURE_ICONS_LAYER for layer in layers)
+
+
+def feature_icon_rules(db: Session) -> list[dict]:
+    """Every icon asset carrying a rule, ordered by name: ``[{id, name, spec_key, values}]``."""
+    rows = (
+        db.query(Asset)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(
+            Asset.kind == ICON,
+            Asset.show_when_spec_key.isnot(None),
+            Attachment.is_deleted.is_(False),
+        )
+        .order_by(Asset.name, Asset.id)
+        .all()
+    )
+    return [
+        {
+            "id": asset.id,
+            "name": asset.name,
+            "spec_key": asset.show_when_spec_key,
+            "values": list(asset.show_when_values or []),
+        }
+        for asset in rows
+    ]
+
+
+def set_show_when(
+    db: Session, asset: Asset, spec_key: Optional[str], values: list[str]
+) -> Asset:
+    """Set or clear an icon's rule (contract B3). Flushes, never commits.
+
+    ``spec_key`` None clears both columns. Otherwise the key must be an ACTIVE registry key,
+    ``values`` non-empty (de-duplicated, order kept) and, when the key lists
+    ``allowed_values``, every value one of them.
+    """
+    from app.models.product_spec import ProductSpecRegistry
+
+    if asset.kind != ICON:
+        raise AppException(
+            status_code=422,
+            message="Only an icon can have a show when rule.",
+            code="NOT_AN_ICON",
+        )
+
+    if spec_key is None:
+        asset.show_when_spec_key = None
+        asset.show_when_values = None
+        db.flush()
+        return asset
+
+    entry = (
+        db.query(ProductSpecRegistry)
+        .filter(
+            ProductSpecRegistry.spec_key == spec_key,
+            ProductSpecRegistry.is_active.is_(True),
+        )
+        .first()
+    )
+    if entry is None:
+        raise AppException(
+            status_code=422,
+            message=f"'{spec_key}' is not an active product spec.",
+            code="UNKNOWN_SPEC",
+        )
+
+    cleaned = list(dict.fromkeys(v for v in values if v is not None))
+    if not cleaned:
+        raise AppException(
+            status_code=422,
+            message="Choose at least one value.",
+            code="VALUES_REQUIRED",
+        )
+
+    allowed = [str(v) for v in (entry.allowed_values or [])]
+    if allowed:
+        unknown = [v for v in cleaned if v not in allowed]
+        if unknown:
+            raise AppException(
+                status_code=422,
+                message=f"Not a value of {entry.label}: {', '.join(unknown)}.",
+                code="UNKNOWN_SPEC_VALUE",
+            )
+
+    asset.show_when_spec_key = spec_key
+    asset.show_when_values = cleaned
+    db.flush()
+    return asset
+
+
 def background_asset_ids(doc: Optional[dict]) -> set[str]:
     """Every asset a document uses as a section background.
 

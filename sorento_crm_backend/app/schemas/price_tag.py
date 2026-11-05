@@ -741,6 +741,19 @@ class BadgeLayerPropsDoc(_StrictProps):
     assetId: str
 
 
+class FeatureIconsLayerPropsDoc(_StrictProps):
+    """PRICETAG-DESIGNER-GAPS item 3: one packed row of the library icons whose rule matches
+    the subject's specs. ``order`` names icon asset ids the designer put first."""
+
+    kind: Literal["feature_icons"]
+    iconSize_mm: float = Field(gt=0, le=200)
+    gap_mm: float = Field(ge=0, le=100)
+    align: Literal["left", "center", "right"] = "left"
+    order: list[str] = []
+    subjectPart: Optional[int] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+
+
 class GroupBindingDoc(_StrictProps):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
@@ -761,6 +774,7 @@ TagLayerPropsDoc = Annotated[
         PriceBadgeLayerPropsDoc,
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
+        FeatureIconsLayerPropsDoc,
     ],
     Field(discriminator="kind"),
 ]
@@ -772,7 +786,7 @@ class TagLayerDoc(BaseModel):
     id: str
     type: Literal[
         "image", "text", "shape", "product_slot", "price_badge",
-        "badge", "group",
+        "badge", "group", "feature_icons",
     ]
     x_mm: float
     y_mm: float
@@ -997,6 +1011,15 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconOut(BaseModel):
+    """One library icon and its "show when" rule (feature icons, contract B5)."""
+
+    id: str
+    name: str
+    spec_key: str
+    values: list[str]
+
+
 class DesignMediaMixin(BaseModel):
     """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
 
@@ -1012,6 +1035,8 @@ class DesignMediaMixin(BaseModel):
     images: dict[str, str] = {}
     #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
     fonts: list[TagFont] = []
+    #: Feature icons: every rule-carrying icon, when the document has a feature_icons layer.
+    feature_icons: list[FeatureIconOut] = []
 
 
 class TagSheetDocResponse(BaseModel):
@@ -1251,6 +1276,9 @@ class SpecValue(BaseModel):
     label: str
     value: str
     unit: Optional[str] = None
+    #: The stored value as a string (`mixer`, `true`), beside the display `value`. Feature
+    #: icons match on this, so renaming a label never silently drops an icon.
+    raw: Optional[str] = None
 
 
 class SpecKeyItem(BaseModel):
@@ -1575,6 +1603,9 @@ class AssetResponse(BaseModel):
     #: original. The picker grid draws this; ``url`` stays the original.
     thumb_url: Optional[str] = None
     mime_type: Optional[str] = None
+    #: Feature icons: an icon shows when this spec's raw value is one of these. Both or neither.
+    show_when_spec_key: Optional[str] = None
+    show_when_values: Optional[list[str]] = None
 
 
 # ---------------------------------------------------------------------------
