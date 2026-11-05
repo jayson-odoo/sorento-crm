@@ -39,6 +39,7 @@ import {
   fontAssetUrl,
   listAssets,
   listFontAssets,
+  listIconAssets,
   type KitAsset,
 } from '../../services/assetService';
 import { listSpecKeys } from '../../services/tagDataService';
@@ -195,6 +196,8 @@ export interface KitLibrary {
 const libraryClient = kitLibraryClient;
 const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
 const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
+/** Feature icons: read by kind so no icon the print page shows falls outside a page of artwork. */
+export const ICONS_KEY = ['dealer-kit', 'library', 'icons'] as const;
 const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
 export { resetKitLibraryCache };
 const NO_ASSETS: KitAsset[] = [];
@@ -211,6 +214,13 @@ export function useKitLibrary(): KitLibrary {
     { queryKey: FONTS_KEY, queryFn: () => listFontAssets() },
     libraryClient,
   );
+  const iconsQuery = useQuery(
+    {
+      queryKey: ICONS_KEY,
+      queryFn: () => listIconAssets(),
+    },
+    libraryClient,
+  );
   // A registry read that fails leaves the Specs group empty rather than stopping the canvas.
   const specKeysQuery = useQuery(
     {
@@ -221,12 +231,14 @@ export function useKitLibrary(): KitLibrary {
   );
   const assets = assetsQuery.data ?? NO_ASSETS;
   const fonts = fontsQuery.data ?? NO_ASSETS;
+  const icons = iconsQuery.data ?? NO_ASSETS;
   const specKeys = specKeysQuery.data ?? NO_SPEC_KEYS;
 
   const reload = useCallback(async () => {
     await Promise.all([
       libraryClient.refetchQueries({ queryKey: ASSETS_KEY }),
       libraryClient.refetchQueries({ queryKey: FONTS_KEY }),
+      libraryClient.refetchQueries({ queryKey: ICONS_KEY }),
     ]);
   }, []);
 
@@ -273,6 +285,12 @@ export function useKitLibrary(): KitLibrary {
         asset,
       ]);
     }
+    if (asset.kind === 'icon') {
+      libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, (prev) => [
+        ...(prev ?? []).filter((a) => a.id !== asset.id),
+        asset,
+      ]);
+    }
   }, []);
 
   /** The row's name changed on the server; carry it here without a round trip. */
@@ -281,6 +299,7 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).map((a) => (a.id === id ? { ...a, name } : a));
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
+    libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, apply);
   }, []);
 
   /** The row was deleted on the server; drop it from every list it was in. */
@@ -289,25 +308,26 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).filter((a) => a.id !== id);
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
+    libraryClient.setQueryData<KitAsset[]>(ICONS_KEY, apply);
   }, []);
 
   const assetUrls = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const asset of assets) {
+    for (const asset of [...icons, ...assets]) {
       if (asset.url) map[asset.id] = asset.url;
     }
     return map;
-  }, [assets]);
+  }, [assets, icons]);
 
   const thumbUrls = useMemo(() => {
     const map: Record<string, string> = {};
-    for (const asset of assets) {
+    for (const asset of [...icons, ...assets]) {
       if (asset.thumb_url) map[asset.id] = asset.thumb_url;
     }
     return map;
-  }, [assets]);
+  }, [assets, icons]);
 
-  const featureIcons = useMemo(() => iconsFromAssets(assets), [assets]);
+  const featureIcons = useMemo(() => iconsFromAssets(icons), [icons]);
 
   const fontOptions = useMemo(() => {
     const brand = fonts.map((font) => ({

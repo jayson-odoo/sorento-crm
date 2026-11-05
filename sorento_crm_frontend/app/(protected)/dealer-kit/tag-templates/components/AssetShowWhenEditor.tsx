@@ -11,8 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { useSpecRegistryQuery } from '@/app/(protected)/master-data-management/product-specifications/hooks/useSpecRegistryQuery';
-import { useSetAssetShowWhen } from '../../hooks/useFeatureIcons';
+import { useFeatureIconSpecKeys, useSetAssetShowWhen } from '../../hooks/useFeatureIcons';
 import type { KitAsset } from '../../services/assetService';
 
 const BOOLEAN_VALUES = ['true', 'false'];
@@ -28,35 +27,34 @@ export function AssetShowWhenEditor({
   onBack,
   onSaved,
 }: AssetShowWhenEditorProps) {
-  const registry = useSpecRegistryQuery();
+  const registry = useFeatureIconSpecKeys();
   const save = useSetAssetShowWhen();
   const [specKey, setSpecKey] = useState(asset.show_when_spec_key ?? '');
   const [values, setValues] = useState<string[]>(asset.show_when_values ?? []);
 
-  // Only a key with a fixed set of values can carry a rule: the values are what a person picks.
+  // Only a key with a fixed set of values can carry a rule (the server refuses any other): a
+  // yes/no key reads `true` / `false`, any other its registry values.
   const keys = useMemo(
     () =>
       (registry.data ?? []).filter(
-        (key) =>
-          key.is_active &&
-          (key.allowed_values.length > 0 || key.data_type === 'boolean'),
+        (key) => key.data_type === 'boolean' || (key.allowed_values ?? []).length > 0,
       ),
     [registry.data],
   );
   const specOptions = useMemo(
-    () => keys.map((key) => ({ value: key.spec_key, label: key.label })),
+    () => keys.map((key) => ({ value: key.key, label: key.label })),
     [keys],
   );
-  const chosen = keys.find((key) => key.spec_key === specKey);
+  const chosen = keys.find((key) => key.key === specKey);
   const valueOptions = useMemo(() => {
     if (!chosen) return [];
-    if (chosen.data_type === 'boolean' && chosen.allowed_values.length === 0) {
+    if (chosen.data_type === 'boolean') {
       return BOOLEAN_VALUES.map((v) => ({
         value: v,
         label: v === 'true' ? 'Yes' : 'No',
       }));
     }
-    return chosen.allowed_values.map((v) => ({
+    return (chosen.allowed_values ?? []).map((v) => ({
       value: v,
       label: chosen.value_labels?.[v] ?? v,
     }));

@@ -49,23 +49,26 @@ vi.mock('../../services/assetService', () => ({
   uploadAsset: vi.fn(),
   setAssetShowWhen,
 }));
+// S1 (fix round 1): the editor reads the dealer-kit spec vocabulary, never the master-data
+// registry route (gated on a permission marketing does not hold).
+vi.mock('../../services/tagDataService', () => ({
+  listSpecKeys: vi.fn(async () => [
+    {
+      key: 'water_supply',
+      label: 'Water supply',
+      unit: null,
+      data_type: 'enum',
+      allowed_values: ['cold_only', 'mixer'],
+      value_labels: { cold_only: 'Cold only', mixer: 'Mixer' },
+    },
+  ]),
+}));
 vi.mock(
   '@/app/(protected)/master-data-management/product-specifications/services/productSpecService',
   () => ({
-    getSpecRegistry: vi.fn(async () => ({
-      keys: [
-        {
-          id: 'r1',
-          spec_key: 'water_supply',
-          label: 'Water supply',
-          data_type: 'enum',
-          unit: null,
-          allowed_values: ['cold_only', 'mixer'],
-          value_labels: { cold_only: 'Cold only', mixer: 'Mixer' },
-          is_active: true,
-        },
-      ],
-    })),
+    getSpecRegistry: vi.fn(async () => {
+      throw new Error('the master-data registry must not be read here');
+    }),
   }),
 );
 vi.mock('@/components/common/SearchableSelect', () => ({

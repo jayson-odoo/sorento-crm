@@ -64,9 +64,10 @@ describe('Inspector feature icons', () => {
 
   it('writes centre and right alignment', () => {
     const onUpdateProps = mount();
-    fireEvent.click(screen.getByRole('button', { name: /^(centre|center)$/i }));
+    // N3 (fix round 1): alignment is the roster's single-choice ToggleGroup, whose items are radios.
+    fireEvent.click(screen.getByRole('radio', { name: /^(centre|center)$/i }));
     expect(onUpdateProps).toHaveBeenLastCalledWith('fi1', expect.objectContaining({ align: 'center' }));
-    fireEvent.click(screen.getByRole('button', { name: /^right$/i }));
+    fireEvent.click(screen.getByRole('radio', { name: /^right$/i }));
     expect(onUpdateProps).toHaveBeenLastCalledWith('fi1', expect.objectContaining({ align: 'right' }));
   });
 });

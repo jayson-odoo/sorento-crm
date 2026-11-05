@@ -55,6 +55,12 @@ interface AssetPickerDialogProps {
   allowProductPhotos?: boolean;
   /** What an upload from this dialog is filed as. */
   uploadKind?: AssetKind;
+  /**
+   * Manage ONE kind (the icon library, from a Feature icons layer): the library lists only that
+   * kind, an upload is filed as it, and the new asset stays in the list instead of being picked,
+   * so its Show when rule can be set next.
+   */
+  libraryKind?: AssetKind;
   title?: string;
   onCancel: () => void;
   onPick: (source: ImageSource) => void;
@@ -64,11 +70,13 @@ export function AssetPickerDialog({
   open,
   productImages,
   allowProductPhotos = true,
-  uploadKind = 'decorative',
+  uploadKind: uploadKindProp = 'decorative',
+  libraryKind,
   title = 'Choose an image',
   onCancel,
   onPick,
 }: AssetPickerDialogProps) {
+  const uploadKind = libraryKind ?? uploadKindProp;
   const [tab, setTab] = useState(allowProductPhotos ? 'product' : 'library');
   const [assets, setAssets] = useState<KitAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -84,7 +92,9 @@ export function AssetPickerDialog({
     try {
       const rows = await listAssets({
         query,
-        tag: tagFilter === '__all__' ? undefined : tagFilter,
+        ...(libraryKind
+          ? { kind: libraryKind }
+          : { tag: tagFilter === '__all__' ? undefined : tagFilter }),
         limit: 100,
       });
       setAssets(rows);
@@ -95,7 +105,7 @@ export function AssetPickerDialog({
     } finally {
       setLoading(false);
     }
-  }, [query, tagFilter]);
+  }, [query, tagFilter, libraryKind]);
 
   useEffect(() => {
     if (!open) return;
@@ -120,13 +130,17 @@ export function AssetPickerDialog({
       });
       setFiles([]);
       toast.success(`${asset.name} added to the library`);
-      onPick({ type: 'asset', assetId: asset.id });
+      if (libraryKind) {
+        setAssets((rows) => [...rows.filter((row) => row.id !== asset.id), asset]);
+      } else {
+        onPick({ type: 'asset', assetId: asset.id });
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [files, uploadKind, onPick]);
+  }, [files, uploadKind, libraryKind, onPick]);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -209,14 +223,16 @@ export function AssetPickerDialog({
                         onChange={(e) => setQuery(e.target.value)}
                       />
                     </div>
-                    <div className="w-40">
-                      <SearchableSelect
-                        value={tagFilter}
-                        onChange={setTagFilter}
-                        options={LIBRARY_TAGS}
-                        size="sm"
-                      />
-                    </div>
+                    {!libraryKind && (
+                      <div className="w-40">
+                        <SearchableSelect
+                          value={tagFilter}
+                          onChange={setTagFilter}
+                          options={LIBRARY_TAGS}
+                          size="sm"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {loading ? (
@@ -303,7 +319,7 @@ export function AssetPickerDialog({
                         ) : (
                           <Upload className="mr-1 size-3.5" />
                         )}
-                        Upload and use
+                        {libraryKind ? 'Upload' : 'Upload and use'}
                       </Button>
                     </div>
                   </div>

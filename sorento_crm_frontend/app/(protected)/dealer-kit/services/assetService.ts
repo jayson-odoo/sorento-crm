@@ -105,6 +105,14 @@ export async function uploadAsset(input: {
   return response.json();
 }
 
+/**
+ * The company's icons, for feature icons. Read by kind with a generous ceiling, so no icon the
+ * print page shows can fall outside a page of the general library.
+ */
+export async function listIconAssets(): Promise<KitAsset[]> {
+  return listAssets({ kind: 'icon', limit: 1000 });
+}
+
 /** The company's brand fonts, for the inspector list and `@font-face`. */
 export async function listFontAssets(): Promise<KitAsset[]> {
   return listAssets({ kind: 'font', limit: 100 });

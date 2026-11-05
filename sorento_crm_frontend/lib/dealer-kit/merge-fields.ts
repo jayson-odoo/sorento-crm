@@ -71,6 +71,10 @@ export interface SpecKeyOption {
   key: string;
   label: string;
   unit?: string | null;
+  /** Feature icons' Show when editor: the key's type and its fixed values, with their labels. */
+  data_type?: string | null;
+  allowed_values?: string[];
+  value_labels?: Record<string, string>;
 }
 
 /**

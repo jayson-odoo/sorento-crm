@@ -92,6 +92,7 @@ import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import type { TagFont } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type {
   ChangeRequestPayload,
   ReviewComment,
@@ -237,6 +238,8 @@ export interface TagPreviewResponse {
   assets: Record<string, string>;
   images: Record<string, string>;
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers. */
+  feature_icons?: FeatureIcon[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.

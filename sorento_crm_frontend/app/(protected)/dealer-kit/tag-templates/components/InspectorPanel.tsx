@@ -251,6 +251,8 @@ interface InspectorPanelProps {
   specKeys?: SpecKeyOption[];
   /** Feature icons: the rule-carrying icon library, for the layer's order list. */
   featureIcons?: FeatureIcon[];
+  /** Feature icons: open the icon library (upload icons, set their Show when rules). */
+  onManageIcons?: () => void;
 }
 
 export function InspectorPanel({
@@ -280,6 +282,7 @@ export function InspectorPanel({
   specSheet = false,
   specKeys,
   featureIcons,
+  onManageIcons,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -567,6 +570,7 @@ export function InspectorPanel({
             <FeatureIconsInspector
               props={layer.props}
               icons={featureIcons ?? []}
+              onManageIcons={onManageIcons}
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
@@ -1840,10 +1844,12 @@ const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: stri
 function FeatureIconsInspector({
   props,
   icons,
+  onManageIcons,
   onChange,
 }: {
   props: FeatureIconsLayerProps;
   icons: FeatureIcon[];
+  onManageIcons?: () => void;
   onChange: (changes: Partial<FeatureIconsLayerProps>) => void;
 }) {
   const listed = orderedIcons(icons, props.order ?? []);
@@ -1879,23 +1885,22 @@ function FeatureIconsInspector({
       </div>
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Align</Label>
-        <div className="flex gap-1">
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={props.align}
+          onValueChange={(next: string) => {
+            // A single group reports '' when the pressed item is clicked again: keep the alignment.
+            if (next) onChange({ align: next as FeatureIconsLayerProps['align'] });
+          }}
+        >
           {FEATURE_ICON_ALIGNS.map((a) => (
-            <button
-              key={a.value}
-              type="button"
-              aria-pressed={props.align === a.value}
-              className={`flex-1 rounded border px-2 py-0.5 text-xs ${
-                props.align === a.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-input hover:bg-accent'
-              }`}
-              onClick={() => onChange({ align: a.value })}
-            >
+            <ToggleGroupItem key={a.value} value={a.value} className="flex-1 text-xs">
               {a.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
       {listed.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -1934,6 +1939,11 @@ function FeatureIconsInspector({
             ))}
           </ul>
         </div>
+      )}
+      {onManageIcons && (
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onManageIcons}>
+          Manage icons
+        </Button>
       )}
     </section>
   );

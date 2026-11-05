@@ -634,6 +634,8 @@ export function TagCanvasEditor({
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
+  /** Feature icons: the icon library dialog, opened from the layer's inspector. */
+  const [iconLibraryOpen, setIconLibraryOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean } | null>(
     null,
   );
@@ -4662,7 +4664,7 @@ export function TagCanvasEditor({
         onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
-        onAddFeatureIcons={handleAddFeatureIcons}
+        onAddFeatureIcons={specSheet ? undefined : handleAddFeatureIcons}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
@@ -4894,6 +4896,7 @@ export function TagCanvasEditor({
               specSheet={specSheet}
               specKeys={library.specKeys}
               featureIcons={library.featureIcons}
+              onManageIcons={() => setIconLibraryOpen(true)}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -4966,6 +4969,23 @@ export function TagCanvasEditor({
         title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
         onCancel={() => setImagePicker(null)}
         onPick={handleImagePicked}
+      />
+
+      {/* Feature icons: the icon library, managed from the layer (upload, Show when rules). */}
+      <AssetPickerDialog
+        open={iconLibraryOpen}
+        productImages={[]}
+        allowProductPhotos={false}
+        libraryKind="icon"
+        title="Icons"
+        onCancel={() => {
+          setIconLibraryOpen(false);
+          void library.reload();
+        }}
+        onPick={() => {
+          setIconLibraryOpen(false);
+          void library.reload();
+        }}
       />
 
       <InsertFieldDialog
