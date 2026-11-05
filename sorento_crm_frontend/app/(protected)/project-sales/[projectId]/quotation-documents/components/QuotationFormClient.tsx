@@ -552,10 +552,16 @@ export function QuotationFormClient({
 
   /**
    * Recheck alerts, in the record card as on the view page (owner hand test, 5 Nov 2026: the
-   * button above the lines is gone). It writes to the server, so it waits while anything typed
-   * is unsaved: the answer would be for rows the screen no longer shows. On a clean form the
-   * opened areas are dropped from the session afterwards, so they re-read the rechecked rows.
+   * button above the lines is gone). It rewrites the saved lines' alerts, so it waits while any
+   * LINE edit is unsaved: the answer would be for rows the screen no longer shows. Letterhead and
+   * letter text are not lines and are kept (they live in this form's own state, not the session).
+   * Afterwards the opened areas are dropped from the line session, so they re-read the rechecked
+   * rows.
    */
+  const linesDirty = edit.changedScopes.length > 0;
+  // Read after the awaits below: a line typed WHILE the recheck runs must not be reset.
+  const linesDirtyRef = React.useRef(linesDirty);
+  linesDirtyRef.current = linesDirty;
   const recompute = useQuotationRecomputeMutation(projectId);
   const keptQuotations = React.useMemo(
     () => (quotations.data ?? []).filter((row) => keptScopes.some((scope) => scope.id === row.id)),
@@ -588,7 +594,9 @@ export function QuotationFormClient({
         // The mutation toasted the reason; the other areas still get their recheck.
       }
     }
-    edit.cancel();
+    // Re-read the rechecked rows only when nothing was typed meanwhile; otherwise the typed
+    // work wins and Save (or the next recheck) carries on from it.
+    if (!linesDirtyRef.current) edit.cancel();
     if (lines.length > 0) toast.success(lines.join(' '));
   }
 
@@ -664,8 +672,8 @@ export function QuotationFormClient({
                   type="button"
                   size="sm"
                   variant="outline"
-                  disabled={recompute.isPending || isDirty}
-                  title={isDirty ? 'Save or cancel your changes first' : undefined}
+                  disabled={recompute.isPending || linesDirty}
+                  title={linesDirty ? 'Save or cancel your line changes first' : undefined}
                   onClick={() => void recheckAll()}
                 >
                   <RefreshCw className="size-4" aria-hidden />
