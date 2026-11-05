@@ -211,6 +211,13 @@ Measured on 5 Nov 2026 (selection only; estimated CPU seconds from the committed
 | `42d1a56c..019770c1` (18 commits, `po_link_history` + one alembic revision) | 526 files, 396 of them `tests/scm/`; est 4,894 CPU-s | 262 files, 21 `tests/scm/`; est 2,384 CPU-s |
 | `019770c1..30bbcc6a` (108 commits, incl. `app/models/user.py` and `procurement.py`) | 1,798 files, 397 `tests/scm/`; est 25,583 CPU-s | all 3,257 files; est 36,751 CPU-s |
 
+Run for real in one 4-core cloud sandbox, `42d1a56c..019770c1`: the old script took 4,063 s
+(migrations 803 passed, all of `tests/scm/` 5,429 passed / 2 failed in 18 min, 103 selected,
+FULL vitest 22,379); the new one took 850 s (3,704 passed / 0 failed, selected 262 of 3,250 test
+files, no vitest because no frontend file changed). The 2 old reds were EXPLAIN-plan assertions in
+`tests/scm/test_container_request_product_index.py` (the planner picked another plan), a file that
+range does not reach.
+
 The second range is not a defect of the rule: a changed User model is imported, directly or
 through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
 old one-level regex missed 1,459 of those dependents.
