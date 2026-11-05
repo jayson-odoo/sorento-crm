@@ -184,3 +184,16 @@ always escaped (`& < > "`). Idempotent.
   tag_template_id: <default link id>, price_type: 'selling' if the default is the SP default else 'list'}`
   and draws the returned line + template + images through `DesignViewer`, overriding only
   `combo.description` with the editor's unsaved draft. One pipeline: the request preview and PDF.
+- R19 (crew pass on 47e16e7e; owner ruling "every combo tag renders correctly"): on a COMBO line, where the
+  subject is the line itself (not a part / position subject), the product description resolves to the
+  combo's own description when it has one, else the host's `price_tag_description`. This covers both the
+  `price_tag_description` slot and the `{{product.price_tag_description}}` merge field, on canvas,
+  request preview and print alike (`resolveSlotText` + `merge-fields.ts` + `layerRichBlocks`). A part or
+  position subject keeps its own product's description. A rich token inside other text (e.g. the dev
+  template's literal `Text{{product.price_tag_description}}`) renders as blocks with formatting kept: the
+  literal text before the token joins the first block, the text after joins the last block.
+- R20 (crew pass, step 14): every template option in the product/combo template multi-select and in the
+  Default LP / Default SP selects shows its price type ("LP", "SP", "LP & SP", "Not set") as the
+  option's `description` line (existing SearchableSelect / SearchableMultiSelect affordance, no new UI).
+- LP line on the dev "Bathroom Furniture SP" template: template content, not code. The hand test adds a
+  text layer "LP: RM {{product.list_price}}" in the designer and publishes (Setup).
