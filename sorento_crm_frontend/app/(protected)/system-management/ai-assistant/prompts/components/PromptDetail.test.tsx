@@ -617,9 +617,11 @@ describe('PromptDetail on the standard record layout (AI-PROMPTS-STD-VIEWS)', ()
     expect(tabs.slice(0, 4)).toEqual(['Prompt', 'Versions', 'Model', 'Dry run']);
   });
 
-  it('shows the role as a field, not a subtitle line', () => {
+  it('shows the role as header metadata, not a subtitle line or a tab body', () => {
     renderDetail();
     expect(screen.getByTestId('prompt-role')).toHaveTextContent('Intent / routing');
+    // Read-only metadata sits under the record header, never inside a tab body.
+    expect(screen.getByTestId('prompt-role').closest('[role="tabpanel"]')).toBeNull();
   });
 
   it('opens read-only; Edit makes the editor editable and swaps the header to Cancel + Save', () => {

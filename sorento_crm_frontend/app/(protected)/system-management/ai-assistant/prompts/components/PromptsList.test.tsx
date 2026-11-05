@@ -241,6 +241,25 @@ describe('PromptsList (standard DataGrid)', () => {
     expect(href).toMatch(/sort=name/);
   });
 
+  it('carries both filters into the row URL, so Back and the pager page the same filtered set', async () => {
+    push.mockReset();
+    renderList();
+    pointer(screen.getByRole('button', { name: /^Filters/ }));
+    const status = (await screen.findByLabelText('prompt-status-filter')) as HTMLSelectElement;
+    for (const o of Array.from(status.options)) o.selected = true;
+    fireEvent.change(status);
+    const model = screen.getByLabelText('prompt-model-filter') as HTMLSelectElement;
+    for (const o of Array.from(model.options)) o.selected = true;
+    fireEvent.change(model);
+    await waitFor(() => expect(lastParams().model).toEqual(['default', 'gpt-5.4-mini']));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+    fireEvent.click(screen.getByText('Rewrite turn'));
+    const href = new URL(String(push.mock.calls.at(-1)![0]), 'http://x');
+    expect(href.searchParams.get('status')).toBe('active,dormant');
+    expect(href.searchParams.get('model')).toBe('default,gpt-5.4-mini');
+  });
+
   it('offers Odoo-style row selection', () => {
     renderList();
     expect(screen.getByRole('checkbox', { name: /Select reformulator/i })).toBeInTheDocument();

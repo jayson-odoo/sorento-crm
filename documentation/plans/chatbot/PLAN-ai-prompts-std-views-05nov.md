@@ -39,9 +39,11 @@ Blanks sort last both ways; text sorts case-insensitively; name breaks ties.
 - `PageHeader` + `BackToList` (keeps list state).
 - Record header card: name + status pill; `DetailActions` with `ListPager`
   (`promptsPagerQuery`, same key builder as the list), gear on the LOADED version (Publish vN,
-  Stage vN, Compare versions) and the one primary, Edit. Edit session: Cancel + Save as new
+  Stage vN) and the one primary, Edit. Edit session: Cancel + Save as new
   version (still a new immutable version, commit message required).
-- Line tabs (`useUrlTab`): Prompt (role field + the unchanged editor: Edit / Preview /
+- Role and live versions sit as a meta strip in the record header (never in a tab body);
+  `PageHeader` title is "Prompt", the name is on the record card.
+- Line tabs (`useUrlTab`): Prompt (the unchanged editor: Edit / Preview /
   Architecture modes, diff, full screen, wired panel), Versions (`PanelDataGrid`; row click loads
   the version; row menu Publish / Stage), Model (`AgentModelCard`), Dry run (`DryRunBox`).
 

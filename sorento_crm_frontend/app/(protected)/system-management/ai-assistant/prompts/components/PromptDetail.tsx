@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -443,17 +443,6 @@ export function PromptDetail({ name }: { name: string }) {
       });
     }
   }
-  if (meta.versions.length > 1) {
-    gearActions.push({
-      key: 'prompt.compare',
-      label: diffOpen ? 'Hide diff' : 'Compare versions',
-      icon: GitCompare,
-      run: () => {
-        toggleDiff();
-        setTab('prompt');
-      },
-    });
-  }
 
   const saveButton = (
     <Button type="button" size="sm" onClick={doSave} disabled={saveDisabled} data-testid="save-version">
@@ -469,7 +458,7 @@ export function PromptDetail({ name }: { name: string }) {
 
   return (
     <Container className="space-y-4">
-      <PageHeader title={<span className="font-mono">{name}</span>} crumbTitle={name} actions={backLink} />
+      <PageHeader title="Prompt" crumbTitle={name} actions={backLink} />
 
       {/* The record header: what the prompt IS, and what can be done to it. */}
       <Card>
@@ -521,6 +510,22 @@ export function PromptDetail({ name }: { name: string }) {
               />
             )}
           </div>
+          {/* Read-only metadata sits under the record header, never in a tab body. */}
+          <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-0.5">
+              <dt className="text-xs text-muted-foreground">Role</dt>
+              <dd className="break-words" data-testid="prompt-role">
+                {meta.role}
+              </dd>
+            </div>
+            <div className="space-y-0.5">
+              <dt className="text-xs text-muted-foreground">Live versions</dt>
+              <dd className="tabular-nums">
+                Production {meta.labels.production != null ? `v${meta.labels.production}` : '-'} · Staging{' '}
+                {meta.labels.staging != null ? `v${meta.labels.staging}` : '-'}
+              </dd>
+            </div>
+          </dl>
         </CardHeader>
       </Card>
 
@@ -551,29 +556,6 @@ export function PromptDetail({ name }: { name: string }) {
           hidden={tab !== 'prompt'}
           className="mt-0 space-y-4 focus-visible:outline-none"
         >
-          <Card>
-            <CardHeader>
-              <CardHeading>
-                <CardTitle>Prompt</CardTitle>
-              </CardHeading>
-            </CardHeader>
-            <section aria-label="Prompt" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Role</div>
-                <div className="break-words text-sm" data-testid="prompt-role">
-                  {meta.role}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">Versions</div>
-                <div className="text-sm tabular-nums">
-                  Production {meta.labels.production != null ? `v${meta.labels.production}` : '-'} · Staging{' '}
-                  {meta.labels.staging != null ? `v${meta.labels.staging}` : '-'}
-                </div>
-              </div>
-            </section>
-          </Card>
-
           <div
             className={cn(
               'grid gap-4',
