@@ -106,6 +106,23 @@ Replaces B1, B2, B3 and F6:
   (each value one of the key's values; each id an icon asset; max 10 per value; empty list removes).
   The asset show-when route is removed.
 - B5 unchanged in shape: `feature_icons` entries `{id, name, spec_key, values}` are now derived from
-  the registry (`values` = every value of that key mapped to that icon).
+  the registry, one entry per (spec, value, icon) with `values: [value]`, already in display order
+  (see the 21:0x revision).
 - F6': the Values and words grid gets an Icons column (view thumbnails, edit with AssetPickerDialog in
   icon-library mode). The canvas reads the icon list from `GET /api/v1/dealer-kit/feature-icons`.
+
+## Revision 5 Nov ~20:4x and ~21:0x (owner: own icons per value, one global sequence)
+
+- Each spec value holds its own 0..10 icons in the admin's order (Mixer may be ONE combined icon,
+  or hot + cold); nothing is forced to be shared.
+- Each spec has `product_spec_registry.icon_order` INTEGER NULL (same migration, additive), set on
+  the spec's Details tab (e.g. Pull-out = 1, Water supply = 2, Steel grade = 3).
+- Sequence, one for every template: spec `icon_order` ascending (blank last, ties by label then
+  spec_key), then the spec's values in its own order, then each value's icon list; an icon reached
+  twice shows once, at its first position. `featureIconsFor(specs, icons)` keeps input order.
+- The Feature icons layer's per-template `order` is retired (dropped at read for drafts that carry
+  it); size, spacing, align, Reads from and Manage icons stay.
+- `value_icons` saves need `master_data.spec_registry.edit` AND `dealer_kit.library.manage`;
+  `icon_order` needs `master_data.spec_registry.edit`. The registry is shared by every company and
+  assets are company-scoped: a save keeps the icon ids of companies the caller cannot see, drops ids
+  whose asset is gone, and a read shows only the caller's own ids.

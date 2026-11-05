@@ -115,3 +115,13 @@ an "Icons" column per value (Water supply = Mixer -> hot + cold; Cold Only -> co
 `product_spec_registry.value_icons` JSONB `{value: [asset ids]}` beside `value_labels` (staff-owned,
 never seed-repaired); migration additive only. "Show when" is removed from the icon screen. The
 designer side is unchanged: one Feature icons layer, close-up, adjustable, follows the combo position.
+
+## Owner rulings 5 Nov ~20:4x and ~21:0x
+
+- 20:4x: each spec value carries its OWN icons, 0..n, in its own order (Cold Only -> blue; Mixer ->
+  one combined red-blue icon, or hot + cold; Hot Only -> red if that value is ever added).
+- 21:0x: the owner DEFINES the sequence once. Each spec gets an "Icon order" number in Master Data >
+  Product Specifications (Pull-out = 1, Water supply = 2, Steel grade = 3); icons show sorted by spec
+  order, then the value's own icon order, packed with no gaps. The layer no longer reorders per
+  template. Pull-out today is two specs: `has_pull_out_shower` (Yes) and `spout_type = pull_out`;
+  icons can sit on either or both.
