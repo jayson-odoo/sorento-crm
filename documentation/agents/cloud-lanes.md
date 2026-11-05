@@ -234,7 +234,7 @@ GitHub-hosted runners in parallel instead of serially in one sandbox (4 cores, 2
 ```
 gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
   -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
-gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main -f comment_on=2176
 ```
 
 `select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
@@ -245,8 +245,8 @@ files onto each pool's runners by estimated seconds (`.test_durations` plus unti
 pool's recorded seconds in runners (a 10% delta gets 3 of 24). vitest: `--shard=i/8` on a full
 run, one runner with `vitest related` + the source guards on a related delta. `summary` posts one
 `crew-tests:` comment (per-shard results, failing ids, wall clock, billable minutes) on
-`comment_on`, or on #2176 for the scheduled nightly, which stays off until crew sets the
-repository variable `TESTS_SHARDED_NIGHTLY=on`.
+`comment_on` (the nightly passes 2176). Dispatch only, no schedule or push trigger (crew, 5 Nov
+2026): every run spends Actions budget, see the costs below, and crew decides each one.
 
 **Nightly-only tests.** `sorento_crm_backend/tests/nightly_only.txt` (the reorder-planning tests,
 owner 5 Nov: "reorder planning are not really in use") is the one list: the release delta

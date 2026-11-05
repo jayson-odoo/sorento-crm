@@ -17,7 +17,11 @@
 #   vitest    full: `vitest run --shard=i/N`; related: `vitest related` + the source guards.
 #   summary   one `crew-tests:` line (passed/failed per shard, failing test ids, wall clock and
 #             billable runner minutes), in the run summary and as a comment on `comment_on`
-#             (dispatch) or the nightly issue #2176 (schedule).
+#             (the nightly passes 2176).
+#
+# workflow_dispatch ONLY (crew, 5 Nov 2026: the four measurement runs billed ~2,375 runner
+# minutes, ~USD 19 of the USD 40 monthly Actions budget). No push, PR or schedule trigger: every
+# run is a deliberate dispatch that crew decides on.
 #
 # Release (crew, after the nightly's green line on #2176):
 #   gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
@@ -25,11 +29,6 @@
 name: Tests (sharded)
 
 on:
-  # TEMPORARY (measurement on main HEAD before the file is on main, where dispatch needs it);
-  # removed before the lane is done.
-  push:
-    branches: [claude/ci-parallel-actions-sharding-9u25cp]
-    paths: [.github/workflows/tests-sharded.yml, sorento_crm_backend/scripts/sharded_tests_*.py]
   workflow_dispatch:
     inputs:
       mode:
@@ -49,27 +48,22 @@ on:
         description: "PR or issue number for the crew-tests comment (empty: run summary only)"
         required: false
         default: ""
-  # 01:47 MYT. Off until crew switches the nightly over: set the repository variable
-  # TESTS_SHARDED_NIGHTLY=on (Settings > Secrets and variables > Actions > Variables).
-  schedule:
-    - cron: "47 17 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: tests-sharded-${{ github.event_name }}-${{ inputs.head || github.ref }}
+  group: tests-sharded-${{ inputs.head }}
   cancel-in-progress: false
 
 env:
-  MODE: ${{ github.event_name == 'schedule' && 'full' || inputs.mode || 'full' }}
+  MODE: ${{ inputs.mode }}
   HEAD_REF: ${{ inputs.head || 'main' }}
   BASE_SHA: ${{ inputs.base || '' }}
 
 jobs:
   select:
     name: Select and shard
-    if: github.event_name != 'schedule' || vars.TESTS_SHARDED_NIGHTLY == 'on'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -391,7 +385,7 @@ jobs:
       - name: Post the crew-tests comment
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET: ${{ github.event_name == 'schedule' && '2176' || inputs.comment_on || '' }}
+          TARGET: ${{ inputs.comment_on }}
         run: |
           if [ -z "$TARGET" ]; then
             echo "no comment target: the line is in the run summary"

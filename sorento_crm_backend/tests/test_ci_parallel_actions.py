@@ -178,15 +178,14 @@ pytestmark_wf = pytest.mark.skipif(not WORKFLOW.is_file(), reason="workflow not 
 
 
 @pytestmark_wf
-def test_the_workflow_dispatches_full_or_delta_and_the_nightly_is_switched_by_a_variable():
+def test_the_workflow_runs_only_on_a_deliberate_dispatch():
+    """crew, 5 Nov 2026: four measurement runs billed ~2,375 runner minutes (~USD 19 of USD 40)."""
     wf = yaml.safe_load(WORKFLOW.read_text())
     on = wf[True]
+    assert set(on) == {"workflow_dispatch"}, on
     inputs = on["workflow_dispatch"]["inputs"]
     assert set(inputs) >= {"mode", "base", "head", "comment_on"}
     assert inputs["mode"]["options"] == ["delta", "full"]
-    assert on["schedule"][0]["cron"]
-    assert "vars.TESTS_SHARDED_NIGHTLY == 'on'" in wf["jobs"]["select"]["if"]
-    assert "'full'" in wf["env"]["MODE"], "a scheduled run is the full sweep"
 
 
 @pytestmark_wf
@@ -205,11 +204,10 @@ def test_the_backend_shards_run_on_postgres_and_redis_with_deploys_flags():
 
 
 @pytestmark_wf
-def test_the_summary_posts_on_the_nightly_issue_or_the_dispatch_target_and_fails_red():
+def test_the_summary_posts_on_the_dispatch_target_and_fails_red():
     summary = yaml.safe_load(WORKFLOW.read_text())["jobs"]["summary"]
     assert summary["if"].startswith("always()")
-    text = json.dumps(summary)
-    assert "'2176'" in text and "inputs.comment_on" in text
+    assert "inputs.comment_on" in json.dumps(summary)
     assert "FAILED" in summary["steps"][-1]["run"]
 
 
