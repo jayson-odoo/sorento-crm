@@ -78,6 +78,7 @@ against the quotation. No? Don't need to fix existing data. This is not rolled o
 - Q4 (a) PO checks against the quotation; the won/open/lost area ranking goes.
 - Q5 (b) no data fix, no migration (project sales not rolled out). Per-area columns stay, unused.
 - Unlinked per-area page: deleted.
+- Mock `mockups/project-outcome-single-05nov.html`: owner OK 14:15 ("ok"), built as mocked.
 
 ## Steps (after answers)
 1. Tester: red pytest for rules 2-8 + vitest for the gear items / dialog / removed pills.
