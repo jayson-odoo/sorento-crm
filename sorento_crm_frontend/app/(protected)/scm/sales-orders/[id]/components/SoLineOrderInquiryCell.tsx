@@ -15,10 +15,7 @@ import {
   type OrderInquiryLine,
 } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
-import {
-  LinePurchaseDocumentsCell,
-  lineDocumentsOf,
-} from '@/app/(protected)/project-sales/order-inquiries/components/OrderInquiryLineDocuments';
+import { LineDocumentsCompact } from '@/app/(protected)/project-sales/order-inquiries/components/OrderInquiryLineDocuments';
 import {
   ReserveText,
   reserveTextOfRows,
@@ -66,11 +63,9 @@ function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: stri
   const href = entry.inquiryId
     ? `/project-sales/order-inquiries/${entry.inquiryId}?row=${line.primary.id}`
     : null;
-  const hasPo = lineDocumentsOf(line, 'po').length > 0;
-  const hasSpo = lineDocumentsOf(line, 'spo').length > 0;
   const reserve = reserveTextOfRows(line.liveRows);
   return (
-    <span className="flex min-w-0 items-center gap-1.5" data-testid={testId}>
+    <span className="flex min-w-0 items-center gap-1.5 overflow-hidden" data-testid={testId}>
       {href ? (
         <Link
           href={href}
@@ -85,18 +80,11 @@ function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: stri
         </span>
       )}
       <OrderInquiryLineStatusPill line={line} rejectedTestId={`${testId}-rejected`} />
-      {hasPo ? (
-        <span className="flex min-w-0 shrink items-center">
-          <LinePurchaseDocumentsCell line={line} kind="po" />
-        </span>
-      ) : null}
-      {hasSpo ? (
-        <span className="flex min-w-0 shrink items-center">
-          <LinePurchaseDocumentsCell line={line} kind="spo" />
-        </span>
-      ) : null}
+      {/* Crew fix (1): one slot for every PO / SPO chip, first chip + "+N", so two
+          document cells never paint over each other in the one-row cell. */}
+      <LineDocumentsCompact line={line} />
       {reserve ? (
-        <span className="min-w-0 shrink truncate">
+        <span className="min-w-0 max-w-[45%] shrink truncate">
           <ReserveText text={reserve} />
         </span>
       ) : null}
@@ -122,7 +110,7 @@ export function SoLineOrderInquiryCell({
   if (entries.length === 0) return <span className="text-muted-foreground">-</span>;
   const [first, ...rest] = entries;
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
       <InquiryEntryView entry={first} testId={`so-line-oi-${lineId}`} />
       {rest.length > 0 ? (
         <Popover>

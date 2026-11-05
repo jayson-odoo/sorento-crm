@@ -75,6 +75,18 @@ group per OI, one row, extra OIs behind "+N".
   the OI columns file), `OrderInquiryRejectedBadge` (pill + reason, Dialog), and
   `SoLineOrderInquiryCell`.
 
+## Crew pass fixes (5 Nov)
+
+1. Layout: the SO cell's PO and SPO chips painted over each other at 360px. One slot now
+   (`LineDocumentsCompact`): the first chip truncates, every other PO/SPO chip sits behind
+   one "+N".
+2. A deep link (`?row=`) into an OI past 25 lines snapped back to page 1: TanStack's
+   `autoResetPageIndex` fired on the next row-model recompute. Off in
+   `OrderInquiryLinesTab`, with explicit resets on search, sort and filters and a clamp when
+   lines shrink.
+3. "Go to linked line" in the PO/SPO lightbox renders only when the loaded document holds
+   the target line (it sat enabled or disabled with nothing to land on).
+
 ## Design note (pre-answer)
 
 One shared FE function for "the status of a sales order line's OI rows" (the fold's

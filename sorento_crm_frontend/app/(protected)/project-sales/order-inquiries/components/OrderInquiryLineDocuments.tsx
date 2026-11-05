@@ -104,16 +104,20 @@ export function LinePurchaseDocumentsCell({ line, kind }: { line: OrderInquiryLi
   );
 }
 
-function DocumentCell({
+export function DocumentCell({
   chip,
   kind,
   showLine = false,
+  fit = false,
 }: {
   chip: DocumentEntry;
   kind: 'po' | 'spo';
   /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
    * document sit side by side. */
   showLine?: boolean;
+  /** SO-LINE-OI-STATUS-UNIFY crew fix (1): the number truncates (ellipsis, full text on
+   * hover) instead of keeping its whole width, for a slot shared with other chips. */
+  fit?: boolean;
 }) {
   // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
   // as the worklist's own receipt pill opens its lightbox.
@@ -127,9 +131,12 @@ function DocumentCell({
   const derived = kind === 'po' && chip.via === 'spo';
   const row = chip.row;
   return (
-    <span className="flex min-w-0 items-center gap-1">
+    <span
+      className={`flex min-w-0 items-center gap-1 ${fit ? 'overflow-hidden' : ''}`}
+      title={fit ? chip.document : undefined}
+    >
       {derived ? (
-        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole />
+        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole={!fit} />
       ) : (
         <OrderInquiryDocumentLink
           kind={kind}
@@ -137,7 +144,7 @@ function DocumentCell({
           poId={link?.po_id}
           poLineId={link?.po_line_id}
           spoLineId={link?.spo_allocation_id}
-          whole
+          whole={!fit}
         />
       )}
       {showLine && chip.lineLabel ? (
@@ -174,3 +181,55 @@ function DocumentCell({
   );
 }
 
+
+/**
+ * SO-LINE-OI-STATUS-UNIFY crew fix (1): every PO and SPO chip of the line in ONE slot - the
+ * first chip (PO before SPO), truncating, and every other one behind a single "+N" that
+ * lists them all in full. For a narrow cell that must stay one row (the Sales Order Lines
+ * tab's Order inquiry cell), where a PO cell and an SPO cell side by side painted over
+ * each other.
+ */
+export function LineDocumentsCompact({ line }: { line: OrderInquiryLine }) {
+  const chips = [
+    ...lineDocumentsOf(line, 'po').map((chip) => ({ chip, kind: 'po' as const })),
+    ...lineDocumentsOf(line, 'spo').map((chip) => ({ chip, kind: 'spo' as const })),
+  ];
+  if (chips.length === 0) return null;
+  const [first, ...rest] = chips;
+  return (
+    <span className="flex min-w-0 items-center gap-1" data-testid="line-documents-compact">
+      <span className="flex min-w-0 shrink items-center overflow-hidden">
+        <DocumentCell chip={first.chip} kind={first.kind} fit />
+      </span>
+      {rest.length > 0 ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
+              aria-label={`${rest.length} more PO or SPO`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              +{rest.length}
+            </Button>
+          </PopoverTrigger>
+          <PopoverPortal>
+            <PopoverContent
+              align="start"
+              collisionPadding={8}
+              className="w-auto max-w-[92vw] space-y-1 p-2"
+            >
+              {chips.map(({ chip, kind }) => (
+                <div key={`${kind}-${chip.key}`}>
+                  <DocumentCell chip={chip} kind={kind} showLine />
+                </div>
+              ))}
+            </PopoverContent>
+          </PopoverPortal>
+        </Popover>
+      ) : null}
+    </span>
+  );
+}

@@ -163,6 +163,45 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
     expect(within(dialog).getByText(/05\/11\/2026/)).toBeInTheDocument();
   });
 
+  it('crew fix (1): PO, via-SPO PO and SPO chips share ONE slot - the first chip truncates, the rest sit behind "+N", nothing overlaps', () => {
+    renderCell([
+      oiRow({
+        state: 'placed',
+        links: [
+          PO_LINK,
+          {
+            id: 'link-2',
+            kind: 'spo',
+            document: 'SPO-2026/09-0041',
+            qty: '4',
+            spo_allocation_id: 'alloc-7',
+            line_label: 'L7',
+            source_po_number: '202609-S0086',
+            purchase_order_id: 'po-86',
+          },
+        ] as never,
+      }),
+    ]);
+    const slot = screen.getByTestId('line-documents-compact');
+    // One chip inline: the PO, which truncates (ellipsis) rather than keeping its width.
+    const inline = within(slot).getByText('202611-P0042');
+    expect(inline).toHaveClass('truncate');
+    expect(inline.closest('span.overflow-hidden')).not.toBeNull();
+    expect(within(slot).queryByText('SPO-2026/09-0041')).toBeNull();
+    expect(within(slot).queryByText('202609-S0086')).toBeNull();
+    // Everything else behind ONE "+N", listed in full.
+    const more = within(slot).getByRole('button', { name: '2 more PO or SPO' });
+    expect(more).toHaveTextContent('+2');
+    fireEvent.click(more);
+    expect(screen.getByText('SPO-2026/09-0041')).toBeInTheDocument();
+    expect(screen.getByText('202609-S0086')).toBeInTheDocument();
+  });
+
+  it('crew fix (1): the cell and each OI entry clip rather than paint past their width', () => {
+    renderCell([oiRow({ state: 'placed', links: [PO_LINK] as never })]);
+    expect(screen.getByTestId('so-line-oi-core-32')).toHaveClass('overflow-hidden');
+  });
+
   it('two OIs on one line stay on one row: the newest shows, the other sits behind "+1"', () => {
     renderCell([
       oiRow(),
