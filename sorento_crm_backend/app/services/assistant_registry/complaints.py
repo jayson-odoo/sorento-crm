@@ -54,7 +54,8 @@ register(
             "complaint_date": FieldDef("Complaint date"),
             "status": FieldDef("Status"),
             "customer_name": FieldDef("Customer"),
-            "product_code": FieldDef("Product code"),
+            # Lists every line's code; the screen cuts it to the contact's brands (`in_scope_product_codes`).
+            "product_code": FieldDef("Product code", whole_document=True),
             "complaint_type": FieldDef("Complaint type"),
             "salesperson": FieldDef("Salesperson"),
             "created_at": FieldDef("Created at"),

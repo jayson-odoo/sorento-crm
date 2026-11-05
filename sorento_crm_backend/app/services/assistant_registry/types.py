@@ -17,8 +17,9 @@ class FieldDef:
     permission: str | None = None
     #: The model attribute; None = the field key itself.
     column: str | None = None
-    #: A figure over the whole record that also counts lines of other brands (an order's total): refused while
-    #: the session carries a contact's brand scope, whose screen recomputes it from the in-scope lines only.
+    #: A value over the whole record that also covers lines of other brands (an order's total, a complaint's list
+    #: of product codes): refused while the session carries a contact's brand scope, whose screen recomputes or
+    #: cuts it to the in-scope lines only.
     whole_document: bool = False
 
 

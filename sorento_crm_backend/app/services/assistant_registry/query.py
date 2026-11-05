@@ -191,7 +191,7 @@ class _Paths:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
         if field.whole_document and self.brand_scoped:
             raise QueryRefused(
-                "restricted", f"`{path}` counts lines of brands outside this contact's brands, so it is not shown here."
+                "restricted", f"`{path}` covers lines of brands outside this contact's brands, so it is not shown here."
             )
         column = table.c[field.column or name]
         return column, field, _kind(column)
@@ -534,12 +534,12 @@ def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates,
 # ------------------------------------------------------------------ describe
 
 
-def _field_rows(entity: EntityDef, slugs: set[str]) -> list[dict]:
+def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[dict]:
     columns = sa_inspect(entity.model).columns
     out = []
     for key, field in entity.fields.items():
         row = {"field": key, "label": field.label, "type": _kind(columns[field.column or key])}
-        if field.permission and field.permission not in slugs:
+        if (field.permission and field.permission not in slugs) or (field.whole_document and brand_scoped):
             row["restricted"] = True
         out.append(row)
     return out
@@ -556,16 +556,23 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
             if not _module_blocked(db, user_id, e.module)
         ]
         return {"entities": listed}
+    from app.models.base import get_brand_scope
+
     found, own_only = _entity_for(db, user_id, entity, slugs)
+    brand_scoped = bool(get_brand_scope(db))
     relations = {}
     for name, (target_key, _fk) in found.relations.items():
         target = ENTITIES[target_key]
-        relations[name] = {"label": target.label, "fields": _field_rows(target, slugs), "relations": list(target.relations)}
+        if _module_blocked(db, user_id, target.module):
+            continue
+        relations[name] = {
+            "label": target.label, "fields": _field_rows(target, slugs, brand_scoped), "relations": list(target.relations),
+        }
     return {
         "entity": found.key,
         "label": found.label,
         "only_own_rows": own_only,
-        "fields": _field_rows(found, slugs),
+        "fields": _field_rows(found, slugs, brand_scoped),
         "relations": relations,
         "ops": list(OPS),
         "buckets": list(BUCKETS),

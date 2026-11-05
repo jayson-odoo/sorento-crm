@@ -735,3 +735,64 @@ def test_R1_a_lookup_row_of_another_company_is_not_read_through_a_relation(db):
         "filters": [{"field": "po_number", "op": "eq", "value": f"{t}-PO-X"}],
     })
     assert [r["supplier.name"] for r in out["rows"]] == [None]
+
+
+def test_R2_a_brand_scoped_contact_cannot_read_a_complaints_full_product_code_list(db):
+    """The header lists every line's code; the screen cuts it to the contact's brands, so here it is refused,
+    in fields, filters and groups alike, and describe says so."""
+    from app.models.complaints import ComplaintProductLine
+    from app.services.assistant_registry.query import describe
+
+    t = tag()
+    chain_in, chain_out = mk_product_chain(db), mk_product_chain(db)
+    product_in, product_out = mk_product(db, unique_code("ZIN"), chain_in), mk_product(db, unique_code("ZOUT"), chain_out)
+    owner = mk_contact(db, "QC2")
+    row = mk_complaint(db, t, 1, owner_contact=owner)
+    row.product_code = f"{product_in.product_code},{product_out.product_code}"
+    db.add_all([
+        ComplaintProductLine(id=str(uuid.uuid4()), complaint_id=row.id, product_code=product_in.product_code),
+        ComplaintProductLine(id=str(uuid.uuid4()), complaint_id=row.id, product_code=product_out.product_code),
+    ])
+    db.flush()
+    user = mk_user(db, C_VIEW)
+    ctx = make_ctx(user)
+    mine = [{"field": "complaint_number", "op": "eq", "value": f"{t}-1"}]
+    with brand_scoped(db, {chain_in[2]}):
+        rows = tool(db, ctx, {"entity": "complaint", "fields": ["complaint_number", "product_code"], "filters": mine}, panel=False)
+        assert rows.status == "ok" and rows.data["restricted"] == ["product_code"]
+        assert "product_code" not in rows.data["rows"][0]
+        oracle = mine + [{"field": "product_code", "op": "contains", "value": product_out.product_code}]
+        assert tool(db, ctx, {"entity": "complaint", "filters": oracle}, panel=False).status == "denied"
+        assert tool(db, ctx, {"entity": "complaint", "group_by": ["product_code"]}, panel=False).status == "denied"
+        fields = writes.run_as_user(db, ctx, lambda u: describe(db, u["id"], "complaint"))["fields"]
+        assert {f["field"]: f.get("restricted", False) for f in fields}["product_code"] is True
+    full = core(db, user, {"entity": "complaint", "fields": ["product_code"], "filters": mine})
+    assert full["rows"][0]["product_code"] == row.product_code
+
+
+def test_R2_a_failed_customer_scope_lookup_refuses_and_leaves_the_session_usable(db, monkeypatch):
+    import app.services.contact_customer_scope as ccs
+
+    def broken(session, contact_id):
+        session.execute(text("SELECT 1/0"))
+
+    monkeypatch.setattr(ccs, "contact_customer_scope", broken)
+    user = mk_user(db, ORDERS_VIEW)
+    names = {r.name for r in writes.permitted_user_reads(db, make_ctx(user))}
+    assert not names & {"crm_query", "crm_describe"}
+    assert db.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_R2_describe_leaves_out_a_relation_whose_module_is_off(db, monkeypatch):
+    from app.modules.runtime import guards
+    from app.services.assistant_registry.query import describe
+
+    real = guards.module_blocked
+    monkeypatch.setattr(guards, "module_blocked", lambda d, u, key: key == "procurement" or real(d, u, key))
+    monkeypatch.setitem(
+        __import__("app.services.assistant_registry", fromlist=["ENTITIES"]).ENTITIES, "supplier",
+        dataclasses.replace(__import__("app.services.assistant_registry", fromlist=["ENTITIES"]).ENTITIES["supplier"], module="procurement"),
+    )
+    user = mk_user(db, SCM_VIEW)
+    out = writes.run_as_user(db, make_ctx(user), lambda u: describe(db, u["id"], "purchase_order"))
+    assert "supplier" not in out["relations"]

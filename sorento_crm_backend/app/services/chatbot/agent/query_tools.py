@@ -35,12 +35,17 @@ def _available(db, ctx) -> bool:
 
     if staff_principal.current() is not None:
         return True
-    try:
-        from app.services.contact_customer_scope import contact_customer_scope
+    from app.services.contact_customer_scope import contact_customer_scope
 
-        return not contact_customer_scope(db, str(ctx.contact_pk)).enforced
+    # A savepoint, so a failed lookup does not leave the turn's transaction aborted for every later call.
+    savepoint = db.begin_nested()
+    try:
+        enforced = contact_customer_scope(db, str(ctx.contact_pk)).enforced
     except Exception:  # noqa: BLE001
+        savepoint.rollback()
         return False
+    savepoint.commit()
+    return not enforced
 
 
 def _refused(exc: QueryRefused) -> ToolResult:
