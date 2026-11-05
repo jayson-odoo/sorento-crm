@@ -50,8 +50,8 @@ The card at the top reads like an order inquiry:
 
 The lines sit on the **Header** tab under the letterhead, one tab per scope above them, with
 **Search lines** and **Columns** on the table. **Edit proposal** shows the same card at the top
-(number, status, version) with **Recheck alerts**, which waits until you save or cancel what you
-typed.
+(number, status, version); **Recheck alerts** is in the actions menu of the proposal itself, not
+on the edit page.
 
 ## Scopes
 

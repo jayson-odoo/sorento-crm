@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { FileText, Mail, Plus, RefreshCw, ScrollText } from 'lucide-react';
+import { FileText, Mail, Plus, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,18 +10,16 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/common/PageHeader';
 import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { projectCrumbs } from '../../../_shared/lib/crumbs';
 import {
   useProject,
   useProjectQuotationVersions,
   useProjectSeries,
-  useQuotationRecomputeMutation,
   useQuotations,
   useQuotationVersions,
 } from '../../../_shared/hooks/useProjects';
-import { isLockedForApproval, quotationStanding } from '../../../_shared/lib/quotationDecision';
+import { quotationStanding } from '../../../_shared/lib/quotationDecision';
 import {
   useQuotationDocument,
   useQuotationCoverPreview,
@@ -47,7 +45,6 @@ import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
 import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
-  describeRecompute,
   QuotationVersionEditor,
   stagedLinesToBody,
   stagedScopeTotal,
@@ -551,54 +548,19 @@ export function QuotationFormClient({
   }
 
   /**
-   * Recheck alerts, in the record card as on the view page (owner hand test, 5 Nov 2026: the
-   * button above the lines is gone). It rewrites the saved lines' alerts, so it waits while any
-   * LINE edit is unsaved: the answer would be for rows the screen no longer shows. Letterhead and
-   * letter text are not lines and are kept (they live in this form's own state, not the session).
-   * Afterwards the opened areas are dropped from the line session, so they re-read the rechecked
-   * rows.
+   * The version for the record card: the highest current version across the kept areas. No
+   * Recheck alerts here (owner hand test, 5 Nov 2026): it lives in the view page's gear.
    */
-  const linesDirty = edit.changedScopes.length > 0;
-  // Read after the awaits below: a line typed WHILE the recheck runs must not be reset.
-  const linesDirtyRef = React.useRef(linesDirty);
-  linesDirtyRef.current = linesDirty;
-  const recompute = useQuotationRecomputeMutation(projectId);
   const keptQuotations = React.useMemo(
     () => (quotations.data ?? []).filter((row) => keptScopes.some((scope) => scope.id === row.id)),
     [quotations.data, keptScopes],
   );
   const keptVersions = useProjectQuotationVersions(keptQuotations);
-  const openVersions = keptVersions.rows
-    .filter((row) => row.version.is_current && (row.version.is_editable ?? true))
-    .map((row) => row.version);
   const currentVersionNo = keptVersions.rows.reduce<number | null>(
     (max, row) =>
       row.version.is_current ? Math.max(max ?? 0, row.version.version_no) : max,
     null,
   );
-  const canRecheck =
-    isEdit &&
-    Boolean(project.data?.can_edit) &&
-    Boolean(saved.data) &&
-    !isLockedForApproval(saved.data as QuotationDocument) &&
-    openVersions.length > 0;
-
-  async function recheckAll() {
-    const lines: string[] = [];
-    for (const version of openVersions) {
-      try {
-        const result = await recompute.mutateAsync(version.id);
-        const label = keptQuotations.find((row) => row.id === version.quotation_id)?.scope_label;
-        lines.push(label ? `${label}: ${describeRecompute(result)}` : describeRecompute(result));
-      } catch {
-        // The mutation toasted the reason; the other areas still get their recheck.
-      }
-    }
-    // Re-read the rechecked rows only when nothing was typed meanwhile; otherwise the typed
-    // work wins and Save (or the next recheck) carries on from it.
-    if (!linesDirtyRef.current) edit.cancel();
-    if (lines.length > 0) toast.success(lines.join(' '));
-  }
 
   const loading =
     project.isLoading ||
@@ -646,7 +608,7 @@ export function QuotationFormClient({
       )}
 
       {/* The view page's record card (PROPOSAL-HEADER-LAYOUT): number, status and version, the
-          title under them, Recheck alerts on the right. A new proposal has none of these yet. */}
+          title under them. A new proposal has none of these yet. */}
       {isEdit && saved.data && !failed && (
         <RecordHeaderCard
           title={saved.data.document_no}
@@ -665,23 +627,6 @@ export function QuotationFormClient({
             </>
           }
           subtitle={header?.subject_title ?? saved.data.subject_title}
-          actions={
-            canRecheck ? (
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={recompute.isPending || linesDirty}
-                  title={linesDirty ? 'Save or cancel your line changes first' : undefined}
-                  onClick={() => void recheckAll()}
-                >
-                  <RefreshCw className="size-4" aria-hidden />
-                  {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
-                </Button>
-              </div>
-            ) : undefined
-          }
         />
       )}
 
