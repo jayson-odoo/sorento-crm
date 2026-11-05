@@ -79,18 +79,28 @@ vi.mock('@/app/(protected)/dealer-kit/hooks/usePublishedTagTemplates', () => ({
 const preview = vi.hoisted(() => ({
   open: [] as Array<{ open: boolean; items: unknown[] }>,
 }));
-vi.mock('@/components/common/AttachmentPreviewModal', () => ({
-  default: (props: { open: boolean; onOpenChange: (o: boolean) => void; items: unknown[] }) => {
-    preview.open.push({ open: props.open, items: props.items });
+vi.mock('@/components/common/AttachmentPreviewModal', () => {
+  // A named component, so the hook below sits in a React component (rules-of-hooks).
+  function PreviewModalStub({
+    open,
+    onOpenChange,
+    items,
+  }: {
+    open: boolean;
+    onOpenChange: (o: boolean) => void;
+    items: unknown[];
+  }) {
+    preview.open.push({ open, items });
     React.useEffect(() => {
-      if (!props.open) return;
-      const onKey = (e: KeyboardEvent) => e.key === 'Escape' && props.onOpenChange(false);
+      if (!open) return;
+      const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onOpenChange(false);
       document.addEventListener('keydown', onKey);
       return () => document.removeEventListener('keydown', onKey);
-    }, [props.open, props.onOpenChange]);
-    return props.open ? <div data-testid="preview-modal" data-items={JSON.stringify(props.items)} /> : null;
-  },
-}));
+    }, [open, onOpenChange]);
+    return open ? <div data-testid="preview-modal" data-items={JSON.stringify(items)} /> : null;
+  }
+  return { default: PreviewModalStub };
+});
 
 const combosQuery = vi.hoisted(() => ({
   value: { data: [] as ProductComboRow[], isLoading: false, isError: false },
