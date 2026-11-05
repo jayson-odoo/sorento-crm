@@ -7,7 +7,9 @@ Not a CI test (the file name is not `test_*`). Run it explicitly, on a local or 
 
 Never a prod key. Only the model is live: `crm_resolve` is a fixed fake (Sorento = brand SORENTO, kitchen sink =
 category, zqc trading = customer) and `crm_report_ask` answers a card built from the call's own arguments, so the
-grade is the ARGUMENTS the agent chose, which is what the prod transcript got wrong. It prints the pass rate and
+grade is the ARGUMENTS the agent chose, which is what the prod transcript got wrong. Hanlim is both a customer
+and a supplier in the fake world; "delivery to hanlim" must land on the customer with no question, from the
+agent's own reading (no special-case code exists for it, on purpose). It prints the pass rate and
 the tokens per run, and USD at `AGENT_EVAL_PRICE` ("in,cached,out" per 1M) when given; gemini-3.5-flash has no
 owner-approved price row yet (`app/services/analytics_connector/prices.py`).
 """
@@ -37,7 +39,7 @@ pytestmark = pytest.mark.skipif(not KEY, reason="AGENT_EVAL_GEMINI_KEY (a DEV ke
 
 #: The fake resolver's world: (kind, name) -> id.
 WORLD = {("brand", "SORENTO"), ("brand", "MOCHA"), ("category", "Kitchen Sink"), ("category", "Water Closet"),
-         ("customer", "zqc trading")}
+         ("customer", "zqc trading"), ("customer", "Hanlim"), ("supplier", "Hanlim")}
 
 
 def fake_id(kind: str, name: str) -> str:
@@ -114,6 +116,20 @@ def _names(args: dict, key: str) -> list[str]:
     if isinstance(ids, str):
         ids = [i.strip() for i in ids.split(",")]
     return sorted(NAMES.get(str(i).lower(), str(i)).lower() for i in ids)
+
+
+def grade_party(expect: dict, all_calls: list[tuple[str, dict]], asked: bool) -> tuple[bool, str]:
+    """`customer_side`: some call names the customer's id, none names the supplier's, and nothing was asked."""
+    name = expect["customer_side"]
+    customer, supplier = fake_id("customer", name), fake_id("supplier", name)
+    flat = [json.dumps(a, default=str).lower() for _, a in all_calls]
+    if asked:
+        return False, "asked instead of reading the side"
+    if any(supplier in f for f in flat):
+        return False, "used the supplier"
+    if not any(customer in f for f in flat):
+        return False, f"no call named the customer ({[n for n, _ in all_calls]})"
+    return True, "ok"
 
 
 def grade(expect: dict, ok_calls: list[dict]) -> tuple[bool, str]:
@@ -228,6 +244,18 @@ def test_live_eval(monkeypatch):
             ok_calls = [a for n, a in mcp.calls if n == "crm_report_ask"]
             passed, why = grade(expect, ok_calls)
             outcomes.append((row["id"], passed, why))
+
+        # Party side: a fresh contact each, nothing held.
+        for line in (GOLD / "agent_reports_party_side.jsonl").read_text().splitlines():
+            case = json.loads(line)
+            contact = seed_agent_contact(db, slugs=all_agent_slugs())
+            mcp = Mcp()
+            result = _turn(db, contact, case["message"], catalog, mcp, 0)
+            tally(result)
+            asked = bool((db.query(ChatbotTurn.response).filter(ChatbotTurn.id == result.turn_id).scalar() or {})
+                         .get("asked_back"))
+            passed, why = grade_party(case["expect"], mcp.calls, asked)
+            outcomes.append((case["id"], passed, why))
 
     passed = sum(1 for _, p, _ in outcomes if p)
     print(f"\nagent-reports eval: {passed}/{len(outcomes)} passed on {MODEL}")

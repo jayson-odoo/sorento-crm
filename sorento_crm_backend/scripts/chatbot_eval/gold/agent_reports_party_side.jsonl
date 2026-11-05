@@ -1,0 +1,1 @@
+{"id": "ar-hanlim", "message": "delivery to hanlim", "expect": {"customer_side": "hanlim"}, "note": "Hanlim is both a customer and a supplier. A delivery goes TO a customer: the agent reads that itself and asks nothing (owner 5 Nov; no party_side special case, #2120 rejected)."}

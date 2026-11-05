@@ -23,6 +23,8 @@ from tests.chatbot.agent.test_router import OPEN_QUESTION_VARS, arm, jev, route 
 
 REPORT = "crm_report_ask"
 BRAND = "6b0c4a3e-1111-4c1e-9b1a-0000000000a1"
+CUSTOMER = "6b0c4a3e-3333-4c1e-9b1a-0000000000d1"
+BY_PRODUCT = "crm_order_management_orders_by_product_list"
 CATEGORY = "6b0c4a3e-2222-4c1e-9b1a-0000000000c1"
 
 CATALOG = {
@@ -44,6 +46,19 @@ CATALOG = {
                 "channel": {"type": "string"},
                 "brand_ids": {"type": "array", "items": {"type": "string"}},
                 "category_ids": {"type": "array", "items": {"type": "string"}},
+                "customer_ids": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["contact_id", "space_id"],
+        },
+    },
+    BY_PRODUCT: {
+        "description": "Orders by product",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "string"},
+                "space_id": {"type": "string"},
+                "customer_ids": {"type": "array", "items": {"type": "string"}},
             },
             "required": ["contact_id", "space_id"],
         },
@@ -116,6 +131,15 @@ def system_text(provider) -> str:
     return provider.seen[0]["messages"][0]["content"]
 
 
+def held_text(provider) -> str:
+    """The held report's data message (user role, never the system prompt)."""
+    from app.services.chatbot.agent.report_state import HELD_PREFIX
+
+    found = [m["content"] for m in provider.seen[0]["messages"] if m["role"] == "user" and m["content"].startswith(HELD_PREFIX)]
+    assert len(found) == 1, found
+    return found[0]
+
+
 def seed_held(db, contact, state, *, minutes_ago=5, reply="earlier"):
     """A finished agent turn of the contact's newest conversation that holds `state`."""
     from app.services.chatbot.agent import memory
@@ -170,7 +194,7 @@ def test_T1_on_the_reply_is_the_card_and_the_full_args_are_held(db):
     result = run(db, contact, provider, mcp, "Total quantity sale for Sorento brand kitchen sink on September 2026")
 
     system = system_text(provider)
-    assert "SALES AND OUTSTANDING REPORTS" in system and "Held report: none yet." in system
+    assert "SALES AND OUTSTANDING REPORTS" in system and "Held report: none yet." in held_text(provider)
     assert mcp.calls[0][0] == REPORT and mcp.calls[0][1]["basis"] == "invoiced"
     assert "Total 2,270 pcs" in result.reply_text and "Company: Sorento" in result.reply_text
     state = row_of(db, result).response["report_state"]
@@ -196,9 +220,13 @@ def test_T2_the_held_report_is_in_the_system_prompt_and_its_ids_may_be_reused(db
     mcp = CardMcp(T2_CARD)
     result = run(db, contact, provider, mcp, "sorento total slaes delaer and proejct")
 
-    system = system_text(provider)
-    assert "Held report arguments:" in system and BRAND in system and CATEGORY in system
-    assert "Brand: SORENTO" in system
+    held = held_text(provider)
+    assert "Held report arguments:" in held and BRAND in held and CATEGORY in held
+    assert "Brand: SORENTO" in held
+    # Security S2: the held arguments carry the user's words, so they never sit in the system role.
+    assert BRAND not in system_text(provider) and "Brand: SORENTO" not in system_text(provider)
+    # The held message sits right before the user's own message.
+    assert provider.seen[0]["messages"][-2]["content"] == held
     assert [s["status"] for s in result.tool_calls] == ["ok"]
     assert mcp.calls[0][1]["brand_ids"] == [BRAND] and mcp.calls[0][1]["group_by"] == "channel"
     assert "Project team" in result.reply_text
@@ -236,7 +264,7 @@ def test_a_user_without_the_report_tool_gets_no_protocol_and_no_state(db):
     names = {t["function"]["name"] for t in provider.seen[0]["tools"]}
     assert REPORT not in names
     assert "SALES AND OUTSTANDING REPORTS" not in system_text(provider)
-    assert BRAND not in system_text(provider)
+    assert all(BRAND not in str(m["content"]) for m in provider.seen[0]["messages"])
     assert "report_state" not in row_of(db, result).response
 
 
@@ -283,13 +311,40 @@ def test_router_on_the_daily_cap_still_holds(db, jev):
     assert (decision.side, decision.reason) == ("chat", "daily_cap")
 
 
-def test_router_on_a_report_held_over_an_hour_ago_goes_back_to_jev(db, jev):
+def test_router_on_a_report_held_a_day_ago_still_holds_no_time_window(db, jev):
+    """Owner, 5 Nov 2026: no time-based window; only a new conversation, the switch or the cap ends it."""
     contact = seed_agent_contact(db)
     arm(db)
     switch(db, True)
-    seed_held(db, contact, {"args": T1_ARGS, "head": ""}, minutes_ago=61)
+    seed_held(db, contact, {"args": T1_ARGS, "head": ""}, minutes_ago=60 * 26)
     decision = route(db, contact["respond_id"], "all")
-    assert decision.reason == "classified" and len(jev.calls) == 1
+    assert (decision.side, decision.reason) == ("agent", "report_held") and jev.calls == []
+
+
+def test_router_on_a_held_report_still_refuses_an_empty_message(db, jev):
+    contact = seed_agent_contact(db)
+    arm(db)
+    switch(db, True)
+    seed_held(db, contact, {"args": T1_ARGS, "head": ""})
+    decision = route(db, contact["respond_id"], "   ")
+    assert (decision.side, decision.reason) == ("chat", "text_length")
+
+
+def test_router_on_a_failing_tool_check_is_todays_routing_never_an_error(db, jev, monkeypatch):
+    from app.services.chatbot.agent import access
+
+    contact = seed_agent_contact(db)
+    arm(db)
+    switch(db, True)
+    seed_held(db, contact, {"args": T1_ARGS, "head": ""})
+
+    def boom(*a, **k):
+        raise RuntimeError("tool registry down")
+
+    monkeypatch.setattr(access, "permitted_tools", boom)
+    decision = route(db, contact["respond_id"], "all")
+    assert decision.reason == "classified"
+    assert "reports" not in jev.calls[0]["criteria"]["agent"]
 
 
 def test_router_on_jev_is_told_report_asks_are_the_agents(db, jev):
@@ -369,14 +424,79 @@ def test_T1_to_T7_every_follow_up_routes_to_the_agent_and_the_held_report_evolve
         # One test transaction gives every row the same now(); in production each turn commits apart.
         row_of(db, result).created_at = datetime.now(timezone.utc) - timedelta(minutes=30 - i)
         db.commit()
-        system = system_text(provider)
+        held = held_text(provider)
         if previous is None:
-            assert "Held report: none yet." in system
+            assert "Held report: none yet." in held
         else:
             for key, value in previous.items():
-                assert f'"{key}": ' in system and str(value if not isinstance(value, list) else value[0]) in system
+                assert f'"{key}": ' in held and str(value if not isinstance(value, list) else value[0]) in held
         assert result.reply_text == card_text.replace("·", "·")
         state = row_of(db, result).response["report_state"]
         assert state["args"] == args
         previous = args
     assert jev.calls == []  # T2 to T7 never reached Jev; T1 ran the loop directly
+
+
+# ================================================================== review rounds
+
+
+def test_security_S1_held_ids_serve_a_report_call_only(db):
+    """A held id needs no fresh lookup for crm_report_ask; any other tool still refuses it this turn."""
+    contact = seed_agent_contact(db)
+    switch(db, True)
+    seed_held(db, contact, {"args": T1_ARGS | {"customer_ids": [CUSTOMER]}, "head": ""})
+    provider = ScriptedProvider([
+        asks({"id": "call-1", "name": BY_PRODUCT, "arguments": {"customer_ids": [CUSTOMER]}},
+             report_call(T1_ARGS | {"customer_ids": [CUSTOMER]}, cid="call-2")),
+        answer("Done."),
+    ])
+    mcp = CardMcp(T1_CARD)
+    result = run(db, contact, provider, mcp, "orders of that customer, and the report again")
+    assert [(c["name"], c["status"]) for c in result.tool_calls] == [(BY_PRODUCT, "invalid"), (REPORT, "ok")]
+    assert [n for n, _ in mcp.calls] == [REPORT]
+
+
+def test_with_cards_the_last_card_counts_not_every_card():
+    from app.services.chatbot.agent.report_state import with_cards
+
+    ledger = {
+        "a": {"name": REPORT, "status": "ok", "args": {}, "data": card(T1_CARD)},
+        "b": {"name": REPORT, "status": "ok", "args": {}, "data": card(T2_CARD)},
+    }
+    assert with_cards(f"Corrected.\n\n{T2_CARD}", ledger) == f"Corrected.\n\n{T2_CARD}"
+    assert with_cards("Here it is.", ledger) == T2_CARD
+    # A turn stopped at a limit keeps its own words (the "not checked" line) under the card.
+    assert with_cards("I did not check stock.", ledger, answered=False) == f"{T2_CARD}\n\nI did not check stock."
+    # A refused or empty report call is never shown.
+    refused = {"a": {"name": REPORT, "status": "denied", "args": {}, "data": card(T1_CARD)}}
+    assert with_cards("No access.", refused) == "No access."
+
+
+def test_from_ledger_never_holds_the_guard_params():
+    from app.services.chatbot.agent.report_state import from_ledger
+
+    ledger = {"a": {"name": REPORT, "status": "ok", "data": card(T1_CARD),
+                    "args": {"basis": "invoiced", "contact_id": "rc-1", "space_id": "sp-1", "view": "render", "channel": None}}}
+    assert from_ledger(ledger)["args"] == {"basis": "invoiced"}
+
+
+def test_a_failed_turn_keeps_the_report_held_before_it(db):
+    contact = seed_agent_contact(db)
+    switch(db, True)
+    seed_held(db, contact, {"args": T1_ARGS, "head": "Sales by invoiced sales"})
+    provider = ScriptedProvider([RuntimeError("model down")])
+    result = run(db, contact, provider, Mcp(), "all")
+    assert result.status == "failed"
+    assert row_of(db, result).response["report_state"]["args"] == T1_ARGS
+
+
+def test_switch_on_a_failed_read_is_off_and_the_session_stays_usable(db, monkeypatch):
+    from sqlalchemy import text as sql
+
+    from app.services.chatbot.agent import report_state
+
+    switch(db, True)
+    # A real database error (the column is gone in this test's own schema), not a Python one.
+    db.execute(sql("ALTER TABLE system_settings RENAME COLUMN chatbot_agent_reports_enabled TO zzt_gone"))
+    assert report_state.switch_on(db) is False
+    assert db.execute(sql("SELECT 1")).scalar() == 1

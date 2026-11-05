@@ -64,7 +64,7 @@ describe('getChatbotMediaSettings', () => {
     expect(settings.chatbot_agent_max_rounds).toBe(8);
     expect(settings.chatbot_agent_max_seconds).toBe(45);
     expect(settings.chatbot_agent_max_input_tokens).toBe(150000);
-    expect(settings.chatbot_agent_compact_tokens).toBe(40000);
+    expect(settings.chatbot_agent_compact_tokens).toBe(12000);
   });
 
   it('reads the stored report rate limit, a stored 0 included (0 means no limit)', async () => {

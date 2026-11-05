@@ -675,7 +675,8 @@ class SystemSetting(Base):
     chatbot_agent_max_rounds = Column(Integer, nullable=False, server_default="8", default=8)
     chatbot_agent_max_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     chatbot_agent_max_input_tokens = Column(Integer, nullable=False, server_default="150000", default=150000)
-    chatbot_agent_compact_tokens = Column(Integer, nullable=False, server_default="40000", default=40000)
+    # AGENT-REPORTS (owner 5 Nov 2026): 12k, down from 40k, so a long WhatsApp thread folds its history sooner.
+    chatbot_agent_compact_tokens = Column(Integer, nullable=False, server_default="12000", default=12000)
     # AGENTIC-P2-ROUTE: the console router sends a message to the agent only when Jev is at
     # least this sure; and the most agent turns one contact gets per day (0 = no cap).
     chatbot_router_min_score = Column(Float, nullable=False, server_default="0.7", default=0.7)

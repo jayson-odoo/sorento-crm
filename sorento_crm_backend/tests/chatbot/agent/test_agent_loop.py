@@ -310,7 +310,7 @@ def test_budgets_default_when_no_settings_row(db):
     b = budgets_from_settings(db)
     assert isinstance(b, Budgets)
     assert (b.max_rounds, b.max_seconds, b.max_input_tokens, b.compact_tokens, b.calls_per_round) == (
-        8, 45, 150_000, 40_000, 4,
+        8, 45, 150_000, 12_000, 4,
     )
 
 
@@ -334,7 +334,7 @@ def test_a_fresh_settings_row_carries_the_documented_defaults(db):
     _set_budgets(db)
     db.refresh(db.query(SystemSetting).first())
     b = budgets_from_settings(db)
-    assert (b.max_rounds, b.max_seconds, b.max_input_tokens, b.compact_tokens) == (8, 45, 150_000, 40_000)
+    assert (b.max_rounds, b.max_seconds, b.max_input_tokens, b.compact_tokens) == (8, 45, 150_000, 12_000)
 
 
 # ------------------------------------------------------------------ failure

@@ -28,7 +28,7 @@ DEFAULTS = {
     "chatbot_agent_max_rounds": 8,
     "chatbot_agent_max_seconds": 45,
     "chatbot_agent_max_input_tokens": 150000,
-    "chatbot_agent_compact_tokens": 40000,
+    "chatbot_agent_compact_tokens": 12000,
 }
 
 

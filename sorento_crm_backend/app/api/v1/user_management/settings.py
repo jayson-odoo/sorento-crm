@@ -516,7 +516,7 @@ def get_settings(
                 "chatbot_agent_max_rounds": getattr(settings, "chatbot_agent_max_rounds", 8) if settings else None,
                 "chatbot_agent_max_seconds": getattr(settings, "chatbot_agent_max_seconds", 45) if settings else None,
                 "chatbot_agent_max_input_tokens": getattr(settings, "chatbot_agent_max_input_tokens", 150000) if settings else None,
-                "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 40000) if settings else None,
+                "chatbot_agent_compact_tokens": getattr(settings, "chatbot_agent_compact_tokens", 12000) if settings else None,
                 "chatbot_router_min_score": getattr(settings, "chatbot_router_min_score", 0.7) if settings else None,
                 "chatbot_agent_daily_turns": getattr(settings, "chatbot_agent_daily_turns", 50) if settings else None,
                 "chatbot_agent_reports_enabled": getattr(settings, "chatbot_agent_reports_enabled", False) if settings else None,

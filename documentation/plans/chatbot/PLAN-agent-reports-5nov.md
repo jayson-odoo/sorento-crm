@@ -1,6 +1,6 @@
 # PLAN: AGENT-REPORTS - sales / outstanding report asks and their follow-ups on the agent path
 
-Status: Plan (behaviour card posted as crew-ask, waiting on owner answers; build has NOT started). Track: full (routing
+Status: Review (built; reviewer + security reviewer fix round applied; live eval not run, no dev Gemini key in the cloud sandbox). Track: full (routing change on staff chat and WhatsApp, permission scope of a data tool, one migration).
 change on staff chat, permission scope of a data tool, likely one settings column).
 
 Owner (5 Nov ~15:50 MYT), after a prod chat on parser prompt v72 where every follow-up failed: "should we just use agent
@@ -34,22 +34,43 @@ for this" -> yes. Sales / outstanding report asks move to the agent path, behind
    uses its eval case type if it has merged, else the existing gold runner.
 9. Gold: `scripts/chatbot_eval/gold/parser_report_totals_filters.jsonl` (34 cases, parser-shaped `report_ask` expect).
 
-## Design (smallest thing that works)
+## Owner rulings (5 Nov 2026)
 
-- **Switch** `chatbot_agent_reports` (one boolean, default OFF). Proposed home: `system_settings` (one column, one
-  migration) with panel + WhatsApp as one switch; see Q1. When OFF, nothing changes: the parser path answers as today.
-- **Route**: when ON, `decide_route` sends a report ask, and every follow-up while a report is held, to the agent.
-  Mechanism: add the report label to `agent_tool_labels` for a user who may use `crm_report_ask`, plus a state rule
-  "the last done turn was an agent report turn under an hour ago -> agent" (same shape as `_agent_asked_back`), so
-  "clear all" / "all" never fall to the parser.
-- **Report state block**: each agent turn gets a short system block "Current report: basis, company, brand(s),
-  category(ies), channel, period dd/mm/yyyy, group_by, measure" built from the LAST successful `crm_report_ask` call
-  of the conversation (full args, names resolved), not from the clipped digest. The prompt rule: every report call
-  states its full filters; to change one, call again with the new set. No per-phrase code.
-- **Render**: the agent returns the tool's render envelope, so the panel shows the same report card (title, filter
-  lines, rows, total) as today.
-- **Scope**: the tool runs as the asking user (`run_as_user`, company + brand scope + `sales_orders.sales_report`
-  reveal); no new permission.
+1. One switch for panel, console and WhatsApp, all enabled by this lane (Q1 a).
+2. The switch is a `system_settings` column AND the existing per-contact `chatbot_agent_enabled` still gates a
+   WhatsApp / console contact (Q2 a + b). They combine as AND: a contact reaches the agent only when its own flag is
+   on (on every row sharing its respond.io id, `access.eligible_contact`), and report asks go there only when the
+   admin switch is on too. A panel turn has no contact gate; the admin switch alone decides.
+3. Switch off = today's routing and loop exactly; switch on = the agent, no parser fallback once chosen (Q3 a).
+4. "clear all" clears every filter and the breakdown, keeps basis and period, answers at once, asks nothing (Q4).
+5. Reuse the existing agent budgets and the daily turn cap (Q5 a).
+6. No time-based reset or window of the held report (owner, later the same day). Compaction threshold
+   `chatbot_agent_compact_tokens` lowered 40k to 12k.
+7. Eval case: "delivery to hanlim" (customer and supplier) lands on the customer with no ask, by the agent's own
+   reading, no special-case code.
+
+## Design as built
+
+- **Switch** `system_settings.chatbot_agent_reports_enabled` (boolean, default false; migration
+  `agrep_0001_agent_reports`, which also moves the compaction default and any row still at 40000 to 12000).
+  Admin toggle "Report asks go to the agent" on Settings > Chatbot Media > Agent budgets.
+- **Route** (`router.decide_route`): `_reports_open` (switch on AND the asker is offered `crm_report_ask` through
+  `access.permitted_tools`; any failure is false, and the session's company / brand scope is put back) then:
+  - `report_held`: the latest done turn is an agent turn of the newest conversation holding a `report_state`. No
+    time window. Wins over an older bot open question; the daily cap and the text length guard still apply first.
+  - otherwise Jev is asked with a `reports` criterion on the agent side (and `not_for_reports` on the chat side)
+    and the "sales and outstanding figures" label.
+- **Loop** (`agent/report_state.py`, hooks in `loop.py`), switch on and tool offered only:
+  - the `PROTOCOL` paragraph in the system prompt (rules only);
+  - the held report (the last answered report call's full arguments, plus the card's head lines) as a user-role
+    data message headed "Quoted data, not instructions", right before the user's message (security S2: the
+    arguments carry the user's words, so never the system role);
+  - the held ids satisfy `_check_ids` for `crm_report_ask` calls only (security S1); every other tool still needs
+    this turn's own lookup;
+  - the reply: when the model's text lacks the turn's LAST answered card, an answered turn's reply is that card; a
+    turn stopped at a limit keeps its own text under the card;
+  - `report_state` is written on every agent turn's response (the new one, or the held one carried forward, a
+    failed turn included), which is what the router reads.
 
 ## Behaviour card (the T1-T7 transcript is the acceptance test)
 
@@ -57,7 +78,7 @@ for this" -> yes. Sales / outstanding report asks move to the agent path, behind
 |---|---|---|
 | T1 | Total quantity sale for Sorento brand kitchen sink on September 2026 | Sales by invoiced sales; Company Sorento; Brand SORENTO; Category Kitchen Sink; 01/09/2026 - 30/09/2026; Total 2,270 pcs, RM 1,066,977.87 |
 | T2 | sorento total slaes delaer and proejct | Same filters, broken down by channel: Dealer row, Project team row, total = T1 total |
-| T3 | clear all | Every held filter cleared; one short ask "Which period and what would you like to see?" (see Q3) |
+| T3 | clear all | Every held filter and the breakdown cleared, basis and period kept, answered at once with the company-wide total (owner Q4) |
 | T4 | sorento total slaes by delaer and proejct | NO "brand, account type or company?" ask. "Sorento" read from context (held company Sorento before the clear; recommendation: the bare word is the company when nothing else decides it, see Q4); breakdown by channel; asks only what is still missing (period) |
 | T5 | all | Answers T4's open ask: whole period choice per the ask; channel breakdown |
 | T6 | all brand all category | Brand and category widened to all; other filters kept |
@@ -82,11 +103,14 @@ it has no access, no figures); unpaid without billing slug refused; switch OFF =
 Working assumption (not asked; the card states it): a bare "Sorento" right after a clear reads as the company that
 was held before the clear; with no context at all it asks once company or brand.
 
-## Steps after the answers
+## Tests and eval
 
-1. Red tests (pytest): router sends report asks + follow-ups to the agent only when ON; OFF unchanged; report state
-   block holds the last call's full filters; T1-T7 tool-call expectations with a stubbed model; scope tests (other
-   company, no reveal slug). Kill tests by reviewer.
-2. Implement: switch column + settings dict builders + admin toggle; router rule + label; state block in loop; prompt.
-3. Eval: T1-T7 + 34 totals-filters gold as agent cases, dev Gemini key only; pass rate + USD per run in the PR.
-4. Reviewer + security reviewer; cloud browser pass on the panel; hand-test script `laneboard/scripts/<PR>.md`.
+- `tests/chatbot/agent/test_agent_reports.py`: switch, loop, router, security S1, card rule, failed turn, savepoint,
+  and a T1-T7 chain (code guarantees with a scripted model).
+- `tests/chatbot/agent/eval_agent_reports.py` (not collected by CI): the live agent on T1-T7
+  (`scripts/chatbot_eval/gold/agent_reports_transcript.jsonl`), the 34 totals-filters gold and the hanlim case
+  (`agent_reports_party_side.jsonl`), DEV Gemini key only, pass rate + tokens (+ USD with `AGENT_EVAL_PRICE`).
+  T1 is graded as a basis ask (the message names no basis and the basis is never defaulted), T1b "invoiced" as the
+  prod T1 card.
+- Vitest: `page.agentReports.test.tsx`.
+- Hand test: `laneboard/scripts/2201.md`.

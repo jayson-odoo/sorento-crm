@@ -80,7 +80,7 @@ class Budgets:
     max_rounds: int = 8
     max_seconds: float = 45
     max_input_tokens: int = 150_000
-    compact_tokens: int = 40_000
+    compact_tokens: int = 12_000
     calls_per_round: int = 4
 
 
@@ -1309,7 +1309,8 @@ def _run(
         reports_on = any(t.name == report_state.REPORT for t in offered) and report_state.switch_on(db)
         if reports_on:
             held_report = report_state.held(db, conv)
-            system = f"{system}\n\n{report_state.block(held_report)}"
+            # The rules only: the held report itself carries the user's words, so it is a data message below.
+            system = f"{system}\n\n{report_state.PROTOCOL}"
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
@@ -1320,6 +1321,8 @@ def _run(
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
             messages.append({"role": "user", "content": context_after})
+        if reports_on and waiting is None:
+            messages.append({"role": "user", "content": report_state.held_message(held_report)})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
@@ -1341,7 +1344,9 @@ def _run(
             return args
         ledger: dict[str, dict] = {}
         seen_ids: set[str] = set()
-        report_state.seed_ids(held_report, seen_ids)
+        # The held report's ids are good for a report call only; every other tool still needs this turn's own lookup.
+        held_ids: set[str] = set()
+        report_state.seed_ids(held_report, held_ids)
         denied_domains: set[str] = set()
         used_call_ids: set[str] = set()
         repaired = False
@@ -1483,6 +1488,15 @@ def _run(
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
+                elif name == report_state.REPORT and held_ids:
+                    report_seen = seen_ids | held_ids
+                    out = dispatch(
+                        db, ctx, name, args,
+                        call=mcp_call if mcp_call is not None else mcp_builder(seconds),
+                        catalog=catalog, timeout=float(seconds), seen_ids=report_seen, denied_domains=denied_domains,
+                    )
+                    # What the report showed counts as shown; the held ids stay report-only.
+                    seen_ids |= report_seen - held_ids
                 else:
                     out = dispatch(
                         db, ctx, name, args,
@@ -1592,7 +1606,7 @@ def _run(
         reply = NO_ANSWER_REPLY
     if status != "failed":
         if reports_on:
-            reply = report_state.with_cards(reply, ledger)
+            reply = report_state.with_cards(reply, ledger, answered=status == "answered")
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.
         handoff = next(

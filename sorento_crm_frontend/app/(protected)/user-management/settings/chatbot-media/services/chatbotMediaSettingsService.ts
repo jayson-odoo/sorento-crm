@@ -189,7 +189,7 @@ const FALLBACKS: ChatbotMediaSettings = {
   chatbot_agent_max_rounds: 8,
   chatbot_agent_max_seconds: 45,
   chatbot_agent_max_input_tokens: 150000,
-  chatbot_agent_compact_tokens: 40000,
+  chatbot_agent_compact_tokens: 12000,
   chatbot_router_min_score: 0.7,
   chatbot_agent_daily_turns: 50,
   chatbot_agent_reports_enabled: false,

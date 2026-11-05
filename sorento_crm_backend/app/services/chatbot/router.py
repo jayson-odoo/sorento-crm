@@ -27,6 +27,7 @@ from app.services.chatbot import jev_client, session_state
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent import report_state as agent_report_state
 from app.services.chatbot.agent import tools as agent_tools
 from app.services.chatbot.agent import writes as agent_writes
 from app.services.chatbot.agent.access import eligible_contact
@@ -85,7 +86,9 @@ def decide_route(
         return RouteDecision("agent", "pending_action")
 
     # AGENT-REPORTS: with the switch on, a report the agent holds keeps its follow-ups on the agent ("clear all",
-    # "all", "by dealer and project"), ahead of an older bot question and with no Jev call; the daily cap still holds.
+    # "all", "by dealer and project"), ahead of an older bot question and with no Jev call. No time window (owner,
+    # 5 Nov 2026): it lasts while the newest turn is an agent turn holding a report in the newest conversation. The
+    # daily cap and the text length guard still hold.
     reports = _reports_open(db, contact_respond_id)
     held = reports and _report_held(db, contact_respond_id)
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
@@ -97,11 +100,11 @@ def decide_route(
     cap = _daily_cap(contact, settings)
     if cap > 0 and _agent_turns_today(db, contact_respond_id) >= cap:
         return RouteDecision("chat", "daily_cap")
-    if held:
-        return RouteDecision("agent", "report_held")
 
     if not text.strip() or len(text.strip()) > MAX_TEXT_CHARS:
         return RouteDecision("chat", "text_length")
+    if held:
+        return RouteDecision("agent", "report_held")
 
     config = db.query(AIAssistantConfig).first()
     api_key = resolve_typesafe_key(config)
@@ -114,8 +117,8 @@ def decide_route(
     labels = agent_tool_labels(db, user, contact_respond_id=contact_respond_id)
     if reports:
         criteria = _with_reports(criteria)
-        if agent_tools.TOOL_LABELS[REPORT_TOOL] not in labels:
-            labels = [*labels, agent_tools.TOOL_LABELS[REPORT_TOOL]]
+        if agent_tools.TOOL_LABELS[agent_report_state.REPORT] not in labels:
+            labels = [*labels, agent_tools.TOOL_LABELS[agent_report_state.REPORT]]
     criteria = _with_agent_tools(_with_open_page(criteria), labels)
 
     state = _state(db, contact_respond_id, text)
@@ -264,9 +267,9 @@ def _bot_asked(block: dict[str, Any]) -> bool:
     return isinstance(ideation, dict) and _held_pointer(ideation, bool(ideation.get("is_test"))) is not None
 
 
-def _recent_agent_response(db, contact_respond_id: str) -> dict[str, Any] | None:
-    """The response of the contact's latest done turn when it is an agent turn in their newest conversation, under
-    an hour old; else None."""
+def _recent_agent_response(db, contact_respond_id: str, *, within_hour: bool = True) -> dict[str, Any] | None:
+    """The response of the contact's latest done turn when it is an agent turn in their newest conversation (and,
+    with `within_hour`, under an hour old); else None."""
     row = (
         db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at, ChatbotTurn.envelope)
         .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
@@ -281,7 +284,7 @@ def _recent_agent_response(db, contact_respond_id: str) -> dict[str, Any] | None
     created = row[2]
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) - created >= timedelta(minutes=ASKED_BACK_MINUTES):
+    if within_hour and datetime.now(timezone.utc) - created >= timedelta(minutes=ASKED_BACK_MINUTES):
         return None
     return row[1]
 
@@ -293,29 +296,31 @@ def _agent_asked_back(db, contact_respond_id: str) -> bool:
 
 
 def _report_held(db, contact_respond_id: str) -> bool:
-    """Is the contact's latest done turn an agent turn of their newest conversation, under an hour ago, that holds a
-    report (`report_state`)? The hour runs from the latest turn, so a report talk stays on the agent while it lasts."""
-    response = _recent_agent_response(db, contact_respond_id)
+    """Is the contact's latest done turn an agent turn of their newest conversation that holds a report
+    (`report_state`)? No time window (owner, 5 Nov 2026); a new conversation, the switch, or the cap ends it."""
+    response = _recent_agent_response(db, contact_respond_id, within_hour=False)
     return response is not None and isinstance(response.get("report_state"), dict)
 
 
 def _reports_open(db, contact_respond_id: str) -> bool:
     """AGENT-REPORTS: the admin switch is on and this turn's agent would be offered the report tool (the asker's
     own slugs and reveals, `access.permitted_tools`). Off, or any doubt, is today's routing."""
-    from app.services.chatbot.agent import report_state
     from app.services.chatbot.agent.access import AgentRefused, build_context, permitted_tools
 
     from app.models import base as model_base
 
-    if not report_state.switch_on(db):
+    if not agent_report_state.switch_on(db):
         return False
     # `build_context` sets the session's company and brand scope for a turn; the router only asks, so both are put back.
     keys = (model_base._SCOPE_KEY, model_base._BRAND_SCOPE_KEY)
     saved = {k: db.info[k] for k in keys if k in db.info}
     try:
         ctx = build_context(db, contact_respond_id)
-        return any(t.name == REPORT_TOOL for t in permitted_tools(db, ctx))
+        return any(t.name == agent_report_state.REPORT for t in permitted_tools(db, ctx))
     except AgentRefused:
+        return False
+    except Exception:  # noqa: BLE001 - any doubt is today's routing; a panel or console turn never fails here
+        logger.warning("chatbot_router: the report tool check failed for %s", contact_respond_id, exc_info=True)
         return False
     finally:
         for key in keys:
@@ -325,7 +330,6 @@ def _reports_open(db, contact_respond_id: str) -> bool:
                 db.info.pop(key, None)
 
 
-REPORT_TOOL = "crm_report_ask"
 REPORTS_CRITERION = (
     "Any ask for sales figures (invoiced, delivered or ordered) or outstanding, pending delivery or unpaid figures: a "
     "total, a ranking, a comparison or a breakdown of them for a brand, category, company, channel, customer or "
