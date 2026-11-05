@@ -1510,6 +1510,13 @@ def change_status(
     project.status_id = to_status_id
     db.flush()
 
+    # Outcome follows the stage (PROJECT-CLASH-LOST): moving onto Lost or Dormant makes the
+    # outcome lost / dormant everywhere it is read (list, board, forecast, clash check), and
+    # moving off it again re-derives the outcome from the quotations.
+    from app.services.project_quotation_service import sync_project_outcome
+
+    sync_project_outcome(db, project)
+
     # A funnel move is real work (AC-H2), so it advances the staleness clock and writes the
     # feed row. Done here rather than in the route because the board, the detail page and
     # any future automation all come through this one function.

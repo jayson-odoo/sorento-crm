@@ -345,30 +345,32 @@ export function ProjectForm(props: ProjectFormProps) {
   const checked = hasChecked && clash.isSuccess && !clash.isFetching;
   // A registration waiting for approval has no lock (its `candidates` carry blocks: false), but
   // its matches still read as a Clash line, as information.
-  const blockingCandidate = (
-    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates
-  ).find((candidate) => candidate.blocks);
-  /** The one result line of a Check, the same in create and edit. */
+  const matches =
+    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
+  const blockingCandidate = matches.find((candidate) => candidate.blocks);
+  // Every other match, in EVERY stage and outcome (won, lost, dormant included), is listed
+  // with its code, stage, outcome and owner so the user can judge it (PROJECT-CLASH-LOST):
+  // a "No clash" over a hidden Won project of the same name read as a missed duplicate.
+  const otherMatches = matches.filter((candidate) => candidate !== blockingCandidate);
+  /** The one result block of a Check, the same in create and edit. */
   const checkResult = checkFailed ? (
     <p className="text-sm text-destructive" role="alert">
       The check did not finish. Try again.
     </p>
   ) : checked ? (
-    blockingCandidate ? (
-      <p className="break-words text-sm text-destructive" aria-live="polite">
-        Clash:{' '}
-        <Link
-          href={`/project-sales/${blockingCandidate.project_id}`}
-          className="font-medium underline"
-        >
-          {blockingCandidate.project_code}
-        </Link>{' '}
-        {blockingCandidate.title}
-      </p>
-    ) : (
+    matches.length === 0 ? (
       <p className="text-sm text-muted-foreground" aria-live="polite">
         No clash
       </p>
+    ) : (
+      <div className="min-w-0 space-y-1.5" aria-live="polite">
+        {blockingCandidate && (
+          <ClashMatchLine candidate={blockingCandidate} label="Clash:" blocking />
+        )}
+        {otherMatches.map((candidate) => (
+          <ClashMatchLine key={candidate.project_id} candidate={candidate} label="Existing:" />
+        ))}
+      </div>
     )
   ) : null;
 
@@ -1278,6 +1280,53 @@ type PickOption = { value: string; label: string; description?: string };
 function TypedHint({ typed, picked }: { typed?: string | null; picked: string }) {
   if (picked || !typed?.trim()) return null;
   return <p className="text-xs text-muted-foreground">Typed: {typed.trim()}</p>;
+}
+
+const OUTCOME_LABEL: Record<string, string> = {
+  open: 'Open',
+  won: 'Won',
+  lost: 'Lost',
+  dormant: 'Dormant',
+};
+
+/**
+ * One matched project in the Check result: "<label> <code> <title>", then its stage, outcome
+ * and owner, so the user can tell a live pursuit from a closed one (PROJECT-CLASH-LOST). A
+ * salesperson with the submit grant only gets code and title back (D8), so the second line
+ * shows only what the server sent.
+ */
+function ClashMatchLine({
+  candidate,
+  label,
+  blocking = false,
+}: {
+  candidate: ClashCandidate;
+  label: string;
+  blocking?: boolean;
+}) {
+  const facts = [
+    candidate.status_label,
+    candidate.outcome ? (OUTCOME_LABEL[candidate.outcome] ?? candidate.outcome) : null,
+    candidate.owner_name,
+  ].filter((fact): fact is string => Boolean(fact));
+  return (
+    <div className="min-w-0">
+      <p
+        className={
+          blocking ? 'break-words text-sm text-destructive' : 'break-words text-sm text-foreground'
+        }
+      >
+        {label}{' '}
+        <Link href={`/project-sales/${candidate.project_id}`} className="font-medium underline">
+          {candidate.project_code}
+        </Link>{' '}
+        {candidate.title}
+      </p>
+      {facts.length > 0 && (
+        <p className="break-words text-xs text-muted-foreground">{facts.join(' · ')}</p>
+      )}
+    </div>
+  );
 }
 
 /**

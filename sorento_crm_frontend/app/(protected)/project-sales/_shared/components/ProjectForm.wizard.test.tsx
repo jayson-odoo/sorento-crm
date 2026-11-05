@@ -447,14 +447,39 @@ describe('AC-W2 / AC-W3 no blocking clash', () => {
     expect(screen.queryByRole('button', { name: 'Check' })).toBeNull();
   });
 
-  it('AC-W3 only non-blocking rows also show just "No clash" and Next, with no similar rows', async () => {
+  it('AC-W3 non-blocking rows are listed with code, stage, outcome and owner, and the action is Next', async () => {
     clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
     renderForm();
     await runCheck('Setia Alam Phase 3C CONTOH');
-    expect(await screen.findByText('No clash')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(linesWithText('Existing: PRJ-000010 Setia Alam Phase 3C CONTOH')).toHaveLength(1),
+    );
+    expect(screen.queryByText('No clash')).toBeNull();
+    expect(screen.getByText('Open · Sales B')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
-    expect(screen.queryByText(/Similar project/)).toBeNull();
-    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
+  });
+
+  it('PROJECT-CLASH-LOST a Won and a Lost project of the same title are both shown, never "No clash"', async () => {
+    clashAnswer = () => ({
+      candidates: [
+        { ...SIMILAR, project_id: 'w1', project_code: 'PPF2611001', title: 'test', outcome: 'won',
+          status_label: 'Sponsorship Form', owner_name: 'Teh Jayson', similarity: 1 },
+        { ...SIMILAR, project_id: 'l1', project_code: 'PPF2611002', title: 'test', outcome: 'lost',
+          status_label: 'Lost', owner_name: 'Sales B', similarity: 1 },
+      ],
+      would_block: false,
+    });
+    renderForm();
+    await runCheck('test');
+    await waitFor(() => expect(linesWithText('Existing: PPF2611001 test')).toHaveLength(1));
+    expect(linesWithText('Existing: PPF2611002 test')).toHaveLength(1);
+    expect(screen.getByText('Sponsorship Form · Won · Teh Jayson')).toBeInTheDocument();
+    expect(screen.getByText('Lost · Lost · Sales B')).toBeInTheDocument();
+    expect(screen.queryByText('No clash')).toBeNull();
+    expect(screen.getByRole('link', { name: 'PPF2611001' })).toHaveAttribute(
+      'href',
+      '/project-sales/w1',
+    );
   });
 });
 
@@ -622,13 +647,28 @@ describe('AC-W9 edit mode is not a wizard', () => {
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
   });
 
-  it('AC-W9 Check shows the same No clash result and no similar rows', async () => {
-    clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
+  it('AC-W9 Check shows the same result as create: a similar row is listed, its own record is not', async () => {
+    clashAnswer = () => ({
+      candidates: [SIMILAR, { ...SIMILAR, project_id: 'p1', project_code: 'PRJ-000001' }],
+      would_block: false,
+    });
+    renderForm({ mode: 'edit', project: editProject() });
+    fireEvent.click(screen.getByRole('button', { name: 'Check' }));
+    await waitFor(() =>
+      expect(linesWithText('Existing: PRJ-000010 Setia Alam Phase 3C CONTOH')).toHaveLength(1),
+    );
+    expect(screen.queryByText('PRJ-000001')).toBeNull();
+    expect(screen.queryByText('No clash')).toBeNull();
+  });
+
+  it('AC-W9 Check in edit mode with only its own record says No clash', async () => {
+    clashAnswer = () => ({
+      candidates: [{ ...SIMILAR, project_id: 'p1', project_code: 'PRJ-000001' }],
+      would_block: false,
+    });
     renderForm({ mode: 'edit', project: editProject() });
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     expect(await screen.findByText('No clash')).toBeInTheDocument();
-    expect(screen.queryByText(/Similar project/)).toBeNull();
-    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
   });
 
   it('AC-W9 Check on a clashing rename shows "Clash: <code> <title>"', async () => {

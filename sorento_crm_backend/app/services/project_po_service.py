@@ -509,6 +509,11 @@ def _advance_to_po_received(db: Session, project: Project) -> bool:
             )
         project.status_id = target.id
         db.flush()
+        # Leaving a Lost / Dormant rung hands the outcome back to the quotations
+        # (PROJECT-CLASH-LOST); on any other move this is a no-op.
+        from app.services.project_quotation_service import sync_project_outcome
+
+        sync_project_outcome(db, project)
         return True
     except AppException:
         # The graph says this move is not legal from here. The PO stays recorded; the
