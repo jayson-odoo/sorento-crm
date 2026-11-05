@@ -443,7 +443,10 @@ function TargetsGrid({
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={emptyMessage}
-      rowHref={(row) => `/sales/targets/${row.target_id}`}
+      // The Team filter lives in the list URL, so it rides to the record and back (owner, 5 Nov).
+      rowHref={(row) =>
+        `/sales/targets/${row.target_id}${tab === 'agent' && teamFilter ? `?team=${encodeURIComponent(teamFilter)}` : ''}`
+      }
     >
       <Card>
         <CardHeader className="block">
