@@ -430,14 +430,19 @@ ANSWER_SCHEMA: dict[str, Any] = {
                 "no_tool": {
                     "type": "array",
                     "description": (
-                        "Only for a part of the ask you could not do because none of your tools can read or "
-                        "change it (not for a search that found nothing): what the user asked, in a few words, "
-                        "and the area of the CRM it belongs to (orders, stock, purchasing, ...)."
+                        "Only for a part of the ask you could not do because no tool exists for it: what the "
+                        "user asked, in a few words, and the area of the CRM it belongs to (orders, stock, "
+                        "purchasing, ...). Not for a search that found nothing. Set reason to no_access, not "
+                        "no_tool, when the ask is outside this user's access."
                     ),
                     "items": {
                         "type": "object",
-                        "properties": {"ask": {"type": "string"}, "area": {"type": "string"}},
-                        "required": ["ask"],
+                        "properties": {
+                            "ask": {"type": "string"},
+                            "area": {"type": "string"},
+                            "reason": {"type": "string", "enum": ["no_tool", "no_access"]},
+                        },
+                        "required": ["ask", "reason"],
                     },
                     "maxItems": 5,
                 },

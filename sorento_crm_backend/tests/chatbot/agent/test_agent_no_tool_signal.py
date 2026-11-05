@@ -51,13 +51,14 @@ def test_the_answer_schema_declares_no_tool_as_optional():
     params = tools.ANSWER_SCHEMA["function"]["parameters"]
     prop = params["properties"]["no_tool"]
     assert prop["type"] == "array"
-    assert prop["items"]["required"] == ["ask"]
-    assert set(prop["items"]["properties"]) == {"ask", "area"}
+    assert prop["items"]["required"] == ["ask", "reason"]
+    assert set(prop["items"]["properties"]) == {"ask", "area", "reason"}
+    assert prop["items"]["properties"]["reason"]["enum"] == ["no_tool", "no_access"]
     assert "no_tool" not in params["required"]
 
 
 def test_an_answer_with_no_tool_saves_it_on_the_turn_trace(db, contact):
-    gaps = [{"ask": "approve purchase order PO-1001", "area": "purchasing"}]
+    gaps = [{"ask": "approve purchase order PO-1001", "area": "purchasing", "reason": "no_tool"}]
     result = run(db, contact, ScriptedProvider([answer_with_gaps("I cannot approve purchase orders.", gaps)]),
                  text="approve PO-1001")
     events = _events(_turn_row(db, result))
@@ -73,7 +74,8 @@ def test_an_answer_without_no_tool_saves_nothing(db, contact):
 
 
 def test_an_empty_or_malformed_no_tool_saves_nothing(db, contact):
-    bad = [{"ask": "   "}, {"area": "stock"}, "free text", {"ask": 12}]
+    bad = [{"ask": "   ", "reason": "no_tool"}, {"area": "stock", "reason": "no_tool"}, "free text",
+           {"ask": 12, "reason": "no_tool"}]
     result = run(db, contact, ScriptedProvider([answer_with_gaps("Hello.", bad)]), text="hello")
     assert _events(_turn_row(db, result)) == []
 
@@ -81,7 +83,7 @@ def test_an_empty_or_malformed_no_tool_saves_nothing(db, contact):
 def test_no_tool_is_trimmed_and_capped_at_five():
     from app.services.chatbot.agent.loop import no_tool_items
 
-    items = no_tool_items({"no_tool": [{"ask": f"  ask {i} " + "x" * 400, "area": "  "} for i in range(8)]})
+    items = no_tool_items({"no_tool": [{"ask": f"  ask {i} " + "x" * 400, "area": "  ", "reason": "no_tool"} for i in range(8)]})
     assert len(items) == 5
     assert all(len(i["ask"]) == 300 and i["ask"].startswith("ask ") for i in items)
     assert all(i["area"] is None for i in items)
@@ -91,7 +93,10 @@ def test_a_forced_final_at_a_limit_still_saves_its_no_tool(db, contact):
     _set_budgets(db, chatbot_agent_max_rounds=2)
     provider = ScriptedProvider([
         asks(call(cid="c1")), asks(call(cid="c2")),
-        answer_with_gaps("I could only check part.", [{"ask": "send the quotation by email", "area": "quotations"}]),
+        answer_with_gaps(
+            "I could only check part.",
+            [{"ask": "send the quotation by email", "area": "quotations", "reason": "no_tool"}],
+        ),
     ])
     result = run(db, contact, provider)
     row = _turn_row(db, result)
@@ -100,10 +105,42 @@ def test_a_forced_final_at_a_limit_still_saves_its_no_tool(db, contact):
 
 
 def test_a_live_whatsapp_turn_is_labelled_whatsapp(db, contact):
-    gaps = [{"ask": "change my delivery address", "area": "orders"}]
+    gaps = [{"ask": "change my delivery address", "area": "orders", "reason": "no_tool"}]
     result = run(db, contact, ScriptedProvider([answer_with_gaps("I cannot change that.", gaps)]),
                  text="change my address", is_test=False)
     assert _events(_turn_row(db, result))[0]["channel"] == "whatsapp"
+
+
+# ------------------------------------------------------------------ an access refusal is not a missing tool
+
+
+def test_an_item_marked_no_access_is_not_recorded(db, contact):
+    gaps = [{"ask": "stock balance of SRTHD120", "area": "stock", "reason": "no_access"}]
+    result = run(db, contact, ScriptedProvider([answer_with_gaps("I cannot check that for you.", gaps)]),
+                 text="What is the stock balance of SRTHD120?")
+    assert _events(_turn_row(db, result)) == []
+
+
+def test_a_reply_refusing_for_lack_of_access_records_nothing_even_if_flagged_no_tool(db, contact):
+    """Crew pass on d6b6ab9b: the agent refused for ACCESS and still flagged the ask as a missing tool."""
+    gaps = [{"ask": "stock balance of SRTHD120", "area": "stock", "reason": "no_tool"}]
+    reply = "Checking stock balances is outside your current access permissions, so I cannot look up SRTHD120."
+    result = run(db, contact, ScriptedProvider([answer_with_gaps(reply, gaps)]),
+                 text="What is the stock balance of SRTHD120?")
+    assert _events(_turn_row(db, result)) == []
+
+
+def test_an_item_without_a_reason_is_not_recorded():
+    from app.services.chatbot.agent.loop import no_tool_items
+
+    assert no_tool_items({"text": "x", "no_tool": [{"ask": "email the stock report", "area": "stock"}]}) == []
+
+
+def test_the_prompt_tells_the_model_not_to_list_out_of_access_asks_in_no_tool(db):
+    from app.services.chatbot.agent.loop import _system_prompt
+
+    prompt = _system_prompt(db, "ZZT", tool_names=())
+    assert "never list them in no_tool" in prompt
 
 
 # ------------------------------------------------------------------ the Wishlist list

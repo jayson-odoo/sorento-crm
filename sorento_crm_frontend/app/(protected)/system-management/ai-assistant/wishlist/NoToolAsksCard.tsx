@@ -32,7 +32,9 @@ export function NoToolAsksTable({ items }: { items: NoToolAsk[] }) {
     return (
       <div className="py-6 text-center">
         <p className="text-sm font-medium">No asks without a tool</p>
-        <p className="text-sm text-muted-foreground">Nothing in the last 30 days.</p>
+        <p className="text-sm text-muted-foreground">
+          Nothing in the last 30 days.
+        </p>
       </div>
     );
   }
@@ -42,17 +44,26 @@ export function NoToolAsksTable({ items }: { items: NoToolAsk[] }) {
         <thead>
           <tr className="border-b text-xs text-muted-foreground">
             <th className="py-2 text-left font-medium">Ask</th>
+            <th className="py-2 text-left font-medium">Date</th>
             <th className="py-2 text-left font-medium">Area</th>
             <th className="py-2 text-left font-medium">User</th>
             <th className="py-2 text-left font-medium">Channel</th>
-            <th className="py-2 text-left font-medium">Date</th>
           </tr>
         </thead>
         <tbody>
           {items.map((it, idx) => (
-            <tr key={`${it.turn_id}-${idx}`} className="border-b align-top last:border-0">
-              <td className="max-w-[28rem] py-2 pe-3" title={it.ask}>
+            <tr
+              key={`${it.turn_id}-${idx}`}
+              className="border-b align-top last:border-0"
+            >
+              <td
+                className="max-w-[28rem] min-w-[9rem] py-2 pe-3"
+                title={it.ask}
+              >
                 {it.ask}
+              </td>
+              <td className="py-2 pe-3 text-xs whitespace-nowrap text-muted-foreground">
+                {formatAskedAt(it.asked_at)}
               </td>
               <td className="py-2 pe-3">
                 {it.area ? (
@@ -63,14 +74,13 @@ export function NoToolAsksTable({ items }: { items: NoToolAsk[] }) {
                   <span className="text-xs text-muted-foreground">-</span>
                 )}
               </td>
-              <td className="py-2 pe-3">{it.who || <span className="text-muted-foreground">-</span>}</td>
               <td className="py-2 pe-3">
+                {it.who || <span className="text-muted-foreground">-</span>}
+              </td>
+              <td className="py-2">
                 <Badge variant="outline" className="text-xs">
                   {channelLabel(it.channel)}
                 </Badge>
-              </td>
-              <td className="py-2 text-xs whitespace-nowrap text-muted-foreground">
-                {formatAskedAt(it.asked_at)}
               </td>
             </tr>
           ))}
@@ -93,7 +103,8 @@ export function NoToolAsksCard() {
           <SectionSkeleton rows={3} />
         ) : query.isError ? (
           <p className="text-sm text-destructive">
-            {(query.error as Error)?.message || 'Failed to load the asks with no tool.'}
+            {(query.error as Error)?.message ||
+              'Failed to load the asks with no tool.'}
           </p>
         ) : (
           <NoToolAsksTable items={query.data || []} />
