@@ -231,3 +231,12 @@ def test_crew_tests_drops_the_nightly_only_tests():
     plan = dict(l.split("=", 1) for l in res.stdout.splitlines() if l.startswith("plan."))
     assert entry not in plan["plan.backend"].split()
     assert "nightly_only.txt" in res.stderr
+
+
+def test_the_refreshed_durations_merge_every_shards_fresh_timings_over_the_base(tmp_path):
+    (tmp_path / "junit-backend-main-1").mkdir()
+    (tmp_path / "junit-backend-main-1" / "durations-main-1.json").write_text('{"t::a": 2.0, "t::new": 1.0}')
+    (tmp_path / "junit-backend-scm-1").mkdir()
+    (tmp_path / "junit-backend-scm-1" / "durations-scm-1.json").write_text('{"s::b": 3.0}')
+    merged, fresh = sts.merge_durations({"t::a": 9.0, "s::b": 9.0, "old::c": 4.0}, tmp_path)
+    assert merged == {"old::c": 4.0, "s::b": 3.0, "t::a": 2.0, "t::new": 1.0} and fresh == 3

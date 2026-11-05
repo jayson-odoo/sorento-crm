@@ -10,7 +10,11 @@ followed by one row per shard (job conclusion, passed, failed, minutes), the fai
 wall clock and the billable runner minutes (each job rounded up to a whole minute, as GitHub bills
 it; this summary job itself is not finished and not counted). A shard counts as FAILED when a
 test failed, when its job did not succeed, or when it uploaded no junit (it crashed before
-pytest/vitest wrote one): a run that lost a shard never reads as a pass. Stdlib only.
+pytest/vitest wrote one): a run that lost a shard never reads as a pass.
+
+With --durations-base/--durations-out it also merges every backend shard's durations-*.json (the
+tests that shard timed under --store-durations) over the head's committed .test_durations, the
+file to commit when the shards drift apart. Stdlib only.
 """
 from __future__ import annotations
 
@@ -111,6 +115,20 @@ def summarise(junit: Path, jobs: list[dict], started: str, now: datetime, *, hea
     return "\n".join(out) + "\n"
 
 
+def merge_durations(base: dict[str, float], junit: Path) -> tuple[dict[str, float], int]:
+    """`base` updated with every shard's durations-*.json (the tests that shard timed)."""
+    merged = dict(base)
+    fresh = 0
+    for path in sorted(junit.glob("*/durations-*.json")):
+        try:
+            mine = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        merged.update(mine)
+        fresh += len(mine)
+    return dict(sorted(merged.items())), fresh
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--junit", required=True)
@@ -121,7 +139,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", default="")
     ap.add_argument("--reason", default="")
     ap.add_argument("--run-url", default="")
+    ap.add_argument("--durations-base", help="the head's committed .test_durations")
+    ap.add_argument("--durations-out", help="write the refreshed .test_durations here")
     args = ap.parse_args(argv)
+    if args.durations_base and args.durations_out:
+        base = json.loads(Path(args.durations_base).read_text(encoding="utf-8"))
+        merged, fresh = merge_durations(base, Path(args.junit))
+        if fresh:
+            Path(args.durations_out).write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     jobs = [json.loads(line) for line in Path(args.jobs).read_text(encoding="utf-8").splitlines() if line.strip()]
     sys.stdout.write(summarise(Path(args.junit), jobs, args.started, datetime.now(timezone.utc), head=args.head,
                                mode=args.mode, base=args.base, reason=args.reason, run_url=args.run_url))

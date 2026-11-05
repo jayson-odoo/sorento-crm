@@ -116,6 +116,7 @@ jobs:
           python tool/sorento_crm_backend/scripts/sharded_tests_plan.py "${args[@]}" > outputs.txt
           mv outputs.txt plan/outputs.txt
           echo "${{ steps.head.outputs.sha }}" > plan/head_sha.txt
+          cp head/sorento_crm_backend/.test_durations plan/test_durations.json
           cat plan/plan.txt | tee -a "$GITHUB_STEP_SUMMARY"
       # One matrix for both pools and the serial entry: {pool, shard, of}.
       - name: Backend matrix
@@ -233,7 +234,18 @@ jobs:
             main|scm)
               mapfile -t FILES < "../plan/$POOL.txt"
               echo "$POOL shard $SHARD of $OF over ${#FILES[@]} files"
-              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" -m "not serial_ddl" "${FILES[@]}"
+              cp .test_durations ../durations.base.json
+              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" -m "not serial_ddl" \
+                --store-durations --durations-path .test_durations "${FILES[@]}"
+              # The tests THIS shard timed (new or changed keys): the summary merges every
+              # shard's into one refreshed .test_durations artifact to commit.
+              python3 - "$POOL-$SHARD" <<'PY'
+          import json, sys
+          base = json.load(open("../durations.base.json"))
+          now = json.load(open(".test_durations"))
+          mine = {k: v for k, v in now.items() if base.get(k) != v}
+          json.dump(mine, open(f"junit/durations-{sys.argv[1]}.json", "w"))
+          PY
               ;;
             serial)
               # release-delta.sh's schema checks: one alembic head, and upgrade head on the
@@ -339,6 +351,10 @@ jobs:
         with:
           pattern: junit-*
           path: junit
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: plan
       - name: Jobs of this run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -355,8 +371,18 @@ jobs:
           python3 sorento_crm_backend/scripts/sharded_tests_summary.py \
             --junit junit --jobs jobs.jsonl --started "$(cat started.txt)" \
             --head "$HEAD_SHA" --mode "$MODE" --base "$BASE_SHA" --reason "$REASON" --run-url "$RUN_URL" \
+            --durations-base plan/test_durations.json --durations-out test_durations.json \
             > comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
+      # The committed .test_durations refreshed with every test this run timed: download it and
+      # commit it as sorento_crm_backend/.test_durations when the shards drift apart.
+      - name: Upload the refreshed durations
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-durations
+          path: test_durations.json
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Post the crew-tests comment
         env:
           GH_TOKEN: ${{ github.token }}
