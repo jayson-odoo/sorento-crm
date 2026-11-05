@@ -10,6 +10,7 @@ owner ruling 5 Nov 23:2x), and so is this entity: `own_scope.sales_target_clause
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from app.models.sales import SalesTarget
 from app.models.sales_agent import SalesAgent
@@ -110,7 +111,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "target_value": goal,
                 "achieved_value": fig["achieved_value"],
                 "achieved_pct": pct,
-                "below_target": None if goal is None else fig["achieved_value"] < goal,
+                "below_target": _below(pct),
                 "shortfall": None if goal is None else round(max(goal - fig["achieved_value"], 0.0), 2),
                 "ratio_missing": missing,
                 "tier_reached": fig["tier_reached"],
@@ -123,47 +124,79 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     return rows
 
 
-def _agent_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
-    """One row per agent: the agent targets' periods in the window (`_target_rows`, the target page's own figures),
-    summed per agent. A sum of the page's figures, nothing recomputed; the % is `achievement_service.achieved_pct`
-    over the sums, as the Agents tab shows a whole range's (`target_service.list_all_targets`)."""
-    from decimal import Decimal
+def _below(pct) -> bool:
+    """The Targets screen's own reading: a target is reached only when its Achieved % is shown and at least 100
+    (`sorento_crm_frontend/app/(protected)/sales/targets/components/SalesTargetsView.tsx:389`, `pct !== null &&
+    pct >= 100` is the green "reached" figure); anything else, a target of 0 or a points target with no ratio (no %)
+    included, is below target. The % is the page's own (`achievement_service.achieved_pct`, one decimal)."""
+    return not (pct is not None and pct >= 100)
 
+
+def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
+    """`agent_target_summary`: one row per owner per period, deterministic, from `_target_rows` (the target page's
+    own per-period figures) with nothing recomputed but sums and counts.
+
+    The owner of a target is the rule the target service already uses for a salesperson's view
+    (`target_chat_scope`): an agent target is its agent's; a dealer target is the agent's who owns EVERY counted
+    account (`Customer.sales_agent_id`), else "(no single agent)"; a team target is the team's. So the rows' counts
+    and payouts add up to every target period on the screens."""
+    from app.models.sales_agent import SalesAgent
     from app.services.sales import achievement_service as ach
+    from app.services.sales import target_service as ts
+    from app.services.sales.team_service import agent_label
 
-    per: dict[str, dict] = {}
-    for row in _target_rows(db, user_id, own_only, date_from, date_to, limit=limit):
-        if row["subject_kind"] != "agent" or not row["agent"]:
-            continue
-        out = per.setdefault(row["agent"], {
-            "id": row["agent_code"], "agent": row["agent"], "agent_code": row["agent_code"], "team": row["team"],
-            "period": row["period_start"], "periods": 0, "targets": set(), "target_value": 0.0, "achieved_value": 0.0,
-            "commission": None, "bonus": None, "payout": None, "ratio_missing": False,
+    periods = _target_rows(db, user_id, own_only, date_from, date_to, limit=limit)
+    dealer_ids = [r["target_id"] for r in periods if r["subject_kind"] == "dealer"]
+    accounts = ts._accounts_by_target(db, dealer_ids) if dealer_ids else {}
+    agent_ids = {c.sales_agent_id for customers in accounts.values() for c in customers if c.sales_agent_id}
+    agents = {a.id: a for a in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids))} if agent_ids else {}
+
+    def owner(row: dict) -> tuple[str, str]:
+        if row["subject_kind"] == "agent":
+            return row["agent"] or "(no agent)", "agent"
+        if row["subject_kind"] == "team":
+            return f"Team {row['team'] or row['subject']}", "team"
+        owners = {c.sales_agent_id for c in accounts.get(row["target_id"], [])}
+        if len(owners) == 1 and None not in owners and next(iter(owners)) in agents:
+            return agent_label(agents[next(iter(owners))]), "agent"
+        return "(no single agent)", "none"
+
+    per: dict[tuple, dict] = {}
+    for row in periods:
+        name, kind = owner(row)
+        key = (name, row["period_start"], row["period_end"])
+        out = per.setdefault(key, {
+            "id": f"{name}|{row['period_start']}|{row['period_end']}", "owner": name, "owner_kind": kind,
+            "period": row["period_start"], "period_start": row["period_start"], "period_end": row["period_end"],
+            "targets": 0, "below_target": 0, "target_value": 0.0, "achieved_value": 0.0,
+            "commission": None, "bonus": None, "payout": None, "_kinds": set(), "_complete": True,
         })
-        out["periods"] += 1
-        out["targets"].add(row["target_no"])
-        out["period"] = min(out["period"], row["period_start"])
-        out["achieved_value"] += row["achieved_value"] or 0.0
-        if row["target_value"] is None:
-            out["ratio_missing"] = True
+        out["targets"] += 1
+        out["_kinds"].add(row["subject_kind"])
+        if _below(row["achieved_pct"]):
+            out["below_target"] += 1
+        if row["metric"] != "amount" or row["target_value"] is None:
+            # Units, or a points target without a ratio: no RM figure to add (the page shows none either).
+            out["_complete"] = False
         else:
             out["target_value"] += row["target_value"]
-        for key in ("commission", "bonus", "payout"):
-            if row[key] is not None:
-                out[key] = round((out[key] or 0.0) + row[key], 2)
+            out["achieved_value"] += row["achieved_value"] or 0.0
+        for k in ("commission", "bonus", "payout"):
+            if row[k] is not None:
+                out[k] = round((out[k] or 0.0) + row[k], 2)
     rows = []
     for out in per.values():
-        goal = None if out["ratio_missing"] else round(out["target_value"], 2)
-        achieved = round(out["achieved_value"], 2)
-        out.update({
-            "targets": ", ".join(sorted(out["targets"])),
-            "target_value": goal,
-            "achieved_value": achieved,
-            "achieved_pct": None if goal is None else ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))),
-            "below_target": None if goal is None else achieved < goal,
-            "shortfall": None if goal is None else round(max(goal - achieved, 0.0), 2),
-        })
+        complete = out.pop("_complete")
+        kinds = out.pop("_kinds")
+        goal, achieved = round(out["target_value"], 2), round(out["achieved_value"], 2)
+        out["kinds"] = ", ".join(sorted(kinds))
+        out["target_value"] = goal if complete else None
+        out["achieved_value"] = achieved if complete else None
+        out["achieved_pct"] = (
+            ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))) if complete and goal else None
+        )
         rows.append(out)
+    rows.sort(key=lambda r: (r["owner"], r["period_start"], r["period_end"]))
     return rows
 
 
@@ -223,7 +256,8 @@ register(
             "achieved_value": FieldDef("Achieved", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
             "below_target": FieldDef(
-                "Below target", kind="boolean", note="Achieved under 100% of the period's target.",
+                "Below target", kind="boolean",
+                note="As the Targets screen reads it: Achieved % shown and under 100, or no % (a target of 0).",
             ),
             "shortfall": FieldDef("Short by", kind="number", note="Target minus achieved, 0 once reached."),
             "tier_reached": FieldDef("Tier reached", kind="number"),
@@ -249,48 +283,60 @@ register(
         screen_path="/sales/targets/{target_id}",
         pages=("/sales/targets",),
         routes=("GET /api/v1/sales/targets",),
-        hint="one row per target PERIOD (agents, teams, dealers): achieved, below_target, tier, commission, payout. "
-             "For anything PER AGENT or for one agent use agent_target instead",
+        hint="one row per target period; for one named target only (TGT-...). Not in the index: use "
+             "agent_target_summary for target questions",
+        in_index=False,
         list_fields=("period_start", "period_end", "target_value", "achieved_value", "achieved_pct", "payout"),
         compute=_target_rows,
         window_field="period",
         # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).
         brand_blind=True,
     ),
-    # Crew pass on 74b6b751: "payout per agent" grouped targets (dealers, a test target) and "Agent A last month"
-    # took 6 calls. One row per agent answers both in one query.
+    # Crew pass on 0463b805 (5 Nov): ONE deterministic entity for target, below target and payout questions, so each
+    # is one query. `sales_target` (per target) stays for a question about one target, through crm_describe.
     EntityDef(
-        key="agent_target",
-        label="Sales targets by agent",
+        key="agent_target_summary",
+        label="Sales targets by agent and period",
         module="sales",
         model=SalesTarget,
         view_permission=TARGETS_VIEW,
         own_permission="sales.targets.view_own",
         own_clause=_own,
         fields={
-            "agent": FieldDef("Agent", kind="text", note="'CODE - Name'; filter with contains on the code or name."),
-            "agent_code": FieldDef("Agent code", kind="text"),
-            "team": FieldDef("Team", kind="text"),
+            "owner": FieldDef(
+                "Agent", kind="text",
+                note="'CODE - Name' (agent targets and the dealers whose accounts the agent owns), 'Team X', or "
+                     "'(no single agent)'; filter with contains on a code or name.",
+            ),
+            "owner_kind": FieldDef("Owner kind", kind="text", note="agent, team or none."),
             "period": FieldDef(
                 "Period", kind="date",
-                note="The date window: between [from, to] (last month, this quarter); without it, the current periods.",
+                note="The window: between [from, to] (last month, this quarter); without it, the current periods.",
             ),
-            "periods": FieldDef("Periods", kind="number"),
-            "targets": FieldDef("Targets", kind="text"),
-            "target_value": FieldDef("Target", kind="number"),
-            "achieved_value": FieldDef("Achieved", kind="number"),
+            "period_start": FieldDef("Period start", kind="date"),
+            "period_end": FieldDef("Period end", kind="date"),
+            "kinds": FieldDef("Target kinds", kind="text"),
+            "targets": FieldDef("Targets", kind="number"),
+            "below_target": FieldDef(
+                "Below target", kind="number",
+                note="How many of these targets are below target as the Targets screen reads it (Achieved % shown "
+                     "and under 100, or no %). The total is the screen's count.",
+            ),
+            "target_value": FieldDef("Target (RM)", kind="number", note="Empty when a units or no-ratio target is in the row."),
+            "achieved_value": FieldDef("Achieved (RM)", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
-            "below_target": FieldDef("Below target", kind="boolean"),
-            "shortfall": FieldDef("Short by", kind="number"),
             "commission": FieldDef("Commission", kind="number"),
             "bonus": FieldDef("Bonus", kind="number"),
-            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus over the window."),
+            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus."),
         },
-        name_by=("agent",),
-        hint="ONE row per agent (agent targets only): target, achieved, %, below_target, commission, payout. Use for "
-             "payout or target PER AGENT and for one agent (agent contains <code or name>); no period = current periods",
-        list_fields=("target_value", "achieved_value", "achieved_pct", "payout"),
-        compute=_agent_rows,
+        name_by=("owner",),
+        hint="EVERY sales target / below target / achievement / commission / payout question, ONE query: a row per "
+             "agent (or team) per period, with a totals row. One agent: owner contains <code or name>. Below "
+             "target: below_target gt 0 (its total = the screens' count). No period = the current periods",
+        list_fields=("period_start", "period_end", "targets", "below_target", "target_value", "achieved_value",
+                     "achieved_pct", "payout"),
+        row_totals=("targets", "below_target", "commission", "bonus", "payout"),
+        compute=_summary_rows,
         window_field="period",
         brand_blind=True,
     ),

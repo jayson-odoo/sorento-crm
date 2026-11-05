@@ -383,6 +383,15 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     }
     if dropped:
         out["columns_dropped"] = dropped
+    shown_keys = {c["key"] for c in columns}
+    totals = {}
+    for f in entity.row_totals:
+        if f in shown_keys:
+            # Over every matching row, not only those shown (`truncated` says how many are shown).
+            values = [r.get(f) or 0 for r in rows]
+            totals[f] = sum(values) if all(isinstance(v, int) for v in values) else round(sum(map(float, values)), 2)
+    if totals:
+        out["totals"] = totals
     return out
 
 

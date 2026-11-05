@@ -149,7 +149,7 @@ def test_I1_the_entity_index_is_in_the_query_tools_description():
 
     text = query_tools.QUERY_SCHEMA["function"]["description"]
     for key, entity in ENTITIES.items():
-        if entity.view_permission:
+        if entity.view_permission and entity.in_index:
             assert f"\n{key} (" in text, key
             assert entity.hint, f"{key} has no index hint"
     assert "payout" in text and "sales_amount" in text and "customer.{code,name}" in text

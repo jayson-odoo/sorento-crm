@@ -456,7 +456,8 @@ def _same_as_page(db, out, target_ids):
                 assert row["target_value"] == mine["target_value"]
                 assert row["achieved_pct"] == mine["achieved_pct"]
             else:
-                assert row["target_value"] is None and row["achieved_pct"] is None and row["below_target"] is None
+                # No % means not reached, as the Targets screen reads it (round 6).
+                assert row["target_value"] is None and row["achieved_pct"] is None and row["below_target"] is True
             checked += 1
     return checked
 

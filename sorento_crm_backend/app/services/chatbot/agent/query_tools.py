@@ -216,7 +216,7 @@ def entity_index() -> str:
     round took list turns from ~49k to ~77k prompt tokens). Notes stay in `crm_describe`."""
     lines = []
     for e in ENTITIES.values():
-        if e.view_permission is None:
+        if e.view_permission is None or not e.in_index:
             continue
         # A relation shows the fields it is named by (all a lookup may read; crm_describe lists the rest).
         rel = [

@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 5: crew pass on 74b6b751 fixed; tables, active customers and invoiced totals passed there). Track: full (RBAC, one
+Status: Review (round 6: crew pass on 0463b805; sales basis and active customers passed there). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -177,6 +177,24 @@ Tokens per turn on this head (real loop, scripted model, real MCP catalogue; one
 
 Call 1 = system 1.6k + MCP tools 17.2k + other tools 4.6k; call 2 carries only the registry tools (1.8k). Worst case
 with the cap: one full call and three narrowed ones, about 38k.
+
+## Crew pass on 0463b805 (5 Nov) and round 6: one deterministic target entity
+
+- `agent_target_summary` (`assistant_registry/sales.py` `_summary_rows`) replaces `agent_target`: one row per owner
+  per period, from `_target_rows` (the target page's own period figures), nothing recomputed but sums and counts.
+  Owner = the target service's own rule for a salesperson's view (`target_chat_scope`): an agent target is its
+  agent's, a dealer target is the agent's who owns every counted account (`Customer.sales_agent_id`, else
+  "(no single agent)"), a team target the team's. Columns: targets, below_target (count), target, achieved, %,
+  payout; a totals row over every matching row (`EntityDef.row_totals`). It is the only target entity in the
+  index (`EntityDef.in_index`); `sales_target` stays for one named target through crm_describe.
+- Below target is the Targets screen's own reading (`sorento_crm_frontend/app/(protected)/sales/targets/components/
+  SalesTargetsView.tsx:389`: reached = `pct !== null && pct >= 100`, the % from `achievement_service.achieved_pct`
+  :898, one decimal). Round 2 had used achieved < target, which counts a target of 0 (no %) as reached: the dev
+  copy's 3 agent targets of 0 and similar rows are the 62 vs 66 gap. `sales_target.below_target` and the summary
+  use `_below` now; test S3 holds the summary's below total = `sales_target`'s count = the count read from
+  `target_detail` the screen's way.
+- Tokens, one query then the answer: payout per agent 27,255; commission for Agent B last month 27,323; below
+  target this quarter 27,320 (2 calls each).
 
 ## Token measurement (task item 5)
 

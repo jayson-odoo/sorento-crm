@@ -88,3 +88,8 @@ class EntityDef:
     #: Said with every total or grouping (`scope_note`): which figure the money is (crew pass on 74b6b751: a sales
     #: table on the delivery-order basis under an invoiced total).
     aggregate_note: str | None = None
+    #: Number fields summed over every row of a rows result (not only those shown), as a totals row.
+    row_totals: tuple[str, ...] = ()
+    #: Listed in `crm_query`'s compact index. False = reachable only through crm_describe (one entity per question
+    #: kind in the index, crew pass on 0463b805).
+    in_index: bool = True
