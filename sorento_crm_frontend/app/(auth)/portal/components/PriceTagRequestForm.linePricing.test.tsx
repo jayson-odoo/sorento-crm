@@ -157,6 +157,7 @@ beforeEach(() => {
 async function startWithALine(item: (typeof ITEMS)[number]) {
   render(<PriceTagRequestForm />);
   await selectOption('Customer', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${item.kind}:${item.id}`);
 }

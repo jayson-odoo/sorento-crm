@@ -526,23 +526,24 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setSectionOpen((prev) => ({ ...prev, [key]: next }));
   }, []);
 
-  // Picking a customer opens Sales Order & Lines (AC-P3).
+  // Each rule opens the NEXT section in the page order Customer, Price, Sales
+  // Order & Lines, Additional Information (O3). Picking a customer opens Price
+  // (AC-P3).
   useEffect(() => {
-    if (debtorCode) openSectionOnce('sales_order');
+    if (debtorCode) openSectionOnce('price');
   }, [debtorCode, openSectionOnce]);
 
-  // The first line (AI or Add line) opens Price (AC-P7).
+  // The first line (AI or Add line) opens Additional Information (AC-P7).
   useEffect(() => {
-    if (lines.length > 0) openSectionOnce('price');
+    if (lines.length > 0) openSectionOnce('need_by');
   }, [lines.length, openSectionOnce]);
 
-  // A chosen price mode opens Additional Information (AC-P8); Selling only
-  // counts once it and a promotion are both there is not required - Selling
-  // alone is enough (D-P2, submit works with no promotion).
+  // A chosen price mode opens Sales Order & Lines (AC-P8); Selling alone is
+  // enough (D-P2, submit works with no promotion).
   useEffect(() => {
     if (!priceModeChosen) return;
     if (priceMode === 'list' || priceMode === 'selling') {
-      openSectionOnce('need_by');
+      openSectionOnce('sales_order');
     }
   }, [priceMode, priceModeChosen, openSectionOnce]);
 
@@ -1817,6 +1818,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </FormSection>
 
         <FormSection
+          title="Price"
+          summary={sectionSummaries.price}
+          open={sectionOpen.price}
+          onOpenChange={(next) => toggleSection('price', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Price</Label>
+            <p className="text-sm font-medium py-2">
+              {(request.price_mode ?? 'list') === 'selling'
+                ? 'Selling price'
+                : 'List price'}
+            </p>
+          </div>
+          {/* D1: a promotion is per LINE now (see the Lines table above) -
+              there is no single request-level promotion to name here any
+              more. */}
+        </FormSection>
+
+        <FormSection
           title="Sales Order & Lines"
           summary={sectionSummaries.sales_order}
           open={sectionOpen.sales_order}
@@ -1856,25 +1876,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               />
             )}
           </div>
-        </FormSection>
-
-        <FormSection
-          title="Price"
-          summary={sectionSummaries.price}
-          open={sectionOpen.price}
-          onOpenChange={(next) => toggleSection('price', next)}
-        >
-          <div className="space-y-1.5">
-            <Label>Price</Label>
-            <p className="text-sm font-medium py-2">
-              {(request.price_mode ?? 'list') === 'selling'
-                ? 'Selling price'
-                : 'List price'}
-            </p>
-          </div>
-          {/* D1: a promotion is per LINE now (see the Lines table above) -
-              there is no single request-level promotion to name here any
-              more. */}
         </FormSection>
 
         <FormSection
@@ -2149,8 +2150,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </>
       )}
 
-      {/* Customer - open by default; picking one opens Sales Order & Lines
-          (AC-P3). */}
+      {/* Customer - open by default; picking one opens Price (AC-P3). */}
       <FormSection
         title="Customer"
         summary={sectionSummaries.customer}
@@ -2185,9 +2185,44 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       </FormSection>
 
+      {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
+          never disabled; its Promotion picker moved onto each line in the
+          table above (AC-S1-3), one line can no longer share a single
+          request-level promotion with another. Choosing either mode opens
+          Sales Order & Lines (AC-P8). */}
+      <FormSection
+        title="Price"
+        titleId="price-section-title"
+        summary={sectionSummaries.price}
+        open={sectionOpen.price}
+        onOpenChange={(next) => toggleSection('price', next)}
+      >
+        <div className="space-y-1.5">
+          {/* No repeated "Price" label here - the section title already
+              says it (review round 1). */}
+          <span id="price-default-label" className="block text-sm text-muted-foreground">
+            Preferred Default
+          </span>
+          <PriceModeToggle
+            value={priceMode}
+            labelledBy="price-default-label"
+            onChange={(mode) => {
+              setPriceModeChosen(true);
+              setPriceMode(mode);
+              // Direct call (review round 2): `setPriceMode('list')` is a
+              // no-op on a fresh form (priceMode is already 'list'), so
+              // React bails out of re-rendering and the auto-open effect
+              // keyed on `priceMode` never reruns - Sales Order & Lines
+              // must still open on this click either way (AC-P8).
+              openSectionOnce('sales_order');
+            }}
+          />
+        </div>
+      </FormSection>
+
       {/* Sales Order & Lines - the AI extract / dropzone and the lines table
           share one section (D-P1): the first line lands here from either one,
-          and opens Price (AC-P7). */}
+          and opens Additional Information (AC-P7). */}
       <FormSection
         title="Sales Order & Lines"
         summary={sectionSummaries.sales_order}
@@ -2268,41 +2303,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onClose={() => setPreviewLineKey(null)}
           />
         ) : null}
-      </FormSection>
-
-      {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
-          never disabled; its Promotion picker moved onto each line in the
-          table above (AC-S1-3), one line can no longer share a single
-          request-level promotion with another. Choosing either mode opens
-          Additional Information (AC-P8). */}
-      <FormSection
-        title="Price"
-        titleId="price-section-title"
-        summary={sectionSummaries.price}
-        open={sectionOpen.price}
-        onOpenChange={(next) => toggleSection('price', next)}
-      >
-        <div className="space-y-1.5">
-          {/* No repeated "Price" label here - the section title already
-              says it (review round 1). */}
-          <span id="price-default-label" className="block text-sm text-muted-foreground">
-            Preferred Default
-          </span>
-          <PriceModeToggle
-            value={priceMode}
-            labelledBy="price-default-label"
-            onChange={(mode) => {
-              setPriceModeChosen(true);
-              setPriceMode(mode);
-              // Direct call (review round 2): `setPriceMode('list')` is a
-              // no-op on a fresh form (priceMode is already 'list'), so
-              // React bails out of re-rendering and the auto-open effect
-              // keyed on `priceMode` never reruns - Additional Information
-              // must still open on this click either way (AC-P8).
-              openSectionOnce('need_by');
-            }}
-          />
-        </div>
       </FormSection>
 
       {/* Additional Information - Need by and Notes, both optional

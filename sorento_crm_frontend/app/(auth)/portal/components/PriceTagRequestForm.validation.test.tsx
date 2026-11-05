@@ -203,6 +203,7 @@ describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has a debtor and nothing else', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
 
@@ -330,6 +331,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 
     sendToMarketing();
@@ -347,6 +349,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     await screen.findByText('Select the dealer these tags are for.');
 
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await waitFor(() =>
       expect(
@@ -364,6 +367,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await addLineWithAProduct();
     await pickPrinting();
 
@@ -387,6 +391,7 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     );
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
     await addLineWithAProduct();
     await pickPrinting();
 

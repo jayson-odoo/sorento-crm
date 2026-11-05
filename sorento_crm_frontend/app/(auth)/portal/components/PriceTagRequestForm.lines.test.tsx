@@ -174,6 +174,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     // requirement (AC-P10); picking the customer auto-opens Sales Order &
     // Lines (AC-P3).
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -199,6 +200,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     render(<PriceTagRequestForm />);
     // Need by is optional since D-P2b - see the note above.
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');

@@ -166,6 +166,7 @@ beforeEach(() => {
 // Item picker and Add line button live.
 async function fillMinimalRequiredFields() {
   await selectOption('Customer', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
   await pickPrinting();

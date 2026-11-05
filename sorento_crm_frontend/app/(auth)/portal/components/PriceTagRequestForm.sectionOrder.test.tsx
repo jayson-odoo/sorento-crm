@@ -122,8 +122,8 @@ describe('read-only view section order (AC-P11)', () => {
     ).map((n) => n.textContent?.trim() ?? '');
     expect(sectionTitles).toEqual([
       'Customer',
-      'Sales Order & Lines',
       'Price',
+      'Sales Order & Lines',
       'Additional Information',
     ]);
 
@@ -137,9 +137,9 @@ describe('read-only view section order (AC-P11)', () => {
 
     expect(normalized).toEqual([
       'Customer',
+      'Price',
       'Sales Order',
       'Lines',
-      'Price',
       // r10 S1: the "Who prints" control (and its `Printing` label) is gone -
       // the portal never asks, `printBy` is a constant 'self'. Additional
       // Information now opens directly on Need by / Notes.
