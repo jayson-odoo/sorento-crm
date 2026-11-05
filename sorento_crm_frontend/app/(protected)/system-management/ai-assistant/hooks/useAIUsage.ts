@@ -11,6 +11,7 @@ import {
   getUsageByDay,
   getUsageSummary,
   getWishlist,
+  getNoToolAsks,
 } from '../services/aiUsageService';
 
 const isoOrUndef = (d: Date | undefined) => (d ? d.toISOString() : undefined);
@@ -87,6 +88,15 @@ export function useWishlist(limit = 20) {
     ...LIST_QUERY_OPTIONS,
     queryKey: ['ai-wishlist', limit],
     queryFn: () => getWishlist(limit),
+    staleTime: 60 * 1000,
+  });
+}
+
+export function useNoToolAsks() {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: ['ai-wishlist-no-tool'],
+    queryFn: () => getNoToolAsks(),
     staleTime: 60 * 1000,
   });
 }
