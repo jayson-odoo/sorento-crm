@@ -9,6 +9,8 @@
 
 import { useCallback, useId, useMemo } from 'react';
 import type { FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
   Braces,
@@ -248,6 +250,8 @@ interface InspectorPanelProps {
   specKeys?: SpecKeyOption[];
   /** Feature icons: open the icon library (upload, rename); the rules live on the spec values. */
   onManageIcons?: () => void;
+  /** Feature icons: how many icons the previewed product reads for the selected layer. */
+  featureIconCount?: number;
 }
 
 export function InspectorPanel({
@@ -277,6 +281,7 @@ export function InspectorPanel({
   specSheet = false,
   specKeys,
   onManageIcons,
+  featureIconCount,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -564,6 +569,8 @@ export function InspectorPanel({
             <FeatureIconsInspector
               props={layer.props}
               onManageIcons={onManageIcons}
+              iconCount={featureIconCount ?? 0}
+              boxWidth_mm={layer.width_mm}
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
@@ -1838,12 +1845,19 @@ const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: stri
 function FeatureIconsInspector({
   props,
   onManageIcons,
+  iconCount,
+  boxWidth_mm,
   onChange,
 }: {
   props: FeatureIconsLayerProps;
   onManageIcons?: () => void;
+  /** Icons the previewed product reads; 0 with nothing previewed. */
+  iconCount: number;
+  boxWidth_mm: number;
   onChange: (changes: Partial<FeatureIconsLayerProps>) => void;
 }) {
+  // Icons that do not fit the box are not drawn (print cannot draw outside it): say so.
+  const { dropped } = featureIconFit(iconCount, props, boxWidth_mm);
   return (
     <section className="flex flex-col gap-2">
       <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1886,6 +1900,13 @@ function FeatureIconsInspector({
           ))}
         </ToggleGroup>
       </div>
+      {dropped > 0 && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {dropped} of {iconCount} icons do not fit this box. Widen the box or make the icons smaller.
+          </AlertDescription>
+        </Alert>
+      )}
       {onManageIcons && (
         <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onManageIcons}>
           Manage icons

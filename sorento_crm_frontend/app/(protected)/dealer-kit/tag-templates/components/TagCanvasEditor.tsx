@@ -234,6 +234,8 @@ import {
 import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
+import { useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -3509,6 +3511,21 @@ export function TagCanvasEditor({
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
+  // Feature icons that do not fit their box are not drawn (crew pass, 5 Nov): count them per
+  // layer for the inspector's warning, and toast the moment a change makes more drop.
+  const featureIconFits = useMemo(() => {
+    const counts = new Map<string, number>();
+    let dropped = 0;
+    for (const layer of layers) {
+      if (layer.props.kind !== 'feature_icons' || layer.visible === false) continue;
+      const count = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.icons?.length ?? 0;
+      counts.set(layer.id, count);
+      dropped += featureIconFit(count, layer.props, layer.width_mm).dropped;
+    }
+    return { counts, dropped };
+  }, [layers, dataOf, assetUrls, library.featureIcons]);
+  useFeatureIconDropToast(featureIconFits.dropped);
+
   /**
    * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
    * rather than `selectedData`, so the Layers panel's suffix still shows with
@@ -4896,6 +4913,7 @@ export function TagCanvasEditor({
               specSheet={specSheet}
               specKeys={library.specKeys}
               onManageIcons={() => setIconLibraryOpen(true)}
+              featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

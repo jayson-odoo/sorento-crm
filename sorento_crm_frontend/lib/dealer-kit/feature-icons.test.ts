@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
+import { featureIconFit, featureIconRow, featureIconsFor, type FeatureIcon } from './feature-icons';
 
 const spec = (key: string, value: string, raw?: string) => ({
   key,
@@ -166,5 +166,41 @@ describe('featureIconRow', () => {
 
   it('allows an icon that exactly fills the box', () => {
     close(featureIconRow(1, props(), 8), [0]);
+  });
+});
+
+describe('featureIconFit', () => {
+  const props = (over: Record<string, unknown> = {}) => ({
+    kind: 'feature_icons' as const,
+    iconSize_mm: 12,
+    gap_mm: 3,
+    align: 'left' as const,
+    ...over,
+  });
+
+  it('shows every icon that fits', () => {
+    expect(featureIconFit(2, props(), 40)).toEqual({ shown: 2, dropped: 0 });
+  });
+
+  it('reports the icon that does not fit (crew: 3 x 12 mm in a 40 mm box)', () => {
+    // 3 * 12 + 2 * 3 = 42 mm > 40 mm.
+    expect(featureIconFit(3, props(), 40)).toEqual({ shown: 2, dropped: 1 });
+  });
+
+  it('does not depend on the alignment', () => {
+    for (const align of ['left', 'center', 'right'] as const) {
+      expect(featureIconFit(3, props({ align }), 40)).toEqual({ shown: 2, dropped: 1 });
+    }
+  });
+
+  it('agrees with featureIconRow', () => {
+    for (const count of [0, 1, 2, 3, 5]) {
+      expect(featureIconRow(count, props(), 40)).toHaveLength(featureIconFit(count, props(), 40).shown);
+    }
+  });
+
+  it('drops everything when not even one fits, and nothing for no icons', () => {
+    expect(featureIconFit(2, props(), 5)).toEqual({ shown: 0, dropped: 2 });
+    expect(featureIconFit(0, props(), 40)).toEqual({ shown: 0, dropped: 0 });
   });
 });

@@ -16,7 +16,8 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { useHasPermission } from '@/hooks/usePermissions';
+import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AssetPickerDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog';
 import { ICON_LIBRARY_QUERY_KEY, useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
 import { readableValue } from '@/lib/spec-readable';
@@ -99,7 +100,10 @@ export function ValuesAndWordsTab({
   // icons. Changing them needs the Dealer Kit library (`dealer_kit.library.manage`, the gate on
   // the asset list and the picker); without it the names still read, from the registry row.
   const canManageIcons = useHasPermission('dealer_kit.library.manage');
-  const { data: iconLibrary } = useIconLibraryQuery(canManageIcons);
+  const { isLoading: permissionsLoading } = usePermissions();
+  const { data: iconLibrary, isLoading: iconLibraryLoading } = useIconLibraryQuery(canManageIcons);
+  // Until both are known the cell cannot tell "no icons" from "not loaded yet" (crew pass).
+  const iconsLoading = permissionsLoading || (canManageIcons && iconLibraryLoading);
   const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   // An icon uploaded inside the picker is not in the list the cell names icons from until it
@@ -399,6 +403,13 @@ export function ValuesAndWordsTab({
         const value = r.original.value;
         const label = displayName(value);
         const ids = valueIcons[value] ?? NO_ICON_IDS;
+        if (iconsLoading) {
+          return (
+            <div data-testid={`value-icons-${value}`}>
+              <Skeleton data-testid="value-icons-loading" className="h-6 w-16" />
+            </div>
+          );
+        }
         return (
           <div data-testid={`value-icons-${value}`} className="flex min-w-0 flex-wrap items-center gap-1">
             {ids.map((id, index) => {
@@ -532,6 +543,7 @@ export function ValuesAndWordsTab({
     valueIcons,
     iconAssets,
     editIcons,
+    iconsLoading,
     row.allowed_values,
     row.also_on,
     wordError,

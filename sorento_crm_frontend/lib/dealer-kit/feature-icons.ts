@@ -64,18 +64,34 @@ export function featureIconRow(
   props: Pick<FeatureIconsLayerProps, 'iconSize_mm' | 'gap_mm' | 'align'>,
   boxWidth_mm: number,
 ): number[] {
+  const { shown } = featureIconFit(count, props, boxWidth_mm);
+  if (shown === 0) return [];
   const size = props.iconSize_mm;
   const gap = Math.max(0, props.gap_mm);
-  if (count <= 0 || !(size > 0) || boxWidth_mm < size) return [];
-  // Tolerate float noise so an icon that exactly fills the box is kept.
-  const EPS = 1e-9;
-  let kept = 0;
-  while (kept < count && (kept + 1) * size + kept * gap <= boxWidth_mm + EPS)
-    kept += 1;
-  if (kept === 0) return [];
-  const total = kept * size + (kept - 1) * gap;
+  const total = shown * size + (shown - 1) * gap;
   const free = Math.max(0, boxWidth_mm - total);
   const start =
     props.align === 'center' ? free / 2 : props.align === 'right' ? free : 0;
-  return Array.from({ length: kept }, (_, i) => start + i * (size + gap));
+  return Array.from({ length: shown }, (_, i) => start + i * (size + gap));
+}
+
+/**
+ * How many of `count` icons fit ENTIRELY inside the box, and how many do not. The one count
+ * `featureIconRow` draws from, so a warning about dropped icons can never disagree with the row
+ * (crew pass, 5 Nov: a dropped icon must never be silent). Alignment does not change it.
+ */
+export function featureIconFit(
+  count: number,
+  props: Pick<FeatureIconsLayerProps, 'iconSize_mm' | 'gap_mm'>,
+  boxWidth_mm: number,
+): { shown: number; dropped: number } {
+  const total = Math.max(0, count);
+  const size = props.iconSize_mm;
+  const gap = Math.max(0, props.gap_mm);
+  if (total === 0 || !(size > 0)) return { shown: 0, dropped: total };
+  // Tolerate float noise so an icon that exactly fills the box is kept.
+  const EPS = 1e-9;
+  let shown = 0;
+  while (shown < total && (shown + 1) * size + shown * gap <= boxWidth_mm + EPS) shown += 1;
+  return { shown, dropped: total - shown };
 }

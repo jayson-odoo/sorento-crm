@@ -58,3 +58,19 @@ describe('Inspector feature icons, fix round 1', () => {
     expect(screen.queryByText('Order')).toBeNull();
   });
 });
+
+describe('Inspector feature icons, crew pass: icons that do not fit', () => {
+  const narrow = { ...layer, width_mm: 40, props: { ...layer.props, iconSize_mm: 12, gap_mm: 3 } } as TagLayer;
+
+  it('warns how many of the icons do not fit the box', () => {
+    render(<InspectorPanel layer={narrow} onUpdate={vi.fn()} onUpdateProps={vi.fn()} featureIconCount={3} />);
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '1 of 3 icons do not fit this box. Widen the box or make the icons smaller.',
+    );
+  });
+
+  it('says nothing when they all fit', () => {
+    render(<InspectorPanel layer={narrow} onUpdate={vi.fn()} onUpdateProps={vi.fn()} featureIconCount={2} />);
+    expect(screen.queryByText(/do not fit this box/)).toBeNull();
+  });
+});
