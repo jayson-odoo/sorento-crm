@@ -1801,125 +1801,17 @@ describe('QuotationFormClient aligned with the view page (PROPOSAL-HEADER-LAYOUT
     expect(await within(header).findByText('v1')).toBeInTheDocument();
   });
 
-  it('F5: Recheck alerts sits in the record card, waits on unsaved LINE changes only, and rechecks', async () => {
-    recomputeQuotationVersion.mockResolvedValue({
-      version_id: 'v1',
-      version_no: 1,
-      quotation_id: 'q1',
-      line_count: 1,
-      changed_count: 0,
-      now_non_standard: 0,
-      no_longer_non_standard: 0,
-      now_below_floor: 0,
-      no_longer_below_floor: 0,
-      floor_changed: 0,
-      unresolved_products: 0,
-      changed_lines: [],
-    });
+  // Owner hand test (5 Nov 2026) struck Recheck alerts from the edit page: it lives in the view
+  // page's gear only.
+  it('F5: the edit page offers no Recheck alerts, in the card or above the lines', async () => {
     renderForm('d1');
 
     const header = await screen.findByTestId('record-header-card');
-    const recheck = await within(header).findByRole('button', { name: 'Recheck alerts' });
-    await waitFor(() => expect(recheck).toBeEnabled());
-    fireEvent.click(recheck);
-    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v1'));
-
-    // Letterhead typing is not a line: the recheck leaves it alone and stays available.
-    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/19' } });
-    expect(within(header).getByRole('button', { name: 'Recheck alerts' })).toBeEnabled();
-    expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/19');
-
-    // A line edit is: the recheck would answer for rows the screen no longer shows.
     const card = await waitFor(() => scopeCard('Townhouse'));
-    fireEvent.change(await addLine(card, 2), { target: { value: 'Grab bar' } });
-    await waitFor(() =>
-      expect(within(header).getByRole('button', { name: 'Recheck alerts' })).toBeDisabled(),
-    );
-  });
-
-  /** A recheck answer for one version. */
-  function rechecked(versionId: string) {
-    return {
-      version_id: versionId,
-      version_no: 1,
-      quotation_id: versionId === 'w1' ? 'q2' : 'q1',
-      line_count: 1,
-      changed_count: 0,
-      now_non_standard: 0,
-      no_longer_non_standard: 0,
-      now_below_floor: 0,
-      no_longer_below_floor: 0,
-      floor_changed: 0,
-      unresolved_products: 0,
-      changed_lines: [],
-    };
-  }
-
-  it('F7: Recheck alerts rechecks every kept area, once per open current version', async () => {
-    const semi = { ...SCOPE, id: 'q2', scope_label: 'Semi-D', current_version_id: 'w1' };
-    listQuotations.mockResolvedValue([SCOPE, semi]);
-    getQuotationDocument.mockResolvedValue(
-      document({
-        scopes: [
-          document().scopes![0],
-          { ...document().scopes![0], id: 'q2', scope_label: 'Semi-D', current_version_id: 'w1' },
-        ],
-      }),
-    );
-    listQuotationVersions.mockImplementation(async (quotationId: string) =>
-      quotationId === 'q2' ? [version({ id: 'w1', quotation_id: 'q2' })] : [version()],
-    );
-    recomputeQuotationVersion.mockImplementation(async (versionId: string) => rechecked(versionId));
-    renderForm('d1');
-
-    const header = await screen.findByTestId('record-header-card');
-    const recheck = await within(header).findByRole('button', { name: 'Recheck alerts' });
-    await waitFor(() => expect(recheck).toBeEnabled());
-    fireEvent.click(recheck);
-    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(2));
-    expect(recomputeQuotationVersion.mock.calls.map((call) => call[0]).sort()).toEqual(['v1', 'w1']);
-  });
-
-  it('F8: after a recheck the open area re-reads its rows from the server', async () => {
-    recomputeQuotationVersion.mockImplementation(async (versionId: string) => {
-      // What the server holds once the recheck has rewritten the line.
-      listQuotationLines.mockResolvedValue([{ ...LINE, description: 'Wall-hung WC rechecked' }]);
-      return rechecked(versionId);
-    });
-    renderForm('d1');
-
-    const card = await openLines('Townhouse');
-    expect(await within(card).findByDisplayValue('Wall-hung WC')).toBeInTheDocument();
-    const header = screen.getByTestId('record-header-card');
-    fireEvent.click(await within(header).findByRole('button', { name: 'Recheck alerts' }));
-
-    expect(
-      await within(scopeCard('Townhouse')).findByDisplayValue('Wall-hung WC rechecked'),
-    ).toBeInTheDocument();
-  });
-
-  it('F9: a line typed WHILE the recheck runs is kept, not reset', async () => {
-    let release: () => void = () => {};
-    recomputeQuotationVersion.mockImplementation(
-      (versionId: string) =>
-        new Promise((resolve) => {
-          release = () => resolve(rechecked(versionId));
-        }),
-    );
-    renderForm('d1');
-
-    const card = await openLines('Townhouse');
-    const header = screen.getByTestId('record-header-card');
-    fireEvent.click(await within(header).findByRole('button', { name: 'Recheck alerts' }));
-    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalled());
-
-    const description = await within(card).findByDisplayValue('Wall-hung WC');
-    fireEvent.change(description, { target: { value: 'Typed meanwhile' } });
-    release();
-
-    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(within(scopeCard('Townhouse')).getByDisplayValue('Typed meanwhile')).toBeInTheDocument();
+    await within(card).findByRole('button', { name: 'Add a line' });
+    expect(within(header).getByText('v1')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    expect(recomputeQuotationVersion).not.toHaveBeenCalled();
   });
 
   it('F6: a new proposal has no record card yet (nothing numbered, no version)', async () => {
