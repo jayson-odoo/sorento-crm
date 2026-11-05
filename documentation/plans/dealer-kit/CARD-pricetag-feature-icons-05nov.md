@@ -1,6 +1,7 @@
 # CARD: feature icons on price tags (hot / cold / mixer, SUS 304, warranty, anti-bacteria) (PRICETAG-DESIGNER-GAPS item 3, 5 Nov)
 
-Behaviour card. Nothing is built until the owner answers the questions at the bottom.
+Behaviour card. **Answered by the owner 5 Nov ~17:45; see "Owner rulings" below, which win over
+the proposal where they differ.**
 
 Owner (5 Nov): "how do we cater all these logos ah like there is one heat logo is for hot mixer tap, one
 cold logo is for cold mixer tap then i think if it is mixed then heat cold also will come out". The
@@ -77,3 +78,30 @@ Q5. When a product lacks one of the facts:
 
 Hot-only: no product carries a hot-only fact today (`water_supply` has no such value), so no hot-only
 rule is proposed. Say so if hot-only taps exist and need their own icon.
+
+## Owner rulings (5 Nov ~17:45 MYT, final)
+
+- **Q1: the rule lives ON the icon asset.** A Dealer Kit asset of kind Icon carries "show when
+  <spec> is <value(s)>" (e.g. `water_supply` = `cold_only`; `steel_grade` = `304`). No per-template
+  rule copies, no separate rules screen. The template has ONE "Feature icons" layer, bound to the
+  main item or a combo position, that shows every icon whose rule matches that product's specs.
+- **Q2 (a):** a mixer shows the hot AND the cold icon. With the rule on the asset this is: the cold
+  icon shows for `cold_only` or `mixer`, the hot icon shows for `mixer`.
+- **Q3:** warranty is a static asset the designer places (no `warranty_months` rule).
+- **Q4:** anti-bacteria is a static asset the designer places.
+- **Q5:** a missing fact takes no space; matching icons close up. The designer adjusts the layer:
+  position / size, icon size, spacing, order.
+
+## Build (revised by the rulings)
+
+B1. `dealer_kit.asset` gains `show_when_spec_key` (nullable) and `show_when_values` (text array,
+    nullable). Only an Icon may carry them; both or neither. Edited on the asset in the Dealer Kit
+    asset library.
+B2. The tag payload's `specs[]` gains `raw` (the stored value, e.g. `mixer`) beside the display
+    `value`, so matching never depends on a label (R4).
+B3. Layer kind `feature_icons`: props `iconSize_mm`, `gap_mm`, `align` (left / centre / right), `order`
+    (asset ids the designer has put first; the rest follow by name), plus the usual subject
+    (`subjectPart` / `subjectSlot`). Icons sit in one row inside the layer box.
+B4. One pure function `featureIconsFor(product specs, icon library, order)` picks the icons; the
+    canvas, the request preview and the print page all call it. Icon pictures reach the print page
+    through the same asset URL map every other asset layer uses.
