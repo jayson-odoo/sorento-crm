@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PromptDetail } from './PromptDetail';
 import type {
@@ -31,7 +31,38 @@ vi.mock('../../hooks/useAIAssistantPrompts', () => ({
   useSetAgentModel: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRegistryVariables: () => useRegistryVariables(),
   usePromptArchitecture: (...args: unknown[]) => usePromptArchitecture(...args),
+  promptsPagerQuery: { listQueryKey: () => ['ai-prompts', 'list'], fetchPage: vi.fn() },
 }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/system-management/ai-assistant/prompts/router',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  useSearchParams: () => new URLSearchParams('page=1&limit=50&sort=name&dir=asc'),
+}));
+// The pager's own walk is pinned in useListPager's tests; here it only has to be THERE, in the
+// record header, pointed at this prompt - and still there after an action.
+vi.mock('@/components/common/ListPager', () => ({
+  default: ({ currentId, detailPath }: { currentId: string; detailPath: string }) => (
+    <div data-testid="list-pager" data-current={currentId} data-path={detailPath} />
+  ),
+}));
+if (!window.matchMedia) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  });
+}
+if (!window.ResizeObserver) {
+  (window as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => useHasPermission(),
 }));
@@ -94,6 +125,13 @@ function renderDetail() {
   );
 }
 
+/** The record header's Edit: the editor is read-only until it is pressed (standard form view). */
+const startEdit = () => fireEvent.click(screen.getByTestId('edit-prompt'));
+/** Radix tabs activate on mousedown. */
+const openTab = (name: string) => fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0 });
+/** Radix menus open on pointerdown. */
+const openMenu = (el: Element) => fireEvent.pointerDown(el, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+
 beforeEach(() => {
   [
     usePromptVersions,
@@ -133,6 +171,7 @@ describe('PromptDetail', () => {
 
   it('hard-blocks save when an unknown token is present', () => {
     renderDetail();
+    startEdit();
     const editor = screen.getByTestId('prompt-editor');
     fireEvent.change(editor, { target: { value: 'Classify {{current_date}} and {{bogus}}' } });
     fireEvent.change(screen.getByTestId('commit-message'), { target: { value: 'msg' } });
@@ -142,6 +181,7 @@ describe('PromptDetail', () => {
 
   it('soft-warns (does not block) when a declared var is removed', () => {
     renderDetail();
+    startEdit();
     fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'Classify without the var.' } });
     fireEvent.change(screen.getByTestId('commit-message'), { target: { value: 'msg' } });
     expect(screen.getByTestId('var-missing-warning')).toBeInTheDocument();
@@ -150,21 +190,25 @@ describe('PromptDetail', () => {
 
   it('keeps save disabled until there is a commit message', () => {
     renderDetail();
+    startEdit();
     fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'Classify {{current_date}} edited.' } });
     expect(screen.getByTestId('save-version')).toBeDisabled();
     fireEvent.change(screen.getByTestId('commit-message'), { target: { value: 'msg' } });
     expect(screen.getByTestId('save-version')).not.toBeDisabled();
   });
 
-  it('opens the publish confirm dialog for a non-production version', () => {
+  it('opens the publish confirm dialog for a non-production version', async () => {
     renderDetail();
-    fireEvent.click(screen.getByTestId('publish-production-1'));
+    openTab('Versions');
+    openMenu(screen.getByRole('button', { name: 'Actions for v1' }));
+    fireEvent.click(await screen.findByTestId('publish-production-1'));
     expect(screen.getByText('Publish router v1 to production?')).toBeInTheDocument();
     expect(screen.getByText(/changes the live assistant immediately/i)).toBeInTheDocument();
   });
 
   it('offers the dry-run for an active key that the assistant turn actually reads', () => {
     renderDetail();
+    openTab('Dry run');
     expect(screen.getByTestId('dry-run-input')).toBeInTheDocument();
     expect(screen.queryByTestId('dry-run-disabled')).not.toBeInTheDocument();
   });
@@ -176,6 +220,7 @@ describe('PromptDetail', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Dry run');
     expect(screen.queryByTestId('dry-run-input')).not.toBeInTheDocument();
     expect(screen.getByTestId('dry-run-disabled')).toHaveTextContent(
       /not part of the assistant pipeline/i,
@@ -194,22 +239,26 @@ describe('PromptDetail', () => {
       isError: false,
     });
     renderDetail();
+    openTab('Dry run');
     expect(screen.getByTestId('dry-run-disabled')).toHaveTextContent(/Dormant key/i);
   });
 
   it('leaves the dry-run offered while the key list is still loading', () => {
     usePromptKeys.mockReturnValue({ data: undefined, isLoading: true, isError: false });
     renderDetail();
+    openTab('Dry run');
     expect(screen.getByTestId('dry-run-input')).toBeInTheDocument();
   });
 
   it('shows an AlertDialog (not window.confirm) when switching versions with unsaved edits', () => {
     const confirmSpy = vi.spyOn(window, 'confirm');
     renderDetail();
+    startEdit();
     // make the editor dirty
     fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'Classify {{current_date}} edited.' } });
     // click the other version row to switch
-    fireEvent.click(screen.getByTestId('version-row-1'));
+    openTab('Versions');
+    fireEvent.click(within(screen.getByTestId('version-row-1')).getByText('seed'));
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(screen.getByText(/Discard unsaved edits\?/i)).toBeInTheDocument();
     confirmSpy.mockRestore();
@@ -335,6 +384,7 @@ describe('PromptDetail wired-panel insert (owner hand test #1405, item 2)', () =
       isError: false,
     });
     renderDetail();
+    startEdit();
     const editor = screen.getByTestId('prompt-chip-editor');
     const textNode = editor.firstChild as Text;
     const range = document.createRange();
@@ -365,6 +415,7 @@ describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
 
   it('puts the editor card over the window and keeps the unsaved text and the same editor node', () => {
     renderDetail();
+    startEdit();
     const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: 'Classify {{current_date}} edited.' } });
     editor.scrollTop = 120;
@@ -385,6 +436,7 @@ describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
 
   it('Exit full screen and Esc both leave, and the text survives', () => {
     renderDetail();
+    startEdit();
     const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: 'edited once' } });
     enter();
@@ -410,6 +462,7 @@ describe('PromptDetail full screen editor (PROMPT-EDITOR-FULLSCREEN)', () => {
 
   it('disables full-screen Stage / Publish while the draft has unsaved edits', () => {
     renderDetail();
+    startEdit();
     enter();
     fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'unsaved' } });
     // It publishes the SAVED version, so beside unsaved text it would mislead.
@@ -533,5 +586,121 @@ describe('PromptDetail Architecture tab (CHAT-INDEX-VIZ FE-2)', () => {
     expect(screen.queryByTestId('var-chips')).toBeNull();
     fireEvent.mouseDown(screen.getByTestId('editor-mode-edit'), { button: 0 });
     expect(screen.getByTestId('var-chips')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------
+// AI-PROMPTS-STD-VIEWS (owner, 5 Nov): the prompt page is a standard record page - record
+// header with the pager, the gear and ONE primary button; line tabs; View -> Edit -> Save.
+// ---------------------------------------------------------------------
+
+describe('PromptDetail on the standard record layout (AI-PROMPTS-STD-VIEWS)', () => {
+  it('carries the prev/next pager in the record header, pointed at this prompt', () => {
+    renderDetail();
+    const pager = screen.getByTestId('list-pager');
+    expect(pager).toHaveAttribute('data-current', 'router');
+    expect(pager).toHaveAttribute('data-path', '/system-management/ai-assistant/prompts');
+  });
+
+  it('has a Back to the list that keeps the list state', () => {
+    renderDetail();
+    const back = screen.getByRole('link', { name: /Back to prompts/i });
+    expect(back.getAttribute('href')).toMatch(/^\/system-management\/ai-assistant\/prompts\?/);
+    expect(back.getAttribute('href')).toMatch(/page=1/);
+  });
+
+  it('lays the record out in line tabs: Prompt, Versions, Model, Dry run', () => {
+    renderDetail();
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.trim());
+    expect(tabs.slice(0, 4)).toEqual(['Prompt', 'Versions', 'Model', 'Dry run']);
+  });
+
+  it('shows the role as a field, not a subtitle line', () => {
+    renderDetail();
+    expect(screen.getByTestId('prompt-role')).toHaveTextContent('Intent / routing');
+  });
+
+  it('opens read-only; Edit makes the editor editable and swaps the header to Cancel + Save', () => {
+    renderDetail();
+    expect(screen.getByTestId('prompt-editor')).toBeDisabled();
+    expect(screen.queryByTestId('save-version')).toBeNull();
+    expect(screen.queryByTestId('commit-message')).toBeNull();
+    startEdit();
+    expect(screen.getByTestId('prompt-editor')).not.toBeDisabled();
+    expect(screen.getByTestId('save-version')).toBeInTheDocument();
+    expect(screen.getByTestId('cancel-edit')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-prompt')).toBeNull();
+  });
+
+  it('offers no Edit to a read-only user', () => {
+    useHasPermission.mockReturnValue(false);
+    renderDetail();
+    expect(screen.queryByTestId('edit-prompt')).toBeNull();
+  });
+
+  it('Cancel throws the draft away and returns to the stored version', () => {
+    renderDetail();
+    startEdit();
+    fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'scribble' } });
+    fireEvent.click(screen.getByTestId('cancel-edit'));
+    expect((screen.getByTestId('prompt-editor') as HTMLTextAreaElement).value).toBe('Classify {{current_date}}.');
+    expect(screen.getByTestId('prompt-editor')).toBeDisabled();
+  });
+
+  it('Save writes a NEW immutable version with the commit message, then leaves edit with the pager back', () => {
+    renderDetail();
+    startEdit();
+    fireEvent.change(screen.getByTestId('prompt-editor'), { target: { value: 'Classify {{current_date}} v3.' } });
+    fireEvent.change(screen.getByTestId('commit-message'), { target: { value: 'tighten' } });
+    fireEvent.click(screen.getByTestId('save-version'));
+    expect(saveMutate).toHaveBeenCalledTimes(1);
+    expect(saveMutate.mock.calls[0][0]).toEqual({ template: 'Classify {{current_date}} v3.', commit_message: 'tighten' });
+    act(() => {
+      saveMutate.mock.calls[0][1].onSuccess({ ...BASE, id: 'router-3', version: 3, labels: [] });
+    });
+    expect(screen.queryByTestId('save-version')).toBeNull();
+    expect(screen.getByTestId('list-pager')).toHaveAttribute('data-current', 'router');
+  });
+
+  it('publishes the loaded version from the header gear, and the pager survives the publish', async () => {
+    renderDetail();
+    // Load v1 (not production) from the Versions grid.
+    openTab('Versions');
+    fireEvent.click(within(screen.getByTestId('version-row-1')).getByText('seed'));
+    openMenu(screen.getByRole('button', { name: 'Actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Publish v1/ }));
+    expect(screen.getByText('Publish router v1 to production?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Publish to production' }));
+    expect(labelMutate).toHaveBeenCalledTimes(1);
+    expect(labelMutate.mock.calls[0][0]).toEqual({ label: 'production', version_id: 'router-1' });
+    act(() => {
+      labelMutate.mock.calls[0][1].onSuccess({ labels: { production: 1, staging: null } });
+    });
+    expect(screen.getByTestId('list-pager')).toHaveAttribute('data-current', 'router');
+  });
+
+  it('lists every version in the standard grid, with its labels and date dd/mm/yyyy', () => {
+    renderDetail();
+    openTab('Versions');
+    const v2 = screen.getByTestId('version-row-2');
+    expect(v2).toHaveTextContent('v2');
+    expect(v2).toHaveTextContent(/production/i);
+    expect(v2).toHaveTextContent('Jay');
+    expect(v2).toHaveTextContent(/03\/07\/2026/);
+    expect(screen.getByTestId('version-row-1')).toHaveTextContent('seed');
+  });
+
+  it('loading a version from the grid puts it in the editor on the Prompt tab', () => {
+    renderDetail();
+    openTab('Versions');
+    fireEvent.click(within(screen.getByTestId('version-row-1')).getByText('seed'));
+    expect(screen.getByRole('tab', { name: 'Prompt' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText(/\(base: v1\)/)).toBeInTheDocument();
+  });
+
+  it('shows the model this prompt runs on in its own tab', () => {
+    renderDetail();
+    openTab('Model');
+    expect(screen.getByRole('tabpanel')).toHaveTextContent('Runs on');
   });
 });
