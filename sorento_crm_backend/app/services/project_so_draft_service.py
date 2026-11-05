@@ -93,6 +93,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.models.user import User
+from app.services.set_driver_pricing import split_set_driver_price
 from app.services.error_handler import AppException
 from app.services.scm.sales_agent_service import normalize_location_group
 from app.services.project_so_reconciliation_service import (
@@ -204,6 +205,10 @@ class _Component:
     numerator: Decimal  # component quantity per `denominator` parent units
     denominator: Decimal
     quotation_line_id: Optional[str] = None
+    # Set only on a quoted SET's driver part: the set's rate per set. The driver's own unit
+    # price then comes from `split_set_driver_price` per slice, so the split always adds up
+    # to the accepted money (owner ruling 5 Nov 2026) instead of the full set rate per part.
+    set_rate: Optional[Decimal] = None
 
 
 @dataclass
@@ -1177,30 +1182,34 @@ class ProjectSODraftService:
                 component_qty = self._component_qty(qty, component)
                 if component_qty is None:
                     component_qty = qty
-                unit_price = component.unit_price
+                if component.set_rate is not None:
+                    priced = split_set_driver_price(component.set_rate, qty, component.numerator)
+                else:
+                    priced = [(component_qty, component.unit_price)]
                 area = (
                     learned.get(_norm_code(component.code))
                     or (phase.area_group if phase else None)
                 )
-                drafts.append(
-                    _LineDraft(
-                        area_group=area,
-                        product_id=component.product_id,
-                        product_code=component.code,
-                        description=component.description or source.description,
-                        qty=component_qty,
-                        uom=component.uom or source.uom,
-                        unit_price=unit_price,
-                        amount=_money(component_qty * unit_price),
-                        delivery_date=phase.delivery_date if phase else None,
-                        phase_id=phase.id if phase else None,
-                        phase_label=(phase.label or phase.area_group) if phase else None,
-                        explosion_source=source_kind,
-                        source_po_line_id=source.po_line_id,
-                        source_po_line_no=source.line_no,
-                        quotation_line_id=component.quotation_line_id,
+                for component_qty, unit_price in priced:
+                    drafts.append(
+                        _LineDraft(
+                            area_group=area,
+                            product_id=component.product_id,
+                            product_code=component.code,
+                            description=component.description or source.description,
+                            qty=component_qty,
+                            uom=component.uom or source.uom,
+                            unit_price=unit_price,
+                            amount=_money(component_qty * unit_price),
+                            delivery_date=phase.delivery_date if phase else None,
+                            phase_id=phase.id if phase else None,
+                            phase_label=(phase.label or phase.area_group) if phase else None,
+                            explosion_source=source_kind,
+                            source_po_line_id=source.po_line_id,
+                            source_po_line_no=source.line_no,
+                            quotation_line_id=component.quotation_line_id,
+                        )
                     )
-                )
         return drafts
 
     def _explosion_for(
@@ -1222,8 +1231,9 @@ class ProjectSODraftService:
         if package is not None:
             return package
 
-        # A quoted SET line carries its parts frozen at quote time: the driver at the quoted
-        # rate, the others at zero, so the set's price is counted once.
+        # A quoted SET line carries its parts frozen at quote time: the driver carries the
+        # set's money (set rate / its qty per set, see `split_set_driver_price`), the others
+        # ride at zero, so the set's price is counted once.
         # The snapshot alone triggers it: a set deleted since the quote (product_set_id nulled by
         # the FK) still splits from what was frozen.
         if quoted is not None and quoted.set_parts_snapshot:
@@ -1238,6 +1248,7 @@ class ProjectSODraftService:
                         numerator=_dec(part["quantity"], Decimal("1")),
                         denominator=Decimal("1"),
                         quotation_line_id=quoted.id,
+                        set_rate=parent_price if part.get("is_driver") else None,
                     )
                     for part in quoted.set_parts_snapshot
                 ],
