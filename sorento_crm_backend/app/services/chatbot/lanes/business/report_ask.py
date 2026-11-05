@@ -2429,8 +2429,9 @@ def _settle(
         }
         if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
             held_channel = source["channel"]
-        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not). The old hold
-        # path only: an object turn never reaches here (`_OBJECT_DROPS` empties `source`); PR B deletes the path whole.
+        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not): owner ruling
+        # B / S6b on a turn whose report_ask is null. An object turn never reaches here (`_OBJECT_DROPS` empties `source`).
+        # TODO(REPORT-FILTER-ALL): delete with the rest of the old hold path in PR B (crew Q3, 5 Nov).
         held_filters = {
             k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "account_types")
             if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
