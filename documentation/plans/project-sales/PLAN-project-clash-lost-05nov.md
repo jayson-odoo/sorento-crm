@@ -1,6 +1,6 @@
 # PLAN: project clash check shows every match; Lost stage and outcome agree
 
-Status: in review (small fix track, lane PROJECT-CLASH-LOST; pytest + vitest run in the lane sandbox)
+Status: owner hand test (small fix track, lane PROJECT-CLASH-LOST; pytest + vitest run in the lane sandbox)
 
 ## Journey
 

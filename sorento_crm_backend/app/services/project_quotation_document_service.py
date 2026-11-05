@@ -880,6 +880,13 @@ def project_quotation(db: Session, project_id: str) -> Optional[ProjectQuotation
     )
 
 
+def _stage_label(db: Session, project: Project) -> Optional[str]:
+    """The label the user sees on the project's current stage (an admin may rename it)."""
+    from app.models.status import Status
+
+    return db.query(Status.label).filter(Status.id == project.status_id).scalar()
+
+
 def make_quotation(
     db: Session,
     *,
@@ -915,7 +922,10 @@ def make_quotation(
         # outcome (PROJECT-CLASH-LOST), so say which stage stops it, not "mark it Won".
         raise AppException(
             status_code=409,
-            message=f"This project is on the {stage_outcome.capitalize()} stage, so it cannot get a quotation.",
+            message=(
+                f"This project is on the {_stage_label(db, project) or stage_outcome.capitalize()}"
+                " stage, so it cannot get a quotation."
+            ),
             code="project_not_won",
         )
     if project is None or scope_service.derive_project_outcome(db, project) != "won":
