@@ -182,6 +182,8 @@ def set_product_tag_templates(
         product_id,
         payload.template_ids,
         user_id=(user or {}).get("id"),
+        default_list_template_id=payload.default_list_template_id,
+        default_selling_template_id=payload.default_selling_template_id,
         default_template_id=payload.default_template_id,
     )
     db.commit()
@@ -229,6 +231,8 @@ def set_combo_tag_templates(
         combo_id,
         payload.template_ids,
         user_id=(user or {}).get("id"),
+        default_list_template_id=payload.default_list_template_id,
+        default_selling_template_id=payload.default_selling_template_id,
         default_template_id=payload.default_template_id,
     )
     db.commit()

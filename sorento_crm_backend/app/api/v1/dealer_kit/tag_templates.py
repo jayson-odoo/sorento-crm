@@ -10,6 +10,8 @@ Permission gates:
 """
 from __future__ import annotations
 
+from typing import Literal, Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
 
@@ -86,10 +88,17 @@ def list_tag_templates(
             "pointer, and each one's PUBLISHED doc rather than its draft."
         ),
     ),
+    price_type: Optional[Literal["list", "selling", "both", "unset"]] = Query(
+        None, description="Filter by price type; `unset` = not set yet."
+    ),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
     query = db.query(TagTemplate).options(joinedload(TagTemplate.published_version))
+    if price_type == "unset":
+        query = query.filter(TagTemplate.price_type.is_(None))
+    elif price_type:
+        query = query.filter(TagTemplate.price_type == price_type)
     if published:
         query = query.filter(TagTemplate.published_version_id.isnot(None))
     templates = query.order_by(TagTemplate.family, TagTemplate.name).all()
@@ -206,6 +215,7 @@ def create_tag_template(
         family=payload.family,
         doc=payload.doc,
         print_size=payload.print_size,
+        price_type=payload.price_type,
         created_by=_user_id(user),
     )
     db.add(t)
