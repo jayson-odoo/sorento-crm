@@ -19,7 +19,7 @@ import {
   type ToolbarTrailingAction,
 } from '../components/CanvasToolbar';
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 import { toast } from '@/lib/toast';
 const mockToastSuccess = vi.mocked(toast.success);
 
@@ -42,6 +42,7 @@ vi.mock('../../services/tagTemplateService', () => ({
   getTemplateVersion: vi.fn(),
   listTemplateVersions: vi.fn(),
   listPublishedTemplates: vi.fn(async () => []),
+  updateTemplateSettings: vi.fn(),
 }));
 
 // AC-S1-1: the template editor's Tag Size control is supposed to show the
@@ -163,6 +164,7 @@ import {
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
+  updateTemplateSettings,
 } from '../../services/tagTemplateService';
 import TagTemplateEditorPage from './page';
 
@@ -172,6 +174,7 @@ const mockListPublished = vi.mocked(listPublishedTemplates);
 const mockPublish = vi.mocked(publishTemplate);
 const mockGetVersion = vi.mocked(getTemplateVersion);
 const mockRestore = vi.mocked(restoreTemplateVersion);
+const mockUpdateSettings = vi.mocked(updateTemplateSettings);
 
 function templateFixture(overrides: Partial<Awaited<ReturnType<typeof getTemplate>>> = {}) {
   return {
@@ -830,5 +833,71 @@ describe('Tag Size control on the template editor (S1, AC-S1-1)', () => {
     expect(
       screen.getByRole('option', { name: /My favourite \(80 x 50 mm\)/ }),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Template settings (PRICETAG-DESIGNER-GAPS item 4): name, family and size
+// are editable after create, from the editor.
+// ---------------------------------------------------------------------------
+
+describe('template settings', () => {
+  it('Settings renames the template, keeping the live badge', async () => {
+    mockGet.mockResolvedValue(
+      templateFixture({ family: 'sink_combo', published_version_id: 'v2', published_version_no: 2 }),
+    );
+    mockUpdateSettings.mockResolvedValue(
+      templateFixture({
+        name: 'Kitchen Sink with 1 Tap',
+        family: 'ala_carte',
+        published_version_id: 'v2',
+        published_version_no: 2,
+      }),
+    );
+    render(<TagTemplateEditorPage />);
+
+    await screen.findByTestId('canvas-editor');
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Name'), { target: { value: 'Kitchen Sink with 1 Tap' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(mockUpdateSettings).toHaveBeenCalledWith('tmpl-1', {
+        name: 'Kitchen Sink with 1 Tap',
+        family: 'sink_combo',
+      }),
+    );
+    expect(await screen.findByText('Kitchen Sink with 1 Tap')).toBeInTheDocument();
+    expect(screen.getByText('Live v2')).toBeInTheDocument();
+    // A settings-only edit does not write the draft doc.
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a size change from Settings goes through the draft autosave, not the settings PUT', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGet.mockResolvedValue(templateFixture());
+      mockUpdate.mockResolvedValue(templateFixture());
+      render(<TagTemplateEditorPage />);
+
+      await screen.findByTestId('canvas-editor');
+      fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+      const dialog = within(await screen.findByRole('dialog'));
+      fireEvent.change(dialog.getByLabelText('Width (mm)'), { target: { value: '100' } });
+      fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'tmpl-1',
+        expect.objectContaining({ width_mm: 100, height_mm: 58, print_size: { width_mm: 100, height_mm: 58 } }),
+        expect.anything(),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

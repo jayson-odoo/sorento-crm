@@ -252,3 +252,23 @@ export async function createTemplateFromTag(
   }
   return response.json();
 }
+
+/**
+ * Rename a template or move it to another family (PRICETAG-DESIGNER-GAPS
+ * item 4). Template facts, not version facts: the draft doc, the versions and
+ * the live pointer are untouched, and no republish is needed.
+ */
+export async function updateTemplateSettings(
+  id: string,
+  settings: { name: string; family: TagTemplateFamily },
+): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the template settings'));
+  }
+  return response.json();
+}
