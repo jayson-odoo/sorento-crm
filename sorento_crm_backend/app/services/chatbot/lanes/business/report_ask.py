@@ -3486,7 +3486,17 @@ def from_object(
 
     raw = verdict.get(OBJECT_KEY)
     status = jsc.js_string(verdict.get("order_status") or "").strip()
-    reported = status in REPORT_STATUSES or _dict(getattr(focus, "required_ask", None)).get("ask") == ASK_NAME
+    held_ask, _asking = _held_object(focus)
+    # REPORT-FILTER-ALL (crew gate X "清除所有筛选"): on the ALL prompt the object is null on every message that is not a
+    # report ask, so an object of the held report's kind is that report's follow-up, whatever the rest of the parse read
+    # (a clear with no report word came back with no status and a casual message type).
+    follow_up = (
+        all_value and isinstance(raw, dict) and held_ask is not None and verdict.get("topic_reset") is not True
+        and raw.get("kind") == held_ask.get("kind")
+    )
+    reported = (
+        status in REPORT_STATUSES or _dict(getattr(focus, "required_ask", None)).get("ask") == ASK_NAME or follow_up
+    )
     if (
         not isinstance(raw, dict) or raw.get("kind") not in ("sales", "outstanding") or not reported
         or _rows_on_screen(verdict, focus, pending)
@@ -3494,6 +3504,10 @@ def from_object(
         return {**verdict, OBJECT_KEY: None}
     ask = {key: raw.get(key) for key in REPORT_ASK_KEYS}  # the schema's keys only
     cleared = _read_all(ask) | (set() if all_value else _legacy_all(ask, verdict))
+    if follow_up:
+        # REPORT-FILTER-ALL: the one keep rule over the report's own slots (period, basis, measure, frame, breakdown,
+        # count), before anything below reads them; its filter half runs once the axis is settled (`_keep_held`).
+        _keep_held_report(ask, held_ask, framed="frame" in raw)
     # M1: what the report gives back, the parser's own call; null or absent (a text without the key) is today's inference.
     frame = ask["frame"] = ask.get("frame") if ask.get("frame") in REPORT_ASK_FRAMES else None
 
@@ -3532,7 +3546,6 @@ def from_object(
         ask["company"] = own_company = str(jsc.array(kind_company)[-1])
     basis = ask["basis"] if ask.get("basis") in BASES else None
     outstanding = ask.get("kind") == "outstanding" or basis in OUTSTANDING_KINDS
-    held_ask, _asking = _held_object(focus)
     # C6-2: the held report carries into this one unless the message starts another report kind or resets the topic.
     carrying = (
         held_ask is not None and verdict.get("topic_reset") is not True
@@ -3696,6 +3709,29 @@ def _legacy_all(ask: dict[str, Any], verdict: dict[str, Any]) -> set[str]:
 
     slots = {slot for kind in widened_kinds(verdict) for slot in _LEGACY_WIDEN_SLOTS.get(kind, ())}
     return {slot for slot in slots if not ask.get(slot)}
+
+
+def _keep_held_report(ask: dict[str, Any], held_ask: dict[str, Any], *, framed: bool) -> None:
+    """REPORT-FILTER-ALL, the same ONE rule as `_keep_held`, over the report's own slots (crew gate 5 Nov: "clear all"
+    lost the period and basis): a slot the object left null, over a held value, keeps it; a value replaces it. The
+    period is one slot (both dates null keeps both). `framed`: the prompt defines `frame`; a null frame keeps the held
+    frame, and every frame but a total keeps the held breakdown axis when the object names none, and the held count on
+    that same axis when it gives none. A total is the object's own call: no axis, no count."""
+    for slot in ("basis", "measure"):
+        if ask.get(slot) in (None, "") and held_ask.get(slot):
+            ask[slot] = held_ask[slot]
+    if not ask.get("date_from") and not ask.get("date_to") and (held_ask.get("date_from") or held_ask.get("date_to")):
+        ask["date_from"], ask["date_to"] = held_ask.get("date_from"), held_ask.get("date_to")
+    if not framed:
+        return
+    if ask.get("frame") is None:
+        ask["frame"] = held_ask.get("frame")
+    if ask.get("frame") == "total":
+        return
+    if not ask.get("group_by"):
+        ask["group_by"] = held_ask.get("group_by")
+    if ask.get("top_n") is None and ask.get("group_by") == held_ask.get("group_by"):
+        ask["top_n"] = held_ask.get("top_n")
 
 
 def _keep_held(

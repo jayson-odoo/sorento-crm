@@ -440,3 +440,77 @@ def test_k2_the_report_lane_reads_no_message_text() -> None:
 
     src = inspect.getsource(report_ask)
     assert "import re\n" not in src and "re.compile" not in src and "re.search" not in src
+
+
+# ------------------------------------------------------------------------------------------ crew gate 5 Nov (round 3)
+
+
+def _clear_all_object(**over: Any) -> dict[str, Any]:
+    """The T5 / X parse of "clear all" on the ALL prompt: every filter slot ALL, the report's own slots left null (the
+    parser did not echo the period, basis, frame or axis)."""
+    every = {slot: _all_of(slot) for slot, *_rest in _KINDS.values()}
+    ra = _ra2(None, basis=None, group_by=None, measure=None, **every, date_from=None, date_to=None)
+    ra.update(over)
+    return ra
+
+
+@pytest.mark.usefixtures("all_on")
+def test_g1_clear_all_with_the_report_slots_left_null_keeps_period_basis_and_breakdown(rbot, world) -> None:
+    """Crew gate T5 / X "clear all": the period and the basis were lost and asked again. The one keep rule covers every
+    slot of the held report: null keeps, a value replaces, ALL clears."""
+    sorento, _m = world
+    _hold_all_kinds(rbot, sorento)
+    v = _follow("sales_analysis", _clear_all_object(), basis=None, group_by=None)
+    text, calls = rbot.say(v, "clear all")
+    assert not _asked(text), f"G1: asked {text!r}"
+    args = _args(calls)
+    for _kind, (_s, _f, _a, arg, _k) in _KINDS.items():
+        assert not args.get(arg), f"G1: {arg} survived: {args.get(arg)}"
+    assert args.get("basis") == "delivered" and args.get("group_by") == "month", args
+    assert args.get("date_from") == "2026-09-01" and args.get("date_to") == "2026-09-30", args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_g1b_an_explicit_total_still_drops_the_held_axis(rbot, world) -> None:
+    """The rule keeps only what the object left null: an explicit total frame is the parser's call (AF-3)."""
+    sorento, _m = world
+    _hold_all_kinds(rbot, sorento)
+    v = _follow("sales_report", _clear_all_object(frame="total"), basis=None, group_by=None)
+    text, calls = rbot.say(v, "total only, no filter")
+    args = _args(calls)
+    assert not args.get("group_by") and args.get("basis") == "delivered" and args.get("date_from") == "2026-09-01", args
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize("message_type", ["casual", None])
+def test_g3_a_report_object_over_a_held_report_runs_the_report_even_when_the_rest_of_the_parse_reads_chit_chat(
+    rbot, world, message_type
+) -> None:
+    """Crew gate X "清除所有筛选": the object was all ALL but the turn answered as chit-chat. The object is the parser's
+    own statement that this is a report ask (it is null on every other message): the report runs."""
+    sorento, _m = world
+    _hold_all_kinds(rbot, sorento)
+    v = _v(
+        None, _clear_all_object(), order_status=None, domain_hint=None, intent_hint=None, message_type=message_type,
+        basis=None, group_by=None, entity_op=None, continuation=None, domain_in_message=False,
+    )
+    text, calls = rbot.say(v, "清除所有筛选")
+    args = _args(calls)
+    assert args.get("basis") == "delivered" and args.get("date_from") == "2026-09-01", args
+    assert not args.get("brand_ids") and not args.get("company"), args
+
+
+def test_g5_a_report_object_turn_never_reads_its_names_as_a_supplier() -> None:
+    """Crew gate steps 8 / 12: "Sorento company, brands Sorento and Cabana" answered "Sorry, I couldn't find a supplier
+    called Sorento" (the span list placed Sorento on supplier rows). A kept report object names no supplier."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot import engine
+
+    prep = SimpleNamespace(supplier_typed=["Sorento"])
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    supplier = {"raw": "Sorento", "hint": "supplier", "canonical_code": None, "current_message": True}
+    report = {"report_ask": _ra2(None, company="Sorento", brands=["Sorento", "Cabana"]), "entities": [supplier]}
+    assert engine._supplier_scope(state, state, report, ["order"], True, prep) is None
+    plain = {"report_ask": None, "entities": [supplier]}
+    assert "supplier" in (engine._supplier_scope(state, state, plain, ["order"], True, prep) or {}).get("line", ""), "lock"

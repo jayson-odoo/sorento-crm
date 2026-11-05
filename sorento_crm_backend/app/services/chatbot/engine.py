@@ -562,8 +562,8 @@ def _supplier_scope(
     would run without one (`fetch.SupplierScopeViolation`). About a supplier: this message names one, the supplier
     question was open when it arrived, or the purchase side runs with a supplier held. None otherwise (and always for
     an asker who may not see suppliers: their supplier words are refused earlier)."""
-    if not asker_sees_suppliers:
-        return None
+    if not asker_sees_suppliers or isinstance(verdict.get("report_ask"), dict):
+        return None  # REPORT-FILTER-ALL: a kept report object names no supplier (see `_with_span_suppliers`' gate)
     named = [
         jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is True and jsc.lower_or_empty(e.get("hint")) == "supplier"
@@ -6719,7 +6719,10 @@ def _run_stages_body(  # noqa: PLR0915
                 db, remembered_before.get("_contact_pk"), contact_respond_id, default_space_id(db)
             )
         )
-        if asker_sees_suppliers:
+        # REPORT-FILTER-ALL (crew gate steps 8 / 12, "couldn't find a supplier called Sorento"): a kept report object is a
+        # sales or outstanding ask (the customer side, no supplier slot); its names are the object's, never a supplier
+        # the span list placed them on.
+        if asker_sees_suppliers and not isinstance(verdict.get("report_ask"), dict):
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
             picked_side = _side_of_the_picked_party(verdict, getattr(state_in, "pending", None))
