@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from contextlib import contextmanager
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -193,7 +194,7 @@ def test_Q1_filter_sort_limit_and_only_allowlisted_fields(db):
         assert set(row) <= {"order_number", "total_amount", "id", "link"}
         assert row["id"] and row["link"]
     assert out["total"] == 5
-    assert out["truncated"] is False or out["truncated"] is True  # present either way
+    assert out["truncated"] is True and out["restricted"] == []
 
 
 def test_Q1_a_column_outside_the_allowlist_is_refused_unknown_field(db):
@@ -519,3 +520,201 @@ def test_Q12_the_registry_is_consistent_with_the_models_and_the_permission_regis
         for rel, (target, fk) in ent.relations.items():
             assert target in ENTITIES, f"{key}.{rel}: unknown target entity {target}"
             assert fk in columns, f"{key}.{rel}: no fk column {fk}"
+
+
+# ------------------------------------------------------------------ review round 1 (reviewer + security reviewer)
+
+
+@contextmanager
+def brand_scoped(db, brand_ids):
+    """A WhatsApp linked-user turn keeps the contact's brand scope on the session (`access.build_context`)."""
+    from app.models.base import get_brand_scope, set_brand_scope
+
+    before = get_brand_scope(db)
+    set_brand_scope(db, frozenset(brand_ids))
+    try:
+        yield
+    finally:
+        set_brand_scope(db, before)
+
+
+def mk_warehouse(db) -> str:
+    from app.models.inventory import Warehouse
+
+    row = Warehouse(id=str(uuid.uuid4()), company_id=SORENTO, warehouse_code=unique_code("ZW"), warehouse_name="ZZT WH")
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def mk_line(db, order: Order, product: Product, warehouse_id: str, total: str) -> None:
+    from app.models.order import OrderLine
+
+    db.add(OrderLine(
+        id=str(uuid.uuid4()), company_id=SORENTO, order_id=order.id, product_id=product.id,
+        warehouse_id=warehouse_id, quantity=Decimal("1"), total=Decimal(total),
+    ))
+    db.flush()
+
+
+def test_R1_a_company_b_only_user_reads_company_b_through_the_tool(db):
+    """The tool stamps the reading user's own company (`run_as_user`), not whatever the session held before."""
+    t = tag()
+    company_b = mk_company_b(db)
+    mk_orders(db, t, 2)
+    for i in range(3):
+        mk_order(db, t, 100 + i, company_id=company_b)
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW, companies=(company_b,))
+    out = tool(db, make_ctx(user), order_spec(t, fields=["order_number"]))
+    assert out.status == "ok", out.message
+    assert sorted(r["order_number"] for r in out.data["rows"]) == [f"{t}-{100 + i}" for i in range(3)]
+
+
+def test_R1_relation_fields_project_group_and_sort_and_stay_in_the_users_company(db):
+    t = tag()
+    company_b = mk_company_b(db)
+    kohler, grohe = mk_supplier(db, f"{t} Kohler"), mk_supplier(db, f"{t} Grohe")
+    for i, supplier in enumerate([kohler, kohler, grohe]):
+        mk_po(db, f"{t}-PO-{i}", supplier)
+    other = Supplier(id=str(uuid.uuid4()), company_id=company_b, supplier_code=unique_code("ZS"), supplier_name=f"{t} Kohler")
+    db.add(other)
+    db.flush()
+    db.add(PurchaseOrder(id=str(uuid.uuid4()), company_id=company_b, po_number=f"{t}-PO-B", supplier_id=other.id))
+    db.flush()
+    user = mk_user(db, SCM_VIEW)
+    mine = [{"field": "po_number", "op": "starts_with", "value": t}]
+    rows = core(db, user, {
+        "entity": "purchase_order", "fields": ["po_number", "supplier.name"], "filters": mine,
+        "sort": [{"field": "supplier.code", "dir": "asc"}, {"field": "po_number", "dir": "asc"}],
+    })
+    assert rows["total"] == 3
+    assert {r["supplier.name"] for r in rows["rows"]} == {f"{t} Kohler", f"{t} Grohe"}
+    groups = core(db, user, {"entity": "purchase_order", "filters": mine, "group_by": ["supplier.name"]})
+    assert {g["supplier.name"]: g["count"] for g in groups["groups"]} == {f"{t} Kohler": 2, f"{t} Grohe": 1}
+    # a group on a relation field only still carries the root's company: company B's PO is not counted
+    everything = core(db, user, {"entity": "purchase_order", "group_by": ["supplier.name"]})
+    assert sum(g["count"] for g in everything["groups"] if g["supplier.name"] == f"{t} Kohler") == 2
+
+
+def test_R1_a_deleted_order_is_not_counted(db):
+    from datetime import datetime
+
+    t = tag()
+    mk_orders(db, t, 2)
+    mk_order(db, t, 9, deleted_at=datetime(2026, 10, 1))
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    assert core(db, user, order_spec(t))["total"] == 2
+    assert core(db, user, order_spec(t, aggregates=[{"fn": "count"}]))["groups"][0]["count"] == 2
+
+
+def test_R1_a_brand_scoped_contact_sees_only_orders_with_its_brands_and_no_whole_order_totals(db):
+    t = tag()
+    chain_in, chain_out = mk_product_chain(db), mk_product_chain(db)
+    product_in, product_out = mk_product(db, unique_code("ZIN"), chain_in), mk_product(db, unique_code("ZOUT"), chain_out)
+    warehouse = mk_warehouse(db)
+    shown, hidden = mk_order(db, t, 1, total_amount=Decimal("100")), mk_order(db, t, 2, total_amount=Decimal("500"))
+    db.flush()
+    mk_line(db, shown, product_in, warehouse, "100")
+    mk_line(db, hidden, product_out, warehouse, "500")
+    user = mk_user(db, ORDERS_VIEW)
+    ctx = make_ctx(user)  # a WhatsApp linked-user turn: no panel principal
+    with brand_scoped(db, {chain_in[2]}):
+        rows = tool(db, ctx, order_spec(t, fields=["order_number"]), panel=False)
+        assert rows.status == "ok", rows.message
+        assert [r["order_number"] for r in rows.data["rows"]] == [f"{t}-1"]
+        totals = tool(db, ctx, order_spec(t, aggregates=[{"fn": "sum", "field": "total_amount"}]), panel=False)
+        assert totals.status == "denied"
+        listed = tool(db, ctx, order_spec(t, fields=["order_number", "total_amount"]), panel=False)
+        assert listed.data["restricted"] == ["total_amount"]
+    # unscoped, both orders and their totals
+    out = core(db, user, order_spec(t, aggregates=[{"fn": "sum", "field": "total_amount"}]))
+    assert out["groups"][0]["sum_total_amount"] == 600
+
+
+def test_R1_a_brand_scoped_contact_sees_only_complaints_of_its_brands(db):
+    from app.models.complaints import ComplaintProductLine
+
+    t = tag()
+    chain_in, chain_out = mk_product_chain(db), mk_product_chain(db)
+    product_in, product_out = mk_product(db, unique_code("ZIN"), chain_in), mk_product(db, unique_code("ZOUT"), chain_out)
+    owner = mk_contact(db, "QC")
+    shown, hidden = mk_complaint(db, t, 1, owner_contact=owner), mk_complaint(db, t, 2, owner_contact=owner)
+    db.add_all([
+        ComplaintProductLine(id=str(uuid.uuid4()), complaint_id=shown.id, product_code=product_in.product_code),
+        ComplaintProductLine(id=str(uuid.uuid4()), complaint_id=hidden.id, product_code=product_out.product_code),
+    ])
+    db.flush()
+    user = mk_user(db, C_VIEW)
+    spec = {"entity": "complaint", "fields": ["complaint_number"],
+            "filters": [{"field": "complaint_number", "op": "starts_with", "value": t}]}
+    with brand_scoped(db, {chain_in[2]}):
+        out = tool(db, make_ctx(user), spec, panel=False)
+    assert [r["complaint_number"] for r in out.data["rows"]] == [f"{t}-1"]
+    assert core(db, user, spec)["total"] == 2
+
+
+def test_R1_timestamps_are_malaysian_days_in_filters_and_buckets(db):
+    from datetime import datetime
+
+    t = tag()
+    # 17:00 UTC on 1 Oct is 01:00 on 2 Oct in Malaysia; 15:00 UTC on 1 Oct is 23:00 on 1 Oct.
+    mk_order(db, t, 1, created_at=datetime(2026, 10, 1, 17, 0))
+    mk_order(db, t, 2, created_at=datetime(2026, 10, 1, 15, 0))
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    days = core(db, user, order_spec(t, group_by=[{"field": "created_at", "bucket": "day"}]))
+    assert {g["created_at_day"]: g["count"] for g in days["groups"]} == {"2026-10-01": 1, "2026-10-02": 1}
+    def numbers(op, value):
+        spec = order_spec(t, fields=["order_number"])
+        spec["filters"].append({"field": "created_at", "op": op, "value": value})
+        return sorted(r["order_number"] for r in core(db, user, spec)["rows"])
+    assert numbers("lte", "2026-10-01") == [f"{t}-2"]
+    assert numbers("eq", "2026-10-02") == [f"{t}-1"]
+    assert numbers("between", ["2026-10-01", "2026-10-01"]) == [f"{t}-2"]
+    assert numbers("in", ["2026-10-02"]) == [f"{t}-1"]
+
+
+def test_R1_the_statement_timeout_is_restored_after_a_query(db):
+    before = db.execute(text("SHOW statement_timeout")).scalar()
+    user = mk_user(db, ORDERS_VIEW)
+    core(db, user, order_spec(tag()))
+    assert db.execute(text("SHOW statement_timeout")).scalar() == before
+
+
+def test_R1_a_value_that_does_not_fit_its_field_is_invalid_not_a_tool_failure(db):
+    user = mk_user(db, ORDERS_VIEW)
+    for field, value in (("order_date", "notadate"), ("total_amount", "abc")):
+        spec = order_spec(tag())
+        spec["filters"].append({"field": field, "op": "gt", "value": value})
+        out = tool(db, make_ctx(user), spec)
+        assert out.status == "invalid", (field, out.status, out.message)
+    assert db.execute(text("SELECT 1")).scalar() == 1
+
+
+def test_R1_contains_text_is_capped(db):
+    user = mk_user(db, ORDERS_VIEW)
+    out = refusal(db, user, {"entity": "order", "filters": [{"field": "debtor_name", "op": "contains", "value": "x" * 201}]})
+    assert out.code == "invalid"
+
+
+def test_R1_a_customer_scoped_whatsapp_contact_is_not_offered_the_tools(db):
+    """Today every WhatsApp read of such a contact is narrowed to its linked customers; these tools cannot be."""
+    from app.models.access import RespondContactCustomer
+    from app.models.order import Customer
+
+    contact = mk_contact(db, "QCS")
+    customer = Customer(id=str(uuid.uuid4()), company_id=SORENTO, customer_code=unique_code("ZK"), customer_name="ZZT Cust")
+    db.add(customer)
+    db.flush()
+    db.add(RespondContactCustomer(contact_id=str(contact.id), customer_id=customer.id))
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW, contact=contact)
+    ctx = dataclasses.replace(make_ctx(user), contact_pk=str(contact.id))
+    names = {r.name for r in writes.permitted_user_reads(db, ctx)}
+    assert not names & {"crm_query", "crm_describe"}
+    assert tool(db, ctx, {"entity": "order"}, panel=False).status == "denied"
+    # the same person on the panel answers as their screen does
+    with panel_turn(user):
+        assert {"crm_query", "crm_describe"} <= {r.name for r in writes.permitted_user_reads(db, ctx)}

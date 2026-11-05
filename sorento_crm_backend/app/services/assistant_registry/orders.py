@@ -6,9 +6,20 @@ from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 
-def _not_deleted(db) -> list:
-    # The list's own rule (`order_service.py`): a soft-deleted order is not on the screen.
-    return [Order.deleted_at.is_(None)]
+def _screen_rules(db) -> list:
+    """The list's own rules (`order_service.py`): a soft-deleted order is not on the screen, and a brand-scoped
+    contact sees only orders with a line of one of its brands (`scope_product_filter`)."""
+    from sqlalchemy import select
+
+    from app.models.base import get_brand_scope
+    from app.models.order import OrderLine
+    from app.services.order_service import scope_product_filter
+
+    clauses = [Order.deleted_at.is_(None)]
+    if get_brand_scope(db):
+        in_scope = select(OrderLine.order_id).where(OrderLine.product_id.in_(scope_product_filter(db, None)))
+        clauses.append(Order.id.in_(in_scope))
+    return clauses
 
 
 register(
@@ -44,8 +55,8 @@ register(
             "warehouse": FieldDef("Warehouse"),
             "branch_name": FieldDef("Branch"),
             "is_cancelled": FieldDef("Cancelled"),
-            "subtotal_amount": FieldDef("Subtotal"),
-            "total_amount": FieldDef("Total"),
+            "subtotal_amount": FieldDef("Subtotal", whole_document=True),
+            "total_amount": FieldDef("Total", whole_document=True),
             "estimated_delivery_date": FieldDef("Estimated delivery date"),
             "actual_delivery_date": FieldDef("Delivered on"),
             "created_at": FieldDef("Created at"),
@@ -54,6 +65,6 @@ register(
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),
         routes=("GET /api/v1/order-management/orders/",),
-        scope=_not_deleted,
+        scope=_screen_rules,
     ),
 )

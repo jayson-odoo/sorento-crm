@@ -17,6 +17,9 @@ class FieldDef:
     permission: str | None = None
     #: The model attribute; None = the field key itself.
     column: str | None = None
+    #: A figure over the whole record that also counts lines of other brands (an order's total): refused while
+    #: the session carries a contact's brand scope, whose screen recomputes it from the in-scope lines only.
+    whole_document: bool = False
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,3 @@ class EntityDef:
     routes: tuple[str, ...] = ()
     #: (db) -> extra always-on clauses the screen's own list applies (not deleted, brand scope).
     scope: Callable[[Any], list] | None = None
-
-    def column_name(self, key: str) -> str:
-        return self.fields[key].column or key

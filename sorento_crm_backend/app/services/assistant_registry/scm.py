@@ -12,7 +12,8 @@ register(
     EntityDef(
         key="supplier",
         label="Suppliers",
-        module="procurement",
+        # The module of the screen that shows it (the PO list), so a lookup is gated with its parent.
+        module="scm",
         model=Supplier,
         view_permission=None,
         fields={"code": FieldDef("Supplier code", column="supplier_code"), "name": FieldDef("Supplier", column="supplier_name")},

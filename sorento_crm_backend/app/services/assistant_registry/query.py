@@ -12,10 +12,9 @@ import re
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Numeric, Float, Integer, String, Text, cast, distinct, func, select, text
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, String, Text, cast, distinct, func, or_, select, text
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import aliased
 
 from app.services.assistant_registry import ENTITIES
 from app.services.assistant_registry.types import EntityDef, FieldDef
@@ -29,6 +28,7 @@ MAX_GROUP_FIELDS = 4
 MAX_FILTERS = 20
 MAX_AGGREGATES = 8
 MAX_IN_VALUES = 100
+MAX_TEXT_CHARS = 200
 #: Naive timestamps are stored UTC; dates the user names are Malaysian dates.
 LOCAL_TZ = "Asia/Kuala_Lumpur"
 
@@ -41,6 +41,8 @@ SPEC_KEYS = ("entity", "fields", "filters", "group_by", "aggregates", "sort", "l
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: Postgres `query_canceled`: the statement timeout fired.
 _QUERY_CANCELED = "57014"
+#: Postgres class 22, data exception: a value that does not fit its field ("abc" for a number).
+_DATA_EXCEPTION = "22"
 
 
 class QueryRefused(Exception):
@@ -115,13 +117,36 @@ def _kind(column) -> str:
     return "other"
 
 
-class _Paths:
-    """Turns dotted field paths into columns, joining each declared relation once (outer join)."""
+def _company_clause(db, model, table):
+    """The session's company predicate for `model`, written against `table` (the model's table or an alias of
+    it); None for a model that is not company scoped or a session scoped to every company. Stated explicitly
+    because the session's automatic criterion is not adapted to a table alias inside a join, and is not
+    attached at all when no column of the root entity is selected (a group on a relation field only)."""
+    from sqlalchemy.sql.util import ClauseAdapter
 
-    def __init__(self, entity: EntityDef, slugs: set[str]) -> None:
+    from app.models.base import CompanyScopedMixin, get_company_scope
+    from app.services.company_scope import build_company_predicate
+
+    if not (isinstance(model, type) and issubclass(model, CompanyScopedMixin)):
+        return None
+    predicate = build_company_predicate(model, get_company_scope(db))
+    if predicate is None or table is model.__table__:
+        return predicate
+    return ClauseAdapter(table).traverse(predicate)
+
+
+class _Paths:
+    """Turns dotted field paths into columns, joining each declared relation once (outer join, on a plain
+    table alias carrying the company predicate in its ON clause)."""
+
+    def __init__(self, db, user_id: str, entity: EntityDef, slugs: set[str]) -> None:
+        from app.models.base import get_brand_scope
+
+        self.db = db
+        self.user_id = user_id
         self.entity = entity
         self.slugs = slugs
-        self.root = entity.model
+        self.brand_scoped = bool(get_brand_scope(db))
         self._aliases: dict[str, Any] = {}
         self.joins: list[tuple[Any, Any]] = []
 
@@ -131,7 +156,7 @@ class _Paths:
         parts = path.strip().split(".")
         if len(parts) - 1 > MAX_HOPS:
             raise QueryRefused("too_deep", f"`{path}` goes through {len(parts) - 1} relations; at most {MAX_HOPS}.")
-        entity, holder, prefix = self.entity, self.root, ""
+        entity, table, prefix = self.entity, self.entity.model.__table__, ""
         for name in parts[:-1]:
             if name not in entity.relations:
                 raise QueryRefused(
@@ -142,15 +167,21 @@ class _Paths:
             target = ENTITIES[target_key]
             prefix = f"{prefix}.{name}" if prefix else name
             if prefix not in self._aliases:
-                alias = aliased(target.model)
+                if _module_blocked(self.db, self.user_id, target.module):
+                    raise QueryRefused("module_disabled", f"The {target.label} module is not enabled.")
+                alias = target.model.__table__.alias()
+                onclause = alias.c.id == table.c[fk]
+                company = _company_clause(self.db, target.model, alias)
+                if company is not None:
+                    onclause = onclause & company
                 self._aliases[prefix] = alias
-                self.joins.append((alias, alias.id == getattr(holder, fk)))
-            entity, holder = target, self._aliases[prefix]
-        return entity, holder, parts[-1]
+                self.joins.append((alias, onclause))
+            entity, table = target, self._aliases[prefix]
+        return entity, table, parts[-1]
 
     def resolve(self, path: Any) -> tuple[Any, FieldDef, str]:
         """(column expression, field, kind). Raises for an unknown or restricted field."""
-        entity, holder, name = self._target(path)
+        entity, table, name = self._target(path)
         field = entity.fields.get(name)
         if field is None:
             raise QueryRefused(
@@ -158,8 +189,12 @@ class _Paths:
             )
         if field.permission and field.permission not in self.slugs:
             raise QueryRefused("restricted", f"`{path}` is restricted for this user.")
-        column = getattr(holder, field.column or name)
-        return column, field, _kind(column.property.columns[0])
+        if field.whole_document and self.brand_scoped:
+            raise QueryRefused(
+                "restricted", f"`{path}` counts lines of brands outside this contact's brands, so it is not shown here."
+            )
+        column = table.c[field.column or name]
+        return column, field, _kind(column)
 
     def allowed(self, path: str) -> bool:
         """Is the (known) field readable by this user? Unknown fields still raise."""
@@ -200,6 +235,8 @@ def _next_day(value: Any) -> dt.date | None:
 def _like(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise QueryRefused("invalid", f"`contains` and `starts_with` on `{path}` need text.")
+    if len(value) > MAX_TEXT_CHARS:
+        raise QueryRefused("invalid", f"The text for `{path}` is longer than {MAX_TEXT_CHARS} characters.")
     return value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
@@ -215,32 +252,37 @@ def _filter(paths: _Paths, item: Any):
         return column.is_(None)
     if op == "is_not_null":
         return column.is_not(None)
-    if op in ("in", "not_in"):
-        if not isinstance(value, list) or not value or len(value) > MAX_IN_VALUES:
-            raise QueryRefused("invalid", f"`{op}` on `{path}` needs a list of 1 to {MAX_IN_VALUES} values.")
-        values = [_scalar(v, path) for v in value]
-        return column.in_(values) if op == "in" else column.not_in(values)
     if op in ("contains", "starts_with"):
         if kind != "text":
             raise QueryRefused("invalid", f"`{op}` works on text fields; `{path}` is {kind}.")
         needle = _like(value, path)
         pattern = f"%{needle}%" if op == "contains" else f"{needle}%"
         return column.ilike(pattern, escape="\\")
+    # A timestamp is compared as Malaysian wall time; a date-only value on it names the whole Malaysian day.
     local = _local(column, kind)
+    day = kind == "datetime"
+    if op in ("in", "not_in"):
+        if not isinstance(value, list) or not value or len(value) > MAX_IN_VALUES:
+            raise QueryRefused("invalid", f"`{op}` on `{path}` needs a list of 1 to {MAX_IN_VALUES} values.")
+        values = [_scalar(v, path) for v in value]
+        if day and all(_next_day(v) for v in values):
+            matched = or_(*((local >= v) & (local < _next_day(v)) for v in values))
+            return matched if op == "in" else ~matched
+        return local.in_(values) if op == "in" else local.not_in(values)
     if op == "between":
         if not isinstance(value, list) or len(value) != 2:
             raise QueryRefused("invalid", f"`between` on `{path}` needs [from, to].")
         low, high = (_scalar(v, path) for v in value)
-        upper = _next_day(high) if kind == "datetime" else None
+        upper = _next_day(high) if day else None
         return (local >= low) & (local < upper if upper is not None else local <= high)
     value = _scalar(value, path)
     if value is None:
         raise QueryRefused("invalid", f"`{op}` on `{path}` needs a value; use is_null for an empty one.")
-    after = _next_day(value) if kind == "datetime" else None
+    after = _next_day(value) if day else None
     if op == "eq":
-        return (local >= value) & (local < after) if after is not None else column == value
+        return (local >= value) & (local < after) if after is not None else local == value
     if op == "ne":
-        return ~((local >= value) & (local < after)) if after is not None else column != value
+        return ~((local >= value) & (local < after)) if after is not None else local != value
     if op == "lt":
         return local < value
     if op == "lte":
@@ -318,6 +360,8 @@ def _run(db, stmt) -> list:
             raise QueryRefused(
                 "timeout", "The question took too long to answer. Narrow it with a filter (a date range, a status)."
             ) from exc
+        if str(getattr(getattr(exc, "orig", None), "pgcode", "") or "").startswith(_DATA_EXCEPTION):
+            raise QueryRefused("invalid", "A filter value does not fit its field (a date is YYYY-MM-DD).") from exc
         raise
     except BaseException:
         if savepoint.is_active:
@@ -328,8 +372,15 @@ def _run(db, stmt) -> list:
 
 
 def _base(db, user_id: str, entity: EntityDef, own_only: bool, stmt, paths: _Paths):
+    root = entity.model
     for alias, onclause in paths.joins:
         stmt = stmt.outerjoin(alias, onclause)
+    company = _company_clause(db, root, root.__table__)
+    if company is not None:
+        stmt = stmt.where(company)
+    brands = _brand_clause(db, root)
+    if brands is not None:
+        stmt = stmt.where(brands)
     if entity.scope is not None:
         for clause in entity.scope(db):
             stmt = stmt.where(clause)
@@ -338,6 +389,20 @@ def _base(db, user_id: str, entity: EntityDef, own_only: bool, stmt, paths: _Pat
 
         stmt = stmt.where(entity.own_clause(me(db, user_id)))
     return stmt
+
+
+def _brand_clause(db, root):
+    """A brand-scoped contact's products (`contact_brand_scope.brand_predicate`), stated for the root as the
+    company predicate is."""
+    from app.models.base import get_brand_scope
+    from app.models.product import Product
+
+    scope = get_brand_scope(db)
+    if not scope or root is not Product:
+        return None
+    from app.services.contact_brand_scope import brand_predicate
+
+    return brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id)
 
 
 def run_query(db, user_id: str, spec: Any) -> dict:
@@ -350,7 +415,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
-    paths = _Paths(entity, slugs)
+    paths = _Paths(db, user_id, entity, slugs)
     filters = [_filter(paths, f) for f in _list(spec, "filters", MAX_FILTERS)]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
@@ -370,11 +435,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     restricted = [f for f in wanted if f not in shown]
     root = entity.model
     columns = [root.id.label("id")] + [paths.resolve(f)[0].label(f) for f in shown]
-    total = func.count().over().label("__total")
-    stmt = select(*columns, total).select_from(root)
-    stmt = _base(db, user_id, entity, own_only, stmt, paths)
-    for clause in filters:
-        stmt = stmt.where(clause)
+    # Every path is resolved before the joins are added, so a relation named only in `sort` is joined too.
     order = []
     for item in _sort_items(spec):
         column = paths.resolve(item["field"])[0]
@@ -382,6 +443,11 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     if not order and hasattr(root, "created_at"):
         order.append(root.created_at.desc())
     order.append(root.id.asc())
+    total = func.count().over().label("__total")
+    stmt = select(*columns, total).select_from(root)
+    stmt = _base(db, user_id, entity, own_only, stmt, paths)
+    for clause in filters:
+        stmt = stmt.where(clause)
     limit = _limit(spec, MAX_ROWS, DEFAULT_ROWS)
     rows = _run(db, stmt.order_by(*order).limit(limit))
     total_rows = int(rows[0]._mapping["__total"]) if rows else 0
@@ -401,8 +467,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
 
 def _group_key(paths: _Paths, item: Any) -> tuple[str, Any]:
     if isinstance(item, str):
-        column, _f, kind = paths.resolve(item)
-        return item, column
+        return item, paths.resolve(item)[0]
     if isinstance(item, dict) and not (set(item) - {"field", "bucket"}):
         path, bucket = item.get("field"), item.get("bucket")
         column, _f, kind = paths.resolve(path)

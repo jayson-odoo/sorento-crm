@@ -27,6 +27,22 @@ _REFUSAL_STATUS = {
 }
 
 
+def _available(db, ctx) -> bool:
+    """Off the panel, a contact narrowed to its linked customers (no office access type) keeps that narrowing
+    today on every WhatsApp read; these tools run as the linked user and cannot narrow by customer, so they
+    are not offered to it. Fail closed: a lookup that fails offers nothing."""
+    from app.services.chatbot import principal as staff_principal
+
+    if staff_principal.current() is not None:
+        return True
+    try:
+        from app.services.contact_customer_scope import contact_customer_scope
+
+        return not contact_customer_scope(db, str(ctx.contact_pk)).enforced
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _refused(exc: QueryRefused) -> ToolResult:
     return ToolResult(_REFUSAL_STATUS.get(exc.code, "invalid"), message=exc.message)
 
@@ -104,10 +120,10 @@ ANY_ENTITY = tuple(sorted({
 }))
 
 writes.USER_READS[QUERY] = writes.UserRead(
-    name=QUERY, user_permission=ANY_ENTITY, schema=QUERY_SCHEMA, run=_query, linked_only=True,
+    name=QUERY, user_permission=ANY_ENTITY, schema=QUERY_SCHEMA, run=_query, linked_only=True, available=_available,
 )
 writes.USER_READS[DESCRIBE] = writes.UserRead(
-    name=DESCRIBE, user_permission=ANY_ENTITY, schema=DESCRIBE_SCHEMA, run=_describe, linked_only=True,
+    name=DESCRIBE, user_permission=ANY_ENTITY, schema=DESCRIBE_SCHEMA, run=_describe, linked_only=True, available=_available,
 )
 TOOL_LABELS.setdefault(QUERY, "reading CRM records, totals and groupings")
 TOOL_LABELS.setdefault(DESCRIBE, "listing the CRM records you can read")
