@@ -90,6 +90,9 @@ export interface DraftLine {
   tag_templates_combo?: string | null;
   /** PRICETAG-LPSP: this line's own LP or SP. Absent = the header's mode. */
   price_type?: PriceMode | null;
+  /** R13: the template and LP/SP a LOADED line was saved with. While both are unchanged the
+   *  template is kept (AC-37): no "No SP template linked" pill, eye enabled, no Submit reason. */
+  kept_template?: { id: string; price_type: PriceMode } | null;
 }
 
 /** The combo the line is asked for as, once the combos lookup has answered. */
@@ -417,6 +420,10 @@ export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): Dra
     pricing: null,
     // The templates lookup answers the options once the line is on screen.
     tag_template_id: line.tag_template_id ?? null,
+    kept_template:
+      line.tag_template_id && (line.price_type ?? requestMode)
+        ? { id: line.tag_template_id, price_type: (line.price_type ?? requestMode) as PriceMode }
+        : null,
     tag_templates: [],
     tag_templates_for: null,
     // The server stores an explicit type on every line, so a line whose type equals the
@@ -494,6 +501,9 @@ export function unfittedPriceType(line: DraftLine, priceMode?: PriceMode | null)
   );
   const lineType = line.price_type ?? priceMode ?? null;
   if (options.length === 0 || !lineType) return null;
+  // R13: a loaded line still holding its saved template and type raises nothing.
+  const kept = line.kept_template;
+  if (kept && kept.id === line.tag_template_id && kept.price_type === lineType) return null;
   return fittingOptions(options, lineType).length === 0 ? lineType : null;
 }
 
