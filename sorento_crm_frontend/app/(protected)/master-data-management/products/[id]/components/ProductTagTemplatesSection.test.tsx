@@ -99,7 +99,8 @@ describe('ProductTagTemplatesSection', () => {
     fireEvent.click(screen.getByText('add c'));
     expect(save).toHaveBeenCalledWith({
       template_ids: ['a', 'b', 'c'],
-      default_template_id: null,
+      default_list_template_id: null,
+      default_selling_template_id: null,
     });
     expect(start).not.toHaveBeenCalled();
   });

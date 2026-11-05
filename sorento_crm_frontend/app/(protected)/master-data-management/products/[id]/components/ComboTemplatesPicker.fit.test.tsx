@@ -67,7 +67,7 @@ type PickerProps = React.ComponentProps<typeof ComboTemplatesPicker> & { parts?:
 const Picker = ComboTemplatesPicker as unknown as React.ComponentType<PickerProps>;
 
 function draw(parts?: unknown[]) {
-  render(<Picker idPrefix="c" value={[]} defaultId="" onChange={vi.fn()} parts={parts as PickerProps['parts']} />);
+  render(<Picker idPrefix="c" value={[]} onChange={vi.fn()} parts={parts as PickerProps['parts']} />);
 }
 const row = (id: string) => screen.getByTestId(`opt-${id}`);
 const description = (id: string) => within(row(id)).getByTestId('description').textContent;
@@ -78,14 +78,15 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     draw(S1);
     expect(description('a')).toBe('105 x 148 mm. Needs 3 from Kitchen tap, upgrade');
     expect(row('a').dataset.disabled).toBe('false');
-    expect(row('a').dataset.badge).toBe('');
+    // The badge now carries the price type (AC-32); these templates have none set.
+    expect(row('a').dataset.badge).toBe('Not set');
   });
 
   it('S1: a template that needs more than the group has is disabled with the reason', () => {
     templates.mockReturnValue([tpl('a', { fixed: 0, groups: [6], upgrades: 0 })]);
     draw(S1);
     expect(row('a').dataset.disabled).toBe('true');
-    expect(row('a').dataset.badge).toBe('Does not fit');
+    expect(row('a').dataset.badge).toBe('Not set / Does not fit');
     expect(description('a')).toBe('Needs 6 from Kitchen tap; this combo has 5');
   });
 
