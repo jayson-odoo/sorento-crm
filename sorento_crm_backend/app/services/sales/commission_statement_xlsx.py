@@ -60,7 +60,9 @@ def _reached_rate(p: dict, metric: str) -> str:
         return text
     if add["kind"] == "amount":
         return f"{text} + RM {add['value']:,.2f}"
-    return f"{text} + {add['value']:.2f}" + ("%" if metric == "amount" else " RM/unit")
+    if metric == "quantity":
+        return f"{text} + RM {add['value']:.2f}/unit"
+    return f"{text} + {add['value']:.2f}%"
 
 
 def _period_label(p: dict) -> str:

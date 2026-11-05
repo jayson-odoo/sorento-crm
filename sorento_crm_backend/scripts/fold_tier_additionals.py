@@ -54,12 +54,13 @@ def _num(value: Decimal) -> str:
     return f"{value.normalize():,f}"
 
 
-def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str]) -> List[str]:
+def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str], unit: str = "%") -> List[str]:
     """Where, after the fold, reaching a higher tier pays a LOWER rate than the tier below
     (owner ruling 5 Nov 12:10: an Additional pays only on its own tier, it never carries up), with
     the Additional each tier needs to keep today's pay. Today's pay: the tier's rate plus every
     "+ Additional" row at or below its threshold (they stacked). One line per period and account
-    with a drop. `rows` are `FoldRow`s; `labels` names an account key (None: every account)."""
+    with a drop. `rows` are `FoldRow`s; `labels` names an account key (None: every account);
+    `unit` is `%`, or ` RM/unit` on a quantity target."""
 
     def rate_on(row, account) -> Optional[Decimal]:
         if row.account_rates is None:
@@ -72,10 +73,15 @@ def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str]) -> List[str]:
         idx = [i for i, r in enumerate(rows) if r.period_start == period]
         mains = sorted((i for i in idx if not rows[i].is_additional), key=lambda i: rows[i].threshold)
         legacy = [i for i in idx if rows[i].is_additional]
-        accounts = {k for i in idx for k in (rows[i].account_rates or {})} or {None}
-        for account in sorted(accounts, key=lambda k: labels.get(k, str(k))):
+        accounts = {k for i in idx for k in (rows[i].account_rates or {})}
+        if not accounts or any(rows[i].account_rates is None for i in mains):
+            # A pay-all tier pays every account: checked once, as "every account".
+            accounts.add(None)
+        for account in sorted(accounts, key=lambda k: (k is not None, labels.get(k, str(k)))):
             old: Dict[int, Decimal] = {}
             new: Dict[int, Decimal] = {}
+            #: What still stacks on the tier after the fold (rows it could not place).
+            left: Dict[int, Decimal] = {}
             for m in mains:
                 base = rate_on(rows[m], account)
                 if base is None:
@@ -83,9 +89,10 @@ def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str]) -> List[str]:
                 own = Decimal(rows[m].additional_rate or 0)
                 stacked = [i for i in legacy if rows[i].threshold <= rows[m].threshold]
                 old[m] = base + own + sum((rate_on(rows[i], account) or 0 for i in stacked), Decimal("0"))
-                new[m] = base + Decimal(fold.rates.get(m, own)) + sum(
+                left[m] = sum(
                     (rate_on(rows[i], account) or 0 for i in stacked if i not in fold.moves), Decimal("0")
                 )
+                new[m] = base + Decimal(fold.rates.get(m, own)) + left[m]
             paying = [m for m in mains if m in new]
             drops = [(a, b) for a, b in zip(paying, paying[1:]) if new[b] < new[a]]
             if not drops:
@@ -93,16 +100,23 @@ def ladder_drops(rows, fold, pct: bool, labels: Dict[object, str]) -> List[str]:
             need: Dict[Decimal, List[int]] = {}
             for m in paying:
                 if new[m] < old[m]:
-                    need.setdefault(old[m] - rate_on(rows[m], account), []).append(m)
+                    # The tier's own Additional that keeps today's pay: today's rate less its rate
+                    # and less what still stacks on it after the fold.
+                    need.setdefault(old[m] - rate_on(rows[m], account) - left[m], []).append(m)
             at = lambda m: f"{_num(rows[m].threshold)}%" if pct else _num(rows[m].threshold)  # noqa: E731
-            who = f"{labels.get(account)} " if account is not None else ""
+            who = f"{labels.get(account, account)} " if account is not None else ""
             first_low, first_high = drops[0]
             fix = "; ".join(
-                f"set Additional {_num(add)}% on {' and '.join(at(m) for m in ms)}" for add, ms in need.items()
+                f"set Additional {_num(add)}{unit} on {' and '.join(at(m) for m in ms)}" for add, ms in need.items()
             )
+            # A drop that comes from the fold widening an Additional to this account, not from
+            # losing pay: nothing to restore, only worth a look.
+            fix = fix or "today's pay is kept; check the tiers' Additionals"
             out.append(
-                f"{period or 'every period'}: {who}tier {at(first_high)} pays {_num(new[first_high])}% "
-                f"vs {_num(new[first_low])}% at {at(first_low)} -> to keep today's pay {fix}"
+                f"{period or 'every period'}: {who}tier {at(first_high)} pays {_num(new[first_high])}{unit} "
+                f"vs {_num(new[first_low])}{unit} at {at(first_low)} -> " + (
+                    f"to keep today's pay {fix}" if need else fix
+                )
             )
     return out
 
@@ -201,7 +215,10 @@ def report(db) -> List[dict]:
                 "periods": rows,
                 "ladder_drops": [
                     f"{target.target_no} {target.name}, {line}"
-                    for line in ladder_drops(fold_rows, fold, (target.threshold_unit or "pct") == "pct", labels)
+                    for line in ladder_drops(
+                        fold_rows, fold, (target.threshold_unit or "pct") == "pct", labels,
+                        " RM/unit" if target.metric == "quantity" else "%",
+                    )
                 ],
             }
         )

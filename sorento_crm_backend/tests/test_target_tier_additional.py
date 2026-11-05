@@ -381,6 +381,8 @@ def test_statement_rate_cell_carries_the_additional():
     p["tier_additional"] = {"kind": "amount", "value": 500.0}
     assert _reached_rate(p, "amount") == "A/C I 6.00% + RM 500.00"
     assert _reached_rate({"tier_rates": [{"label": None, "rate": 5.0}], "tier_additional": None}, "amount") == "5.00%"
+    q = {"tier_rates": [{"label": None, "rate": 1.5}], "tier_additional": {"kind": "pct", "value": 0.5}}
+    assert _reached_rate(q, "quantity") == "1.50 RM/unit + RM 0.50/unit"
 
 
 def _script():
@@ -417,9 +419,10 @@ def test_ladder_drops_none_when_every_tier_has_its_own():
 
 
 def test_ladder_drops_per_account_names_the_account():
+    # CE is paid only from 100,000, so it has no ladder to drop: only A/C I is named.
     script = _script()
     rows = [
-        _row(80000, 0, accounts={A1: 4}), _row(100000, 0, accounts={A1: 5}),
+        _row(80000, 0, accounts={A1: 4}), _row(100000, 0, accounts={A1: 5, CE: 3}),
         _row(80000, 0, additional=True, accounts={A1: 5}),
     ]
     lines = script.ladder_drops(rows, fold_additionals(rows), False, {A1: "300-B001"})
@@ -427,3 +430,48 @@ def test_ladder_drops_per_account_names_the_account():
         "2026-01-01: 300-B001 tier 100,000 pays 5% vs 9% at 80,000 -> to keep today's pay "
         "set Additional 5% on 100,000"
     ]
+
+
+def test_ladder_drops_advice_leaves_out_rows_that_still_stack():
+    # 2% from 55,000 sits on no tier, so it stays and keeps stacking on 60,000: the tier needs 5%
+    # of its own, not 7% (review round 2). Checked against the engine: same pay as today.
+    script = _script()
+    rows = [
+        _row(50000, 3), _row(60000, 4),
+        _row(50000, 5, additional=True), _row(55000, 2, additional=True),
+    ]
+    fold = fold_additionals(rows)
+    lines = script.ladder_drops(rows, fold, False, {})
+    assert lines == [
+        "2026-01-01: tier 60,000 pays 6% vs 8% at 50,000 -> to keep today's pay set Additional 5% on 60,000"
+    ]
+    achieved = {None: D("60000")}
+    today = _pay([tier(50000, 3), tier(60000, 4), tier(50000, 5, additional=True), tier(55000, 2, additional=True)], achieved)
+    fixed = _pay([tier(50000, 3, add=5), tier(60000, 4, add=5), tier(55000, 2, additional=True)], achieved)
+    assert today.commission == fixed.commission == D("6600.00")
+
+
+def test_ladder_drops_equal_rates_are_not_a_drop():
+    script = _script()
+    rows = [_row(50000, 3), _row(60000, 5), _row(50000, 2, additional=True)]
+    assert script.ladder_drops(rows, fold_additionals(rows), False, {}) == []
+
+
+def test_ladder_drops_quantity_target_says_rm_per_unit():
+    script = _script()
+    rows = [_row(100, 1), _row(200, "1.5"), _row(100, 1, additional=True)]
+    assert script.ladder_drops(rows, fold_additionals(rows), False, {}, " RM/unit") == [
+        "2026-01-01: tier 200 pays 1.5 RM/unit vs 2 RM/unit at 100 -> to keep today's pay "
+        "set Additional 1 RM/unit on 200"
+    ]
+
+
+def test_api_still_saves_a_bonus_tier_beside_a_legacy_row(api):
+    # A Bonus beside a legacy row was valid before this lane; the fold leaves it, so saving works.
+    client, db, company_id = api
+    a1 = _customer(db, company_id, "ZZT BONUS AND ROW", level=1)
+    res = client.post(BASE, json=_dealer_body([a1], tiers=[
+        {"period_start": "2026-01-01", "threshold": 75000, "rate": 6, "bonus_amount": 300},
+        {"period_start": "2026-01-01", "threshold": 75000, "rate": 1, "is_additional": True},
+    ]))
+    assert res.status_code == 201, res.text
