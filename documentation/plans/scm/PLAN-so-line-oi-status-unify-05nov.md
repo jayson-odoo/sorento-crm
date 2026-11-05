@@ -87,6 +87,22 @@ group per OI, one row, extra OIs behind "+N".
 3. "Go to linked line" in the PO/SPO lightbox renders only when the loaded document holds
    the target line (it sat enabled or disabled with nothing to land on).
 
+## Owner hand-test round (5 Nov)
+
+1. OI header card names the sales order (`SO419595 · Raised by ...`), linking to it.
+2. OI Lines tab: each No. links to `/scm/sales-orders/<id>?tab=lines&line=<core line>`
+   (`orderInquirySoLineHref`), the line highlighted.
+3. Fulfilment planning list: the LINE cell carries that link; the Sales order cell links to
+   the sales order itself.
+4. SO Lines "Order inquiry": OI number + status pill only. The pill opens a lightbox
+   (`Dialog`) listing every PO / SPO chip (`LineDocumentsList`, the OI tab's own chips) and
+   the reserve text; a refusal's pill keeps its Rejected lightbox. The one-slot chips
+   (crew fix 1) are gone with it.
+5. A PO chip's line label is `L<n>` from the PO line's `line_no`, never AutoCount's raw
+   `source_ref` key (`_line_label` accepts plain numbers only).
+6. The SO Lines tab holds its own page with the auto reset off, so a `?line=` landing on a
+   long order stays on the line's page (same fix as the OI Lines tab).
+
 ## Design note (pre-answer)
 
 One shared FE function for "the status of a sales order line's OI rows" (the fold's

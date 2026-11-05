@@ -16,7 +16,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
+import { act, render, screen, cleanup, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
@@ -2763,5 +2763,44 @@ describe('FULFIL-SO-REMARK (AC-17, AC-18): Remark, Shipping Info and the Mockup 
     withData({ lines: [{ ...line('l-1', 'SRTWB1515', false), is_mockup: true }] });
     openTab('Lines');
     expect(screen.queryByTestId('so-line-mockup-badge')).toBeNull();
+  });
+});
+
+describe('owner hand test (5 Nov 2026): a link to one line of a long order lands on its page', () => {
+  function longOrder(): SalesOrder {
+    return so({
+      lines: Array.from({ length: 60 }, (_, index) => ({
+        id: `l-${index + 1}`,
+        sku: `SKU-${String(index + 1).padStart(3, '0')}`,
+        product_name: `Line ${index + 1}`,
+        qty_ordered: 1,
+        qty_delivered: 0,
+        uom: 'PCS',
+        warehouse_code: 'BRW-BB',
+        line_status: 'open',
+        line_no: (index + 1) * 16,
+      })) as SalesOrderLine[],
+      line_count: 60,
+    });
+  }
+
+  it('opens the Lines tab on the page holding line 40 of 60, highlighted, and stays there on a re-read', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+
+    const target = await screen.findByText('SKU-040');
+    expect(target.closest('tr')).toHaveClass('deep-link-highlight');
+    expect(screen.queryByText('SKU-001')).toBeNull();
+
+    // The order query answers again (focus, an action's invalidation): a NEW object.
+    await act(async () => {
+      useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+      // Any URL write re-renders the page, which reads the order afresh.
+      replaceSearchParams(new URLSearchParams(searchParams.toString()));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByText('SKU-040')).toBeInTheDocument();
+    expect(screen.queryByText('SKU-001')).toBeNull();
   });
 });

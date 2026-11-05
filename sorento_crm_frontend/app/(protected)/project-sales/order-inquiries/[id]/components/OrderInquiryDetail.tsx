@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -780,6 +781,26 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 <ConsignmentBadge docType={header.so_doc_type} size="md" />
               </div>
               <span className="text-sm text-muted-foreground">
+                {/* Owner hand test (5 Nov 2026): the sales order, one click away, without
+                    going to the General tab (same link the General tab's S/O no uses). */}
+                {header.so_number ? (
+                  <>
+                    {header.sales_order_id ? (
+                      <Link
+                        href={`/scm/sales-orders/${header.sales_order_id}`}
+                        className="font-medium tabular-nums text-primary hover:underline"
+                        data-testid="oi-header-so-link"
+                      >
+                        {header.so_number}
+                      </Link>
+                    ) : (
+                      <span className="font-medium tabular-nums text-foreground" data-testid="oi-header-so">
+                        {header.so_number}
+                      </span>
+                    )}
+                    {' · '}
+                  </>
+                ) : null}
                 Raised by {header.raised_by_name ?? 'Not recorded'}
                 {header.raised_at ? ` on ${formatDateTimeInMalaysia(header.raised_at)}` : ''}
               </span>

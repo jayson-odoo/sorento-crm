@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
+  PaginationState,
   SortingState,
   getCoreRowModel,
   getFilteredRowModel,
@@ -669,6 +670,19 @@ export function SalesOrderDetail({
     debouncedValue: lineSearch,
     reset: resetLineSearch,
   } = useDebouncedSearch();
+  // SO-LINE-OI-STATUS-UNIFY owner hand test (5 Nov 2026): the Lines page is held here with
+  // TanStack's auto reset off, so a `?line=` landing on a long order (96+ lines) stays on
+  // the page holding the line instead of snapping back to page 1 on the next re-read. The
+  // reader's own search and sort still start again from page 1 (effect below).
+  const [linePagination, setLinePagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  });
+  useEffect(() => {
+    setLinePagination((current) =>
+      current.pageIndex === 0 ? current : { ...current, pageIndex: 0 },
+    );
+  }, [lineSearch, sorting]);
   // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
@@ -1525,8 +1539,10 @@ export function SalesOrderDetail({
     columns,
     data: lines,
     getRowId: (row) => row.id,
-    state: { sorting, globalFilter: lineSearch },
+    state: { sorting, globalFilter: lineSearch, pagination: linePagination },
     onSortingChange: setSorting,
+    onPaginationChange: setLinePagination,
+    autoResetPageIndex: false,
     // The whole ROW answers the search, so every column is allowed to carry it and the
     // matcher below decides. Left to the default, only string columns qualify, which made
     // the filter depend on which columns happen to hold strings.
@@ -1542,6 +1558,16 @@ export function SalesOrderDetail({
     enableColumnResizing: true,
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
+  // A page that no longer exists (lines removed) falls back to the last one.
+  const linePageCount = table.getPageCount();
+  useEffect(() => {
+    if (linePagination.pageIndex > 0 && linePagination.pageIndex >= linePageCount) {
+      setLinePagination((current) => ({
+        ...current,
+        pageIndex: Math.max(linePageCount - 1, 0),
+      }));
+    }
+  }, [linePageCount, linePagination.pageIndex]);
 
   // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-3/10/11/12): a link from the OI Lines
   // tab / worklist's own "SO line" cell lands on this exact row (`?line=<id>`) - `row.id`

@@ -2016,26 +2016,30 @@ describe('FulfilmentBoardListView: the decision trail icon (AC-DT-5, PLAN-oi-dec
 });
 
 /**
- * S6 (AC-B6-14): the Sales order cell's own link now carries the target line, landing that
- * exact row highlighted on the sales-order detail (AC-B6-3).
+ * Owner hand test (5 Nov 2026, PR #2187): the navigation to the exact SO line belongs on
+ * the LINE column ("this navigation supposed to be at the Line column also, not the SO
+ * number column"). The Sales order cell opens the sales order itself, no line.
  */
-describe('FulfilmentBoardListView: AC-B6-14 - the Sales order cell links with the line pre-selected', () => {
-  it('links to /scm/sales-orders/<id>?tab=lines&line=<core line id>', async () => {
-    renderView({
-      contributions: [
-        contribution({
-          sales_order_id: 'so-99',
-          line_id: 'core-line-99',
-          so_number: 'SO500099',
-          line_no: 3,
-        }),
-      ],
-    });
+describe('FulfilmentBoardListView: the Line cell lands on the SO line, the Sales order cell on the SO', () => {
+  const row = () =>
+    contribution({
+      sales_order_id: 'so-99',
+      line_id: 'core-line-99',
+      so_number: 'SO500099',
+      line_no: 3,
+      so_line_no: 176,
+    } as never);
 
+  it('links the Line number to /scm/sales-orders/<id>?tab=lines&line=<core line id>', async () => {
+    renderView({ contributions: [row()] });
+    const line = await screen.findByRole('link', { name: '176' });
+    expect(line).toHaveAttribute('href', '/scm/sales-orders/so-99?tab=lines&line=core-line-99');
+  });
+
+  it('links the Sales order number to the sales order itself, with no line', async () => {
+    renderView({ contributions: [row()] });
     const soNumber = await screen.findByText('SO500099');
-    const link = soNumber.closest('a');
-    expect(link).not.toBeNull();
-    expect(link).toHaveAttribute('href', '/scm/sales-orders/so-99?tab=lines&line=core-line-99');
+    expect(soNumber.closest('a')).toHaveAttribute('href', '/scm/sales-orders/so-99');
   });
 });
 

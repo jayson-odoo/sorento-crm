@@ -1207,3 +1207,38 @@ describe('OI-RESERVE-ANY-ROW: reserve on a not-Done row of any verb counts on it
     expect(screen.getByTestId('req')).toHaveTextContent('12');
   });
 });
+
+describe('owner hand test (5 Nov 2026): the No. opens the sales order at that line', () => {
+  function noCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'line_no',
+    ) as { cell: (context: unknown) => React.ReactNode };
+    return column.cell({ row: { original: row } });
+  }
+
+  it('links each No. to the SO Lines tab with that line highlighted', () => {
+    render(
+      <>
+        {noCell(
+          linesRow({
+            id: 'r-96',
+            so_line_no: 96,
+            core_sales_order_id: 'so-419595',
+            core_line_id: 'core-96',
+          } as never),
+        )}
+      </>,
+    );
+    expect(screen.getByRole('link', { name: '96' })).toHaveAttribute(
+      'href',
+      '/scm/sales-orders/so-419595?tab=lines&line=core-96',
+    );
+  });
+
+  it('stays plain text when the line reaches no sales order line', () => {
+    render(<>{noCell(linesRow({ id: 'r-7', so_line_no: 7 } as never))}</>);
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+});

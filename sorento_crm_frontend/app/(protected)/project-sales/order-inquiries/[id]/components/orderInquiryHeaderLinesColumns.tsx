@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
   Check,
   ChevronDown,
@@ -25,6 +26,7 @@ import {
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import {
   formatInquiryQty,
+  orderInquirySoLineHref,
   raisedKindLabel,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -530,9 +532,21 @@ export function useOrderInquiryHeaderLinesColumns({
         size: 72,
         meta: { headerTitle: 'No.', skeleton: <Skeleton className="h-4 w-6" /> },
         cell: ({ row }) => {
-          const lineNo = lineOf(row.original).lineNo;
-          return lineNo == null ? (
-            <span className="text-muted-foreground">-</span>
+          const line = lineOf(row.original);
+          const lineNo = line.lineNo;
+          if (lineNo == null) return <span className="text-muted-foreground">-</span>;
+          // Owner hand test (5 Nov 2026): the No. opens the sales order's Lines tab at this
+          // line, highlighted (`orderInquirySoLineHref`, the worklist's own SO line link).
+          const linked = line.rows.find((r) => r.core_sales_order_id && r.core_line_id);
+          const href = linked ? orderInquirySoLineHref(linked) : null;
+          return href ? (
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              className="tabular-nums font-medium text-primary hover:underline"
+            >
+              {lineNo}
+            </Link>
           ) : (
             <span className="tabular-nums">{lineNo}</span>
           );
