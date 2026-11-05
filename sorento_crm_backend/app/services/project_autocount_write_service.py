@@ -366,7 +366,12 @@ class ProjectAutocountWriteService:
         return str(item)[:_MAX_TEXT]
 
     def _interpret(
-        self, answer: Dict[str, Any], *, verb: str, stale_since: Optional[str] = None
+        self,
+        answer: Dict[str, Any],
+        *,
+        verb: str,
+        stale_since: Optional[str] = None,
+        debtor: Optional[str] = None,
     ) -> Dict[str, Any]:
         """One SS answer in the plan's plain words. `done` carries the read-back lines."""
         outcome = answer.get("outcome")
@@ -389,6 +394,15 @@ class ProjectAutocountWriteService:
             )
         if code in ("WRITE_DISABLED", "WRITE_NOT_ALLOWED", "WRITE_COMPANY_NOT_TEST"):
             return self._blank("refused", SWITCHED_OFF_HERE)
+        if debtor and (
+            code == "DEBTOR_TERM_MISSING"
+            or (code == "FIELD_REQUIRED" and "displayTerm" in str(answer.get("message") or ""))
+        ):
+            # Our own debtor code (from the body we sent), never text taken from SS.
+            return self._blank(
+                "refused",
+                f"AutoCount needs a credit term on debtor {debtor}. Set it in AutoCount and try again.",
+            )
         if code == "DOC_STALE":
             return self._blank(
                 "refused", f"Changed in AutoCount since {_since(stale_since)}, open Compare first."
@@ -513,8 +527,7 @@ class ProjectAutocountWriteService:
         }
         if po is not None and po.po_number:
             header["yourPONo"] = po.po_number
-        if po is not None and po.term_days:
-            header["displayTerm"] = f"Net {po.term_days} days"
+        # No displayTerm (owner, round 5): SS fills the term from the debtor's AutoCount record.
         agent = self._agent_code(customer)
         if agent:
             header["salesAgent"] = agent
@@ -557,7 +570,7 @@ class ProjectAutocountWriteService:
                 "documents/sales-orders", body, idempotency_key=f"crm-pso-{order.id}-create"
             )
         )
-        result = self._interpret(answer, verb="created")
+        result = self._interpret(answer, verb="created", debtor=body["header"]["debtorCode"])
         if self._is_done(answer):
             document = answer.get("document") or {}
             order.autocount_doc_no = result["doc_no"]
@@ -868,7 +881,7 @@ class ProjectAutocountWriteService:
                 idempotency_key=f"crm-qt-{document.id}-{issue.id}-create",
             )
         )
-        result = self._interpret(answer, verb="created")
+        result = self._interpret(answer, verb="created", debtor=debtor)
         if self._is_done(answer):
             self._store_sent(document, issue, answer)
             document.autocount_book = book

@@ -100,7 +100,8 @@ def test_the_header_is_sent_field_by_field(api, fake_ss):
     assert D(header["currencyRate"]) == 1
     assert header["yourPONo"] == world.po.po_number
     assert header["ref"] == world.project.title
-    assert header["displayTerm"] == "Net 60 days"
+    # Round 5 (owner): the term is the debtor's own in AutoCount; the CRM sends none.
+    assert "displayTerm" not in header
     assert header["salesAgent"] == world.agent.sales_agent
     assert header["remark1"] == world.order.provisional_ref
     # AutoCount numbers the document, and refDocNo is create-never.

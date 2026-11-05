@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
-import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 import {
   ColumnDef,
   PaginationState,
@@ -38,6 +37,7 @@ import {
   useAutocountWriteCapabilities,
   useCreateSalesOrderInAutocount,
 } from '../../../../../_shared/hooks/useProjectAutocountWrite';
+import { createInAutocountState } from '../../../../../_shared/lib/autocountWriteRules';
 import { AutocountWriteButton } from '../../../../../_shared/components/AutocountWriteButton';
 import type {
   ProjectSalesOrderFinding,
@@ -184,10 +184,16 @@ function WorksheetView({
         ? 'This worksheet cannot be exported yet'
         : undefined;
   const canExport = !exportHint;
-  // R2: the CSV stays beside it. Create shows only for an exportable order not yet in AutoCount.
-  const createCap = capabilities.data?.sales_orders?.create_doc;
-  const canCreateInAutocount =
-    writeAccess && isPublished && worksheet.can_export && !worksheet.autocount_doc_no;
+  // R2: the CSV stays beside it. The rules are the shared ones (detail page, list, amendment page);
+  // the worksheet hides the button when the order is not eligible instead of greying it.
+  const createState = createInAutocountState({
+    status: worksheet.status,
+    canExport: worksheet.can_export,
+    autocountDocNo: worksheet.autocount_doc_no,
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
+  const canCreateInAutocount = writeAccess && createState.eligible;
 
   // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -410,18 +416,8 @@ function WorksheetView({
               pendingLabel="Creating…"
               variant="primary"
               run={() => createInAutocount.mutateAsync(psoId)}
-              disabled={!createCap?.enabled || !capabilities.data?.book?.trim()}
-              title={
-                capabilities.isLoading
-                  ? 'Checking AutoCount…'
-                  : !createCap
-                    ? 'Could not reach AutoCount'
-                    : !capabilities.data?.book?.trim()
-                      ? AUTOCOUNT_WAITING_TEXT
-                      : !createCap.enabled
-                        ? (createCap.reason ?? undefined)
-                        : undefined
-              }
+              disabled={!createState.enabled}
+              title={createState.reason ?? undefined}
             />
           )}
         </div>

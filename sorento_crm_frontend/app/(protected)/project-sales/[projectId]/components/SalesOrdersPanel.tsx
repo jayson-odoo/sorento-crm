@@ -47,11 +47,7 @@ import { GROUPING_ORIGIN_LABEL, SalesOrderStatusPill } from './SalesOrderStatusP
 import { FINDING_SEVERITY_BADGE_VARIANT, FINDING_SEVERITY_LABEL } from '../../_shared/lib/findings';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
-import {
-  AUTOCOUNT_ALREADY_CANCELLED_TEXT,
-  AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT,
-  AUTOCOUNT_WAITING_TEXT,
-} from '@/lib/autocountWriteWording';
+import { cancelInAutocountState } from '../../_shared/lib/autocountWriteRules';
 import { AutocountDecideMenu } from '../../_shared/components/AutocountDecideMenu';
 import { AutocountWriteDialog } from '../../_shared/components/AutocountWriteDialog';
 import {
@@ -451,22 +447,13 @@ export function SalesOrdersPanel({
   const selectedRows = table.getSelectedRowModel().rows.map((row) => row.original);
   const undeletable = selectedRows.find((row) => salesOrderDeleteRefusal(row) !== undefined);
 
-  // Decide > Cancel in AutoCount: greyed with the feed's reason (R4), never hard-coded off.
-  const cancelCap = capabilities.data?.sales_orders?.cancel_doc;
-  const notInAutocount = selectedRows.some((row) => !row.in_autocount);
-  const alreadyCancelled = selectedRows.some((row) => row.autocount_cancelled);
-  // R8: any record in AutoCount waits until SS names a book (the server also checks it matches).
-  const waitingForBook =
-    selectedRows.some((row) => row.in_autocount) && !capabilities.data?.book?.trim();
-  const cancelReason = notInAutocount
-    ? AUTOCOUNT_NOT_IN_AUTOCOUNT_TEXT
-    : alreadyCancelled
-      ? AUTOCOUNT_ALREADY_CANCELLED_TEXT
-      : waitingForBook
-        ? AUTOCOUNT_WAITING_TEXT
-        : cancelCap
-      ? cancelCap.reason
-      : 'Checking AutoCount…';
+  // Decide > Cancel in AutoCount: the shared rules (R4, R8), never hard-coded off.
+  const cancelState = cancelInAutocountState({
+    inAutocount: selectedRows.every((row) => row.in_autocount),
+    cancelled: selectedRows.some((row) => row.autocount_cancelled),
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
   const cancelSelected = async () => {
     const results: AutocountWriteResult[] = [];
     for (const row of selectedRows) {
@@ -563,8 +550,8 @@ export function SalesOrdersPanel({
                       {
                         key: 'cancel',
                         label: 'Cancel in AutoCount',
-                        enabled: !notInAutocount && !alreadyCancelled && !waitingForBook && Boolean(cancelCap?.enabled),
-                        reason: cancelReason,
+                        enabled: cancelState.enabled,
+                        reason: cancelState.reason,
                         onSelect: cancelSelected,
                       },
                     ]}

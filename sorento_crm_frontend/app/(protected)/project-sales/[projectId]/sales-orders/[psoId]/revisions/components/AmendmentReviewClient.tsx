@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 import Link from 'next/link';
 import { GitCompareArrows } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -27,6 +26,7 @@ import {
   type AmendmentAutocountUpdate,
 } from '../../../../components/AmendmentAutocountChangeList';
 import { AutocountWriteDialog } from '../../../../../_shared/components/AutocountWriteDialog';
+import { updateInAutocountState } from '../../../../../_shared/lib/autocountWriteRules';
 import {
   useAutocountWriteAccess,
   useAutocountWriteCapabilities,
@@ -99,17 +99,15 @@ export function AmendmentReviewClient({
   const capabilities = useAutocountWriteCapabilities(writeAccess);
   const updateInAutocount = useUpdateSalesOrderInAutocount();
   const [updateResult, setUpdateResult] = React.useState<AutocountWriteResult | null>(null);
-  const editCap = capabilities.data?.sales_orders?.edit_doc;
+  const updateState = updateInAutocountState({
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
   const autocountUpdate =
     writeAccess && published && so?.in_autocount && amendmentId
       ? {
           pending: updateInAutocount.isPending,
-          disabledReason:
-            !capabilities.data?.book?.trim()
-              ? AUTOCOUNT_WAITING_TEXT
-              : editCap && !editCap.enabled
-                ? editCap.reason
-                : null,
+          disabledReason: updateState.reason,
           onUpdate: () =>
             updateInAutocount
               .mutateAsync(amendmentId)

@@ -80,7 +80,7 @@ Create header (`header{}`):
 | debtorCode (required) | customer `customer_code` (SO: the PO issuer's customer, `_customer_for`; QT: the recipient party's customer). Missing -> refused in the CRM before any call: "No debtor code on <customer>". |
 | docDate | today (MYT), dd/mm/yyyy on screen |
 | currencyCode, currencyRate (required by the CRM) | `MYR`, `1`. Project SOs and quotations carry no currency today (no column in `project_so.py` / `projects.py`). |
-| displayTerm | `Net N days` from the PO's `term_days` (SO); quotation `payment_terms` text is free text, so QT sends none |
+| displayTerm | not sent (R10): SS fills it from the AutoCount debtor's own credit term |
 | yourPONo | customer PO number (SO); quotation `your_ref` (QT) |
 | ref | project title (today's "Our Ref No.") |
 | refDocNo (create only) | not sent |
@@ -213,6 +213,13 @@ names no book (missing, null, empty or blank); when a book is named, create proc
 (not accepted, missing debtor or location) still come first and make no call. The FE greys Create in AutoCount on the worksheet and the
 quotation header with "Waiting for AutoCount" while the capabilities' `book` is empty. The capabilities route's field is `book` (SS names one
 book per company), renamed from `sales_orders_book`.
+
+## Owner ruling R10 (5 Nov, hand test on db3): the credit term comes from the AutoCount debtor
+
+The CRM sends NO `displayTerm` on a create or an update (it used to send `Net N days` from the PO's `term_days`). SS fills the term from the
+debtor's AutoCount record. A refusal for a missing term (`errorCode DEBTOR_TERM_MISSING`, or today's `FIELD_REQUIRED` whose message names
+`displayTerm`) reads "AutoCount needs a credit term on debtor <our debtor code>. Set it in AutoCount and try again.", with the debtor code
+from the body the CRM sent, never text taken from SS.
 
 ## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
 
