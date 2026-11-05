@@ -11,7 +11,9 @@ MCP catalog copy, whose source file is guarded instead), and a 200 KB cap on
 any added or modified `*.png` vs `origin/main` (compress with `pngquant`
 before pushing), and, when either file changed, that the backend copy
 `sorento_crm_backend/app/services/mcp_catalog_copy.py` still equals
-`sorento_crm_mcp/sorento_crm_mcp/catalog.py`. Under 60s.
+`sorento_crm_mcp/sorento_crm_mcp/catalog.py`, and the assistant coverage gate
+(`scripts/ci_ai_coverage.py`: a GET route added since `origin/main` that takes `page` or `limit` is
+registered for the assistant or opted out with a reason). Under 60s.
 
 Install once per clone (worktrees share the main checkout's config):
 `git config core.hooksPath scripts/git-hooks`

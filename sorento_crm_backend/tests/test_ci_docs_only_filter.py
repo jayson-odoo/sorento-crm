@@ -666,7 +666,10 @@ def test_the_pr_gate_runs_the_fast_gates_as_its_first_steps():
     steps = _lean_gate_steps()
     for name, needle in (("Single alembic head", "python3 scripts/ci_alembic_heads.py"),
                          ("No personal data in tracked files", "python3 scripts/pii_guard.py"),
-                         ("Secret scan (gitleaks)", "bash scripts/ci_gitleaks.sh")):
+                         ("Secret scan (gitleaks)", "bash scripts/ci_gitleaks.sh"),
+                         # AI-GATE: diffs against the main the merge step merged in
+                         ("Assistant coverage of new list routes",
+                          'python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"')):
         assert name in steps, names
         assert needle in steps[name], name
         assert "github.event_name == 'pull_request'" in steps[name], name

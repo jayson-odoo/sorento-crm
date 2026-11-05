@@ -113,3 +113,103 @@ def load_cases(data_dir: str | Path, split: str | None = None) -> LoadResult:
         if split is None or case.split == split:
             cases.append(case)
     return LoadResult(cases=cases, invalid=invalid)
+
+
+# --------------------------------------------------------------------------- assistant cases
+# AI tools standard (PLAN-ai-tools-standard-5nov.md 2.5, DoD line 8): every feature adds two prompts to
+# gold/assistant_<module>.jsonl, each naming the entity the agent should read (crm_query / crm_describe)
+# or the action it should propose (crm_act). Synthetic and committed, like the parser gold, so the
+# rows hold no real customer text. One JSON object per line:
+#   {"id": "asst-scm-01", "module": "scm", "message": "which POs did we approve for Kohler in October?",
+#    "expect": {"entity": "purchase_order"}}
+#   {"id": "asst-scm-02", "module": "scm", "message": "approve PO-2026-0042",
+#    "expect": {"action": "purchase_order.approve"}}
+
+ASSISTANT_GOLD_DIR = Path(__file__).resolve().parent / "gold"
+ASSISTANT_GOLD_GLOB = "assistant_*.jsonl"
+#: The agent tools whose `entity` argument names what was read.
+ASSISTANT_READ_TOOLS = ("crm_query", "crm_describe")
+#: The agent tool whose `action` argument names what was proposed.
+ASSISTANT_ACT_TOOL = "crm_act"
+
+
+@dataclass
+class AssistantCase:
+    id: str
+    module: str
+    message: str
+    entity: str | None = None
+    action: str | None = None
+
+
+def parse_assistant_case(raw: object) -> AssistantCase:
+    """One gold row; exactly one of expect.entity / expect.action."""
+    if not isinstance(raw, dict):
+        raise ValueError("case is not a JSON object")
+    for key in ("id", "module", "message", "expect"):
+        if not raw.get(key):
+            raise ValueError(f"missing {key}")
+    if not isinstance(raw["message"], str):
+        raise ValueError("message is not text")
+    exp = raw["expect"]
+    if not isinstance(exp, dict):
+        raise ValueError("expect is not an object")
+    entity, action = exp.get("entity"), exp.get("action")
+    if bool(entity) == bool(action):
+        raise ValueError("expect names exactly one of entity or action")
+    unknown = set(exp) - {"entity", "action"}
+    if unknown:
+        raise ValueError(f"unknown expect key {sorted(unknown)[0]!r}")
+    if action and "." not in action:
+        raise ValueError(f"action {action!r} is not <entity>.<verb>")
+    return AssistantCase(
+        id=str(raw["id"]), module=str(raw["module"]), message=raw["message"], entity=entity, action=action
+    )
+
+
+def load_assistant_gold(gold_dir: str | Path = ASSISTANT_GOLD_DIR) -> tuple[list[AssistantCase], list[tuple[str, str]]]:
+    """Every assistant_*.jsonl row; returns (cases, invalid as (file:line, reason)). Ids are unique."""
+    cases: list[AssistantCase] = []
+    invalid: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for path in sorted(Path(gold_dir).glob(ASSISTANT_GOLD_GLOB)):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if not line.strip():
+                continue
+            where = f"{path.name}:{n}"
+            try:
+                case = parse_assistant_case(json.loads(line))
+            except ValueError as exc:  # JSONDecodeError is a ValueError
+                invalid.append((where, str(exc)))
+                continue
+            if case.id in seen:
+                invalid.append((where, f"duplicate id {case.id!r}"))
+                continue
+            seen.add(case.id)
+            cases.append(case)
+    return cases, invalid
+
+
+def grade_assistant(case: AssistantCase, tools: list[dict] | None) -> tuple[str, str]:
+    """(verdict, reason) from the turn digest's tool list ({"tool", "args"} rows, trace.build_digest).
+
+    verdict: "pass" when a read tool named the expected entity (or crm_act the expected action),
+    "no_trace" when the turn ran no tool, else "fail" naming what was used instead.
+    """
+    if not tools:
+        return "no_trace", "the turn ran no tool"
+    used: list[str] = []
+    for t in tools:
+        name, args = t.get("tool"), t.get("args") or {}
+        if case.entity and name in ASSISTANT_READ_TOOLS:
+            if args.get("entity") == case.entity:
+                return "pass", f"{name} read {case.entity}"
+            used.append(f"{name}:{args.get('entity')}")
+        elif case.action and name == ASSISTANT_ACT_TOOL:
+            if args.get("action") == case.action:
+                return "pass", f"crm_act proposed {case.action}"
+            used.append(f"crm_act:{args.get('action')}")
+        else:
+            used.append(str(name))
+    want = case.entity or case.action
+    return "fail", f"expected {want}, used {', '.join(used)}"
