@@ -49,3 +49,23 @@ Posted as the lane's crew-ask on PR #2202. Recommended shape:
   (`app/services/company_scope.py:236-237`, returns no predicate) and `company_sql_predicate`
   (`app/services/company_scope_sql.py:40`, returns ""). Under Q3(a) both return
   `company_id NOT IN (SELECT id FROM companies WHERE is_test)`, shared tables keeping `IS NULL OR ...`.
+
+## Owner input (via crew, 5 Nov): seed from db3 through the existing hapi read API
+
+The CRM never calls hapi directly. AutoCount reads reach it through SS in two ways:
+- SS pushes into `/api/v1/external/ingest/*` (`app/api/v1/external/ingest.py:284-341`), with
+  `companyCode` + free-form `book` (`ingest.py:821-830`, `autocount_doc_ingest_service.py:88-89`),
+  and the company is resolved from the body (`app/api/v1/external/company_anchor.py:135-161`).
+- The CRM pulls gateway snapshots by `companyCode` (`autocount_pull_service.py:143-147,216`).
+
+A CRM company coded `SRT_DB3` therefore needs no client change. SS-side dependency (foundryx-shared-service
+lane, routed by crew):
+1. prod SS company `SRT_DB3`, db3 connection only;
+2. hapi pollers for SRT_DB3 against `/api/db3/...` (location, itembypage, debtorbypage, creditorbypage,
+   ItemGroup/Type/Brand/Category/Class, salesagent, taxcode, terms, itemuombypage,
+   itembatchbalqtybypage, branchbypage, purchaseorder*, goodsreceivenote*, salesorder*,
+   deliveryorder*), pushing with `companyCode=SRT_DB3, book=db3`;
+3. gateway snapshots + write-capabilities answered for SRT_DB3.
+
+New card Q6: a CRM book/company pairing guard (db3 only for test companies, and never for live companies),
+on ingest and on PO-link writes.
