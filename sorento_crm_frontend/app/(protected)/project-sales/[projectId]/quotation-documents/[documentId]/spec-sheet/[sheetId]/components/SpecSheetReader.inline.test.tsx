@@ -1308,6 +1308,96 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     );
   });
 
+  it('a template switch saves no page edit (no pages/*/edit request), and switching back restores the original layers', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [
+          { id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 },
+          { id: 'tp2', name: 'Single item', width_mm: 338.7, height_mm: 190.5 },
+        ],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    // The cover and an item page are live, as on a 2-page sheet.
+    report(['cover', 'k1']);
+    expect(await screen.findByTestId('live-canvas-k1')).toHaveAttribute(
+      'data-layers',
+      'logo,area',
+    );
+    await screen.findByTestId('live-canvas-cover');
+
+    let page = 'tp';
+    const current = () => ({
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page:
+          page === 'tp'
+            ? { id: 'tp', name: 'Page', version_no: 1 }
+            : { id: 'tp2', name: 'Single item', version_no: 3 },
+      },
+    });
+    updateSpecSheet.mockImplementation(async (...args: unknown[]) => {
+      page = (args[3] as { page_template_id: string }).page_template_id;
+      return current();
+    });
+    getSpecSheet.mockImplementation(async () => current());
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        const out = previewFor(keys);
+        if (page === 'tp2')
+          for (const sheet of out.doc.sheets)
+            sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+
+    const switchTo = async (name: string) => {
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+        key: 'Enter',
+      });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+      const dialog = await screen.findByRole('dialog');
+      await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+      const select = within(dialog).getAllByRole('combobox')[1];
+      fireEvent.click(select);
+      fireEvent.click(await screen.findByRole('option', { name: new RegExp(`^${name}`) }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    };
+
+    await switchTo('Single item');
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+    // Past the autosave delay: nothing was written for any page.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+    expect(screen.getByTestId('spec-sheet-save-state').textContent).toBe('');
+
+    await switchTo('Page');
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area'),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+  }, 15000);
+
   it('a page whose chunk was cached BEFORE a template switch draws the new template when it comes back into view', async () => {
     listSpecSheets.mockResolvedValue({
       items: [],

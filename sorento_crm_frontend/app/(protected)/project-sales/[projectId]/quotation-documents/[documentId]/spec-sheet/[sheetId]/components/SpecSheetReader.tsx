@@ -48,6 +48,7 @@ import type {
 
 import {
   specSheetListKey,
+  templateSignature,
   useSpecSheetDetail,
   useSpecSheetMutations,
   useSpecSheetPageImages,
@@ -358,12 +359,7 @@ export function SpecSheetReader({
     [chunks, visible, railVisible],
   );
   // Which template versions the pages are drawn from (Templates, Use latest templates change it).
-  const templateSig = (['cover', 'page', 'single'] as const)
-    .map((part) => {
-      const t = detail?.templates[part];
-      return t ? `${t.id}@${t.version_no}` : '-';
-    })
-    .join('|');
+  const templateSig = detail ? templateSignature(detail) : '';
   const previews = useSpecSheetPreviews(
     projectId,
     documentId,
@@ -995,6 +991,7 @@ export function SpecSheetReader({
                     sheetIndex={drawn.get(page.key)?.index}
                     live={liveKeys.has(page.key)}
                     epoch={restarts[page.key] ?? 0}
+                    templateSig={templateSig}
                     selectedLayerId={
                       selection?.pageKey === page.key ? selection.layerId : null
                     }

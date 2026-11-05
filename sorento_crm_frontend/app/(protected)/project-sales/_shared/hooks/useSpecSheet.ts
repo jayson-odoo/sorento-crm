@@ -102,6 +102,19 @@ export function useSpecSheetPreview(
 }
 
 /**
+ * Which template versions a sheet prints from (cover, page, single item), as the previews' cache
+ * key part. Templates and Use latest templates change it.
+ */
+export function templateSignature(detail: Pick<SpecSheetDetail, 'templates'>): string {
+  return (['cover', 'page', 'single'] as const)
+    .map((part) => {
+      const t = detail.templates?.[part];
+      return t ? `${t.id}@${t.version_no}` : '-';
+    })
+    .join('|');
+}
+
+/**
  * One preview query per chunk of pages. A chunk's key is its own sorted keys, so scrolling back to
  * a chunk already fetched is a cache hit and a fast scroll costs one call per chunk, not per page.
  *
@@ -180,6 +193,17 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
   const queryClient = useQueryClient();
 
   const refreshSheet = (sheetId: string, detail?: SpecSheetDetail) => {
+    // The previews are cached per template versions (`useSpecSheetPreviews`). When a write moved
+    // the sheet to other templates, the chunks on screen are still keyed by the OLD versions until
+    // the next render: refetching them now would file the new template's pages under the old
+    // key, and switching back would draw them. Mark them stale only; the new keys fetch themselves.
+    const before = queryClient.getQueryData<SpecSheetDetail>(
+      specSheetDetailKey(documentId, sheetId),
+    );
+    const switched =
+      detail !== undefined &&
+      before !== undefined &&
+      templateSignature(before) !== templateSignature(detail);
     // The answer of a write IS the sheet's new detail: keep it, no second read. Without one the
     // detail is read again.
     if (detail)
@@ -191,6 +215,7 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
     queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
     queryClient.invalidateQueries({
       queryKey: specSheetPreviewPrefix(documentId, sheetId),
+      ...(switched ? { refetchType: 'none' as const } : {}),
     });
     queryClient.invalidateQueries({
       queryKey: [DESIGN_KEY, documentId, sheetId],
