@@ -30,6 +30,7 @@ from app.schemas.ai_prompt import (
     DryRunResponse,
     DryRunToolCall,
     PromptKeySummary,
+    PromptListPage,
     PromptVersionDetail,
     PromptVersionsResponse,
     RegistryVariableRow,
@@ -416,6 +417,34 @@ def list_ai_assistant_prompts(
     db: Session = Depends(get_db),
 ):
     return [PromptKeySummary(**row) for row in AIPromptService(db).list_keys()]
+
+
+@router.get("/ai-assistant/prompts/list", response_model=PromptListPage)
+def list_ai_assistant_prompts_page(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    query: Optional[str] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
+    model: Optional[list[str]] = Query(None),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The prompts list on the standard DataGrid contract: paged, every column sortable,
+    searchable by name and role, Status (active, dormant) and Runs on (model, or ``default``)
+    as multi-select filters."""
+    return PromptListPage(
+        **AIPromptService(db).list_keys_page(
+            page=page,
+            limit=limit,
+            sort=sort,
+            direction=dir,
+            query=query,
+            status_in=multi_values(status_filter, "status"),
+            model_in=multi_values(model, "model"),
+        )
+    )
 
 
 @router.get("/ai-assistant/prompts/{name}/versions", response_model=PromptVersionsResponse)
