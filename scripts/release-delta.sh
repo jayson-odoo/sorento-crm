@@ -50,7 +50,11 @@ HEADS="$(venv/bin/alembic heads 2>/dev/null | grep -c '(head)' || true)"
 UPGRADE=ok
 venv/bin/alembic upgrade head > "$OUT/alembic_upgrade.log" 2>&1 || UPGRADE=FAILED
 
-SEL="$(venv/bin/python scripts/release_delta_select.py --base "$BASE" --head "$HEAD_SHA" --out "$OUT")" \
+# The head's own selector; a head older than the selector (a re-run on a past range) borrows
+# this checkout's copy, pointed at the head's tree.
+SELECTOR=scripts/release_delta_select.py
+[ -f "$SELECTOR" ] || SELECTOR="$SWEEP_REPO_ROOT/sorento_crm_backend/scripts/release_delta_select.py"
+SEL="$(venv/bin/python "$SELECTOR" --backend "$PWD" --base "$BASE" --head "$HEAD_SHA" --out "$OUT")" \
   || SEL="backend=failed"
 sel() { sed -n "s/^$1=//p" <<< "$SEL"; }
 if [ "$(sel backend)" = failed ]; then

@@ -141,7 +141,7 @@ bash scripts/nightly-sweep.sh [<sha>]                    # default origin/main, 
 # crew-tests: <sha> backend N passed/F failed, vitest N/F
 
 bash scripts/release-delta.sh <nightly sha> [<head>]     # default head origin/main
-# crew-tests: <head> delta since nightly <nightly sha> backend N passed/F failed, vitest N/F
+# crew-tests: <head> delta since nightly <nightly sha> backend N passed/F failed (selected S of M test files: <why>), vitest N/F (<mode>)
 ```
 
 The nightly runs the split above on a detached worktree of the sha with a FRESH database
@@ -149,9 +149,53 @@ bootstrapped from that sha's code: 10 xdist groups (pytest-split) of `tests/` mi
 the migration tests, `serial_ddl` and `tests/ci_excluded.txt`; then `tests/test_migration_*.py`
 and `-m serial_ddl` serially; then `tests/scm/` (xdist, then its `serial_ddl`); then
 `npx vitest run`. The delta runs alembic heads == 1, `bootstrap_env` + `alembic upgrade head` on
-a fresh database, the migration tests, `tests/scm/` incl. `serial_ddl`, every backend test file
-the diff touches or that imports a touched `app/` module (list in `selected.txt`), and the FULL
-vitest. Logs, junit files and `failed.txt` stay in the output directory the script names.
+a fresh database, and then **only the affected tests** (owner ruling 5 Nov 2026: "run only the
+tests that are affected, dependent, or depended by"; RELEASE-DELTA-AFFECTED). Logs, junit files,
+`selected.txt`, `selected_why.txt` (each file with the rule that picked it) and `failed.txt` stay
+in the output directory the script names.
+
+**Backend selection** (`sorento_crm_backend/scripts/release_delta_select.py`; its docstring is the
+full rule, `tests/test_release_delta_select.py` pins it). The import graph covers every `.py`
+under `app/`, `scripts/`, `tests/` (static AST imports incl. relative ones; in tests also dotted
+`mock.patch` / `monkeypatch.setattr` strings; `from app.models import User` resolves through the
+package's re-export to `app/models/user.py`). Edges are module-level (run at import) or lazy
+(inside a function). It is cached as JSON per backend tree sha in
+`~/.cache/sorento-release-delta/` (`RELEASE_DELTA_GRAPH_CACHE`); building it takes ~26 s, a
+cached selection under 2 s.
+
+| Rule | Selects |
+| --- | --- |
+| changed test file | itself |
+| dependents | test files that import, through any chain of module-level imports, a changed module or a module that imports one (a lazy import is followed one hop, not further) |
+| depended-by | for a changed module M and each module D it imports directly: `test_<D>.py` / `test_<D>_*.py` that import D |
+| changed non-module file | test files that name it (alembic revision, workflow, shell script, frontend path); a template or data file under `app/` also through the module that names it |
+| deleted module | test files that name its dotted path |
+| migration tests | `tests/test_migration_*.py` only when `alembic/`, `alembic.ini` or `app/models/` changed |
+| regression guards | `tests/test_lessons_learnt_regressions.py` on any backend change |
+
+`tests/scm/` runs only when these rules reach it. `tests/ci_excluded.txt` entries never run.
+The selection runs in the PR gate's split: main tree and `tests/scm/` each under xdist and then
+`-m serial_ddl`, the migration tests serially.
+
+**Full backend suite** instead, the reason printed in the `crew-tests:` line: a `conftest.py`,
+`tests/__init__.py`, `tests/_xdist_crash_guard.py`, `tests/ci_excluded.txt`, `pytest.ini`,
+`pyproject.toml`, `setup.cfg` or `requirements*.txt` changed; env bootstrap changed
+(`sorento_crm_backend/scripts/bootstrap_env.py`, `scripts/cloud-env-setup.sh`); the graph
+cannot be built (a file does not parse); or the selector itself failed.
+
+Why lazy imports stop after one hop (measured 5 Nov on `42d1a56c..019770c1`): following every
+import transitively selects ~95% of the test files from almost any change, because function-local
+imports tie the services into one component. On that diff, following them on through module-level
+importers selected 1,499 files, 1,319 of them only because `app/main.py` mounts the ingest router
+and `document_ingest_service` imports the changed `po_link_history` inside a function.
+
+**Frontend**: no frontend change runs no vitest. Otherwise `npx vitest related --run
+<changed frontend files that exist at head>` plus the source-scanning guards
+(`sorento_crm_frontend/scripts/source-guard-tests.sh`, tests that read files instead of importing
+them); the FULL `vitest run` when `package.json`, `package-lock.json`, `vitest.config.*`,
+`vitest.setup.*`, `tsconfig*.json`, `test-mocks/` or a `__mocks__/` directory changed.
+
+What is not caught here is caught by the next nightly, which still runs everything.
 
 `scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
 #2171), each of which shows up as reds that CI does not have:
