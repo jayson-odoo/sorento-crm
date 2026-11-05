@@ -8,7 +8,11 @@
  */
 
 import { useCallback, useId, useMemo } from 'react';
+import type { FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import { orderedIcons, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
+  ArrowDown,
+  ArrowUp,
   Bold,
   Braces,
   Copy,
@@ -245,6 +249,8 @@ interface InspectorPanelProps {
   specSheet?: boolean;
   /** The spec registry keys, for the "Show only when spec is Yes" picker. */
   specKeys?: SpecKeyOption[];
+  /** Feature icons: the rule-carrying icon library, for the layer's order list. */
+  featureIcons?: FeatureIcon[];
 }
 
 export function InspectorPanel({
@@ -273,6 +279,7 @@ export function InspectorPanel({
   subjectParentCode,
   specSheet = false,
   specKeys,
+  featureIcons,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -329,8 +336,10 @@ export function InspectorPanel({
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
     layer.props.kind === 'text' ||
-    layer.props.kind === 'image';
+    layer.props.kind === 'image' ||
+    layer.props.kind === 'feature_icons';
   const readsProductData =
+    layer.props.kind === 'feature_icons' ||
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
@@ -552,6 +561,13 @@ export function InspectorPanel({
               layerId={layer.id}
               props={layer.props}
               onChooseBadge={onChooseBadge}
+            />
+          )}
+          {layer.props.kind === 'feature_icons' && (
+            <FeatureIconsInspector
+              props={layer.props}
+              icons={featureIcons ?? []}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
           {layer.props.kind === 'barcode' && (
@@ -1803,6 +1819,122 @@ function BarcodeInspector({
           Show product code
         </label>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons inspector (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: string }[] = [
+  { value: 'left', label: 'Left' },
+  { value: 'center', label: 'Centre' },
+  { value: 'right', label: 'Right' },
+];
+
+/**
+ * Icon size, spacing, alignment and the order of the rule-carrying icons. Every write carries
+ * the whole props object, so a change never drops `order` or the subject.
+ */
+function FeatureIconsInspector({
+  props,
+  icons,
+  onChange,
+}: {
+  props: FeatureIconsLayerProps;
+  icons: FeatureIcon[];
+  onChange: (changes: Partial<FeatureIconsLayerProps>) => void;
+}) {
+  const listed = orderedIcons(icons, props.order ?? []);
+  const move = (index: number, delta: number) => {
+    const ids = listed.map((icon) => icon.id);
+    const target = index + delta;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    onChange({ order: ids });
+  };
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Feature icons
+      </h4>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="Icon size (mm)"
+          value={props.iconSize_mm}
+          onChange={(v) => onChange({ iconSize_mm: v })}
+          step={0.5}
+          min={0.5}
+          max={200}
+        />
+        <NumberInput
+          label="Spacing (mm)"
+          value={props.gap_mm}
+          onChange={(v) => onChange({ gap_mm: v })}
+          step={0.5}
+          min={0}
+          max={100}
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Align</Label>
+        <div className="flex gap-1">
+          {FEATURE_ICON_ALIGNS.map((a) => (
+            <button
+              key={a.value}
+              type="button"
+              aria-pressed={props.align === a.value}
+              className={`flex-1 rounded border px-2 py-0.5 text-xs ${
+                props.align === a.value
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-input hover:bg-accent'
+              }`}
+              onClick={() => onChange({ align: a.value })}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {listed.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Order</Label>
+          <ul className="flex flex-col gap-1">
+            {listed.map((icon, index) => (
+              <li key={icon.id} className="flex items-center gap-1 text-xs">
+                <span className="min-w-0 flex-1 truncate" title={icon.name}>
+                  {icon.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  mode="icon"
+                  className="size-6"
+                  aria-label={`Move ${icon.name} up`}
+                  disabled={index === 0}
+                  onClick={() => move(index, -1)}
+                >
+                  <ArrowUp className="size-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  mode="icon"
+                  className="size-6"
+                  aria-label={`Move ${icon.name} down`}
+                  disabled={index === listed.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  <ArrowDown className="size-3.5" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

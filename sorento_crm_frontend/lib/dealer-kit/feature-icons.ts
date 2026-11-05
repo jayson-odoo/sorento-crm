@@ -65,7 +65,19 @@ export function featureIconsFor(
     return raw !== undefined && icon.values.includes(raw);
   });
 
-  const byId = new Map(matched.map((icon) => [icon.id, icon]));
+  return orderedIcons(matched, order);
+}
+
+/**
+ * Icons in display order: ids in `order` first, in that order, then the rest by name ignoring
+ * case. Each icon at most once; an id in `order` that is not among `icons` is ignored. The
+ * inspector lists the library this way, so its list reads the same as the row it prints.
+ */
+export function orderedIcons(
+  icons: readonly FeatureIcon[],
+  order: readonly string[] = [],
+): FeatureIcon[] {
+  const byId = new Map(icons.map((icon) => [icon.id, icon]));
   const out: FeatureIcon[] = [];
   const seen = new Set<string>();
   for (const id of order) {
@@ -75,7 +87,7 @@ export function featureIconsFor(
       seen.add(id);
     }
   }
-  const rest = matched
+  const rest = icons
     .filter((icon) => !seen.has(icon.id))
     .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   for (const icon of rest) {

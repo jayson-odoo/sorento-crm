@@ -20,6 +20,10 @@
  *   Renaming a font also rewrites every layer that named the old family;
  *   anything else changes only the row.
  *
+ * PUT /api/v1/dealer-kit/assets/{id}/show-when   { spec_key: string | null, values: string[] }
+ *   200 the asset. `spec_key` null clears the rule. 422 NOT_AN_ICON / UNKNOWN_SPEC /
+ *   UNKNOWN_SPEC_VALUE / VALUES_REQUIRED; 404 ASSET_NOT_FOUND.
+ *
  * DELETE /api/v1/dealer-kit/assets/{id}
  *   204, or 409 FONT_IN_USE / ASSET_IN_USE naming what still uses it. No
  *   service function here for it: delete is a deferred action (D7) parked
@@ -28,7 +32,7 @@
  *   immediate one the record action executes, for API/non-UI callers.
  * ```
  *
- * All four endpoints are gated on `dealer_kit.library.manage`.
+ * All five endpoints are gated on `dealer_kit.library.manage`.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -47,6 +51,15 @@ export interface KitAsset {
   /** A rendition for a screen (thumbnail or medium), never the original. Absent on older replies. */
   thumb_url?: string | null;
   mime_type: string | null;
+  /** Feature icons: an icon shows when this spec's raw value is one of `show_when_values`. */
+  show_when_spec_key?: string | null;
+  show_when_values?: string[] | null;
+}
+
+/** An icon's "show when" rule; `spec_key` null clears it. */
+export interface AssetShowWhenBody {
+  spec_key: string | null;
+  values: string[];
 }
 
 export interface ListAssetsParams {
@@ -135,4 +148,17 @@ export async function renameAsset(id: string, name: string): Promise<KitAsset> {
  */
 export function fontAssetUrl(assetId: string): string {
   return `/api/v1/public/dealer-kit/fonts/${assetId}`;
+}
+
+/** Set or clear an icon's "show when" rule (feature icons). */
+export async function setAssetShowWhen(id: string, body: AssetShowWhenBody): Promise<KitAsset> {
+  const response = await apiFetch(`${BASE}/${id}/show-when`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the show when rule'));
+  }
+  return response.json();
 }
