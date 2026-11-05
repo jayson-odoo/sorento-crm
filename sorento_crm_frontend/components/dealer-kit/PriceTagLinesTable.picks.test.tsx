@@ -345,6 +345,19 @@ describe('O4: blocking reasons show on the line only after Approve was clicked',
     expect(document.querySelector('[data-error-anchor]')).toBeNull();
   });
 
+  it('F2: the cell hint may wrap inside the cell; only the figure stays on one line', () => {
+    renderTable({ price_type: 'selling', promotion_id: 'promo-1' }, [], {
+      l1: { list_price: 2500, sell_price: 799, candidates: [], parts_at_list: [] },
+    });
+    const figure = screen.getByText('RM 799').closest('div') as HTMLElement;
+    expect(figure.className).toContain('whitespace-nowrap');
+    renderTable({ price_type: 'selling', promotion_id: 'promo-1' }, [], {
+      l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] },
+    });
+    const hint = screen.getByText('Clear the promotion to type a price');
+    expect(hint.closest('.whitespace-nowrap')).toBeNull();
+  });
+
   it('no hint in the cell while a price can be typed', () => {
     renderTable({ price_type: 'selling', promotion_id: null }, [], {
       l1: { list_price: 2500, sell_price: null, candidates: [], parts_at_list: [] },

@@ -329,6 +329,20 @@ describe('Escalate to marketing says what is missing (D48b; owner ruling 3 Nov)'
     expect(createRequest).not.toHaveBeenCalled();
   });
 
+  it('B: the "N things need attention" line is a button that scrolls to the first problem', async () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    sendToMarketing();
+    await screen.findByText('Select the dealer these tags are for.');
+    scrolled.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: /2 things need attention/ }));
+
+    await waitFor(() => expect(scrolled).toHaveBeenCalled());
+  });
+
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');

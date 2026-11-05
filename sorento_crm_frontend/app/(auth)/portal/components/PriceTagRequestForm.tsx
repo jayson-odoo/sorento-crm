@@ -100,7 +100,9 @@ import {
   draftLinesPayload,
   lineNeedsTemplate,
   lineToDraft,
+  EMPTY_LINE,
   lineProblemsOf,
+  pruneGuardError,
   MISSING_TAG_TEMPLATE,
   linePriceType,
   partsFromCombo,
@@ -144,7 +146,6 @@ type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
-const EMPTY_LINE = 'Pick a set or a product for this line.';
 
 /** Statuses the real design (D11) is visible at, once one exists to show.
  *  `ready` is retired (r9 D8); the two collection statuses take its place. */
@@ -1385,6 +1386,30 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, homePath, client]);
 
+  // A: a message from the last click leaves its line as soon as its problem no longer holds. It
+  // only removes; nothing new is shown before the next click.
+  useEffect(() => {
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        if (!l.guard_error) return l;
+        const holding = [
+          ...(l.product_id || l.product_set_id ? [] : [EMPTY_LINE]),
+          ...(lineNeedsTemplate(l) ? [MISSING_TAG_TEMPLATE] : []),
+          ...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode),
+          ...(l.code && previewState.missing.includes(l.code) ? ['No tag template yet.'] : []),
+          // Prices still loading say nothing either way: keep what the click found.
+          ...(lineEditor.linePricing[l.key] ? [] : l.guard_error.split('\n').filter((m) => m.startsWith('No combo '))),
+        ];
+        const guard = pruneGuardError(l.guard_error, holding);
+        if (guard === l.guard_error) return l;
+        changed = true;
+        return { ...l, guard_error: guard };
+      });
+      return changed ? next : prev;
+    });
+  }, [lines, lineEditor.linePricing, priceMode, previewState]);
+
   const hasDrawableLine = lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id));
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
@@ -2418,10 +2443,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           data-testid="submit-problem-summary"
         >
           {problemCount > 0 && (
-            <p>
+            <button type="button" className="text-left underline" onClick={scrollToFirstProblem}>
               {problemCount} thing{problemCount === 1 ? '' : 's'} need
               {problemCount === 1 ? 's' : ''} attention.
-            </p>
+            </button>
           )}
           {serverMessage && <p className="mt-0.5">{serverMessage}</p>}
         </div>

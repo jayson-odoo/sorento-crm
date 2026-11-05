@@ -285,6 +285,19 @@ describe('PriceTagRequestForm - Approve or Escalate, never Submit (owner ruling 
     expect(submitAndApprove).not.toHaveBeenCalled();
   });
 
+  it('A: a line message leaves as soon as its problem is fixed, without another click', async () => {
+    render(<PriceTagRequestForm />);
+    await selectOption('Customer', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^approve$/i }));
+    expect(await screen.findByText('Pick a set or a product for this line.')).toBeInTheDocument();
+
+    await selectOption('Search a set or product...', 'product:prod-uuid-1');
+
+    await waitFor(() => expect(screen.queryByText('Pick a set or a product for this line.')).toBeNull());
+  });
+
   it('Escalate does not ask for the facts Approve needs: it is the way out of them', async () => {
     previewReport.missing = ['CBF-1234'];
     render(<PriceTagRequestForm />);

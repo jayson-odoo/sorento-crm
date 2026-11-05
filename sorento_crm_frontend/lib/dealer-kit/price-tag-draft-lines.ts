@@ -249,10 +249,13 @@ export function insertComboRow(line: DraftLine, id: string): DraftPart[] {
  */
 export function packageWarningFor(line: DraftLine): string | null {
   if (line.line_type !== 'product' || !line.product_id) return null;
-  if (!line.combos_loaded || !line.host_guarded) return null;
+  if (!line.combos_loaded) return null;
   if (!line.combo_id) {
+    // Whether a package is expected at all is the server's call (guarded families only).
+    if (!line.host_guarded) return null;
     return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
   }
+  // A chosen package says what it holds, on any host: removing a part of it is always worth a note.
   const combo = comboOfLine(line);
   if (!combo) return null;
   const missing: string[] = [];
@@ -462,6 +465,8 @@ export function lineTemplateState(line: DraftLine): LineTemplateState {
 }
 
 /** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
+export const EMPTY_LINE = 'Pick a set or a product for this line.';
+
 export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 
 export function lineNeedsTemplate(line: DraftLine): boolean {
@@ -603,4 +608,26 @@ export function linePickProblems(
   priceMode: PriceMode = 'list',
 ): string[] {
   return lines.flatMap((line) => lineProblemsOf(line, pricingByKey[line.key], priceMode));
+}
+
+/** The messages the Approve click writes on a line; a server refusal is none of these. */
+function isCheckMessage(message: string): boolean {
+  return (
+    message === EMPTY_LINE ||
+    message === MISSING_TAG_TEMPLATE ||
+    message === 'No tag template yet.' ||
+    /^No combo (list|selling) price\.$/.test(message) ||
+    / is discontinued\.$/.test(message) ||
+    /: pick \d+ more\.$/.test(message)
+  );
+}
+
+/**
+ * A line's click-time message with the facts that no longer hold taken out (A): `holding` is what
+ * is wrong with the line right now. It only removes; a new problem waits for the next click.
+ */
+export function pruneGuardError(guardError: string | null, holding: string[]): string | null {
+  if (!guardError) return null;
+  const kept = guardError.split('\n').filter((message) => !isCheckMessage(message) || holding.includes(message));
+  return kept.length > 0 ? kept.join('\n') : null;
 }

@@ -550,11 +550,13 @@ function LineRow({
         </div>
       )}
       {line.promotion_id ? (
-        <div
-          className="text-sm font-medium whitespace-nowrap"
-          title={partsAtListTitle(line, pricing)}
-        >
-          {formatRM(pricing?.sell_price)}
+        <div>
+          <div
+            className="text-sm font-medium whitespace-nowrap"
+            title={partsAtListTitle(line, pricing)}
+          >
+            {formatRM(pricing?.sell_price)}
+          </div>
           {pricing?.sell_price == null ? (
             <div className="text-2xs font-normal text-muted-foreground">
               Clear the promotion to type a price
