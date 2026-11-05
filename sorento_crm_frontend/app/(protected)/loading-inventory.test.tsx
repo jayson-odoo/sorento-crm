@@ -310,7 +310,9 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 168.
     // CLIENT-ERROR-REPORT (#2165): `system-management/client-errors` is a new DataGrid list
     // segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 169.
-    expect(requiredSegmentNames.length).toBe(169);
+    // AI-PROMPTS-STD-VIEWS: `system-management/ai-assistant/prompts` is now a DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 170.
+    expect(requiredSegmentNames.length).toBe(170);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

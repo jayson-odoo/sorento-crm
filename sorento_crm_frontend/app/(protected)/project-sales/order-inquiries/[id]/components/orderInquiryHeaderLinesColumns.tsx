@@ -31,7 +31,6 @@ import {
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import {
   formatInquiryQty,
-  isInquiryBuyRow,
   raisedKindLabel,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -571,12 +570,14 @@ function quantityColumn({
   };
 }
 
-/** The line's reserve figure: summed over its live buy rows, the same fold Taken and
- * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
+/** The line's reserve figure: summed over its live rows of ANY verb (OI-RESERVE-ANY-ROW, owner
+ * 5 Nov 2026: a DELAY or ADVANCE row is reservable too), the rows Taken counts reserve on
+ * (`orderInquiryLineFold.ts`), so the columns beside it agree. */
 function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | 'reserved_qty') {
-  const total = lineOf(row)
-    .liveRows.filter((live) => isInquiryBuyRow(live.verb))
-    .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
+  const total = lineOf(row).liveRows.reduce(
+    (sum, live) => sum + (Number(live[field] ?? '0') || 0),
+    0,
+  );
   return String(total);
 }
 
@@ -749,7 +750,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
       // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
       // Requested, the shared columns the Lines list uses, summed over the line's live
-      // buy rows.
+      // rows (any verb, OI-RESERVE-ANY-ROW).
       ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
       ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
         requestedOf: (row) => lineReserveQty(row, 'asked_reserve_qty'),
