@@ -133,6 +133,11 @@ export interface ReaderPageProps {
   live: boolean;
   /** Bumped when the host replaced this page's layers from the server, so the canvas starts over. */
   epoch: number;
+  /**
+   * The template versions the sheet prints from. The previews are cached per signature, so the
+   * payload always belongs to it; when it changes the canvas starts over from that payload.
+   */
+  templateSig: string;
   /** The layer selected on THIS page, if any. */
   selectedLayerId: string | null;
   /** The host's local copy of this page's layers, if it has one. */
@@ -206,6 +211,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   sheetIndex,
   live,
   epoch,
+  templateSig,
   selectedLayerId,
   draftLayers,
   externalLayers,
@@ -265,7 +271,7 @@ export const ReaderPage = React.memo(function ReaderPage({
         : null,
     // The document is a starting point: only a new payload arriving or a restart replaces it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [payload === null, epoch, pageMm.width_mm, pageMm.height_mm],
+    [payload === null, epoch, templateSig, pageMm.width_mm, pageMm.height_mm],
   );
   const bound = React.useMemo<TagBindingData | null>(() => {
     const row = payload?.resolvedData?.[page.key] as unknown as
@@ -457,7 +463,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                 data-testid={`spec-page-live-${page.key}`}
               >
                 <TagCanvasEditor
-                  key={epoch}
+                  key={`${epoch}:${templateSig}`}
                   doc={liveDoc}
                   onChange={NOOP}
                   onLayersChange={onLayersChange}
@@ -505,6 +511,8 @@ export const ReaderPage = React.memo(function ReaderPage({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') finish();
                     if (e.key === 'Escape') {
+                      // Handled here: full screen must not also take this Escape as "exit".
+                      e.preventDefault();
                       cancelled.current = true;
                       setEditing(null);
                     }
