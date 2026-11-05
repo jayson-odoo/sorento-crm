@@ -136,3 +136,40 @@ Note on 4 (pinned contract): there is no cancel op today, so Cancel in AutoCount
   Red tests: `sorento_crm_backend/tests/test_project_autocount_qt_payload.py` (rate-only skipped, set exploded codes + qty x set qty,
   mixed quotation, only-rate-only quotation sends nothing). The builder is pure: `build_quotation_lines(lines, *, location)` in
   `app/services/project_autocount_write_service.py`.
+
+## Phase 2 contract (build, 5 Nov; mock v2 approved 08:43 MYT)
+
+### Data (migration `acqs_0001_project_ac_write`, down_revision `oiod_0002_pending_restore`, idempotent DDL)
+- `system_settings.project_autocount_write_enabled` BOOLEAN NOT NULL DEFAULT false (U1). Model, `SystemSettingUpdate`, GET dict, `AppConfigResponse`, NOT-NULL null->False loop (U4).
+- `projects.sales_orders`: `autocount_doc_key` VARCHAR(80), `autocount_last_modified` VARCHAR(64) (raw string from SS `document`).
+- `projects.quotation_documents`: `autocount_doc_no` VARCHAR(80), `autocount_doc_key` VARCHAR(80), `autocount_last_modified` VARCHAR(64), `autocount_issue_id` UUID (the accepted issue last sent).
+- Permission `projects.autocount.write` "Send quotations and sales orders to AutoCount", granted to superadmin + admin (pol_0001 pattern) and in `permission_registry.py` (U18).
+
+### Client (`foundryx_autocount_client.py`)
+`write_capabilities(company_code)` and `write(path, body, *, idempotency_key)` copied verbatim from #2168, plus `patch(path, body, *, idempotency_key)` with the same answer rule (a body with `outcome` is returned as-is for any status; anything else goes through `_parse`; transport error -> FoundryxPullError UNREACHABLE).
+
+### Service `app/services/project_autocount_write_service.py`
+- `build_quotation_lines(lines, *, location)` pure, R6 (tests already red: `tests/test_project_autocount_qt_payload.py`).
+- `build_sales_order_body(db, order)` -> `{companyCode, header{...}, lines[...]}` per U6. Missing debtor code -> AppException 422 `ac_missing_debtor` "No debtor code on <customer name>."; a line with no location after `derived_stock_location` -> 422 `ac_missing_location` "No location on line <n>." (U7).
+- `ProjectAutocountWriteService(db, client=None)` methods: `capabilities(company_id)`, `create_sales_order(pso_id, actor)`, `update_sales_order(amendment_id, actor)`, `cancel_sales_order(pso_id, actor)`, `send_quotation(document_id, actor)` (create when no `autocount_doc_key`, else update), `cancel_quotation(document_id, actor)`.
+- Capability shape `{"sales_orders": {op: {enabled, reason}}, "quotations": {...}}`, ops `create_doc, edit_doc, add_line, delete_line, cancel_doc`. Reasons: VENDOR_UNSUPPORTED (and any unknown) "Waiting for AutoCount"; WRITE_DISABLED / WRITE_NOT_ALLOWED / WRITE_COMPANY_NOT_TEST "Changes to AutoCount are switched off here"; SS unreachable -> every op "Could not reach AutoCount". companyCode = `companies.code` of the record's `company_id`, never from the request (U19).
+- Idempotency-Key: `crm-pso-{pso_id}-create`, `crm-amd-{amendment_id}-update`, `crm-qt-{document_id}-{issue_id}-create|update`, `crm-pso-{pso_id}-cancel`, `crm-qt-{document_id}-cancel`.
+- Result: `{outcome, message, doc_no, lines[{line_no, item_code, description, qty, unit_price, location, delivery_date}], warnings[], skipped[], exploded[], waiting[]}`. `lines` from `document.Details` (AutoCount field names ItemCode, Description, Qty, UnitPrice, Location, DeliveryDate). Only `outcome == done` writes to the CRM (`autocount_doc_no`, `autocount_doc_key`, `autocount_last_modified` = `document.LastModified`, QT also `autocount_issue_id`) (U8, U9).
+- Update SO (U10-U13): rows of the published amendment's AutoCount change list. QTY_CHANGE -> PATCH line qty; ADVANCE / DELAY -> PATCH line deliveryDate; ADD_LINE -> POST lines; any other verb -> `waiting` (no call) unless the feed enables delete_line / cancel_doc. PATCH body `{companyCode, header{docDate}, expectedLastModified, lines[{dtlKey, ...}]}`; dtlKey = last `:` segment of the core SO line's `source_ref`. DOC_STALE -> message "Changed in AutoCount since dd/mm/yyyy, open Compare first." (date from the stored last-modified).
+- Cancel (U14): reads capabilities; `cancel_doc` off -> 409 `ac_waiting` "Waiting for AutoCount" with no write call.
+
+### Routes (`app/api/v1/projects/project_autocount_write.py`, `projects.autocount.write`)
+Check order: permission -> switch (403 `ac_write_switched_off` "AutoCount quotations and sales orders from Project sales are switched off in Settings.", no SS call) -> record in the user's company (404) -> eligibility (409) -> SS.
+- `GET  /api/v1/project-sales/autocount-write/capabilities` -> `{enabled, sales_orders, quotations}`; switch off -> `enabled: false`, op maps empty, no SS call.
+- `POST /api/v1/project-sales/sales-orders/{pso_id}/autocount` (create; eligible: status published|amended, `can_export`, no `autocount_doc_no`).
+- `POST /api/v1/project-sales/sales-orders/amendments/{amendment_id}/autocount` (update; amendment published, order has `autocount_doc_key`).
+- `POST /api/v1/project-sales/sales-orders/{pso_id}/autocount/cancel`.
+- `POST /api/v1/project-sales/quotation-documents/{document_id}/autocount` (kind quotation; latest issue `accepted_at` set, else 409 "The customer has not accepted this quotation yet."; nothing new to send -> 409 "Already in AutoCount.").
+- `POST /api/v1/project-sales/quotation-documents/{document_id}/autocount/cancel`.
+- Row/detail payloads gain `autocount_doc_key` presence only as `in_autocount: bool` (no keys in the UI).
+
+### Frontend
+`settings` switch row beside the others; `app/models/system.ts` field; `_shared/services/projectAutocountWriteService.ts` + `_shared/hooks/useProjectAutocountWrite.ts`; `components/AutocountWriteDialog.tsx` + `lib/autocountWriteWording.ts`; worksheet button (after Download CSV); `AmendmentAutocountChangeList` "AutoCount" column + "Update in AutoCount (N)"; `SalesOrdersPanel` Decide > Cancel in AutoCount; `QuotationDocumentPageHeader` Create / Update / Decide. Each renders only when app-config switch on AND permission held; greyed with the capability reason otherwise.
+
+### Assumed, to confirm on the hand-test SS (8114)
+PATCH body field names (`lines[].dtlKey`, `expectedLastModified`) and `document.LastModified` / `document.Details[]` key casing. The tests pin the CRM side; a mismatch is a one-line mapping fix.
