@@ -8,4 +8,4 @@ Owner feedback, 5 Nov 2026: description formatting close to the printed flyer; L
 (tie one template to LP or SP; a product/combo links one or more of each); designer picture uses the existing
 preview function.
 
-Card: `CARD-pricetag-combo-format-05nov.md` (to follow).
+Card: `CARD-pricetag-combo-format-05nov.md` (posted as crew-ask, 5 Nov). Mock: `pricetag-combo-format-mock.html` (to follow).
