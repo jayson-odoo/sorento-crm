@@ -1,6 +1,7 @@
 /**
- * TagTemplatesList - delete, one row or a selection, as a deferred action
- * (PLAN-price-tag-feedback-r2.md D26, S11; UAC AC-S11-1).
+ * TagTemplatesList - delete a selection as a deferred action
+ * (PLAN-price-tag-feedback-r2.md D26, S11; UAC AC-S11-1), and delete one row
+ * behind a confirm (TAG-TEMPLATE-DELETE-CONFIRM, owner 5 Nov).
  *
  * Mocked at the SERVICE boundary (`pendingActionService`) rather than at the hook,
  * so the thing under test is what the list actually does with the grace window:
