@@ -71,17 +71,16 @@ Edge cases: ambiguous name with no context (asks once); unknown basis (asks, inv
 `sales_orders.sales_report` or with a narrower company/brand scope gets only their scope (tool refuses, agent says
 it has no access, no figures); unpaid without billing slug refused; switch OFF = today's behaviour unchanged.
 
-## Questions for the owner (crew-ask)
+## Questions for the owner (crew-ask on PR #2201, same numbering)
 
-1. Switch scope: one global setting covering panel + WhatsApp, or panel-only first? Rec: one global setting, panel
-   only in this lane (WhatsApp stays parser even when ON) until panel evals pass.
-2. Old parser path when the switch is OFF: stays as is? Rec: yes, untouched; when ON and the agent fails, no fallback
-   (the router rule: after the agent is chosen it never falls back).
-3. T3 "clear all" with nothing else: ask or show company-wide total? Rec: ask one line (period + what to show), since
-   basis and period are then unknown.
-4. Bare "Sorento" after a clear: company or brand? Rec: company (the held company before the clear decides it).
-5. Cost cap per turn: Rec: reuse the agent's existing budgets (`loop.budgets_from_settings`) and the daily turn cap;
-   eval run reports USD per run; no new cap.
+1. Switch scope: (a) panel + WhatsApp now, (b) one setting, panel only this lane. Rec (b).
+2. Switch home: (a) `system_settings` column, (b) per contact `chatbot_agent_enabled`. Rec (a).
+3. OFF = parser untouched; ON = no parser fallback once the agent is chosen. Rec yes to both.
+4. T3 "clear all" alone: (a) ask period + what to show, (b) company-wide total this month. Rec (a).
+5. Cost: (a) existing agent budgets + daily turn cap, USD per eval run reported, (b) new per-turn cap. Rec (a).
+
+Working assumption (not asked; the card states it): a bare "Sorento" right after a clear reads as the company that
+was held before the clear; with no context at all it asks once company or brand.
 
 ## Steps after the answers
 
