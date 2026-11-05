@@ -1,4 +1,5 @@
 import type { EmailBlock, EmailBlockType, EmailTemplate } from '../types/emailTemplate.types';
+import { randomId } from '@/lib/id';
 
 /** Human labels for the "Add block" menu and the read-only summary rows (AC-EM040/042). */
 export const BLOCK_TYPE_LABELS: Record<EmailBlockType, string> = {
@@ -23,16 +24,10 @@ export const BLOCK_TYPES: EmailBlockType[] = [
   'footer',
 ];
 
-let counter = 0;
-
 /** A client-side id for React keys / reorder identity - the backend accepts
  * whatever it is handed (Block document contract, PLAN-email-layout-28sep.md). */
 export function nextBlockId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  counter += 1;
-  return `block-${Date.now()}-${counter}`;
+  return randomId();
 }
 
 export function defaultBlockFor(type: EmailBlockType, id: string): EmailBlock {

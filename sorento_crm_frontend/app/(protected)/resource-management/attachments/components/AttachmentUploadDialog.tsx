@@ -33,6 +33,7 @@ import {
 } from '@/app/(protected)/master-data-management/products/hooks/useFieldLinkageSchema';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { useUploadManager } from '@/components/upload-activity';
+import { randomId } from '@/lib/id';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -268,10 +269,7 @@ export default function AttachmentUploadDialog({
 
     // One UUID per multi-file submit so the BE notification helpers can coalesce
     // the per-attachment n8n callbacks into a single email (see attachment_notification_helper).
-    const uploadBatchId =
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const uploadBatchId = randomId();
 
     // Snapshot dialog-level state into a closure so the optimistic
     // uploader survives modal close + state resets cleanly.

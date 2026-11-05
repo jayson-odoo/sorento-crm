@@ -4,15 +4,13 @@ import { useEffect, useRef } from 'react';
 import { getSession } from 'next-auth/react';
 import { recordQuotationView } from '../services/quotationSignService';
 import { localStore } from '@/lib/storage';
+import { randomId } from '@/lib/id';
 
 export const VISITOR_KEY = 'sorento.quotationSign.visitor';
 
 /** A random id for this browser, kept so the backend can apply its 30-minute rule. */
 export function visitorId(): string {
-  const fresh = () =>
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const fresh = randomId;
   try {
     const kept = localStore.getItem(VISITOR_KEY);
     if (kept && kept.length >= 8 && kept.length <= 128) return kept;
