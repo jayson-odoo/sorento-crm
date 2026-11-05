@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarRange,
   CircleDollarSign,
+  Columns3,
   Info,
   LoaderCircleIcon,
   Plus,
@@ -15,10 +16,14 @@ import {
   Trash2,
   UsersRound,
 } from 'lucide-react';
+import type { ColumnDef, Table } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +31,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { RecordAction } from '@/components/common/recordActions';
 import {
@@ -68,6 +74,7 @@ import type {
   Rounding,
   TargetAccount,
   ThresholdUnit,
+  TierAdditional,
   TierRateEntry,
   SalesTargetCreatePayload,
   SalesTargetDetail,
@@ -552,6 +559,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   });
   // Set once Save found a bad number: each field's sentence then follows its value live.
   const [showErrors, setShowErrors] = useState(false);
+  const [lightboxPeriod, setLightboxPeriod] = useState<TargetPeriod | null>(null);
 
   // Every name a picked category, product or brand is known by (F5).
   const labels = useRef(new Map<string, string>());
@@ -1081,6 +1089,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                 ) : (
                   <div className="rounded-lg border border-dashed py-8 text-center text-sm font-medium">No periods yet</div>
                 )
+              ) : target && !editing ? (
+                <PeriodsGrid target={target} today={today} onOpenTiers={setLightboxPeriod} />
               ) : target ? (
                 <PeriodsTable
                   unit={unit}
@@ -1210,6 +1220,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
             <Card>
               <section aria-label="Accounts" className="flex flex-col gap-3 p-5">
                 <DealerAccounts
+                  onOpenTiers={setLightboxPeriod}
                   target={target}
                   draft={draft}
                   labels={labels.current}
@@ -1247,6 +1258,14 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
           </Card>
         </TabsContent>
       </Tabs>
+      {target ? (
+        <TierLightbox
+          target={target}
+          period={lightboxPeriod}
+          accounts={accountColumns(target, null, labels.current)}
+          onClose={() => setLightboxPeriod(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1323,7 +1342,6 @@ function paidIn(p: SalesTargetDetail['periods'][number]): number | null {
   return p.commission_earned + (p.bonus_earned ?? 0);
 }
 
-/** `6.00%`, or `A/C I 2.00%, A/C III 3.00%`; RM per unit on a quantity target. */
 /** `+ 1.00%`, `+ RM 1.00/unit` or `+ RM 500.00`: a tier's Additional; `''` when it has none. */
 export function additionalText(add: TierAdditional | null | undefined, metric: TargetMetric): string {
   if (!add || !add.value) return '';
@@ -1332,12 +1350,13 @@ export function additionalText(add: TierAdditional | null | undefined, metric: T
 }
 
 /** The reached tier's rate(s) and its Additional: `A/C I 6.00% + 1.00%`. */
-export function reachedRateText(p: SalesTargetPeriod, metric: TargetMetric): string {
+export function reachedRateText(p: TargetPeriod, metric: TargetMetric): string {
   const rates = rateText(p.tier_rates, metric);
   const add = additionalText(p.tier_additional, metric);
   return rates && add ? `${rates} ${add}` : rates;
 }
 
+/** `6.00%`, or `A/C I 2.00%, A/C III 3.00%`; RM per unit on a quantity target. */
 export function rateText(entries: TierRateEntry[] | undefined, metric: TargetMetric): string {
   return (entries ?? [])
     .filter((e) => e.rate !== null && e.rate !== undefined)
@@ -1882,7 +1901,9 @@ function DealerAccounts({
   labels,
   fetchCustomers,
   set,
+  onOpenTiers,
 }: {
+  onOpenTiers: (p: TargetPeriod) => void;
   target: SalesTargetDetail | undefined;
   draft: Draft | null;
   labels: Map<string, string>;
@@ -1925,69 +1946,8 @@ function DealerAccounts({
           </table>
         </div>
       ) : accounts.length && target ? (
-        <div className="overflow-x-auto rounded-lg border">
-          <table aria-label="Counted accounts" className="w-full min-w-[48rem] text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 text-start font-medium">Period</th>
-                <th className="px-3 py-2 text-start font-medium">Code</th>
-                <th className="px-3 py-2 text-start font-medium">Customer</th>
-                <th className="px-3 py-2 text-start font-medium">Account</th>
-                <th className="px-3 py-2 text-end font-medium">
-                  {target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`}
-                </th>
-                {commission ? <th className="px-3 py-2 text-end font-medium">Commission (RM)</th> : null}
-                {commission ? <th className="px-3 py-2 text-start font-medium">Pays to</th> : null}
-              </tr>
-            </thead>
-            {periods.map((p) => {
-              const sales = new Map((p.accounts ?? []).map((a) => [a.customer_id, a.achieved_value]));
-              const paid = paidIn(p);
-              return (
-                <tbody key={p.id} className={`divide-y border-b ${p.is_current ? 'bg-primary/5' : ''}`}>
-                  {accounts.map((a, i) => (
-                    <tr key={a.customer_id}>
-                      <td className="whitespace-nowrap px-3 py-2">
-                        {i === 0 ? (
-                          <span className="inline-flex items-center gap-2">
-                            {periodRange(p.period_start, p.period_end)}
-                            {p.is_current ? (
-                              <Badge variant="primary" appearance="light" size="sm">
-                                Current
-                              </Badge>
-                            ) : null}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">{a.code}</td>
-                      <td className="max-w-[16rem] truncate px-3 py-2" title={a.name}>
-                        {a.name}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2">{a.label}</td>
-                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                        {formatMoney(sales.get(a.customer_id) ?? 0)}
-                      </td>
-                      {commission ? <td colSpan={2} className="px-3 py-2" aria-hidden="true" /> : null}
-                    </tr>
-                  ))}
-                  <tr className="bg-muted/40 font-medium">
-                    <td colSpan={4} className="whitespace-nowrap px-3 py-2">
-                      {p.is_current ? 'Period total (so far)' : 'Period total'}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(p.achieved_value)}</td>
-                    {commission ? (
-                      <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatMoney(paid)}</td>
-                    ) : null}
-                    {commission ? (
-                      <td className="whitespace-nowrap px-3 py-2" title={paid ? payoutText(target) : undefined}>
-                        {paid ? payoutShort(target) : '-'}
-                      </td>
-                    ) : null}
-                  </tr>
-                </tbody>
-              );
-            })}
-          </table>
+        <div role="group" aria-label="Counted accounts">
+          <AccountsGrid target={target} accounts={accounts} periods={periods} onOpenTiers={onOpenTiers} />
         </div>
       ) : (
         <div className="flex w-full flex-col items-center gap-1 rounded-lg border border-dashed py-8 text-center">
@@ -2091,56 +2051,17 @@ function CommissionTiers({
           <Field label="Round to">{ROUNDING_LABEL[target?.rounding ?? 'sen']}</Field>
           <Field label="Tiers">{perPeriod ? 'Own tiers per period' : 'Same every period'}</Field>
         </div>
-        <div className="overflow-x-auto rounded-lg border">
-          <table aria-label="Commission tiers" className="w-full text-sm">
-            <thead className="bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                {perPeriod ? <th className="px-3 py-2 text-start font-medium">Period</th> : null}
-                <th className="px-3 py-2 text-start font-medium">{`From (${THRESHOLD_LABEL[unit]})`}</th>
-                {dealer ? (
-                  accounts.map((a) => (
-                    <th key={a.id} className="px-3 py-2 text-end font-medium">{`${a.label} rate`}</th>
-                  ))
-                ) : (
-                  <th className="px-3 py-2 text-end font-medium">{`Rate (${rateUnit})`}</th>
-                )}
-                <th className="px-3 py-2 text-end font-medium">Additional</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {tiers.map((t, i) => (
-                <tr key={`${t.period_start ?? ''}-${i}`}>
-                  {perPeriod ? (
-                    <td className="whitespace-nowrap px-3 py-2">{periodLabel(t.period_start ?? '')}</td>
-                  ) : null}
-                  <td className="whitespace-nowrap px-3 py-2">
-                    {t.is_additional ? '+ Additional from ' : ''}
-                    {unit === 'pct' ? `${formatFigure(t.from_pct ?? null)}%` : formatFigure(t.threshold ?? null)}
-                  </td>
-                  {dealer ? (
-                    accounts.map((a) => (
-                      <td key={a.id} className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                        {rateOf(t, a.id)}
-                      </td>
-                    ))
-                  ) : (
-                    <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(t.rate)}</td>
-                  )}
-                  <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
-                    {additionalText(
-                      t.additional_rate
-                        ? { kind: 'pct', value: t.additional_rate }
-                        : t.bonus_amount
-                          ? { kind: 'amount', value: t.bonus_amount }
-                          : null,
-                      target?.metric ?? 'amount',
-                    ) || '-'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {target ? (
+          <div role="group" aria-label="Commission tiers">
+            <TiersGrid
+              target={target}
+              rows={tierRows(target, tiers)}
+              accounts={accounts}
+              listingKey="sales.targets.view::tiers"
+              periodFilter
+            />
+          </div>
+        ) : null}
       </>
     );
   }
@@ -2358,5 +2279,580 @@ function CommissionTiers({
       {problem ? <p className="text-sm text-destructive">{problem}</p> : null}
       <div>{addButton}</div>
     </>
+  );
+}
+
+// ----------------------------------------------------------------------------------------
+// The read-mode tables on the standard grid (owner, 5 Nov 11:30): Periods, Accounts and the
+// Commission tiers are `PanelDataGrid` with the Columns chooser, as every other detail tab;
+// a period's Tier reached / Rate opens that period's tiers in a lightbox.
+// ----------------------------------------------------------------------------------------
+
+type TargetPeriod = SalesTargetDetail['periods'][number];
+
+/** The Columns chooser, as the other detail grids mount it (`PODeliveriesPanel`). */
+function ColumnsButton<T>({ table }: { table: Table<T> }) {
+  return (
+    <DataGridColumnVisibility
+      table={table}
+      trigger={
+        <Button variant="outline" size="sm" className="gap-1.5">
+          <Columns3 className="size-4" aria-hidden />
+          Columns
+        </Button>
+      }
+    />
+  );
+}
+
+/** A tier's Additional as the engine reads it: its % first, else its RM (Bonus). */
+function tierAdditional(t: CommissionTier): TierAdditional | null {
+  if (t.additional_rate) return { kind: 'pct', value: t.additional_rate };
+  if (t.bonus_amount) return { kind: 'amount', value: t.bonus_amount };
+  return null;
+}
+
+/** A period's tiers in the engine's order: main tiers by threshold (so position n is "Tier n"),
+ * then any legacy "+ Additional" rows. */
+function periodTiers(target: SalesTargetDetail, periodStart: string): CommissionTier[] {
+  const from = (t: CommissionTier) => (t.from_pct ?? t.threshold ?? 0);
+  const mine = target.tiers.filter((t) => !target.tiers_per_period || t.period_start === periodStart);
+  return [
+    ...mine.filter((t) => !t.is_additional).sort((a, b) => from(a) - from(b)),
+    ...mine.filter((t) => t.is_additional).sort((a, b) => from(a) - from(b)),
+  ];
+}
+
+interface TierRow {
+  key: string;
+  tier: CommissionTier;
+  /** 1-based among its period's main tiers; null on a legacy "+ Additional" row. */
+  number: number | null;
+}
+
+function tierRows(target: SalesTargetDetail, tiers: CommissionTier[]): TierRow[] {
+  const counter = new Map<string, number>();
+  return tiers.map((tier, i) => {
+    const period = target.tiers_per_period ? (tier.period_start ?? '') : '';
+    let number: number | null = null;
+    if (!tier.is_additional) {
+      number = (counter.get(period) ?? 0) + 1;
+      counter.set(period, number);
+    }
+    return { key: `${period}-${i}`, tier, number };
+  });
+}
+
+/** The tiers as a grid: the Commission tab's read mode, and the lightbox (one period, the
+ * reached tier highlighted). */
+function TiersGrid({
+  target,
+  rows,
+  accounts,
+  listingKey,
+  reached = null,
+  periodFilter = false,
+}: {
+  target: SalesTargetDetail;
+  rows: TierRow[];
+  accounts: { id: string; label: string }[];
+  listingKey: string | null;
+  /** The lightbox: the main tier number to highlight. */
+  reached?: number | null;
+  periodFilter?: boolean;
+}) {
+  const unit = target.threshold_unit ?? 'pct';
+  const perPeriod = !!target.tiers_per_period;
+  const dealer = target.subject_kind === 'dealer';
+  const legacy = rows.some((r) => r.tier.is_additional);
+  const rateUnit = target.metric === 'quantity' ? 'RM per unit' : '% of RM';
+  const [periods, setPeriods] = useState<string[]>([]);
+  const periodOptions = target.periods.map((p) => ({ value: p.period_start, label: periodRange(p.period_start, p.period_end) }));
+  const labelOf = (start: string | null | undefined) =>
+    periodOptions.find((o) => o.value === start)?.label ?? (start ? shortDate(start) : '-');
+  const shown = periods.length ? rows.filter((r) => periods.includes(r.tier.period_start ?? '')) : rows;
+  const columns = useMemo<ColumnDef<TierRow>[]>(() => {
+    const out: ColumnDef<TierRow>[] = [];
+    if (perPeriod) {
+      out.push({
+        id: 'period',
+        accessorFn: (r) => r.tier.period_start ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => <span className="truncate">{labelOf(row.original.tier.period_start)}</span>,
+        size: 190,
+        meta: { headerTitle: 'Period' },
+      });
+    }
+    out.push({
+      id: 'tier',
+      accessorFn: (r) => r.number ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title={legacy ? 'Type' : 'Tier'} column={column} />,
+      cell: ({ row }) => (row.original.number ? `Tier ${row.original.number}` : '+ Additional'),
+      size: 110,
+      meta: { headerTitle: legacy ? 'Type' : 'Tier' },
+    });
+    out.push({
+      id: 'from',
+      accessorFn: (r) => r.tier.from_pct ?? r.tier.threshold ?? 0,
+      header: ({ column }) => <DataGridColumnHeader title={`From (${THRESHOLD_LABEL[unit]})`} column={column} />,
+      cell: ({ row }) => {
+        const t = row.original.tier;
+        return unit === 'pct' ? `${formatFigure(t.from_pct ?? null)}%` : formatFigure(t.threshold ?? null);
+      },
+      size: 130,
+      meta: { headerTitle: `From (${THRESHOLD_LABEL[unit]})`, cellClassName: 'tabular-nums' },
+    });
+    if (dealer) {
+      for (const a of accounts) {
+        out.push({
+          id: `rate-${a.id}`,
+          accessorFn: (r) => r.tier.account_rates?.find((x) => x.customer_id === a.id)?.rate ?? r.tier.rate ?? null,
+          header: ({ column }) => <DataGridColumnHeader title={`${a.label} rate`} column={column} />,
+          cell: ({ row }) => {
+            const t = row.original.tier;
+            if (!t.account_rates) return formatFigure(t.rate);
+            const r = t.account_rates.find((x) => x.customer_id === a.id);
+            return r ? formatFigure(r.rate) : '-';
+          },
+          size: 120,
+          meta: { headerTitle: `${a.label} rate`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        });
+      }
+    } else {
+      out.push({
+        id: 'rate',
+        accessorFn: (r) => r.tier.rate ?? null,
+        header: ({ column }) => <DataGridColumnHeader title={`Rate (${rateUnit})`} column={column} />,
+        cell: ({ row }) => formatFigure(row.original.tier.rate),
+        size: 130,
+        meta: { headerTitle: `Rate (${rateUnit})`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    out.push({
+      id: 'additional',
+      accessorFn: (r) => r.tier.additional_rate ?? r.tier.bonus_amount ?? null,
+      header: ({ column }) => <DataGridColumnHeader title="Additional" column={column} />,
+      cell: ({ row }) => additionalText(tierAdditional(row.original.tier), target.metric) || '-',
+      size: 130,
+      meta: { headerTitle: 'Additional', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, accounts, legacy, perPeriod, dealer, unit, rateUnit]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full flex-wrap items-center gap-2">
+          {periodFilter && perPeriod ? (
+            <div className="w-full sm:w-72">
+              <span id="target-tier-period-filter-label" className="sr-only">
+                Period
+              </span>
+              <SearchableMultiSelect
+                id="target-tier-period-filter"
+                value={periods}
+                onChange={setPeriods}
+                options={periodOptions}
+                placeholder="Every period"
+                clearable
+              />
+            </div>
+          ) : null}
+          <div className="sm:ms-auto">
+            <ColumnsButton table={table} />
+          </div>
+        </div>
+      )}
+      columns={columns}
+      rows={shown}
+      getRowId={(r) => r.key}
+      listingKey={listingKey}
+      emptyTitle="No tiers in this period"
+      paginate={false}
+      rowClassName={(r) => (reached !== null && r.number === reached ? 'bg-primary/10 font-medium' : undefined)}
+      rowAttributes={(r) => ({ 'data-reached': reached !== null && r.number === reached ? 'true' : undefined })}
+    />
+  );
+}
+
+/** A period's tiers in a lightbox, the reached tier highlighted (owner, 5 Nov 11:30). */
+function TierLightbox({
+  target,
+  period,
+  accounts,
+  onClose,
+}: {
+  target: SalesTargetDetail;
+  period: TargetPeriod | null;
+  accounts: { id: string; label: string }[];
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={!!period} onOpenChange={(open) => (open ? null : onClose())}>
+      <DialogContent className="sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{period ? `Tiers, ${periodRange(period.period_start, period.period_end)}` : 'Tiers'}</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          {period ? (
+            <div className="flex flex-col gap-3">
+              <p className="text-sm">
+                {period.tier_reached
+                  ? `Tier ${period.tier_reached} reached: ${reachedRateText(period, target.metric)}`
+                  : 'No tier reached'}
+              </p>
+              <TiersGrid
+                target={target}
+                rows={tierRows(target, periodTiers(target, period.period_start))}
+                accounts={accounts}
+                listingKey={null}
+                reached={period.tier_reached ?? null}
+              />
+            </div>
+          ) : null}
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A cell that opens the period's tiers. */
+function TierLink({ label, onOpen, title }: { label: string; onOpen: () => void; title?: string }) {
+  return (
+    <button
+      type="button"
+      className="max-w-full truncate text-primary hover:underline"
+      title={title ?? label}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** The Periods tab in read mode. */
+function PeriodsGrid({
+  target,
+  today,
+  onOpenTiers,
+}: {
+  target: SalesTargetDetail;
+  today: string;
+  onOpenTiers: (p: TargetPeriod) => void;
+}) {
+  const isDealer = target.subject_kind === 'dealer';
+  const commission = target.commission_method !== 'none';
+  const points = target.threshold_unit === 'points';
+  const provisional = isDealer && target.basis !== 'invoiced';
+  const figure = target.metric === 'amount' ? formatMoney : formatFigure;
+  const unit = unitOf(target.metric);
+  const sum = (pick: (p: TargetPeriod) => number | null | undefined) =>
+    target.periods.reduce((total, p) => total + (pick(p) ?? 0), 0);
+  const columns = useMemo<ColumnDef<TargetPeriod>[]>(() => {
+    const future = (p: TargetPeriod) => p.period_start > today;
+    const out: ColumnDef<TargetPeriod>[] = [
+      {
+        id: 'period',
+        accessorFn: (p) => p.period_start,
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-2">
+            {periodRange(row.original.period_start, row.original.period_end)}
+            {row.original.is_current ? (
+              <Badge variant="primary" appearance="light" size="sm">
+                Current
+              </Badge>
+            ) : null}
+          </span>
+        ),
+        footer: commission ? () => 'Total' : undefined,
+        size: 240,
+        meta: { headerTitle: 'Period' },
+      },
+      {
+        id: 'target',
+        accessorFn: (p) => p.target_value,
+        header: ({ column }) => <DataGridColumnHeader title={`Target (${unit})`} column={column} />,
+        cell: ({ row }) => figure(row.original.target_value),
+        footer: commission ? () => figure(sum((p) => p.target_value)) : undefined,
+        size: 130,
+        meta: { headerTitle: `Target (${unit})`, cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      },
+      {
+        id: 'achieved',
+        accessorFn: (p) => p.achieved_value,
+        header: ({ column }) => (
+          <DataGridColumnHeader title={provisional ? `Achieved (${PROVISIONAL})` : 'Achieved'} column={column} />
+        ),
+        cell: ({ row }) => (future(row.original) ? '-' : figure(row.original.achieved_value)),
+        footer: commission ? () => figure(sum((p) => p.achieved_value)) : undefined,
+        size: 170,
+        meta: {
+          headerTitle: provisional ? `Achieved (${PROVISIONAL})` : 'Achieved',
+          cellClassName: 'text-end tabular-nums',
+          headerClassName: 'text-end',
+        },
+      },
+      {
+        id: 'pct',
+        accessorFn: (p) => p.achieved_pct,
+        header: ({ column }) => <DataGridColumnHeader title="%" column={column} />,
+        cell: ({ row }) => (future(row.original) ? '-' : formatPct(row.original.achieved_pct)),
+        size: 80,
+        meta: { headerTitle: '%', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      },
+    ];
+    if (points) {
+      out.push({
+        id: 'ratio',
+        accessorFn: (p) => p.point_ratio ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="RM per point" column={column} />,
+        cell: ({ row }) => (row.original.ratio_missing ? 'No ratio' : formatFigure(row.original.point_ratio ?? null)),
+        size: 120,
+        meta: { headerTitle: 'RM per point', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+      });
+    }
+    if (commission) {
+      out.push(
+        {
+          id: 'tier_reached',
+          accessorFn: (p) => p.tier_reached ?? 0,
+          header: ({ column }) => <DataGridColumnHeader title="Tier reached" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            if (future(p)) return '-';
+            return (
+              <TierLink
+                label={p.tier_reached ? `Tier ${p.tier_reached}` : 'None'}
+                title={`Tiers, ${periodRange(p.period_start, p.period_end)}`}
+                onOpen={() => onOpenTiers(p)}
+              />
+            );
+          },
+          size: 120,
+          meta: { headerTitle: 'Tier reached' },
+        },
+        {
+          id: 'rate',
+          accessorFn: (p) => reachedRateText(p, target.metric),
+          header: ({ column }) => <DataGridColumnHeader title="Rate" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            const text = reachedRateText(p, target.metric);
+            if (future(p) || !text) return '-';
+            return <TierLink label={text} onOpen={() => onOpenTiers(p)} />;
+          },
+          size: 180,
+          meta: { headerTitle: 'Rate', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        },
+        {
+          id: 'commission',
+          accessorFn: (p) => paidIn(p),
+          header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
+          cell: ({ row }) => {
+            const p = row.original;
+            const paid = paidIn(p);
+            return (
+              <span>
+                {future(p) || paid === null ? '-' : formatMoney(paid)}
+                {p.replaced ? (
+                  <span className="block text-xs text-muted-foreground">
+                    {`Replaced by ${target.replaced_by?.target_no ?? 'the dealer target'}`}
+                  </span>
+                ) : null}
+              </span>
+            );
+          },
+          footer: () => formatMoney(sum(paidIn)),
+          size: 150,
+          meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        },
+      );
+      if (isDealer) {
+        out.push({
+          id: 'pays_to',
+          accessorFn: (p) => (paidIn(p) ? payoutShort(target) : ''),
+          header: ({ column }) => <DataGridColumnHeader title="Pays to" column={column} />,
+          cell: ({ row }) => {
+            const paid = paidIn(row.original);
+            return <span title={paid ? payoutText(target) : undefined}>{paid ? payoutShort(target) : '-'}</span>;
+          },
+          size: 170,
+          meta: { headerTitle: 'Pays to' },
+        });
+      }
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, today, onOpenTiers]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full justify-end">
+          <ColumnsButton table={table} />
+        </div>
+      )}
+      columns={columns}
+      rows={target.periods}
+      getRowId={(p) => p.id}
+      listingKey="sales.targets.view::periods"
+      emptyTitle="No periods yet"
+      paginate={false}
+      rowClassName={(p) => (p.is_current ? 'bg-primary/5' : undefined)}
+    />
+  );
+}
+
+interface AccountRow {
+  key: string;
+  period: TargetPeriod;
+  /** Null on the period's total row. */
+  account: TargetAccount | null;
+  first: boolean;
+}
+
+/** The Accounts tab in read mode: each counted account's sales per period, then the period's
+ * total with its commission and the account it pays to. */
+function AccountsGrid({
+  target,
+  accounts,
+  periods,
+  onOpenTiers,
+}: {
+  target: SalesTargetDetail;
+  accounts: TargetAccount[];
+  periods: TargetPeriod[];
+  onOpenTiers: (p: TargetPeriod) => void;
+}) {
+  const commission = target.commission_method !== 'none';
+  const rows = useMemo<AccountRow[]>(
+    () =>
+      periods.flatMap((p) => [
+        ...accounts.map((a, i) => ({ key: `${p.id}-${a.customer_id}`, period: p, account: a, first: i === 0 })),
+        { key: `${p.id}-total`, period: p, account: null, first: false },
+      ]),
+    [periods, accounts],
+  );
+  const columns = useMemo<ColumnDef<AccountRow>[]>(() => {
+    const sales = (r: AccountRow) =>
+      r.account
+        ? ((r.period.accounts ?? []).find((a) => a.customer_id === r.account?.customer_id)?.achieved_value ?? 0)
+        : (r.period.achieved_value ?? 0);
+    const out: ColumnDef<AccountRow>[] = [
+      {
+        id: 'period',
+        accessorFn: (r) => r.period.period_start,
+        header: ({ column }) => <DataGridColumnHeader title="Period" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (!r.account) return r.period.is_current ? 'Period total (so far)' : 'Period total';
+          if (!r.first) return null;
+          const label = periodRange(r.period.period_start, r.period.period_end);
+          return (
+            <span className="inline-flex items-center gap-2">
+              {commission ? <TierLink label={label} title={`Tiers, ${label}`} onOpen={() => onOpenTiers(r.period)} /> : label}
+              {r.period.is_current ? (
+                <Badge variant="primary" appearance="light" size="sm">
+                  Current
+                </Badge>
+              ) : null}
+            </span>
+          );
+        },
+        size: 240,
+        meta: { headerTitle: 'Period' },
+      },
+      {
+        id: 'code',
+        accessorFn: (r) => r.account?.code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        cell: ({ row }) => row.original.account?.code ?? '',
+        size: 110,
+        meta: { headerTitle: 'Code' },
+      },
+      {
+        id: 'customer',
+        accessorFn: (r) => r.account?.name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.account?.name}>
+            {row.original.account?.name ?? ''}
+          </span>
+        ),
+        size: 240,
+        meta: { headerTitle: 'Customer' },
+      },
+      {
+        id: 'account',
+        accessorFn: (r) => r.account?.label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Account" column={column} />,
+        cell: ({ row }) => row.original.account?.label ?? '',
+        size: 100,
+        meta: { headerTitle: 'Account' },
+      },
+      {
+        id: 'sales',
+        accessorFn: sales,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title={target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => formatMoney(sales(row.original)),
+        size: 190,
+        meta: {
+          headerTitle: target.basis === 'invoiced' ? 'Sales (RM)' : `Sales (RM, ${PROVISIONAL})`,
+          cellClassName: 'text-end tabular-nums',
+          headerClassName: 'text-end',
+        },
+      },
+    ];
+    if (commission) {
+      out.push(
+        {
+          id: 'commission',
+          accessorFn: (r) => (r.account ? null : paidIn(r.period)),
+          header: ({ column }) => <DataGridColumnHeader title="Commission (RM)" column={column} />,
+          cell: ({ row }) => (row.original.account ? '' : formatMoney(paidIn(row.original.period))),
+          size: 150,
+          meta: { headerTitle: 'Commission (RM)', cellClassName: 'text-end tabular-nums', headerClassName: 'text-end' },
+        },
+        {
+          id: 'pays_to',
+          accessorFn: (r) => (r.account ? '' : payoutShort(target)),
+          header: ({ column }) => <DataGridColumnHeader title="Pays to" column={column} />,
+          cell: ({ row }) => {
+            if (row.original.account) return '';
+            const paid = paidIn(row.original.period);
+            return <span title={paid ? payoutText(target) : undefined}>{paid ? payoutShort(target) : '-'}</span>;
+          },
+          size: 170,
+          meta: { headerTitle: 'Pays to' },
+        },
+      );
+    }
+    return out;
+  }, [target, commission, onOpenTiers]);
+  return (
+    <PanelDataGrid
+      toolbar={({ table }) => (
+        <div className="flex w-full justify-end">
+          <ColumnsButton table={table} />
+        </div>
+      )}
+      columns={columns}
+      rows={rows}
+      getRowId={(r) => r.key}
+      listingKey="sales.targets.view::accounts"
+      emptyTitle="No periods yet"
+      paginate={false}
+      rowClassName={(r) =>
+        r.account ? (r.period.is_current ? 'bg-primary/5' : undefined) : 'bg-muted/40 font-medium'
+      }
+    />
   );
 }

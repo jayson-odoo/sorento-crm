@@ -13,6 +13,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/sales/targets/t1',
   useRouter: () => router,
@@ -460,7 +464,8 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     openTab('Periods');
     const periods = screen.getByRole('region', { name: 'Periods' });
     expect(within(periods).getByText('Current')).toBeTruthy();
-    expect(within(periods).queryAllByRole('button')).toHaveLength(0);
+    // The standard grid's own controls (Columns, sorting) only: no pencil.
+    expect(within(periods).queryAllByRole('button', { name: /edit|pencil/i })).toHaveLength(0);
     expect(within(periods).queryAllByRole('spinbutton')).toHaveLength(0);
     expect(within(periods).getAllByText('1,000.00')).toHaveLength(3);
   });
@@ -775,7 +780,7 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     render(<TargetRecord id="t1" />);
     expect(tabNames()).toEqual(['Details', 'Periods', 'Accounts', 'Commission']);
     openTab('Accounts');
-    const table = screen.getByRole('table', { name: 'Counted accounts' });
+    const table = screen.getByRole('group', { name: 'Counted accounts' });
     expect(within(table).getByText('300-A0124')).toBeTruthy();
     expect(within(table).getByText('A/C III')).toBeTruthy();
     expect(within(table).getByText('70,000.00')).toBeTruthy();
@@ -845,7 +850,7 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
     expect(screen.getByText('Highest rate on everything')).toBeTruthy();
     expect(screen.getByText('Own tiers per period')).toBeTruthy();
     expect(screen.getByText('Sen (0.01)')).toBeTruthy();
-    const table = screen.getByRole('table', { name: 'Commission tiers' });
+    const table = screen.getByRole('group', { name: 'Commission tiers' });
     expect(within(table).getByText('A/C I rate')).toBeTruthy();
     expect(within(table).getByText('A/C III rate')).toBeTruthy();
     // A/C III has no rate on these tiers: it earns nothing on them (ruling 2).
@@ -955,7 +960,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     openTab('Accounts');
-    const table = screen.getByRole('table', { name: 'Counted accounts' });
+    const table = screen.getByRole('group', { name: 'Counted accounts' });
     expect(within(table).getByText('Sales (RM, sales orders, incl. tax)')).toBeTruthy();
     for (const label of ['01/01/2026 - 31/03/2026', '01/04/2026 - 30/06/2026', '01/07/2026 - 30/09/2026', '01/10/2026 - 31/12/2026']) {
       expect(within(table).getByText(label)).toBeTruthy();
@@ -1061,5 +1066,78 @@ describe('additionalText', () => {
     expect(additionalText({ kind: 'amount', value: 500 }, 'amount')).toBe('+ RM 500.00');
     expect(additionalText({ kind: 'pct', value: 0.5 }, 'quantity')).toBe('+ RM 0.50/unit');
     expect(additionalText(null, 'amount')).toBe('');
+  });
+});
+
+// ----------------------------------------------------------------------------------------
+// Owner 5 Nov 11:30: the standard grid, a Period filter on the tiers, tiers in a lightbox
+// ----------------------------------------------------------------------------------------
+
+describe('TargetRecord: standard grids and the tier lightbox (lane TARGET-TIER-ADDITIONAL)', () => {
+  /** TGT-000009-shaped: Q1 tiers 85,000 / 115,000 / 135,000 at 3 / 4 / 5 %, Q2 other figures. */
+  function bathIdea() {
+    const base = tgt8();
+    const tier = (start: string, threshold: number, rate: number, add: number | null = null) => ({
+      threshold, rate, bonus_amount: null, additional_rate: add, period_start: start,
+    });
+    return {
+      ...base,
+      commission_method: 'retroactive',
+      threshold_unit: 'amount',
+      tiers_per_period: true,
+      periods: [{ ...base.periods[0], tier_reached: 2, tier_rates: [{ label: 'A/C I', rate: 4 }], tier_additional: { kind: 'pct', value: 1 } }, ...base.periods.slice(1)],
+      tiers: [
+        tier('2026-01-01', 85000, 3), tier('2026-01-01', 115000, 4, 1), tier('2026-01-01', 135000, 5),
+        tier('2026-04-01', 90000, 3), tier('2026-04-01', 120000, 4),
+      ],
+    };
+  }
+
+  it('Periods, Accounts and Commission each offer the Columns chooser', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: bathIdea(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    for (const tab of ['Periods', 'Accounts', 'Commission']) {
+      openTab(tab);
+      const panel = screen.getByRole('region', { name: tab });
+      expect(within(panel).getByRole('button', { name: 'Columns' })).toBeTruthy();
+    }
+  });
+
+  it('the Commission Period filter shows only the picked periods’ tiers', () => {
+    hooks.useSalesTarget.mockReturnValue({ data: bathIdea(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Commission');
+    const tiers = screen.getByRole('group', { name: 'Commission tiers' });
+    expect(within(tiers).getByText('90,000')).toBeTruthy();
+    const filter = screen.getByRole('group', { name: 'Period' });
+    fireEvent.click(within(filter).getByLabelText('01/01/2026 - 31/03/2026'));
+    expect(within(tiers).getByText('85,000')).toBeTruthy();
+    expect(within(tiers).getByText('115,000')).toBeTruthy();
+    expect(within(tiers).getByText('135,000')).toBeTruthy();
+    expect(within(tiers).queryByText('90,000')).toBeNull();
+  });
+
+  it('Tier reached on Periods opens that period’s tiers with the reached tier marked', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: bathIdea(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Periods');
+    const q1 = screen.getByText('01/01/2026 - 31/03/2026').closest('tr') as HTMLElement;
+    fireEvent.click(within(q1).getByRole('button', { name: 'Tier 2' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Tiers, 01/01/2026 - 31/03/2026')).toBeTruthy();
+    expect(within(dialog).getByText('Tier 2 reached: A/C I 4.00% + 1.00%')).toBeTruthy();
+    const reached = within(dialog).getByText('115,000').closest('tr') as HTMLElement;
+    expect(reached.getAttribute('data-reached')).toBe('true');
+    expect(within(dialog).queryByText('90,000')).toBeNull();
+  });
+
+  it('a period on the Accounts tab opens the same lightbox', async () => {
+    hooks.useSalesTarget.mockReturnValue({ data: bathIdea(), isLoading: false, isError: false });
+    render(<TargetRecord id="t1" />);
+    openTab('Accounts');
+    const accounts = screen.getByRole('group', { name: 'Counted accounts' });
+    fireEvent.click(within(accounts).getByRole('button', { name: '01/01/2026 - 31/03/2026' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Tiers, 01/01/2026 - 31/03/2026')).toBeTruthy();
   });
 });
