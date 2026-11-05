@@ -136,6 +136,9 @@ class SystemSettingUpdate(BaseModel):
     # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
     # Here, in the GET dict, and in AppConfigResponse below.
     project_autocount_write_enabled: Optional[bool] = None
+    # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
+    # dict, and in AppConfigResponse below.
+    stock_debt_po_link_enabled: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -291,6 +294,9 @@ class AppConfigResponse(BaseModel):
     #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
     #: salesperson who sends holds no `user_management.settings.view`.
     project_autocount_write_enabled: bool = False
+    #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
+    #: purchasing user who links holds no `user_management.settings.view`.
+    stock_debt_po_link_enabled: bool = False
     #: Seconds a destructive action waits before it commits; the quotation column-removal
     #: countdown reads it. Not sensitive.
     deferred_delete_seconds: Optional[int] = None
@@ -484,6 +490,9 @@ def get_settings(
                 "project_autocount_write_enabled": (
                     bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
                 ),
+                "stock_debt_po_link_enabled": (
+                    bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
+                ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -626,6 +635,7 @@ def get_app_config(
             project_autocount_write_enabled=bool(
                 getattr(settings, "project_autocount_write_enabled", False)
             ),
+            stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
             deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
         )
@@ -1237,7 +1247,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     )
 
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
-    for column in ("sample_request_require_project", "project_autocount_write_enabled"):
+    for column in (
+        "sample_request_require_project",
+        "project_autocount_write_enabled",
+        "stock_debt_po_link_enabled",
+    ):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 

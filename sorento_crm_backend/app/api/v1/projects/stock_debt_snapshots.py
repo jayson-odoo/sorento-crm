@@ -8,6 +8,15 @@
     GET  /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/lines
     PUT  /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/decision
     POST /project-sales/stock-debt/snapshots/{id}/export
+    GET  /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link
+    POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/link
+    POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/unlink
+    POST /project-sales/stock-debt/snapshots/{id}/rows/{row_id}/po-link/relink
+    POST /project-sales/stock-debt/po-link/relocate
+    POST /project-sales/stock-debt/po-link/operations/{operation_id}/resume
+
+The PO link routes (AC-LINK-CRM-UI) need `projects.stock_debt.link_po`: they write to AutoCount
+through the Shared Service.
 
 Delete is the deferred action `stock_debt_snapshot.delete` (`app/services/record_actions.py`),
 not a route. Every route needs `projects.stock_debt.view` and is session only (`require_permission`): a snapshot
@@ -28,6 +37,14 @@ from app.schemas.common import MAX_PAGE_LIMIT
 from app.schemas.download import DownloadResponse
 from app.schemas.stock_debt_snapshot import (
     DecisionFilter,
+    PoLinkIn,
+    PoLinkOptions,
+    PoLinkResult,
+    PoLinkResults,
+    PoRelinkIn,
+    PoRelocateIn,
+    PoResumeIn,
+    PoUnlinkIn,
     SnapshotCreate,
     SnapshotDecisionIn,
     SnapshotDetail,
@@ -38,6 +55,7 @@ from app.schemas.stock_debt_snapshot import (
     SnapshotRowList,
 )
 from app.services.error_handler import AppException, handle_internal_error
+from app.services.scm.stock_debt_po_link_service import StockDebtPoLinkService
 from app.services.scm.stock_debt_snapshot_service import StockDebtSnapshotService
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.multi_value import multi_choices
@@ -45,6 +63,7 @@ from app.utils.multi_value import multi_choices
 router = APIRouter()
 
 VIEW = "projects.stock_debt.view"
+LINK_PO = "projects.stock_debt.link_po"
 BASE = "/stock-debt/snapshots"
 
 
@@ -218,3 +237,139 @@ def export_snapshot(
         return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# --------------------------------------------------------------- PO link (AC-LINK-CRM-UI)
+
+PO_LINK = BASE + "/{snapshot_id}/rows/{row_id}/po-link"
+
+
+SWITCHED_OFF = "AutoCount links from Stock Debt are switched off in Settings."
+
+
+def _require_switch(db: Session) -> None:
+    """Owner, 5 Nov: the PO actions stay inert until the switch is on (System Settings)."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    if not bool(getattr(row, "stock_debt_po_link_enabled", False)):
+        raise AppException(status_code=403, message=SWITCHED_OFF)
+
+
+def _guard(exc: Exception):
+    raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(PO_LINK, response_model=PoLinkOptions)
+def po_link_options(
+    snapshot_id: str,
+    row_id: str,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    """What AutoCount can do now, and the open PO lines of the row's product."""
+    validate_uuid_path(snapshot_id, resource="Snapshot")
+    validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
+    try:
+        return StockDebtPoLinkService(db).options(snapshot_id, row_id)
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post(PO_LINK + "/link", response_model=PoLinkResults)
+def po_link_link(
+    snapshot_id: str,
+    row_id: str,
+    payload: PoLinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(snapshot_id, resource="Snapshot")
+    validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
+    try:
+        out = StockDebtPoLinkService(db).link(
+            snapshot_id, row_id, [line.model_dump() for line in payload.lines]
+        )
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post(PO_LINK + "/unlink", response_model=PoLinkResults)
+def po_link_unlink(
+    snapshot_id: str,
+    row_id: str,
+    payload: PoUnlinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(snapshot_id, resource="Snapshot")
+    validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
+    try:
+        out = StockDebtPoLinkService(db).unlink(snapshot_id, row_id, payload.po_line_ids)
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post(PO_LINK + "/relink", response_model=PoLinkResults)
+def po_link_relink(
+    snapshot_id: str,
+    row_id: str,
+    payload: PoRelinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    validate_uuid_path(snapshot_id, resource="Snapshot")
+    validate_uuid_path(row_id, resource="Snapshot row")
+    _require_switch(db)
+    try:
+        out = StockDebtPoLinkService(db).relink(
+            snapshot_id, row_id, [move.model_dump() for move in payload.moves]
+        )
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post("/stock-debt/po-link/relocate", response_model=PoLinkResult)
+def po_link_relocate(
+    payload: PoRelocateIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    """Move a linked PO row to its SO row's location (after `LOCATION_NOT_MOVED`)."""
+    _require_switch(db)
+    try:
+        validate_uuid_path(payload.po_line_id, resource="PO line")
+        out = StockDebtPoLinkService(db).relocate(payload.po_line_id)
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)
+
+
+@router.post("/stock-debt/po-link/operations/{operation_id}/resume", response_model=PoLinkResult)
+def po_link_resume(
+    operation_id: str,
+    payload: PoResumeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    """Ask the Shared Service to re-read AutoCount and finish an operation it stopped."""
+    _require_switch(db)
+    try:
+        validate_uuid_path(payload.po_line_id, resource="PO line")
+        out = StockDebtPoLinkService(db).resume(
+            operation_id, payload.po_line_id, payload.sales_order_line_id
+        )
+        db.commit()
+        return out
+    except Exception as exc:
+        _guard(exc)

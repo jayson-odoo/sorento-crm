@@ -221,6 +221,42 @@ class FoundryxAutocountClient:
             page += 1
         return rows
 
+    # ------------------------------------------------------- write-back (AC-LINK-CRM-UI)
+    # SS PR #191 `57-autocount-write-qtso-contract.md` + plan 55 relocate. A write answers
+    # one JSON shape (`outcome`, `errorCode`, ...) for every status; that answer is
+    # returned as-is so the caller shows what AutoCount said. A flat-body error (auth,
+    # company, parse) has no `outcome` and raises `FoundryxPullError` as every other call.
+
+    def write_capabilities(self, company_code: str) -> dict:
+        """``GET /api/v1/autocount/write-capabilities?companyCode=``."""
+        return self._request(
+            "GET",
+            "/api/v1/autocount/write-capabilities",
+            timeout=_STATUS_TIMEOUT_SECONDS,
+            params={"companyCode": company_code},
+        )
+
+    def write(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
+        """``POST`` one write route (``/po-links``, ``/po-links/unlink``,
+        ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``)."""
+        headers = self._headers()
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        try:
+            with self._client(_WRITE_TIMEOUT_SECONDS) as client:
+                response = client.post(f"/api/v1/autocount/{path}", headers=headers, json=body)
+        except httpx.HTTPError as exc:
+            raise FoundryxPullError(
+                code="UNREACHABLE", message="Could not reach AutoCount.", status=502
+            ) from exc
+        try:
+            answer = response.json()
+        except ValueError:
+            answer = None
+        if isinstance(answer, dict) and answer.get("outcome"):
+            return answer
+        return self._parse(response)
+
     def probe(self) -> tuple[int, Optional[dict]]:
         """``GET`` the nil-snapshot id, RAW - unlike ``_request``/``_parse``, a non-2xx
         status is not converted into ``FoundryxPullError``. The Test action needs the
@@ -247,25 +283,9 @@ class FoundryxAutocountClient:
             body = None
         return response.status_code, body if isinstance(body, dict) else None
 
-    # ------------------------------------------------------- write-back (AC-LINK-CRM-UI, AC-QTSO-CRM)
-    # SS PR #191 `57-autocount-write-qtso-contract.md` + plan 55 relocate. A write answers
-    # one JSON shape (`outcome`, `errorCode`, ...) for every status; that answer is
-    # returned as-is so the caller shows what AutoCount said. A flat-body error (auth,
-    # company, parse) has no `outcome` and raises `FoundryxPullError` as every other call.
-
-    def write_capabilities(self, company_code: str) -> dict:
-        """``GET /api/v1/autocount/write-capabilities?companyCode=``."""
-        return self._request(
-            "GET",
-            "/api/v1/autocount/write-capabilities",
-            timeout=_STATUS_TIMEOUT_SECONDS,
-            params={"companyCode": company_code},
-        )
-
-    def write(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
-        """``POST`` one write route (``/po-links``, ``/po-links/unlink``,
-        ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``)."""
-        return self._send("POST", path, body, idempotency_key)
+    # ------------------------------------------------------- document writes (AC-QTSO-CRM)
+    # Beyond #2168's `write` / `write_capabilities` above: a PATCH with the same answer rule
+    # (a body carrying `outcome` is returned as-is for any status), and a document read.
 
     def patch(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
         """``PATCH`` one document (``documents/{kind}/{docKey}``); same answer rule as ``write``."""

@@ -465,6 +465,12 @@ class SystemSetting(Base):
     project_autocount_write_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-LINK-CRM-UI (owner, 5 Nov): "AutoCount links from Stock Debt". OFF on deploy; the
+    # owner turns it on only after the full AutoCount + Shared Service test. Off, the Stock
+    # Debt drill offers no PO actions and every po-link route answers 403.
+    stock_debt_po_link_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(

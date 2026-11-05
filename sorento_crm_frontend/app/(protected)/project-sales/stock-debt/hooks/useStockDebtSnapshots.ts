@@ -8,7 +8,14 @@ import {
   createSnapshot,
   exportSnapshot,
   getSnapshot,
+  getPoLinkOptions,
+  getPoLinkSwitch,
   getSnapshotRowLines,
+  linkPoLines,
+  relinkPoLines,
+  relocatePoLine,
+  resumePoLink,
+  unlinkPoLines,
   listSnapshotRows,
   listSnapshots,
   setSnapshotDecision,
@@ -107,5 +114,68 @@ export function useExportSnapshot(id: string) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to start the snapshot export'),
+  });
+}
+
+/* ------------------------------------------------------------ PO link (AC-LINK-CRM-UI) */
+
+/** What AutoCount can do now and the open PO lines of the row's product. Read only while the
+ *  Decide menu or the Link to PO popup is open, so the capabilities are always fresh. */
+export function usePoLinkOptions(id: string, rowId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...SNAPSHOTS_KEY, 'po-link', id, rowId],
+    queryFn: () => getPoLinkOptions(id, rowId),
+    enabled,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+/** The PO link writes. Each answers per line; the drill lines and options are read again
+ *  after every call so Now shows what AutoCount returned. */
+export function usePoLinkMutations(id: string, rowId: string) {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: [...SNAPSHOTS_KEY, 'lines', id] });
+    queryClient.invalidateQueries({ queryKey: [...SNAPSHOTS_KEY, 'po-link', id, rowId] });
+  };
+  const onError = (error: Error) => toast.error(error.message);
+  return {
+    link: useMutation({
+      mutationFn: (lines: Parameters<typeof linkPoLines>[2]) => linkPoLines(id, rowId, lines),
+      onSuccess: refresh,
+      onError,
+    }),
+    unlink: useMutation({
+      mutationFn: (ids: string[]) => unlinkPoLines(id, rowId, ids),
+      onSuccess: refresh,
+      onError,
+    }),
+    relink: useMutation({
+      mutationFn: (moves: Parameters<typeof relinkPoLines>[2]) => relinkPoLines(id, rowId, moves),
+      onSuccess: refresh,
+      onError,
+    }),
+    relocate: useMutation({
+      mutationFn: (poLineId: string) => relocatePoLine(poLineId),
+      onSuccess: refresh,
+      onError,
+    }),
+    resume: useMutation({
+      mutationFn: (input: Parameters<typeof resumePoLink>[0]) => resumePoLink(input),
+      onSuccess: refresh,
+      onError,
+    }),
+  };
+}
+
+/** "AutoCount links from Stock Debt" (System Settings). Read only for a link_po holder. */
+export function usePoLinkSwitch(enabled: boolean) {
+  return useQuery({
+    queryKey: ['system-app-config', 'stock-debt-po-link'],
+    queryFn: getPoLinkSwitch,
+    enabled,
+    staleTime: 60_000,
+    retry: false,
   });
 }

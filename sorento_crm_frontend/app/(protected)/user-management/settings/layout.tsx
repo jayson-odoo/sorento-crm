@@ -107,6 +107,7 @@ export function mapSettingsFromApi(
     borrowFromOrderEnabled: Boolean(raw.borrow_from_order_enabled),
     sampleRequestRequireProject: Boolean(raw.sample_request_require_project),
     projectAutocountWriteEnabled: Boolean(raw.project_autocount_write_enabled),
+    stockDebtPoLinkEnabled: Boolean(raw.stock_debt_po_link_enabled),
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -238,6 +239,7 @@ function createDefaultSettings(): SystemSetting {
     borrowFromOrderEnabled: false,
     sampleRequestRequireProject: false,
     projectAutocountWriteEnabled: false,
+    stockDebtPoLinkEnabled: false,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,

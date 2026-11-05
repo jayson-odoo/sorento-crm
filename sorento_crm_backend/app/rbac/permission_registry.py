@@ -701,6 +701,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.stock_debt.link_po",
+        "name": "Link PO lines from Stock Debt",
+        "description": (
+            "Link, unlink or move a purchase order line to a sales order line from a Stock "
+            "Debt snapshot. Writes to AutoCount."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",

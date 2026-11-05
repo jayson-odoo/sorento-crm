@@ -102,6 +102,7 @@ export interface SystemSetting {
   sampleRequestRequireProject?: boolean;
   /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
   projectAutocountWriteEnabled?: boolean;
+  stockDebtPoLinkEnabled?: boolean;
 
   /**
    * "Borrow from another order" (PLAN-borrow-location-only-8oct.md D1), off by default.

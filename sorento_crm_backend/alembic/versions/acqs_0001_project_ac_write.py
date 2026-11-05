@@ -5,7 +5,7 @@
 * Permission `projects.autocount.write`, granted to the admin roles.
 
 Revision ID: acqs_0001_project_ac_write
-Revises: oiod_0002_pending_restore
+Revises: pol_0001_stock_debt_link_po
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "acqs_0001_project_ac_write"
-down_revision = "oiod_0002_pending_restore"
+down_revision = "pol_0001_stock_debt_link_po"
 branch_labels = None
 depends_on = None
 

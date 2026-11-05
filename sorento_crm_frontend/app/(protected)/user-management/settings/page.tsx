@@ -314,6 +314,7 @@ export default function Page() {
     sampleRequestRequireProject: Boolean(settings?.sampleRequestRequireProject),
     // Off is the shipped state (AC-QTSO-CRM).
     projectAutocountWriteEnabled: Boolean(settings?.projectAutocountWriteEnabled),
+    stockDebtPoLinkEnabled: Boolean(settings?.stockDebtPoLinkEnabled),
     priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
@@ -389,6 +390,7 @@ export default function Page() {
       borrowFromOrderEnabled: Boolean(settings.borrowFromOrderEnabled),
       sampleRequestRequireProject: Boolean(settings.sampleRequestRequireProject),
       projectAutocountWriteEnabled: Boolean(settings.projectAutocountWriteEnabled),
+      stockDebtPoLinkEnabled: Boolean(settings.stockDebtPoLinkEnabled),
       priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
@@ -446,6 +448,7 @@ export default function Page() {
         borrow_from_order_enabled: values.borrowFromOrderEnabled,
         sample_request_require_project: values.sampleRequestRequireProject,
         project_autocount_write_enabled: values.projectAutocountWriteEnabled,
+        stock_debt_po_link_enabled: values.stockDebtPoLinkEnabled,
         price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId ===
@@ -1270,6 +1273,28 @@ export default function Page() {
                         />
                         <Label htmlFor="project-autocount-write-enabled">
                           AutoCount quotations and sales orders from Project sales
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="stockDebtPoLinkEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="stock-debt-po-link-enabled"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="stock-debt-po-link-enabled">
+                          AutoCount links from Stock Debt
                         </Label>
                       </div>
                     </FormControl>

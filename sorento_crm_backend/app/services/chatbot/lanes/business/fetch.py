@@ -3036,6 +3036,21 @@ def _without_row_offers(text: str) -> str:
     return text.replace("\n\n" + _SO_LIST_OFFER, "").replace("\n\n" + _DO_LIST_OFFER, "")
 
 
+def _breakdown_head(text: str) -> str:
+    """CHATBOT-TOTALS-FILTERS CP-3 (crew console pass): a breakdown asked for every row (the lane's
+    `report_ask.BREAKDOWN_TOP_N`, no count from the user) heads by its axis, never "Top N": the presenter's
+    "Top 80 of 92 sales agents by delivered sales" reads "Sales agents by delivered sales". Any other head is kept."""
+    head, sep, rest = text.partition("\n")
+    words = head.split(" ")
+    if len(words) < 3 or words[0] not in ("Top", "Bottom") or not words[1].replace(",", "").isdigit():
+        return text
+    words = words[2:]
+    if len(words) > 2 and words[0] == "of" and words[1].replace(",", "").isdigit():
+        words = words[2:]
+    head = " ".join(words)
+    return f"{head[:1].upper()}{head[1:]}{sep}{rest}"
+
+
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """REPORT-ENGINE slice 1b: the presenter's text (`presenters._report_ask`) is the reply,
     verbatim. It names its own scope (basis, filters, period), so the generic search-scope
@@ -3046,6 +3061,11 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     # The args a ranking that ran was asked with, held for a refine (`Focus.sales_ranking_frame`).
     semantic_input = (ctx or {}).get("semantic_input")
     args = semantic_input.get("report_ask_args") if isinstance(semantic_input, dict) else None
+    if text and isinstance(args, dict) and not semantic_input.get("report_ask_detail"):
+        from app.services.chatbot.lanes.business.report_ask import BREAKDOWN_TOP_N, TREND_AXES
+
+        if args.get("top_n") == BREAKDOWN_TOP_N and args.get("group_by") not in TREND_AXES:
+            text = _breakdown_head(text)  # CP-3: every row, so no "Top N"
     note = semantic_input.get("report_ask_note") if isinstance(semantic_input, dict) else None
     if note and text:
         text = f"{note}\n\n{text}"

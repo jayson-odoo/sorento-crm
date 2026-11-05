@@ -1708,3 +1708,51 @@ def test_account_type_gold_open_question_is_the_object_the_engine_sends():
         assert list(asked) == list(sent), (row_id, list(asked), list(sent))
         assert asked["question"] == sent["question"] == "Brand or account type?"
         assert asked["options"] == sent["options"] and asked["owed"] == ["kind"]
+
+
+def _said_as_v(said_as, *, key=True):
+    ent = {"hint": "brand", "raw": "Sorento", "canonical_code": "SORENTO"}
+    if key:
+        ent["said_as"] = said_as
+    return {"entities": [ent]}
+
+
+def test_entity_said_as_grading_flags_a_mismatch_and_a_missing_key_and_passes_a_match():
+    want = {"entity_said_as": {"sorento": "company"}}
+    ok, why = pg.grade_parse(_said_as_v("brand"), want)
+    assert ok is False and any("said_as" in r for r in why), why
+    ok, why = pg.grade_parse(_said_as_v(None, key=False), want)
+    assert ok is False and any("said_as" in r for r in why), why
+    assert pg.grade_parse(_said_as_v("company"), want) == (True, [])
+
+
+def _text_v(text, *, key=True, raw="Sorento"):
+    ent = {"hint": "brand", "raw": raw, "canonical_code": "SORENTO"}
+    if key:
+        ent["said_as_text"] = text
+    return {"entities": [ent]}
+
+
+def _text_ok(v, want):
+    return pg.grade_parse(v, {"entity_said_as_text": {"sorento": want}})[0]
+
+
+def test_entity_said_as_text_null_want_passes_null_blank_and_missing_and_fails_any_word():
+    assert _text_ok(_text_v(None), None) and _text_ok(_text_v(""), None) and _text_ok(_text_v("  "), None)
+    assert _text_ok(_text_v(None, key=False), None)
+    ok, why = pg.grade_parse(_text_v("company"), {"entity_said_as_text": {"sorento": None}})
+    assert ok is False and any("said_as_text" in r for r in why), why
+
+
+def test_entity_said_as_text_star_want_passes_any_non_blank_and_fails_null_blank_and_missing():
+    assert _text_ok(_text_v("company"), "*") and _text_ok(_text_v("company and brand"), "*")
+    for bad in (_text_v(None), _text_v(""), _text_v("  "), _text_v(None, key=False)):
+        ok, why = pg.grade_parse(bad, {"entity_said_as_text": {"sorento": "*"}})
+        assert ok is False and any("said_as_text" in r for r in why), (bad, why)
+
+
+def test_entity_said_as_text_exact_want_is_case_aside_and_a_word_without_an_entity_fails():
+    assert _text_ok(_text_v("Company"), "company") and not _text_ok(_text_v("brand"), "company")
+    for want in (None, "*", "company"):
+        ok, why = pg.grade_parse(_text_v("company", raw="Mocha"), {"entity_said_as_text": {"sorento": want}})
+        assert ok is False and any("said_as_text" in r for r in why), (want, why)
