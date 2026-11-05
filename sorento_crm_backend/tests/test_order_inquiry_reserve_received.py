@@ -33,7 +33,6 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
-    IV_DELAY,
     OrderInquiryLink,
     OrderInquiryReserveRequestRow,
     OrderInquiryRow,
@@ -267,12 +266,12 @@ def test_rr3_qty_out_of_range_names_requestable(ctx, bad):
 
 
 def test_rr4_unchanged_refusals(ctx):
-    """AC-RR-4: actioned, cancelled, other verbs and an already open request stay 409."""
+    """AC-RR-4: actioned, cancelled and an already open request stay 409. (Other verbs no longer
+    refuse: OI-RESERVE-ANY-ROW, owner 5 Nov 2026, covered in tests/test_oi_reserve_any_row.py.)"""
     sc = _scene(ctx)
     for kwargs in (
         {"state": INQUIRY_ACTIONED},
         {"state": INQUIRY_CANCELLED},
-        {"state": INQUIRY_RAISED, "verb": IV_DELAY},
     ):
         r = _row_with(sc, qty=10, **kwargs)
         sc.db.commit()
