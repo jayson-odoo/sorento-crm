@@ -127,7 +127,17 @@ function blockLabel(group: TagLayer, children: TagLayer[], ordinal: number): str
   return `${layerDisplayName(group)} - block ${ordinal}${trailing}`;
 }
 
-/** Every layer with a bindable slot that no group has claimed. */
+/**
+ * Whether a layer draws product data, so a product preview applies to it: a
+ * product slot binding, or a Feature icons layer, which reads its product's
+ * specs with no slot of its own (PRICETAG-DESIGNER-GAPS item 3).
+ */
+function readsProduct(layer: TagLayer): boolean {
+  if (layer.props.kind === 'feature_icons') return true;
+  return layer.slot_binding !== null && PRODUCT_SLOTS.includes(layer.slot_binding);
+}
+
+/** Every layer that reads product data and that no group has claimed. */
 function looseBoundLayers(layers: TagLayer[]): TagLayer[] {
   const claimed = new Set<string>();
   for (const layer of layers) {
@@ -136,10 +146,7 @@ function looseBoundLayers(layers: TagLayer[]): TagLayer[] {
   }
   return layers.filter(
     (layer) =>
-      layer.props.kind !== 'group' &&
-      !claimed.has(layer.id) &&
-      layer.slot_binding !== null &&
-      PRODUCT_SLOTS.includes(layer.slot_binding),
+      layer.props.kind !== 'group' && !claimed.has(layer.id) && readsProduct(layer),
   );
 }
 
@@ -181,7 +188,7 @@ export function previewBlockOf(
  * what lets the request designer keep drawing its line while one block of the
  * tag is previewed against something else.
  *
- * A slot-bound layer that belongs to no group follows the implicit
+ * A slot-bound (or Feature icons) layer that belongs to no group follows the implicit
  * `WHOLE_TAG_BLOCK_ID` entry (D10, S6) - one product choice for every loose
  * end of the tag, from the frame's own eye, rather than piggy-backing on
  * whichever real block happened to be previewed first.
@@ -194,6 +201,6 @@ export function previewBindingFor(
   const owner = layer.props.kind === 'group' ? layer : groupOfChild.get(layer.id);
   if (owner) return previews[owner.id];
 
-  if (!layer.slot_binding || !PRODUCT_SLOTS.includes(layer.slot_binding)) return undefined;
+  if (!readsProduct(layer)) return undefined;
   return previews[WHOLE_TAG_BLOCK_ID];
 }

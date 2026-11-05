@@ -54,7 +54,15 @@ interface AssetPickerDialogProps {
   allowProductPhotos?: boolean;
   /** What an upload from this dialog is filed as. */
   uploadKind?: AssetKind;
+  /**
+   * Manage ONE kind (the icon library, from a Feature icons layer or a spec value): the library lists only that
+   * kind, an upload is filed as it, and the new asset stays in the list instead of being picked,
+   * so the next one can be added straight away.
+   */
+  libraryKind?: AssetKind;
   title?: string;
+  /** The footer button's words: "Cancel" when picking one, "Done" when adding several. */
+  closeLabel?: string;
   onCancel: () => void;
   onPick: (source: ImageSource) => void;
 }
@@ -63,11 +71,14 @@ export function AssetPickerDialog({
   open,
   productImages,
   allowProductPhotos = true,
-  uploadKind = 'decorative',
+  uploadKind: uploadKindProp = 'decorative',
+  libraryKind,
   title = 'Choose an image',
+  closeLabel = 'Cancel',
   onCancel,
   onPick,
 }: AssetPickerDialogProps) {
+  const uploadKind = libraryKind ?? uploadKindProp;
   const [tab, setTab] = useState(allowProductPhotos ? 'product' : 'library');
   const [assets, setAssets] = useState<KitAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,7 +92,9 @@ export function AssetPickerDialog({
     try {
       const rows = await listAssets({
         query,
-        tag: tagFilter === '__all__' ? undefined : tagFilter,
+        ...(libraryKind
+          ? { kind: libraryKind }
+          : { tag: tagFilter === '__all__' ? undefined : tagFilter }),
         limit: 100,
       });
       setAssets(rows);
@@ -92,7 +105,7 @@ export function AssetPickerDialog({
     } finally {
       setLoading(false);
     }
-  }, [query, tagFilter]);
+  }, [query, tagFilter, libraryKind]);
 
   useEffect(() => {
     if (!open) return;
@@ -116,13 +129,20 @@ export function AssetPickerDialog({
       });
       setFiles([]);
       toast.success(`${asset.name} added to the library`);
-      onPick({ type: 'asset', assetId: asset.id });
+      if (libraryKind) {
+        setAssets((rows) => [
+          ...rows.filter((row) => row.id !== asset.id),
+          asset,
+        ]);
+      } else {
+        onPick({ type: 'asset', assetId: asset.id });
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [files, uploadKind, onPick]);
+  }, [files, uploadKind, libraryKind, onPick]);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -189,14 +209,16 @@ export function AssetPickerDialog({
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </div>
-                <div className="w-40">
-                  <SearchableSelect
-                    value={tagFilter}
-                    onChange={setTagFilter}
-                    options={LIBRARY_TAGS}
-                    size="sm"
-                  />
-                </div>
+                {!libraryKind && (
+                  <div className="w-40">
+                    <SearchableSelect
+                      value={tagFilter}
+                      onChange={setTagFilter}
+                      options={LIBRARY_TAGS}
+                      size="sm"
+                    />
+                  </div>
+                )}
               </div>
 
               {loading ? (
@@ -213,32 +235,33 @@ export function AssetPickerDialog({
                     // A rendition for the grid, never 200 originals.
                     const preview = asset.thumb_url ?? asset.url;
                     return (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        className="flex flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
-                        onClick={() =>
-                          onPick({ type: 'asset', assetId: asset.id })
-                        }
-                        title={asset.name}
-                      >
-                        <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
-                          {preview ? (
-                            <img
-                              src={preview}
-                              alt=""
-                              className="size-full object-contain"
-                            />
-                          ) : (
-                            <span className="text-2xs text-muted-foreground">
-                              No preview
-                            </span>
-                          )}
-                        </span>
-                        <span className="w-full truncate text-2xs">
-                          {asset.name}
-                        </span>
-                      </button>
+                      <div key={asset.id} className="relative">
+                        <button
+                          type="button"
+                          className="flex w-full flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
+                          onClick={() =>
+                            onPick({ type: 'asset', assetId: asset.id })
+                          }
+                          title={asset.name}
+                        >
+                          <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
+                            {preview ? (
+                              <img
+                                src={preview}
+                                alt=""
+                                className="size-full object-contain"
+                              />
+                            ) : (
+                              <span className="text-2xs text-muted-foreground">
+                                No preview
+                              </span>
+                            )}
+                          </span>
+                          <span className="w-full truncate text-2xs">
+                            {asset.name}
+                          </span>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -264,7 +287,7 @@ export function AssetPickerDialog({
                     ) : (
                       <Upload className="mr-1 size-3.5" />
                     )}
-                    Upload and use
+                    {libraryKind ? 'Upload' : 'Upload and use'}
                   </Button>
                 </div>
               </div>
@@ -273,7 +296,7 @@ export function AssetPickerDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            Cancel
+            {closeLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

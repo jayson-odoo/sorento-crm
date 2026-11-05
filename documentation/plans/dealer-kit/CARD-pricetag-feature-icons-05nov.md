@@ -105,3 +105,23 @@ B3. Layer kind `feature_icons`: props `iconSize_mm`, `gap_mm`, `align` (left / c
 B4. One pure function `featureIconsFor(product specs, icon library, order)` picks the icons; the
     canvas, the request preview and the print page all call it. Icon pictures reach the print page
     through the same asset URL map every other asset layer uses.
+
+## Owner ruling 5 Nov ~20:35 (supersedes Q1 and B1 above)
+
+The icon <-> spec link moves from the icon to the SPEC VALUE ("more intuitive"). Admins set it
+where spec values are managed: Master Data > Product Specifications > a spec > Values and words,
+an "Icons" column per value (Water supply = Mixer -> hot + cold; Cold Only -> cold; Steel grade
+304 -> 304 icon), picked from the Dealer Kit icon library with the existing asset picker. Stored as
+`product_spec_registry.value_icons` JSONB `{value: [asset ids]}` beside `value_labels` (staff-owned,
+never seed-repaired); migration additive only. "Show when" is removed from the icon screen. The
+designer side is unchanged: one Feature icons layer, close-up, adjustable, follows the combo position.
+
+## Owner rulings 5 Nov ~20:4x and ~21:0x
+
+- 20:4x: each spec value carries its OWN icons, 0..n, in its own order (Cold Only -> blue; Mixer ->
+  one combined red-blue icon, or hot + cold; Hot Only -> red if that value is ever added).
+- 21:0x: the owner DEFINES the sequence once. Each spec gets an "Icon order" number in Master Data >
+  Product Specifications (Pull-out = 1, Water supply = 2, Steel grade = 3); icons show sorted by spec
+  order, then the value's own icon order, packed with no gaps. The layer no longer reorders per
+  template. Pull-out today is two specs: `has_pull_out_shower` (Yes) and `spout_type = pull_out`;
+  icons can sit on either or both.

@@ -53,6 +53,7 @@ import {
   defaultPriceBadgeProps,
   defaultBadgeProps,
   defaultBarcodeProps,
+  defaultFeatureIconsProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
   buildAccessoriesStrip,
@@ -234,6 +235,8 @@ import {
 import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
+import { useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -634,6 +637,8 @@ export function TagCanvasEditor({
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
+  /** Feature icons: the icon library dialog, opened from the layer's inspector. */
+  const [iconLibraryOpen, setIconLibraryOpen] = useState(false);
   const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean } | null>(
     null,
   );
@@ -1169,6 +1174,13 @@ export function TagCanvasEditor({
       ...makeBaseLayer('barcode', 40, 22),
       slot_binding: 'barcode',
       props: defaultBarcodeProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
+  const handleAddFeatureIcons = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('feature_icons', 40, 10),
+      props: defaultFeatureIconsProps(),
     });
   }, [addLayer, makeBaseLayer]);
 
@@ -3503,6 +3515,21 @@ export function TagCanvasEditor({
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
+  // Feature icons that do not fit their box are not drawn (crew pass, 5 Nov): count them per
+  // layer for the inspector's warning, and toast the moment a change makes more drop.
+  const featureIconFits = useMemo(() => {
+    const counts = new Map<string, number>();
+    let dropped = 0;
+    for (const layer of layers) {
+      if (layer.props.kind !== 'feature_icons' || layer.visible === false) continue;
+      const count = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.icons?.length ?? 0;
+      counts.set(layer.id, count);
+      dropped += featureIconFit(count, layer.props, layer.width_mm).dropped;
+    }
+    return { counts, dropped };
+  }, [layers, dataOf, assetUrls, library.featureIcons]);
+  useFeatureIconDropToast(featureIconFits.dropped);
+
   /**
    * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
    * rather than `selectedData`, so the Layers panel's suffix still shows with
@@ -3909,7 +3936,7 @@ export function TagCanvasEditor({
                           key={`${layer.id}-ghost`}
                           layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -3949,7 +3976,7 @@ export function TagCanvasEditor({
                           key={layer.id}
                           layer={withPolygonPreview(layer)}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -4668,6 +4695,7 @@ export function TagCanvasEditor({
         onAddPriceBadge={handleAddPriceBadge}
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
+        onAddFeatureIcons={specSheet ? undefined : handleAddFeatureIcons}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
@@ -4898,6 +4926,8 @@ export function TagCanvasEditor({
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}
+              onManageIcons={() => setIconLibraryOpen(true)}
+              featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -4970,6 +5000,24 @@ export function TagCanvasEditor({
         title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
         onCancel={() => setImagePicker(null)}
         onPick={handleImagePicked}
+      />
+
+      {/* Feature icons: the icon library, managed from the layer (upload, rename). Which icons a
+          value shows is set on the spec value, in Product Specifications. */}
+      <AssetPickerDialog
+        open={iconLibraryOpen}
+        productImages={[]}
+        allowProductPhotos={false}
+        libraryKind="icon"
+        title="Icons"
+        onCancel={() => {
+          setIconLibraryOpen(false);
+          void library.reload();
+        }}
+        onPick={() => {
+          setIconLibraryOpen(false);
+          void library.reload();
+        }}
       />
 
       <InsertFieldDialog

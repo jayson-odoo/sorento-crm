@@ -1,6 +1,8 @@
 # PLAN: tag designer gaps (PRICETAG-DESIGNER-GAPS, 5 Nov)
 
-Status: Plan (small fix track for items 1 and 4; item 3 waits on the behaviour card answers)
+Status: Build. Items 1 and 4 (small fix track) merged as #2207. Item 3 (full track: migration
+`dkfi_0001_spec_value_icons`, icons on spec values + spec icon order per the 5 Nov 20:35 / 20:4x /
+21:0x rulings) in its review fix round on #2204; card and contract carry the rulings.
 
 Owner ask (5 Nov ~17:25 MYT): image flip, editable template settings, feature icons (hot/cold).
 

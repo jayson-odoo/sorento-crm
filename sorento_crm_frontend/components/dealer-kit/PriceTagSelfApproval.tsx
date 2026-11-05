@@ -88,6 +88,7 @@ export function buildSelfProof(
     assets: response.assets,
     images: response.images,
     fonts: response.fonts,
+    feature_icons: response.feature_icons,
   });
   return payload ? { doc, payload } : null;
 }

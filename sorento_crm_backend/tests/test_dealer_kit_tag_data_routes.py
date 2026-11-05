@@ -1089,6 +1089,7 @@ def test_product_tag_data_carries_specs_on_the_wire(api):
         "label": "Diameter",
         "value": "407",
         "unit": "mm",
+        "raw": "407",
     } in specs
 
 
@@ -1212,4 +1213,5 @@ def test_print_payload_lines_carry_their_specs(api):
         # AC-S3-1 (r10): title-cased, like every other stored slug.
         "value": "Ceramic",
         "unit": None,
+        "raw": "ceramic",
     } in payload["resolvedData"][tag_id]["specs"]

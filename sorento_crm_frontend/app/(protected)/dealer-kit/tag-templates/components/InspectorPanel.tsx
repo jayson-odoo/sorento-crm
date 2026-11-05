@@ -8,6 +8,9 @@
  */
 
 import { useCallback, useId, useMemo } from 'react';
+import type { FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
   Braces,
@@ -246,6 +249,10 @@ interface InspectorPanelProps {
   specSheet?: boolean;
   /** The spec registry keys, for the "Show only when spec is Yes" picker. */
   specKeys?: SpecKeyOption[];
+  /** Feature icons: open the icon library (upload, rename); the rules live on the spec values. */
+  onManageIcons?: () => void;
+  /** Feature icons: how many icons the previewed product reads for the selected layer. */
+  featureIconCount?: number;
 }
 
 export function InspectorPanel({
@@ -274,6 +281,8 @@ export function InspectorPanel({
   subjectParentCode,
   specSheet = false,
   specKeys,
+  onManageIcons,
+  featureIconCount,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -330,8 +339,10 @@ export function InspectorPanel({
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
     layer.props.kind === 'text' ||
-    layer.props.kind === 'image';
+    layer.props.kind === 'image' ||
+    layer.props.kind === 'feature_icons';
   const readsProductData =
+    layer.props.kind === 'feature_icons' ||
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
@@ -553,6 +564,15 @@ export function InspectorPanel({
               layerId={layer.id}
               props={layer.props}
               onChooseBadge={onChooseBadge}
+            />
+          )}
+          {layer.props.kind === 'feature_icons' && (
+            <FeatureIconsInspector
+              props={layer.props}
+              onManageIcons={onManageIcons}
+              iconCount={featureIconCount ?? 0}
+              boxWidth_mm={layer.width_mm}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
           {layer.props.kind === 'barcode' && (
@@ -1812,6 +1832,95 @@ function BarcodeInspector({
           Show product code
         </label>
       </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons inspector (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: string }[] = [
+  { value: 'left', label: 'Left' },
+  { value: 'center', label: 'Centre' },
+  { value: 'right', label: 'Right' },
+];
+
+/**
+ * Icon size, spacing and alignment, plus the icon library (upload / rename). The order of the
+ * icons is the spec registry's (each spec's Icon order), never the layer's. Every write carries
+ * the whole props object, so a change never drops the subject.
+ */
+function FeatureIconsInspector({
+  props,
+  onManageIcons,
+  iconCount,
+  boxWidth_mm,
+  onChange,
+}: {
+  props: FeatureIconsLayerProps;
+  onManageIcons?: () => void;
+  /** Icons the previewed product reads; 0 with nothing previewed. */
+  iconCount: number;
+  boxWidth_mm: number;
+  onChange: (changes: Partial<FeatureIconsLayerProps>) => void;
+}) {
+  // Icons that do not fit the box are not drawn (print cannot draw outside it): say so.
+  const { dropped } = featureIconFit(iconCount, props, boxWidth_mm);
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Feature icons
+      </h4>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="Icon size (mm)"
+          value={props.iconSize_mm}
+          onChange={(v) => onChange({ iconSize_mm: v })}
+          step={0.5}
+          min={0.5}
+          max={200}
+        />
+        <NumberInput
+          label="Spacing (mm)"
+          value={props.gap_mm}
+          onChange={(v) => onChange({ gap_mm: v })}
+          step={0.5}
+          min={0}
+          max={100}
+        />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Align</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={props.align}
+          onValueChange={(next: string) => {
+            // A single group reports '' when the pressed item is clicked again: keep the alignment.
+            if (next) onChange({ align: next as FeatureIconsLayerProps['align'] });
+          }}
+        >
+          {FEATURE_ICON_ALIGNS.map((a) => (
+            <ToggleGroupItem key={a.value} value={a.value} className="flex-1 text-xs">
+              {a.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      </div>
+      {dropped > 0 && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {dropped} of {iconCount} icons do not fit this box. Widen the box or make the icons smaller.
+          </AlertDescription>
+        </Alert>
+      )}
+      {onManageIcons && (
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onManageIcons}>
+          Manage icons
+        </Button>
+      )}
     </section>
   );
 }

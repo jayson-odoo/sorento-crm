@@ -36,6 +36,8 @@ from app.schemas.price_tag import (
 )
 from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.error_handler import AppException
+# Feature icons (PRICETAG-DESIGNER-GAPS item 3); its own line, away from the shared list above.
+from app.schemas.price_tag import FeatureIconItem
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,24 @@ def list_spec_keys(
         SpecKeyItem(key=row.spec_key, label=row.label, unit=row.unit)
         for row in active_registry(db)
     ]
+
+
+@router.get("/feature-icons", response_model=list[FeatureIconItem])
+def list_feature_icons(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Every icon each spec value carries, in display order, with its signed URL.
+
+    The canvas's feature icons source (PRICETAG-DESIGNER-GAPS item 3): the same list
+    ``design_media`` sends the previews and the print page, behind the editor's own gate
+    rather than the master-data one, like ``/spec-keys`` above.
+    """
+    from app.services.dealer_kit import asset_service
+
+    rules = asset_service.feature_icon_rules(db)
+    urls = asset_service.urls_for(db, {rule["id"] for rule in rules})
+    return [FeatureIconItem(**rule, url=urls.get(rule["id"])) for rule in rules]
 
 
 @router.get(

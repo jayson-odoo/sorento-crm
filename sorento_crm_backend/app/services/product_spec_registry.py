@@ -1522,6 +1522,7 @@ def _remove_value(db: Session, spec_key: str, value: str) -> dict:
         row.user_values = [v for v in added if v != value]
         row.user_synonyms = {k: w for k, w in (row.user_synonyms or {}).items() if k != value}
         row.value_labels = {k: w for k, w in (row.value_labels or {}).items() if k != value}
+        row.value_icons = {k: w for k, w in (row.value_icons or {}).items() if k != value}
         # A rule setting a choice that is gone would keep writing it, and the next
         # rules save would refuse it (review N-R4). Only a stored list can hold one:
         # the shipped rules set shipped choices only.
@@ -1537,6 +1538,9 @@ def _remove_value(db: Session, spec_key: str, value: str) -> dict:
             return {"spec_key": spec_key, "value": value, "products_updated": updated}
     elif value in shipped:
         suppressed = [str(v) for v in (row.suppressed_values or [])]
+        # Its icons go with it (review B1): left behind, an open draft resends them and the
+        # key's every icon save is refused.
+        row.value_icons = {k: w for k, w in (row.value_icons or {}).items() if k != value}
         if value not in suppressed:
             fingerprint_before = product_spec_rederive.rules_fingerprint(db)
             row.suppressed_values = [*suppressed, value]

@@ -12,6 +12,7 @@
 import {
   Banknote,
   Barcode,
+  BadgeCheck,
   Boxes,
   ChevronDown,
   Copy,
@@ -99,6 +100,8 @@ interface CanvasToolbarProps {
   onAddPriceBadge: () => void;
   onAddBadge: () => void;
   onAddBarcode: () => void;
+  /** Feature icons (PRICETAG-DESIGNER-GAPS item 3). Absent hides the button. */
+  onAddFeatureIcons?: () => void;
   onAddProduct: () => void;
   onAddSet: () => void;
   onAddAlternativesRow: () => void;
@@ -235,6 +238,7 @@ export function CanvasToolbar({
   onAddPriceBadge,
   onAddBadge,
   onAddBarcode,
+  onAddFeatureIcons,
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
@@ -299,6 +303,9 @@ export function CanvasToolbar({
       />
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
       <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
+      {onAddFeatureIcons && (
+        <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
+      )}
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
