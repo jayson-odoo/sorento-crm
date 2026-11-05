@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 4: crew pass on 69b3b479 fixed at the root causes; figures passed there). Track: full (RBAC, one
+Status: Review (round 5: crew pass on 74b6b751 fixed; tables, active customers and invoiced totals passed there). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -149,6 +149,34 @@ Tokens per turn (gpt-4.1 tokenizer; same scripted calls on 69b3b479 and on this 
 | sales last month per agent | describe x2, query, answer | 96,392 | 36,478 |
 | active customers of agent A | query, answer | 46,905 | 26,915 |
 | active customers of agent A | describe x2, query, answer | 95,373 | 35,343 |
+
+## Crew pass on 74b6b751 (5 Nov) and round 5
+
+- (a) One sales basis per answer. The description says sales with no basis named are invoiced (billing_document, one
+  query for the table and its total; owner rule: invoiced first, ask when unclear) and delivery orders only when DOs
+  are asked. Every billing total says its basis ("Invoiced sales (invoices + cash sales + debit notes - credit
+  notes, by document date)."). The loop refuses a second money total on the other basis in the same turn
+  (`query_tools.money_basis`, `mixed_basis_refusal`; test SB3 through the real loop).
+- (b) (e) `agent_target`: one row per agent (agent targets only) over the window, the sum of `sales_target`'s own
+  period figures (target, achieved, commission, bonus, payout; % by `achievement_service.achieved_pct` over the
+  sums). "Payout per agent" and "Agent A last month" are one query; dealers and team targets stay out.
+- (c) `agent` on `sales_target` and `agent_target` is "CODE - Name", so a name matches; `agent_code` stays. A text
+  filter that matches nothing returns `values_in_window` and the instruction not to show or total other records.
+- (d) At most 8 columns per row result (`query.MAX_COLUMNS`), the rest named in `columns_dropped`.
+- Calls: `loop.MAX_QUERY_CALLS` 3.
+
+Tokens per turn on this head (real loop, scripted model, real MCP catalogue; one query then the answer):
+
+| Question | Calls | Turn | Call 1 | Call 2 |
+|---|---|---|---|---|
+| sales last month per agent | 2 | 27,382 | 23,545 | 3,837 |
+| payout per agent | 2 | 27,340 | 23,544 | 3,796 |
+| commission payout for Agent A last month | 2 | 27,386 | 23,547 | 3,839 |
+| who is below target this quarter | 2 | 27,382 | 23,546 | 3,836 |
+| active customers of Agent A | 2 | 27,285 | 23,545 | 3,740 |
+
+Call 1 = system 1.6k + MCP tools 17.2k + other tools 4.6k; call 2 carries only the registry tools (1.8k). Worst case
+with the cap: one full call and three narrowed ones, about 38k.
 
 ## Token measurement (task item 5)
 

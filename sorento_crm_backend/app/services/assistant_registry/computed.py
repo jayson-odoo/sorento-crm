@@ -322,6 +322,25 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         out = _rows(entity, slugs, rows, sort, spec)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
+    if not rows and computed:
+        out.update(_no_match(entity, rest, computed))
+    return out
+
+
+#: The most values listed when a text filter matched nothing.
+NO_MATCH_VALUES = 15
+
+
+def _no_match(entity: EntityDef, filters: list, computed: list[dict]) -> dict:
+    """Nothing matched a text filter (crew pass on 74b6b751: "Agent A" found 0 records and the model then showed
+    unrelated targets over 6 calls). Say which values do exist in the window, and that nothing else is shown."""
+    out: dict = {"instruction": "Nothing matched. Say so; do not show or total other records instead."}
+    for item in filters:
+        field = entity.fields.get(item.get("field")) if isinstance(item, dict) else None
+        if field is None or (field.kind or "text") != "text" or item.get("op") not in ("eq", "contains", "starts_with", "in"):
+            continue
+        values = sorted({str(r.get(item["field"])) for r in computed if r.get(item["field"]) not in (None, "")})
+        out.setdefault("values_in_window", {})[item["field"]] = values[:NO_MATCH_VALUES]
     return out
 
 
@@ -332,7 +351,11 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     for name in asked:
         if name not in entity.fields:
             _field(entity, slugs, name)  # raises unknown_field (a restricted one is dropped below, as in SQL)
-    wanted = list(dict.fromkeys([*entity.name_by, *(asked or entity.list_fields or list(entity.fields))]))
+    from app.services.assistant_registry.query import MAX_COLUMNS
+
+    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    dropped = picked[MAX_COLUMNS:]
+    wanted = list(dict.fromkeys([*entity.name_by, *picked[:MAX_COLUMNS]]))
     shown = [f for f in wanted if not entity.fields[f].permission or entity.fields[f].permission in slugs]
     restricted = [f for f in wanted if f not in shown]
     order = []
@@ -354,10 +377,13 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
         {"key": f, "label": entity.fields[f].label} for f in shown if f not in entity.name_by
     ]
-    return {
+    out = {
         "entity": entity.key, "rows": out_rows, "total": len(rows), "truncated": len(rows) > len(out_rows),
         "restricted": restricted, "columns": columns,
     }
+    if dropped:
+        out["columns_dropped"] = dropped
+    return out
 
 
 def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[dict], spec: dict) -> dict:

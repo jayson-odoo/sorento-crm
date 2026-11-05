@@ -29,6 +29,9 @@ MAX_FILTERS = 20
 MAX_AGGREGATES = 8
 MAX_IN_VALUES = 100
 MAX_TEXT_CHARS = 200
+#: The most columns a row result carries besides the record's name (crew pass on 74b6b751: a below-target answer
+#: asked for 15). The rest are named in `columns_dropped`.
+MAX_COLUMNS = 8
 #: Naive timestamps are stored UTC; dates the user names are Malaysian dates.
 LOCAL_TZ = "Asia/Kuala_Lumpur"
 
@@ -506,6 +509,8 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         out = _rows(db, user_id, entity, own_only, paths, filters, spec)
     # Display facts decided here, not by the model (crew pass, 5 Nov): the period in dd/mm/yyyy and what the
     # result leaves out. `loop.final_reply` puts the scope note in the reply when the model does not.
+    if (group_by or aggregates) and entity.aggregate_note:
+        notes.insert(0, entity.aggregate_note)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
     return out
@@ -553,7 +558,9 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     asked = _list(spec, "fields", 30)
     if any(not isinstance(f, str) for f in asked):
         raise QueryRefused("invalid", "`fields` is a list of field names.")
-    wanted = list(dict.fromkeys([*entity.name_by, *(asked or entity.list_fields or list(entity.fields))]))
+    picked = list(dict.fromkeys(asked or entity.list_fields or list(entity.fields)))
+    dropped = picked[MAX_COLUMNS:] if asked else []
+    wanted = list(dict.fromkeys([*entity.name_by, *(picked[:MAX_COLUMNS] if asked else picked)]))
     shown = [f for f in wanted if paths.allowed(f)]
     restricted = [f for f in wanted if f not in shown]
     root = entity.model
@@ -590,10 +597,13 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     columns = ([{"key": "label", "label": entity.label}] if any(f in shown for f in entity.name_by) else []) + [
         {"key": f, "label": paths.resolve(f)[1].label} for f in shown if f not in entity.name_by
     ]
-    return {
+    out = {
         "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
         "restricted": restricted, "columns": columns,
     }
+    if dropped:
+        out["columns_dropped"] = dropped
+    return out
 
 
 def _group_key(paths: _Paths, item: Any) -> tuple[str, Any, str]:

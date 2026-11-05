@@ -27,6 +27,7 @@ from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
+from app.services.chatbot.agent.query_tools import mixed_basis_refusal, money_basis
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
     ANSWER,
@@ -82,7 +83,7 @@ _CATALOG_LOCK = threading.Lock()
 #: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
 #: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
 QUERY_TOOLS = ("crm_query", "crm_describe")
-MAX_QUERY_CALLS = 4
+MAX_QUERY_CALLS = 3
 
 
 #: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
@@ -1420,6 +1421,8 @@ def _run(
                 return reply_text
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
+        # The sales basis this answer's money totals are on (`query_tools.money_basis`); one per turn.
+        turn_basis: list[str] = []
         while True:
             if run.rounds >= 1:
                 # Confirming acts on the user's own message only: from the second round on, tool
@@ -1498,6 +1501,11 @@ def _run(
                     ).to_json(call_id)
                     run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
                     continue
+                basis = money_basis(args) if name == "crm_query" else None
+                if basis and turn_basis and basis != turn_basis[0]:
+                    replies[idx] = mixed_basis_refusal(turn_basis[0], basis).to_json(call_id)
+                    run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
+                    continue
                 if tool_index >= budgets.calls_per_round:
                     # A Gemini continuation must be replayed with a reply for every call it
                     # contains, so each extra call gets one; the digest and trace carry one note.
@@ -1553,6 +1561,8 @@ def _run(
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
                 run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
+                if basis and out.status == "ok" and not turn_basis:
+                    turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
                 trace.add(
                     "agent_tool",

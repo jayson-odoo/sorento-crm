@@ -85,3 +85,6 @@ class EntityDef:
     #: The columns a row shows when the query names no `fields` (crew pass on 69b3b479: a below-target answer
     #: carried 22 columns into the prompt and the table). Empty = every field, as before.
     list_fields: tuple[str, ...] = ()
+    #: Said with every total or grouping (`scope_note`): which figure the money is (crew pass on 74b6b751: a sales
+    #: table on the delivery-order basis under an invoiced total).
+    aggregate_note: str | None = None

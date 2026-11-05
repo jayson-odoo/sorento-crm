@@ -102,7 +102,8 @@ def test_T1_commission_payout_for_agent_a_last_month(targets):
     db, _client_, t = targets
     out = run(db, {
         "entity": "sales_target",
-        "filters": [{"field": "agent", "op": "eq", "value": t["a"].sales_agent}, {"field": "period", "op": "between", "value": SEP}],
+        # By NAME, as the owner asks it (crew pass on 74b6b751: a code-only field found "0 records").
+        "filters": [{"field": "agent", "op": "contains", "value": "agent a"}, {"field": "period", "op": "between", "value": SEP}],
         "fields": ["commission", "bonus", "payout", "achieved_value", "achieved_pct", "tier_reached"],
     })
     [row] = out["rows"]
@@ -186,8 +187,8 @@ def test_T5_payout_per_agent_this_quarter_grouped(targets):
         "sort": [{"field": "sum_payout", "dir": "desc"}],
     })
     assert out["groups"] == [
-        {"agent": t["a"].sales_agent, "sum_payout": 360.0, "avg_achieved_pct": 40.0},
-        {"agent": t["b"].sales_agent, "sum_payout": 0.0, "avg_achieved_pct": 16.67},
+        {"agent": f"{t['a'].sales_agent} - Agent A", "sum_payout": 360.0, "avg_achieved_pct": 40.0},
+        {"agent": f"{t['b'].sales_agent} - Agent B", "sum_payout": 0.0, "avg_achieved_pct": 16.67},
     ]
     assert out["totals"] == {"sum_payout": 360.0}
 
@@ -262,7 +263,11 @@ def test_B1_sales_is_iv_cs_dn_minus_cn_by_doc_date_cancelled_excluded(sales):
     mine = {"field": "debtor_code", "op": "eq", "value": s["cust"].customer_code}
     out = run(db, {"entity": "billing_document", "filters": [window, mine], "aggregates": [{"fn": "sum", "field": "sales_amount"}]})
     assert out["groups"] == [{"sum_sales_amount": 950.0}]  # 1000 + 200 + 50 - 300, the 9,999 cancelled one out
-    assert out["scope_note"] == "Cancelled documents excluded."
+    # The basis is said with every total (crew pass on 74b6b751), then the exclusion.
+    assert out["scope_note"] == (
+        "Invoiced sales (invoices + cash sales + debit notes - credit notes, by document date). "
+        "Cancelled documents excluded."
+    )
     assert out["period_display"] == "Document date 01/10/2026 to 31/10/2026"
     expected = db.execute(
         select(func.sum(invoiced_sales.signed_amount())).where(
@@ -485,10 +490,13 @@ def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
     assert team_target.status_code == 201, team_target.text
     _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 10, 2), line_total=Decimal("700"), product_id=pid)
 
-    every = ["period_start", "target_value", "achieved_value", "achieved_pct", "below_target", "tier_reached",
-             "commission", "bonus", "replaced", "ratio_missing"]
-    out = run(db, {"entity": "sales_target", "filters": [{"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}],
-                   "fields": every, "limit": 50})
+    # At most 8 columns a query (MAX_COLUMNS): the figures in two queries, merged by row.
+    year = {"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}
+    first = run(db, {"entity": "sales_target", "filters": [year], "limit": 50,
+                     "fields": ["period_start", "target_value", "achieved_value", "achieved_pct", "below_target", "tier_reached"]})
+    second = {r["id"]: r for r in run(db, {"entity": "sales_target", "filters": [year], "limit": 50,
+                                         "fields": ["commission", "bonus", "replaced", "ratio_missing"]})["rows"]}
+    out = {"rows": [{**r, **second[r["id"]]} for r in first["rows"]]}
     ids = [points["id"], dealer["id"], replaced["id"], team_target.json()["id"]]
     assert _same_as_page(db, out, ids) == 4 + 1 + 1 + 1
     rows = {r["link"].rsplit("/", 1)[1] + r["period_start"]: r for r in out["rows"]}

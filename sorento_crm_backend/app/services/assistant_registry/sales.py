@@ -96,7 +96,10 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "name": target.name,
                 "subject_kind": target.subject_kind,
                 "subject": subject,
-                "agent": agent.sales_agent if agent else None,
+                # "CODE - Name", as the screens print an agent, so "Agent A" (a name) matches as well as the code
+                # (crew pass on 74b6b751: a code-only field found "0 records" for a name).
+                "agent": agent_label(agent) if agent else None,
+                "agent_code": agent.sales_agent if agent else None,
                 "team": team.name if team else None,
                 "period": period.period_start,
                 "period_start": period.period_start,
@@ -117,6 +120,50 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "replaced": fig["replaced"],
             }
         )
+    return rows
+
+
+def _agent_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
+    """One row per agent: the agent targets' periods in the window (`_target_rows`, the target page's own figures),
+    summed per agent. A sum of the page's figures, nothing recomputed; the % is `achievement_service.achieved_pct`
+    over the sums, as the Agents tab shows a whole range's (`target_service.list_all_targets`)."""
+    from decimal import Decimal
+
+    from app.services.sales import achievement_service as ach
+
+    per: dict[str, dict] = {}
+    for row in _target_rows(db, user_id, own_only, date_from, date_to, limit=limit):
+        if row["subject_kind"] != "agent" or not row["agent"]:
+            continue
+        out = per.setdefault(row["agent"], {
+            "id": row["agent_code"], "agent": row["agent"], "agent_code": row["agent_code"], "team": row["team"],
+            "period": row["period_start"], "periods": 0, "targets": set(), "target_value": 0.0, "achieved_value": 0.0,
+            "commission": None, "bonus": None, "payout": None, "ratio_missing": False,
+        })
+        out["periods"] += 1
+        out["targets"].add(row["target_no"])
+        out["period"] = min(out["period"], row["period_start"])
+        out["achieved_value"] += row["achieved_value"] or 0.0
+        if row["target_value"] is None:
+            out["ratio_missing"] = True
+        else:
+            out["target_value"] += row["target_value"]
+        for key in ("commission", "bonus", "payout"):
+            if row[key] is not None:
+                out[key] = round((out[key] or 0.0) + row[key], 2)
+    rows = []
+    for out in per.values():
+        goal = None if out["ratio_missing"] else round(out["target_value"], 2)
+        achieved = round(out["achieved_value"], 2)
+        out.update({
+            "targets": ", ".join(sorted(out["targets"])),
+            "target_value": goal,
+            "achieved_value": achieved,
+            "achieved_pct": None if goal is None else ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))),
+            "below_target": None if goal is None else achieved < goal,
+            "shortfall": None if goal is None else round(max(goal - achieved, 0.0), 2),
+        })
+        rows.append(out)
     return rows
 
 
@@ -157,7 +204,10 @@ register(
             ),
             "name": FieldDef("Target name", kind="text"),
             "subject_kind": FieldDef("Target for", kind="text", note="agent, team or dealer."),
-            "agent": FieldDef("Agent code", kind="text", note="Agent targets only; filter on this for one agent."),
+            "agent": FieldDef(
+                "Agent", kind="text", note="'CODE - Name', agent targets only; filter with contains on the code or name.",
+            ),
+            "agent_code": FieldDef("Agent code", kind="text"),
             "team": FieldDef("Team", kind="text", note="The agent's team today, or the team of a team target."),
             "period": FieldDef(
                 "Period", kind="date",
@@ -199,12 +249,49 @@ register(
         screen_path="/sales/targets/{target_id}",
         pages=("/sales/targets",),
         routes=("GET /api/v1/sales/targets",),
-        hint="sales targets per period: achieved, below_target, commission, payout; no period filter = current "
-             "periods (add one only when a period is named); per agent = group by agent, sum payout",
+        hint="one row per target PERIOD (agents, teams, dealers): achieved, below_target, tier, commission, payout. "
+             "For anything PER AGENT or for one agent use agent_target instead",
         list_fields=("period_start", "period_end", "target_value", "achieved_value", "achieved_pct", "payout"),
         compute=_target_rows,
         window_field="period",
         # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).
+        brand_blind=True,
+    ),
+    # Crew pass on 74b6b751: "payout per agent" grouped targets (dealers, a test target) and "Agent A last month"
+    # took 6 calls. One row per agent answers both in one query.
+    EntityDef(
+        key="agent_target",
+        label="Sales targets by agent",
+        module="sales",
+        model=SalesTarget,
+        view_permission=TARGETS_VIEW,
+        own_permission="sales.targets.view_own",
+        own_clause=_own,
+        fields={
+            "agent": FieldDef("Agent", kind="text", note="'CODE - Name'; filter with contains on the code or name."),
+            "agent_code": FieldDef("Agent code", kind="text"),
+            "team": FieldDef("Team", kind="text"),
+            "period": FieldDef(
+                "Period", kind="date",
+                note="The date window: between [from, to] (last month, this quarter); without it, the current periods.",
+            ),
+            "periods": FieldDef("Periods", kind="number"),
+            "targets": FieldDef("Targets", kind="text"),
+            "target_value": FieldDef("Target", kind="number"),
+            "achieved_value": FieldDef("Achieved", kind="number"),
+            "achieved_pct": FieldDef("Achieved %", kind="number"),
+            "below_target": FieldDef("Below target", kind="boolean"),
+            "shortfall": FieldDef("Short by", kind="number"),
+            "commission": FieldDef("Commission", kind="number"),
+            "bonus": FieldDef("Bonus", kind="number"),
+            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus over the window."),
+        },
+        name_by=("agent",),
+        hint="ONE row per agent (agent targets only): target, achieved, %, below_target, commission, payout. Use for "
+             "payout or target PER AGENT and for one agent (agent contains <code or name>); no period = current periods",
+        list_fields=("target_value", "achieved_value", "achieved_pct", "payout"),
+        compute=_agent_rows,
+        window_field="period",
         brand_blind=True,
     ),
 )

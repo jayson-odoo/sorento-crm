@@ -67,6 +67,8 @@ register(
         # `sales.reports.view`; outstanding through `sales_orders.outstanding`), so the registry is no side door.
         aggregate_permission=SALES_REPORT,
         list_fields=("doc_date", "document_type", "agent", "sales_amount"),
-        hint="invoices, cash sales, debit and credit notes. SALES = sum sales_amount by doc_date, group by agent",
+        aggregate_note="Invoiced sales (invoices + cash sales + debit notes - credit notes, by document date).",
+        hint="invoices, cash sales, debit and credit notes. ANY 'sales' question with no basis named: sum "
+             "sales_amount by doc_date (invoiced), per agent = group by agent; table and total from this ONE query",
     ),
 )

@@ -77,7 +77,7 @@ def test_P1_payout_per_agent_without_a_period_is_the_current_period(targets):
     out = run(db, {"entity": "sales_target", "group_by": ["agent"], "aggregates": [{"fn": "sum", "field": "payout"}],
                    "filters": [{"field": "subject_kind", "op": "eq", "value": "agent"}]})
     assert out["groups"] == [
-        {"agent": t["a"].sales_agent, "sum_payout": 180.0},
-        {"agent": t["b"].sales_agent, "sum_payout": 180.0},
+        {"agent": f"{t['a'].sales_agent} - Agent A", "sum_payout": 180.0},
+        {"agent": f"{t['b'].sales_agent} - Agent B", "sum_payout": 180.0},
     ]
     assert out["scope_note"] == "Periods containing today (20/10/2026)."

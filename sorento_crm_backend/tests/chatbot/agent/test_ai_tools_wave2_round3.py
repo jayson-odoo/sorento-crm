@@ -156,15 +156,15 @@ def test_I1_the_entity_index_is_in_the_query_tools_description():
     assert "call crm_describe only when" in text
 
 
-def test_I2_at_most_four_query_calls_per_turn():
-    """The loop denies the fifth crm_query / crm_describe call of a turn and tells the model to answer."""
+def test_I2_at_most_three_query_calls_per_turn():
+    """The loop denies the fourth crm_query / crm_describe call of a turn and tells the model to answer."""
     import app.main  # noqa: F401
     from app.services.chatbot.agent import loop
     from app.services.company_scope import register_company_scope_listeners
     from tests._pg_fixture import blank_session
     from tests.chatbot.agent.test_ai_query_reply import Scripted, agent_contact, answer, asks, turn
 
-    assert loop.MAX_QUERY_CALLS == 4
+    assert loop.MAX_QUERY_CALLS == 3
     register_company_scope_listeners()
     seen: list[list[dict]] = []
 
@@ -186,8 +186,8 @@ def test_I2_at_most_four_query_calls_per_turn():
             harness.Scripted = original
     replies = seen[-1]
     assert len(replies) == 5
-    assert all("At most" not in r["content"] for r in replies[:4])
-    assert "At most 4 crm_query/crm_describe calls" in replies[4]["content"]
+    assert all("At most" not in r["content"] for r in replies[:3])
+    assert all("At most 3 crm_query/crm_describe calls" in r["content"] for r in replies[3:])
 
 
 # ------------------------------------------------------------------ (4) the table renders

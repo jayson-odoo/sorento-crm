@@ -178,6 +178,37 @@ def _describe(db, ctx, args: dict) -> ToolResult:
 # and the turn then fails as a whole (`tests/chatbot/agent/test_agent_tool_schemas_gemini.py`).
 _TEXT = {"type": "string"}
 
+#: Money fields per entity whose total is a SALES figure on that entity's basis (crew pass on 74b6b751).
+MONEY_FIELDS = {
+    "billing_document": {"sales_amount", "net_total", "total"},
+    "order": {"subtotal_amount", "total_amount"},
+}
+BASIS_LABELS = {"billing_document": "invoiced (billing documents)", "order": "delivery-order"}
+
+
+def money_basis(args: Any) -> str | None:
+    """The entity whose money a `crm_query` totals (a sum / avg / min / max of one of its money fields), else None."""
+    if not isinstance(args, dict) or args.get("entity") not in MONEY_FIELDS:
+        return None
+    money = MONEY_FIELDS[args["entity"]]
+    for item in args.get("aggregates") or []:
+        if isinstance(item, dict) and item.get("fn") in ("sum", "avg", "min", "max") and item.get("field") in money:
+            return args["entity"]
+    return None
+
+
+def mixed_basis_refusal(first: str, now: str) -> ToolResult:
+    """One answer, one sales basis: the turn already totals sales on `first`."""
+    return ToolResult(
+        "denied",
+        message=(
+            f"This answer's sales figures are already on the {BASIS_LABELS[first]} basis; a {BASIS_LABELS[now]} "
+            "total would mix two bases in one answer. Answer from the first result, or ask the user which basis "
+            "they want."
+        ),
+    )
+
+
 
 def entity_index() -> str:
     """The compact index in `crm_query`'s description: each queryable entity's hint, fields and relations, so most
@@ -203,8 +234,11 @@ QUERY_SCHEMA = {
     "function": {
         "name": QUERY,
         "description": (
-            "Read CRM records as their screens show them: rows, or totals with group_by. Delivery order counts "
-            "and totals per agent, customer or month are this tool on entity order, not the sales report. "
+            "Read CRM records as their screens show them: rows, or totals with group_by. SALES with no basis named "
+            "are invoiced: billing_document, one query for the table and its total (owner rule: invoiced first; if "
+            "the user's basis is unclear, ask). Delivery order (DO) counts and totals per agent, customer or month are "
+            "entity order, not the sales report, and only when DOs are asked, never as sales; never mix the two in "
+            "one answer. "
             "Call it directly with the entities and fields below (a relation field is customer.code); call "
             "crm_describe only when a field's meaning is unclear. In the reply, show each row by its label exactly "
             "and say the result's period_display and scope_note. "
