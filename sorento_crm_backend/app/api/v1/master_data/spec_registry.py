@@ -180,6 +180,8 @@ def _serialise(row, owners: Optional[dict] = None) -> dict:
         # asset id -> name, so the screen names an icon rather than showing its id, without
         # the reader holding the Dealer Kit library permission.
         "value_icon_names": _icon_names(row),
+        # Where this spec's icons sit in the tag's one icon sequence (null: last).
+        "icon_order": row.icon_order,
         "parser_hint": row.parser_hint,
         "label_owned": bool(row.label_owned),
         "also_on": _also_on(row, owners),
@@ -276,6 +278,8 @@ class SpecKeyUpdate(BaseModel):
     # shows for a product holding that value. Staff-owned like value_labels, never
     # seed-repaired; an empty list removes the value's entry.
     value_icons: Optional[dict[str, list[str]]] = None
+    # The spec's place in the tag's one feature icon sequence (1 first); null clears it.
+    icon_order: Optional[int] = Field(default=None, ge=1, le=999)
     # Which products may carry this key at all, as {other_key: [permitted values]}.
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
@@ -1231,6 +1235,9 @@ def update_spec_key(
 
             # Reassigned, never mutated in place (JSONB, see value_labels above).
             row.value_icons = clean_value_icons(db, row, fields["value_icons"] or {})
+
+        if "icon_order" in fields:
+            row.icon_order = fields["icon_order"]
 
         if "value_weights" in fields:
             row.value_weights = {

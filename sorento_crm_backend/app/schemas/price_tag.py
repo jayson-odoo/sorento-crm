@@ -742,16 +742,24 @@ class BadgeLayerPropsDoc(_StrictProps):
 
 
 class FeatureIconsLayerPropsDoc(_StrictProps):
-    """PRICETAG-DESIGNER-GAPS item 3: one packed row of the library icons whose rule matches
-    the subject's specs. ``order`` names icon asset ids the designer put first."""
+    """PRICETAG-DESIGNER-GAPS item 3: one packed row of the icons the subject's spec values
+    carry, in the spec registry's one icon sequence (no per-template order)."""
 
     kind: Literal["feature_icons"]
     iconSize_mm: float = Field(gt=0, le=200)
     gap_mm: float = Field(ge=0, le=100)
     align: Literal["left", "center", "right"] = "left"
-    order: list[str] = []
     subjectPart: Optional[int] = None
     subjectSlot: Optional[SubjectSlotDoc] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_order(cls, data):
+        """A draft saved while the layer still had its own ``order`` (owner 21:0x retired it)
+        opens and saves without it, rather than being refused as an unknown field."""
+        if isinstance(data, dict) and "order" in data:
+            data = {k: v for k, v in data.items() if k != "order"}
+        return data
 
 
 class GroupBindingDoc(_StrictProps):

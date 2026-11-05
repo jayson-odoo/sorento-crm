@@ -283,7 +283,7 @@ def _layer(**props) -> dict:
 
 def test_the_document_accepts_a_feature_icons_layer():
     doc = TagTemplateDocModel.model_validate(
-        _layer(align="center", order=["a1"], subjectPart=0, subjectSlot={"kind": "fixed", "index": 0})
+        _layer(align="center", subjectPart=0, subjectSlot={"kind": "fixed", "index": 0})
     )
     assert doc.layers[0].type == "feature_icons"
 
@@ -291,7 +291,13 @@ def test_the_document_accepts_a_feature_icons_layer():
 def test_a_feature_icons_layer_defaults_to_left_aligned():
     doc = TagTemplateDocModel.model_validate(_layer())
     assert doc.layers[0].props.align == "left"
-    assert doc.layers[0].props.order == []
+
+
+def test_a_layer_saved_with_the_retired_order_still_validates_without_it():
+    """Owner 21:0x: the per-template icon order is gone (the spec's Icon order decides). A
+    draft saved during the lane with `order` must still open, and the key is not kept."""
+    doc = TagTemplateDocModel.model_validate(_layer(order=["a1"]))
+    assert "order" not in doc.layers[0].props.model_dump()
 
 
 def test_a_zero_icon_size_is_refused():

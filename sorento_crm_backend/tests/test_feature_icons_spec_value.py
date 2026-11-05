@@ -366,3 +366,128 @@ def test_the_feature_icons_route_needs_the_editor_permission(reg):
     db.commit()
     _as(_OUTSIDER)
     assert client.get("/api/v1/dealer-kit/feature-icons").status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Owner 21:0x: each SPEC has an "Icon order"; ONE global sequence
+# ---------------------------------------------------------------------------
+
+
+def _for_product(rules: list[dict], holds: dict[str, str]) -> list[str]:
+    """What a product holding `holds` ({spec_key: raw value}) shows: the FE rule, in input
+    order, each asset once at its first position."""
+    out: list[str] = []
+    for rule in rules:
+        if holds.get(rule["spec_key"]) in rule["values"] and rule["id"] not in out:
+            out.append(rule["id"])
+    return out
+
+
+def _ordered_world(db, *, pull_order=1, water_order=2, combined=False):
+    pull_key, water_key = _spec_key(), _spec_key()
+    pull = _icon(db, "ZZT pull-out")
+    hot, cold = _icon(db, "ZZT hot"), _icon(db, "ZZT cold")
+    combo = _icon(db, "ZZT red-blue")
+    _key(db, pull_key, label="Pull-out", data_type="boolean", icon_order=pull_order,
+         value_icons={"true": [pull.id]})
+    _key(db, water_key, label="Water supply", data_type="enum", icon_order=water_order,
+         allowed_values=["cold_only", "mixer"],
+         value_icons={"mixer": [combo.id] if combined else [hot.id, cold.id], "cold_only": [cold.id]})
+    db.flush()
+    return pull_key, water_key, SimpleNamespace(pull=pull, hot=hot, cold=cold, combo=combo)
+
+
+def _rules(db, *keys):
+    from app.services.dealer_kit import asset_service
+
+    return [r for r in asset_service.feature_icon_rules(db) if r["spec_key"] in keys]
+
+
+def test_pull_out_then_water_supply_by_icon_order(reg):
+    db, _as, _client = reg
+    pull_key, water_key, i = _ordered_world(db)
+    rules = _rules(db, pull_key, water_key)
+    assert _for_product(rules, {pull_key: "true", water_key: "mixer"}) == [i.pull.id, i.hot.id, i.cold.id]
+    assert _for_product(rules, {water_key: "mixer"}) == [i.hot.id, i.cold.id]
+
+
+def test_a_combined_mixer_icon_shows_alone(reg):
+    db, _as, _client = reg
+    pull_key, water_key, i = _ordered_world(db, combined=True)
+    rules = _rules(db, pull_key, water_key)
+    assert _for_product(rules, {water_key: "mixer"}) == [i.combo.id]
+    assert _for_product(rules, {water_key: "cold_only"}) == [i.cold.id]
+
+
+def test_the_icon_order_beats_the_spec_key(reg):
+    """Water supply (1) before Pull-out (2) once the numbers say so, whatever the keys."""
+    db, _as, _client = reg
+    pull_key, water_key, i = _ordered_world(db, pull_order=2, water_order=1)
+    rules = _rules(db, pull_key, water_key)
+    assert _for_product(rules, {pull_key: "true", water_key: "mixer"}) == [i.hot.id, i.cold.id, i.pull.id]
+
+
+def test_a_spec_with_no_icon_order_goes_last(reg):
+    db, _as, _client = reg
+    pull_key, water_key, i = _ordered_world(db, pull_order=None, water_order=5)
+    rules = _rules(db, pull_key, water_key)
+    assert _for_product(rules, {pull_key: "true", water_key: "mixer"}) == [i.hot.id, i.cold.id, i.pull.id]
+
+
+def test_ties_fall_back_to_the_spec_label(reg):
+    db, _as, _client = reg
+    # Same order: "Pull-out" < "Water supply" by label.
+    pull_key, water_key, i = _ordered_world(db, pull_order=3, water_order=3)
+    rules = _rules(db, pull_key, water_key)
+    assert _for_product(rules, {pull_key: "true", water_key: "mixer"}) == [i.pull.id, i.hot.id, i.cold.id]
+
+
+def test_icon_order_is_saved_read_back_and_cleared(reg):
+    db, _as, client = reg
+    key = _spec_key()
+    _key(db, key, data_type="enum", allowed_values=["a"])
+    db.commit()
+
+    res = client.patch(f"{_BASE}/{key}", json={"icon_order": 2})
+    assert res.status_code == 200, res.text
+    assert res.json()["icon_order"] == 2
+    _as(_MERCHANDISER)
+    listed = {k["spec_key"]: k for k in client.get(_BASE).json()["keys"]}
+    assert listed[key]["icon_order"] == 2
+
+    _as(_REGISTRY_ADMIN)
+    res = client.patch(f"{_BASE}/{key}", json={"icon_order": None})
+    assert res.status_code == 200, res.text
+    assert res.json()["icon_order"] is None
+
+
+@pytest.mark.parametrize("bad", [0, 1000, -1])
+def test_icon_order_outside_1_to_999_is_refused(reg, bad):
+    db, _as, client = reg
+    key = _spec_key()
+    _key(db, key, data_type="enum", allowed_values=["a"])
+    db.commit()
+    assert client.patch(f"{_BASE}/{key}", json={"icon_order": bad}).status_code == 422
+
+
+def test_a_merchandiser_cannot_set_icon_order(reg):
+    db, _as, client = reg
+    key = _spec_key()
+    _key(db, key, data_type="enum", allowed_values=["a"])
+    db.commit()
+    _as(_MERCHANDISER)
+    assert client.patch(f"{_BASE}/{key}", json={"icon_order": 1}).status_code == 403
+
+
+def test_seed_repair_leaves_icon_order_alone(reg):
+    from app.services.product_spec_registry import SPEC_REGISTRY_SEED, seed_spec_registry
+
+    db, _as, _client = reg
+    entry = SPEC_REGISTRY_SEED[0]
+    row = _key(db, entry["spec_key"], label="Drifted", data_type=entry["data_type"],
+               source="seed", icon_order=7)
+    db.commit()
+    seed_spec_registry(db, commit=True)
+    db.refresh(row)
+    assert row.icon_order == 7
+    assert row.label == entry["label"]

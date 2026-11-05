@@ -2,7 +2,8 @@
 
 PRICETAG-DESIGNER-GAPS item 3, owner ruling 5 Nov 20:35: the icon <-> spec link lives on the
 spec VALUE. `product_spec_registry.value_icons` is `{value: [asset id, ...]}`, staff-owned and
-never seed-repaired, like `value_labels`. Additive only.
+never seed-repaired, like `value_labels`. `icon_order` (owner, 5 Nov 21:0x) places a spec's
+icons in the one global sequence a tag shows (ascending, blank last). Additive only.
 
 (This revision replaces the unmerged `dkfi_0001_asset_show_when`, which put the rule on the
 asset. A database that ran that one keeps its two unused `dealer_kit.asset.show_when_*`
@@ -29,9 +30,15 @@ def upgrade() -> None:
             "ADD COLUMN IF NOT EXISTS value_icons JSONB NOT NULL DEFAULT '{}'::jsonb"
         )
     )
+    op.get_bind().execute(
+        sa.text("ALTER TABLE product_spec_registry ADD COLUMN IF NOT EXISTS icon_order INTEGER")
+    )
 
 
 def downgrade() -> None:
+    op.get_bind().execute(
+        sa.text("ALTER TABLE product_spec_registry DROP COLUMN IF EXISTS icon_order")
+    )
     op.get_bind().execute(
         sa.text("ALTER TABLE product_spec_registry DROP COLUMN IF EXISTS value_icons")
     )

@@ -470,10 +470,11 @@ def spec_value_keys(row) -> list[str]:
 def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list[dict]:
     """The icons every spec value carries, as ``[{id, name, spec_key, values: [value]}]``.
 
-    One entry per (key, value, icon), in display order: keys in ``spec_key`` order (the
-    registry's own ``active_registry`` order), each key's values in its own order, each value's
-    icons in the order the admin set (owner, 5 Nov 20:4x). An icon on two values is two entries;
-    the frontend shows it once per product, at its first position.
+    One entry per (key, value, icon), already in the ONE sequence a tag shows (owner, 5 Nov
+    21:0x): keys by their ``icon_order`` ascending (blank last; ties by label, then
+    ``spec_key``), each key's values in its own order, each value's icons in the order the admin
+    set. The frontend keeps this input order and shows an asset reached twice once, at its first
+    position.
 
     Only an existing, non-deleted asset of kind icon counts, scoped like any asset query;
     ``company_id`` narrows it to one company, for a render of a request (a staff session may
@@ -481,7 +482,15 @@ def feature_icon_rules(db: Session, *, company_id: Optional[str] = None) -> list
     """
     from app.services.product_spec_registry import active_registry
 
-    rows = [row for row in active_registry(db) if row.value_icons]
+    rows = sorted(
+        (row for row in active_registry(db) if row.value_icons),
+        key=lambda row: (
+            row.icon_order is None,
+            row.icon_order or 0,
+            (row.label or "").lower(),
+            row.spec_key,
+        ),
+    )
     wanted = {
         str(asset_id)
         for row in rows
