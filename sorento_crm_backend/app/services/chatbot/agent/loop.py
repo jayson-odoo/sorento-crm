@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
@@ -1090,7 +1091,6 @@ def run_agent_turn(
         )
 
 
-NO_TOOL_EVENT = "agent_no_tool"
 _NO_TOOL_MAX = 5
 _NO_TOOL_CHARS = 300
 

@@ -74,6 +74,7 @@ from app.schemas.ai_assistant import (
     UsageByDayItem,
     UsageSummaryResponse,
     WishlistClusterItem,
+    NoToolAskItem,
 )
 from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService, MCPToolCallError
 from app.services.ai_wishlist_service import AiWishlistService
@@ -1128,6 +1129,15 @@ def list_wishlist_clusters(
         )
         for it in items
     ]
+
+
+@router.get("/ai-assistant/wishlist/no-tool", response_model=list[NoToolAskItem])
+def list_wishlist_no_tool(
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The last 30 days of asks the agent flagged as `no_tool`, newest first (GAP-SIGNAL)."""
+    return [NoToolAskItem(**row) for row in AiWishlistService(db).list_no_tool(days=30)]
 
 
 # --- Model prices -----------------------------------------------------------
