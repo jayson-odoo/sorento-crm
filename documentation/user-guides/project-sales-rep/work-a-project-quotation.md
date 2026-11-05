@@ -49,13 +49,15 @@ The card at the top reads like an order inquiry:
   every scope at once).
 
 The lines sit on the **Header** tab under the letterhead, one tab per scope above them, with
-**Search lines** and **Columns** on the table.
+**Search lines** and **Columns** on the table. **Edit proposal** shows the same card at the top
+(number, status, version) with **Recheck alerts**, which waits until you save or cancel what you
+typed.
 
 ## Scopes
 
 A proposal is split into scopes (for example *Townhouse*, *Guard house*), one tab each above the
-lines: on the **Header** tab when you read a proposal, and on the **Lines** tab of **New
-proposal** and **Edit proposal**, where you add and change them.
+lines, on the **Header** tab under the letterhead. Reading a proposal and **New proposal** /
+**Edit proposal** look the same; in New and Edit you add and change the scopes and lines.
 
 * **Add a scope:** click **+** at the end of the tabs and name it.
 * **See a scope's value:** click the **$** on its tab.
@@ -292,7 +294,7 @@ of a quotation can be laid out that way. A section with no grid stays exactly as
 
 ### Set up the columns
 
-In **Edit proposal**, on the section's **Lines** tab, while the revision is still a draft:
+In **Edit proposal**, on the **Header** tab under the section's tab, while the revision is still a draft:
 
 1. Click **+ Column header** under the table (once the grid exists it is also the narrow column at
    the far right) and type its name, for example *TYPE A - 1 BH* or *LEVEL 9*. Your lines' current quantities move into the
