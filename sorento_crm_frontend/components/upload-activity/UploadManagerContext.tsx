@@ -32,6 +32,7 @@ import type {
   UploadActivitySession,
 } from './types';
 import { UPLOAD_ACTIVITY_QUERY_KEY } from './queryKeys';
+import { randomId } from '@/lib/id';
 
 // ---- state ----------------------------------------------------------------
 
@@ -220,9 +221,7 @@ const Ctx = createContext<UploadManagerApi | null>(null);
 // ---- provider -------------------------------------------------------------
 
 function genId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-    return crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return randomId();
 }
 
 export function UploadManagerProvider({ children }: { children: ReactNode }) {

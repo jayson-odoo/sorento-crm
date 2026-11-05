@@ -1,5 +1,6 @@
 'use client';
 
+import { randomId } from '@/lib/id';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Filter, Plus, Trash2 } from 'lucide-react';
@@ -102,7 +103,7 @@ function rowsFromFilter(
       rows: defaultField
         ? [
             {
-              id: crypto.randomUUID(),
+              id: randomId(),
               field_key: defaultField.field_key,
               op: defaultField.allowed_operators[0] || 'eq',
               valueRaw: '',
@@ -118,7 +119,7 @@ function rowsFromFilter(
   return {
     rootOp: filter.op,
     rows: flat.map((c) => ({
-      id: crypto.randomUUID(),
+      id: randomId(),
       field_key: c.field_key,
       op: c.op,
       valueRaw:
@@ -291,7 +292,7 @@ export function ListQueryFilterDialog({
     setRows((prev) => [
       ...prev,
       {
-        id: crypto.randomUUID(),
+        id: randomId(),
         field_key: defaultField.field_key,
         op: defaultField.allowed_operators[0] || 'eq',
         valueRaw: '',
