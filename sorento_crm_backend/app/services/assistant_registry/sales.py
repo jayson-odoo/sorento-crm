@@ -18,6 +18,8 @@ from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 TARGETS_VIEW = "sales.targets.view"
+#: The owner of a dealer target no single agent owns every account of (crew pass on ddd978ef).
+UNASSIGNED = "Unassigned"
 
 
 def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
@@ -159,22 +161,22 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         owners = {c.sales_agent_id for c in accounts.get(row["target_id"], [])}
         if len(owners) == 1 and None not in owners and next(iter(owners)) in agents:
             return agent_label(agents[next(iter(owners))]), "agent"
-        return "(no single agent)", "none"
+        return UNASSIGNED, "none"
 
-    per: dict[tuple, dict] = {}
+    per: dict[str, dict] = {}
     for row in periods:
         name, kind = owner(row)
-        key = (name, row["period_start"], row["period_end"])
-        out = per.setdefault(key, {
-            "id": f"{name}|{row['period_start']}|{row['period_end']}", "owner": name, "owner_kind": kind,
-            "period": row["period_start"], "period_start": row["period_start"], "period_end": row["period_end"],
-            "targets": 0, "below_target": 0, "target_value": 0.0, "achieved_value": 0.0,
+        # ONE row per owner over the whole window (crew pass on ddd978ef: per owner and period put one agent on
+        # four rows).
+        out = per.setdefault(name, {
+            "id": name, "owner": name, "owner_kind": kind, "period": row["period_start"],
+            "periods": 0, "targets": set(), "target_value": 0.0, "achieved_value": 0.0,
             "commission": None, "bonus": None, "payout": None, "_kinds": set(), "_complete": True,
         })
-        out["targets"] += 1
+        out["periods"] += 1
+        out["targets"].add(row["target_no"])
+        out["period"] = min(out["period"], row["period_start"])
         out["_kinds"].add(row["subject_kind"])
-        if _below(row["achieved_pct"]):
-            out["below_target"] += 1
         if row["metric"] != "amount" or row["target_value"] is None:
             # Units, or a points target without a ratio: no RM figure to add (the page shows none either).
             out["_complete"] = False
@@ -187,16 +189,49 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
     rows = []
     for out in per.values():
         complete = out.pop("_complete")
-        kinds = out.pop("_kinds")
+        out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
+        out["targets"] = len(out["targets"])
         goal, achieved = round(out["target_value"], 2), round(out["achieved_value"], 2)
-        out["kinds"] = ", ".join(sorted(kinds))
         out["target_value"] = goal if complete else None
         out["achieved_value"] = achieved if complete else None
         out["achieved_pct"] = (
             ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))) if complete and goal else None
         )
         rows.append(out)
-    rows.sort(key=lambda r: (r["owner"], r["period_start"], r["period_end"]))
+    # Agents by name, then teams, then the targets no single agent owns, once, last.
+    rows.sort(key=lambda r: ({"agent": 0, "team": 1}.get(r["owner_kind"], 2), r["owner"]))
+    return rows
+
+
+def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
+    """`target_list`: the Targets screens' own rows (`target_service.list_all_targets`, Teams, Agents and Dealers
+    tabs: one row per target, its whole range's target, achieved and %), for targets whose range overlaps the
+    window. Reached is the screen's green figure (`_below`). An own-only holder gets the Agents tab cut to their own
+    agents, as the screen cuts it (`api/v1/sales/targets.py` `_own_rows`)."""
+    from app.services import own_scope
+    from app.services.sales import target_service as ts
+
+    mine = set(own_scope.me(db, user_id).agent_ids) if own_only else None
+    rows = []
+    for subject in ("agent", "team", "dealer"):
+        if mine is not None and subject != "agent":
+            continue
+        for r in ts.list_all_targets(db, subject=subject)["rows"]:
+            if mine is not None and r.get("sales_agent_id") not in mine:
+                continue
+            if r["start_date"] > date_to or r["end_date"] < date_from:
+                continue
+            rows.append({
+                "id": r["target_id"], "target_id": r["target_id"], "target_no": r["target_no"],
+                "subject": r["subject_label"], "subject_kind": subject, "period": r["start_date"],
+                "start_date": r["start_date"], "end_date": r["end_date"], "target_value": r["target_value"],
+                "achieved_value": r["achieved_value"], "achieved_pct": r["achieved_pct"],
+                "reached": not _below(r["achieved_pct"]),
+            })
+            if len(rows) > limit:
+                from app.services.assistant_registry.query import QueryRefused
+
+                raise QueryRefused("timeout", f"More than {limit} targets in that window; narrow it.")
     return rows
 
 
@@ -292,11 +327,10 @@ register(
         # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).
         brand_blind=True,
     ),
-    # Crew pass on 0463b805 (5 Nov): ONE deterministic entity for target, below target and payout questions, so each
-    # is one query. `sales_target` (per target) stays for a question about one target, through crm_describe.
+    # Crew passes on 0463b805 and ddd978ef (5 Nov): two deterministic target entities, one per question kind.
     EntityDef(
         key="agent_target_summary",
-        label="Sales targets by agent and period",
+        label="Sales targets by agent",
         module="sales",
         model=SalesTarget,
         view_permission=TARGETS_VIEW,
@@ -306,37 +340,66 @@ register(
             "owner": FieldDef(
                 "Agent", kind="text",
                 note="'CODE - Name' (agent targets and the dealers whose accounts the agent owns), 'Team X', or "
-                     "'(no single agent)'; filter with contains on a code or name.",
+                     "'Unassigned'; filter with contains on a code or name.",
             ),
             "owner_kind": FieldDef("Owner kind", kind="text", note="agent, team or none."),
             "period": FieldDef(
                 "Period", kind="date",
                 note="The window: between [from, to] (last month, this quarter); without it, the current periods.",
             ),
-            "period_start": FieldDef("Period start", kind="date"),
-            "period_end": FieldDef("Period end", kind="date"),
             "kinds": FieldDef("Target kinds", kind="text"),
+            "periods": FieldDef("Periods", kind="number"),
             "targets": FieldDef("Targets", kind="number"),
-            "below_target": FieldDef(
-                "Below target", kind="number",
-                note="How many of these targets are below target as the Targets screen reads it (Achieved % shown "
-                     "and under 100, or no %). The total is the screen's count.",
-            ),
             "target_value": FieldDef("Target (RM)", kind="number", note="Empty when a units or no-ratio target is in the row."),
             "achieved_value": FieldDef("Achieved (RM)", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
             "commission": FieldDef("Commission", kind="number"),
             "bonus": FieldDef("Bonus", kind="number"),
-            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus."),
+            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus over the window."),
         },
         name_by=("owner",),
-        hint="EVERY sales target / below target / achievement / commission / payout question, ONE query: a row per "
-             "agent (or team) per period, with a totals row. One agent: owner contains <code or name>. Below "
-             "target: below_target gt 0 (its total = the screens' count). No period = the current periods",
-        list_fields=("period_start", "period_end", "targets", "below_target", "target_value", "achieved_value",
-                     "achieved_pct", "payout"),
-        row_totals=("targets", "below_target", "commission", "bonus", "payout"),
+        hint="PAYOUT / COMMISSION / TARGET vs ACHIEVED per agent or for one agent: one row per agent over the window, "
+             "totals row. One agent: owner contains <code or name>",
+        list_fields=("targets", "target_value", "achieved_value", "achieved_pct", "payout"),
+        row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
+        window_field="period",
+        brand_blind=True,
+    ),
+    EntityDef(
+        key="target_list",
+        label="Sales targets",
+        module="sales",
+        model=SalesTarget,
+        view_permission=TARGETS_VIEW,
+        own_permission="sales.targets.view_own",
+        own_clause=_own,
+        fields={
+            "target_no": FieldDef("Target", kind="text"),
+            "subject": FieldDef("Agent, team or dealer", kind="text", note="As the Targets screen names it."),
+            "subject_kind": FieldDef("Target for", kind="text", note="agent, team or dealer."),
+            "period": FieldDef(
+                "Period", kind="date",
+                note="The window: targets whose date range overlaps between [from, to]; without it, targets running today.",
+            ),
+            "start_date": FieldDef("Start", kind="date"),
+            "end_date": FieldDef("End", kind="date"),
+            "target_value": FieldDef("Target", kind="number"),
+            "achieved_value": FieldDef("Achieved", kind="number"),
+            "achieved_pct": FieldDef("Achieved %", kind="number"),
+            "reached": FieldDef(
+                "Reached", kind="boolean", note="Achieved % shown and at least 100, the Targets screen's green figure.",
+            ),
+        },
+        name_by=("target_no", "subject"),
+        hint="WHICH TARGETS / BELOW TARGET / NOT REACHED: one row per target as the Targets screens list it. Below "
+             "target: reached eq false; the total is the count",
+        list_fields=("subject_kind", "end_date", "target_value", "achieved_value", "achieved_pct"),
+        always_note="Not reached = achieved under 100% of target, as the Targets screen shows it.",
+        screen_path="/sales/targets/{target_id}",
+        pages=("/sales/targets",),
+        routes=("GET /api/v1/sales/targets",),
+        compute=_target_list_rows,
         window_field="period",
         brand_blind=True,
     ),

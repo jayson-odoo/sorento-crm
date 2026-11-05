@@ -93,3 +93,5 @@ class EntityDef:
     #: Listed in `crm_query`'s compact index. False = reachable only through crm_describe (one entity per question
     #: kind in the index, crew pass on 0463b805).
     in_index: bool = True
+    #: Said with every result of the entity (`scope_note`): a definition the answer must carry.
+    always_note: str | None = None

@@ -35,6 +35,8 @@ from app.services.assistant_registry.query import (
 )
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
+#: Date names a model reaches for that mean the window on any computed entity, field or not (crew pass on ddd978ef).
+WINDOW_ALIASES = frozenset({"period_start", "period_end", "start_date", "end_date", "date"})
 #: The most periods one call reads before its filters: past it the window is too wide to compute in a turn.
 MAX_COMPUTED_ROWS = 2000
 #: The widest date window one call computes (security review, wave 2: "all payouts ever" is not a chat question).
@@ -73,8 +75,10 @@ def _date(value: Any, path: str) -> dt.date:
 
 
 def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str | None]:
-    """(date_from, date_to, the other filters, the period as said). A filter on the window field sets the window
-    (the periods overlapping it); everything else is a row filter."""
+    """(date_from, date_to, the other filters, the period as said). A filter on ANY date field of the entity sets
+    the window (the periods overlapping it): the date fields are facets of the one period, so `period_start
+    between [...]` means the same as `period` (crew pass on ddd978ef: it was refused as invalid, a wasted call).
+    Everything else is a row filter."""
     key = entity.window_field
     label = entity.fields[key].label if key else ""
     low = high = None
@@ -82,7 +86,12 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
     for item in asked:
         if not isinstance(item, dict) or set(item) - {"field", "op", "value"}:
             raise QueryRefused("invalid", "Each filter is {field, op, value}.")
-        if key is None or item.get("field") != key:
+        name = item.get("field") if isinstance(item.get("field"), str) else None
+        field = entity.fields.get(name) if name else None
+        is_window = key is not None and (
+            (field is not None and field.kind == "date") or (field is None and name in WINDOW_ALIASES)
+        )
+        if not is_window:
             rest.append(item)
             continue
         op, value = item.get("op"), item.get("value")
@@ -99,12 +108,6 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
         else:
             raise QueryRefused("invalid", f"`{key}` takes eq, between, gte, gt, lte or lt (a date window).")
     if low is None and high is None:
-        dated = [i.get("field") for i in rest if (entity.fields.get(i.get("field")) or FieldDef("")).kind == "date"]
-        if key and dated:
-            # Without a window only today's periods are read, so a date filter alone would find nothing.
-            raise QueryRefused(
-                "invalid", f"Pick the periods with `{key}` (between [from, to]); `{dated[0]}` only narrows within it."
-            )
         today = _today()
         return today, today, rest, None
     if low is None or high is None:
@@ -296,6 +299,8 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
             notes.append(note)
     if period is None and entity.window_field:
         notes.insert(0, f"Periods containing today ({_display_date(date_from.isoformat(), 'date')}).")
+    if entity.always_note:
+        notes.insert(0, entity.always_note)
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)

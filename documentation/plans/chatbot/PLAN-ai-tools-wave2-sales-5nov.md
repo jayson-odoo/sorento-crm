@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 6: crew pass on 0463b805; sales basis and active customers passed there). Track: full (RBAC, one
+Status: Review (round 7: crew pass on ddd978ef; sales, payout total, Agent B figure and active customers passed there). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -195,6 +195,22 @@ with the cap: one full call and three narrowed ones, about 38k.
   `target_detail` the screen's way.
 - Tokens, one query then the answer: payout per agent 27,255; commission for Agent B last month 27,323; below
   target this quarter 27,320 (2 calls each).
+
+## Crew pass on ddd978ef (5 Nov) and round 7
+
+- `agent_target_summary` is one row per owner over the whole window (no longer per owner and period); dealer targets
+  no single agent owns appear once as "Unassigned", last. Totals over every row.
+- `target_list` (new): the Targets screens' own rows (`target_service.list_all_targets`, Teams, Agents and Dealers
+  tabs; one row per target, whole-range target, achieved and %), for targets whose range overlaps the window
+  (default: running today). `reached` = the screen's green figure (`SalesTargetsView.tsx:389`); "who is below
+  target" = `reached eq false`, the result's `total` is the count, and every answer carries "Not reached = achieved
+  under 100% of target, as the Targets screen shows it." (`EntityDef.always_note`). Test S3 holds it equal to
+  `list_all_targets` read the screen's way.
+- No invalid first call: on a computed entity any date field, and the names `period_start`, `period_end`,
+  `start_date`, `end_date`, `date`, set the window instead of being refused (`computed.WINDOW_ALIASES`).
+- Index hints no longer repeat the field list.
+- Tokens, one query then the answer: payout per agent 27,260; commission for Agent B last month 27,328; below
+  target this quarter 27,315; active customers of Agent B 27,187 (2 calls each).
 
 ## Token measurement (task item 5)
 

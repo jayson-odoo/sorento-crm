@@ -23,26 +23,33 @@ def _owner(t, key):
     return f"{t[key].sales_agent} - Agent {key.upper()}"
 
 
-def test_S1_payout_per_agent_one_row_per_agent_per_current_period_with_totals(targets):
+def test_S1_payout_per_agent_one_row_per_agent_unassigned_once_with_totals(targets):
     db, _c, t = targets
     out = run(db, {"entity": ENTITY})
-    rows = {r["label"]: r for r in out["rows"]}
-    assert set(rows) == {_owner(t, "a"), _owner(t, "b"), "(no single agent)"}
-    a = rows[_owner(t, "a")]
-    assert (a["period_start"], a["period_end"]) == ("01/10/2026", "31/10/2026")
+    assert [r["label"] for r in out["rows"]] == [_owner(t, "a"), _owner(t, "b"), "Unassigned"]
+    a = out["rows"][0]
     assert a["targets"] == 1 and a["target_value"] == 10000.0 and a["achieved_value"] == 9000.0
-    assert a["achieved_pct"] == 90.0 and a["below_target"] == 1 and a["payout"] == 180.0
-    assert out["totals"] == {"targets": 3, "below_target": 3, "payout": 360.0 + 0.0}
+    assert a["achieved_pct"] == 90.0 and a["payout"] == 180.0
+    assert out["totals"] == {"targets": 3, "payout": 360.0}
     assert out["scope_note"] == "Periods containing today (20/10/2026)."
-    assert [c["key"] for c in out["columns"]] == [
-        "label", "period_start", "period_end", "targets", "below_target", "target_value", "achieved_value",
-        "achieved_pct", "payout"]
 
 
-def test_S2_commission_for_agent_b_last_month_by_name_one_row(targets):
+def test_S1b_a_wider_window_is_still_one_row_per_agent(targets):
+    db, _c, t = targets
+    out = run(db, {"entity": ENTITY, "filters": [{"field": "period", "op": "between", "value": ["01/07/2026", "31/12/2026"]},
+                                                 {"field": "owner_kind", "op": "eq", "value": "agent"}],
+                   "fields": ["periods", "targets", "target_value", "achieved_value", "achieved_pct", "payout"]})
+    a, b = out["rows"]
+    assert a["label"] == _owner(t, "a") and a["periods"] == 6 and a["targets"] == 1
+    assert (a["target_value"], a["achieved_value"], a["achieved_pct"], a["payout"]) == (60000.0, 21000.0, 35.0, 540.0)
+    assert b["payout"] == 180.0
+
+
+def test_S2_commission_for_agent_b_last_month_by_name_one_row_period_start_sets_the_window(targets):
+    """The crew's first call used `period_start` and was refused; any date field now sets the window."""
     db, _c, t = targets
     out = run(db, {"entity": ENTITY, "filters": [{"field": "owner", "op": "contains", "value": "agent b"},
-                                                 {"field": "period", "op": "between", "value": SEP}],
+                                                 {"field": "period_start", "op": "between", "value": SEP}],
                    "fields": ["commission", "bonus", "payout", "achieved_pct"]})
     [row] = out["rows"]
     assert row["label"] == _owner(t, "b")
@@ -50,24 +57,25 @@ def test_S2_commission_for_agent_b_last_month_by_name_one_row(targets):
     assert out["period_display"] == "Period 01/09/2026 to 30/09/2026"
 
 
-def test_S3_below_target_total_is_the_screens_count(targets):
-    """The screen's reading (`SalesTargetsView.tsx`: reached = % shown and >= 100) over every target period of the
-    quarter, from the target page itself, equals the summary's below_target total and `sales_target`'s count."""
+def test_S3_below_target_is_the_targets_screens_count_and_says_its_definition(targets):
+    """`target_list` is the Targets screens' own rows (`list_all_targets`); not reached = % missing or under 100."""
     from app.services.sales import target_service
 
     db, _c, t = targets
-    summary = run(db, {"entity": ENTITY, "filters": [QUARTER, {"field": "below_target", "op": "gt", "value": 0}]})
-    per_period = run(db, {"entity": "sales_target", "filters": [QUARTER, {"field": "below_target", "op": "eq", "value": True}],
-                          "limit": 50})
-    screen = 0
-    for key in ("ta", "tb", "dealer"):
-        target = target_service.get_target_or_404(db, t[key]["id"])
-        for p in target_service.target_detail(db, target)["periods"]:
-            if p["period_end"].isoformat() >= "2026-10-01" and p["period_start"].isoformat() <= "2026-12-31":
-                pct = p["achieved_pct"]
-                screen += 0 if (pct is not None and pct >= 100) else 1
-    assert screen == 7  # A and B: Oct (90%), Nov, Dec (0%); the dealer's Q4 (nothing sold yet)
-    assert summary["totals"]["below_target"] == per_period["total"] == screen
+    out = run(db, {"entity": "target_list", "filters": [{"field": "reached", "op": "eq", "value": False}]})
+    screen = [r for subject in ("agent", "team", "dealer") for r in target_service.list_all_targets(db, subject=subject)["rows"]
+              if not (r["achieved_pct"] is not None and r["achieved_pct"] >= 100)]
+    assert out["total"] == len(screen) == 3
+    assert {r["label"].split(":")[0] for r in out["rows"]} == {t["ta"]["target_no"], t["tb"]["target_no"], t["dealer"]["target_no"]}
+    assert out["scope_note"].startswith("Not reached = achieved under 100% of target, as the Targets screen shows it.")
+    a = next(r for r in out["rows"] if r["label"].startswith(t["ta"]["target_no"]))
+    assert (a["target_value"], a["achieved_value"], a["achieved_pct"]) == (60000.0, 21000.0, 35.0)
+
+
+def test_S3b_target_list_window_is_the_targets_date_range(targets):
+    db, _c, t = targets
+    out = run(db, {"entity": "target_list", "filters": [{"field": "period", "op": "between", "value": ["01/01/2027", "31/03/2027"]}]})
+    assert out["rows"] == []
 
 
 def test_S4_the_screens_reading_a_target_without_a_percent_is_below():
@@ -90,12 +98,10 @@ def test_S5_a_dealer_whose_accounts_one_agent_owns_is_that_agents(targets):
     db.flush()
     out = run(db, {"entity": ENTITY, "filters": [{"field": "period", "op": "between", "value": ["01/07/2026", "30/09/2026"]},
                                                  {"field": "owner", "op": "contains", "value": "agent a"}],
-                   "fields": ["period_start", "period_end", "kinds", "targets", "payout"]})
-    by_period = {(r["period_start"], r["period_end"]): r for r in out["rows"]}
-    dealer_q3 = by_period[("01/07/2026", "30/09/2026")]
-    assert dealer_q3["kinds"] == "dealer" and dealer_q3["payout"] == 3500.0  # 70,000 at 5%
-    assert out["totals"]["payout"] == 3500.0 + 360.0  # plus A's own September commission
-    assert "(no single agent)" not in {r["label"] for r in out["rows"]}
+                   "fields": ["kinds", "targets", "payout"]})
+    [row] = out["rows"]
+    assert row["kinds"] == "agent, dealer" and row["targets"] == 2
+    assert row["payout"] == 3500.0 + 360.0  # the dealer's Q3 (70,000 at 5%) plus A's own September
 
 
 def test_S6_nothing_matched_is_said_never_padded(targets):
@@ -110,17 +116,19 @@ def test_S7_follows_the_targets_slugs_and_the_own_rule(targets, grant):
 
     db, _c, _t = targets
     grant("sales.reports.view")
-    with pytest.raises(query.QueryRefused) as info:
-        run(db, {"entity": ENTITY})
-    assert info.value.code == "no_access"
+    for entity in (ENTITY, "target_list"):
+        with pytest.raises(query.QueryRefused) as info:
+            run(db, {"entity": entity})
+        assert info.value.code == "no_access"
     grant("sales.targets.view_own")
     # A user with no linked agent: nothing of anyone's.
     assert run(db, {"entity": ENTITY})["rows"] == []
+    assert run(db, {"entity": "target_list"})["rows"] == []
 
 
-def test_S8_the_index_offers_only_the_summary_for_targets():
+def test_S8_the_index_offers_the_two_target_entities_only():
     from app.services.chatbot.agent import query_tools
 
-    index = query_tools.entity_index()
-    assert "\nagent_target_summary (" in f"\n{index}"
-    assert "\nsales_target (" not in f"\n{index}"
+    index = f"\n{query_tools.entity_index()}"
+    assert "\nagent_target_summary (" in index and "\ntarget_list (" in index
+    assert "\nsales_target (" not in index

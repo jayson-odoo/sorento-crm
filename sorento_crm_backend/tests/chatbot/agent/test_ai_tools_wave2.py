@@ -551,13 +551,15 @@ def test_E2_between_inclusive_ne_and_booleans_as_sql(world):
     assert pick({"field": "below_target", "op": "eq", "value": "false"}) == {"C"}
     assert pick({"field": "achieved_pct", "op": "not_in", "value": [50]}) == {"C", "D"}
     for bad in ({"field": "achieved_pct", "op": "between", "value": [None, 5]},
-                {"field": "agent", "op": "in", "value": [None]},
-                {"field": "period_start", "op": "eq", "value": "01/09/2026"}):
+                {"field": "agent", "op": "in", "value": [None]}):
         from app.services.assistant_registry.query import QueryRefused
 
         with pytest.raises(QueryRefused) as info:
-            _computed(db, ROWS, {"filters": [bad] if bad["field"] == "period_start" else [SEPW, bad]})
+            _computed(db, ROWS, {"filters": [SEPW, bad]})
         assert info.value.code == "invalid", bad
+    # Round 7: a date field sets the window instead of being refused (crew pass on ddd978ef).
+    out = _computed(db, ROWS, {"filters": [{"field": "period_start", "op": "eq", "value": "01/09/2026"}], "fields": ["agent"]})
+    assert out["period_display"] == "Period 01/09/2026"
 
 
 def test_E3_window_ops_name_the_exact_days(world, monkeypatch):
