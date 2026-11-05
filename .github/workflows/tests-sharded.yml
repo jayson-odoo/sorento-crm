@@ -235,7 +235,11 @@ jobs:
               mapfile -t FILES < "../plan/$POOL.txt"
               echo "$POOL shard $SHARD of $OF over ${#FILES[@]} files"
               cp .test_durations ../durations.base.json
-              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" -m "not serial_ddl" \
+              # least_duration, not the default duration_based_chunks: the committed
+              # .test_durations held 26k of ~56k tests on 5 Nov, and contiguous chunks put the
+              # untimed tests together (run 41977895392: main shards 17.7 to 35.9 min of pytest).
+              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" --splitting-algorithm least_duration \
+                -m "not serial_ddl" \
                 --store-durations --durations-path .test_durations "${FILES[@]}"
               # The tests THIS shard timed (new or changed keys): the summary merges every
               # shard's into one refreshed .test_durations artifact to commit.
@@ -373,6 +377,7 @@ jobs:
             --head "$HEAD_SHA" --mode "$MODE" --base "$BASE_SHA" --reason "$REASON" --run-url "$RUN_URL" \
             --durations-base plan/test_durations.json --durations-out test_durations.json \
             > comment.md
+          cat comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
       # The committed .test_durations refreshed with every test this run timed: download it and
       # commit it as sorento_crm_backend/.test_durations when the shards drift apart.
