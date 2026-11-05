@@ -29,7 +29,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: ({ options = [], selectedOptions = [] }: { options?: Opt[]; selectedOptions?: Opt[] }) => (
     <ul>
       {[...options, ...selectedOptions].map((o, i) => (
-        <li key={`${o.value}-${i}`} data-testid={`opt-${o.value}`}>
+        <li key={`${o.value}-${i}`} data-testid={`opt-${o.value}`} data-description={o.description ?? ''}>
           {[o.label, o.description, o.badgeText].filter(Boolean).join(' | ')}
         </li>
       ))}
@@ -42,7 +42,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     'aria-label'?: string;
     value?: string;
     onChange?: (v: string) => void;
-    options?: { value: string; label: string }[];
+    options?: { value: string; label: string; description?: string }[];
   }) => (
     <select
       aria-label={props['aria-label'] ?? props.placeholder ?? ''}
@@ -51,7 +51,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     >
       <option value="">-</option>
       {(props.options ?? []).map((o) => (
-        <option key={o.value} value={o.value}>
+        <option key={o.value} value={o.value} data-description={o.description ?? ''}>
           {o.label}
         </option>
       ))}
@@ -176,5 +176,33 @@ describe('ProductTagTemplatesSection price types (AC-32)', () => {
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({ default_selling_template_id: null, default_list_template_id: 'lp' }),
     );
+  });
+});
+
+const LABEL: Record<string, string> = { lp: 'LP', sp: 'SP', both: 'LP & SP', none: 'Not set' };
+
+describe('price type as the option description (R20)', () => {
+  it('R20: every option of the link multi-select has its price type as its description', () => {
+    manager();
+    linked.mockReturnValue({ data: [LP, SP, BOTH, NONE], isLoading: false, isError: false });
+    render(<ProductTagTemplatesSection productId="p1" />);
+    for (const id of Object.keys(LABEL)) {
+      const options = screen.getAllByTestId(`opt-${id}`);
+      // The type leads the description; a size may follow after ' / '.
+      expect(options.some((o) => (o.dataset.description ?? '').split(' / ')[0] === LABEL[id]), id).toBe(true);
+    }
+  });
+
+  it('R20: the Default LP and Default SP options carry it too', () => {
+    manager();
+    linked.mockReturnValue({ data: [LP, SP, BOTH, NONE], isLoading: false, isError: false });
+    render(<ProductTagTemplatesSection productId="p1" />);
+    for (const type of ['LP', 'SP'] as const) {
+      const options = Array.from(defaultSelect(type).querySelectorAll('option')).filter((o) => o.getAttribute('value'));
+      expect(options.length).toBeGreaterThan(0);
+      for (const o of options) {
+        expect((o as HTMLElement).dataset.description, `${type} ${o.getAttribute('value')}`).toBe(LABEL[o.getAttribute('value') as string]);
+      }
+    }
   });
 });
