@@ -1,7 +1,6 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
-import { PageHeader } from '@/components/common/PageHeader';
-import BackToList from '@/components/common/BackToList';
+import TargetPageHeader from '../components/TargetPageHeader';
 import TargetRecord from '../components/TargetRecord';
 
 export const metadata: Metadata = {
@@ -14,10 +13,7 @@ export default async function TargetPage({ params }: { params: Promise<{ id: str
   return (
     <>
       <Container>
-        <PageHeader
-          title="Target"
-          actions={<BackToList listPath="/sales/targets" label="Back to targets" />}
-        />
+        <TargetPageHeader id={id} />
       </Container>
       <Container>
         <TargetRecord id={id} />

@@ -419,8 +419,9 @@ WhatsApp message; the **dealer**, who may receive a WhatsApp message.
   Team filter (No team included) sits in Filters.
 - **S1-33 [FE] (F4)** One target record serves create and edit: `/sales/targets/new` opens it
   empty with Amount, Ordered, All products, today to month end, split off; no modal. Header
-  card, then tabs Details, Periods, Agents (team only), Commission. Edit, Duplicate and Delete
-  are gear items.
+  card, then tabs Details, Periods, Agents (team only), Commission. Edit is the one primary button
+  (owner, 5 Nov, TARGET-EDIT-CTA; it was a gear item until then); Export commission statement,
+  Duplicate and Delete are gear items.
 - **S1-34 [BE][FE] (F5)** No id is ever shown for a category, product or brand, in read or edit
   mode: each shows "CODE - Name".
 - **S1-35 [BE][FE] (F6)** Both dates are required. A one-line helper says what Split does. A

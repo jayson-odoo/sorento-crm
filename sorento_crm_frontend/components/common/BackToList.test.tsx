@@ -62,6 +62,16 @@ describe('BackToList', () => {
     );
   });
 
+  it('a list path that names its own tab keeps it and still carries the list state (TARGET-EDIT-CTA)', () => {
+    search = 'page=2&limit=25&from=t1&tab=periods';
+
+    render(<BackToList listPath="/sales/targets?tab=dealer" label="Back to targets" />);
+
+    expect(screen.getByRole('link', { name: /Back to targets/ }).getAttribute('href')).toBe(
+      '/sales/targets?tab=dealer&page=2&limit=25&from=t1',
+    );
+  });
+
   it('S3-01: a caller that owns its whole href keeps it (spec verification worklist)', () => {
     search = 'page=2&limit=50';
 
