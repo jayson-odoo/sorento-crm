@@ -31,3 +31,35 @@ export function templateFitsLine(
 export function lineTypeLabel(lineType: LinePriceType): 'LP' | 'SP' {
   return lineType === 'list' ? 'LP' : 'SP';
 }
+
+/** The options that fit a line of `lineType` (all of them for a line with no type). */
+export function fittingOptions<T extends { price_type?: TemplatePriceType | null }>(
+  options: T[],
+  lineType: LinePriceType | null | undefined,
+): T[] {
+  return options.filter((option) => templateFitsLine(option.price_type, lineType));
+}
+
+/**
+ * The template a line of `lineType` starts on: that type's default among the fitting links, else
+ * the only fitting link, else none (several and no default = the salesperson picks).
+ */
+export function defaultOptionFor<
+  T extends {
+    price_type?: TemplatePriceType | null;
+    default_list?: boolean;
+    default_selling?: boolean;
+    is_default?: boolean;
+  },
+>(options: T[], lineType: LinePriceType | null | undefined): T | null {
+  const fitting = fittingOptions(options, lineType);
+  // An older payload carries only `is_default`; it stands for both types.
+  const flagged = fitting.find((option) =>
+    lineType === 'selling'
+      ? (option.default_selling ?? option.is_default)
+      : lineType === 'list'
+        ? (option.default_list ?? option.is_default)
+        : option.is_default,
+  );
+  return flagged ?? (fitting.length === 1 ? fitting[0] : null);
+}

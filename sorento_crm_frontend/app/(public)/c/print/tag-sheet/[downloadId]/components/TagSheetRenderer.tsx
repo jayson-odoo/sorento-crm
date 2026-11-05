@@ -26,6 +26,7 @@ import type {
   TagSheetDoc,
   TagSheet,
   TagSpecValue,
+  TextLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {

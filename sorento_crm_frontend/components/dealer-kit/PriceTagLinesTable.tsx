@@ -24,6 +24,7 @@ import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
+import { defaultOptionFor, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
@@ -212,6 +213,18 @@ interface LineRowProps {
  *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
  *  `sell_price` unconditionally showed the offer price in List mode too.
  *  Falls back to the bare code while pricing has not answered yet. */
+/**
+ * What flipping a line to `mode` does to its template: a pick that still fits is kept (nothing
+ * changes); otherwise it moves to that type's default, or is cleared when the item has none.
+ */
+function templateAfterFlip(line: DraftLine, mode: PriceMode): { tag_template_id?: string | null } {
+  const options = line.tag_templates ?? [];
+  if (options.length === 0) return {};
+  const current = options.find((option) => option.id === line.tag_template_id);
+  if (current && templateFitsLine(current.price_type, mode)) return {};
+  return { tag_template_id: defaultOptionFor(options, mode)?.id ?? null };
+}
+
 /** Whether the line's chosen template reads any position (fixed part, pick or upgrade). */
 function templateUsesPositions(state: LineTemplateState): boolean {
   const needs = (state.kind === 'single' ? state.template : state.kind === 'many' ? state.picked : null)?.needs;
@@ -416,7 +429,7 @@ function LineRow({
   onPreviewLine,
   anySelling,
 }: LineRowProps) {
-  const templateState = lineTemplateState(line);
+  const templateState = lineTemplateState(line, priceMode);
   // P2: Add part lists the combo's own rows the line lacks first, then the catalogue search.
   const missingRows = useMemo(() => missingComboRows(line), [line]);
   const fetchAddPartOptions = useCallback(
@@ -435,7 +448,7 @@ function LineRow({
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // What the chosen template reads from each group, once per part.
-  const picksByPart = new Map(line.parts.map((part) => [part.key, picksNeeded(line, part.role)]));
+  const picksByPart = new Map(line.parts.map((part) => [part.key, picksNeeded(line, part.role, priceMode)]));
   // Only when there is a choice to make: one combo is applied on pick, and none
   // leaves nothing to select.
   const showPackage = !isSet && line.combos.length > 1;
@@ -457,7 +470,10 @@ function LineRow({
   const showPricing = !isSet && !!line.product_id;
   const isSelling = linePriceType(line, priceMode) === 'selling';
   // A product with a finished lookup and no published template has nothing to draw.
-  const noTemplate = !isSet && !!line.product_id && templateState.kind === 'none';
+  const noTemplate =
+    !isSet &&
+    !!line.product_id &&
+    (templateState.kind === 'none' || templateState.kind === 'mismatch');
   const canPreview = !!(isSet ? line.product_set_id : line.product_id) && !noTemplate;
   // What the last click found wrong with this line, one message per line of text (set by the form).
   const reasons = line.guard_error ? line.guard_error.split('\n') : [];
@@ -496,7 +512,7 @@ function LineRow({
       ariaLabel={`Price type for line ${index + 1}`}
       value={linePriceType(line, priceMode)}
       title={line.price_type ? undefined : 'Follows Preferred Default'}
-      onChange={(mode) => onUpdate(line.key, { price_type: mode })}
+      onChange={(mode) => onUpdate(line.key, { price_type: mode, ...templateAfterFlip(line, mode) })}
     />
   );
 
@@ -701,6 +717,17 @@ function LineRow({
           </div>
         </td>
       </tr>
+      {templateState.kind === 'mismatch' && (
+        <tr className="align-top">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            <div className="sticky left-0 max-w-[calc(100vw-9rem)] border-l-2 border-border pl-3 sm:max-w-none">
+              <Badge variant="warning" className="font-normal">
+                No {lineTypeLabel(templateState.priceType)} template linked
+              </Badge>
+            </div>
+          </td>
+        </tr>
+      )}
       {templateState.kind === 'single' && (
         <tr className="align-top">
           <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
