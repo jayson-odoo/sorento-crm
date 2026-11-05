@@ -36,6 +36,7 @@ import {
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
 import { localStore } from '@/lib/storage';
+import { randomId } from '@/lib/id';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
 // One run id per contact, so a reload finds the same bot turns; "New conversation" replaces it.
@@ -50,11 +51,7 @@ interface StoredContact {
 }
 
 function newRunId(): string {
-  const rand =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `console-${rand}`;
+  return `console-${randomId()}`;
 }
 
 function uniqueId(prefix: string): string {
