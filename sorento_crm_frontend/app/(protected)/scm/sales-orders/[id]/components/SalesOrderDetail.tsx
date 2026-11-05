@@ -673,16 +673,20 @@ export function SalesOrderDetail({
   // SO-LINE-OI-STATUS-UNIFY owner hand test (5 Nov 2026): the Lines page is held here with
   // TanStack's auto reset off, so a `?line=` landing on a long order (96+ lines) stays on
   // the page holding the line instead of snapping back to page 1 on the next re-read. The
-  // reader's own search and sort still start again from page 1 (effect below).
+  // reader's own search and sort still start again from page 1 (`resetLinePage`).
   const [linePagination, setLinePagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 10,
   });
-  useEffect(() => {
+  // Reset by the reader's own search and sort only, never by an effect: an effect runs on
+  // mount, and under dev's StrictMode runs twice, so with the order already cached (the
+  // landing happens in the mount effects) it fired again after a `?line=` landing and
+  // dropped it to page 1 (crew pass on PR #2187).
+  const resetLinePage = useCallback(() => {
     setLinePagination((current) =>
       current.pageIndex === 0 ? current : { ...current, pageIndex: 0 },
     );
-  }, [lineSearch, sorting]);
+  }, []);
   // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
@@ -1540,7 +1544,10 @@ export function SalesOrderDetail({
     data: lines,
     getRowId: (row) => row.id,
     state: { sorting, globalFilter: lineSearch, pagination: linePagination },
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      setSorting(updater);
+      resetLinePage();
+    },
     onPaginationChange: setLinePagination,
     autoResetPageIndex: false,
     // The whole ROW answers the search, so every column is allowed to carry it and the
@@ -2282,7 +2289,10 @@ export function SalesOrderDetail({
                       order" on a 200-line contract. */}
                   <ListSearchInput
                     value={lineSearchInput}
-                    onChange={setLineSearchInput}
+                    onChange={(next: string) => {
+                      setLineSearchInput(next);
+                      resetLinePage();
+                    }}
                     aria-label="Search lines"
                     placeholder="Search product..."
                     className="w-56"

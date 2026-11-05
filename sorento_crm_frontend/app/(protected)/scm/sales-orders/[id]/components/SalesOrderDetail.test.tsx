@@ -2804,6 +2804,25 @@ describe('owner hand test (5 Nov 2026): a link to one line of a long order lands
     expect(screen.queryByText('SKU-001')).toBeNull();
   });
 
+  it('crew pass: an order already in the cache (data on the first render) still lands on the line under StrictMode', async () => {
+    // The SO was opened earlier in the tab, so its read answers from the cache and the
+    // landing runs in the mount effects. Dev's StrictMode runs those effects twice; a page
+    // reset that ran on mount used to fire again AFTER the landing and drop it to page 1.
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>
+          <SalesOrderDetail id="so-1" />
+        </QueryClientProvider>
+      </React.StrictMode>,
+    );
+    const target = await screen.findByText('SKU-040');
+    expect(target.closest('tr')).toHaveClass('deep-link-highlight');
+    expect(screen.queryByText('SKU-001')).toBeNull();
+  });
+
   it('review: a search typed on page 4 shows its result from page 1, never an empty page', async () => {
     searchParams = new URLSearchParams('tab=lines&line=l-40');
     useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });

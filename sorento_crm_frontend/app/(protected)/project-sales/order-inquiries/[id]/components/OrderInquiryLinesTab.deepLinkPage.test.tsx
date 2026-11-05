@@ -78,6 +78,18 @@ describe('a deep link into a long OI opens the page holding the line', () => {
     expect(screen.queryByText('ITEM-001')).toBeNull();
   });
 
+  it('crew pass: lands and stays under StrictMode with the lines already loaded on mount', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <React.StrictMode>
+        <QueryClientProvider client={client}>{tab(lines())}</QueryClientProvider>
+      </React.StrictMode>,
+    );
+    const target = await screen.findByText('ITEM-040');
+    expect(target.closest('tr')).toHaveClass('deep-link-highlight');
+    expect(screen.queryByText('ITEM-001')).toBeNull();
+  });
+
   it('falls back to a page that exists when the lines shrink under it', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { rerender } = render(
