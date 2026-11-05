@@ -236,3 +236,27 @@ def test_the_crm_line_pricing_route_answers_null_list_price_for_an_unpriced_comb
     (priced,) = response.json()
     assert priced["list_price"] is None
     assert priced["sell_price"] is None
+
+
+def test_s2_an_options_own_price_is_the_headline_only_when_it_is_the_groups_one_pick(db):
+    """With two or more picks of one group the headline is the combo price, else nothing."""
+    from app.models.product_combo import ProductComboPart
+    from app.services.dealer_kit.pricing import combo_prices
+
+    s = shapes.s1(db, "ZZT S2 headline", list_price=D("3000.00"), sell_price=D("2500.00"))
+    first, second = s["options"][0], s["options"][1]
+    part = (
+        db.query(ProductComboPart)
+        .filter(ProductComboPart.combo_id == s["combo"].id, ProductComboPart.part_product_id == first.id)
+        .one()
+    )
+    part.sell_price = D("799.00")
+    db.flush()
+    db.expire(s["combo"], ["parts"])
+    assert combo_prices(s["combo"], {first.id})[1:] == (D("799.00"), True)
+    assert combo_prices(s["combo"], {first.id, second.id})[1:] == (D("2500.00"), True)
+
+    s["combo"].sell_price = None
+    db.flush()
+    db.expire(s["combo"], ["parts"])
+    assert combo_prices(s["combo"], {first.id, second.id})[1:] == (None, False)

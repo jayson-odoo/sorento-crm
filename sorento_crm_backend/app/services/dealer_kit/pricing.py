@@ -694,12 +694,15 @@ def combo_prices(
     if combo_sell is None and open_priced and picked_upgrade is None:
         return list_price, None, True
     # The first picked option that has a price of its own (a one-option group auto-resolves,
-    # so several groups can each have a pick), else the combo's.
+    # so several groups can each have a pick), else the combo's. An option decides the headline
+    # only as its group's ONE pick; two or more picks of a group leave the combo's price.
     base = next(
         (
             _as_decimal(p.sell_price)
             for p in options
-            if p.part_product_id in picked_ids and p.sell_price is not None
+            if p.part_product_id in picked_ids
+            and p.sell_price is not None
+            and sum(o.part_product_id in picked_ids for o in groups[p.choice_group]) == 1
         ),
         None,
     )
