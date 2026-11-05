@@ -1160,25 +1160,111 @@ def list_projects(
 
     total = query.count()
 
-    sortable = {
-        "created_at": Project.created_at,
-        "updated_at": Project.updated_at,
-        "project_code": Project.project_code,
-        "title": Project.title,
-        "outcome": Project.outcome,
-        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
-    }
-    column = sortable.get(sort, Project.created_at)
-    ordered = column.asc() if str(direction).lower() == "asc" else column.desc()
-    if column is Project.project_code:
-        # A project with no code yet sorts after every coded one, whichever the direction.
-        ordered = ordered.nulls_last()
-    query = query.order_by(ordered)
+    query = query.order_by(*_list_order_by(db, sort, direction))
 
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
     rows = query.offset((page - 1) * limit).limit(limit).all()
     return rows, total
+
+
+def _list_order_by(db: Session, sort: str, direction: str) -> list:
+    """ORDER BY for the projects list: one entry per grid column, whitelisted.
+
+    Every column the Projects grid shows sorts on the server (owner rule 27 Oct, "every
+    column must be sortable", PROJECTS-BOARD-VIEW-PREF), never on one page in the
+    browser. The derived columns sort on the same value the row displays, read through
+    a correlated subquery so the join cannot duplicate a project or change the count:
+
+    - ``developer_name`` / ``owner_name``: the name shown, case-insensitive.
+    - ``status_label`` (Stage): the stage's ``sort_order`` in the status graph, so
+      Identified < Registered < Quoted, not alphabetical.
+    - ``estimated_sales_value``: the amount.
+    - ``next_action``: the earliest open task's due date; a project whose open tasks
+      carry no date comes after every dated one, and "Nothing open" comes last, in
+      both directions.
+    - ``flags``: Critical. Descending puts Critical first.
+
+    A blank value (no developer, no stage, no amount, unassigned) sorts last in both
+    directions, like an uncoded project. Ties fall back to newest first, then id, so a
+    page boundary never shuffles rows between requests.
+    """
+    from app.models.projects import ProjectTask
+    from app.models.user import User
+    from app.services.project_task_service import open_task_status_ids
+
+    asc = str(direction).lower() == "asc"
+
+    def directed(expr):
+        return expr.asc() if asc else expr.desc()
+
+    plain = {
+        "created_at": Project.created_at,
+        "updated_at": Project.updated_at,
+        "title": Project.title,
+        "outcome": Project.outcome,
+        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
+        "flags": Project.is_critical,
+    }
+    tiebreak = [Project.created_at.desc(), Project.id.asc()]
+
+    if sort in plain:
+        return [directed(plain[sort])] + tiebreak
+    if sort == "project_code":
+        # A project with no code yet sorts after every coded one, whichever the direction.
+        return [directed(Project.project_code).nulls_last()] + tiebreak
+    if sort == "developer_name":
+        expr = (
+            db.query(func.lower(ProjectParty.name))
+            .filter(ProjectParty.id == Project.developer_party_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "owner_name":
+        expr = (
+            db.query(func.lower(func.coalesce(User.name, User.email)))
+            .filter(User.id == Project.owner_user_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "status_label":
+        expr = (
+            db.query(Status.sort_order)
+            .filter(Status.id == Project.status_id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "estimated_sales_value":
+        expr = (
+            db.query(ProjectSalesProfile.estimated_sales_value)
+            .filter(ProjectSalesProfile.project_id == Project.id)
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        return [directed(expr).nulls_last()] + tiebreak
+    if sort == "next_action":
+        open_ids = open_task_status_ids(db)
+        if not open_ids:
+            return tiebreak
+        open_tasks = db.query(ProjectTask).filter(
+            ProjectTask.project_id == Project.id,
+            ProjectTask.status_id.in_(open_ids),
+            ProjectTask.completed_at.is_(None),
+        )
+        next_due = (
+            open_tasks.with_entities(func.min(ProjectTask.due_date))
+            .correlate(Project)
+            .scalar_subquery()
+        )
+        has_open = open_tasks.correlate(Project).exists()
+        # Dated first (by date, in the asked direction), then open-but-undated, then
+        # nothing open: `has_open` desc is fixed, it does not follow the direction.
+        return [directed(next_due).nulls_last(), has_open.desc()] + tiebreak
+    # An unknown key orders by creation, as it always has.
+    return [directed(Project.created_at), Project.id.asc()]
 
 
 # ------------------------------------------------------------ profile + edit
