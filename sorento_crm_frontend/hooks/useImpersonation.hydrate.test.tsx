@@ -66,6 +66,33 @@ describe('hydrate() validates this tab, never adopts', () => {
     expect(impersonationStore.getState()).toBeNull();
   });
 
+  it('a tab holding an ended view-as of the same target does not pick up a newer one', async () => {
+    impersonationStore.setSession({ sessionId: 's-old', startedAt: SERVER_ROW.started_at, targetUser: TARGET });
+    current(SERVER_ROW);
+    const { result } = mount();
+    await act(async () => {
+      await result.current.hydrate();
+    });
+    expect(impersonationStore.getState()).toBeNull();
+  });
+
+  it('an Exit while the check is in flight is not undone by the late answer', async () => {
+    impersonationStore.setSession({ sessionId: 's1', startedAt: SERVER_ROW.started_at, targetUser: TARGET });
+    let release!: (v: unknown) => void;
+    apiFetch.mockReturnValue(new Promise((r) => { release = r; }));
+    const { result } = mount();
+    let pending!: Promise<unknown>;
+    act(() => {
+      pending = result.current.hydrate();
+    });
+    impersonationStore.setSession(null);
+    await act(async () => {
+      release({ ok: true, status: 200, json: async () => SERVER_ROW });
+      await pending;
+    });
+    expect(impersonationStore.getState()).toBeNull();
+  });
+
   it('a tab whose view-as is still open keeps it', async () => {
     impersonationStore.setSession({ sessionId: 's1', startedAt: SERVER_ROW.started_at, targetUser: TARGET });
     current(SERVER_ROW);

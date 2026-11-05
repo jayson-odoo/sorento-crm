@@ -200,3 +200,32 @@ def test_header_without_an_open_row_is_ignored_even_for_an_admin():
         r = tc.get("/probe/me", headers=_tab_a(token, sales.id))
         assert r.json()["id"] == str(admin.id)
         assert r.headers.get(IMPERSONATION_ENDED_HEADER) == "1"
+
+
+def test_exit_in_a_stale_tab_does_not_end_another_tabs_newer_view_as():
+    """Tab A viewed as X; tab C then started Y (which ends X). Exit in A names A's own session,
+    so it must not end C's view-as of Y."""
+    with blank_session() as db:
+        admin, sales, _ = _world(db)
+        other = _user(db, _role(db, "salesperson"))
+        tc = _app(db)
+        token = _bearer(db, admin)
+        a_session = tc.post(f"{IMP}/start", json={"target_user_id": sales.id}, headers=token).json()["session_id"]
+        tc.post(f"{IMP}/start", json={"target_user_id": other.id}, headers=token)
+
+        stop = tc.post(f"{IMP}/stop", json={"session_id": a_session}, headers=_tab_a(token, sales.id))
+        assert stop.status_code == 200 and stop.json()["ended"] is False
+
+        c = tc.get("/probe/me", headers=_tab_a(token, other.id))
+        assert c.json()["id"] == str(other.id)
+        assert IMPERSONATION_ENDED_HEADER not in c.headers
+
+
+def test_exit_naming_the_open_session_ends_it():
+    with blank_session() as db:
+        admin, sales, _ = _world(db)
+        tc = _app(db)
+        token = _bearer(db, admin)
+        sid = tc.post(f"{IMP}/start", json={"target_user_id": sales.id}, headers=token).json()["session_id"]
+        stop = tc.post(f"{IMP}/stop", json={"session_id": sid}, headers=_tab_a(token, sales.id))
+        assert stop.json() == {"ended": True, "session_id": sid}

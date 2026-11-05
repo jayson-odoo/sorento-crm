@@ -1,7 +1,7 @@
 # PLAN: Portal impersonation isolated from the admin's staff session
 
-Status: Build (lane PORTAL-IMPERSONATION-ISOLATE, small fix track: FE-only diff, no migration, no
-RBAC change; security reviewer still runs because it touches the impersonation boundary)
+Status: Review (lane PORTAL-IMPERSONATION-ISOLATE, small fix track: no migration, no RBAC change;
+security reviewer runs because it touches the impersonation boundary)
 
 UAC: `portal-impersonation-isolate-acceptance-criteria.md` (alongside).
 
@@ -45,6 +45,11 @@ The view-as lives in the tab that started it, nowhere else:
 - `hooks/useImpersonation.ts` `hydrate()`: only **validates** the tab's own view-as against
   `/impersonation/current` (cleared when the server has ended it or it now names someone else). A
   tab with no view-as never adopts the server's row.
+- `hydrate()` matches on the session id, not the target: a newer view-as of the same person
+  started elsewhere is not this tab's.
+- Exit names the tab's view-as: `POST /impersonation/stop` takes an optional `session_id` and ends
+  only that open row (`{"ended": false}` otherwise), so Exit in a stale tab never ends a newer
+  view-as another tab started (security + code review should-fix). Omitted = today's behaviour.
 - Nothing else changes: the header is still sent only by a tab holding a view-as, the backend still
   honours it only for an admin with a matching open row, audit is unchanged (target is the actor,
   admin is `real_user_id`), start/stop endpoints still use `get_real_user`.
@@ -59,14 +64,18 @@ Consequences, stated so nobody is surprised:
 - One open view-as per admin stays (unique index `uq_impersonation_sessions_active_admin`):
   starting view-as of Y in tab C ends X in tab A, which then falls back to the admin, same toast.
 
-No backend code change. Backend tests pin the per-request contract so a later change cannot
+The only backend change is the optional `session_id` on `/stop`. Backend tests pin the per-request contract so a later change cannot
 reintroduce account-wide view-as server side.
+
+- A server row can stay open with no tab holding it (the view-as tab closed without Exit). It is
+  inert: the backend uses it only for a request carrying the header, and the next start ends it.
 
 ## Out of scope / asked
 
 - `phone_signin_service.home_path_for_user` (`:337-341`) sends a user holding `salesperson` plus
   another role (admin included) and a linked contact to their portal home before the admin check.
-  That is sign-in routing, not impersonation; raised as a crew-ask on the PR.
+  That is sign-in routing, not impersonation. Crew answer (a): left unchanged, raised with the
+  owner separately.
 
 ## Tests
 
@@ -75,11 +84,16 @@ Backend `tests/test_impersonation_isolation.py` (real session tokens, real `get_
 - a staff-only permission route answers 403 to tab A and 200 to tab B;
 - stopping in A: A's header is ignored with `X-Impersonation-Ended: 1`, B unchanged, same token
   still valid (no re-login);
-- a non-admin's start is 403 and a non-admin's header is ignored.
+- a non-admin's start is 403 and a non-admin's header is ignored;
+- Exit naming a replaced session leaves the newer view-as open; naming the open one ends it.
 
 Frontend vitest:
 - `lib/impersonation-store.isolation.test.ts`: persisted in sessionStorage only, a legacy
   localStorage entry is dropped and not adopted.
 - `hooks/useImpersonation.hydrate.test.tsx`: a tab with no view-as does not adopt the server's
   session; a tab whose view-as the server ended clears it; a matching one is kept.
+- `hooks/useImpersonation.hydrate.test.tsx` also: an ended view-as of the same target is not
+  revived; an Exit during the in-flight check is not undone. `useImpersonation.stop.test.tsx`: stop
+  names the tab's session.
+- `e2e/session-never-stuck.spec.ts` reads sessionStorage (existing spec, key moved).
 - `lib/api.sessionEnd.test.ts` seeds the view-as in sessionStorage.
