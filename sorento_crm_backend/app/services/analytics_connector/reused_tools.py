@@ -755,9 +755,9 @@ REUSED_TOOLS: tuple[dict, ...] = (
         "name": 'crm_project_quotations_list',
         "description": (
             'List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with '
-            "each scope's current version number, current total, outcome (open / won / lost) "
-            "and loss reason. USE for 'what did we quote on <project>', 'how much is "
-            "<project> worth', 'did we win the common area', 'why did we lose <project>'. A "
+            "each scope's current version number and current total. Scopes carry no outcome: "
+            "won or lost is on the project. USE for 'what did we quote on <project>', 'how much is "
+            "<project> worth'. A "
             'project has MANY quotations, one per scope, and each quotation has versions -- '
             "the total returned is the CURRENT version's, which is the only figure that "
             'should be quoted back. INVOCATION: `project_id` is the canonical project UUID.'
