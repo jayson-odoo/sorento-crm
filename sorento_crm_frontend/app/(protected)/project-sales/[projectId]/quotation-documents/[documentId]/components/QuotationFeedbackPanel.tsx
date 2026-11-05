@@ -169,7 +169,7 @@ export function QuotationFeedbackPanel() {
       (row.scope_id ? scopes.find((item) => item.id === row.scope_id) : undefined) ??
       scopes.find((item) => item.scope_label === row.scope_label);
     if (scope) selectScope(scope.id);
-    router.push(`/project-sales/${projectId}/quotation-documents/${documentId}/lines`);
+    router.push(`/project-sales/${projectId}/quotation-documents/${documentId}`);
   };
 
   if (feedback.isLoading) return <Skeleton className="h-48 w-full" />;

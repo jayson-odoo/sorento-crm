@@ -81,6 +81,7 @@ const createQuotationLine = vi.fn();
 const updateQuotationLine = vi.fn();
 const deleteQuotationLine = vi.fn();
 const reviseQuotation = vi.fn();
+const recomputeQuotationVersion = vi.fn();
 const push = vi.fn();
 const reviseQuotationApproval = vi.fn();
 const moveQuotationApproval = vi.fn();
@@ -201,6 +202,7 @@ vi.mock('../../../../_shared/services/projectService', async (importOriginal) =>
     updateQuotationLine: (...args: unknown[]) => updateQuotationLine(...args),
     deleteQuotationLine: (...args: unknown[]) => deleteQuotationLine(...args),
     reviseQuotation: (...args: unknown[]) => reviseQuotation(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
   };
 });
 
@@ -222,11 +224,11 @@ import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
 import {
-  QuotationHeaderTab,
   QuotationSignaturesTab,
   QuotationCoverLetterTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
+import { QuotationHeaderTab } from './QuotationHeaderTab';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -688,9 +690,9 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     );
     renderScreen();
 
-    expect(
-      await screen.findByText(/The customer holds this version\. Edit opens the next one\./i),
-    ).toBeInTheDocument();
+    // The hint that used to say this is gone (owner, 5 Nov 2026); the prompt below says it.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
 
     await pressEdit();
 
@@ -1134,12 +1136,14 @@ describe('QuotationDocumentClient standing badge', () => {
  * user starts.
  */
 describe('QuotationDocumentClient scope series', () => {
-  it('AC-QF004: offers no per-scope Edit scope; Record outcome stays', async () => {
+  it('AC-QF004: offers no per-scope Edit scope, and no Record outcome (owner, 5 Nov 2026)', async () => {
     // The owner: "editing of scope should be done by 'Edit Quotation', not a separate button".
+    // Record outcome left the page too: "we only need per project outcome" (its own lane).
     seedOneScope();
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: 'Record outcome' })).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record outcome' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
@@ -1161,7 +1165,9 @@ describe('QuotationDocumentClient scope series', () => {
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
   });
 
-  it('says which series the scope is quoted from', async () => {
+  // The area header row that named the series is gone in view (owner, 5 Nov 2026: "in view i
+  // don't even need this"); the series still shows on the form page.
+  it('names no series above the lines in view, even when one is bound', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ grand_total: '9000.00', scopes: [scope()] }),
     );
@@ -1172,16 +1178,9 @@ describe('QuotationDocumentClient scope series', () => {
     listQuotationLines.mockResolvedValue([line()]);
     renderScreen();
 
-    expect(await screen.findByText('Sanitaryware template')).toBeInTheDocument();
-  });
-
-  it('says NO series when none is bound, rather than looking identically clean', async () => {
-    // The state the whole database was in. A scope checking nothing and a scope whose lines
-    // are all standard render the same lines; only this tells them apart.
-    seedOneScope();
-    renderScreen();
-
-    expect(await screen.findByText('No series')).toBeInTheDocument();
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText('Sanitaryware template')).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
   });
 });
 
@@ -1265,25 +1264,25 @@ describe('QuotationDocumentClient Header details (AC-QF052)', () => {
 });
 
 describe('QuotationDocumentClient header dedupe (#1336 kept, AC-QF054)', () => {
-  it('does not repeat the document number under the breadcrumb', async () => {
+  // Superseded by PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026: "it should be like order
+  // inquiry"): the record card leads with the number, as Order Inquiry does, and the title is
+  // its subtitle line.
+  it('leads the record card with the document number, the title under it', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument({ our_ref: 'NCSB-OURS-1' }));
     renderScreen(<QuotationHeaderTab />);
 
     expect(await screen.findByText('NCSB-OURS-1')).toBeInTheDocument();
-    expect(screen.queryByText('SRT/Q/2026/0141')).toBeNull();
-    expect(
-      screen.getByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
+    const card = screen.getByTestId('record-header-card');
+    expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
+    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).getByText('Draft')).toBeInTheDocument();
   });
 
   it('says the project title once, in the record header, not again in the Header tab card', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument());
     renderScreen(<QuotationHeaderTab />);
 
-    expect(
-      await screen.findByRole('heading', { level: 2, name: 'CADANGAN MEMBINA PANGSAPURI' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
     expect(screen.getAllByText('CADANGAN MEMBINA PANGSAPURI')).toHaveLength(1);
   });
 });
@@ -1743,22 +1742,18 @@ describe('QuotationDocumentClient: locked while Pending or Approved, explicit Re
     expect(reviseQuotationApproval).not.toHaveBeenCalled();
   });
 
-  it('D6: the Lines tab offers a per-scope Revise to vN on a draft but not while locked', async () => {
+  // Revise to vN moved into the gear (PROPOSAL-HEADER-LAYOUT); the locked half is H10.
+  it('D6: the gear offers Revise to vN on a draft', async () => {
     seedOneScope();
     getQuotationDocument.mockResolvedValue(
       belowFloor('draft', { grand_total: '9000.00', scopes: [scope()] }),
     );
-    const { unmount } = renderScreen();
-    expect(await screen.findByRole('button', { name: /Revise to v3/i })).toBeInTheDocument();
-    unmount();
-
-    seedOneScope();
-    getQuotationDocument.mockResolvedValue(
-      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
-    );
     renderScreen();
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Revise to v/i })).toBeNull();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
   });
 
   it('D7: after Revise the chip reads Draft and the primary button reads Send for approval', async () => {
@@ -1864,7 +1859,12 @@ describe('QuotationDocumentClient: fix round 2', () => {
     );
     renderScreen();
 
-    expect(await screen.findByRole('button', { name: /Recheck alerts/i })).toBeInTheDocument();
+    // A gear item now (PROPOSAL-HEADER-LAYOUT), no longer a button above the lines.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
   });
 
   it('6: gear Delete shows the countdown INLINE in the header, not only a toast', async () => {
@@ -2144,5 +2144,306 @@ describe('Cover letter tab preview (read)', () => {
     expect(screen.queryByLabelText('Closing text')).toBeNull();
     const body = JSON.parse(String((coverPreview.mock.calls[0][1] as RequestInit).body));
     expect(body).toMatchObject({ document_id: 'd1' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// PROPOSAL-HEADER-LAYOUT (owner, 5 Nov 2026; mock documentation/plans/project-sales/mockups/
+// proposal-header-layout-05nov.html v4): the record header is the Order Inquiry card, the lines
+// sit on the Header tab, and the per-area / per-version rows above the lines are gone.
+// ---------------------------------------------------------------------------------------------
+describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LAYOUT)', () => {
+  const issuedOneScope = () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([version({ is_issued: true, is_editable: false })]);
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '9000.00',
+        scopes: [scope()],
+        is_issued: true,
+        issue_count: 2,
+        current_issue_no: 2,
+        customer_decision: 'accepted',
+        signatory_signature: signature(),
+      }),
+    );
+    listQuotationIssues.mockResolvedValue([
+      {
+        id: 'i2',
+        document_id: 'd1',
+        issue_no: 2,
+        our_ref_text: 'SRT/Q/2026/0141-R2',
+        issued_at: '2026-11-05T02:00:00',
+        issued_by: 'u1',
+        issued_by_name: 'Ahmad',
+        grand_total: '9000.00',
+        scope_count: 1,
+      },
+    ]);
+  };
+
+  async function headerCard() {
+    return screen.findByTestId('record-header-card');
+  }
+
+  it('H1: the document number and the status pill share the card title row', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(within(row).getByText('SRT/Q/2026/0141')).toBeInTheDocument();
+    expect(within(row).getByText('Accepted')).toBeInTheDocument();
+  });
+
+  it('H2: no customer line in the header card (the letterhead To says it)', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+    expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
+  });
+
+  it('H3: neither copy of "the customer holds this version" hint is shown', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByText(/The customer holds/i)).toBeNull();
+    expect(screen.queryByText(/Edit opens the next/i)).toBeNull();
+  });
+
+  it('H4: actions read gear, printer, primary, left to right', async () => {
+    issuedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    const gear = await screen.findByRole('button', { name: 'Proposal actions' });
+    const printer = await screen.findByTitle('View downloads for SRT/Q/2026/0141-R2');
+    const send = await screen.findByRole('button', { name: /^Send to Customer/ });
+    expect(gear.compareDocumentPosition(printer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(printer.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('H5: the Header tab carries the letterhead AND the lines; there is no Lines tab', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.getByText('Our Ref')).toBeInTheDocument();
+    const strip = screen.getByTestId('quotation-document-tab-strip');
+    expect(within(strip).getByRole('tab', { name: /Header/ })).toBeInTheDocument();
+    expect(within(strip).queryByRole('tab', { name: /^Lines$/ })).toBeNull();
+  });
+
+  it('H6: no area header row and no Record outcome anywhere on the page (owner 12:20, 12:28)', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Record outcome/ })).toBeNull();
+    expect(screen.queryByText('No series')).toBeNull();
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /outcome/i })).toBeNull();
+  });
+
+  it('H7: the version is a chip in the header card, and the version row above the lines is gone', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const row = within(await headerCard()).getByTestId('record-header-title-row');
+    expect(await within(row).findByText('v2')).toBeInTheDocument();
+    // The old pills were buttons carrying aria-current; none remain below the card.
+    expect(screen.queryAllByRole('button', { name: /^v\d/ }).filter((b) => b.hasAttribute('aria-current'))).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Recheck alerts/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Revise to v/ })).toBeNull();
+  });
+
+  it('H8: with two versions the chip switches the lines to the frozen one', async () => {
+    seedOneScope();
+    listQuotationVersions.mockResolvedValue([
+      version(),
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [line({ id: 'l0', version_id: 'v1', description: 'Old WC' })]
+        : [line()],
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    const chip = await screen.findByRole('button', { name: /^Version v2/ });
+    fireEvent.pointerDown(chip, { button: 0, ctrlKey: false });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /v1 \(frozen\)/ }));
+
+    expect(await screen.findByText('Old WC')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Version v1 \(frozen\)/ })).toBeInTheDocument();
+  });
+
+  it('H9: Recheck alerts and Revise to vN are gear items; Revise asks first, then revises every area', async () => {
+    seedOneScope();
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+
+    expect(await screen.findByRole('heading', { name: 'Revise to v3' })).toBeInTheDocument();
+    expect(reviseQuotation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledWith('q1'));
+  });
+
+  it('H10: while locked for approval the gear offers no Revise to vN and no Recheck alerts', async () => {
+    seedOneScope();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { grand_total: '9000.00', scopes: [scope()] }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+
+    const menu = await openGear();
+    expect(within(menu).queryByRole('menuitem', { name: /Revise to v/ })).toBeNull();
+    expect(within(menu).queryByRole('menuitem', { name: 'Recheck alerts' })).toBeNull();
+  });
+
+  it('H11: two hints are two lines in the card, never joined with a middle dot', async () => {
+    // A reader (no edit right) on a quotation waiting for a manager: both hints apply.
+    getProject.mockResolvedValue(project({ can_edit: false }));
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { signatory_signature: signature() }),
+    );
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await headerCard();
+    await within(card).findByText('With a manager for approval');
+    const lines = within(card)
+      .getAllByTestId('record-header-subtitle')
+      .map((el) => el.textContent);
+    expect(lines).toContain('You can read this quotation but not change it.');
+    expect(lines).toContain('With a manager for approval');
+    expect(card.textContent).not.toContain('·');
+  });
+
+  /** Two areas, Townhouse (q1) and Semi-D (q2), each at the given current version. */
+  function seedTwoAreas(townhouseNo = 2, semiNo = 2) {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '18000.00',
+        scopes: [
+          scope({ current_version_id: 'v2', current_version_no: townhouseNo }),
+          scope({
+            id: 'q2',
+            scope_label: 'Semi-D',
+            sort_order: 2,
+            current_version_id: 'w2',
+            current_version_no: semiNo,
+          }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation({ current_version_no: townhouseNo }),
+      quotation({
+        id: 'q2',
+        scope_label: 'Semi-D',
+        current_version_id: 'w2',
+        current_version_no: semiNo,
+      }),
+    ]);
+    listQuotationVersions.mockImplementation(async (quotationId: string) =>
+      quotationId === 'q2'
+        ? [version({ id: 'w2', quotation_id: 'q2', version_no: semiNo })]
+        : [version({ version_no: townhouseNo })],
+    );
+    listQuotationLines.mockResolvedValue([line()]);
+  }
+
+  it('H12: Revise to vN revises EVERY area, one after the other', async () => {
+    seedTwoAreas();
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    expect(await screen.findByText(/v2 of all 2 areas is frozen for good/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2']);
+  });
+
+  it('H13: a retry after one area failed does not revise the area that already moved', async () => {
+    seedTwoAreas();
+    reviseQuotation
+      .mockResolvedValueOnce(version({ id: 'v3', version_no: 3 }))
+      .mockRejectedValueOnce(new Error('Conflict'))
+      .mockResolvedValueOnce(version({ id: 'w3', quotation_id: 'q2', version_no: 3 }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    const freeze = await screen.findByRole('button', { name: /Freeze .*and continue/ });
+    fireEvent.click(freeze);
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    // Still open after the failure; try again.
+    fireEvent.click(await screen.findByRole('button', { name: /Freeze .*and continue/ }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(3));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2', 'q2']);
+  });
+
+  it('H14: areas on different versions: the dialog says what happens to each one', async () => {
+    seedTwoAreas(2, 1);
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise every area' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise every area' }));
+    expect(
+      await screen.findByText(/Townhouse v2 to v3, Semi-D v1 to v2/),
+    ).toBeInTheDocument();
+  });
+
+  it('H15: Recheck alerts rechecks every open area, once each', async () => {
+    seedTwoAreas();
+    recomputeQuotationVersion.mockImplementation(async (versionId: string) => ({
+      version_id: versionId,
+      version_no: 2,
+      quotation_id: versionId === 'w2' ? 'q2' : 'q1',
+      line_count: 1,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: [],
+    }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Recheck alerts' }));
+    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(2));
+    expect(recomputeQuotationVersion.mock.calls.map((call) => call[0]).sort()).toEqual(['v2', 'w2']);
   });
 });
