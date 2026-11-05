@@ -9,6 +9,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
+import { RichTextView } from '@/components/dealer-kit/RichTextView';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { numberFieldError } from '@/lib/number-field';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
@@ -33,6 +37,7 @@ import type {
   ProductComboUpdate,
 } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
+import { ComboTagPreview } from './ComboTagPreview';
 import { ComboTemplatesField } from './ComboTemplatesField';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
@@ -153,6 +158,45 @@ function TextField({
       ) : (
         <Input id={id} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
       )}
+    </div>
+  );
+}
+
+/**
+ * The combo description in the shared rich text editor, with the tag it prints on drawn beside it.
+ * Saves on blur (when focus leaves the editor, toolbar included) and only when the text changed; a
+ * refused save puts the saved text back. Empty saves null. The preview follows the draft.
+ */
+function DescriptionField({
+  combo,
+  onSave,
+}: {
+  combo: ProductComboRow;
+  onSave: (next: string | null, revert: () => void) => void;
+}) {
+  const saved = combo.description ?? '';
+  const [draft, setDraft] = useState(saved);
+  const labelId = `${combo.id}-description-label`;
+  const commit = (event: React.FocusEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
+  };
+  return (
+    <div className="grid gap-3 lg:grid-cols-2">
+      <div className="min-w-0 space-y-1.5">
+        <Label id={labelId}>Description</Label>
+        <div onBlur={commit}>
+          <RichTextEditor
+            aria-labelledby={labelId}
+            value={toEditorHtml(draft)}
+            onChange={setDraft}
+            minHeight={140}
+          />
+        </div>
+      </div>
+      <div className="min-w-0">
+        <ComboTagPreview combo={combo} description={draft.trim() === '' ? null : draft} />
+      </div>
     </div>
   );
 }
@@ -318,6 +362,7 @@ function ComboImageControl({
   const busy = isUploading || isDeleting;
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleFile = useCallback(
     async (file: File | undefined) => {
@@ -363,10 +408,22 @@ function ComboImageControl({
         <>
           {/* A signed CDN URL, not a local/static asset next/image can
               optimise. */}
-          <img
-            src={combo.image.url}
-            alt={combo.name}
-            className="size-14 shrink-0 rounded-md border object-cover"
+          <button
+            type="button"
+            aria-label={`Preview photo of ${combo.name}`}
+            className="shrink-0 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setPreviewOpen(true)}
+          >
+            <img
+              src={combo.image.url}
+              alt=""
+              className="size-14 rounded-md border object-cover"
+            />
+          </button>
+          <AttachmentPreviewModal
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            items={[{ id: combo.image.attachment_id, name: combo.name, url: combo.image.url }]}
           />
           {canEdit ? (
             <div className="flex gap-2">
@@ -535,13 +592,9 @@ function ComboBlock({
             className="space-y-1.5"
           />
           <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-description`}
-              label="Description"
-              value={combo.description}
+            <DescriptionField
+              combo={combo}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
-              multiline
-              maxLength={5000}
             />
           </div>
           <div className="sm:col-span-2">
@@ -558,8 +611,9 @@ function ComboBlock({
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
           <ReadOnlyField label="List price (RM)" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
           <ReadOnlyField label="Sell price (RM)" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
-          <div className="sm:col-span-2">
-            <ReadOnlyField label="Description" value={combo.description} />
+          <div className="min-w-0 space-y-0.5 sm:col-span-2">
+            <p className="text-xs text-muted-foreground">Description</p>
+            <RichTextView value={combo.description} />
           </div>
           <div className="sm:col-span-2">
             <ReadOnlyField label="Free items" value={combo.free_items} />

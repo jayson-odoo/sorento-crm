@@ -23,8 +23,13 @@ export interface ProductTagTemplateItem {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
-  /** The link preselected on a request line; a lone link counts. */
+  /** Compat: a default of either kind. */
   is_default?: boolean;
+  /** The template's hand-picked price type; null = not set (offered on LP and SP lines). */
+  price_type?: 'list' | 'selling' | 'both' | null;
+  /** The link preselected on an LP / SP request line; a lone fitting link counts. */
+  default_list?: boolean;
+  default_selling?: boolean;
 }
 
 /** The wire body of a links save. `default_template_id` must be one of `template_ids`. */
