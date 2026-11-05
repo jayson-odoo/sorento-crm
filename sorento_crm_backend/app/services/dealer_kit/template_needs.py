@@ -116,7 +116,12 @@ def fit_reason(needs: dict, shape: dict) -> Optional[str]:
 
     Checked in this order: choice groups, fixed parts, upgrades. A choice group and the upgrades
     are at most what the combo has (a pick of k from n, an offer); fixed parts are always in the
-    box, so a template must print every one."""
+    box, so a template must print every one.
+
+    A plain template (no combo position read at all) prints the combo as one product and fits
+    every combo (PRICETAG-COMBO-FIT-HOTFIX)."""
+    if not needs["fixed"] and not needs["upgrades"] and not any(n > 0 for n in needs["groups"]):
+        return None
     for index, need in enumerate(needs["groups"]):
         if need <= 0:
             continue

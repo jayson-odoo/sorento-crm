@@ -91,10 +91,11 @@ const getSpecSheetPreview = vi.fn();
 const saveSpecSheetPageEdit = vi.fn();
 const applySpecSheetLayerToAll = vi.fn();
 const updateSpecSheet = vi.fn();
+const listSpecSheets = vi.fn();
 vi.mock(
   '@/app/(protected)/project-sales/_shared/services/specSheetService',
   () => ({
-    listSpecSheets: vi.fn(),
+    listSpecSheets: (...a: unknown[]) => listSpecSheets(...a),
     createSpecSheet: vi.fn(),
     getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
     updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
@@ -266,6 +267,7 @@ vi.mock(
         <div
           data-testid={`live-canvas-${key}`}
           data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
+          data-layers={layers.map((l) => l.id).join(',')}
         >
           <button type="button" onClick={() => props.embedded.onSelect('logo')}>
             {`select ${key}`}
@@ -599,7 +601,7 @@ describe('apply to every page', () => {
     await screen.findByTestId('inspector');
 
     fireEvent.click(
-      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+      screen.getByRole('radio', { name: 'Every page' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
 
@@ -647,7 +649,7 @@ describe('apply to every page: one send per pause, other pages held while it run
     );
     await screen.findByTestId('inspector');
     fireEvent.click(
-      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+      screen.getByRole('radio', { name: 'Every page' }),
     );
   }
 
@@ -715,7 +717,7 @@ describe('apply to every page restarts only the pages the server changed', () =>
     const k1Before = mounts.get('k1') ?? 0;
     const k2Before = mounts.get('k2') ?? 0;
     fireEvent.click(
-      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+      screen.getByRole('radio', { name: 'Every page' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'lower logo' }));
     await waitFor(() =>
@@ -738,7 +740,7 @@ describe('a change made ON the canvas in Every-page mode', () => {
     );
     await screen.findByTestId('inspector');
     fireEvent.click(
-      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+      screen.getByRole('radio', { name: 'Every page' }),
     );
     // The fake canvas "drags" the selected logo 1 mm right.
     fireEvent.click(
@@ -934,7 +936,7 @@ describe('every page, pending saves, save status and the unload guard', () => {
     );
     await screen.findByTestId('inspector');
     fireEvent.click(
-      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+      screen.getByRole('radio', { name: 'Every page' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
 
@@ -1100,4 +1102,399 @@ describe('a page that does not move under the pointer', () => {
     expect(shown.className).not.toContain('invisible');
     expect(shape(shown)).toBe(before);
   });
+});
+
+describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates', () => {
+  it('Full screen lifts the editor into the shared focus overlay; Escape brings it back', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+
+    const overlay = document.querySelector('[data-dk-focus-mode]') as HTMLElement;
+    expect(overlay).not.toBeNull();
+    // The page stack, the rail and the toolbar are all inside the overlay.
+    expect(within(overlay).getByTestId('spec-sheet-stack')).toBeInTheDocument();
+    expect(within(overlay).getByTestId('spec-sheet-rail')).toBeInTheDocument();
+    expect(
+      within(overlay).getByRole('button', { name: 'Exit full screen spec sheet' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(document.querySelector('[data-dk-focus-mode]')).toBeNull(),
+    );
+  });
+
+  it('a live page keeps its canvas when full screen toggles (no remount)', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    const before = await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+    expect(screen.getByTestId('live-canvas-k1')).toBe(before);
+  });
+
+  it('the page rail folds away and comes back', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.getByTestId('spec-sheet-rail')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Pages' }));
+    expect(screen.queryByTestId('spec-sheet-rail')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Pages' }));
+    expect(screen.getByTestId('spec-sheet-rail')).toBeInTheDocument();
+  });
+
+  it('the Inspector folds away and comes back, keeping the selection', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Inspector' }));
+    expect(screen.queryByTestId('inspector')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Inspector' }));
+    expect(screen.getByTestId('inspector')).toHaveAttribute('data-layer', 'logo');
+  });
+
+  it('Apply to is a two-option segmented control, This page by default, no long caption', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+
+    const group = screen.getByRole('group', { name: 'Apply to' });
+    const options = within(group).getAllByRole('radio');
+    expect(options.map((o) => o.textContent)).toEqual(['This page', 'Every page']);
+    expect(within(group).getByRole('radio', { name: 'This page' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    expect(screen.queryByText(/each becomes an edited page/)).toBeNull();
+
+    fireEvent.click(within(group).getByRole('radio', { name: 'Every page' }));
+    expect(within(group).getByRole('radio', { name: 'Every page' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    // Clicking the chosen option again does not leave the control with nothing picked.
+    fireEvent.click(within(group).getByRole('radio', { name: 'Every page' }));
+    expect(within(group).getByRole('radio', { name: 'Every page' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('Templates opens the template picker for this sheet and saves the picks', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [
+          { id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 },
+          { id: 'tp2', name: 'Project Page Default Template', width_mm: 338.7, height_mm: 190.5 },
+        ],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Pick templates' })).toBeInTheDocument();
+    await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+    expect(updateSpecSheet).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', {
+      cover_template_id: 'tc',
+      page_template_id: 'tp',
+      single_page_template_id: null,
+    });
+  });
+
+  it('Escape that cancels an Area edit does not also leave full screen', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('double-click area k1'),
+    );
+    const box = await screen.findByRole('textbox', { name: 'Area' });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Area' })).toBeNull(),
+    );
+    expect(document.querySelector('[data-dk-focus-mode]')).not.toBeNull();
+  });
+
+  it('after a template switch an unedited LIVE page redraws from the new template, no reload', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [{ id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 }],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    const before = await screen.findByTestId('live-canvas-k1');
+    expect(before).toHaveAttribute('data-layers', 'logo,area');
+
+    // The server now draws every unedited page from the other template.
+    const switched = {
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page: { id: 'tp2', name: 'Item with accessories', version_no: 3 },
+      },
+    };
+    updateSpecSheet.mockResolvedValue(switched);
+    getSpecSheet.mockResolvedValue(switched);
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        const out = previewFor(keys);
+        for (const sheet of out.doc.sheets)
+          sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+  });
+
+  it('a template switch saves no page edit (no pages/*/edit request), and switching back restores the original layers', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [
+          { id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 },
+          { id: 'tp2', name: 'Single item', width_mm: 338.7, height_mm: 190.5 },
+        ],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    // The cover and an item page are live, as on a 2-page sheet.
+    report(['cover', 'k1']);
+    expect(await screen.findByTestId('live-canvas-k1')).toHaveAttribute(
+      'data-layers',
+      'logo,area',
+    );
+    await screen.findByTestId('live-canvas-cover');
+
+    let page = 'tp';
+    const current = () => ({
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page:
+          page === 'tp'
+            ? { id: 'tp', name: 'Page', version_no: 1 }
+            : { id: 'tp2', name: 'Single item', version_no: 3 },
+      },
+    });
+    updateSpecSheet.mockImplementation(async (...args: unknown[]) => {
+      page = (args[3] as { page_template_id: string }).page_template_id;
+      return current();
+    });
+    getSpecSheet.mockImplementation(async () => current());
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        const out = previewFor(keys);
+        if (page === 'tp2')
+          for (const sheet of out.doc.sheets)
+            sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+
+    const switchTo = async (name: string) => {
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+        key: 'Enter',
+      });
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+      const dialog = await screen.findByRole('dialog');
+      await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+      const select = within(dialog).getAllByRole('combobox')[1];
+      fireEvent.click(select);
+      fireEvent.click(await screen.findByRole('option', { name: new RegExp(`^${name}`) }));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    };
+
+    await switchTo('Single item');
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+    // Past the autosave delay: nothing was written for any page.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+    expect(screen.getByTestId('spec-sheet-save-state').textContent).toBe('');
+
+    await switchTo('Page');
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area'),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+  }, 15000);
+
+  it('a page whose chunk was cached BEFORE a template switch draws the new template when it comes back into view', async () => {
+    listSpecSheets.mockResolvedValue({
+      items: [],
+      sources: [],
+      templates: {
+        cover: [{ id: 'tc', name: 'Cover', width_mm: 338.7, height_mm: 190.5 }],
+        page: [{ id: 'tp', name: 'Page', width_mm: 338.7, height_mm: 190.5 }],
+      },
+      defaults: {
+        source: null,
+        cover_template_id: null,
+        page_template_id: null,
+        single_page_template_id: null,
+      },
+      create_disabled_reason: null,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    // k13 is read (its chunk is cached with the old template), then the reader moves away.
+    report(['k13']);
+    expect(await screen.findByTestId('live-canvas-k13')).toHaveAttribute(
+      'data-layers',
+      'logo,area',
+    );
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    await waitFor(() => expect(screen.queryByTestId('live-canvas-k13')).toBeNull());
+
+    const switched = {
+      ...detail(),
+      templates: {
+        ...detail().templates,
+        page: { id: 'tp2', name: 'Item with accessories', version_no: 3 },
+      },
+    };
+    updateSpecSheet.mockResolvedValue(switched);
+    getSpecSheet.mockResolvedValue(switched);
+    // The new template's previews answer slowly, so a stale cached chunk would draw first.
+    getSpecSheetPreview.mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const out = previewFor(keys);
+        for (const sheet of out.doc.sheets)
+          sheet.tags[0].layers = [{ ...LOGO, id: 'title' }] as never;
+        return out;
+      },
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Spec sheet actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Templates' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'title'),
+    );
+
+    // Back to k13: never seeded from the old template's cached chunk.
+    report(['k13']);
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k13')).toHaveAttribute('data-layers', 'title'),
+    );
+    const seen: string[] = [];
+    const watch = setInterval(() => {
+      const el = screen.queryByTestId('live-canvas-k13');
+      if (el) seen.push(el.getAttribute('data-layers') ?? '');
+    }, 5);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    clearInterval(watch);
+    expect(seen.every((v) => v === 'title')).toBe(true);
+  });
+
+  it('a phone has no toolbar format bar (the Properties sheet formats text), so the toolbar has no blank rows', async () => {
+    mobile = true;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(
+      document.querySelector('[role="group"][aria-label="Text formatting"]'),
+    ).toBeNull();
+  });
+
+  it('the "Press Esc" hint is hidden on a touch screen', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen spec sheet' }));
+    const hint = screen.getByText('Press Esc to exit full screen');
+    expect(hint.className).toContain('pointer-coarse:hidden');
+  });
+
+  it('a viewer who cannot edit gets no Templates action', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.queryByRole('menuitem', { name: 'Templates' })).toBeNull();
+    expect(screen.queryByText('Templates')).toBeNull();
+  });
+
 });

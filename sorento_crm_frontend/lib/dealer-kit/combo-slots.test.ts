@@ -136,7 +136,17 @@ describe('fitReason', () => {
     expect(m.fitReason({ fixed: 1, groups: [], upgrades: 0 }, shape)).toBe(
       "Prints 1 of this combo's 2 fixed parts",
     );
-    expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, shape)).toBe(
+  });
+  it('HOTFIX: a plain template (no position field) fits every combo, fixed parts too', async () => {
+    const m = await mod();
+    for (const parts of [S1_PARTS, S3_PARTS, S4_PARTS]) {
+      expect(m.fitReason({ fixed: 0, groups: [], upgrades: 0 }, m.comboShape(parts))).toBeNull();
+      expect(m.fitReason({ fixed: 0, groups: [0], upgrades: 0 }, m.comboShape(parts))).toBeNull();
+    }
+  });
+  it('HOTFIX: a partial template that reads some position is still refused', async () => {
+    const m = await mod();
+    expect(m.fitReason({ fixed: 0, groups: [], upgrades: 1 }, m.comboShape(S4_PARTS))).toBe(
       "Prints 0 of this combo's 2 fixed parts",
     );
   });
