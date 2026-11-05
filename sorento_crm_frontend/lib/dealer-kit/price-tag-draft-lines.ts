@@ -581,6 +581,27 @@ export function lineProblemsOf(
 ): string[] {
   const out: string[] = [];
   const combo = comboOfLine(line);
+  const needs = chosenTemplate(line)?.needs;
+  const heldPicks = (role: string) =>
+    line.parts
+      .filter((part) => part.role === role)
+      .reduce((n, part) => n + (part.product_ids?.length ?? (part.product_id ? 1 : 0)), 0);
+  // N1: what the chosen template reads, not the rows present: a deleted group row still owes its picks.
+  if (needs && combo) {
+    const shape = comboShape(combo.parts);
+    shape.groups.forEach((group, index) => {
+      const k = needs.groups[index] ?? 0;
+      if (k > 0 && !line.parts.some((part) => part.role === group.role) && heldPicks(group.role) < k) {
+        out.push(`${group.role}: pick ${k - heldPicks(group.role)} more.`);
+      }
+    });
+    const fixedParts = combo.parts.filter((p) => !p.is_upgrade && !p.choice_group);
+    for (let i = 0; i < Math.min(needs.fixed, fixedParts.length); i += 1) {
+      if (!line.parts.some((part) => part.product_id === fixedParts[i].product_id)) {
+        out.push(`Template needs ${fixedParts[i].code}.`);
+      }
+    }
+  }
   for (const part of line.parts) {
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
     const k = picksNeeded(line, part.role);

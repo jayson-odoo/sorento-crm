@@ -250,6 +250,34 @@ describe('linePickProblems', () => {
     expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 3 more.']);
   });
 
+  it('N1: a deleted group row still owes the template its picks', () => {
+    const l = line({ parts: [] });
+    expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 3 more.']);
+  });
+
+  it('N1: a deleted group row owes one pick to a template that reads one', () => {
+    const l = line({ tag_template_id: 't1', parts: [] });
+    expect(api.linePickProblems([l], {})).toEqual(['Kitchen tap: pick 1 more.']);
+  });
+
+  it('N1: a fixed part the template reads and the line no longer has is named', () => {
+    const withFixed = {
+      ...S1_COMBO,
+      parts: [{ product_id: 'fx', code: 'SRTFIX', name: 'Fixed', choice_group: null, is_discontinued: false }, ...S1_COMBO.parts],
+    };
+    const needs = { fixed: 1, groups: [3], upgrades: 0 };
+    const full = [picksPart([id(OPTIONS[0]), id(OPTIONS[1]), id(OPTIONS[2])])];
+    const base = { combos: [withFixed], tag_templates: [tpl('t3', [3], { needs })] };
+    expect(api.linePickProblems([line({ ...base, parts: full })], {})).toEqual(['Template needs SRTFIX.']);
+    const fixed = { key: 'f', product_id: 'fx', code: 'SRTFIX', name: 'Fixed', role: null, candidates: [] };
+    expect(api.linePickProblems([line({ ...base, parts: [fixed, ...full] })], {})).toEqual([]);
+  });
+
+  it('N1: a line whose template reads no group is not refused for lacking one', () => {
+    const l = line({ tag_templates: [tpl('t0', [0])], tag_template_id: 't0', parts: [] });
+    expect(api.linePickProblems([l], {})).toEqual([]);
+  });
+
   it('a full group is fine', () => {
     expect(api.linePickProblems([line()], {})).toEqual([]);
   });
