@@ -330,3 +330,69 @@ def test_plain_text_mode_keeps_newlines_and_is_not_escaped():
 def test_plain_text_mode_is_idempotent():
     once = sanitise_tag_html("x<script>alert(1)</script>y <i>z</i>\nq")
     assert sanitise_tag_html(once) == once
+
+
+# --------------------------------------------------------------------------- fix round 1 (R2, R3, R4)
+import re
+import time
+
+from app.utils.tag_rich_text import ALLOWED_TAGS
+
+#: Nested-tag tricks: removing the inner tag in one pass leaves a NEW tag behind.
+_R2_INPUTS = [
+    "<<p>p><<p>img src=x onerror=alert(1)>hi",
+    "<</b>img src=x onerror=alert(1)>",
+    "x<<i>script>alert(1)<</i>/script>",
+    "<<b>p>hi<<b>img src=x onerror=alert(1)>",
+]
+
+
+def _tags_in(value: str) -> set[str]:
+    return {name.lower() for name in re.findall(r"</?([A-Za-z][A-Za-z0-9]*)", value or "")}
+
+
+@pytest.mark.parametrize("html", _R2_INPUTS)
+def test_r2_nested_tag_tricks_leave_no_tag_outside_the_allow_list(html):
+    """R2: plain-text mode loops until stable, then a rich result goes through the rich pass."""
+    out = sanitise_tag_html(html)
+    assert _tags_in(out) <= ALLOWED_TAGS, out
+    assert "onerror" not in (out or "").lower(), out
+    assert "<script" not in (out or "").lower(), out
+
+
+@pytest.mark.parametrize("html", _R2_INPUTS)
+def test_r2_output_is_idempotent(html):
+    once = sanitise_tag_html(html)
+    assert sanitise_tag_html(once) == once
+
+
+def test_r2_the_nested_inputs_join_the_idempotency_corpus():
+    for html in _R2_INPUTS:
+        if html not in _CORPUS:
+            _CORPUS.append(html)
+    for html in _CORPUS:
+        once = sanitise_tag_html(html)
+        assert sanitise_tag_html(once) == once, html
+
+
+def test_r3_deeply_nested_input_with_mismatched_end_tags_is_fast():
+    """R3: end-tag matching is O(1) per tag, not a scan of the open-tag stack."""
+    n = 20000
+    html = "<p>" + "<span>" * n + "x" + "</b></i></em>" * (n // 3) + "</span>" * n + "</p>"
+    started = time.perf_counter()
+    out = sanitise_tag_html(html)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.5, f"{elapsed:.2f}s for n={n}"
+    assert "x" in (out or "")
+
+
+def test_r4_control_characters_are_stripped_in_both_modes():
+    assert sanitise_tag_html("<p>a\x00b</p>") == "<p>ab</p>"
+    assert sanitise_tag_html("a\x01b\nc") == "ab\nc"
+    assert sanitise_tag_html("<p>a\x1fb\x08c</p>") == "<p>abc</p>"
+    assert sanitise_tag_html("x<b>a\x00b</b>") == "xab"
+
+
+def test_r4_newline_and_tab_survive():
+    assert sanitise_tag_html("a\tb\nc") == "a\tb\nc"
+    assert sanitise_tag_html("<p>a\tb</p>") == "<p>a\tb</p>"

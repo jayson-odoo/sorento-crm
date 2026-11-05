@@ -51,3 +51,19 @@ def test_empty_markup_clears_the_description(api, world, db):
     res = _put(api, pid, "<p></p>")
     assert res.status_code == 200, res.text
     assert res.json()["price_tag_description"] is None
+
+
+def test_r3_a_raw_value_over_20000_characters_is_422(api, world, db):
+    """R3: product update `price_tag_description` has the same raw limit at the schema."""
+    pid = world["product"](f"{STEM}-RICH4")
+    db.commit()
+    assert _put(api, pid, "a" * 100_000).status_code == 422
+    assert _put(api, pid, "a" * 20_001).status_code == 422
+
+
+def test_r4_control_characters_are_stripped(api, world, db):
+    pid = world["product"](f"{STEM}-RICH5")
+    db.commit()
+    res = _put(api, pid, "<p>a\u0000b</p>")
+    assert res.status_code == 200, res.text
+    assert res.json()["price_tag_description"] == "<p>ab</p>"

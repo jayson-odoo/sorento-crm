@@ -140,3 +140,35 @@ def test_a_stray_less_than_in_plain_text_is_stored_unchanged(db, monkeypatch):
     res = _patch(client, combo.id, description="L400 < 500mm")
     assert res.status_code == 200, res.text
     assert res.json()["description"] == "L400 < 500mm"
+
+
+# --------------------------------------------------------------------------- fix round 1 (R3, R4)
+def test_r3_a_raw_value_over_the_schema_limit_is_422_before_sanitising(db, monkeypatch):
+    """R3: `max_length=20000` on the raw field (the 5000 after sanitising stays)."""
+    host, combo, client = _setup(db, monkeypatch)
+    assert _patch(client, combo.id, description="a" * 100_000).status_code == 422
+    assert _patch(client, combo.id, description="a" * 20_001).status_code == 422
+    created = client.post(
+        COMBOS.format(product_id=host.id), json={"name": "big", "description": "a" * 100_000}
+    )
+    assert created.status_code == 422, created.text
+
+
+def test_r3_the_raw_limit_is_20000_not_less(db, monkeypatch):
+    """A 20000-character raw value that sanitises under 5000 still saves."""
+    _host, combo, client = _setup(db, monkeypatch)
+    noisy = "<p>" + '<span class="c">x</span>' * 833 + "</p>"
+    assert 19000 < len(noisy) <= 20000
+    res = _patch(client, combo.id, description=noisy)
+    assert res.status_code == 200, res.text
+
+
+def test_r4_a_nul_byte_is_stripped_not_a_500(db, monkeypatch):
+    """R4: Postgres refuses NUL in text; the sanitiser removes it first."""
+    _host, combo, client = _setup(db, monkeypatch)
+    res = _patch(client, combo.id, description="<p>a\u0000b</p>")
+    assert res.status_code == 200, res.text
+    assert res.json()["description"] == "<p>ab</p>"
+    res = _patch(client, combo.id, description="a\u0001b\nc")
+    assert res.status_code == 200, res.text
+    assert res.json()["description"] == "ab\nc"
