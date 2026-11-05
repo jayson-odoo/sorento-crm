@@ -12,9 +12,13 @@ Pieces:
 ## Start (first time)
 
 1. **CRM database.** Copy the dev database into one whose name carries a staging token:
-   `createdb -T <dev db> sorento_staging`. The script refuses any database that is not on this
-   machine, has no `dev`/`staging`/`stg`/`local` token in its name, or has a
-   `prod`/`production`/`live`/`main` token.
+   `createdb -T <dev db> sorento_staging`. Never seed the shared dev database itself: the
+   script re-points the one global `foundryx-esb` row and turns the write switches on, which
+   would break every other lane on it. The script refuses a database that:
+   - is not on this machine, or could be rerouted elsewhere (`?host=`/`?service=` in the URL,
+     or `PGHOST`/`PGHOSTADDR`/`PGSERVICE` set);
+   - has no `staging`/`stg` token in its name;
+   - has a `prod`/`production`/`live`/`main` token in its name.
 2. **CRM env.** Copy `sorento_crm_backend/.env` to `.env.staging` and point `DATABASE_URL` and
    `DIRECT_URL` at `sorento_staging`. Leave the SMTP and Respond.io variables unset so nothing
    reaches a real person.
@@ -24,11 +28,15 @@ Pieces:
    ```
    export SORENTO_ENV_FILE=.env.staging
    export STAGING_SS_API_KEY=<CRM -> SS key> STAGING_ADMIN_PASSWORD=<choose one>
-   export STAGING_SS_PUSH_KEY=<a long random string; SS sends it to the CRM>
+   export STAGING_SS_PUSH_KEY=$(openssl rand -hex 24)   # SS sends it to the CRM; at least 32 characters
    venv/bin/python -m scripts.staging.seed_db3_staging --ss-base-url http://localhost:<ss port>
-   venv/bin/python -m scripts.staging.seed_db3_staging --ss-base-url http://localhost:<ss port> --apply
+   venv/bin/python -m scripts.staging.seed_db3_staging --ss-base-url http://localhost:<ss port> \
+     --apply --confirm-db sorento_staging
    ```
-   The first command is a dry run that lists what would change. The second applies it.
+   The first command is a dry run that lists what would change. The second applies it; it
+   needs the database name typed out in `--confirm-db`. The admin email must be on
+   `example.com`/`.org`/`.net`, so the script can never take over a real login. Keep the run's
+   output out of tickets and PRs: a minted push key is printed there once.
 5. **SS push target.** Configure SS's CRM push target as `http://localhost:8000` with the same
    `STAGING_SS_PUSH_KEY` as its `X-API-Key`.
 6. **Run the stack.** Start the backend with `SORENTO_ENV_FILE=.env.staging`, plus the worker
@@ -48,8 +56,8 @@ Pieces:
 ## Reset
 
 1. Stop the backend and the worker.
-2. `dropdb sorento_staging`, then repeat Start steps 1 and 4 (keep the same
-   `STAGING_SS_PUSH_KEY` so SS needs no change).
+2. `dropdb sorento_staging`, then repeat Start steps 1 and 4. Keep the same
+   `STAGING_SS_PUSH_KEY` so SS needs no change.
 3. db3 is AutoCount's own test book. Documents written there stay there; reset it on the
    AutoCount side if needed.
 
@@ -72,6 +80,10 @@ applies.
 
 - Every CRM call names `companyCode`. SRT_DB3 only ever reaches the SS company bound to db3, and
   SS's guard refuses writes to any other book.
+- **The push key is admin-level.** It acts as the `foundryx-esb` principal (role at parity with
+  Admin, `app/services/integration_seed.py:106`), and an `X-API-Key` call without a contact reads
+  every company on the copy (`app/services/company_scope_resolver.py:361-365`). Keep the staging
+  backend on `127.0.0.1` rather than Tailscale/LAN while the copy holds real data.
 - **The real companies on the copy (SRT, MCH) can still reach SS.** If the local SS also holds
   the SRT/MCH companies, a pull from inside them reads db1/db2. Writes are still refused by the
   db3-only guard. Stay in SRT_DB3 to test.

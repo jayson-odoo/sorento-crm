@@ -21,7 +21,8 @@ dev/staging token AND no prod token. Default is a dry run; `--apply` commits.
 
 Run from sorento_crm_backend/:
     STAGING_SS_API_KEY=... STAGING_ADMIN_PASSWORD=... \\
-      venv/bin/python -m scripts.staging.seed_db3_staging --ss-base-url http://localhost:8100 --apply
+      venv/bin/python -m scripts.staging.seed_db3_staging --ss-base-url http://localhost:8100 \\
+          --apply --confirm-db sorento_staging
 
 Runbook: documentation/plans/autocount/RUNBOOK-db3-local-staging.md
 """
@@ -35,12 +36,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
-#: Hosts that mean "this machine". Anything else is refused: staging is local by definition.
+#: Hosts that mean "this machine". An empty host is a unix socket, accepted only when nothing
+#: else (URL query, PG* env) can send libpq to another server.
 LOCAL_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
-#: At least one of these must be a token of the database name (split on _ - .).
-STAGING_TOKENS = frozenset({"dev", "staging", "stg", "local"})
+#: libpq inputs that can reroute a connection whose URL host looks local.
+REROUTE_QUERY_KEYS = frozenset({"host", "hostaddr", "service"})
+REROUTE_ENV_VARS = ("PGHOST", "PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE")
+#: At least one of these must be a token of the database name (split on _ - .). Not `dev` or
+#: `local`: the shared prod-copy dev database is one of those and must never be re-pointed.
+STAGING_TOKENS = frozenset({"staging", "stg"})
 #: None of these may be a token of the database name.
 PROD_TOKENS = frozenset({"prod", "production", "live", "main"})
+#: The admin login is created on a reserved domain only, so it can never be a real person.
+RESERVED_EMAIL_DOMAINS = ("@example.com", "@example.org", "@example.net")
+#: An SS push key is admin-level on the CRM; a short one is refused.
+MIN_PUSH_KEY_LENGTH = 32
 
 #: Every AutoCount write switch on `system_settings`. #2168 is on main; #2173's column lands
 #: with that PR (branch claude/ac-qtso-crm-phase-2-1n1ffk) and is reported missing until then.
@@ -59,19 +69,27 @@ class RefusedTarget(Exception):
     """The database is not a local staging database."""
 
 
-def check_target(url) -> str:
+def check_target(url, environ=None) -> str:
     """Return the database name if `url` is a local staging database, else raise RefusedTarget.
 
-    `url` is a SQLAlchemy URL or a string. Checked against the URL the app's engine really uses,
-    not an env var a caller could have set differently.
+    `url` is a SQLAlchemy URL or a string: the URL the app's engine really writes through
+    (`SessionLocal`), not an env var a caller could have set differently. `environ` defaults to
+    `os.environ` and is read for the libpq variables that can reroute a local-looking URL.
     """
     from sqlalchemy.engine import make_url
 
+    environ = os.environ if environ is None else environ
     parsed = make_url(str(url)) if not hasattr(url, "database") else url
     host = (parsed.host or "").lower()
     name = (parsed.database or "").lower()
     if host not in LOCAL_HOSTS:
         raise RefusedTarget(f"database host {host!r} is not this machine; staging is local only")
+    rerouting = sorted(k for k in (parsed.query or {}) if k.lower() in REROUTE_QUERY_KEYS)
+    if rerouting:
+        raise RefusedTarget(f"database URL sets {rerouting}, which can reach another server")
+    env_set = [v for v in REROUTE_ENV_VARS if (environ.get(v) or "").strip()]
+    if env_set:
+        raise RefusedTarget(f"{env_set} set in the environment, which can reach another server")
     tokens = {t for t in re.split(r"[_\-.]+", name) if t}
     prod_hit = tokens & PROD_TOKENS
     if prod_hit:
@@ -155,10 +173,14 @@ def _ensure_push_key(db, row, cfg: SeedConfig, report: SeedReport) -> None:
     from app.services.integration_key_service import IntegrationKeyService
 
     if cfg.push_key:
+        if len(cfg.push_key) < MIN_PUSH_KEY_LENGTH:
+            raise RefusedTarget(f"the push key must be at least {MIN_PUSH_KEY_LENGTH} characters")
         digest = hash_api_key(cfg.push_key)
         existing = db.query(IntegrationApiKey).filter(IntegrationApiKey.key_hash == digest).first()
         if existing is not None and existing.integration_id != row.id:
             raise RefusedTarget("the given push key already belongs to another integration")
+        if existing is not None and (existing.revoked_at is not None or existing.expires_at is not None):
+            raise RefusedTarget("the given push key was revoked or rotated out; choose a new one")
         if existing is None:
             db.add(
                 IntegrationApiKey(
@@ -168,9 +190,6 @@ def _ensure_push_key(db, row, cfg: SeedConfig, report: SeedReport) -> None:
             db.flush()
             report.add("push key (SS -> CRM): registered")
         else:
-            existing.revoked_at = None
-            existing.expires_at = None
-            db.flush()
             report.add("push key (SS -> CRM): already registered")
         return
 
@@ -212,6 +231,11 @@ def _ensure_admin(db, cfg: SeedConfig, company, report: SeedReport) -> None:
     from app.models.company import UserCompany
     from app.models.user import User, UserRole, UserRoleAssignment
 
+    if not cfg.admin_email.lower().endswith(RESERVED_EMAIL_DOMAINS):
+        # An existing address would have its password reset and superadmin granted.
+        raise RefusedTarget(
+            f"admin email must be on a reserved domain {RESERVED_EMAIL_DOMAINS}, never a real login"
+        )
     role = None
     for slug in ("superadmin", "admin"):
         role = db.query(UserRole).filter(UserRole.slug == slug).first()
@@ -271,6 +295,11 @@ def _parse(argv) -> argparse.Namespace:
     ap.add_argument("--company-name", default=DEFAULT_COMPANY_NAME)
     ap.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL)
     ap.add_argument("--apply", action="store_true", help="commit; without it nothing is written")
+    ap.add_argument(
+        "--confirm-db",
+        default="",
+        help="with --apply: the database name, typed out, as proof you own this database",
+    )
     return ap.parse_args(argv)
 
 
@@ -282,6 +311,10 @@ def main(argv=None) -> int:
         name = check_target(engine.url)
     except RefusedTarget as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+
+    if args.apply and args.confirm_db.strip().lower() != name:
+        print(f"REFUSED: --apply needs --confirm-db {name}", file=sys.stderr)
         return 2
 
     missing = [
