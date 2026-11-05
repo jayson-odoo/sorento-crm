@@ -5,7 +5,7 @@ B1). An icon asset carries ``show_when_spec_key`` + ``show_when_values``: it sho
 Feature icons layer when the product's spec has one of those raw values. Both or neither.
 
 Revision ID: dkfi_0001_asset_show_when
-Revises: pol_0001_stock_debt_link_po
+Revises: ttdc_0001_tag_template_archived
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "dkfi_0001_asset_show_when"
-down_revision = "pol_0001_stock_debt_link_po"
+down_revision = "ttdc_0001_tag_template_archived"
 branch_labels = None
 depends_on = None
 
