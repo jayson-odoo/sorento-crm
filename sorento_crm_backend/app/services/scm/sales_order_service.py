@@ -419,6 +419,9 @@ class SalesOrderService:
         """
         customer = so.customer
         inquiries = self._line_inquiries(so) if line_planning else {}
+        # SO-LINE-OI-STATUS-UNIFY: the line's OI rows in the OI page's own shape, so the
+        # Order inquiry cell folds them exactly as the OI Lines tab does.
+        inquiry_rows = self._line_inquiry_rows(so) if line_planning else {}
         # Which revision decided each line, what it decided, and what the engine had
         # suggested (AC-D4). Off by default: the list prints none of it and would pay the
         # read across a page of 50 orders.
@@ -560,6 +563,7 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
+                "order_inquiry_rows": inquiry_rows.get(str(ln.id)),
                 "split_view": split_views.get(str(ln.id)),
                 # AC-I9 / S7: WHERE this line's Buy sits - the order-inquiry link(s) a
                 # PROJECT line carries first, then a RETAIL line's own SPO coverage (S7,
@@ -755,6 +759,54 @@ class SalesOrderService:
                 "rejected_by_name": entry.get("rejected_by_name"),
                 "rejected_at": entry.get("rejected_at"),
             }
+        return out
+
+    def _line_inquiry_rows(self, so: SalesOrder) -> dict[str, list[dict]]:
+        """SO-LINE-OI-STATUS-UNIFY (`PLAN-so-line-oi-status-unify-05nov.md`): every order
+        inquiry row of each of this order's lines, keyed by CORE line id, serialized by the
+        OI worklist itself (`OrderInquiryWorklistService.list_rows`, the read the OI page's
+        Lines tab makes with `include_history`) and validated through its own response
+        model, so the FE fold reads the same fields, spelled the same way.
+
+        `_line_inquiries` above picks ONE row (the newest) and its supply `state`; the OI
+        page folds the LIVE rows and reads the primary's `ack_state`. Owner, 5 Nov 2026:
+        the SO line must read what the OI row reads, so the fold runs on the same rows.
+        Used and cancelled rows are sent, flagged, and the fold hides them by the one
+        visibility rule (`isLiveInquiryRow`), as on the OI page.
+
+        Two reads for the whole order: the row ids, then one worklist page of them.
+        """
+        from app.models.project_so import OrderInquiryRow
+        from app.schemas.project_order_inquiry import OrderInquiryWorklistRow
+        from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        if not core_ids:
+            return {}
+        pairs = (
+            self.db.query(ProjectSalesOrderLine.core_sales_order_line_id, OrderInquiryRow.id)
+            .select_from(OrderInquiryRow)
+            .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids))
+            .all()
+        )
+        if not pairs:
+            return {}
+        core_by_row = {str(row_id): str(core_id) for core_id, row_id in pairs}
+        page = OrderInquiryWorklistService(self.db).list_rows(
+            page=1,
+            limit=len(core_by_row),
+            sort="raised_at",
+            direction="asc",
+            include_cancelled=True,
+            row_ids=list(core_by_row),
+        )
+        out: dict[str, list[dict]] = {}
+        for raw in page["data"]:
+            row = OrderInquiryWorklistRow.model_validate(raw).model_dump(mode="json")
+            core_id = core_by_row.get(str(row["id"]))
+            if core_id:
+                out.setdefault(core_id, []).append(row)
         return out
 
     def _line_split_views(self, so: SalesOrder) -> dict[str, dict]:
