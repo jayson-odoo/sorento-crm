@@ -1141,7 +1141,7 @@ describe('QuotationDocumentClient scope series', () => {
     seedOneScope();
     renderScreen();
 
-    await screen.findByText(/Wall-hung|Townhouse/);
+    await screen.findAllByText(/Wall-hung|Townhouse/);
     expect(screen.queryByRole('button', { name: 'Record outcome' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit scope' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Add a scope' })).toBeNull();
