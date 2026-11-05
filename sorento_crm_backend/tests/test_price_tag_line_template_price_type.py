@@ -292,6 +292,32 @@ def test_a_saved_line_is_not_rewritten_when_its_template_type_changes(env):
     assert res.json()["lines"][0]["tag_template_id"] == u
 
 
+def test_a_resent_unchanged_pick_is_kept_after_the_template_stopped_fitting(env):
+    """AC-37 ruling (5 Nov): a pick equal to the line's stored one, on an unchanged price type,
+    is not re-checked: the save succeeds (no 422) and the line keeps the template. A CHANGED
+    pick that does not fit is still refused."""
+    db, c, _ = env
+    product = _product(db, _reference(db))
+    t, u = _typed(db, "T", "list"), _typed(db, "U", "list")
+    _link(db, product, t, u)
+    body = _draft(c, [_line(product, "list", tag_template_id=t)])
+    assert body["lines"][0]["tag_template_id"] == t
+
+    _set_type(db, t, "selling")  # T no longer fits the LP line
+
+    res = c.put(f"{PTAG}/{body['id']}", json={"lines": [_line(product, "list", tag_template_id=t)]})
+    assert res.status_code == 200, res.text
+    assert res.json()["lines"][0]["tag_template_id"] == t
+    assert _line_row(db, body["id"]).tag_template_id == t
+
+    # the same pick sent for a CHANGED price type is checked (T is SP-only now, the line goes SP: fits)
+    # and a different non-fitting pick is refused
+    _set_type(db, u, "selling")
+    refused = c.put(f"{PTAG}/{body['id']}", json={"lines": [_line(product, "list", tag_template_id=u)]})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "TEMPLATE_PRICE_TYPE_MISMATCH"
+
+
 def test_an_approved_tag_keeps_its_template_and_pinned_data_after_the_type_change(env):
     """AC-37: submit pins the tag's data; approval freezes the request; a later type change on
     the template moves neither the stored template nor the pin."""

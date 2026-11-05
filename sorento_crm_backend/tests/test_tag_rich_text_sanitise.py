@@ -277,7 +277,8 @@ def test_legacy_plain_text_is_returned_unchanged():
     legacy = "SRTBF11416 (CABINET)\nL400xW345xH390mm"
     assert sanitise_tag_html(legacy) == legacy
     assert sanitise_tag_html("a < b & c") == "a < b & c"
-    assert sanitise_tag_html("<b>x</b>") == "<b>x</b>"
+    # a tag inside plain text is removed (text mode, captain ruling 5 Nov), text kept
+    assert sanitise_tag_html("<b>x</b>") == "x"
 
 
 # --------------------------------------------------------------------------- AC-12
@@ -303,3 +304,29 @@ def test_plain_text_of_plain_input_is_unchanged_and_none_is_none():
     assert plain_text("a\nb") == "a\nb"
     assert plain_text("1 < 2 & 3") == "1 < 2 & 3"
     assert plain_text(None) is None
+
+
+# --------------------------------------------------------------------------- captain ruling 5 Nov
+# Plain (non-rich) input that contains "<" runs through the same parser in TEXT mode: every tag
+# removed (script/style/iframe/object/embed with content), text kept UNescaped, newlines kept.
+def test_plain_text_mode_removes_tags_and_keeps_the_text():
+    assert sanitise_tag_html("<img src=x onerror=alert(1)>x") == "x"
+    assert sanitise_tag_html("x<script>alert(1)</script>y") == "xy"
+    for tag in ("style", "iframe", "object", "embed"):
+        assert sanitise_tag_html(f"x<{tag}>alert(1)</{tag}>y") == "xy", tag
+
+
+def test_plain_text_mode_leaves_a_stray_less_than_alone():
+    assert sanitise_tag_html("a < b") == "a < b"
+    assert sanitise_tag_html("L400 < 500mm") == "L400 < 500mm"
+    assert sanitise_tag_html("a < b & c") == "a < b & c"
+
+
+def test_plain_text_mode_keeps_newlines_and_is_not_escaped():
+    out = sanitise_tag_html("SRTBF11416 (CABINET)\n<b>L400</b>xW345 & more\nlast")
+    assert out == "SRTBF11416 (CABINET)\nL400xW345 & more\nlast"
+
+
+def test_plain_text_mode_is_idempotent():
+    once = sanitise_tag_html("x<script>alert(1)</script>y <i>z</i>\nq")
+    assert sanitise_tag_html(once) == once

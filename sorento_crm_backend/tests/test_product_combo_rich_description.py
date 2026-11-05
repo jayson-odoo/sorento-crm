@@ -112,3 +112,31 @@ def test_legacy_plain_text_is_stored_unchanged(db, monkeypatch):
     res = _patch(client, combo.id, description=legacy)
     assert res.status_code == 200, res.text
     assert res.json()["description"] == legacy
+
+
+# --------------------------------------------------------------------------- captain ruling 5 Nov
+def test_a_bare_img_with_no_leading_block_stores_null(db, monkeypatch):
+    """Plain-text mode: a value that is only a tag has no text left, so it clears the field."""
+    _host, combo, client = _setup(db, monkeypatch)
+    assert _patch(client, combo.id, description="<p>first</p>").status_code == 200
+    res = _patch(client, combo.id, description="<img src=x onerror=alert(1)>")
+    assert res.status_code == 200, res.text
+    assert res.json()["description"] is None
+    db.expire_all()
+    from app.models.product_combo import ProductCombo
+
+    assert db.get(ProductCombo, combo.id).description is None
+
+
+def test_a_bare_img_before_text_keeps_only_the_text(db, monkeypatch):
+    _host, combo, client = _setup(db, monkeypatch)
+    res = _patch(client, combo.id, description="<img src=x onerror=alert(1)>x")
+    assert res.status_code == 200, res.text
+    assert res.json()["description"] == "x"
+
+
+def test_a_stray_less_than_in_plain_text_is_stored_unchanged(db, monkeypatch):
+    _host, combo, client = _setup(db, monkeypatch)
+    res = _patch(client, combo.id, description="L400 < 500mm")
+    assert res.status_code == 200, res.text
+    assert res.json()["description"] == "L400 < 500mm"
