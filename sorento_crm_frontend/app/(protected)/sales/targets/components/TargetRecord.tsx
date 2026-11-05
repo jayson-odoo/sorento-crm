@@ -521,7 +521,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const create = useCreateSalesTarget();
   const patchHeader = usePatchSalesTarget();
   const { actions: targetActions, pending } = useSalesTargetActions(target, {
-    onDeleted: () => router.push('/sales/targets'),
+    // Back to the list tab the deleted target sat on (owner, 5 Nov).
+    onDeleted: () => router.push(target ? `/sales/targets?tab=${target.subject_kind}` : '/sales/targets'),
   });
   const { data: siblings } = useSalesTargets(
     { all: true, subject: target?.subject_kind ?? 'agent' },
