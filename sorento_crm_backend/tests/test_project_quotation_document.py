@@ -612,12 +612,9 @@ def test_a_line_carries_the_columns_the_real_quotation_actually_prints():
 # ------------------------------------------------------------------------- AC-A5
 
 
-def test_the_document_layer_does_not_disturb_the_derived_project_outcome():
-    """This is the regression that matters most: the document was added ABOVE the scope
-    precisely so that winning the townhouse stays a fact about the townhouse and not about a
-    revision. A project with one decided scope and one still open is not decided, and one win
-    beside one loss is still a win - the pipeline's rule (AC-E10), unchanged, now reached
-    through a document."""
+def test_the_document_layer_never_writes_an_outcome():
+    """BE9. One outcome per project: adding scopes to a document, or deleting one, leaves
+    the project outcome alone (the area-delete recompute is gone)."""
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_service as quotes
 
@@ -629,26 +626,25 @@ def test_the_document_layer_does_not_disturb_the_derived_project_outcome():
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
-        townhouse = qdocs.add_scope(
+        qdocs.add_scope(
             db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
         guard_house = qdocs.add_scope(
             db, document=document, scope_label=f"{MARKER} Guard House", actor_user_id=owner
         )
-
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        # One scope lost, the other still open: the project is still live.
-        quotes.set_outcome(db, quotation=townhouse, outcome="lost", loss_reason="price")
-        assert quotes.derive_project_outcome(db, project) == "open"
         db.refresh(project)
         assert project.outcome == "open"
 
-        # A won scope beside a lost one is a won project (AC-E10, any-won wins).
-        quotes.set_outcome(db, quotation=guard_house, outcome="won", loss_reason=None)
-        assert quotes.derive_project_outcome(db, project) == "won"
+        project.outcome = "lost"
+        project.loss_reason = "price"
+        db.flush()
+        quotes.delete_quotation(db, guard_house)
         db.refresh(project)
-        assert project.outcome == "won"
+        assert project.outcome == "lost"
+        assert project.loss_reason == "price"
+        assert not hasattr(quotes, "derive_project_outcome")
+        assert not hasattr(quotes, "set_outcome")
+        assert not hasattr(quotes, "sync_project_outcome")
 
 
 # ------------------------------------------------------------------------- AC-A6

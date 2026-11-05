@@ -497,15 +497,15 @@ def test_the_first_po_moves_the_project_to_po_received(seeded):
     assert project.status_id == _status_id(db, "po_received")
 
 
-def test_the_auto_edge_does_not_touch_the_derived_outcome(seeded):
-    """AC-F10 explicitly: outcome comes from quotations (AC-E10), not from a PO. A PO
-    against a lost scope is a data problem somebody should see, not something to paper
-    over by flipping the outcome."""
+def test_the_auto_edge_wins_the_project(seeded):
+    """BE2: the first PO moves the status to PO Received AND sets outcome won."""
     from app.services import project_po_service as pos
 
     db, company_id, owner = seeded
     project, _q, version, _p = _quoted_project(db, company_id, owner)
-    outcome_before = project.outcome
+    project.status_id = _status_id(db, "quoted")
+    project.outcome = "open"
+    db.flush()
 
     pos.create_po(
         db,
@@ -519,7 +519,9 @@ def test_the_auto_edge_does_not_touch_the_derived_outcome(seeded):
     )
 
     db.refresh(project)
-    assert project.outcome == outcome_before
+    assert project.status_id == _status_id(db, "po_received")
+    assert project.outcome == "won"
+    assert project.loss_reason is None
 
 
 def test_a_second_po_does_not_move_the_status_again(seeded):
@@ -577,6 +579,8 @@ def test_an_illegal_auto_edge_records_the_po_anyway_and_says_the_status_did_not_
     db.refresh(project)
     assert project.status_id == status_before
     assert getattr(po, "_status_moved", None) is False
+    # BE2: when the status does not move, the outcome is untouched.
+    assert project.outcome == "open"
 
 
 def test_recording_a_po_blocks_deleting_the_project(seeded):

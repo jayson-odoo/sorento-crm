@@ -72,7 +72,7 @@ export function useQuotationDocumentActions({
   onDeleted?: () => void;
   /** `inline` on the record page (countdown in the header, watched from mount); `toast` in a row. */
   surface?: 'inline' | 'toast';
-  /** The project's outcome: "Make quotation" is offered only on a won project. */
+  /** The project's outcome: "Make quotation" is offered unless the project is lost. */
   projectOutcome?: string | null;
   /** The project already holds a quotation (made from any proposal): no second one. */
   projectHasQuotation?: boolean;
@@ -147,14 +147,14 @@ export function useQuotationDocumentActions({
   }
 
   // PS-PROPOSAL-QUOTATION: an issued proposal of a won project becomes its quotation. Hidden on
-  // a proposal a quotation was already made from, and on a project that is not won.
+  // a proposal a quotation was already made from, and on a lost project.
   if (
     canEdit &&
     document.kind !== 'quotation' &&
     issued &&
     !document.quotation_document_id &&
     !projectHasQuotation &&
-    projectOutcome === 'won'
+    (projectOutcome === 'open' || projectOutcome === 'won')
   ) {
     actions.push({
       key: 'quotation_document.make_quotation',

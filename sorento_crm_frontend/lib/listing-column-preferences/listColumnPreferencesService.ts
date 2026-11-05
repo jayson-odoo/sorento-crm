@@ -6,6 +6,9 @@ export type ListSortEntry = {
   desc: boolean;
 };
 
+/** Which view a page with a board / grid / list toggle was left in. */
+export type ListViewMode = 'board' | 'grid' | 'list';
+
 /**
  * The stored per-user, per-listing blob.
  *
@@ -44,6 +47,8 @@ export type UserListColumnConfigPayload = {
    * can still survive a GET, so the FE applies the same bound on read and drops it.
    */
   pageSize?: number | null;
+  /** Board / grid / list toggle, owned by `useListingViewMode` (PROJECTS-BOARD-VIEW-PREF). */
+  view?: ListViewMode | null;
 };
 
 export type UserListColumnConfigResponse = {

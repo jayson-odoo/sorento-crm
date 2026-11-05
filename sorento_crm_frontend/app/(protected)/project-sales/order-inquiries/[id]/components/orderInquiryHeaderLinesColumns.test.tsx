@@ -983,6 +983,37 @@ describe('OI-AUTO-CONFIRM (approved mock panels 2 and 3): the State column reads
     expect(screen.queryByText('Partly on PO/SPO')).not.toBeInTheDocument();
   });
 
+  it('SO-LINE-OI-STATUS-UNIFY: a placed but unconfirmed line reads To order, the word the SO line now reads too', () => {
+    render(<>{stateCell(linesRow({ id: 's5', core_line_id: 'cl-s5', state: 'placed', ack_state: 'awaiting' }))}</>);
+    expect(screen.getByText('To order')).toBeInTheDocument();
+    expect(screen.queryByText('On PO/SPO')).not.toBeInTheDocument();
+  });
+
+  it('SO-LINE-OI-STATUS-UNIFY (owner Q4): a rejected line reads Rejected with its reason, a click opens the lightbox', () => {
+    render(
+      <>
+        {stateCell(
+          linesRow({
+            id: 's6',
+            core_line_id: 'cl-s6',
+            state: 'raised',
+            ack_state: 'rejected',
+            rejected_reason: 'DISCON',
+            rejected_by_name: 'Joey',
+            rejected_at: '2026-10-13T08:32:00',
+          } as never),
+        )}
+      </>,
+    );
+    const badge = screen.getByTestId('lines-rejected-s6');
+    expect(badge).toHaveTextContent(/^RejectedDISCON$/);
+    fireEvent.click(badge);
+    const dialog = screen.getByTestId('lines-rejected-s6-dialog');
+    expect(dialog).toHaveTextContent('DISCON');
+    expect(dialog).toHaveTextContent('Joey');
+    expect(dialog).toHaveTextContent(/13\/10\/2026/);
+  });
+
   it('a done line reads Done, not On PO/SPO', () => {
     render(<>{stateCell(linesRow({ id: 's3', core_line_id: 'cl-s3', state: 'placed', ack_state: 'acknowledged' }))}</>);
     expect(screen.getByText('Done')).toBeInTheDocument();
@@ -1174,5 +1205,40 @@ describe('OI-RESERVE-ANY-ROW: reserve on a not-Done row of any verb counts on it
     );
     render(<span data-testid="req">{column('reserve_requested').cell({ row: { original: lineRow } })}</span>);
     expect(screen.getByTestId('req')).toHaveTextContent('12');
+  });
+});
+
+describe('owner hand test (5 Nov 2026): the No. opens the sales order at that line', () => {
+  function noCell(row: OrderInquiryWorklistRow) {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'line_no',
+    ) as { cell: (context: unknown) => React.ReactNode };
+    return column.cell({ row: { original: row } });
+  }
+
+  it('links each No. to the SO Lines tab with that line highlighted', () => {
+    render(
+      <>
+        {noCell(
+          linesRow({
+            id: 'r-96',
+            so_line_no: 96,
+            core_sales_order_id: 'so-419595',
+            core_line_id: 'core-96',
+          } as never),
+        )}
+      </>,
+    );
+    expect(screen.getByRole('link', { name: '96' })).toHaveAttribute(
+      'href',
+      '/scm/sales-orders/so-419595?tab=lines&line=core-96',
+    );
+  });
+
+  it('stays plain text when the line reaches no sales order line', () => {
+    render(<>{noCell(linesRow({ id: 'r-7', so_line_no: 7 } as never))}</>);
+    expect(screen.getByText('7')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 });

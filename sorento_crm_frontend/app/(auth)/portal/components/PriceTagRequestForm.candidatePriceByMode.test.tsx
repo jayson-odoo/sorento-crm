@@ -172,6 +172,7 @@ beforeEach(() => {
 async function startWithTheHost() {
   render(<PriceTagRequestForm />);
   await selectOption('Customer', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${HOST.kind}:${HOST.id}`);
 }

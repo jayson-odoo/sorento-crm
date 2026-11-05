@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -23,12 +24,13 @@ import BackToList from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import DetailActions from '@/components/common/DetailActions';
+import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -764,26 +766,48 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="block py-4">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-col gap-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-3">
-                <CardTitle className="text-lg tabular-nums">{header.inquiry_no}</CardTitle>
-                <Badge
-                  variant={orderInquiryHeaderStatusVariant(header.status)}
-                  appearance="light"
-                  size="md"
-                >
-                  {orderInquiryHeaderStatusLabel(header.status)}
-                </Badge>
-                <ConsignmentBadge docType={header.so_doc_type} size="md" />
-              </div>
-              <span className="text-sm text-muted-foreground">
-                Raised by {header.raised_by_name ?? 'Not recorded'}
-                {header.raised_at ? ` on ${formatDateTimeInMalaysia(header.raised_at)}` : ''}
-              </span>
-            </div>
+      <RecordHeaderCard
+        title={header.inquiry_no}
+        badges={
+          <>
+            <Badge
+              variant={orderInquiryHeaderStatusVariant(header.status)}
+              appearance="light"
+              size="md"
+            >
+              {orderInquiryHeaderStatusLabel(header.status)}
+            </Badge>
+            <ConsignmentBadge docType={header.so_doc_type} size="md" />
+          </>
+        }
+        subtitle={
+          <>
+            {/* Owner hand test (5 Nov 2026): the sales order, one click away, without going
+                to the General tab (same link the General tab's S/O no uses). */}
+            {header.so_number ? (
+              <>
+                {header.sales_order_id ? (
+                  <Link
+                    href={`/scm/sales-orders/${header.sales_order_id}`}
+                    className="font-medium tabular-nums text-primary hover:underline"
+                    data-testid="oi-header-so-link"
+                  >
+                    {header.so_number}
+                  </Link>
+                ) : (
+                  <span className="font-medium tabular-nums text-foreground" data-testid="oi-header-so">
+                    {header.so_number}
+                  </span>
+                )}
+                {' · '}
+              </>
+            ) : null}
+            {`Raised by ${header.raised_by_name ?? 'Not recorded'}${
+              header.raised_at ? ` on ${formatDateTimeInMalaysia(header.raised_at)}` : ''
+            }`}
+          </>
+        }
+        actions={
             <DetailActions
               pager={{
                 ...orderInquiryHeadersPagerQuery,
@@ -960,15 +984,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 ) : undefined
               }
             />
-          </div>
-          {unlinkSelectedAction.countdown ? (
-            <div className="mt-3">{unlinkSelectedAction.countdown}</div>
-          ) : null}
-          {reserveRequestCancelAction.countdown ? (
-            <div className="mt-3">{reserveRequestCancelAction.countdown}</div>
-          ) : null}
-        </CardHeader>
-      </Card>
+        }
+      >
+        {unlinkSelectedAction.countdown ? (
+          <div className="mt-3">{unlinkSelectedAction.countdown}</div>
+        ) : null}
+        {reserveRequestCancelAction.countdown ? (
+          <div className="mt-3">{reserveRequestCancelAction.countdown}</div>
+        ) : null}
+      </RecordHeaderCard>
 
       <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">

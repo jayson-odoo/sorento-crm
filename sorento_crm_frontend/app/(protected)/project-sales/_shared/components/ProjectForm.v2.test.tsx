@@ -601,7 +601,9 @@ describe('D2 a blocking clash becomes Register interest', () => {
     });
     expect(within(line).getByRole('link', { name: 'PRJ-000009' })).toHaveAttribute('href', '/project-sales/p9');
     expect(within(line).queryByRole('button')).toBeNull();
-    expect(screen.queryByText(/Manager M/)).toBeNull();
+    // PROJECT-CLASH-LOST: the owner asked to see each clash's outcome and owner to decide.
+    expect(screen.getByText('Open')).toBeInTheDocument();
+    expect(screen.getByText('Manager M')).toBeInTheDocument();
     expect(screen.queryByText(/Stage:|Owner:|%/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Ask to join|Dispute/ })).toBeNull();
     expect(screen.queryByText(/Blocked by an existing project/)).toBeNull();
@@ -655,14 +657,13 @@ describe('D2 a blocking clash becomes Register interest', () => {
   });
 });
 
-describe('D3 a non-blocking candidate is shown as No clash (AC-W3)', () => {
-  it('AC-W3 a non-blocking candidate shows just "No clash": no similar row, no action', async () => {
+describe('D3 a non-blocking candidate is listed, not hidden (AC-W3, PROJECT-CLASH-LOST)', () => {
+  it('AC-W3 a non-blocking candidate shows its Existing line and Next, no "No clash"', async () => {
     clashAnswer = () => ({ candidates: [SIMILAR], would_block: false });
     renderForm();
     await checkTitle('Setia Alam Phase 3C CONTOH');
-    expect(await screen.findByText('No clash')).toBeInTheDocument();
-    expect(screen.queryByText(/Similar project/)).toBeNull();
-    expect(screen.queryByText(/PRJ-000010/)).toBeNull();
+    expect(await screen.findByText('PRJ-000010')).toBeInTheDocument();
+    expect(screen.queryByText('No clash')).toBeNull();
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
   });
 });

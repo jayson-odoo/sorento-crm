@@ -7,7 +7,10 @@
  */
 
 import type { PlanningChangeFromTo } from '@/app/(protected)/project-sales/_shared/types/planningChange.types';
-import type { LineSplitView } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type {
+  LineSplitView,
+  OrderInquiryWorklistRow,
+} from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '@/app/(protected)/project-sales/_shared/types/lineSplit.types';
 import type { CancelSource } from '../lib/autocountCancel';
 
@@ -324,6 +327,10 @@ export interface SalesOrderLine {
    * more queries a page for a fact nothing there prints.
    */
   order_inquiry?: SalesOrderLineInquiry | null;
+  /** SO-LINE-OI-STATUS-UNIFY: every OI row of this line (live, used, cancelled) in the OI
+   * worklist row shape; the Order inquiry cell folds them as the OI Lines tab does.
+   * Single order read only; null on a line nobody raised a row on. */
+  order_inquiry_rows?: OrderInquiryWorklistRow[] | null;
   /** OI-SPLIT-VIEW (UAC B1): the split popup of this line's planning mirror; null when the
    * line has no splits or no project order. Single order read only. */
   split_view?: LineSplitView | null;

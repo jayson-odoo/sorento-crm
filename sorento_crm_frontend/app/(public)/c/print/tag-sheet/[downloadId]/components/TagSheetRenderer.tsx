@@ -340,6 +340,8 @@ function renderImageLayer(
 
   const url = imageUrlFor(layer, media, resolved);
   const circle = props.maskShape === 'circle';
+  // No photo prints nothing: the grey box is an editor placeholder, not part of a tag.
+  if (!url) return null;
 
   return (
     <div
@@ -356,24 +358,22 @@ function renderImageLayer(
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: url ? 'transparent' : '#f5f5f5',
       }}
     >
-      {url &&
-        (isCropped(props.cropRect) ? (
-          <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
-        ) : (
-          <img
-            src={url}
-            alt=""
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit:
-                props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
-            }}
-          />
-        ))}
+      {isCropped(props.cropRect) ? (
+        <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
+      ) : (
+        <img
+          src={url}
+          alt=""
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit:
+              props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+          }}
+        />
+      )}
     </div>
   );
 }
