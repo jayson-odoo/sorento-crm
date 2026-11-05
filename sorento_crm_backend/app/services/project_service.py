@@ -1186,7 +1186,8 @@ def _list_order_by(db: Session, sort: str, direction: str) -> list:
     - ``flags``: Critical. Descending puts Critical first.
 
     A blank value (no developer, no stage, no amount, unassigned) sorts last in both
-    directions, like an uncoded project. Ties fall back to newest first, then id, so a
+    directions, like an uncoded project. Last activity keeps its older, pinned rule
+    (no activity first descending). Ties fall back to newest first, then id, so a
     page boundary never shuffles rows between requests.
     """
     from app.models.projects import ProjectTask
@@ -1203,14 +1204,15 @@ def _list_order_by(db: Session, sort: str, direction: str) -> list:
         "updated_at": Project.updated_at,
         "title": Project.title,
         "outcome": Project.outcome,
+        # No-activity rows keep Postgres's default (first descending), pinned by
+        # test_16_a_null_activity_date_sorts_first_descending_as_it_always_did.
+        "last_meaningful_activity_at": Project.last_meaningful_activity_at,
         "flags": Project.is_critical,
     }
     tiebreak = [Project.created_at.desc(), Project.id.asc()]
 
     if sort in plain:
         return [directed(plain[sort])] + tiebreak
-    if sort == "last_meaningful_activity_at":
-        return [directed(Project.last_meaningful_activity_at).nulls_last()] + tiebreak
     if sort == "project_code":
         # A project with no code yet sorts after every coded one, whichever the direction.
         return [directed(Project.project_code).nulls_last()] + tiebreak

@@ -108,8 +108,6 @@ def _titles(db, company, ids, sort, direction):
         # Graph order (Zebra start < Middle < Alpha end), not alphabetical.
         ("status_label", ["B", "C", "A", "D"], ["A", "C", "B", "D"]),
         # Amount, numerically (1000 > 300 > 20, not string order).
-        # No activity last in both directions.
-        ("last_meaningful_activity_at", ["B", "C", "A", "D"], ["A", "C", "B", "D"]),
         ("estimated_sales_value", ["C", "A", "B", "D"], ["B", "A", "C", "D"]),
         # Dated by earliest due date, then open-undated, then nothing open, both ways.
         ("next_action", ["B", "A", "C", "D"], ["A", "B", "C", "D"]),
