@@ -69,7 +69,7 @@ import {
 import {
   renderMergeFields,
   soleMergeField,
-  type MergeFieldGroup,
+  PRICE_TAG_FIELD_GROUPS,
 } from '@/lib/dealer-kit/merge-fields';
 import {
   moveEdge,
@@ -558,7 +558,6 @@ interface DragSession {
  * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
  * page data exists. Three, the most the owner's sample prints on one page.
  */
-const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
 
 const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
   code: `Accessory ${n}`,
@@ -3515,6 +3514,16 @@ export function TagCanvasEditor({
       : specSheet
         ? SPEC_SHEET_ACCESSORY_PARTS
         : undefined;
+  // PRICETAG-COMBO-RENDER K7: the previewed combo's positions, for the position picker and the
+  // Layers suffix.
+  // In the template editor the previewed combo is the data (`dataOf`), not `boundData`.
+  const slotSource = comboPreview?.data ?? boundData;
+  const subjectSlots =
+    slotSource?.kind === 'line'
+      ? slotSource.line.slots
+      : slotSource?.kind === 'product'
+        ? slotSource.product.slots
+        : null;
   const subjectParentCode =
     boundData?.kind === 'line'
       ? boundData.line.code
@@ -4773,6 +4782,7 @@ export function TagCanvasEditor({
                     onMoveLayer={handleMoveLayer}
                     overflowingIds={overflowingIds}
                     subjectParts={subjectParts}
+                    subjectSlots={subjectSlots}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -4787,6 +4797,7 @@ export function TagCanvasEditor({
                   onMoveLayer={handleMoveLayer}
                   overflowingIds={overflowingIds}
                   subjectParts={subjectParts}
+                  subjectSlots={subjectSlots}
                 />
               </div>
             )}
@@ -4869,6 +4880,7 @@ export function TagCanvasEditor({
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
               subjectParts={subjectParts}
+              subjectSlots={subjectSlots}
               subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
               specSheet={specSheet}
               specKeys={library.specKeys}

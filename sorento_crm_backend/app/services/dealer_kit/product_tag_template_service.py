@@ -38,6 +38,7 @@ from sqlalchemy.orm import Query, Session
 from app.models.dealer_kit import ComboTagTemplate, ProductTagTemplate, TagTemplate
 from app.models.product import Product
 from app.models.product_combo import ProductCombo
+from app.services.dealer_kit.template_needs import combo_shape, fit_reason, template_needs
 from app.services.company_scope import build_company_predicate, get_company_scope
 from app.services.error_handler import AppException
 
@@ -214,8 +215,27 @@ def line_links(db: Session, pairs: Iterable[tuple[Optional[str], Optional[str]]]
         )
         for combo_id, host_id, template, flag in rows:
             combo.setdefault((str(combo_id), str(host_id)), []).append((template, bool(flag)))
+    shapes = (
+        {c.id: combo_shape(c) for c in db.query(ProductCombo).filter(ProductCombo.id.in_(cids)).all()}
+        if cids
+        else {}
+    )
+
+    def fitting(links: list[Link], cid: Optional[str]) -> list[Link]:
+        """M1b: a template that cannot print every fixed part of the combo never draws it. An
+        existing non-fitting link is ignored here, at read; nothing is migrated."""
+        shape = shapes.get(cid) if cid else None
+        if shape is None:
+            return links
+        return [
+            link
+            for link in links
+            if link[0].published_version is None
+            or fit_reason(template_needs(link[0].published_version.doc), shape) is None
+        ]
+
     return {
-        (pid, cid): (combo.get((cid, pid)) if cid else None) or product.get(pid, [])
+        (pid, cid): fitting((combo.get((cid, pid)) if cid else None) or product.get(pid, []), cid)
         for pid, cid in clean
     }
 
@@ -347,6 +367,24 @@ def combo_exists(db: Session, combo_id: str) -> bool:
     )
 
 
+def _require_fit(db: Session, combo_id: str, template_ids: list[str]) -> None:
+    """422 naming the reason when a template cannot print the combo (`fit_reason`); a template
+    with no published document has no needs yet and is let through."""
+    combo = db.get(ProductCombo, _uuid_or_none(combo_id))
+    if combo is None or not template_ids:
+        return
+    shape = combo_shape(combo)
+    for template in db.query(TagTemplate).filter(TagTemplate.id.in_(template_ids)).all():
+        version = template.published_version
+        reason = fit_reason(template_needs(version.doc), shape) if version is not None else None
+        if reason:
+            raise AppException(
+                status_code=422,
+                message=f"{template.name}: {reason}",
+                code="TAG_TEMPLATE_DOES_NOT_FIT",
+            )
+
+
 def set_combo_templates(
     db: Session,
     combo_id: str,
@@ -359,6 +397,7 @@ def set_combo_templates(
     if not combo_exists(db, combo_id):
         raise _not_found("Combo")
     wanted, default_id = _check_templates(db, template_ids, default_template_id)
+    _require_fit(db, combo_id, wanted)
     _replace_links(
         db, ComboTagTemplate, "combo_id", _uuid_or_none(combo_id), wanted, default_id, user_id
     )
@@ -621,6 +660,7 @@ def template_item(template: TagTemplate, is_default: bool = False) -> dict:
         "width_mm": size.get("width_mm"),
         "height_mm": size.get("height_mm"),
         "is_default": is_default,
+        "needs": template_needs(version.doc) if version is not None else None,
     }
 
 

@@ -87,6 +87,7 @@
 
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
@@ -118,6 +119,8 @@ export interface LinePartCandidate {
   name: string;
   /** Set on an upgrade candidate: its top-up. */
   topup_amount?: number | null;
+  /** The product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /**
@@ -208,6 +211,8 @@ export interface ProductTagTemplateOption {
   height_mm: number | null;
   /** PRICETAG-LPSP: the link preselected on a line. */
   is_default?: boolean;
+  /** What the template reads from a combo (from its published layers). */
+  needs?: TemplateNeeds;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -361,6 +366,8 @@ export interface ComboPartOption {
   is_upgrade?: boolean;
   /** An upgrade's top-up, when set. */
   topup_amount?: number | null;
+  /** The part product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */
