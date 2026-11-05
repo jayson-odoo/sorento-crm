@@ -37,6 +37,10 @@ Pieces:
    needs the database name typed out in `--confirm-db`. The admin email must be on
    `example.com`/`.org`/`.net`, so the script can never take over a real login. Keep the run's
    output out of tickets and PRs: a minted push key is printed there once.
+   - On a database with no `foundryx-esb` row the script runs the standard integration seed
+     and logs "EXTERNAL_API_KEY absent ... will stop authenticating". That is expected here.
+   - The report lists any other live push keys on `foundryx-esb`. Each is admin-level, so
+     revoke the ones SS does not use (Settings > Integrations).
 5. **SS push target.** Configure SS's CRM push target as `http://localhost:8000` with the same
    `STAGING_SS_PUSH_KEY` as its `X-API-Key`.
 6. **Run the stack.** Start the backend with `SORENTO_ENV_FILE=.env.staging`, plus the worker
@@ -65,7 +69,7 @@ Pieces:
 
 | Integration | Where | Switch (turned ON by the seed) |
 | --- | --- | --- |
-| PO line <-> SO line link / unlink / relink (#2168) | Project sales > Stock debt > drill a line > PO actions | `stock_debt_po_link_enabled` |
+| PO line <-> SO line link / unlink / relink (#2168) | Procurement > Supply Chain > Stock Debt (`/project-sales/stock-debt`) > drill a line > PO actions | `stock_debt_po_link_enabled` |
 | Project quotation / SO create, update, cancel (#2173) | Project sales > quotation document / sales order > AutoCount actions | `project_autocount_write_enabled` (only once #2173 is on main; until then the seed reports it skipped) |
 | Delivery Order pull + confirm | Orders list > AutoCount pull | none (permission only) |
 | GRN pull | Procurement > GRN list > AutoCount pull | none |

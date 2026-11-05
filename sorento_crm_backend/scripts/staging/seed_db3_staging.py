@@ -191,6 +191,19 @@ def _ensure_push_key(db, row, cfg: SeedConfig, report: SeedReport) -> None:
             report.add("push key (SS -> CRM): registered")
         else:
             report.add("push key (SS -> CRM): already registered")
+        others = (
+            db.query(IntegrationApiKey)
+            .filter(
+                IntegrationApiKey.integration_id == row.id,
+                IntegrationApiKey.key_hash != digest,
+                IntegrationApiKey.revoked_at.is_(None),
+            )
+            .all()
+        )
+        if others:
+            # Each is admin-level; a pinned key does not retire keys minted on earlier runs.
+            prefixes = ", ".join(f"{k.key_prefix}..." for k in others)
+            report.add(f"push key: {len(others)} other live key(s) on {INTEGRATION_NAME}: {prefixes} (revoke in Settings > Integrations)")
         return
 
     live = (
@@ -206,7 +219,7 @@ def _ensure_push_key(db, row, cfg: SeedConfig, report: SeedReport) -> None:
         report.add(f"push key (SS -> CRM): {live.key_prefix}... exists; set STAGING_SS_PUSH_KEY to pin one")
         return
     report.minted_push_key = IntegrationKeyService(db).issue_key(row)
-    report.add("push key (SS -> CRM): minted (printed below, once)")
+    report.add("push key (SS -> CRM): minted (printed once, with --apply only)")
 
 
 def _switches_on(db, report: SeedReport) -> None:

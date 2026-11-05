@@ -24,7 +24,7 @@ changes only the company code and the book.
 How the CRM names the SS company:
 - Every pull and write sends `companyCode = companies.code`
   (`app/services/foundryx_autocount_client.py:173,236`;
-  `app/services/scm/stock_debt_po_link_service.py:479,517,542,579,602`).
+  `app/services/scm/stock_debt_po_link_service.py:490,520,548,577,602`).
 - Every push is resolved by its body `companyCode` (`app/api/v1/external/company_anchor.py:135-161`).
 - The CRM never sends a book. The book only comes back inside `source_ref` (`{book}:...`), e.g.
   `db3:BR:300-T001:HQ`.
@@ -47,7 +47,7 @@ Do the same as the SRT/db1 hourly poll, with `companyCode=SRT_DB3, book=db3`, re
 `GET /api/db3/...`. Target: `POST {CRM}/api/v1/external/ingest/{entity}`
 (`app/api/v1/external/ingest.py:1000`). Deletions go to `.../{entity}/deletions` (:1177).
 
-Envelope: `{"companyCode": "SRT_DB3", "book": "db3", "records": [...]}` (`ingest.py:821-830`).
+Envelope: `{"companyCode": "SRT_DB3", "book": "db3", "records": [...]}` (book validation `ingest.py:821-830`).
 Proven on a seeded local copy: a `branches` push with this envelope landed in SRT_DB3 as
 `db3:BR:300-T001:HQ`.
 

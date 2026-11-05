@@ -76,7 +76,6 @@ def test_apply_needs_the_database_name_typed_out(monkeypatch, capsys):
     # The refusal must come before anything else, so no seed input may be present to proceed with.
     for var in ("STAGING_SS_API_KEY", "STAGING_ADMIN_PASSWORD", "STAGING_SS_PUSH_KEY"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(mod, "SessionLocal", None, raising=False)
     monkeypatch.setattr(mod, "check_target", lambda url: "sorento_staging")
     assert mod.main(["--ss-base-url", "http://x", "--apply"]) == 2
     assert "--confirm-db sorento_staging" in capsys.readouterr().err
@@ -124,6 +123,9 @@ def test_seed_creates_everything_and_is_idempotent():
         cfg = _cfg(code, push_key=PUSH + "a" + code)
 
         first = seed(db, cfg)
+        # The second run must re-activate the integration, whatever state it was left in.
+        db.query(Integration).filter(Integration.name == INTEGRATION_NAME).one().is_active = False
+        db.flush()
         second = seed(db, _cfg(code, push_key=PUSH + "a" + code, admin_password="staging-pass-2"))
 
         companies = db.query(Company).filter(Company.code == code).all()
@@ -150,6 +152,15 @@ def test_seed_creates_everything_and_is_idempotent():
         assert user.status == "ACTIVE"
         assert user.last_active_company_id == companies[0].id
         assert bcrypt.checkpw(b"staging-pass-2", user.password.encode("utf-8"))  # second run's
+        from app.models.user import UserRole, UserRoleAssignment
+
+        roles = (
+            db.query(UserRole.slug)
+            .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
+            .filter(UserRoleAssignment.user_id == user.id)
+            .all()
+        )
+        assert len(roles) == 1 and roles[0][0] in ("superadmin", "admin")
         grants = db.query(UserCompany).filter_by(user_id=user.id, company_id=companies[0].id).all()
         assert len(grants) == 1
 
@@ -234,3 +245,39 @@ def test_seed_never_revives_a_revoked_push_key():
         with pytest.raises(RefusedTarget, match="revoked"):
             seed(db, _cfg(code, push_key=key))
         assert row.revoked_at is not None
+
+
+class _FakeSession:
+    def __init__(self):
+        self.calls = []
+
+    def commit(self):
+        self.calls.append("commit")
+
+    def rollback(self):
+        self.calls.append("rollback")
+
+    def close(self):
+        self.calls.append("close")
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        ([], "rollback"),  # dry run by default
+        (["--apply", "--confirm-db", "sorento_staging"], "commit"),
+    ],
+)
+def test_main_rolls_back_unless_applied(monkeypatch, extra, expected):
+    import app.database
+    from scripts.staging import seed_db3_staging as mod
+
+    fake = _FakeSession()
+    monkeypatch.setattr(app.database, "SessionLocal", lambda: fake)
+    monkeypatch.setattr(mod, "check_target", lambda url: "sorento_staging")
+    monkeypatch.setattr(mod, "seed", lambda db, cfg: mod.SeedReport())
+    monkeypatch.setenv("STAGING_SS_API_KEY", "k")
+    monkeypatch.setenv("STAGING_ADMIN_PASSWORD", "p")
+
+    assert mod.main(["--ss-base-url", "http://x", *extra]) == 0
+    assert fake.calls == [expected, "close"]
