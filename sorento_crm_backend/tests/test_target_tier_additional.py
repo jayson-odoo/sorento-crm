@@ -142,6 +142,15 @@ def test_fold_per_account_additional_naming_one_account_becomes_the_tier_additio
     assert out.broadened == {0}
 
 
+def test_fold_pay_all_additional_onto_a_named_tier_is_reported_narrowed():
+    # "A/C I- 6% + Additional 1%": the tier names A/C I, the additional cell names no account.
+    rows = [_row(75000, 0, accounts={A1: 6}), _row(75000, 1, additional=True)]
+    out = fold_additionals(rows)
+    assert out.moves == {1: 0}
+    assert out.rates == {0: D("1")}
+    assert out.narrowed == {0}
+
+
 def test_fold_leaves_and_reports_what_it_cannot_place():
     rows = [
         _row(150000, 2), _row(200000, 3),
@@ -216,3 +225,57 @@ def test_api_refuses_a_tier_with_both_a_pct_and_an_rm_additional(api):
     ]))
     assert res.status_code == 422, res.text
     assert "not both" in res.text
+
+
+# ------------------------------------------------------------------ import
+
+
+def _a_craft_workbook():
+    """The owner's 2026 layout for A CRAFT IDEA A/C I, Q1 only (figures as in his file)."""
+    import io
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "SORENTO 2026"
+    ws.cell(row=2, column=1, value="DEALER NAME")
+    ws.cell(row=2, column=2, value="ACCOUNT")
+    ws.cell(row=2, column=3, value="Q1")
+    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=12)
+    ws.cell(row=3, column=3, value="JAN-MAR")
+    ws.merge_cells(start_row=3, start_column=3, end_row=3, end_column=12)
+    cells = [
+        (60000, "A/C I- 5% + Additional 1%"),
+        (">= 75000", "A/C I- 6% + Additional 1%"),
+        (85000, "A/C I- 7%"),
+        (">=85000", "A/C I- 7% + Additional 1%"),
+        (None, None),
+    ]
+    for n, (threshold, incentive) in enumerate(cells, start=1):
+        col = 3 + 2 * (n - 1)
+        ws.cell(row=4, column=col, value=f"Tier {n}")
+        ws.cell(row=4, column=col + 1, value=f"Tier {n} Incentive")
+        ws.cell(row=5, column=col, value=threshold)
+        ws.cell(row=5, column=col + 1, value=incentive)
+    ws.cell(row=5, column=1, value="A CRAFT IDEA SDN BHD")
+    ws.cell(row=5, column=2, value="A/C I")
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_import_a_craft_reads_each_tier_with_its_additional_and_tier_3_4_as_one():
+    from app.services.sales.dealer_target_import import parse_workbook
+
+    parsed = parse_workbook(_a_craft_workbook(), year=2026)
+    (scheme,) = [s for s in parsed.schemes if s.kind == "quarterly"]
+    q1 = [t for t in scheme.tiers if t.period_start == date(2026, 1, 1)]
+    assert [
+        (t.threshold, list((t.account_rates or {}).values()) or [t.rate], t.additional_rate, t.is_additional)
+        for t in q1
+    ] == [
+        (D("60000"), [D("5")], D("1"), False),
+        (D("75000"), [D("6")], D("1"), False),
+        (D("85000"), [D("7")], D("1"), False),
+    ]

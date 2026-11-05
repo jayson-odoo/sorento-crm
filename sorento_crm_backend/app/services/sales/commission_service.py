@@ -202,6 +202,9 @@ class Fold(NamedTuple):
     skipped: Dict[int, str]
     #: main tier indexes whose Additional now also pays accounts the old row did not name.
     broadened: set
+    #: main tier indexes whose Additional now pays only the tier's named accounts, where the old
+    #: row paid every counted account.
+    narrowed: set = set()
 
 
 def fold_additionals(rows: Sequence[FoldRow]) -> Fold:
@@ -227,6 +230,7 @@ def fold_additionals(rows: Sequence[FoldRow]) -> Fold:
     moves: Dict[int, int] = {}
     rates: Dict[int, Decimal] = {}
     broadened: set = set()
+    narrowed: set = set()
     for m, adds in by_main.items():
         main = rows[m]
         if len(adds) > 1:
@@ -257,12 +261,12 @@ def fold_additionals(rows: Sequence[FoldRow]) -> Fold:
         else:
             rate = Decimal(r.rate or 0)
             if main.account_rates is not None:
-                # The old row paid every account; the tier pays only its named ones.
-                skipped[i] = "pays every account but the tier pays named accounts only"
-                continue
+                # "A/C I- 6% + Additional 1%": the old row paid every counted account, the tier
+                # pays only its named ones; reported, so a target counting more accounts shows.
+                narrowed.add(m)
         moves[i] = m
         rates[m] = rate
-    return Fold(moves, rates, skipped, broadened)
+    return Fold(moves, rates, skipped, broadened, narrowed)
 
 
 def _rm(value: Optional[Decimal]) -> Optional[Decimal]:

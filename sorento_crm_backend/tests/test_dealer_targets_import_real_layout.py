@@ -92,13 +92,14 @@ def test_q1_over_jan_mar_over_tier_and_tier_incentive_with_merged_accounts():
     assert q.codes == [a1, a3]
     assert (q.start, q.end, q.split_every, q.split_unit) == (date(2026, 1, 1), date(2026, 12, 31), 3, "month")
     assert q.threshold_unit == "amount"
-    # 6. "+ Additional 1%" as a SECOND tier at the same threshold is that tier's additional; a
-    # second additional line at its own threshold stacks too (ruling 5).
+    # 6. "+ Additional 1%" as a SECOND tier at the same threshold is that tier's Additional,
+    # folded onto it (lane TARGET-TIER-ADDITIONAL, owner 5 Nov); an additional line at a
+    # threshold no tier starts at stays a line of its own, said on the row.
     assert _tiers(q, date(2026, 1, 1)) == [
         (D("500000"), D("2"), False, None),
-        (D("500000"), D("1"), True, None),
         (D("600000"), D("0.5"), True, None),
     ]
+    assert [t.additional_rate for t in q.tiers if t.period_start == date(2026, 1, 1)] == [D("1"), None]
 
 
 def test_monthly_header_over_jan_to_dec():
