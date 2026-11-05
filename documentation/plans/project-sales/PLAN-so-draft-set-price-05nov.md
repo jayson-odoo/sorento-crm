@@ -37,8 +37,19 @@ blocked, ready) are deleted and rebuilt the next time the PO + schedule is built
 recomputes them on its own. Crew's dev check (20 Oct copy) found 0 affected rows; the owner runs
 the read-only query in the PR body on prod. No data fix unless that finds rows.
 
-## Known limit
+## Amendments (review round 1)
 
-`project_so_delta_service._lines_by_phase_product` keys lines by (area, sequence, product), so when
-the driver goes as two rows of the same item an amendment's qty delta lands on one of them. Only
-the remainder-cents case produces two rows; total qty stays correct.
+`project_so_delta_service._lines_by_phase_product` keyed ONE line per (area, sequence, product),
+so when the remainder cents put the main part on two rows of the same item, a phase date move
+reached only one of them. It now keeps every line per key: a date move reaches both rows and the
+phase's `line_count` counts both (test `test_a_phase_date_move_reaches_both_rows_of_a_split_main_part`).
+
+Known limit, unchanged from before this lane: a schedule QTY change on a product is applied to one
+row per (area, sequence, product), the last one, as it always was. If such a change ever targets a
+split main part, that row takes the product's whole new qty while the other row keeps its own, so
+the qty would be overstated. In practice the schedule's qty cells are keyed by the PO line's
+product, and a set's PO line is the set, not its main part, so this path should not reach a split
+row; it is noted, not built around.
+
+Also from review: only the first part marked as the main part carries the money (a snapshot with
+two would otherwise count the set twice), and a negative quantity is divided like any other.

@@ -1237,6 +1237,11 @@ class ProjectSODraftService:
         # The snapshot alone triggers it: a set deleted since the quote (product_set_id nulled by
         # the FK) still splits from what was frozen.
         if quoted is not None and quoted.set_parts_snapshot:
+            # Only the FIRST part marked as the driver carries the money: a snapshot with two
+            # would otherwise count the set's price twice.
+            driver = next(
+                (part for part in quoted.set_parts_snapshot if part.get("is_driver")), None
+            )
             return _Explosion(
                 components=[
                     _Component(
@@ -1244,11 +1249,11 @@ class ProjectSODraftService:
                         code=part["product_code"],
                         description=part.get("description"),
                         uom=part.get("uom"),
-                        unit_price=parent_price if part.get("is_driver") else _ZERO,
+                        unit_price=parent_price if part is driver else _ZERO,
                         numerator=_dec(part["quantity"], Decimal("1")),
                         denominator=Decimal("1"),
                         quotation_line_id=quoted.id,
-                        set_rate=parent_price if part.get("is_driver") else None,
+                        set_rate=parent_price if part is driver else None,
                     )
                     for part in quoted.set_parts_snapshot
                 ],
