@@ -10,7 +10,7 @@ asset. A database that ran that one keeps its two unused `dealer_kit.asset.show_
 columns; nothing reads them and nothing is dropped here.)
 
 Revision ID: dkfi_0001_spec_value_icons
-Revises: ttdc_0001_tag_template_archived
+Revises: ptag_0015_combo_format
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "dkfi_0001_spec_value_icons"
-down_revision = "ttdc_0001_tag_template_archived"
+down_revision = "ptag_0015_combo_format"
 branch_labels = None
 depends_on = None
 
