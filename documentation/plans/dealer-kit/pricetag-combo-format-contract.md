@@ -155,3 +155,7 @@ always escaped (`& < > "`). Idempotent.
   enabled, and no client-side Submit/Approve reason is raised for it. The pill, disabled eye and reason
   apply only to a line with no kept pick (new line, user changed the pick, or user flipped LP/SP) whose item
   has no fitting template.
+- R14 (security re-check, 5 Nov): the stored (sanitised) `price_tag_description` is capped at 5000 like the
+  combo description (422 over it, the row unchanged); the raw 20000 limit sits on `ProductCreate` /
+  `ProductUpdate` only, never on `ProductBase` / `ProductResponse`, so a response can never fail on length.
+  `import_price_tag_descriptions.py` refuses (reports) a row that sanitises over 5000.
