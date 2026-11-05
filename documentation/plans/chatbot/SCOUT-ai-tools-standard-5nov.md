@@ -1,6 +1,6 @@
 # SCOUT: AI tools standard (every module gets assistant tools)
 
-Status: scout done, card posted as crew-ask on PR #2185, waiting on owner. Lane AI-TOOLS-SCOUT. Read-only, no
+Status: done; owner answered 5 Nov, plan in `PLAN-ai-tools-standard-5nov.md`. Lane AI-TOOLS-SCOUT. Read-only, no
 product code. Base main 93886d3b. `BE` = `sorento_crm_backend/app`, `MCP` = `sorento_crm_mcp/sorento_crm_mcp`,
 `AG` = `BE/services/chatbot/agent`.
 
