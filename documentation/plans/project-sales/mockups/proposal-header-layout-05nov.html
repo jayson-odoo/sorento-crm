@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal header layout</title>
+<!-- PROPOSAL-HEADER-LAYOUT Lavish mock. Annotated mockup, not shipped code. Plain inline CSS so it
+     opens from a file. Plan: documentation/plans/project-sales/PLAN-proposal-header-layout-05nov.md
+     Data: the owner's screenshot, PRJQ-2026-0005 "test", Accepted, R2, RM 350.00. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --green:#15803d; --green-soft:#f0fdf4; --red:#dc2626; --red-soft:#fef2f2;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--bg);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff;vertical-align:middle}
+.content{padding:20px 28px 28px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.phrow h1{font-size:20px;margin:0}
+.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;font:500 13px var(--font);color:var(--fg);white-space:nowrap;height:32px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.icon{width:32px;justify-content:center;padding:0}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.rcard{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:16px}
+.rrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+.rid{display:flex;flex-direction:column;gap:4px;min-width:0}
+.rtitle{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.rtitle b{font-size:18px;font-variant-numeric:tabular-nums}
+.rsub{font-size:14px;color:var(--muted)}
+.rsub u{text-decoration:none;border-bottom:1px dotted var(--muted)}
+.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.pager{display:inline-flex;align-items:center;gap:4px;color:var(--muted);font-size:13px}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);margin-bottom:16px;font-size:13px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:600}
+.tabs span.gone{color:var(--red);text-decoration:line-through}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+.kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 24px;font-size:13px}
+.kv div span{color:var(--muted);display:inline-block;width:80px}
+.scopes{display:flex;gap:8px;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafafa}
+td{padding:9px 10px;border-bottom:1px solid var(--line)}
+td.num,th.num{text-align:right}
+.tblwrap{overflow-x:auto}
+.strike{color:var(--red);text-decoration:line-through;font-size:13px}
+.m375 .content{padding:14px 16px}
+.m375 .kv{grid-template-columns:1fr}
+.m375 .rrow{flex-direction:column;align-items:stretch}
+.m375 .acts{justify-content:flex-start}
+.qa{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 20px;max-width:1100px}
+.qa h3{margin:14px 0 4px;font-size:14px}
+.qa p{margin:0 0 6px}
+.rec{color:var(--green);font-weight:600}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Proposal / quotation detail header (PROPOSAL-HEADER-LAYOUT)</h1>
+<p class="sub">Mock v1, 5 Nov 2026. The header becomes the Order Inquiry record card (number + status inline, one subtitle line,
+actions right). The customer line and the "customer holds this version" hint go. The printer sits beside the gear. The Lines tab
+goes; the lines sit on the Header tab under the letterhead card. Quotations use the same page, so they change too.
+Pink numbers map each element to the component it reuses (list on the right).</p>
+
+<h2 class="ft">1. Before (today, owner's screenshot)</h2>
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0005</h1><div class="crumbs">Dashboards › Project Sales › Projects › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+  <div class="rrow" style="align-items:flex-start">
+    <div class="rid">
+      <span class="pill green" style="align-self:flex-start">Accepted</span>
+      <b style="font-size:20px">test</b>
+      <span class="strike">1 LIVING DEPOT SDN BHD [A/C I]</span>
+      <span class="rsub">Not viewed yet</span>
+    </div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+      <div class="acts"><span class="btn icon">⚙</span><span class="btn primary">Send to Customer R3 ▾</span><span class="btn">🖨 0</span></div>
+      <span class="strike">The customer holds this version. Edit opens the next one.</span>
+    </div>
+  </div>
+  <div class="tabs" style="margin-top:16px"><span class="on">Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span></div>
+  <div class="card" style="color:var(--muted)">Letterhead card (To, Attn, Our Ref, Your Ref, Date, Total)</div>
+</div></div></div>
+
+<h2 class="ft">2. After, Header tab (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0005</h1><div class="crumbs">Dashboards › Project Sales › Projects › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+
+  <div class="rcard">
+    <div class="rrow">
+      <div class="rid">
+        <div class="rtitle"><span class="co">1</span><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span><span class="co">2</span></div>
+        <span class="rsub"><span class="co">3</span> test · <u>Not viewed yet</u></span>
+      </div>
+      <div class="acts">
+        <span class="co">4</span><span class="pager">‹ 1 / 3 ›</span>
+        <span class="btn icon">⚙</span><span class="co">5</span>
+        <span class="btn">🖨 0</span><span class="co">6</span>
+        <span class="btn primary">Send to Customer R3 ▾</span><span class="co">7</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="tabs"><span class="on">Header</span><span class="gone">Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span><span class="co" style="padding:0;margin-top:6px;color:#fff">8</span></div>
+
+  <div class="card"><span class="co" style="float:right">9</span>
+    <div class="kv">
+      <div><span>To</span>1 LIVING DEPOT SDN BHD [A/C I]</div><div><span>Our Ref</span>PRJQ-2026-0005-R2</div>
+      <div><span>Attn</span>-</div><div><span>Your Ref</span>-</div>
+      <div><span>Issued by</span>Sales User</div><div><span>Date</span>05/11/2026</div>
+      <div><span>Opened</span>-</div><div><span>Total</span><b>RM 350.00</b></div>
+    </div>
+  </div>
+
+  <div class="scopes"><span class="co">10</span><span class="pill blue">Main scope</span></div>
+  <div class="card" style="padding:0">
+    <div class="rrow" style="padding:12px 16px;border-bottom:1px solid var(--line)"><div class="rtitle" style="gap:8px"><b style="font-size:14px">Main scope</b><span class="pill">Won</span><span class="rsub" style="font-size:12px">No series</span></div><span class="btn">Record outcome</span></div>
+    <div class="tblwrap" style="padding:12px 16px"><table>
+      <thead><tr><th>#</th><th>Photo</th><th>Product</th><th>Description</th><th>Brand</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>▢</td><td>SAMPLE-001</td><td>Basin mixer</td><td>Sorento</td><td class="num">2</td><td>PCS</td><td class="num">100.00</td><td class="num">200.00</td></tr>
+        <tr><td>2</td><td>▢</td><td>SAMPLE-002</td><td>Shower set</td><td>Sorento</td><td class="num">1</td><td>SET</td><td class="num">150.00</td><td class="num">150.00</td></tr>
+        <tr><td colspan="8" class="num"><b>Total</b></td><td class="num"><b>350.00</b></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</div></div></div>
+
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>Record card</b>The OI card: number + status inline, subtitle under, actions right. OI's card is inline today (and copied into ~14 detail pages), so it is extracted once as <code>RecordHeaderCard</code> and used by both OI and this page.<span class="ref">from app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryDetail.tsx:767-971 → new components/common/RecordHeaderCard.tsx</span></div></li>
+  <li><span class="co">2</span><div><b>Status badge, inline</b>Same reading as the project's proposal list (quotationStanding), so list and page never disagree. No more floating "Accepted" above the title.<span class="ref">app/(protected)/project-sales/_shared/lib/quotationDecision.ts quotationStanding + lib/status-pill.ts</span></div></li>
+  <li><span class="co">3</span><div><b>One subtitle line</b>"&lt;title&gt; · &lt;viewed state&gt;". The viewed part keeps its view-log popover, shown once sent ("Viewed 3 times, last 05/11/2026, 2:14 pm"). Customer line removed (it repeats To in the card below).<span class="ref">QuotationViewCount.tsx (viewCountText, formatDateTimeInMalaysia)</span></div></li>
+  <li><span class="co">4</span><div><b>Pager</b>Already exists: steps through this project's proposals and quotations, shown when the project has 2 or more. Unchanged.<span class="ref">components/common/RecordNavigation.tsx, QuotationDocumentClient.tsx:350</span></div></li>
+  <li><span class="co">5</span><div><b>Gear</b>Unchanged menu (Edit, exports, delete...).<span class="ref">components/common/DetailActionsMenu.tsx, actions.tsx useQuotationDocumentActions</span></div></li>
+  <li><span class="co">6</span><div><b>Printer + count, beside the gear</b>Moved left out of the primary slot. Still shown only once something has been sent.<span class="ref">components/my-downloads/EntityDownloadsButton.tsx</span></div></li>
+  <li><span class="co">7</span><div><b>One primary</b>Send to Customer R3 (Email / WhatsApp), or Sign / Send for approval / Approve+Reject, exactly as today.<span class="ref">components/common/DetailActions.tsx (pager, gear, primary)</span></div></li>
+  <li><span class="co">8</span><div><b>Lines tab removed</b>Old /lines links (and the feedback tab's "go to line") land on Header.<span class="ref">QuotationDocumentTabs.tsx:36, (view)/lines/page.tsx</span></div></li>
+  <li><span class="co">9</span><div><b>Letterhead card</b>Unchanged, first on the Header tab.<span class="ref">QuotationDocumentHeader.tsx</span></div></li>
+  <li><span class="co">10</span><div><b>Lines, under the card</b>The whole former Lines tab as is: scope strip, Record outcome, the lines grid with its editing, sorting, totals and feedback marks.<span class="ref">QuotationScopesTab.tsx → QuotationVersionEditor.tsx → QuotationLinesGrid.tsx</span></div></li>
+</ol></div>
+</div>
+
+<h2 class="ft">3. After, 375 px (no sideways page scroll; the lines grid scrolls inside its card)</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="content">
+  <div class="phrow"><div><h1 style="font-size:18px">Proposal PRJQ-2026-0005</h1><div class="crumbs">… › Project › Proposal PRJQ-2026-0005</div></div><span class="btn">‹ Back to project</span></div>
+  <div class="rcard" style="padding:14px 16px">
+    <div class="rrow">
+      <div class="rid">
+        <div class="rtitle"><b>PRJQ-2026-0005</b><span class="pill green">Accepted</span></div>
+        <span class="rsub">test · <u>Not viewed yet</u></span>
+      </div>
+      <div class="acts"><span class="pager">‹ 1 / 3 ›</span><span class="btn icon">⚙</span><span class="btn">🖨 0</span><span class="btn primary">Send to Customer R3 ▾</span></div>
+    </div>
+  </div>
+  <div class="tabs"><span class="on">Header</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span>Customer feedback</span><span>Spec sheet</span></div>
+  <div class="card"><div class="kv">
+    <div><span>To</span>1 LIVING DEPOT SDN BHD [A/C I]</div><div><span>Our Ref</span>PRJQ-2026-0005-R2</div><div><span>Date</span>05/11/2026</div><div><span>Total</span><b>RM 350.00</b></div>
+  </div></div>
+  <div class="card" style="padding:0"><div class="tblwrap" style="padding:10px 12px"><table style="min-width:560px">
+    <thead><tr><th>#</th><th>Product</th><th>Description</th><th class="num">Qty</th><th class="num">Rate (RM)</th><th class="num">Total (RM)</th></tr></thead>
+    <tbody><tr><td>1</td><td>SAMPLE-001</td><td>Basin mixer</td><td class="num">2</td><td class="num">100.00</td><td class="num">200.00</td></tr>
+    <tr><td>2</td><td>SAMPLE-002</td><td>Shower set</td><td class="num">1</td><td class="num">150.00</td><td class="num">150.00</td></tr></tbody>
+  </table></div></div>
+</div></div>
+<div class="notes"><ol><li><span class="co">i</span><div><b>Wrap</b>The actions wrap under the identity at 375 (D6, same as OI). The tab strip scrolls in its own gutter, as today.</div></li></ol></div>
+</div>
+
+<h2 class="ft">4. Behaviour card: 5 questions, each with a recommendation</h2>
+<div class="qa">
+  <h3>Q1. Pager: should proposals get one, over what list?</h3>
+  <p>They already have one: prev/next over this project's proposals and quotations, shown once the project has two or more (QuotationDocumentClient.tsx:350). People reach the page from the project's Proposals tab, so the project's own list is the right one, not a global list.</p>
+  <p class="rec">Recommend: keep it as is, in the OI position (left of the gear).</p>
+  <h3>Q2. Should "Edit opens the next version" survive somewhere?</h3>
+  <p>Edit sits in the gear and, on a version the customer holds, already opens a prompt naming the scopes and the version it will create (ReviseToEditDialog.tsx). A tooltip does not work on a phone.</p>
+  <p class="rec">Recommend: drop the text everywhere; the Edit prompt already says it at the moment it matters.</p>
+  <h3>Q3. Quotation: same page as proposal, or separate?</h3>
+  <p>Same page. One route serves both; only the noun changes (documentNoun, app/(protected)/project-sales/_shared/services/quotationDocumentService.ts:213; tabs QuotationDocumentTabs.tsx:32). So both change in this PR. (The older per-scope page project-sales/[projectId]/quotations/[quotationId] has no link to it in the app and is not touched.)</p>
+  <p class="rec">Recommend: one change, both get it.</p>
+  <h3>Q4. The two other hint lines under the buttons ("With a manager for approval", "You can read this quotation but not change it.")</h3>
+  <p>You struck only the "customer holds" hint. These two still matter (the first explains why there is no Send button while approval is pending).</p>
+  <p class="rec">Recommend: move them onto the subtitle line ("test · Not viewed yet · With a manager for approval"), so nothing hangs under the buttons.</p>
+  <h3>Q5. Order Inquiry card</h3>
+  <p>OI switches to the shared card too (same look, no visible change), so the two cannot drift apart.</p>
+  <p class="rec">Recommend: yes. The other ~12 pages that copy the same card are left for later, not in this PR.</p>
+</div>
+</div>
+</body>
+</html>
