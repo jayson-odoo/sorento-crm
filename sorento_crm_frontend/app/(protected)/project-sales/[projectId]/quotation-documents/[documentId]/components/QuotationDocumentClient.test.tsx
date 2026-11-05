@@ -81,6 +81,7 @@ const createQuotationLine = vi.fn();
 const updateQuotationLine = vi.fn();
 const deleteQuotationLine = vi.fn();
 const reviseQuotation = vi.fn();
+const recomputeQuotationVersion = vi.fn();
 const push = vi.fn();
 const reviseQuotationApproval = vi.fn();
 const moveQuotationApproval = vi.fn();
@@ -201,6 +202,7 @@ vi.mock('../../../../_shared/services/projectService', async (importOriginal) =>
     updateQuotationLine: (...args: unknown[]) => updateQuotationLine(...args),
     deleteQuotationLine: (...args: unknown[]) => deleteQuotationLine(...args),
     reviseQuotation: (...args: unknown[]) => reviseQuotation(...args),
+    recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
   };
 });
 
@@ -222,11 +224,11 @@ import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
 import {
-  QuotationHeaderTab,
   QuotationSignaturesTab,
   QuotationCoverLetterTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
+import { QuotationHeaderTab } from './QuotationHeaderTab';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -2310,14 +2312,138 @@ describe('QuotationDocumentClient: header like Order Inquiry (PROPOSAL-HEADER-LA
     expect(within(menu).queryByRole('menuitem', { name: 'Recheck alerts' })).toBeNull();
   });
 
-  it('H11: hints sit on their own line in the card, never joined with a middle dot', async () => {
+  it('H11: two hints are two lines in the card, never joined with a middle dot', async () => {
+    // A reader (no edit right) on a quotation waiting for a manager: both hints apply.
+    getProject.mockResolvedValue(project({ can_edit: false }));
     getQuotationDocument.mockResolvedValue(
       belowFloor('pending_approval', { signatory_signature: signature() }),
     );
     renderScreen(<QuotationHeaderTab />);
 
     const card = await headerCard();
-    expect(await within(card).findByText('With a manager for approval')).toBeInTheDocument();
+    await within(card).findByText('With a manager for approval');
+    const lines = within(card)
+      .getAllByTestId('record-header-subtitle')
+      .map((el) => el.textContent);
+    expect(lines).toContain('You can read this quotation but not change it.');
+    expect(lines).toContain('With a manager for approval');
     expect(card.textContent).not.toContain('·');
+  });
+
+  /** Two areas, Townhouse (q1) and Semi-D (q2), each at the given current version. */
+  function seedTwoAreas(townhouseNo = 2, semiNo = 2) {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        grand_total: '18000.00',
+        scopes: [
+          scope({ current_version_id: 'v2', current_version_no: townhouseNo }),
+          scope({
+            id: 'q2',
+            scope_label: 'Semi-D',
+            sort_order: 2,
+            current_version_id: 'w2',
+            current_version_no: semiNo,
+          }),
+        ],
+      }),
+    );
+    listQuotations.mockResolvedValue([
+      quotation({ current_version_no: townhouseNo }),
+      quotation({
+        id: 'q2',
+        scope_label: 'Semi-D',
+        current_version_id: 'w2',
+        current_version_no: semiNo,
+      }),
+    ]);
+    listQuotationVersions.mockImplementation(async (quotationId: string) =>
+      quotationId === 'q2'
+        ? [version({ id: 'w2', quotation_id: 'q2', version_no: semiNo })]
+        : [version({ version_no: townhouseNo })],
+    );
+    listQuotationLines.mockResolvedValue([line()]);
+  }
+
+  it('H12: Revise to vN revises EVERY area, one after the other', async () => {
+    seedTwoAreas();
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    expect(await screen.findByText(/v2 of all 2 areas is frozen for good/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Freeze v2 and continue' }));
+
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2']);
+  });
+
+  it('H13: a retry after one area failed does not revise the area that already moved', async () => {
+    seedTwoAreas();
+    reviseQuotation
+      .mockResolvedValueOnce(version({ id: 'v3', version_no: 3 }))
+      .mockRejectedValueOnce(new Error('Conflict'))
+      .mockResolvedValueOnce(version({ id: 'w3', quotation_id: 'q2', version_no: 3 }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise to v3' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise to v3' }));
+    const freeze = await screen.findByRole('button', { name: /Freeze .*and continue/ });
+    fireEvent.click(freeze);
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(2));
+    // Still open after the failure; try again.
+    fireEvent.click(await screen.findByRole('button', { name: /Freeze .*and continue/ }));
+    await waitFor(() => expect(reviseQuotation).toHaveBeenCalledTimes(3));
+    expect(reviseQuotation.mock.calls.map((call) => call[0])).toEqual(['q1', 'q2', 'q2']);
+  });
+
+  it('H14: areas on different versions: the dialog says what happens to each one', async () => {
+    seedTwoAreas(2, 1);
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Revise every area' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Revise every area' }));
+    expect(
+      await screen.findByText(/Townhouse v2 to v3, Semi-D v1 to v2/),
+    ).toBeInTheDocument();
+  });
+
+  it('H15: Recheck alerts rechecks every open area, once each', async () => {
+    seedTwoAreas();
+    recomputeQuotationVersion.mockImplementation(async (versionId: string) => ({
+      version_id: versionId,
+      version_no: 2,
+      quotation_id: versionId === 'w2' ? 'q2' : 'q1',
+      line_count: 1,
+      changed_count: 0,
+      now_non_standard: 0,
+      no_longer_non_standard: 0,
+      now_below_floor: 0,
+      no_longer_below_floor: 0,
+      floor_changed: 0,
+      unresolved_products: 0,
+      changed_lines: [],
+    }));
+    renderScreen(<QuotationHeaderTab />);
+    expect((await screen.findAllByText('Wall-hung WC')).length).toBeGreaterThan(0);
+
+    const menu = await openGear();
+    await waitFor(() =>
+      expect(within(menu).getByRole('menuitem', { name: 'Recheck alerts' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Recheck alerts' }));
+    await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledTimes(2));
+    expect(recomputeQuotationVersion.mock.calls.map((call) => call[0]).sort()).toEqual(['v2', 'w2']);
   });
 });

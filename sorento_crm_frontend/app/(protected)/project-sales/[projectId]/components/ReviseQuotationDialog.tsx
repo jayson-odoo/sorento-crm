@@ -1,5 +1,6 @@
 'use client';
 
+import * as React from 'react';
 import {
   Dialog,
   DialogContent,
@@ -42,26 +43,49 @@ export function ReviseQuotationDialog({
   onDone: (newVersionId?: string) => void;
 }) {
   const { revise } = useQuotationMutations(projectId);
+  /**
+   * Areas already revised in THIS dialog. A retry after one area failed must not revise the
+   * ones that already moved: that would freeze a second version nobody asked for, and a revise
+   * cannot be undone.
+   */
+  const done = React.useRef(new Map<string, string>());
   const currentVersionNo = Math.max(0, ...scopes.map((scope) => scope.currentVersionNo));
   const lineCount = scopes.reduce((sum, scope) => sum + scope.lineCount, 0);
-  const subject =
-    scopes.length === 1 ? `"${scopes[0].quotation.scope_label}"` : `all ${scopes.length} areas`;
+  const sameVersion = scopes.every((scope) => scope.currentVersionNo === currentVersionNo);
+  const title = sameVersion ? `Revise to v${currentVersionNo + 1}` : 'Revise every area';
+
+  let description: string;
+  if (scopes.length === 1) {
+    description =
+      `v${currentVersionNo} of "${scopes[0].quotation.scope_label}" is frozen for good and ` +
+      (lineCount === 1 ? 'its 1 line is' : `all ${lineCount} of its lines are`) +
+      ` copied into v${currentVersionNo + 1}, which becomes the editable one. This cannot be undone.`;
+  } else if (sameVersion) {
+    description =
+      `v${currentVersionNo} of all ${scopes.length} areas is frozen for good and all ${lineCount} ` +
+      `of their lines are copied into v${currentVersionNo + 1}, which becomes the editable one. ` +
+      'This cannot be undone.';
+  } else {
+    // Areas added later sit on a lower number; say what happens to each rather than one number
+    // that is true of only some of them.
+    description =
+      'Each area is frozen for good and its lines are copied into its next version (' +
+      scopes
+        .map(
+          (scope) =>
+            `${scope.quotation.scope_label} v${scope.currentVersionNo} to v${scope.currentVersionNo + 1}`,
+        )
+        .join(', ') +
+      '). This cannot be undone.';
+  }
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="w-full max-w-md">
         <DialogHeader>
-          <DialogTitle>{`Revise to v${currentVersionNo + 1}`}</DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <DialogDescription>
-          {`v${currentVersionNo} of ${subject} is frozen for good and `}
-          {scopes.length > 1
-            ? `all ${lineCount} of their lines are`
-            : lineCount === 1
-              ? 'its 1 line is'
-              : `all ${lineCount} of its lines are`}
-          {` copied into v${currentVersionNo + 1}, which becomes the editable one. This cannot be undone.`}
-        </DialogDescription>
+        <DialogDescription>{description}</DialogDescription>
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={() => onDone()}>
             Cancel
@@ -70,19 +94,20 @@ export function ReviseQuotationDialog({
             type="button"
             disabled={revise.isPending}
             onClick={async () => {
-              let last: string | undefined;
               try {
                 for (const scope of scopes) {
-                  last = (await revise.mutateAsync(scope.quotation.id)).id;
+                  if (done.current.has(scope.quotation.id)) continue;
+                  const version = await revise.mutateAsync(scope.quotation.id);
+                  done.current.set(scope.quotation.id, version.id);
                 }
               } catch {
-                // The mutation toasted the reason; the dialog stays open to try again.
+                // The mutation toasted the reason; the dialog stays open to try the rest again.
                 return;
               }
-              onDone(last);
+              onDone([...done.current.values()].pop());
             }}
           >
-            {`Freeze v${currentVersionNo} and continue`}
+            {sameVersion ? `Freeze v${currentVersionNo} and continue` : 'Freeze and continue'}
           </Button>
         </DialogFooter>
       </DialogContent>

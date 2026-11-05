@@ -128,10 +128,10 @@ import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationFeedbackPanel } from './QuotationFeedbackPanel';
 import {
   QuotationCoverLetterTab,
-  QuotationHeaderTab,
   QuotationSignaturesTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
+import { QuotationHeaderTab } from './QuotationHeaderTab';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {

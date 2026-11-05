@@ -145,8 +145,9 @@ export function QuotationVersionEditor({
    */
   headerVersion?: {
     versionNo: number | null;
-    recheck?: QuotationRecomputeResult | null;
-    onDismissRecheck?: () => void;
+    /** The header's Recheck alerts answers, by the version id each one ran on. */
+    recheckResults?: Record<string, QuotationRecomputeResult>;
+    onDismissRecheck?: (versionId: string) => void;
   };
   /**
    * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, and
@@ -682,82 +683,82 @@ export function QuotationVersionEditor({
   return (
     <div className="min-w-0 space-y-3">
       {!headerVersion && (
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {rows.map((version) => (
-            <button
-              key={version.id}
-              type="button"
-              onClick={() => setSelectedId(version.id)}
-              aria-current={selected?.id === version.id}
-              className={
-                selected?.id === version.id
-                  ? 'rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium'
-                  : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
-              }
-            >
-              {`v${version.version_no}`}
-              {version.is_current ? '' : ' (frozen)'}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Re-ask both alerts against today's master data (S19). On the version that is
-              being looked at, and only while it is still open: the flags on a frozen
-              version are what was true when the customer was sent the paper.
-
-              Withheld while an edit session is open on this scope. Recompute writes to the
-              server, and the staged rows on screen would silently be answering for a state
-              the database no longer holds. */}
-          {project.can_edit && editable && selected && !locked && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={recompute.isPending || isEditing}
-              title={
-                isEditing
-                  ? 'Save or cancel your changes first'
-                  : 'Re-check every line against the series and price floors as they stand today'
-              }
-              onClick={async () => {
-                try {
-                  setRecomputed(await recompute.mutateAsync(selected.id));
-                } catch {
-                  // The mutation already toasted the reason.
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {rows.map((version) => (
+              <button
+                key={version.id}
+                type="button"
+                onClick={() => setSelectedId(version.id)}
+                aria-current={selected?.id === version.id}
+                className={
+                  selected?.id === version.id
+                    ? 'rounded-md border border-primary bg-primary/10 px-2.5 py-1 text-xs font-medium'
+                    : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
                 }
-              }}
-            >
-              <RefreshCw className="size-4" aria-hidden />
-              {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
-            </Button>
-          )}
+              >
+                {`v${version.version_no}`}
+                {version.is_current ? '' : ' (frozen)'}
+              </button>
+            ))}
+          </div>
 
-          {/* Not on the form page: a revise writes a new version at once, under lines the form
-              has staged against the current one and saves by scope. The quotation page's Edit
-              quotation already asks to revise before it opens the form. */}
-          {project.can_edit && current && !edit && !locked && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setRevising(true)}
-            >
-              {`Revise to v${current.version_no + 1}`}
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Re-ask both alerts against today's master data (S19). On the version that is
+                being looked at, and only while it is still open: the flags on a frozen
+                version are what was true when the customer was sent the paper.
+
+                Withheld while an edit session is open on this scope. Recompute writes to the
+                server, and the staged rows on screen would silently be answering for a state
+                the database no longer holds. */}
+            {project.can_edit && editable && selected && !locked && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={recompute.isPending || isEditing}
+                title={
+                  isEditing
+                    ? 'Save or cancel your changes first'
+                    : 'Re-check every line against the series and price floors as they stand today'
+                }
+                onClick={async () => {
+                  try {
+                    setRecomputed(await recompute.mutateAsync(selected.id));
+                  } catch {
+                    // The mutation already toasted the reason.
+                  }
+                }}
+              >
+                <RefreshCw className="size-4" aria-hidden />
+                {recompute.isPending ? 'Rechecking...' : 'Recheck alerts'}
+              </Button>
+            )}
+
+            {/* Not on the form page: a revise writes a new version at once, under lines the form
+                has staged against the current one and saves by scope. The quotation page's Edit
+                quotation already asks to revise before it opens the form. */}
+            {project.can_edit && current && !edit && !locked && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setRevising(true)}
+              >
+                {`Revise to v${current.version_no + 1}`}
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
       )}
 
       {recomputed && !headerVersion && (
         <RecomputeSummary result={recomputed} onDismiss={() => setRecomputed(null)} />
       )}
-      {headerVersion?.recheck && (
+      {headerVersion && selected && headerVersion.recheckResults?.[selected.id] && (
         <RecomputeSummary
-          result={headerVersion.recheck}
-          onDismiss={() => headerVersion.onDismissRecheck?.()}
+          result={headerVersion.recheckResults[selected.id]}
+          onDismiss={() => headerVersion.onDismissRecheck?.(selected.id)}
         />
       )}
 

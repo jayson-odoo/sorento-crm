@@ -184,10 +184,7 @@ export function QuotationDocumentClient({
           (row) => row.quotation.id === quotation.id && row.version.is_current,
         )?.version,
       }))
-      .filter(
-        (pair): pair is { quotation: (typeof pair)['quotation']; current: NonNullable<(typeof pair)['current']> } =>
-          Boolean(pair.current),
-      );
+      .flatMap((pair) => (pair.current ? [{ quotation: pair.quotation, current: pair.current }] : []));
   }, [quotations.data, scopeVersions.rows, scopes]);
   /** The proposal's version numbers, newest first, across its areas. */
   const documentVersionNos = React.useMemo(() => {
@@ -202,6 +199,10 @@ export function QuotationDocumentClient({
   const currentVersionNo = currentScopes.length
     ? Math.max(...currentScopes.map((pair) => pair.current.version_no))
     : null;
+  // A number some area still holds as its CURRENT version is not frozen, even when another area
+  // has moved past it (an area added later starts lower).
+  const currentNumbers = new Set(currentScopes.map((pair) => pair.current.version_no));
+  const allSameVersion = currentNumbers.size <= 1;
 
   const canEditProject = project.data?.can_edit ?? false;
   // The customer's feedback notes (PS-QUOTE-MATRIX): the open count is the tab's badge. The same
@@ -307,7 +308,7 @@ export function QuotationDocumentClient({
   if (canEdit && !locked && currentScopes.length > 0 && currentVersionNo !== null) {
     versionActions.push({
       key: 'quotation_document.revise_version',
-      label: `Revise to v${currentVersionNo + 1}`,
+      label: allSameVersion ? `Revise to v${currentVersionNo + 1}` : 'Revise every area',
       icon: GitBranch,
       run: () => setRevisingAll(true),
     });
@@ -318,7 +319,7 @@ export function QuotationDocumentClient({
     return [...gear.actions.slice(0, at + 1), ...versionActions, ...gear.actions.slice(at + 1)];
   })();
   const shownVersionNo = versionNo ?? currentVersionNo;
-  const versionFrozen = versionNo !== null && versionNo !== currentVersionNo;
+  const versionFrozen = versionNo !== null && !currentNumbers.has(versionNo);
   const versionLabel =
     shownVersionNo === null ? null : `v${shownVersionNo}${versionFrozen ? ' (frozen)' : ''}`;
   /**
@@ -347,10 +348,10 @@ export function QuotationDocumentClient({
   /**
    * What pressing the change-request banner's button will actually do, said in its label.
    *
-   * Deliberately NOT "Revise to v3": the Lines tab already carries a per-scope button by that
-   * exact name, and two controls reading the same words a few centimetres apart - one acting on
-   * one scope, one on the whole document - is worse than a vaguer label. This one is the
-   * DOCUMENT's act, and the prompt it opens names the scopes and the version it will mint.
+   * Deliberately NOT "Revise to v3": the gear already carries an item by that exact name (a
+   * plain revise, no form), and two controls reading the same words is worse than a vaguer
+   * label. This one leads into editing, and the prompt it opens names the scopes and the version
+   * it will mint.
    *
    * With no frozen scope left (a revision is already open) the click goes straight to the
    * form page, and the label has to say that rather than promise a version it will not mint.
@@ -446,7 +447,11 @@ export function QuotationDocumentClient({
                         key={no}
                         onSelect={() => setVersionNo(no === currentVersionNo ? null : no)}
                       >
-                        {`v${no} (${no === currentVersionNo ? 'current' : 'frozen'})`}
+                        {no === currentVersionNo
+                          ? `v${no} (current)`
+                          : currentNumbers.has(no)
+                            ? `v${no}`
+                            : `v${no} (frozen)`}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>

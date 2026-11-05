@@ -113,14 +113,10 @@ export function QuotationScopesTab() {
               feedback={openFeedback}
               headerVersion={{
                 versionNo,
-                // A recheck answers for the CURRENT version; reading a frozen one, it stays out.
-                recheck:
-                  versionNo === null && activeQuotation.current_version_id
-                    ? (recheckResults[activeQuotation.current_version_id] ?? null)
-                    : null,
-                onDismissRecheck: () =>
-                  activeQuotation.current_version_id &&
-                  dismissRecheck(activeQuotation.current_version_id),
+                // Keyed by the version id each recheck ran on; the editor shows the one for the
+                // version it is reading, so a frozen version never shows the current one's answer.
+                recheckResults,
+                onDismissRecheck: dismissRecheck,
               }}
             />
           </CardContent>
