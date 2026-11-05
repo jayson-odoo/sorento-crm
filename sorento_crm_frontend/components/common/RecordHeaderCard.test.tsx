@@ -9,20 +9,27 @@ describe('RecordHeaderCard (the Order Inquiry record card, shared)', () => {
       <RecordHeaderCard
         title="OI-2609-0002"
         badges={<span>Outstanding</span>}
-        subtitle={['Raised by Ahmad on 05/11/2026, 2:14 pm', <span key="x">Second line</span>]}
+        subtitle={[
+          'Raised by Ahmad on 05/11/2026, 2:14 pm',
+          <span key="x">Second line</span>,
+        ]}
         actions={<button type="button">Confirm</button>}
       />,
     );
     const card = screen.getByTestId('record-header-card');
     const row = within(card).getByTestId('record-header-title-row');
-    expect(within(row).getByRole('heading', { name: 'OI-2609-0002' })).toBeInTheDocument();
+    expect(
+      within(row).getByRole('heading', { name: 'OI-2609-0002' }),
+    ).toBeInTheDocument();
     expect(within(row).getByText('Outstanding')).toBeInTheDocument();
     const lines = within(card).getAllByTestId('record-header-subtitle');
     expect(lines.map((el) => el.textContent)).toEqual([
       'Raised by Ahmad on 05/11/2026, 2:14 pm',
       'Second line',
     ]);
-    expect(within(card).getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    expect(
+      within(card).getByRole('button', { name: 'Confirm' }),
+    ).toBeInTheDocument();
   });
 
   it('drops empty subtitle entries and renders children under the row', () => {

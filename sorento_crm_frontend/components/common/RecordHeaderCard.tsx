@@ -38,7 +38,8 @@ export function RecordHeaderCard({
   className,
 }: RecordHeaderCardProps) {
   const lines = (Array.isArray(subtitle) ? subtitle : [subtitle]).filter(
-    (line) => line !== null && line !== undefined && line !== false && line !== '',
+    (line) =>
+      line !== null && line !== undefined && line !== false && line !== '',
   );
   return (
     <Card className={className} data-testid="record-header-card">

@@ -125,7 +125,6 @@ vi.mock('../../../components/QuotationVersionEditor', () => ({
 }));
 
 import { QuotationDocumentClient } from './QuotationDocumentClient';
-import { QuotationScopesTab } from './QuotationScopesTab';
 import { QuotationFeedbackPanel } from './QuotationFeedbackPanel';
 import {
   QuotationCoverLetterTab,
@@ -199,11 +198,13 @@ function renderTab(route: string, tab: React.ReactNode) {
  * The letterhead card itself (To, Our Ref, Your Ref, Date, Total) lives in the Header tab only.
  */
 async function expectIdentityOnScreen() {
-  expect(
-    await screen.findByRole('heading', { name: 'CADANGAN MEMBINA PANGSAPURI' }),
-  ).toBeInTheDocument();
-  expect(screen.getAllByText('Nadi Cergas Sdn Bhd').length).toBeGreaterThan(0);
-  expect(screen.getByText('Draft')).toBeInTheDocument();
+  // The Order Inquiry record card (PROPOSAL-HEADER-LAYOUT): number, status, title; no customer
+  // line (the letterhead's To carries it).
+  const card = await screen.findByTestId('record-header-card');
+  expect(within(card).getByRole('heading', { name: 'SRT/Q/2026/0141' })).toBeInTheDocument();
+  expect(within(card).getByText('CADANGAN MEMBINA PANGSAPURI')).toBeInTheDocument();
+  expect(within(card).queryByText('Nadi Cergas Sdn Bhd')).toBeNull();
+  expect(within(card).getByText('Draft')).toBeInTheDocument();
   // E4: an unsigned, unblocked draft leads with Sign and offers no Send to Customer.
   expect(screen.getByRole('button', { name: 'Sign' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
@@ -231,13 +232,13 @@ beforeEach(() => {
 });
 
 describe('the quotation document tab strip', () => {
-  it('AC-QF050/053: reads Header, Lines, Cover letter, Terms, Signatures, Spec sheet, each its own route', async () => {
+  // No Lines tab (PROPOSAL-HEADER-LAYOUT, owner 5 Nov 2026): the lines sit on the Header tab.
+  it('AC-QF050/053: reads Header, Cover letter, Terms, Signatures, Spec sheet, each its own route', async () => {
     renderTab(BASE, <QuotationHeaderTab />);
 
     const tabs = await screen.findAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual([
       'Header',
-      'Lines',
       'Cover letter',
       'Terms',
       'Signatures',
@@ -246,7 +247,6 @@ describe('the quotation document tab strip', () => {
       'Spec sheet',
     ]);
     expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('href', BASE);
-    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('href', `${BASE}/lines`);
     expect(screen.getByRole('tab', { name: 'Cover letter' })).toHaveAttribute(
       'href',
       `${BASE}/cover-letter`,
@@ -287,14 +287,6 @@ describe('the quotation document tab strip', () => {
     );
   });
 
-  it('marks Lines open on its own route', async () => {
-    renderTab(`${BASE}/lines`, <QuotationScopesTab />);
-
-    expect(await screen.findByRole('tab', { name: 'Lines' })).toHaveAttribute(
-      'data-state',
-      'active',
-    );
-  });
 });
 
 describe('what each quotation document tab renders', () => {
@@ -313,13 +305,16 @@ describe('what each quotation document tab renders', () => {
     expect(card).toHaveTextContent('NC/18');
     expect(card).toHaveTextContent('Date');
     expect(card).toHaveTextContent('RM 235,000.00');
+    // The lines sit under it on the same tab (PROPOSAL-HEADER-LAYOUT).
+    expect(await screen.findByText('No lines on this quotation yet')).toBeInTheDocument();
     await expectIdentityOnScreen();
   });
 
-  it('AC-QF051: the letterhead card is not above the tabs, so Lines does not repeat it', async () => {
-    renderTab(`${BASE}/lines`, <QuotationScopesTab />);
+  it('AC-QF051: the letterhead card is not above the tabs, so another tab does not repeat it', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ terms_html: '<p>30 days</p>' }));
+    renderTab(`${BASE}/terms`, <QuotationTermsTab />);
 
-    expect(await screen.findByText('No lines on this quotation yet')).toBeInTheDocument();
+    expect(await screen.findByText('30 days')).toBeInTheDocument();
     expect(screen.queryByTestId('quotation-header-card')).toBeNull();
     expect(screen.queryByText('Our Ref')).toBeNull();
     expect(screen.queryByText('RM 235,000.00')).toBeNull();
@@ -550,13 +545,13 @@ describe('the Customer feedback tab (PS-QUOTE-MATRIX)', () => {
     );
   });
 
-  it('Show in Lines opens the Lines tab', async () => {
+  it('Show in Lines opens the Header tab, where the lines are', async () => {
     getQuotationFeedback.mockResolvedValue(FEEDBACK);
     renderTab(`${BASE}/feedback`, <QuotationFeedbackPanel />);
 
     const rows = await screen.findAllByTestId('quotation-feedback-row');
     fireEvent.click(within(rows[0]).getByRole('button', { name: 'Show in Lines' }));
-    expect(push).toHaveBeenCalledWith(`${BASE}/lines`);
+    expect(push).toHaveBeenCalledWith(BASE);
   });
 
   it('renders its empty state when nothing came in', async () => {
