@@ -553,7 +553,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     asked = _list(spec, "fields", 30)
     if any(not isinstance(f, str) for f in asked):
         raise QueryRefused("invalid", "`fields` is a list of field names.")
-    wanted = list(dict.fromkeys([*entity.name_by, *(asked or list(entity.fields))]))
+    wanted = list(dict.fromkeys([*entity.name_by, *(asked or entity.list_fields or list(entity.fields))]))
     shown = [f for f in wanted if paths.allowed(f)]
     restricted = [f for f in wanted if f not in shown]
     root = entity.model

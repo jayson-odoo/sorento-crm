@@ -82,3 +82,6 @@ class EntityDef:
     #: One line for the compact entity index in `crm_query`'s description: what the entity is for, so most
     #: questions need no `crm_describe` call (crew pass, 5 Nov: the extra round cost ~28k prompt tokens a turn).
     hint: str = ""
+    #: The columns a row shows when the query names no `fields` (crew pass on 69b3b479: a below-target answer
+    #: carried 22 columns into the prompt and the table). Empty = every field, as before.
+    list_fields: tuple[str, ...] = ()

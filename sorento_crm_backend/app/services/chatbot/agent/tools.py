@@ -184,6 +184,13 @@ ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
 ROW_KEYS = ("items", "answers", "response", "groups", "summary_items", "drill_rows", "attachments", "action_links")
 FIXED_ERROR = "The tool failed."
 FIXED_NO_ACCESS = "You do not have access to this information."
+#: A panel read the ROUTE refused (crew pass, 5 Nov): specific, and not "do not get this another way", because
+#: `crm_query` reads the records in process as the user under the same rules (the sales report reveal included,
+#: `assistant_registry.query._slugs`), so it is the legitimate way to the user's own figures, not a side door.
+PANEL_ROUTE_REFUSED = (
+    "This tool's route refused the request. Try crm_query, which reads the records as this user under the same "
+    "access rules; if it refuses too, tell the user it is outside their access."
+)
 FIXED_TIMEOUT = "The tool did not answer in time."
 #: What `crm_resolve` may search, the slug the user needs for each kind, and the contact reveal
 #: a kind also needs.
@@ -709,7 +716,7 @@ def _http_failure(status: int, detail: Any, who: str = "") -> ToolResult:
             # A panel user can be refused although they hold the slug (the shared key's role lacks it): the
             # model gets a plain line, never the route's slug, path or status. The detail goes to the log.
             logger.warning("agent: a route refused a panel read (403) %s: %s", who, clean_detail(detail))
-            return ToolResult("denied", message=FIXED_NO_ACCESS)
+            return ToolResult("denied", message=PANEL_ROUTE_REFUSED)
         # The route refused this contact or user: a denial, not a bad request.
         return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
     if 400 <= status < 500:
@@ -1158,7 +1165,7 @@ def dispatch(
     if out.status == "denied":
         if domain is not None:
             domains.add(domain)
-        if DENIED_TAIL not in out.message:
+        if DENIED_TAIL not in out.message and out.message != PANEL_ROUTE_REFUSED:
             out.message = f"{out.message.rstrip()} {DENIED_TAIL}".strip()
     return out
 

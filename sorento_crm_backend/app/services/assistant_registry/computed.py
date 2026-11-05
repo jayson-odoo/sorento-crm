@@ -332,7 +332,7 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     for name in asked:
         if name not in entity.fields:
             _field(entity, slugs, name)  # raises unknown_field (a restricted one is dropped below, as in SQL)
-    wanted = list(dict.fromkeys([*entity.name_by, *(asked or list(entity.fields))]))
+    wanted = list(dict.fromkeys([*entity.name_by, *(asked or entity.list_fields or list(entity.fields))]))
     shown = [f for f in wanted if not entity.fields[f].permission or entity.fields[f].permission in slugs]
     restricted = [f for f in wanted if f not in shown]
     order = []

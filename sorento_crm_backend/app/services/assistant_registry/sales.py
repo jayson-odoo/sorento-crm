@@ -201,6 +201,7 @@ register(
         routes=("GET /api/v1/sales/targets",),
         hint="sales targets per period: achieved, below_target, commission, payout; no period filter = current "
              "periods (add one only when a period is named); per agent = group by agent, sum payout",
+        list_fields=("period_start", "period_end", "target_value", "achieved_value", "achieved_pct", "payout"),
         compute=_target_rows,
         window_field="period",
         # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).

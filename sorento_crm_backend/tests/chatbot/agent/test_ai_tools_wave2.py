@@ -330,9 +330,9 @@ def test_C1_customers_list_per_agent_without_contact_fields(api, grant):
     for row in rows[:2]:
         row.sales_agent_id = a.id
     db.flush()
-    out = run(db, {"entity": "customer", "filters": [{"field": "agent.code", "op": "eq", "value": a.sales_agent}],
-                   "group_by": ["agent.code"], "aggregates": [{"fn": "count"}]})
-    assert out["groups"] == [{"agent.code": a.sales_agent, "count": 2}]
+    out = run(db, {"entity": "customer", "filters": [{"field": "agent", "op": "contains", "value": a.sales_agent}],
+                   "group_by": ["agent"], "aggregates": [{"fn": "count"}]})
+    assert out["groups"] == [{"agent": f"{a.sales_agent} - Cust Agent", "count": 2}]
     from app.services.assistant_registry import ENTITIES
 
     assert not {"email", "phone_number", "mobile_number", "billing_address", "ar_outstanding"} & set(ENTITIES["customer"].fields)
@@ -379,7 +379,7 @@ def test_R2_a_related_customer_is_a_lookup_without_the_customers_slug(sales, gra
     out = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["customer.code", "customer.region"], "limit": 1})
     assert out["rows"][0]["customer.code"] == s["cust"].customer_code
     assert "customer.region" in out["restricted"] and "customer.region" not in out["rows"][0]
-    assert refused(db, {"entity": "billing_document", "filters": [{"field": "customer.agent.code", "op": "eq", "value": "X"}]}).code == "restricted"
+    assert refused(db, {"entity": "billing_document", "filters": [{"field": "customer.agent", "op": "eq", "value": "X"}]}).code == "restricted"
     assert refused(db, {"entity": "billing_document", "group_by": ["customer.region"]}).code == "restricted"
     from app.services.assistant_registry.query import describe
 
@@ -485,8 +485,10 @@ def test_T8_points_replaced_and_team_targets_equal_the_target_page(api, grant):
     assert team_target.status_code == 201, team_target.text
     _so_line(db, company_id, agent_id=a.id, order_date=date(2026, 10, 2), line_total=Decimal("700"), product_id=pid)
 
+    every = ["period_start", "target_value", "achieved_value", "achieved_pct", "below_target", "tier_reached",
+             "commission", "bonus", "replaced", "ratio_missing"]
     out = run(db, {"entity": "sales_target", "filters": [{"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}],
-                   "limit": 50})
+                   "fields": every, "limit": 50})
     ids = [points["id"], dealer["id"], replaced["id"], team_target.json()["id"]]
     assert _same_as_page(db, out, ids) == 4 + 1 + 1 + 1
     rows = {r["link"].rsplit("/", 1)[1] + r["period_start"]: r for r in out["rows"]}

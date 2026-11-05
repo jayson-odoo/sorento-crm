@@ -66,6 +66,7 @@ register(
         # (`api/v1/order_management/report_ask.py`: the staff reveal `sales_orders.sales_report`, held through
         # `sales.reports.view`; outstanding through `sales_orders.outstanding`), so the registry is no side door.
         aggregate_permission=SALES_REPORT,
+        list_fields=("doc_date", "document_type", "agent", "sales_amount"),
         hint="invoices, cash sales, debit and credit notes. SALES = sum sales_amount by doc_date, group by agent",
     ),
 )

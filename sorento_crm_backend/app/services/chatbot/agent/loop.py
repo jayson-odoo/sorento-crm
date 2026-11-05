@@ -85,6 +85,25 @@ QUERY_TOOLS = ("crm_query", "crm_describe")
 MAX_QUERY_CALLS = 4
 
 
+#: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
+#: resent all ~21k tokens of tool schemas (the MCP catalogue alone ~17k), which made 4 to 7 calls 107k to 173k.
+REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
+
+
+def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict]) -> list[dict]:
+    """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
+    the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
+    other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
+    registry calls were all refused, leaves the schemas as they are."""
+    names = {str(c.get("name") or "") for c in calls}
+    if not names or not names <= REGISTRY_ROUND_TOOLS:
+        return schemas
+    answered = done[-len(calls):] if calls else []
+    if not any(c.get("name") in QUERY_TOOLS and c.get("status") == "ok" for c in answered):
+        return schemas
+    return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
+
+
 @dataclass
 class Budgets:
     max_rounds: int = 8
@@ -1581,6 +1600,7 @@ def _run(
                 )
             if accepted:
                 break
+            schemas = narrow_after_query(schemas, calls, run.tool_calls)
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"

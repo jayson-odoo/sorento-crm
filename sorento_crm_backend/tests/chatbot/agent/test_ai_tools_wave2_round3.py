@@ -92,7 +92,7 @@ def test_G1_sales_totals_need_the_same_reveal_as_the_sales_report(docs, holds):
         ):
             assert refusal(db, {"entity": "billing_document", "filters": [mine], **spec}).code == "restricted", spec
         # Rows: the screen's documents, without a money figure.
-        rows = run(db, {"entity": "billing_document", "filters": [mine]})
+        rows = run(db, {"entity": "billing_document", "filters": [mine], "fields": ["doc_no", "sales_amount", "net_total", "total"]})
         assert {"sales_amount", "net_total", "total"} <= set(rows["restricted"])
         assert all("net_total" not in r and "sales_amount" not in r for r in rows["rows"])
         assert refusal(db, {"entity": "billing_document", "filters": [mine], "sort": [{"field": "net_total", "dir": "desc"}]}).code == "restricted"
@@ -102,9 +102,9 @@ def test_G2_outstanding_follows_the_outstanding_reveal(docs, holds):
     db, _company, cust = docs
     mine = {"field": "debtor_code", "op": "eq", "value": cust.customer_code}
     holds(BILLING_VIEW, SALES_REPORTS)
-    assert "outstanding" in run(db, {"entity": "billing_document", "filters": [mine]})["restricted"]
+    assert "outstanding" in run(db, {"entity": "billing_document", "filters": [mine], "fields": ["outstanding"]})["restricted"]
     holds(BILLING_VIEW, SALES_REPORTS, ORDERS_VIEW)  # `sales_orders.outstanding` answers to the orders slug
-    assert "outstanding" not in run(db, {"entity": "billing_document", "filters": [mine]})["restricted"]
+    assert "outstanding" not in run(db, {"entity": "billing_document", "filters": [mine], "fields": ["outstanding"]})["restricted"]
 
 
 def test_G3_sales_order_counts_need_the_reveal_rows_do_not(api, holds):
@@ -128,10 +128,13 @@ def test_A1_active_customers_of_an_agent_use_the_customers_lists_active_filter(a
         row.sales_agent_id = agent.id
     rows[2].is_active = False
     db.flush()
-    by_agent = {"field": "agent.code", "op": "eq", "value": agent.sales_agent}
+    # By name, as the owner asks it ("active customers of Agent A"), and by code: the same customers.
+    by_agent = {"field": "agent", "op": "contains", "value": "active agent"}
     out = run(db, {"entity": "customer", "filters": [by_agent], "aggregates": [{"fn": "count"}]})
     assert out["groups"] == [{"count": 2}]
     assert out["scope_note"] == "Inactive customers excluded."
+    by_code = {"field": "agent", "op": "contains", "value": agent.sales_agent}
+    assert run(db, {"entity": "customer", "filters": [by_code], "aggregates": [{"fn": "count"}]})["groups"] == [{"count": 2}]
     every = run(db, {"entity": "customer", "filters": [by_agent, {"field": "is_active", "op": "in", "value": [True, False]}],
                      "aggregates": [{"fn": "count"}]})
     assert every["groups"] == [{"count": 3}] and every["scope_note"] is None
