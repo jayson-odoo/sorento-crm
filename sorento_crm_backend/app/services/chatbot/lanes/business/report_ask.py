@@ -3692,23 +3692,22 @@ def _keep_held(
 ) -> None:
     """REPORT-FILTER-ALL, the ONE safety rule over the parser's final object: a filter slot it left empty, over a held
     value, without ALL, forgot to echo it: the held value stays. Not the axis's own slot (a breakdown ranks across it,
-    C6-2), and not a held name the object now holds in another slot (it moved: a name the message calls the company, an
-    account type the brand question settled). Then a company that is none of the contact's own but spells the held one
-    is the held one (`_held_spelling`)."""
-    def fold(value: Any) -> str:
-        return _squash(value)
+    C6-2), and not a held name the object puts in a slot the held report did not hold it in (it moved: a name the
+    message calls the company, an account type the brand question settled). Then a company that is none of the
+    contact's own but spells the held one is the held one (`_held_spelling`)."""
+    def names(source: dict[str, Any], slot: str) -> set[str]:
+        value = source.get(slot)
+        return {_squash(v) for v in (jsc.array(value) if isinstance(value, list) else [value]) if v}
 
+    # A name the object puts in a slot the held report did not hold it in (read before any refill).
+    moved = {name for slot in _FILTER_SLOTS for name in names(ask, slot) - names(held_ask, slot)}
     for slot in _FILTER_SLOTS:
         held = held_ask.get(slot)
         if slot in cleared or slot == axis_slot or ask.get(slot) or not held:
             continue
-        elsewhere = {
-            fold(v) for other in _FILTER_SLOTS if other != slot
-            for v in (jsc.array(ask.get(other)) if isinstance(ask.get(other), list) else [ask.get(other)]) if v
-        }
         if isinstance(held, list):
-            ask[slot] = [v for v in held if fold(v) not in elsewhere]
-        elif fold(held) not in elsewhere:
+            ask[slot] = [v for v in held if _squash(v) not in moved]
+        elif _squash(held) not in moved:
             ask[slot] = held
     ask["company"] = _held_spelling(ask.get("company"), held_ask.get("company"), companies)
 
