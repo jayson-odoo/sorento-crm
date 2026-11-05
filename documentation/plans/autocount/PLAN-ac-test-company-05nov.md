@@ -1,9 +1,26 @@
 # PLAN: AC-TEST-COMPANY - standing TEST company bound to AutoCount db3
 
-Status: Plan (behaviour card drafted, waiting on owner answers before build). Track: full (migration + RBAC/scoping).
+Status: Build (re-scoped 5 Nov to a LOCAL staging kit; script + tests + SS contract + runbook in PR #2202, in review). Track: small fix (no migration, no app code change, no auth/RBAC change).
 
 Lane: AC-TEST-COMPANY. Owner ask (5 Nov 2026): a company in the real CRM the owner and picked admins can use to
 exercise every AutoCount integration end to end against the AutoCount db3 test book, without risk to the live book.
+
+## Owner answers (5 Nov, via crew) - RE-SCOPE
+
+"test company, we can just use local as our staging". The test company lives on a LOCAL staging
+copy on the owner's Mac, not in the prod CRM. Q1/Q2/Q3/Q5/Q6 are moot (no `is_test` column, no prod
+fencing, no per-company switch logic, no book guard). Q4(a): data comes from db3 through the existing
+SS pushes/pulls (hapi `/api/db3/...`), never hand-copied.
+
+Deliverables:
+1. `sorento_crm_backend/scripts/staging/seed_db3_staging.py` (+ `tests/test_staging_seed_db3.py`):
+   idempotent seed of company SRT_DB3, `foundryx-esb` pointed at the local SS, the SS push key,
+   every AutoCount write switch ON, and a staging admin. Refuses non-local DBs and DB names without
+   a dev/staging token or with a prod token. Dry run by default.
+2. `CONTRACT-db3-local-staging-ss.md`: the SS side.
+3. `RUNBOOK-db3-local-staging.md`: start, refresh, reset, what to try.
+
+The sections below are the original prod-company exploration, kept for the record.
 
 ## Facts (main @ 9ebae8e9)
 
