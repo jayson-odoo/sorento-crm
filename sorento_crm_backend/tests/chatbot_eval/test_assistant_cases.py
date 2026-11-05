@@ -39,6 +39,7 @@ def test_parse_entity_and_action_cases():
         ({"expect": {"action": "approve"}}, "<entity>.<verb>"),
         ({"module": ""}, "missing module"),
         ({"message": {"text": "hi"}}, "not text"),
+        ({"expect": {"entity": ["purchase_order"]}}, "is not text"),
     ],
 )
 def test_parse_refuses_bad_rows(over, reason):

@@ -157,6 +157,8 @@ def parse_assistant_case(raw: object) -> AssistantCase:
     entity, action = exp.get("entity"), exp.get("action")
     if bool(entity) == bool(action):
         raise ValueError("expect names exactly one of entity or action")
+    if not isinstance(entity or action, str):
+        raise ValueError("expect.entity / expect.action is not text")
     unknown = set(exp) - {"entity", "action"}
     if unknown:
         raise ValueError(f"unknown expect key {sorted(unknown)[0]!r}")

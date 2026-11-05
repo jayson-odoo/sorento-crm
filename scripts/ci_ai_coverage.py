@@ -12,13 +12,18 @@ on a comment line directly above its decorators, this check fails.
 
 Diff-based, so there is no baseline file: a route counts as added when its method + full path is
 served at HEAD and was not served at the base (the merge base with origin/main by default). An edit
-to an existing route's body, signature or file therefore never triggers it.
+to an existing route's body, signature or file therefore never triggers it; changing a list's
+served path (say "" to "/all") does, since a new path is then served.
 
 Stdlib only and no import of the backend: full paths are worked out from the source by AST
 (`APIRouter(prefix=...)`, `include_router(..., prefix=...)` chains up to `app.include_router` in
-app/main.py), so it runs in the PR gate before any dependency install. A route whose mount chain
-cannot be resolved statically is reported with what is known and must use the opt-out or be
-registered by its file-local path.
+app/main.py, route factories, module string constants), so it runs in the PR gate before any
+dependency install. A route whose mount chain or path cannot be resolved statically is reported
+with what is known and can only pass with the opt-out (tests/test_ci_ai_coverage.py pins the
+resolver to FastAPI's live route table, so such a route is rare).
+
+A list route is a GET (`@x.get`, or `@x.api_route` with "GET" in `methods`) with a parameter named
+`page` or `limit`, or aliased to one (`Query(..., alias="page")`).
 
 Usage: python3 scripts/ci_ai_coverage.py [--base REF] [--head REF]
   --base  ref to diff against (default: merge base of HEAD and origin/main)
@@ -453,11 +458,12 @@ def build_graph(files: dict[str, str]) -> Graph:
             fparams = params.get((mod, factory.name), []) if factory is not None else []
             local = local_routers.get(factory.name, {}) if factory is not None else {}
             for dec in node.decorator_list:
-                if not (
-                    isinstance(dec, ast.Call)
-                    and isinstance(dec.func, ast.Attribute)
-                    and dec.func.attr == "get"
-                ):
+                if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)):
+                    continue
+                if dec.func.attr == "api_route":
+                    if not _methods_include_get(dec):
+                        continue
+                elif dec.func.attr != "get":
                     continue
                 base = dec.func.value
                 if dec.args:
@@ -472,7 +478,7 @@ def build_graph(files: dict[str, str]) -> Graph:
                     func=node.name,
                     router=("", ""),
                     path=path,
-                    paged=any(a.arg in PAGED_PARAMS for a in all_args),
+                    paged=_is_paged(node),
                     opt_out=_opt_out_above(lines, first_line),
                 )
                 if isinstance(base, ast.Name) and base.id in local:
@@ -517,6 +523,34 @@ def build_graph(files: dict[str, str]) -> Graph:
     for fkey, pname, rkey in applications:
         apply(fkey, pname, rkey)
     return g
+
+
+def _methods_include_get(dec: ast.Call) -> bool:
+    for kw in dec.keywords:
+        if kw.arg == "methods" and isinstance(kw.value, (ast.List, ast.Tuple, ast.Set)):
+            return any(
+                isinstance(e, ast.Constant) and isinstance(e.value, str) and e.value.upper() == "GET"
+                for e in kw.value.elts
+            )
+    return False
+
+
+def _is_paged(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """A parameter named page / limit, or one whose Query(...) / Param default aliases to one."""
+    a = fn.args
+    every = a.posonlyargs + a.args + a.kwonlyargs
+    if any(x.arg in PAGED_PARAMS for x in every):
+        return True
+    for default in list(a.defaults) + [d for d in a.kw_defaults if d is not None]:
+        if isinstance(default, ast.Call) and _str_kw(default, "alias") in PAGED_PARAMS:
+            return True
+    for x in every:  # Annotated[int, Query(alias="page")]
+        ann = x.annotation
+        if isinstance(ann, ast.Subscript):
+            for sub in ast.walk(ann):
+                if isinstance(sub, ast.Call) and _str_kw(sub, "alias") in PAGED_PARAMS:
+                    return True
+    return False
 
 
 def _opt_out_above(lines: list[str], first_line: int) -> str | None:
@@ -635,6 +669,8 @@ def main(argv: list[str] | None = None) -> int:
     for f in findings:
         shown = ", ".join(sorted(f.keys))
         print(f"  {f.route.file}:{f.route.line} {f.route.func}  GET {shown}  ({f.problem})")
+        if any(k.startswith("?") for k in f.keys):
+            print("    its served path could not be worked out from the source: only the opt-out passes it")
         print(
             f"::error file={f.route.file},line={f.route.line},title=AI coverage::"
             f"GET {shown}: {f.problem}"

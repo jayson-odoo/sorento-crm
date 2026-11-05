@@ -241,7 +241,13 @@ def test_registration_of_a_different_route_does_not_cover(repo, capsys):
 def test_route_string_outside_entitydef_does_not_count(repo, capsys):
     root, base = repo
     _append(root, PARTS, NEW_PAGED_ROUTE)
-    _write(root, {REGISTRY: 'NOTE = "GET /api/v1/widgets/parts/archived"\n'})
+    _write(
+        root,
+        {
+            REGISTRY: 'NOTE = "GET /api/v1/widgets/parts/archived"\n'
+            'OTHER = Other(routes=("GET /api/v1/widgets/parts/archived",))\n'
+        },
+    )
     _commit(root, "string but no EntityDef")
     code, _out = _run(root, base, capsys)
     assert code == 1
@@ -319,6 +325,54 @@ def test_non_paged_get_is_ignored(repo, capsys):
     _commit(root, "non-paged GET")
     code, out = _run(root, base, capsys)
     assert code == 0, out
+
+
+def test_api_route_with_get_counts_and_without_get_does_not(repo, capsys):
+    root, base = repo
+    _append(
+        root,
+        PARTS,
+        """
+
+        @router.api_route("/search", methods=["POST"])
+        def search_parts(page: int = 1):
+            return []
+
+
+        @router.api_route("/browse", methods=["GET", "HEAD"])
+        def browse_parts(page: int = 1):
+            return []
+        """,
+    )
+    _commit(root, "api_route")
+    code, out = _run(root, base, capsys)
+    assert code == 1
+    assert "/api/v1/widgets/parts/browse" in out and "/search" not in out
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        'page_number: int = Query(1, alias="page")',
+        'size: Annotated[int, Query(alias="limit")] = 20',
+    ],
+)
+def test_paging_parameter_under_an_alias_counts(repo, capsys, signature):
+    root, base = repo
+    _append(
+        root,
+        PARTS,
+        f"""
+
+        @router.get("/aliased")
+        def list_aliased({signature}):
+            return []
+        """,
+    )
+    _commit(root, "aliased paging")
+    code, out = _run(root, base, capsys)
+    assert code == 1, out
+    assert "/api/v1/widgets/parts/aliased" in out
 
 
 def test_added_post_with_page_is_ignored(repo, capsys):
