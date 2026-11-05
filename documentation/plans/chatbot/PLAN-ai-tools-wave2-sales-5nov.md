@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 2: security and code review fixed, own-only targets added). Track: full (RBAC, one
+Status: Review (round 3: crew browser pass on d430fe3c fixed; targets and commission passed there). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -72,6 +72,40 @@ module reaches the agent through the registry, one `crm_query` tool, no per-scre
   in between / in refused; a date filter without a `period` window refused; `below_target` on the raw figures;
   `ratio_missing` exposed (target and % empty then); dealer subject without the ledger marker. The mutations that
   survived round 1 (replaced zeroing, points ratio, truncation, between bound, ne) now fail the suite.
+
+## Crew pass on d430fe3c (5 Nov) and round 3
+
+Targets and commission passed against the screens. Fixed:
+
+1. Sales report gate. `crm_report_ask` refuses a staff member without the reveal `sales_orders.sales_report`
+   (`api/v1/order_management/report_ask.py:45` GRANT, :432 staff keys, :439 granted, :448 staff decision, :460 the
+   refusal), which a staff member holds through `sales.reports.view` (`contact_field_reveal_service.py:105`,
+   `staff_reveal_keys` :114). The registry now reads the same keys: `query._slugs` adds `reveal:<key>` for every
+   `staff_reveal_keys` entry (`assistant_registry/query.py:70`), `billing_document`'s money fields need
+   `reveal:sales_orders.sales_report` and `outstanding` needs `reveal:sales_orders.outstanding`
+   (`finance.py:41,49,50,53`), and every total or grouping of `billing_document` and `sales_order` needs the sales
+   report reveal (`EntityDef.aggregate_permission`, `query.require_aggregate` :80, applied at :500 and
+   `computed.py:304`). `crm_query` runs in process as the staff member alone, so its keys are the report's
+   `staff_reveal_keys_for` over that one user. Test G1 asserts both answer the same for the same user.
+2. Active customers: `customer` applies the Customers list's Active filter (`order_service.py:3740`, `is_active`)
+   unless the query names `is_active`, and says "Inactive customers excluded."
+3. Tokens: the entity index (hint, fields, relation name fields) is in `crm_query`'s description
+   (`query_tools.entity_index`), so a question is one query call with no describe round; `loop.MAX_QUERY_CALLS = 4`
+   crm_query/crm_describe calls per turn, the fifth is denied with "answer with what you have".
+4. The panel table has a blank line before and after it (`query_tools.render_card`), or markdown shows raw "|".
+5. Payout per agent: the `sales_target` hint says no period filter = the current periods and per agent = group by
+   agent, sum payout; the default window was already today's periods (T4).
+
+Tokens on three sample questions (OpenAI input_tokens; this round's parts measured, the rest of each call, system
+prompt and MCP catalogue, taken as 18.5k so that "before" reproduces crew's measured ~77k list turn):
+
+| Question | Before (d430fe3c) | After |
+|---|---|---|
+| commission payout for agent A last month | 4 calls, 79.3k | 2 calls, 39.5k |
+| who is below target this quarter | 4 calls, 79.3k | 2 calls, 39.4k |
+| sales last month per agent | 4 calls, 79.0k | 2 calls, 39.5k |
+
+Per call the in-process schemas grow 662 -> 1,100 tokens (the index); one describe round saved is ~19k.
 
 ## Token measurement (task item 5)
 
