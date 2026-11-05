@@ -202,6 +202,8 @@ export function ProjectsGrid({
       },
       {
         id: 'next_action',
+        // An accessor only so TanStack lets the header sort (manualSorting: the server orders).
+        accessorFn: (row) => row.next_action_date ?? '',
         // Derived server-side from the earliest open task, and sorted there too
         // (`_list_order_by`, project_service.py): by that due date, open-but-undated
         // after it, "Nothing open" last. Never sorted in the browser, which would order
@@ -250,6 +252,7 @@ export function ProjectsGrid({
       },
       {
         id: 'flags',
+        accessorFn: (row) => row.is_critical,
         // Sorted server-side on Critical; descending puts Critical first.
         header: ({ column }) => <DataGridColumnHeader title="Flags" column={column} />,
         size: 110,
