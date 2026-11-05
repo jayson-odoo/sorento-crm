@@ -67,3 +67,52 @@ def test_r4_control_characters_are_stripped(api, world, db):
     res = _put(api, pid, "<p>a\u0000b</p>")
     assert res.status_code == 200, res.text
     assert res.json()["price_tag_description"] == "<p>ab</p>"
+
+
+# --------------------------------------------------------------------------- R14 (security re-check)
+def _stored(db, pid):
+    from app.models.base import company_scope
+    from app.models.product import Product
+
+    db.expire_all()
+    with company_scope(db, None):
+        return db.query(Product.price_tag_description).filter(Product.id == pid).scalar()
+
+
+def test_r14_the_sanitised_value_is_capped_at_5000_like_the_combo(api, world, db):
+    """R14: 19,997 raw characters of `"` pass the raw 20000 limit but escape to ~120k stored; the
+    stored value is capped at 5000 (422) and the row stays as it was."""
+    pid = world["product"](f"{STEM}-R14A", price_tag_description="<p>old</p>")
+    db.commit()
+
+    nasty = "<p>" + '"' * 19990 + "</p>"
+    assert len(nasty) == 19997
+    res = _put(api, pid, nasty)
+    assert res.status_code == 422, res.text[:300]
+    assert _stored(db, pid) == "<p>old</p>"
+
+
+def test_r14_a_value_at_the_cap_saves_and_one_over_it_does_not(api, world, db):
+    pid = world["product"](f"{STEM}-R14B")
+    db.commit()
+    at_cap = "<p>" + "a" * 4993 + "</p>"
+    assert len(at_cap) == 5000
+    assert _put(api, pid, at_cap).status_code == 200
+    assert _put(api, pid, "<p>" + "a" * 4994 + "</p>").status_code == 422
+    assert _stored(db, pid) == at_cap
+
+
+def test_r14_a_stored_value_over_the_cap_still_reads_back(api, world, db):
+    """R14: the raw 20000 limit lives on the write schemas only, never on a response model, so a
+    row that already holds 25,000 characters does not turn the product page or the list into an
+    error."""
+    pid = world["product"](f"{STEM}-R14C", price_tag_description="a" * 25_000)
+    db.commit()
+
+    detail = api.get(f"/api/v1/master-data/products/{pid}")
+    assert detail.status_code == 200, detail.text[:300]
+    assert len(detail.json()["price_tag_description"]) == 25_000
+
+    listed = api.get("/api/v1/master-data/products/", params={"query": f"{STEM}-R14C"})
+    assert listed.status_code == 200, listed.text[:300]
+    assert [row["id"] for row in listed.json()["data"]] == [pid]
