@@ -170,6 +170,7 @@ export function EscalateDialog({
               <Label htmlFor="escalate-need-by">Need by</Label>
               <DatePicker
                 id="escalate-need-by"
+                portal
                 value={date ? parseDateInput(date) : undefined}
                 onChange={(next) => setDate(next ? formatLocalDateToYyyyMmDd(next) : '')}
               />
