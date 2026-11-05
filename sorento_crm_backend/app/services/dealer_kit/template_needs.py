@@ -134,3 +134,34 @@ def fit_reason(needs: dict, shape: dict) -> Optional[str]:
     if needs["upgrades"] > shape["upgrades"]:
         return f"Needs {_plural(needs['upgrades'], 'upgrade')}; this combo has {shape['upgrades']}"
     return None
+
+
+def missing_positions(needs: dict, combo, parts) -> list[str]:
+    """What a line still owes the template it prints with, as the form words it (N1).
+
+    ``parts`` is the line's ``(role, product_id)`` pairs (``product_id`` None for an open row).
+    Judged against the template's needs and the combo, not against the rows present: a deleted
+    choice group row owes every pick. A group the template reads one from is satisfied by an open
+    row (marketing lists the options); upgrades are never checked, the tag prints the combo's own.
+    """
+    out: list[str] = []
+    rows = [(role, product_id) for role, product_id in parts]
+    groups = combo_shape(combo)["groups"]
+    for index, need in enumerate(needs.get("groups") or []):
+        if need <= 0 or index >= len(groups):
+            continue
+        role = groups[index]["role"]
+        mine = [row for row in rows if row[0] == role]
+        picked = sum(1 for _role, product_id in mine if product_id)
+        if picked >= need or (mine and need == 1):
+            continue
+        out.append(f"{role}: pick {need - picked} more.")
+    fixed = [
+        p for p in combo.parts or [] if not p.is_upgrade and not p.choice_group
+    ]
+    held = {product_id for _role, product_id in rows if product_id}
+    for part in fixed[: needs.get("fixed") or 0]:
+        if part.part_product_id not in held:
+            code = part.part_product.product_code if part.part_product is not None else ""
+            out.append(f"Template needs {code}.")
+    return out

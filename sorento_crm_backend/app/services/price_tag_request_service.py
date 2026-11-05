@@ -1700,6 +1700,38 @@ Marketing's own work is not part of the form's payload, so it is captured
                 )
 
     @staticmethod
+    def require_template_positions(db: Session, request: PriceTagRequest) -> None:
+        """Refuse an approval whose line lacks what its template prints (N1).
+
+        Judged against the stored template's needs and the line's combo, not the rows present, so
+        deleting a whole choice group row cannot slip through. A line with no combo or a template
+        that reads no such position is never refused. Escalate is unaffected.
+        """
+        from app.models.dealer_kit import TagTemplate
+        from app.models.product_combo import ProductCombo
+        from app.services.dealer_kit import tag_data_service
+        from app.services.dealer_kit.template_needs import missing_positions, template_needs
+
+        for index, _tag, line, _t in tag_data_service.ordered_tags(request):
+            if not line.combo_id or not line.tag_template_id:
+                continue
+            template = db.get(TagTemplate, line.tag_template_id)
+            combo = db.get(ProductCombo, line.combo_id)
+            version = template.published_version if template is not None else None
+            if combo is None or version is None:
+                continue
+            owed = missing_positions(
+                template_needs(version.doc), combo, [(p.role, p.product_id) for p in line.parts or []]
+            )
+            if owed:
+                raise AppException(
+                    status_code=422,
+                    message=" ".join(owed),
+                    detail=f"line:{index}",
+                    code="TEMPLATE_POSITIONS_MISSING",
+                )
+
+    @staticmethod
     def self_approve(
         db: Session, request: PriceTagRequest, doc: dict | None, approver_name: str | None,
     ) -> PriceTagRequest:
@@ -1728,6 +1760,7 @@ Marketing's own work is not part of the form's payload, so it is captured
             )
         if not request.assigned_to_id:
             PriceTagRequestService.require_combo_prices(db, request)
+            PriceTagRequestService.require_template_positions(db, request)
             if not doc:
                 raise AppException(
                     status_code=422,

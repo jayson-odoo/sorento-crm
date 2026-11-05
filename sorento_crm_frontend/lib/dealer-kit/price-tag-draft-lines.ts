@@ -637,6 +637,7 @@ function isCheckMessage(message: string): boolean {
     message === EMPTY_LINE ||
     message === MISSING_TAG_TEMPLATE ||
     message === 'No tag template yet.' ||
+    message.startsWith('Template needs ') ||
     /^No combo (list|selling) price\.$/.test(message) ||
     / is discontinued\.$/.test(message) ||
     /: pick \d+ more\.$/.test(message)
