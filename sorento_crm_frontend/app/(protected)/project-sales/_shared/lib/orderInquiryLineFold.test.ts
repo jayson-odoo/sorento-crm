@@ -640,7 +640,7 @@ describe('OI-RESERVE-ANY-ROW owner (b): ORDER and DELAY both live on one line, e
   });
 });
 
-describe('OI-RESERVE-ANY-ROW crew: one action on one line makes one request, on the primary row', () => {
+describe('OI-RESERVE-ANY-ROW crew: one action on one line asks once for the line', () => {
   const both = [
     row({ id: 'used', so_line_id: 'sol-1', qty: '55', redirected_to_pool: true }),
     row({ id: 'order', so_line_id: 'sol-1', qty: '22' }),
@@ -653,7 +653,7 @@ describe('OI-RESERVE-ANY-ROW crew: one action on one line makes one request, on 
     expect(reserveRowsOfLines(both, (r) => picked.has(r.id)).map((r) => r.id)).toEqual(['order']);
   });
 
-  it('picking only the DELAY row still sends the line once, on its primary', () => {
+  it('picking only the DELAY row still sends the line once, on its buy row', () => {
     expect(reserveRowsOfLines(both, (r) => r.id === 'delay').map((r) => r.id)).toEqual(['order']);
   });
 
@@ -667,5 +667,37 @@ describe('OI-RESERVE-ANY-ROW crew: one action on one line makes one request, on 
 
   it('two ticked lines send one row each', () => {
     expect(reserveRowsOfLines(both, () => true).map((r) => r.id)).toEqual(['order', 'other']);
+  });
+});
+
+describe('OI-RESERVE-ANY-ROW review R1: a line split over several ORDER rows asks for each', () => {
+  const split = [
+    row({ id: 'a', so_line_id: 'sol-1', qty: '10' }),
+    row({ id: 'b', so_line_id: 'sol-1', qty: '12' }),
+  ];
+
+  it('both raised ORDER rows of the line are sent', () => {
+    expect(reserveRowsOfLines(split, () => true).map((r) => r.id)).toEqual(['a', 'b']);
+  });
+
+  it('after A is requested, B is still sent (A is not primary-locked)', () => {
+    const rows = [{ ...split[0], reserve_state: 'requested' } as OrderInquiryWorklistRow, split[1]];
+    expect(reserveRowsOfLines(rows, () => true).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(reserveRowsOfLines(rows, (r) => r.id === 'b').map((r) => r.id)).toEqual(['b']);
+  });
+
+  it('a Done ORDER row is left out; a line with nothing reservable sends its primary', () => {
+    const done = [row({ id: 'x', so_line_id: 'sol-1', state: 'actioned' })];
+    expect(reserveRowsOfLines([...done, row({ id: 'y', so_line_id: 'sol-1' })], () => true).map((r) => r.id)).toEqual(['y']);
+    expect(reserveRowsOfLines(done, () => true).map((r) => r.id)).toEqual(['x']);
+  });
+
+  it('two live notice rows and no buy row: one row, the picked one', () => {
+    const notices = [
+      row({ id: 'adv', so_line_id: 'sol-1', verb: 'ADVANCE' }),
+      row({ id: 'dly', so_line_id: 'sol-1', verb: 'DELAY' }),
+    ];
+    expect(reserveRowsOfLines(notices, (r) => r.id === 'dly').map((r) => r.id)).toEqual(['dly']);
+    expect(reserveRowsOfLines(notices, () => true)).toHaveLength(1);
   });
 });

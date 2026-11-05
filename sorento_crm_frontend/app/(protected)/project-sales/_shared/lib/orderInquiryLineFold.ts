@@ -234,10 +234,12 @@ export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
 }
 
 /**
- * OI-RESERVE-ANY-ROW (crew, 5 Nov): ONE request per line per action. The lines among
- * `allRows` that carry a picked row each give their primary row (`pickPrimary`: the
- * reserve-bearing row, else the most urgent buy row, else the first live row), so a line whose
- * ORDER and DELAY rows are both live never asks twice.
+ * OI-RESERVE-ANY-ROW (crew, 5 Nov): what one "Request CS to reserve" sends for the lines among
+ * `allRows` that carry a picked row. A line with reservable live buy rows sends those (the
+ * picked ones when any are, else all of them: a line split over several ORDER rows asks for
+ * each, as before). A line with none sends ONE row, so a DELAY beside another notice never
+ * asks twice: the picked one, else the line's primary. A line with nothing reservable sends
+ * its primary, so the caller's eligibility check can say why.
  */
 export function reserveRowsOfLines(
   allRows: OrderInquiryWorklistRow[],
@@ -245,8 +247,18 @@ export function reserveRowsOfLines(
 ): OrderInquiryWorklistRow[] {
   return foldInquiryLines(allRows)
     .filter((line) => line.liveRows.some(isPicked))
-    .map((line) => line.primary)
-    .filter(isLiveInquiryRow);
+    .flatMap((line) => {
+      const open = line.liveRows.filter(isReservableInquiryRow);
+      const buy = open.filter((row) => isInquiryBuyRow(row.verb));
+      if (buy.length > 0) {
+        const picked = buy.filter(isPicked);
+        return picked.length > 0 ? picked : buy;
+      }
+      if (open.length > 0) {
+        return [open.find(isPicked) ?? (open.includes(line.primary) ? line.primary : open[0])];
+      }
+      return [line.primary].filter(isLiveInquiryRow);
+    });
 }
 
 /**
