@@ -276,7 +276,7 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
     assert body["companyCode"] == "SRT"
     assert body["header"]["docDate"] in myt_today_candidates()
     assert body["expectedLastModified"] == "2026-10-21T08:00:00"
-    assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update"
+    assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-edit"
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id
     assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
@@ -359,3 +359,152 @@ def _new_product(db, world):
     from tests.test_project_so_draft import _product, _uid
 
     return _product(db, f"ZZT-NEW-{_uid()[:6]}")
+
+
+# --------------------------------------------------------------------------- fix round 1: steps, retry, waiting
+
+
+def _second_issue_with_new_item(db, world):
+    """R2 accepted on top of an R1 already in AutoCount; R2 adds one new item code."""
+    from app.models.projects import ProjectQuotationLine
+
+    _mark_sent(db, world)
+    p_new = _new_product(db, world)
+    db.add(
+        ProjectQuotationLine(
+            id=str(__import__("uuid").uuid4()), company_id=world.company_id, version_id=world.version.id,
+            product_id=p_new.id, product_code_snapshot=p_new.product_code, description_snapshot="New item",
+            unit_price=Decimal("75.00"), quantity=Decimal("3"), uom="UNIT",
+            line_total=Decimal("225.00"), sort_order=9,
+        )
+    )
+    issue2 = add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    return issue2, p_new
+
+
+def _answer_update(fake_ss, world, *, post=None, held_extra=()):
+    held = _read_back(world) + list(held_extra)
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held))
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (
+        200, done_body(doc_key=QT_KEY, details=held, last_modified="2026-11-06T09:00:00")
+    )
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = post or (
+        200, done_body(doc_key=QT_KEY, details=held, last_modified="2026-11-06T09:05:00")
+    )
+
+
+def test_a_partial_update_says_what_was_made_and_never_nothing_was_changed(api, fake_ss):
+    client, db, world = api
+    issue2, _p = _second_issue_with_new_item(db, world)
+    _answer_update(fake_ss, world, post=(422, refused_body("ITEM_NOT_FOUND", "Item is not in AutoCount")))
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"].startswith("Quantity and price changes were made. ") or body["message"].startswith(
+        "The quotation header was updated. "
+    )
+    assert "AutoCount refused the added lines: Item is not in AutoCount." in body["message"]
+    assert "Nothing was changed" not in body["message"]
+    db.refresh(world.document)
+    assert world.document.autocount_edit_issue_id == issue2.id
+    assert world.document.autocount_lines_issue_id is None
+    assert world.document.autocount_issue_id != issue2.id
+    assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
+
+
+def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key(api, fake_ss):
+    client, db, world = api
+    issue2, p_new = _second_issue_with_new_item(db, world)
+    _answer_update(fake_ss, world, post=(422, refused_body("ITEM_NOT_FOUND", "Item is not in AutoCount")))
+    client.post(_url(world))
+    _answer_update(fake_ss, world)
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "done"
+    assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the PATCH step is done and is not sent again"
+    first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
+    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"] == (
+        f"crm-qt-{world.document.id}-{issue2.id}-update-lines"
+    )
+    assert first.content == second.content
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id == issue2.id
+
+
+def test_a_press_after_a_complete_update_is_409_already_with_no_call(api, fake_ss):
+    client, db, world = api
+    _second_issue_with_new_item(db, world)
+    _answer_update(fake_ss, world)
+    assert client.post(_url(world)).status_code == 200
+    calls = len(fake_ss.calls)
+
+    again = client.post(_url(world))
+
+    assert again.status_code == 409 and again.json()["message"] == ALREADY
+    assert len(fake_ss.calls) == calls
+
+
+def test_waiting_rows_keep_the_issue_unsent_so_needs_update_stays_true(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    issue2 = add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    _answer_update(fake_ss, world, held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)])
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "done" and "ZZT-OLD-CODE" in str(body["waiting"])
+    db.refresh(world.document)
+    assert world.document.autocount_issue_id != issue2.id, "needs-update must stay true while rows wait"
+    assert world.document.autocount_edit_issue_id == issue2.id
+
+
+def test_a_second_press_with_only_waiting_rows_left_makes_no_write_call(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    _answer_update(fake_ss, world, held_extra=[detail(4, "ZZT-OLD-CODE", "1", "10.00", "BRW-BB", None, 4)])
+    client.post(_url(world))
+    writes = len(fake_ss.writes())
+
+    body = client.post(_url(world)).json()
+
+    assert len(fake_ss.writes()) == writes, "no line edits and no header change: no PATCH"
+    assert "ZZT-OLD-CODE" in str(body["waiting"])
+
+
+def test_a_recovered_answer_writes_nothing_to_the_quotation(api, fake_ss):
+    client, db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, {**_created(world), "outcome": "recovered"})
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] != "done"
+    db.refresh(world.document)
+    assert world.document.autocount_doc_key is None and world.document.autocount_issue_id is None
+
+
+def test_a_bad_doc_key_never_reaches_a_path(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    world.document.autocount_doc_key = "5001/../x"
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+
+    response = client.post(_url(world))
+
+    assert response.status_code == 409
+    assert fake_ss.calls == []
+
+
+def test_ss_messages_are_capped_at_500_characters(api, fake_ss):
+    client, _db, world = api
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (422, refused_body("X", "y" * 900))
+
+    body = client.post(_url(world)).json()
+
+    assert len(body["message"]) < 600
