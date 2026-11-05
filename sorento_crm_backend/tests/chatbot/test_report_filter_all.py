@@ -30,7 +30,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID
 from tests.chatbot.test_chat_state_parser_input import _fresh_prompt_cache  # noqa: F401 - fixture
 from tests.chatbot.test_report_ask_lane import console_no_grant  # noqa: F401 - fixture
-from tests.chatbot.test_report_semantic_carry import _ent, _ran, _v, rbot, world  # noqa: F401 - fixtures + helpers
+from tests.chatbot.test_report_semantic_carry import _ent, _pick_of, _ran, _v, rbot, world  # noqa: F401 - fixtures + helpers
 from tests.chatbot.test_report_totals_filters import (  # noqa: F401 - fixtures + helpers
     _HELD_WORDS,
     _KINDS,
@@ -375,7 +375,7 @@ def test_u5b_a_company_this_message_typed_is_never_read_as_an_echo() -> None:
 
 _PLANS = __import__("pathlib").Path(__file__).resolve().parents[3] / "documentation" / "plans" / "chatbot"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
-CANDIDATE_MD5 = "e9421dede66c100a5f75db1db7c6a1e2"
+CANDIDATE_MD5 = "5a58739ad208e2a2bc4d081c9087816c"
 
 
 def _md5(path) -> str:
@@ -514,3 +514,69 @@ def test_g5_a_report_object_turn_never_reads_its_names_as_a_supplier() -> None:
     assert engine._supplier_scope(state, state, report, ["order"], True, prep) is None
     plain = {"report_ask": None, "entities": [supplier]}
     assert "supplier" in (engine._supplier_scope(state, state, plain, ["order"], True, prep) or {}).get("line", ""), "lock"
+
+
+# ------------------------------------------------------------------------------------------ crew gate 6 Nov (round 4)
+
+
+def _sorento_debtor_type(rbot) -> None:
+    """The 1104 copy (a production snapshot) holds a SORENTO debtor type (`autocount_debtor_type`, AutoCount data)."""
+    from tests.chatbot.test_sales_account_type_lane import _ledger
+
+    db = rbot.console.session_factory()
+    try:
+        _ledger(db, DEFAULT_COMPANY_ID, "ZZT SORENTO TYPE LEDGER [A/C IV]", "SORENTO")
+        db.commit()
+    finally:
+        db.close()
+
+
+def _said(raw: str, said_as: str, typed: str) -> dict[str, Any]:
+    ent = _ent(raw, "brand", raw.upper(), None)
+    ent.update(said_as=said_as, said_as_text=typed)
+    return ent
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+@pytest.mark.parametrize("order", ["company-first", "brand-first"])
+def test_h8_a_name_said_once_as_company_and_once_as_brand_is_both(rbot, world, order) -> None:
+    """Crew gate step 8 "Sorento company, brands Sorento and Cabana" kept CABANA only; step 14 "Sorento company, Sorento
+    brand" kept the brand only. The parser's two entities for the word say company and brand: both (owner rule)."""
+    sorento, _m = world
+    _hold(rbot, sorento, group_by="channel")
+    ents = [_said("Sorento", "company", "company"), _said("Sorento", "brand", "brands")]
+    if order == "brand-first":
+        ents.reverse()
+    ra = _ra2(None, basis="delivered", group_by="channel", company=sorento, brands=["Sorento", "Cabana"], **SEP)
+    v = _follow("sales_analysis", ra, *ents, _ent("Cabana", "brand", "CABANA", "brands"), group_by="channel",
+                sales_company=sorento, **SEPF)
+    text, calls = rbot.say(v, "Sorento company, brands Sorento and Cabana")
+    assert _ran(calls), f"H8: nothing ran: {text!r}"
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID, f"H8 company: {args}"
+    assert len(args.get("brand_ids") or []) >= 2, f"H8 both brands (SORENTO + CABANA): {args}"
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+def test_h15_a_company_name_that_is_also_a_debtor_type_asks_company_or_brand_once_and_brand_is_every_company(
+    rbot, world
+) -> None:
+    """Crew gate R2 / steps 15-16 (1104): "Sorento total sale delivered September 2026" asked "brand, account type or
+    company?" (the SORENTO debtor type), and the brand answer still showed Company Sorento. A name that is one of the
+    contact's own companies and a brand is asked company or brand once (owner rule); the brand answer is the brand
+    across every company."""
+    from tests.chatbot.test_report_totals_filters import _cob_turn, _kind_slot, _option_position, _ra3
+
+    _sorento_debtor_type(rbot)
+    text, calls = _cob_turn(rbot, _ra3(["Sorento"], basis="delivered", **SEP))
+    assert not _ran(calls), _ran(calls)
+    slot = _kind_slot(rbot)
+    assert slot.get("asking") == "kind" and "account type" not in text.lower(), f"H15: {text!r}"
+    assert "company" in text.lower() and "brand" in text.lower(), text
+    pos = _option_position(slot, "brand")
+    ra = _ra3([], basis="delivered", brands=["SORENTO"], **SEP)
+    v = _v("sales_ranking", ra, basis="delivered", continuation=True, entity_op="reuse", domain_in_message=False,
+           open_question_answer=_pick_of(pos), reference_positions=[pos], **SEPF)
+    text, calls = rbot.say(v, "brand")
+    args = _args(calls)
+    assert args.get("brand_ids") and not args.get("company"), f"H16: the brand answer set the company: {args}"

@@ -1647,6 +1647,7 @@ def _account_plan(
         (e.get("hint"), e.get("word")): e for e in jsc.array(parse_output.get("report_ask_kind")) if isinstance(e, dict)
     }
     numbers = [w for w in acct_words if w.casefold() not in stored]
+    own = [c for c in list(companies or ()) if isinstance(c, (list, tuple)) and len(c) >= 3]
     decided: list[tuple[str, str, str, str]] = []  # (how, hint, word, stored type); how: brand | account | ask
     for hint, word in [("brand", w) for w in brand_words] + [("account_type", w) for w in acct_words]:
         entry = entries.get((hint, word))
@@ -1659,11 +1660,14 @@ def _account_plan(
         elif entry.get("said") is True:
             how = "brand" if hint == "brand" else "account"
         elif _is_brand(db, word, typed):
-            how = "ask" if ask else "brand"
+            # REPORT-FILTER-ALL (crew gate R2 / step 15, 1104 holds a SORENTO debtor type): a brand that is also one of
+            # the contact's own companies is that company or its brand (owner: a bare Sorento asks company or brand once,
+            # `_company_or_brand`), never a third reading as the debtor type of the same name. Read from the data.
+            company_name = len(own) > 1 and {_squash(word), _squash(typed)} & {_squash(c[i]) for c in own for i in (1, 2)}
+            how = "brand" if company_name else "ask" if ask else "brand"
         else:
             how = "account"
         decided.append((how, hint, word, kind))
-    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) >= 3]
     ids = [str(c[0]) for c in own]
     said_company = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
     if said_company:  # a named company narrows the book to that company
@@ -3400,11 +3404,24 @@ def _word_kinds(
     both_open = bool(owed_words) and bool(extras.get("kind_both"))  # M2: the company-or-brand question is open
     either = {fold(w) for w in jsc.array(ask.get("company_or_brand"))} - {""}
     named: dict[str, dict[str, Any]] = {}
+    every: dict[str, list[dict[str, Any]]] = {}  # REPORT-FILTER-ALL: each entity of this message naming the word
     for e in jsc.array(verdict.get("entities")):
         if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type"):
-            for key in ("raw", "canonical_code"):
-                if fold(e.get(key)):
-                    named.setdefault(fold(e.get(key)), e)
+            for key in {fold(e.get(k)) for k in ("raw", "canonical_code")} - {""}:
+                named.setdefault(key, e)
+                every.setdefault(key, []).append(e)
+
+    def said_as_of(key: str) -> Any:
+        """The `said_as` of the word over every entity of this message that names it (crew gate steps 8 / 14: "Sorento
+        company, brands Sorento and Cabana" names it twice, once each way): company and brand together are both. With
+        `said_as_text` defined, an entity's `said_as` counts only beside its typed word (HT1-13)."""
+        said = {
+            e.get("said_as") for e in every.get(key, ())
+            if e.get("said_as") in SAID_AS and (not said_as_text or jsc.js_string(e.get("said_as_text") or "").strip())
+        }
+        if "both" in said or {"company", "brand"} <= said:
+            return "both"
+        return next(iter(said)) if len(said) == 1 else None
     out: list[tuple[str, str]] = []
     lists = [
         (key, default) for key, default in (
@@ -3426,10 +3443,8 @@ def _word_kinds(
         if not key or key in {fold(w) for w, _how, _e, _s in out}:
             continue
         entity = named.get(key)
-        said_as = (entity or {}).get("said_as") if {key, fold((entity or {}).get("raw"))} & own else None
-        typed = jsc.js_string((entity or {}).get("said_as_text") or "").strip()
-        if said_as_text and not typed:
-            said_as = None  # HT1-13: no word of the message says it, so it is not said (the HT1-5 / ON-16 rules ask)
+        # HT1: read only for one of the contact's companies; HT1-13: an entity whose typed word is empty says nothing.
+        said_as = said_as_of(key) if {key, fold((entity or {}).get("raw"))} & own else None
         if picked and key in owed:
             how = picked
         elif said_as in SAID_AS:

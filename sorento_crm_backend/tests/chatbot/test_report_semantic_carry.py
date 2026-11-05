@@ -1308,22 +1308,18 @@ def test_r4_3_the_held_customer_resolves_to_the_exact_name_row_among_many_partia
 
 
 def test_r5_1_a_newer_object_replaces_the_word_an_open_question_asked_even_with_a_declared_pick(rbot, world) -> None:
-    """Console step 11: the kind question is open for SORENTO (a brand and an account type); the reply's object holds
-    CERAMIC only, and the parse also declares an answer to the open question. SORENTO is not added back."""
+    """Console step 11: the kind question is open for CABANA (a brand and an account type); the reply's object holds
+    CERAMIC only, and the parse also declares an answer to the open question. CABANA is not added back. (The word was
+    SORENTO until REPORT-FILTER-ALL round 4: a name that is one of the contact's companies is no longer asked as an
+    account type, so the open question is set up on a brand-and-type word that is no company.)"""
     sorento, _mocha = world
-    db = rbot.console.session_factory()
-    try:
-        _ledger(db, DEFAULT_COMPANY_ID, "ZZT LEDGER FIVE [A/C V]", "SORENTO")
-        db.commit()
-    finally:
-        db.close()
     first = _v(
-        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Sorento"], **Y),
-        _ent(AGENT_1, "sales_agent"), _ent("sorento", "brand", "SORENTO", None), basis="invoiced", sales_company=sorento,
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana"], **Y),
+        _ent(AGENT_1, "sales_agent"), _ent("cabana", "brand", "CABANA", None), basis="invoiced", sales_company=sorento,
         domain_in_message=True, **YR,
     )
-    text, calls = rbot.say(first, "sorento sales for agent a sorento 2026 invoiced")
-    assert not calls and "brand, account type or company?" in text, f"setup: want the three-option question for SORENTO (Sorento is held), got {text or calls!r}"
+    text, calls = rbot.say(first, "cabana sales for agent a sorento 2026 invoiced")
+    assert not calls and "brand or account type?" in text.lower(), f"setup: want the kind question for CABANA, got {text or calls!r}"
     reply = _v(
         "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y),
         _ent("ceramic", "account_type", None, "account type"), entity_op="replace_combine", continuation=True,
@@ -1332,7 +1328,7 @@ def test_r5_1_a_newer_object_replaces_the_word_an_open_question_asked_even_with_
     text, calls = rbot.say(reply, "for ceramic account type")
     ran = _ran(calls)
     assert ran, f"R5-1: the reply did not run: {text!r}"
-    assert ran[0].get("account_types") == ["CERAMIC"], f"R5-1: want CERAMIC only, got {ran[0].get('account_types')} (SORENTO added back from the open question)"
+    assert ran[0].get("account_types") == ["CERAMIC"], f"R5-1: want CERAMIC only, got {ran[0].get('account_types')} (CABANA added back from the open question)"
     assert not ran[0].get("brand_ids"), f"R5-1: {ran[0].get('brand_ids')}"
 
 
@@ -1458,36 +1454,39 @@ def test_r5_1b_the_asked_word_carries_when_the_answer_names_no_word_of_its_own(r
     assert ran[0].get("account_types") == ["CABANA"], f"R5-1b: want account type CABANA, got {ran[0].get('account_types')}"
 
 
-def _sorento_is_a_brand_and_an_account_type(rbot_: Routing) -> None:
+def _tile_is_a_brand_and_an_account_type(rbot_: Routing) -> None:
+    """ZZTILE: a brand and a stored account type of the contact's company, and no company's name."""
     db = rbot_.console.session_factory()
     try:
-        _ledger(db, DEFAULT_COMPANY_ID, "ZZT LEDGER FIVE [A/C V]", "SORENTO")
+        db.add(Brand(id=str(uuid.uuid4()), brand_code="ZZTILE", brand_name="Zztile", company_id=DEFAULT_COMPANY_ID))
+        _ledger(db, DEFAULT_COMPANY_ID, "ZZT LEDGER TILE [A/C VI]", "ZZTILE")
         db.commit()
     finally:
         db.close()
 
 
 def test_r5_1c_a_carried_brand_does_not_drop_the_asked_account_type(rbot, world) -> None:
-    """A settled brand (Cabana) is held; "and sorento" opens the kind question; the reply "account type" declares the pick
-    and the object carries Cabana but leaves sorento out. Both run: brand Cabana and account type SORENTO."""
+    """A settled brand (Cabana) is held; "and zztile" opens the kind question; the reply "account type" declares the pick
+    and the object carries Cabana but leaves zztile out. Both run: brand Cabana and account type ZZTILE. (SORENTO until
+    REPORT-FILTER-ALL round 4: a company's name is no longer asked as an account type.)"""
     sorento, _mocha = world
-    _sorento_is_a_brand_and_an_account_type(rbot)
+    _tile_is_a_brand_and_an_account_type(rbot)
     text, calls = rbot.say(_cabana_ask(sorento, bucket="brands", kind_said="brand"), "sorento sales for agent a cabana brand 2026 invoiced")
     assert _ran(calls) and _ran(calls)[0].get("brand_ids"), f"setup: {text!r}"
     add = _v(
-        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana", "Sorento"], **Y),
-        _ent("sorento", "brand", "SORENTO", None), basis="invoiced", sales_company=sorento, continuation=True, **YR,
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana", "Zztile"], **Y),
+        _ent("zztile", "brand", "ZZTILE", None), basis="invoiced", sales_company=sorento, continuation=True, **YR,
     )
-    text, calls = rbot.say(add, "and sorento")
-    assert not _ran(calls) and "brand, account type or company?" in text, f"setup: want the three-option question (Sorento is held), got {text!r}"
+    text, calls = rbot.say(add, "and zztile")
+    assert not _ran(calls) and "brand or account type?" in text.lower(), f"setup: want the kind question, got {text!r}"
     reply = _v(
         "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana"], **Y),
         entity_op="reuse", continuation=True, open_question_answer=_pick_of(2), **YR,
     )
     text, calls = rbot.say(reply, "account type")
     ran = _ran(calls)
-    assert ran and ran[0].get("account_types") == ["SORENTO"] and len(ran[0].get("brand_ids") or []) == 1, (
-        f"R5-1c: want brand Cabana and account type SORENTO, got types {ran[0].get('account_types') if ran else None} "
+    assert ran and ran[0].get("account_types") == ["ZZTILE"] and len(ran[0].get("brand_ids") or []) == 1, (
+        f"R5-1c: want brand Cabana and account type ZZTILE, got types {ran[0].get('account_types') if ran else None} "
         f"brands {ran[0].get('brand_ids') if ran else text!r}"
     )
 
