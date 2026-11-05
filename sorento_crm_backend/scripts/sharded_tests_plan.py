@@ -16,11 +16,11 @@ tests.scm.conftest by name), tests/test_migration_*.py serially on one runner wi
 `serial_ddl` tests of both pools.
 
 SHARDS. A full run uses --main-shards / --scm-shards / --vitest-shards runners. A delta run sizes
-each backend pool by its share of the full pool's committed `.test_durations` seconds
-(`ceil(full_shards * selected / full)`, a file with no recorded test at the median file), so a
+each backend pool by its share of the full pool's estimated seconds (`file_costs`:
+`.test_durations` plus the untimed test functions; `ceil(full_shards * selected / full)`), so a
 delta shard is as long as a full one and no constant needs calibrating twice. A pool with no
-file gets no runner. pytest-split then balances the files of a pool across its runners by the
-same durations (`--splits N --group i`), each runner a separate job.
+file gets no runner. `pack` then puts whole files onto the pool's runners, longest first onto
+the least loaded, written as <pool>-<i>.txt; each runner is a separate job.
 
 Writes into --out: main.txt, scm.txt, migrations.txt, main_ddl.txt / scm_ddl.txt (the files of
 each pool that name the `serial_ddl` marker; backend-relative test files),
@@ -40,7 +40,6 @@ import json
 import math
 import os
 import re
-import statistics
 import sys
 from pathlib import Path
 
@@ -86,27 +85,56 @@ def _text(path: Path) -> str:
         return ""
 
 
-def file_seconds(root: Path) -> dict[str, float]:
+DEF_RE = re.compile(r"^\s*(?:async\s+)?def (test_\w+)", re.M)
+
+
+def file_costs(root: Path, files: list[str]) -> dict[str, float]:
+    """Estimated seconds per test file: its recorded `.test_durations` seconds plus, for each
+    test function the file defines that has no recorded run, the file's own mean per recorded
+    function (the suite's mean for a file with none). The committed file held 26k of ~56k tests
+    on 5 Nov 2026, so recorded seconds alone put 25.6k of an estimated 61k main-pool seconds on
+    the files that happened to be timed."""
     try:
         durations = json.loads((root / ".test_durations").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    per_file: dict[str, float] = {}
+        durations = {}
+    rec: dict[str, list] = {}
     for node, secs in durations.items():
-        f = node.split("::", 1)[0]
-        per_file[f] = per_file.get(f, 0.0) + float(secs)
-    return per_file
+        f, _, rest = node.partition("::")
+        entry = rec.setdefault(f, [0.0, set()])
+        entry[0] += float(secs)
+        entry[1].add(rest.split("[", 1)[0])
+    n_fn = sum(len(e[1]) for e in rec.values())
+    mean = (sum(e[0] for e in rec.values()) / n_fn) if n_fn else 1.0
+    costs = {}
+    for f in files:
+        secs, fns = rec.get(f, (0.0, set()))
+        per = secs / len(fns) if fns else mean
+        missing = set(DEF_RE.findall(_text(root / f))) - fns
+        costs[f] = max(secs + len(missing) * per, 0.1)
+    return costs
 
 
-def shards_for(selected: list[str], full: list[str], full_shards: int, seconds: dict[str, float]) -> int:
-    """Runners for a delta pool: its share of the full pool's recorded seconds."""
+def pack(files: list[str], n: int, costs: dict[str, float]) -> list[list[str]]:
+    """Whole files onto n shards, longest first onto the least loaded (LPT). Whole files keep
+    `--dist loadfile` and each module's fixtures on one runner; pytest-split's per-test
+    least_duration spread every file over all 36 shards and made each one slower than the
+    contiguous chunks (run 41982964838)."""
+    shards: list[list[str]] = [[] for _ in range(n)]
+    load = [0.0] * n
+    for f in sorted(files, key=lambda f: (-costs[f], f)):
+        i = min(range(n), key=lambda k: (load[k], k))
+        shards[i].append(f)
+        load[i] += costs[f]
+    return [sorted(s) for s in shards]
+
+
+def shards_for(selected: list[str], full: list[str], full_shards: int, costs: dict[str, float]) -> int:
+    """Runners for a delta pool: its share of the full pool's estimated seconds."""
     if not selected:
         return 0
-    known = [seconds[f] for f in full if f in seconds]
-    median = statistics.median(known) if known else 1.0
-    cost = lambda files: sum(seconds.get(f, median) for f in files)  # noqa: E731
-    total = cost(full) or 1.0
-    return max(1, min(full_shards, math.ceil(full_shards * cost(selected) / total)))
+    total = sum(costs[f] for f in full) or 1.0
+    return max(1, min(full_shards, math.ceil(full_shards * sum(costs[f] for f in selected) / total)))
 
 
 def plan(mode: str, root: Path, *, base: str | None = None, head: str | None = None,
@@ -124,14 +152,15 @@ def plan(mode: str, root: Path, *, base: str | None = None, head: str | None = N
         key = rds.tree_sha(root.resolve().parent, head, rds.BACKEND_PREFIX) if head else None
         res = rds.select(changed, root, cache_key=key, cache_dir=None)
         tests, vitest, related = list(res.tests), res.vitest, list(res.vitest_files)
-        seconds = file_seconds(root)
+        costs = file_costs(root, full_main + full_scm)
         sel_main, sel_scm, _ = pools(tests)
-        n_main = shards_for(sel_main, full_main, main_shards, seconds)
-        n_scm = shards_for(sel_scm, full_scm, scm_shards, seconds)
+        n_main = shards_for(sel_main, full_main, main_shards, costs)
+        n_scm = shards_for(sel_scm, full_scm, scm_shards, costs)
         reason = (f"delta {(base or '')[:10]}..{(head or '')[:10]}: backend {res.backend}, "
                   f"{len(tests)} of {res.total} test files ({res.backend_reason}); "
                   f"vitest {res.vitest} ({res.vitest_reason})")
     main, scm, migrations = pools(tests)
+    costs = file_costs(root, main + scm)
     # The serial runner's `-m serial_ddl` passes collect only the files that name the marker
     # (it is applied in the test files themselves): collecting the whole main pool to run its
     # ~110 serial_ddl tests took 949 s of the serial runner's 21 min (run 41977895392).
@@ -140,6 +169,8 @@ def plan(mode: str, root: Path, *, base: str | None = None, head: str | None = N
     return {
         "main": main, "scm": scm, "migrations": migrations, "vitest_related": related,
         "main_ddl": ddl(main), "scm_ddl": ddl(scm),
+        "main_shard_files": pack(main, n_main, costs) if n_main else [],
+        "scm_shard_files": pack(scm, n_scm, costs) if n_scm else [],
         "main_n": n_main, "scm_n": n_scm, "vitest_n": n_vitest, "vitest": vitest,
         "serial": bool(main or scm or migrations), "reason": reason,
     }
@@ -165,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     for name in ("main", "scm", "migrations", "vitest_related", "main_ddl", "scm_ddl"):
         (out / f"{name}.txt").write_text("".join(f"{t}\n" for t in p[name]), encoding="utf-8")
+    for pool in ("main", "scm"):
+        for i, files in enumerate(p[f"{pool}_shard_files"], start=1):
+            (out / f"{pool}-{i}.txt").write_text("".join(f"{t}\n" for t in files), encoding="utf-8")
     shards = lambda n: json.dumps(list(range(1, n + 1)))  # noqa: E731
     lines = [
         f"main_shards={shards(p['main_n'])}", f"scm_shards={shards(p['scm_n'])}",

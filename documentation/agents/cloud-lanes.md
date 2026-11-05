@@ -240,8 +240,8 @@ gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=fu
 `select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
 test file (the nightly), mode=delta is the selector above. The backend runs one runner per
 (pool, shard): the main tree on 36 runners, `tests/scm/` on 3, and one `serial` runner (alembic
-heads == 1, `alembic upgrade head`, the migration tests, both pools' `serial_ddl`); pytest-split
-balances each pool by the committed `.test_durations`. A delta pool gets its share of the full
+heads == 1, `alembic upgrade head`, the migration tests, both pools' `serial_ddl`); the planner packs whole
+files onto each pool's runners by estimated seconds (`.test_durations` plus untimed functions). A delta pool gets its share of the full
 pool's recorded seconds in runners (a 10% delta gets 4 of 36). vitest: `--shard=i/6` on a full
 run, one runner with `vitest related` + the source guards on a related delta. `summary` posts one
 `crew-tests:` comment (per-shard results, failing ids, wall clock, billable minutes) on

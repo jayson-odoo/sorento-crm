@@ -196,7 +196,7 @@ def test_the_backend_shards_run_on_postgres_and_redis_with_deploys_flags():
     assert backend["services"]["redis"]["image"].startswith("redis:")
     assert backend["strategy"]["fail-fast"] is False
     run = "\n".join(str(s.get("run", "")) for s in backend["steps"])
-    for flag in ("--max-worker-restart 0", "tests._xdist_crash_guard", "--splits", "-m serial_ddl",
+    for flag in ("--max-worker-restart 0", "tests._xdist_crash_guard", '"../plan/$POOL-$SHARD.txt"', "-m serial_ddl",
                  "scripts.bootstrap_env", "max_locks_per_transaction"):
         assert flag in run, flag
     vrun = "\n".join(str(s.get("run", "")) for s in jobs["vitest"]["steps"])
@@ -248,3 +248,24 @@ def test_the_serial_runner_collects_only_the_files_that_name_serial_ddl(tmp_path
     p = stp.plan("full", root)
     assert p["main_ddl"] == ["tests/test_ddl.py"] and p["scm_ddl"] == []
     assert "tests/test_ddl.py" in p["main"]
+
+
+def test_whole_files_are_packed_longest_first_onto_the_least_loaded_shard(tmp_path):
+    shards = stp.pack(["a", "b", "c", "d"], 2, {"a": 10.0, "b": 6.0, "c": 5.0, "d": 1.0})
+    assert sorted(map(sorted, shards)) == [["a", "d"], ["b", "c"]]
+    assert sorted(f for s in shards for f in s) == ["a", "b", "c", "d"]
+
+
+def test_an_untimed_test_function_costs_its_files_mean(tmp_path):
+    root = _tree(tmp_path)
+    (root / "tests" / "test_user.py").write_text("def test_a(): ...\ndef test_b(): ...\n")
+    (root / ".test_durations").write_text(json.dumps({"tests/test_user.py::test_a": 10.0}))
+    assert stp.file_costs(root, ["tests/test_user.py"]) == {"tests/test_user.py": 20.0}
+
+
+def test_the_planner_writes_one_file_list_per_shard(tmp_path):
+    root = _tree(tmp_path)
+    assert stp.main(["--mode", "full", "--backend", str(root), "--out", str(tmp_path / "plan"),
+                     "--main-shards", "2", "--scm-shards", "1"]) == 0
+    listed = (tmp_path / "plan" / "main-1.txt").read_text().split() + (tmp_path / "plan" / "main-2.txt").read_text().split()
+    assert sorted(listed) == sorted((tmp_path / "plan" / "main.txt").read_text().split())

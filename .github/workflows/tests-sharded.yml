@@ -11,8 +11,8 @@
 #             runs everything (tests/nightly_only.txt included); mode=delta runs the affected
 #             tests of <base>..<head> (scripts/release_delta_select.py, never a nightly-only test).
 #   backend   one runner per (pool, shard), pgvector Postgres + Redis service containers, the
-#             same setup and pytest flags as deploy.yml's test-backend; pytest-split balances a
-#             pool's files across its runners by the committed .test_durations. The `serial`
+#             same setup and pytest flags as deploy.yml's test-backend; the planner packs whole
+#             files onto a pool's runners by their estimated seconds. The `serial`
 #             entry runs the migration tests and the serial_ddl tests alone, without xdist.
 #   vitest    full: `vitest run --shard=i/N`; related: `vitest related` + the source guards.
 #   summary   one `crew-tests:` line (passed/failed per shard, failing test ids, wall clock and
@@ -232,14 +232,14 @@ jobs:
           XDIST=(-n auto --dist loadfile --max-worker-restart 0 -p tests._xdist_crash_guard)
           case "$POOL" in
             main|scm)
-              mapfile -t FILES < "../plan/$POOL.txt"
+              # The planner packed whole files onto this runner (sharded_tests_plan.pack):
+              # pytest-split's chunks left the untimed tests together (run 41977895392: main
+              # shards 17.7 to 35.9 min) and its least_duration spread every file over every
+              # runner, repeating each module's setup 36 times (run 41982964838).
+              mapfile -t FILES < "../plan/$POOL-$SHARD.txt"
               echo "$POOL shard $SHARD of $OF over ${#FILES[@]} files"
               cp .test_durations ../durations.base.json
-              # least_duration, not the default duration_based_chunks: the committed
-              # .test_durations held 26k of ~56k tests on 5 Nov, and contiguous chunks put the
-              # untimed tests together (run 41977895392: main shards 17.7 to 35.9 min of pytest).
-              run "$POOL-$SHARD" "${XDIST[@]}" --splits "$OF" --group "$SHARD" --splitting-algorithm least_duration \
-                -m "not serial_ddl" \
+              run "$POOL-$SHARD" "${XDIST[@]}" -m "not serial_ddl" \
                 --store-durations --durations-path .test_durations "${FILES[@]}"
               # The tests THIS shard timed (new or changed keys): the summary merges every
               # shard's into one refreshed .test_durations artifact to commit.
