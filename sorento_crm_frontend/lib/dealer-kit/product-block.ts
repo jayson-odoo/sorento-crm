@@ -19,6 +19,8 @@
 
 import type {
   TagCombo,
+  FeatureIconsLayerProps,
+  TagSpecValue,
   GroupBinding,
   LineTagData,
   ProductSetMemberTagData,
@@ -42,6 +44,7 @@ import {
   imageSourceOf,
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
+import { featureIconsFor, type FeatureIcon } from './feature-icons';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
@@ -80,6 +83,7 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
     case 'product_slot':
     case 'price_badge':
     case 'barcode':
+    case 'feature_icons':
     // Browser finding: the designer's own photo slots are `image` layers
     // (bound via `slot_binding: 'product_image'`), not `product_slot` -
     // they read product data exactly the same way and need the same
@@ -99,6 +103,7 @@ function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
     case 'price_badge':
     case 'barcode':
     case 'image':
+    case 'feature_icons':
       return props.subjectSlot;
     default:
       return undefined;
@@ -1278,6 +1283,8 @@ export interface TagLayerDisplay {
    * layer carries the barcode VALUE itself, not the product code.
    */
   code?: string | null;
+  /** Feature icons: the matched library icons with a signed URL, in display order. */
+  icons?: { id: string; url: string }[];
 }
 
 /**
@@ -1307,6 +1314,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Badge';
     case 'barcode':
       return 'Barcode';
+    case 'feature_icons':
+      return 'Feature icons';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -1350,6 +1359,7 @@ export function layerDisplay(
   layer: TagLayer,
   data: TagBindingData | null | undefined,
   assetUrls: Record<string, string>,
+  featureIcons?: readonly FeatureIcon[],
 ): TagLayerDisplay | undefined {
   switch (layer.props.kind) {
     case 'text': {
@@ -1391,9 +1401,39 @@ export function layerDisplay(
       return text == null ? undefined : { text };
     }
 
+    case 'feature_icons':
+      return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
+
     default:
       return undefined;
   }
+}
+
+/** The specs of a layer's own subject (main product, a part or a combo position). */
+export function subjectSpecs(
+  data: TagBindingData | null | undefined,
+  layer: { props?: TagLayerProps },
+): TagSpecValue[] {
+  const subject = subjectOf(data, layer);
+  if (subject?.kind === 'product') return subject.product.specs ?? [];
+  if (subject?.kind === 'line') return subject.line.specs ?? [];
+  return [];
+}
+
+/** Feature icons for the canvas: matched icons with a signed URL; one without is skipped. */
+function featureIconsDisplay(
+  props: FeatureIconsLayerProps,
+  data: TagBindingData | null | undefined,
+  assetUrls: Record<string, string>,
+  featureIcons: readonly FeatureIcon[] | undefined,
+): { id: string; url: string }[] {
+  const matched = featureIconsFor(subjectSpecs(data, { props }), featureIcons ?? []);
+  const out: { id: string; url: string }[] = [];
+  for (const icon of matched) {
+    const url = assetUrls[icon.id];
+    if (url) out.push({ id: icon.id, url });
+  }
+  return out;
 }
 
 /** PS-SPEC-SHEET: the technical drawing of whatever is bound, or null. */

@@ -127,6 +127,7 @@ export function previewPayload(
     assets: response.assets,
     images: response.images,
     fonts: response.fonts,
+    feature_icons: response.feature_icons,
   });
 }
 

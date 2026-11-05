@@ -14,6 +14,9 @@ import { QueryClient } from '@tanstack/react-query';
  */
 export const KIT_LIBRARY_STALE_MS = 30 * 60 * 1000;
 
+/** Feature icons: the spec-value icon list the designer reads (and a spec save refreshes). */
+export const FEATURE_ICONS_KEY = ['dealer-kit', 'library', 'feature-icons'] as const;
+
 export const kitLibraryClient = new QueryClient({
   defaultOptions: {
     queries: {
