@@ -15,6 +15,7 @@ import uuid
 import pytest
 
 from tests._ac_write_support import (
+    BOOK,
     BASE,
     EDIT,
     VIEW,
@@ -262,7 +263,7 @@ def test_a_done_so_cancel_is_recorded_with_when_and_by_whom(so_api, fake_ss):
     client, db, world = so_api
     put_in_autocount(db, world)
     db.commit()
-    fake_ss.answers[("GET", CAPS)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
     fake_ss.answers[("POST", f"{SO_CREATE_PATH}/{DOC_KEY}/cancel")] = (200, done_body())
 
     assert client.post(f"{BASE}/sales-orders/{world.order.id}/autocount/cancel").status_code == 200
@@ -275,8 +276,9 @@ def test_a_done_so_cancel_is_recorded_with_when_and_by_whom(so_api, fake_ss):
 def test_a_done_quotation_cancel_is_recorded(qt_api, fake_ss):
     client, db, world = qt_api
     world.document.autocount_doc_no, world.document.autocount_doc_key = "QT000777", "5001"
+    world.document.autocount_book = BOOK
     db.commit()
-    fake_ss.answers[("GET", CAPS)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
     fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations/5001/cancel")] = (
         200, done_body(doc_no="QT000777", doc_key=5001)
     )
@@ -307,7 +309,7 @@ def test_the_stale_date_is_in_malaysia_time(stamp, expected):
 
 
 def _cancel_on(fake_ss):
-    fake_ss.answers[("GET", CAPS)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
 
 
 def test_a_second_so_cancel_is_409_already_cancelled_with_no_call(so_api, fake_ss):
@@ -329,6 +331,7 @@ def test_a_second_so_cancel_is_409_already_cancelled_with_no_call(so_api, fake_s
 def test_a_second_quotation_cancel_is_409_already_cancelled_with_no_call(qt_api, fake_ss):
     client, db, world = qt_api
     world.document.autocount_doc_no, world.document.autocount_doc_key = "QT000777", "5001"
+    world.document.autocount_book = BOOK
     db.commit()
     _cancel_on(fake_ss)
     fake_ss.answers[("POST", "/api/v1/autocount/documents/quotations/5001/cancel")] = (

@@ -20,6 +20,8 @@ const apiFetch = vi.fn();
 const listProjectSalesOrders = vi.fn();
 let permissions = new Set<string>();
 let switchOn = true;
+let bookNamed: string | null = 'db3';
+let cancelOn = false;
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -180,6 +182,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissions = new Set([WRITE]);
   switchOn = true;
+  bookNamed = 'db3';
+  cancelOn = false;
   apiFetch.mockImplementation(async (url: string) => {
     const path = String(url);
     if (path.includes('settings/app-config')) {
@@ -188,8 +192,8 @@ beforeEach(() => {
     if (path.includes('autocount-write/capabilities')) {
       const open = { enabled: true, reason: null };
       const waiting = { enabled: false, reason: 'Waiting for AutoCount' };
-      const ops = { create_doc: open, edit_doc: open, add_line: open, delete_line: waiting, cancel_doc: waiting };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops });
+      const ops = { create_doc: open, edit_doc: open, add_line: open, delete_line: waiting, cancel_doc: cancelOn ? open : waiting };
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
     }
     return json({});
   });
@@ -205,6 +209,32 @@ describe('Decide > Cancel in AutoCount on the sales order list', () => {
     const item = await screen.findByRole('menuitem', { name: /Cancel in AutoCount/ });
     expect(item).toHaveAttribute('aria-disabled', 'true');
     expect(document.body.textContent).toContain('Waiting for AutoCount');
+  });
+
+  it('greys it with "Waiting for AutoCount" while SS names no book, even when cancel is on (R8)', async () => {
+    cancelOn = true;
+    bookNamed = null;
+    renderPanel([row(IN_AUTOCOUNT)]);
+    await tick('Select SO397450');
+    await settled();
+
+    openDecide();
+
+    const item = await screen.findByRole('menuitem', { name: /Cancel in AutoCount/ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(document.body.textContent).toContain('Waiting for AutoCount');
+  });
+
+  it('lets Cancel run once SS names the book and cancel is on', async () => {
+    cancelOn = true;
+    renderPanel([row(IN_AUTOCOUNT)]);
+    await tick('Select SO397450');
+    await settled();
+
+    openDecide();
+
+    const item = await screen.findByRole('menuitem', { name: /Cancel in AutoCount/ });
+    await waitFor(() => expect(item).not.toHaveAttribute('aria-disabled', 'true'));
   });
 
   it('greys it with "Already cancelled in AutoCount" for a cancelled order', async () => {

@@ -20,6 +20,7 @@ import pytest
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.project_so import ProjectSalesOrderLine
 from tests._ac_write_support import (
+    BOOK,
     BASE,
     DOC_KEY,
     DTL_1,
@@ -314,7 +315,7 @@ def test_edit_doc_off_in_the_feed_keeps_the_edits_waiting_with_its_reason(api, f
     client, db, world = api
     amendment, _line3 = _setup_mixed(db, world)
     fake_ss.answers[("GET", "/api/v1/autocount/write-capabilities")] = (
-        200, {"capabilities": caps_with(edit_doc=(False, "WRITE_DISABLED"))}
+        200, {"book": BOOK, "capabilities": caps_with(edit_doc=(False, "WRITE_DISABLED"))}
     )
 
     body = client.post(_url(amendment)).json()

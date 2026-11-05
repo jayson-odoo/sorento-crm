@@ -483,6 +483,8 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     # A done cancel in AutoCount: when, and by whom (a user id; no FK, it is a marker).
     autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
     autocount_cancelled_by = Column(String(100), nullable=True)
+    # The AutoCount book the key belongs to (R8): SS's name at create, or the adopted source_ref's.
+    autocount_book = Column(String(40), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the

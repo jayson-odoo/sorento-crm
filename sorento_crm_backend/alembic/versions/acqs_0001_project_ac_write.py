@@ -40,7 +40,8 @@ def upgrade() -> None:
             "ADD COLUMN IF NOT EXISTS autocount_doc_key VARCHAR(80), "
             "ADD COLUMN IF NOT EXISTS autocount_last_modified VARCHAR(64), "
             "ADD COLUMN IF NOT EXISTS autocount_cancelled_at TIMESTAMP, "
-            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100)"
+            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100), "
+            "ADD COLUMN IF NOT EXISTS autocount_book VARCHAR(40)"
         )
     )
     bind.execute(
@@ -59,7 +60,8 @@ def upgrade() -> None:
             "ADD COLUMN IF NOT EXISTS autocount_edit_issue_id UUID, "
             "ADD COLUMN IF NOT EXISTS autocount_lines_issue_id UUID, "
             "ADD COLUMN IF NOT EXISTS autocount_cancelled_at TIMESTAMP, "
-            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100)"
+            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100), "
+            "ADD COLUMN IF NOT EXISTS autocount_book VARCHAR(40)"
         )
     )
     bind.execute(
@@ -105,7 +107,7 @@ def downgrade() -> None:
     bind.execute(
         sa.text(
             "ALTER TABLE projects.quotation_documents "
-            "DROP COLUMN IF EXISTS autocount_cancelled_by, DROP COLUMN IF EXISTS autocount_cancelled_at, "
+            "DROP COLUMN IF EXISTS autocount_book, DROP COLUMN IF EXISTS autocount_cancelled_by, DROP COLUMN IF EXISTS autocount_cancelled_at, "
             "DROP COLUMN IF EXISTS autocount_lines_issue_id, DROP COLUMN IF EXISTS autocount_edit_issue_id, "
             "DROP COLUMN IF EXISTS autocount_issue_id, DROP COLUMN IF EXISTS autocount_last_modified, "
             "DROP COLUMN IF EXISTS autocount_doc_key, DROP COLUMN IF EXISTS autocount_doc_no"
@@ -114,7 +116,7 @@ def downgrade() -> None:
     bind.execute(
         sa.text(
             "ALTER TABLE projects.sales_orders "
-            "DROP COLUMN IF EXISTS autocount_cancelled_by, DROP COLUMN IF EXISTS autocount_cancelled_at, "
+            "DROP COLUMN IF EXISTS autocount_book, DROP COLUMN IF EXISTS autocount_cancelled_by, DROP COLUMN IF EXISTS autocount_cancelled_at, "
             "DROP COLUMN IF EXISTS autocount_last_modified, DROP COLUMN IF EXISTS autocount_doc_key"
         )
     )

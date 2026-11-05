@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.fn();
 let permissions = new Set<string>();
 let switchOn = true;
+let bookNamed: string | null = 'db3';
 
 const getProjectSalesOrder = vi.fn();
 const previewAmendment = vi.fn();
@@ -224,6 +225,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissions = new Set([WRITE]);
   switchOn = true;
+  bookNamed = 'db3';
   apiFetch.mockImplementation(async (url: string) => {
     const path = String(url);
     if (path.includes('settings/app-config')) {
@@ -232,7 +234,7 @@ beforeEach(() => {
     if (path.includes('autocount-write/capabilities')) {
       const open = { enabled: true, reason: null };
       const ops = { create_doc: open, edit_doc: open, add_line: open };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops });
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
     }
     return json({});
   });
@@ -242,13 +244,16 @@ describe('Update in AutoCount on a published amendment', () => {
   it('counts only the rows the server marks autocount_sendable', async () => {
     await openAmendment();
 
-    expect(await screen.findByRole('button', { name: 'Update in AutoCount (3)' })).toBeEnabled();
+    const update = await screen.findByRole('button', { name: 'Update in AutoCount (3)' });
+    // Greyed until SS names the book (R8), then enabled.
+    await waitFor(() => expect(update).toBeEnabled());
     // The export stays beside it.
     expect(screen.getByRole('button', { name: 'Export for AutoCount' })).toBeEnabled();
   });
 
-  it('is greyed "Waiting for AutoCount" for an adopted order while SS names no book', async () => {
-    await openAmendment({ adopted: true });
+  it('is greyed "Waiting for AutoCount" while SS names no book, adopted or not (R8)', async () => {
+    bookNamed = null;
+    await openAmendment({ adopted: false });
 
     const button = await screen.findByRole('button', { name: 'Update in AutoCount (3)' });
     expect(button).toBeDisabled();

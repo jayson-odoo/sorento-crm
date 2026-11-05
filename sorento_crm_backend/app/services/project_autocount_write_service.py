@@ -303,13 +303,18 @@ class ProjectAutocountWriteService:
             out[group] = ops
         return out, book
 
-    def _require_book_if_adopted(self, order: ProjectSalesOrder, book: Optional[str], adopted: bool) -> None:
-        """Owner ruling R7: an adopted order waits until SS names a book equal to its own."""
-        if not adopted:
-            return
-        _key, own, _ = self._draft.autocount_key_info(order)
-        if not book or not own or book.strip().lower() != own.strip().lower():
+    @staticmethod
+    def _require_book(own: Optional[str], named: Optional[str]) -> None:
+        """Owner ruling R8: every Update / Cancel waits unless the record's stored (or, for an
+        adopted order, derived) book equals the book SS names now. NULL on either side waits."""
+        if not own or not named or own.strip().lower() != named.strip().lower():
             raise AppException(status_code=409, message=WAITING, code="ac_waiting")
+
+    def _order_book(self, order: ProjectSalesOrder) -> Optional[str]:
+        """The book an order's key belongs to: stored at create, else the adopted source_ref's."""
+        if order.autocount_doc_key:
+            return order.autocount_book
+        return self._draft.autocount_key_info(order)[1]
 
     # ------------------------------------------------------------ answers
 
@@ -533,6 +538,8 @@ class ProjectAutocountWriteService:
                 code="so_export_blocked",
             )
         body = self.build_sales_order_body(order)
+        # The book SS names at write time is the book the document lands in (R8).
+        book = self.read_capabilities(order.company_id)[1]
         answer = self._call(
             lambda c: c.write(
                 "documents/sales-orders", body, idempotency_key=f"crm-pso-{order.id}-create"
@@ -543,6 +550,7 @@ class ProjectAutocountWriteService:
             document = answer.get("document") or {}
             order.autocount_doc_no = result["doc_no"]
             order.autocount_doc_key = self._key_of(answer)
+            order.autocount_book = book
             order.autocount_last_modified = document.get("LastModified")
             self.db.flush()
         return result
@@ -570,8 +578,6 @@ class ProjectAutocountWriteService:
                 code="ac_not_in_autocount",
             )
         doc_key = _safe_key(doc_key)
-        if adopted:
-            self._require_book_if_adopted(order, self.read_capabilities(order.company_id)[1], adopted)
         accepted, _declined = ProjectSODeltaService(self.db)._decided_rows(
             amendment, amendment.delta_json or {}
         )
@@ -589,6 +595,8 @@ class ProjectAutocountWriteService:
             done["waiting"] = waiting
             return done
 
+        # R8: nothing is written unless SS names the book this order's key belongs to.
+        self._require_book(self._order_book(order), self.read_capabilities(order.company_id)[1])
         caps = self.capabilities(order.company_id)["sales_orders"]
         if not caps["edit_doc"]["enabled"]:
             reason = caps["edit_doc"]["reason"] or WAITING
@@ -626,6 +634,9 @@ class ProjectAutocountWriteService:
         final["doc_no"] = final["doc_no"] or order.autocount_doc_no
         final["message"] = f"{final['doc_no']} updated in AutoCount"
         final["waiting"] = waiting
+        if not order.autocount_doc_key:
+            # An adopted order's first done update: keep its key and the book it came from.
+            order.autocount_book = _own_book
         order.autocount_doc_key = order.autocount_doc_key or doc_key
         order.autocount_last_modified = (answer.get("document") or {}).get("LastModified") or expected
         amendment.autocount_edit_sent_at = datetime.utcnow()
@@ -708,8 +719,7 @@ class ProjectAutocountWriteService:
         if order.autocount_cancelled_at is not None:
             raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
         doc_key = _safe_key(doc_key)
-        if adopted:
-            self._require_book_if_adopted(order, self.read_capabilities(order.company_id)[1], adopted)
+        self._require_book(self._order_book(order), self.read_capabilities(order.company_id)[1])
         cap = self.capabilities(order.company_id)["sales_orders"]["cancel_doc"]
         if not cap["enabled"]:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
@@ -790,6 +800,9 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=NOT_ACCEPTED, code="ac_not_accepted")
         if document.autocount_doc_key and document.autocount_issue_id == issue.id:
             raise AppException(status_code=409, message=ALREADY, code="ac_already_sent")
+        if document.autocount_doc_key:
+            _safe_key(document.autocount_doc_key)
+            self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
 
         customer = self._recipient(document)
         debtor = self._debtor_code(customer)
@@ -833,6 +846,7 @@ class ProjectAutocountWriteService:
             "header": header,
             "lines": [_wire_line(l) for l in payload.lines],
         }
+        book = self.read_capabilities(document.company_id)[1]
         answer = self._call(
             lambda c: c.write(
                 "documents/quotations",
@@ -843,6 +857,7 @@ class ProjectAutocountWriteService:
         result = self._interpret(answer, verb="created")
         if self._is_done(answer):
             self._store_sent(document, issue, answer)
+            document.autocount_book = book
             result["skipped"] = payload.skipped
             result["exploded"] = payload.exploded
         return result
@@ -1012,6 +1027,7 @@ class ProjectAutocountWriteService:
         if document.autocount_cancelled_at is not None:
             raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
         key = _safe_key(document.autocount_doc_key)
+        self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
         cap = self.capabilities(document.company_id)["quotations"]["cancel_doc"]
         if not cap["enabled"]:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")

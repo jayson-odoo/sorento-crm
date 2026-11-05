@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const apiFetch = vi.fn();
 let permissions = new Set<string>();
 let switchOn = true;
+let bookNamed: string | null = 'db3';
 let documentData: Record<string, unknown> = {};
 
 vi.mock('next/navigation', () => ({
@@ -94,6 +95,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   permissions = new Set([WRITE]);
   switchOn = true;
+  bookNamed = 'db3';
   apiFetch.mockImplementation(async (url: string) => {
     const path = String(url);
     if (path.includes('settings/app-config')) {
@@ -102,13 +104,23 @@ beforeEach(() => {
     if (path.includes('autocount-write/capabilities')) {
       const open = { enabled: true, reason: null };
       const ops = { create_doc: open, edit_doc: open, add_line: open };
-      return json({ enabled: switchOn, sales_orders: ops, quotations: ops });
+      return json({ enabled: switchOn, sales_orders: ops, quotations: ops, sales_orders_book: bookNamed });
     }
     return json({});
   });
 });
 
 describe('Quotation page header, AutoCount write actions', () => {
+  it('greys Update with "Waiting for AutoCount" while SS names no book (R8)', async () => {
+    bookNamed = null;
+    renderHeader(doc({ in_autocount: true, autocount_doc_no: 'QT000777', autocount_needs_update: true }));
+
+    const update = await screen.findByRole('button', { name: /Update in AutoCount/ });
+    await settled();
+    expect(update).toBeDisabled();
+    expect(update).toHaveAttribute('title', 'Waiting for AutoCount');
+  });
+
   it('offers Create in AutoCount on an accepted quotation not yet in AutoCount', async () => {
     renderHeader(doc());
 
@@ -119,7 +131,8 @@ describe('Quotation page header, AutoCount write actions', () => {
   it('offers Update in AutoCount when it is in AutoCount and a later accepted issue is unsent', async () => {
     renderHeader(doc({ in_autocount: true, autocount_doc_no: 'QT000777', autocount_needs_update: true }));
 
-    expect(await screen.findByRole('button', { name: /Update in AutoCount/ })).toBeEnabled();
+    const update = await screen.findByRole('button', { name: /Update in AutoCount/ });
+    await waitFor(() => expect(update).toBeEnabled());
     expect(screen.queryByRole('button', { name: /Create in AutoCount/ })).not.toBeInTheDocument();
   });
 

@@ -20,6 +20,7 @@ from decimal import Decimal
 import pytest
 
 from tests._ac_write_support import (
+    BOOK,
     BASE,
     QT_CREATE_PATH,
     EDIT,
@@ -87,6 +88,7 @@ def _mark_sent(db, world, issue=None):
     world.document.autocount_doc_key = str(QT_KEY)
     world.document.autocount_last_modified = "2026-10-21T08:00:00"
     world.document.autocount_issue_id = (issue or world.issue).id
+    world.document.autocount_book = BOOK
     db.commit()
 
 

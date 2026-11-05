@@ -1213,6 +1213,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     autocount_lines_issue_id = Column(UUID(as_uuid=False), nullable=True)
     autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
     autocount_cancelled_by = Column(String(100), nullable=True)
+    autocount_book = Column(String(40), nullable=True)
 
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True

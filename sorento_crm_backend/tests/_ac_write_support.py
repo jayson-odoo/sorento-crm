@@ -79,6 +79,8 @@ SWITCHED_OFF_HERE = "Changes to AutoCount are switched off here"
 UNREACHABLE_TEXT = "Could not reach AutoCount"
 PENDING_TEXT = "Sent; AutoCount has not confirmed yet. It will show after the next sync."
 
+#: The AutoCount book the fake Shared Service names and the stored records belong to (R8).
+BOOK = "db3"
 DOC_KEY = 12008
 DTL_1 = 12009
 DTL_2 = 12010
@@ -176,7 +178,7 @@ class FakeSS:
     def __init__(self) -> None:
         self.calls: list[httpx.Request] = []
         self.answers: dict[tuple[str, str], Any] = {
-            ("GET", CAPS_PATH): (200, {"capabilities": default_capabilities()}),
+            ("GET", CAPS_PATH): (200, {"book": BOOK, "capabilities": default_capabilities()}),
         }
         self.transport_error: Optional[Exception] = None
 
@@ -358,6 +360,7 @@ def put_in_autocount(db, world: SoWorld) -> None:
     order.so_id = core.id
     order.autocount_doc_no = "SO412345"
     order.autocount_doc_key = str(DOC_KEY)
+    order.autocount_book = BOOK
     order.autocount_last_modified = LAST_MODIFIED
     order.status = SO_STATUS_AMENDED
     db.flush()

@@ -18,6 +18,7 @@ import pytest
 
 from tests._pg_fixture import blank_session
 from tests._ac_write_support import (
+    BOOK,
     BASE,
     CAPS_PATH,
     DOC_KEY,
@@ -133,7 +134,7 @@ def test_an_unreachable_gateway_disables_every_op_with_could_not_reach(svc, fake
 def test_a_feed_that_turns_cancel_on_is_believed(svc, fake_ss):
     """No hard-coded off (U14): the day SS ships cancel_doc, the CRM follows the feed."""
     service, company_id = svc
-    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
 
     caps = service.capabilities(company_id)
 
@@ -176,7 +177,7 @@ def test_so_cancel_with_cancel_doc_on_posts_the_cancel(so_api, fake_ss):
     client, db, world = so_api
     put_in_autocount(db, world)
     db.commit()
-    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
     cancel_path = f"{SO_CREATE_PATH}/{DOC_KEY}/cancel"
     fake_ss.answers[("POST", cancel_path)] = (200, done_body())
 
@@ -194,7 +195,7 @@ def test_so_cancel_shows_a_refusal_as_autocounts_answer(so_api, fake_ss):
     client, db, world = so_api
     put_in_autocount(db, world)
     db.commit()
-    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
     fake_ss.answers[("POST", f"{SO_CREATE_PATH}/{DOC_KEY}/cancel")] = (
         422, refused_body("HAS_DELIVERIES", "Document has delivered lines")
     )
@@ -220,6 +221,7 @@ def test_so_cancel_of_an_order_not_in_autocount_is_409_with_no_call(so_api, fake
 def _qt_in_autocount(db, world) -> None:
     world.document.autocount_doc_no = "QT000777"
     world.document.autocount_doc_key = "5001"
+    world.document.autocount_book = BOOK
     world.document.autocount_last_modified = "2026-10-21T08:00:00"
     world.document.autocount_issue_id = world.issue.id
     db.commit()
@@ -244,7 +246,7 @@ def test_quotation_cancel_with_cancel_doc_off_is_409_ac_waiting_and_makes_no_wri
 def test_quotation_cancel_with_cancel_doc_on_posts_the_cancel(qt_api, fake_ss):
     client, db, world = qt_api
     _qt_in_autocount(db, world)
-    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
     cancel_path = f"{QT_CREATE_PATH}/5001/cancel"
     fake_ss.answers[("POST", cancel_path)] = (200, done_body(doc_no="QT000777", doc_key=5001))
 

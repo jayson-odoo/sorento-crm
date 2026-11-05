@@ -5,7 +5,11 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import { Badge } from '@/components/ui/badge';
-import { AUTOCOUNT_ALREADY_CANCELLED_TEXT, AUTOCOUNT_NOT_ACCEPTED_TEXT } from '@/lib/autocountWriteWording';
+import {
+  AUTOCOUNT_ALREADY_CANCELLED_TEXT,
+  AUTOCOUNT_NOT_ACCEPTED_TEXT,
+  AUTOCOUNT_WAITING_TEXT,
+} from '@/lib/autocountWriteWording';
 import { AutocountDecideMenu } from '../../../../_shared/components/AutocountDecideMenu';
 import { AutocountWriteButton } from '../../../../_shared/components/AutocountWriteButton';
 import { AutocountWriteDialog } from '../../../../_shared/components/AutocountWriteDialog';
@@ -94,7 +98,13 @@ function QuotationAutocountActions({
     : createCap && !createCap.enabled
       ? createCap.reason
       : null;
-  const updateReason = editCap && !editCap.enabled ? editCap.reason : null;
+  // R8: an update or cancel waits until SS names the book the record belongs to.
+  const waitingForBook = !capabilities.data?.sales_orders_book?.trim();
+  const updateReason = waitingForBook
+    ? AUTOCOUNT_WAITING_TEXT
+    : editCap && !editCap.enabled
+      ? editCap.reason
+      : null;
 
   return (
     <>
@@ -130,12 +140,14 @@ function QuotationAutocountActions({
             {
               key: 'cancel',
               label: 'Cancel in AutoCount',
-              enabled: !doc.autocount_cancelled && Boolean(cancelCap?.enabled),
+              enabled: !doc.autocount_cancelled && !waitingForBook && Boolean(cancelCap?.enabled),
               reason: doc.autocount_cancelled
                 ? AUTOCOUNT_ALREADY_CANCELLED_TEXT
-                : cancelCap
-                  ? cancelCap.reason
-                  : 'Checking AutoCount…',
+                : waitingForBook
+                  ? AUTOCOUNT_WAITING_TEXT
+                  : cancelCap
+                    ? cancelCap.reason
+                    : 'Checking AutoCount…',
               onSelect: () =>
                 cancel
                   .mutateAsync(documentId)

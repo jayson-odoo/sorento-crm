@@ -108,7 +108,8 @@ def test_an_adopted_order_whose_book_matches_is_allowed(api, fake_ss, named):
     assert fake_ss.to("POST", f"{DOC_PATH}/cancel")
 
 
-def test_a_crm_created_order_is_allowed_with_no_book_in_the_feed(api, fake_ss):
+def test_a_crm_created_order_waits_when_the_feed_names_no_book(api, fake_ss):
+    """R8 replaces R7's "CRM-created unaffected": every update / cancel needs SS's book."""
     client, db, world = api
     put_in_autocount(db, world)
     amendment = add_amendment(db, world, [delay_row(world, world.line2, "2027-01-07")])
@@ -116,8 +117,9 @@ def test_a_crm_created_order_is_allowed_with_no_book_in_the_feed(api, fake_ss):
     _feed(fake_ss, False)
     _answers(fake_ss)
 
-    assert _update(client, amendment).status_code == 200
-    assert _cancel(client, world).status_code == 200
+    for response in (_update(client, amendment), _cancel(client, world)):
+        assert response.status_code == 409 and response.json()["code"] == "ac_waiting"
+    assert [r for r in fake_ss.writes() if r.method != "GET"] == []
 
 
 def test_the_capabilities_route_passes_the_book_through(api, fake_ss):
