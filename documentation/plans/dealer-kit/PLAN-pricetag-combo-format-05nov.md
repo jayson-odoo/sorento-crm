@@ -1,6 +1,6 @@
 # PLAN: Price tag combo format (rich description, LP/SP templates, designer preview image)
 
-Status: Plan (behaviour card + mock in progress; build waits for owner mock approval and PR #2172 merge). Track: TBD (likely full track: migration expected).
+Status: Waiting (card + mock posted as crew-asks 5 Nov; build waits for owner answers, mock approval and PR #2172 merge). Track: full (migration: tag_template.price_type).
 
 Lane: PRICETAG-COMBO-FORMAT.
 
@@ -8,4 +8,4 @@ Owner feedback, 5 Nov 2026: description formatting close to the printed flyer; L
 (tie one template to LP or SP; a product/combo links one or more of each); designer picture uses the existing
 preview function.
 
-Card: `CARD-pricetag-combo-format-05nov.md` (posted as crew-ask, 5 Nov). Mock: `pricetag-combo-format-mock.html` (to follow).
+Card: `CARD-pricetag-combo-format-05nov.md` (posted as crew-ask, 5 Nov). Mock: `pricetag-combo-format-mock.html`.

@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price tag combo format</title>
+<!--
+  PRICETAG-COMBO-FORMAT mock (CARD-pricetag-combo-format-05nov.md, recommendations Q1 a, Q2 a, Q3 a, Q4 a, Q5 a).
+  Static, no data fetch. Real case: combo SRTBF11416 (Bathroom Furniture, white), LP 730 / SP 459, and
+  combo "SRTBF11829 + SRTMCB8083-BL" (LP 2,715 / SP 2,099), from the owner's 5 Nov screenshots.
+
+  Element -> component map (reuse first; NEW only where named):
+  A1. Combo Description box + Bold button + live tag preview
+        app/(protected)/master-data-management/products/[id]/components/ProductCombosSection.tsx
+          TextField (:126-155, components/ui/textarea) gains a Bold toggle (components/ui/toggle, lucide Bold icon,
+          aria-label "Bold") that wraps the selection in ** **; Ctrl/Cmd+B same.
+        Live preview: components/dealer-kit/DesignViewer.tsx fed the combo's tag-data
+          (GET /dealer-kit/products/{host}/tag-data?combo_id=, app/api/v1/dealer_kit/tag_data.py:72-91) with the
+          combo's default template; the same renderer as the request preview and the PDF.
+        Same Bold button on the product's price tag description:
+          .../products/[id]/components/ProductSpecificationsTab.tsx PriceTagDescriptionBlock (:179)
+  A2. Runs on canvas and print (no visible control): NEW lib/dealer-kit/rich-text.ts (parse ** to runs, the ONE
+        parser), used by app/(protected)/dealer-kit/tag-templates/components/KonvaTagLayer.tsx TextContent (:567)
+        and app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx (text spans, never
+        innerHTML); wrapping in the existing textLayerLines becomes run-aware.
+        BE: NEW plain_text() helper for non-tag readers (project_spec_sheet_service.py, combo API consumers).
+  A3. Inspector "Bold text colour" on a text layer
+        app/(protected)/dealer-kit/tag-templates/components/InspectorPanel.tsx text section, the existing
+        ColorPicker (./ColorPicker, usedColours as the colour beside it at :695)
+  B1. Template "Price type" (LP / SP / LP or SP)
+        app/(protected)/dealer-kit/tag-templates/components/TagTemplateDialog.tsx beside Family (:118-125);
+        components/ui/toggle-group, same control as components/dealer-kit/PriceModeToggle.tsx
+        BE: dealer_kit.tag_template.price_type (app/models/dealer_kit.py:705)
+  B2. Combo / product "Price tag templates" with an LP default and an SP default
+        .../products/[id]/components/ComboTemplatesField.tsx + ComboTemplatesPicker.tsx and
+        ProductTagTemplatesSection.tsx (components/common/SearchableMultiSelect, clearable; default star as today)
+        BE: product_tag_template_service.py _replace_links (:271) default check per (owner, price type)
+  B3. Request line: template select filtered by the line's LP/SP; "No SP template linked"
+        components/dealer-kit/PriceTagLinesTable.tsx (template select :184-185, components/common/SearchableSelect;
+        LP/SP toggle from PRICETAG-LPSP); refusal reason via the existing Approve/Submit reason line
+        BE: product_tag_template_service.py pick_template (:104) + line_links (:184) filter by price type
+  B4. Classification dry-run report: NEW scripts/classify_tag_template_price_type.py (dry run default, --apply)
+  C1. Designer eye + one picker for products and combos
+        app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx PreviewEyeButton (:321-356),
+        ProductPickDialog.tsx gains combo rows (options from GET /tag-data/combos,
+        app/(protected)/dealer-kit/services/tagDataService.ts:131); combo pick -> existing handlePreviewCombo (:716);
+        lib/dealer-kit/preview.ts PRODUCT_SLOTS (:54) gains combo_* slots. "Preview combo" select (:4671-4690) removed.
+        Picture: KonvaTagLayer.tsx ImageContent (:460-502), URL from gallery_images (product_images.py:139).
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --dangerbg:#fef2f2; --warn:#b45309; --warnbg:#fffbeb; --sel:#eef4ff; --ok:#047857; --okbg:#ecfdf5; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:960px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; }
+  .row > .grow { flex:1 1 320px; min-width:0; }
+  label.lbl { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+  .field { margin-bottom:12px; }
+  .input { border:1px solid var(--line); border-radius:8px; padding:6px 10px; background:var(--card); color:var(--fg); font-size:13px; min-height:32px; }
+  textarea { width:100%; min-height:220px; border:1px solid var(--line); border-radius:0 0 8px 8px; padding:8px; background:var(--card); color:var(--fg); font:12px/1.5 ui-monospace, monospace; resize:vertical; }
+  .tb { display:flex; gap:4px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; padding:4px; background:var(--bg); }
+  .tbtn { width:28px; height:28px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--fg); font-weight:800; }
+  .tbtn.on { background:var(--sel); border-color:var(--primary); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:4px 10px; font-size:12px; } .seg .on { background:var(--primary); color:#fff; } .seg .off { color:var(--muted); }
+  .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; margin:2px 4px 2px 0; }
+  .chip .t { font-size:10px; font-weight:700; border-radius:4px; padding:0 4px; }
+  .t.lp { background:#e0f2fe; color:#075985; } .t.sp { background:#fde68a; color:#78350f; } .t.ei { background:#e5e7eb; color:#374151; }
+  .star { color:#d97706; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .tablewrap { overflow-x:auto; }
+  .code { font-weight:600; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; }
+  .pill.err { background:var(--dangerbg); color:var(--danger); } .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.ok { background:var(--okbg); color:var(--ok); } .pill.info { background:var(--sel); color:var(--primary); }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn[disabled] { opacity:.5; }
+  .note { background:var(--warnbg); color:var(--warn); border-radius:8px; padding:8px 10px; font-size:12px; margin-top:8px; }
+
+  /* The printed tag (always on white paper, so fixed colours) */
+  .tag { width:260px; max-width:100%; background:#1f4d36; padding:10px; border-radius:4px; color:#111; font-family: Arial, Helvetica, sans-serif; flex:none; }
+  .tag .logo { color:#fff; font:italic 700 16px Georgia, serif; text-align:center; margin-bottom:6px; }
+  .tag .paper { background:#fff; border-radius:2px; padding:8px 10px 10px; }
+  .tag .photo { height:110px; display:flex; align-items:center; justify-content:center; background:#f3f4f6; border-radius:2px; margin-bottom:6px; }
+  .tag .photo.empty { color:#9ca3af; font-size:11px; }
+  .tag .title { color:#1f4d36; font-weight:800; font-size:15px; margin-bottom:4px; }
+  .tag .desc { font-size:10.5px; line-height:1.35; color:#6b7280; white-space:pre-line; }
+  .tag .desc b { color:#111; }
+  .tag .lp { color:#1f7a4d; font-weight:600; font-size:13px; margin-top:8px; }
+  .tag .sp { color:#8b4513; display:flex; align-items:flex-end; gap:4px; margin-top:2px; }
+  .tag .sp .st { display:flex; flex-direction:column; font-weight:800; font-size:11px; line-height:1; padding-bottom:5px; }
+  .tag .sp .amt { font-weight:900; font-size:40px; line-height:1; }
+  .tag .lponly { color:#111; font-weight:800; font-size:30px; margin-top:8px; }
+  .tag .lponly small { font-size:12px; font-weight:700; margin-right:2px; }
+  .tag .ph { border:1px dashed #9ca3af; color:#6b7280; font-size:10px; padding:2px 4px; border-radius:2px; display:inline-block; }
+  .designer { position:relative; display:inline-block; }
+  .eye { position:absolute; top:-10px; right:-10px; width:30px; height:30px; border-radius:999px; background:var(--card); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .eye svg { width:16px; height:16px; }
+  .dialog { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px; max-width:420px; flex:1 1 300px; }
+  .opt { display:flex; justify-content:space-between; gap:8px; padding:8px; border-radius:6px; font-size:13px; }
+  .opt.hl { background:var(--sel); }
+  .arrow { align-self:center; color:var(--muted); font-size:22px; }
+  @media (max-width: 600px) { .arrow { transform:rotate(90deg); width:100%; text-align:center; } }
+</style>
+</head>
+<body>
+<h1>Price tag combo format</h1>
+<p class="muted">Mock for the owner, 5 Nov 2026. Static. Recommendations Q1-Q5 (a). Real case: combo SRTBF11416.</p>
+
+<!-- ============================================================ A1 -->
+<h2>A1. Combo description: Bold button, live tag preview</h2>
+<div class="card">
+  <div class="muted" style="margin-bottom:10px">Product SRTBF11416 &rsaquo; Combos &rsaquo; Bathroom Furniture</div>
+  <div class="row">
+    <div class="grow">
+      <div class="row" style="gap:12px">
+        <div class="field" style="flex:1 1 140px"><label class="lbl">List price (RM)</label><div class="input">730.00</div></div>
+        <div class="field" style="flex:1 1 140px"><label class="lbl">Sell price (RM)</label><div class="input">459.00</div></div>
+      </div>
+      <div class="field">
+        <label class="lbl" for="d1">Description</label>
+        <div class="tb"><button class="tbtn on" aria-label="Bold" title="Bold (Ctrl+B)">B</button></div>
+<textarea id="d1">**SRTBF11416** (CABINET)
+L400xW345xH390mm
+**SRTWB248** (BASIN)
+L430xW360xH150mm
+**MIRROR**
+L400xH500mm
+**SHELF**
+L400xH120mm
+**SRTWT5837**
+(BASIN COLD TAP)
+**SRTW2600**
+(POP UP WASTE)</textarea>
+      </div>
+      <div class="field"><label class="lbl">Free items</label><div class="input"></div></div>
+    </div>
+    <div>
+      <div class="muted" style="margin-bottom:6px">Bathroom Furniture SP (default SP)</div>
+      <div class="tag" aria-label="Tag preview">
+        <div class="logo">Sorento</div>
+        <div class="paper">
+          <div class="photo"><svg width="120" height="96" viewBox="0 0 120 96" aria-label="combo photo"><rect x="30" y="4" width="60" height="40" fill="#e5e7eb" stroke="#9ca3af"/><rect x="22" y="50" width="76" height="40" fill="#fff" stroke="#6b7280"/><rect x="26" y="58" width="68" height="6" fill="#d1d5db"/><rect x="40" y="70" width="40" height="14" fill="#f9fafb" stroke="#9ca3af"/></svg></div>
+          <div class="title">SRTBF11416</div>
+          <div class="desc"><b>SRTBF11416</b> (CABINET)
+L400xW345xH390mm
+<b>SRTWB248</b> (BASIN)
+L430xW360xH150mm
+<b>MIRROR</b>
+L400xH500mm
+<b>SHELF</b>
+L400xH120mm
+<b>SRTWT5837</b>
+(BASIN COLD TAP)
+<b>SRTW2600</b>
+(POP UP WASTE)</div>
+          <div class="lp">LP: RM 730</div>
+          <div class="sp"><span class="st"><span>SP</span><span>RM</span></span><span class="amt">459</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="muted">Saved as text with ** around bold words (no HTML). Canvas, request preview and PDF draw the same runs. Typing &lt;b&gt; prints &lt;b&gt;.</p>
+</div>
+
+<!-- ============================================================ A3 -->
+<h2>A3. Template text layer: Bold text colour</h2>
+<div class="card" style="max-width:420px">
+  <div class="muted" style="margin-bottom:8px">Inspector &rsaquo; Text &rsaquo; bound to Combo description</div>
+  <div class="field"><label class="lbl">Colour</label><span class="chip"><span style="width:14px;height:14px;border-radius:3px;background:#6b7280;display:inline-block"></span>#6B7280</span></div>
+  <div class="field"><label class="lbl">Bold text colour</label><span class="chip"><span style="width:14px;height:14px;border-radius:3px;background:#111111;display:inline-block"></span>#111111</span></div>
+</div>
+
+<!-- ============================================================ B1 -->
+<h2>B1. Template settings: Price type</h2>
+<div class="card" style="max-width:480px">
+  <div class="field"><label class="lbl">Name</label><div class="input">Bathroom Furniture SP</div></div>
+  <div class="field"><label class="lbl">Family</label><div class="input">Combo</div></div>
+  <div class="field"><label class="lbl">Price type</label>
+    <div class="seg" role="group" aria-label="Price type"><span class="off">LP</span><span class="on">SP</span><span class="off">LP or SP</span></div>
+  </div>
+</div>
+
+<!-- ============================================================ B2 -->
+<h2>B2. Combo: price tag templates, one default LP and one default SP</h2>
+<div class="card">
+  <label class="lbl">Price tag templates</label>
+  <div class="input" style="display:flex;flex-wrap:wrap;align-items:center">
+    <span class="chip"><span class="t sp">SP</span>Bathroom Furniture SP <span class="star" title="Default SP">&#9733;</span></span>
+    <span class="chip"><span class="t lp">LP</span>Small Price Tag LP <span class="star" title="Default LP">&#9733;</span></span>
+    <span class="chip"><span class="t lp">LP</span>Bathroom Furniture LP</span>
+    <span class="muted" style="margin-left:4px">Search templates</span>
+  </div>
+</div>
+
+<!-- ============================================================ B3 -->
+<h2>B3. Request lines: template list follows LP / SP</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Item</th><th>Price</th><th>Template</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11416</div><div class="muted">Bathroom Furniture</div></td>
+        <td><div class="seg"><span class="off">LP</span><span class="on">SP</span></div><div class="muted">SP RM 459</div></td>
+        <td><div class="input">Bathroom Furniture SP</div><div class="muted">Offered: SP and LP or SP templates</div></td>
+        <td><button class="btn" aria-label="Preview tag">&#128065;</button></td>
+      </tr>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11416</div><div class="muted">Bathroom Furniture</div></td>
+        <td><div class="seg"><span class="on">LP</span><span class="off">SP</span></div><div class="muted">LP RM 730</div></td>
+        <td><div class="input">Small Price Tag LP</div><div class="muted">Offered: Small Price Tag LP, Bathroom Furniture LP</div></td>
+        <td><button class="btn" aria-label="Preview tag">&#128065;</button></td>
+      </tr>
+      <tr>
+        <td><span class="pill info">Combo</span><div class="code">SRTBF11829 + SRTMCB8083-BL</div></td>
+        <td><div class="seg"><span class="off">LP</span><span class="on">SP</span></div><div class="muted">SP RM 2,099</div></td>
+        <td><span class="pill err">No SP template linked</span></td>
+        <td><button class="btn" aria-label="Preview tag" disabled>&#128065;</button></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+    <button class="btn primary" disabled>Submit</button>
+    <span class="muted">SRTBF11829 + SRTMCB8083-BL: No SP template linked</span>
+  </div>
+  <div class="row" style="margin-top:16px">
+    <div>
+      <div class="muted" style="margin-bottom:6px">Line 2 tag (LP template): no SP block, no LP/SP word</div>
+      <div class="tag">
+        <div class="logo">Sorento</div>
+        <div class="paper">
+          <div class="title">SRTBF11416</div>
+          <div class="desc"><b>SRTBF11416</b> (CABINET)
+L400xW345xH390mm
+<b>SRTWB248</b> (BASIN) ...</div>
+          <div class="lponly"><small>RM</small>730</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ B4 -->
+<h2>B4. Existing templates: classification report (dry run, owner approves)</h2>
+<div class="card">
+  <div class="tablewrap"><table>
+    <thead><tr><th>Template</th><th>Layers say</th><th>Price type</th><th>Check</th></tr></thead>
+    <tbody>
+      <tr><td>Bathroom Furniture SP</td><td>promo badge, list_price text</td><td><span class="t sp chip" style="border:0">SP</span></td><td><span class="pill ok">name agrees</span></td></tr>
+      <tr><td>Small Price Tag LP</td><td>list_price text</td><td><span class="t lp chip" style="border:0">LP</span></td><td><span class="pill ok">name agrees</span></td></tr>
+      <tr><td>(example) Furniture set A5</td><td>price + price_label slots</td><td><span class="t ei chip" style="border:0">LP or SP</span></td><td><span class="pill ok">serves both</span></td></tr>
+      <tr><td>(example) Promo LP</td><td>promo badge</td><td><span class="t sp chip" style="border:0">SP</span></td><td><span class="pill warn">name says LP, layers say SP</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Rows marked "(example)" illustrate the report shape; the real list comes from the dry run.</p>
+</div>
+
+<!-- ============================================================ C -->
+<h2>C. Designer: the eye previews a real combo, picture included</h2>
+<div class="card">
+  <div class="row" style="align-items:flex-start">
+    <div>
+      <div class="muted" style="margin-bottom:10px">Before: nothing picked</div>
+      <div class="designer">
+        <div class="tag">
+          <div class="logo">Sorento</div>
+          <div class="paper">
+            <div class="photo empty">No image</div>
+            <div><span class="ph">{{combo.name}}</span></div>
+            <div style="margin-top:4px"><span class="ph">{{combo.description}}</span></div>
+            <div class="sp"><span class="st" style="color:#dc2626"><span>SP</span><span>RM</span></span></div>
+          </div>
+        </div>
+        <button class="eye" aria-label="Preview with a product or combo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="dialog" role="dialog" aria-label="Preview with">
+      <div style="font-weight:600;margin-bottom:8px">Preview with</div>
+      <div class="input" style="margin-bottom:8px">SRTBF11416</div>
+      <div class="opt hl"><span><span class="pill info">Combo</span> <span class="code">SRTBF11416</span> Bathroom Furniture</span></div>
+      <div class="opt"><span><span class="pill" style="background:var(--bg)">Product</span> <span class="code">SRTBF11416</span> (host product)</span></div>
+      <div class="opt"><span><span class="pill" style="background:var(--bg)">Product</span> <span class="code">SRTBF11416-NEW</span> 6 in 1 Honeycomb Bathroom Furniture Set (White)</span></div>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div>
+      <div class="muted" style="margin-bottom:10px">After: combo SRTBF11416 (not saved on the template)</div>
+      <div class="designer">
+        <div class="tag">
+          <div class="logo">Sorento</div>
+          <div class="paper">
+            <div class="photo"><svg width="120" height="96" viewBox="0 0 120 96" aria-label="combo photo"><rect x="30" y="4" width="60" height="40" fill="#e5e7eb" stroke="#9ca3af"/><rect x="22" y="50" width="76" height="40" fill="#fff" stroke="#6b7280"/><rect x="26" y="58" width="68" height="6" fill="#d1d5db"/><rect x="40" y="70" width="40" height="14" fill="#f9fafb" stroke="#9ca3af"/></svg></div>
+            <div class="title">SRTBF11416</div>
+            <div class="desc"><b>SRTBF11416</b> (CABINET)
+L400xW345xH390mm
+<b>SRTWB248</b> (BASIN)
+L430xW360xH150mm ...</div>
+            <div class="sp"><span class="st"><span>SP</span><span>RM</span></span><span class="amt">459</span></div>
+          </div>
+        </div>
+        <button class="eye" aria-label="Preview with a product or combo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <p class="muted">The picture is the combo photo from the same signed image list the request preview and PDF use. The separate "Preview combo" box above the canvas is gone.</p>
+</div>
+</body>
+</html>
