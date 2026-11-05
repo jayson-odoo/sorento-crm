@@ -1,6 +1,7 @@
 # PLAN: AI-QUERY-CORE (phase 1 of the AI tools standard)
 
-Status: in review 5 Nov 2026 (fix round 1 done, security re-review running). Track: full (multi-company reads, RBAC).
+Status: review done 5 Nov 2026 (two fix rounds; reviewer and security reviewer findings fixed), waiting on the owner's go
+to merge. Track: full (multi-company reads, RBAC).
 Lane AI-QUERY-CORE, PR #2188.
 
 Parent plan: `PLAN-ai-tools-standard-5nov.md` section 4 "QUERY-CORE" (branch `claude/ai-tools-scout-mcp-vea9ka`,
@@ -84,6 +85,8 @@ offered when a console operator acts for someone else (an aggregate cannot be in
   offered off the panel (`UserRead.available`). Owner can relax this.
 - **Offer rule:** the tools are offered to a user holding at least one registered entity's view or own slug
   (`query_tools.ANY_ENTITY`), and not when a console operator acts for someone else (`linked_only`).
+- **Complaint product codes:** the header lists every line's code and the screen cuts it to the contact's brands,
+  so `product_code` is `whole_document` too.
 - **Lookup module:** a relation's target module is checked; a lookup carries the module of the screen showing it.
 - `crm_query`'s schema is kept small (shapes in the description, items left open) for the token budget.
 
