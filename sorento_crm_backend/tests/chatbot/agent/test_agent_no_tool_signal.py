@@ -150,9 +150,11 @@ def test_the_list_holds_the_last_30_days_newest_first_with_user_and_channel(db, 
 def test_a_contact_without_a_linked_user_is_named_by_the_contact(db):
     from sqlalchemy import text
 
-    rid = f"zzt-{uuid.uuid4().hex[:8]}"
-    db.execute(text("INSERT INTO respond_contacts (id, respond_io_id, name, session_vars) "
-                    "VALUES (:id, :rid, 'ZZT Dealer', '{}'::jsonb)"), {"id": str(uuid.uuid4()), "rid": rid})
+    from tests.chatbot.agent._seed import seed_contact
+
+    seeded = seed_contact(db)
+    db.execute(text("UPDATE respond_contacts SET name = 'ZZT Dealer' WHERE id = :id"), {"id": seeded["pk"]})
+    rid = seeded["respond_id"]
     _seed_turn(db, created_at=datetime.now(timezone.utc), items=[{"ask": "ZZT dealer ask"}], channel="whatsapp",
                contact_id=rid)
     rows = [r for r in AiWishlistService(db).list_no_tool() if r["ask"] == "ZZT dealer ask"]
