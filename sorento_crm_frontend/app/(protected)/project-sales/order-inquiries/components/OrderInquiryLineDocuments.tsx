@@ -191,7 +191,7 @@ export function LineDocumentsList({ line }: { line: OrderInquiryLine }) {
   return (
     <ul className="space-y-1.5" data-testid="line-documents-list">
       {chips.map(({ chip, kind }) => (
-        <li key={`${kind}-${chip.key}`} className="flex min-w-0 items-center gap-2">
+        <li key={`${kind}-${chip.key}`} className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="w-9 shrink-0 text-2xs font-medium text-muted-foreground">
             {kind === 'po' ? 'PO' : 'SPO'}
           </span>

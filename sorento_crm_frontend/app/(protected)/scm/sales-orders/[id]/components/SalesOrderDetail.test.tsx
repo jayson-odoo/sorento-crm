@@ -2803,4 +2803,34 @@ describe('owner hand test (5 Nov 2026): a link to one line of a long order lands
     expect(screen.getByText('SKU-040')).toBeInTheDocument();
     expect(screen.queryByText('SKU-001')).toBeNull();
   });
+
+  it('review: a search typed on page 4 shows its result from page 1, never an empty page', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-40');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+    await screen.findByText('SKU-040');
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search lines' }), {
+      target: { value: 'SKU-003' },
+    });
+    expect(await screen.findByText('SKU-003', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByText('SKU-040')).toBeNull();
+  });
+
+  it('review: lines shrinking under the current page fall back to the last page there is', async () => {
+    searchParams = new URLSearchParams('tab=lines&line=l-55');
+    useSalesOrder.mockReturnValue({ data: longOrder(), isLoading: false, isError: false });
+    renderDetail();
+    await screen.findByText('SKU-055');
+
+    await act(async () => {
+      const shorter = longOrder();
+      shorter.lines = shorter.lines.slice(0, 15);
+      useSalesOrder.mockReturnValue({ data: shorter, isLoading: false, isError: false });
+      replaceSearchParams(new URLSearchParams(searchParams.toString()));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    // 15 lines at 10 a page: page 2 holds 11 to 15.
+    expect(await screen.findByText('SKU-015')).toBeInTheDocument();
+  });
 });

@@ -9,14 +9,16 @@ import {
   PopoverPortal,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { OrderInquiryLineStatusPill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryLineStatusPill';
+import {
+  lineShowsRejectedBadge,
+  OrderInquiryLineStatusPill,
+} from '@/app/(protected)/project-sales/_shared/components/OrderInquiryLineStatusPill';
 import {
   foldInquiryLines,
   type OrderInquiryLine,
 } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
 import { LineDocumentsList } from '@/app/(protected)/project-sales/order-inquiries/components/OrderInquiryLineDocuments';
-import { ackStateOf } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryAck';
 import {
   Dialog,
   DialogBody,
@@ -73,7 +75,8 @@ function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: stri
   const href = entry.inquiryId
     ? `/project-sales/order-inquiries/${entry.inquiryId}?row=${line.primary.id}`
     : null;
-  const rejected = ackStateOf(line.primary) === 'rejected' && line.liveRows.length > 0;
+  // The pill's own rule: only when the pill IS the Rejected button does it keep that lightbox.
+  const rejected = lineShowsRejectedBadge(line);
   const reserve = reserveTextOfRows(line.liveRows);
   return (
     <span className="flex min-w-0 items-center gap-1.5 overflow-hidden" data-testid={testId}>

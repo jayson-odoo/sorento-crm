@@ -8827,7 +8827,7 @@ class ProjectOrderInquiryService:
             po_number,
             po_issue_date,
             po_expected_date,
-            po_source_ref,
+            po_line_ref,
             warehouse_code,
             spo_number,
             spo_line_number,
@@ -8878,7 +8878,7 @@ class ProjectOrderInquiryService:
                     # when the line it named has since been deleted out from under it.
                     "document": link.document or spo_number or po_number,
                     "line_label": self._line_label(
-                        spo_line_number if is_spo else po_source_ref
+                        spo_line_number if is_spo else po_line_ref
                     ),
                     "qty": _qty_str(_dec(link.qty)),
                     "location": location,
@@ -11817,7 +11817,7 @@ class ProjectOrderInquiryService:
         # line's `source_ref` is AutoCount's `"{database}:{DocKey}:{DtlKey}"` key, which
         # printed as "LAED_SORENTO:45836908:45884936" beside the PO; a raw key is never
         # shown, so anything that is not a plain number reads as no label.
-        if not text_value.isdigit():
+        if not text_value.isdecimal():
             return None
         return f"L{int(text_value)}"
 

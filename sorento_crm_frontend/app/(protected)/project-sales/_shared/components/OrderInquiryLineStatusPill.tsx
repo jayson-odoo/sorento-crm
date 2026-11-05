@@ -15,6 +15,31 @@ function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
   return state === 'acknowledged' ? 'approved' : state === 'rejected' ? 'voided' : 'pending';
 }
 
+const LIVE_LINE_STATES = ['raised', 'partly_linked', 'placed', 'to_confirm'];
+
+function reserveStateOf(line: OrderInquiryLine): string | null | undefined {
+  return line.liveRows.length > 0 ? line.primary.reserve_state : null;
+}
+
+/** The pill reads a reserve state first, whatever else the line is. */
+function showsReservePill(line: OrderInquiryLine): boolean {
+  const state = reserveStateOf(line);
+  return state === 'requested' || state === 'reserved' || state === 'declined';
+}
+
+/**
+ * Whether this line's pill is the Rejected badge (with its own lightbox). ONE rule, read by
+ * the pill below and by any caller that wraps the pill (the Sales Order's Order inquiry cell
+ * opens its documents lightbox only when the pill is not already the Rejected button).
+ */
+export function lineShowsRejectedBadge(line: OrderInquiryLine): boolean {
+  return (
+    !showsReservePill(line) &&
+    LIVE_LINE_STATES.includes(line.state) &&
+    ackStateOf(line.primary) === 'rejected'
+  );
+}
+
 /**
  * SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): the ONE status of a sales order line's
  * order inquiry rows, folded by `foldInquiryLines`. The OI Lines tab's State cell and the
@@ -34,20 +59,19 @@ export function OrderInquiryLineStatusPill({
   rejectedTestId?: string;
 }) {
   const primary = line.primary;
-  const reserveState = line.liveRows.length > 0 ? primary.reserve_state : null;
-  if (reserveState === 'requested' || reserveState === 'reserved' || reserveState === 'declined') {
+  if (showsReservePill(line)) {
     return (
       <ReservePill
-        reserveState={reserveState}
+        reserveState={reserveStateOf(line)}
         reservedQty={primary.reserved_qty}
         requestedQty={primary.requested_qty}
       />
     );
   }
-  if (!['raised', 'partly_linked', 'placed', 'to_confirm'].includes(line.state)) {
+  if (!LIVE_LINE_STATES.includes(line.state)) {
     return <OrderInquiryLineStatePill state={line.state} />;
   }
-  if (ackStateOf(primary) === 'rejected') {
+  if (lineShowsRejectedBadge(line)) {
     return <OrderInquiryRejectedBadge refusal={primary} testId={rejectedTestId} />;
   }
   const text = ackStatusText(primary);

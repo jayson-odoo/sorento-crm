@@ -205,6 +205,22 @@ describe('SO line Order inquiry cell reads the OI row status', () => {
     expect(within(dialog).getByText('L7')).toBeInTheDocument();
   });
 
+  it('review: a rejected line holding a reserve reads the reserve pill, and that pill still opens the PO/SPO lightbox', () => {
+    renderCell([
+      oiRow({
+        ack_state: 'rejected',
+        rejected_reason: 'DISCON',
+        reserve_state: 'reserved',
+        reserved_qty: '4',
+        reserve_label: 'Reserved @ BRW',
+        links: [PO_LINK] as never,
+      } as never),
+    ]);
+    expect(screen.getByText(/Reserved 4/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
+    expect(screen.getByText('202611-P0042')).toBeInTheDocument();
+  });
+
   it('the lightbox says when nothing is linked yet', () => {
     renderCell([oiRow()]);
     fireEvent.click(screen.getByTestId('so-line-oi-core-32-pill'));
