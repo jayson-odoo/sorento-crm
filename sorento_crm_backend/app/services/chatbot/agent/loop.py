@@ -24,7 +24,7 @@ from typing import Any, Callable
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
-from app.services.chatbot.agent import actions, memory, portal_writes, writes
+from app.services.chatbot.agent import actions, memory, portal_writes, report_state, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
@@ -1247,6 +1247,9 @@ def _run(
         )
         return result
 
+    # AGENT-REPORTS: the report protocol and the held report, only while the admin switch is on.
+    reports_on = False
+    held_report: dict | None = None
     try:
         if provider is None:
             provider, provider_name, model, effort = _resolve_provider(db)
@@ -1303,6 +1306,10 @@ def _run(
             db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
             principal=ctx.principal,
         )
+        reports_on = any(t.name == report_state.REPORT for t in offered) and report_state.switch_on(db)
+        if reports_on:
+            held_report = report_state.held(db, conv)
+            system = f"{system}\n\n{report_state.block(held_report)}"
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
@@ -1334,6 +1341,7 @@ def _run(
             return args
         ledger: dict[str, dict] = {}
         seen_ids: set[str] = set()
+        report_state.seed_ids(held_report, seen_ids)
         denied_domains: set[str] = set()
         used_call_ids: set[str] = set()
         repaired = False
@@ -1583,6 +1591,8 @@ def _run(
     if not reply:
         reply = NO_ANSWER_REPLY
     if status != "failed":
+        if reports_on:
+            reply = report_state.with_cards(reply, ledger)
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.
         handoff = next(
@@ -1667,6 +1677,11 @@ def _run(
         "limit_hit": limit_hit,
         "rounds": run.rounds,
     }
+    if reports_on:
+        # A failed turn may have stopped before its ledger existed: it keeps the report held before it.
+        state = (report_state.from_ledger(ledger) if status != "failed" else None) or held_report
+        if state is not None:
+            turn.response["report_state"] = state
     # Only a real final answer can ask back; a forced final at a limit never does.
     if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
         turn.response["asked_back"] = True

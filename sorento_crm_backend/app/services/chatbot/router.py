@@ -84,15 +84,21 @@ def decide_route(
     if agent_actions.pending_action(db, contact_respond_id, user_id=owner, test=False if user is None else None) is not None:
         return RouteDecision("agent", "pending_action")
 
+    # AGENT-REPORTS: with the switch on, a report the agent holds keeps its follow-ups on the agent ("clear all",
+    # "all", "by dealer and project"), ahead of an older bot question and with no Jev call; the daily cap still holds.
+    reports = _reports_open(db, contact_respond_id)
+    held = reports and _report_held(db, contact_respond_id)
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
     block = {"session_vars": contact.session_vars if session_vars is None else session_vars}
-    if session_state.pending_of(block) is not None or _bot_asked(block):
+    if not held and (session_state.pending_of(block) is not None or _bot_asked(block)):
         return RouteDecision("chat", "open_question")
 
     settings = db.query(SystemSetting).first()
     cap = _daily_cap(contact, settings)
     if cap > 0 and _agent_turns_today(db, contact_respond_id) >= cap:
         return RouteDecision("chat", "daily_cap")
+    if held:
+        return RouteDecision("agent", "report_held")
 
     if not text.strip() or len(text.strip()) > MAX_TEXT_CHARS:
         return RouteDecision("chat", "text_length")
@@ -105,9 +111,12 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
-    criteria = _with_agent_tools(
-        _with_open_page(criteria), agent_tool_labels(db, user, contact_respond_id=contact_respond_id)
-    )
+    labels = agent_tool_labels(db, user, contact_respond_id=contact_respond_id)
+    if reports:
+        criteria = _with_reports(criteria)
+        if agent_tools.TOOL_LABELS[REPORT_TOOL] not in labels:
+            labels = [*labels, agent_tools.TOOL_LABELS[REPORT_TOOL]]
+    criteria = _with_agent_tools(_with_open_page(criteria), labels)
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -255,23 +264,88 @@ def _bot_asked(block: dict[str, Any]) -> bool:
     return isinstance(ideation, dict) and _held_pointer(ideation, bool(ideation.get("is_test"))) is not None
 
 
-def _agent_asked_back(db, contact_respond_id: str) -> bool:
-    """Is the contact's latest done turn an agent turn in their newest conversation that asked the user something, under an hour ago?"""
+def _recent_agent_response(db, contact_respond_id: str) -> dict[str, Any] | None:
+    """The response of the contact's latest done turn when it is an agent turn in their newest conversation, under
+    an hour old; else None."""
     row = (
         db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at, ChatbotTurn.envelope)
         .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
         .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.started_at.desc().nullslast())
         .first()
     )
-    if row is None or row[0] != "agent" or not isinstance(row[1], dict) or row[1].get("asked_back") is not True:
-        return False
+    if row is None or row[0] != "agent" or not isinstance(row[1], dict):
+        return None
     latest = agent_memory.latest_conversation(db, contact_respond_id)
     if latest is None or not isinstance(row[3], dict) or row[3].get("agent_conversation_id") != str(latest.id):
-        return False
+        return None
     created = row[2]
     if created.tzinfo is None:
         created = created.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - created < timedelta(minutes=ASKED_BACK_MINUTES)
+    if datetime.now(timezone.utc) - created >= timedelta(minutes=ASKED_BACK_MINUTES):
+        return None
+    return row[1]
+
+
+def _agent_asked_back(db, contact_respond_id: str) -> bool:
+    """Is the contact's latest done turn an agent turn in their newest conversation that asked the user something, under an hour ago?"""
+    response = _recent_agent_response(db, contact_respond_id)
+    return response is not None and response.get("asked_back") is True
+
+
+def _report_held(db, contact_respond_id: str) -> bool:
+    """Is the contact's latest done turn an agent turn of their newest conversation, under an hour ago, that holds a
+    report (`report_state`)? The hour runs from the latest turn, so a report talk stays on the agent while it lasts."""
+    response = _recent_agent_response(db, contact_respond_id)
+    return response is not None and isinstance(response.get("report_state"), dict)
+
+
+def _reports_open(db, contact_respond_id: str) -> bool:
+    """AGENT-REPORTS: the admin switch is on and this turn's agent would be offered the report tool (the asker's
+    own slugs and reveals, `access.permitted_tools`). Off, or any doubt, is today's routing."""
+    from app.services.chatbot.agent import report_state
+    from app.services.chatbot.agent.access import AgentRefused, build_context, permitted_tools
+
+    from app.models import base as model_base
+
+    if not report_state.switch_on(db):
+        return False
+    # `build_context` sets the session's company and brand scope for a turn; the router only asks, so both are put back.
+    keys = (model_base._SCOPE_KEY, model_base._BRAND_SCOPE_KEY)
+    saved = {k: db.info[k] for k in keys if k in db.info}
+    try:
+        ctx = build_context(db, contact_respond_id)
+        return any(t.name == REPORT_TOOL for t in permitted_tools(db, ctx))
+    except AgentRefused:
+        return False
+    finally:
+        for key in keys:
+            if key in saved:
+                db.info[key] = saved[key]
+            else:
+                db.info.pop(key, None)
+
+
+REPORT_TOOL = "crm_report_ask"
+REPORTS_CRITERION = (
+    "Any ask for sales figures (invoiced, delivered or ordered) or outstanding, pending delivery or unpaid figures: a "
+    "total, a ranking, a comparison or a breakdown of them for a brand, category, company, channel, customer or "
+    "period, and any change to the report the agent showed last, such as clear all, all brands, all, by dealer and "
+    "project, another period or another basis."
+)
+
+
+def _with_reports(criteria: dict[str, Any]) -> dict[str, Any]:
+    """AGENT-REPORTS: a copy of the criteria in which report asks are the agent's and not the bot's. The published
+    label is never touched; only a turn with the switch on and the report tool offered sees this."""
+    out = dict(criteria)
+    agent = out.get("agent")
+    agent = dict(agent) if isinstance(agent, dict) else {"what": str(agent or "")}
+    agent["reports"] = REPORTS_CRITERION
+    out["agent"] = agent
+    chat = out.get("chat")
+    if isinstance(chat, dict):
+        out["chat"] = {**chat, "not_for_reports": "Sales or outstanding figures of any kind, and changes to a report."}
+    return out
 
 
 def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:

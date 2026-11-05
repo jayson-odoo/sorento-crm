@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -84,6 +85,7 @@ type Draft = {
   agentCompactTokens: string;
   routerMinScore: string;
   agentDailyTurns: string;
+  agentReports: boolean;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -116,6 +118,7 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     agentCompactTokens: String(settings.chatbot_agent_compact_tokens),
     routerMinScore: String(settings.chatbot_router_min_score ?? 0.7),
     agentDailyTurns: String(settings.chatbot_agent_daily_turns ?? 50),
+    agentReports: settings.chatbot_agent_reports_enabled === true,
   };
 }
 
@@ -151,6 +154,7 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     chatbot_agent_compact_tokens: Number(draft.agentCompactTokens.trim()),
     chatbot_router_min_score: Number(draft.routerMinScore.trim()),
     chatbot_agent_daily_turns: Number(draft.agentDailyTurns.trim()),
+    chatbot_agent_reports_enabled: draft.agentReports,
   };
 }
 
@@ -452,6 +456,15 @@ export default function ChatbotMediaSettingsPage() {
             onChange={(v) => set('agentDailyTurns', v)}
             min={0}
           />
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="agent-reports">Report asks go to the agent</Label>
+            <Switch
+              id="agent-reports"
+              aria-label="Report asks go to the agent"
+              checked={draft.agentReports}
+              onCheckedChange={(v) => set('agentReports', v === true)}
+            />
+          </div>
         </CardContent>
       </Card>
 

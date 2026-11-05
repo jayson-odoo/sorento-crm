@@ -123,6 +123,8 @@ export interface ChatbotMediaSettings {
   chatbot_agent_compact_tokens: number;
   chatbot_router_min_score?: number;
   chatbot_agent_daily_turns?: number;
+  /** AGENT-REPORTS: sales and outstanding report asks go to the agent. Off by default. */
+  chatbot_agent_reports_enabled?: boolean;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -154,6 +156,7 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'chatbot_agent_compact_tokens',
   'chatbot_router_min_score',
   'chatbot_agent_daily_turns',
+  'chatbot_agent_reports_enabled',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -189,6 +192,7 @@ const FALLBACKS: ChatbotMediaSettings = {
   chatbot_agent_compact_tokens: 40000,
   chatbot_router_min_score: 0.7,
   chatbot_agent_daily_turns: 50,
+  chatbot_agent_reports_enabled: false,
 };
 
 /**

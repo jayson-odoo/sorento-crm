@@ -680,6 +680,9 @@ class SystemSetting(Base):
     # least this sure; and the most agent turns one contact gets per day (0 = no cap).
     chatbot_router_min_score = Column(Float, nullable=False, server_default="0.7", default=0.7)
     chatbot_agent_daily_turns = Column(Integer, nullable=False, server_default="50", default=50)
+    # AGENT-REPORTS (owner 5 Nov 2026): sales / outstanding report asks and their follow-ups go to the agent
+    # (panel, console and WhatsApp alike; WhatsApp contacts still need their own `chatbot_agent_enabled`). Default off.
+    chatbot_agent_reports_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
