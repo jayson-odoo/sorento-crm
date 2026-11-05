@@ -135,8 +135,11 @@ always escaped (`& < > "`). Idempotent.
   `price_type` is null.
 - R8 (S3) Every non-tag display of the two columns uses `plain_text` (backend) / `richPlainText` (FE):
   the "Product data changed" review (tag_data_service diff values), the designer Content box for a layer
-  bound to a description slot (read-only plain text), and product/combo API payloads read by MCP and the
-  chatbot (grep list recorded in the plan). The tag payload (`tag_data_service` tag data) keeps rich.
+  bound to a description slot (read-only plain text). The "Product data changed" diff compares plain text,
+  so a formatting-only edit is not reported. NARROWED (captain, 5 Nov): the product/combo API stays rich
+  (the product editor reads the same `ProductResponse`); MCP `crm_master_products_list` / `crm_find`
+  pass that value through as stored; the chatbot never reads either column (grep: tester report). Known
+  limit, recorded in the PR body. The tag payload (`tag_data_service` tag data) keeps rich.
 - R9 (S4, sec L3) Shared editor: `editorProps.transformPastedHTML` strips `style` attributes from pasted
   HTML (colour/align only come from the toolbar); `normaliseEditorHtml` operates on element style
   attributes via a parsed DOM, never on the string (text is never rewritten).
