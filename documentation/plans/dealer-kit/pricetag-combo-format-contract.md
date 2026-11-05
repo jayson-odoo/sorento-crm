@@ -14,7 +14,9 @@ BLOCK_TAGS   = {"p","h1","h2","h3","ul","ol","blockquote"}   # a value is "rich"
 def is_rich(value: str | None) -> bool          # lstrip, case-insensitive "<p" "<h1".. "<blockquote" followed by ">" or whitespace
 def sanitise_tag_html(value: str | None) -> str | None
     # None / "" / whitespace -> None
-    # not is_rich(value) -> value unchanged (legacy plain text; every reader treats it as text)
+    # not is_rich(value): plain text. No "<" -> unchanged. Contains "<" -> the same parser runs in TEXT mode:
+    #   every tag removed (script/style/iframe/object/embed WITH content), text kept UNescaped, newlines kept.
+    #   "a < b" stays "a < b"; "<img src=x onerror=alert(1)>x" -> "x" (defence in depth; captain ruling 5 Nov)
     # rich -> allow-list re-serialisation (stdlib html.parser), then if no text content remains -> None
 def plain_text(value: str | None) -> str | None
     # None -> None; not rich -> unchanged; rich -> blocks joined by "\n",
@@ -32,7 +34,8 @@ always escaped (`& < > "`). Idempotent.
 
 ### Write paths that call `sanitise_tag_html`
 - `product_combo_service` create + update (`description`), before the existing 5000 limit check (the limit
-  applies to the sanitised value).
+  applies to the sanitised value, so the schema's raw `max_length` moves into the service).
+  `ProductComboCreate` gains optional `description` (captain ruling 5 Nov).
 - product update `price_tag_description` (`app/schemas/product.py` / product service).
 - `scripts/import_product_combos.py` when it writes `description`; its compare uses `plain_text` on both
   sides.
@@ -69,10 +72,15 @@ always escaped (`& < > "`). Idempotent.
   type -> 422 `NO_TEMPLATE_FOR_PRICE_TYPE`, `detail=f"line:{idx}"`, message
   `f"{label}: No SP template linked"` (or `LP`), label = combo name for a combo line, else product code.
   A line whose item has NO links at all keeps today's behaviour (unchanged NO_TEMPLATE path).
+- A re-sent pick equal to the line's stored `tag_template_id`, with the line's price type unchanged, is kept
+  even if it no longer fits (no 422; captain ruling 5 Nov). Only a changed pick or a changed price type is
+  checked.
+- Approve uses the same gate as Submit (`require_line_templates` / the no-fitting-template check).
 - Existing saved lines are not rewritten: resolve/print uses the stored `tag_template_id` even if it no
   longer fits (AC-37); only save with a NEW pick or a changed price type re-filters.
 - Portal: `GET /lookups/product-tag-templates/{product_id}?combo_id=&price_type=list|selling` filters;
-  absent `price_type` = unfiltered (compat).
+  absent `price_type` = unfiltered (compat); any other value 422.
+- Combo link indexes: `uq_dealer_kit_combo_tag_template_default_list` / `..._default_selling`.
 
 ### Migration
 - One revision, id <= 32 chars, e.g. `ptag_0015_combo_format`, `down_revision` = main's head at build time
