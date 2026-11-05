@@ -298,7 +298,7 @@ def test_the_permission_slug_is_registered_with_its_plain_name():
 
 
 def test_the_migration_adds_the_switch_the_columns_and_the_grant():
-    """`acqs_0001_project_ac_write` chains onto `oiod_0002_pending_restore` (plan, Data)."""
+    """`acqs_0001_project_ac_write` chains onto main's head."""
     import importlib.util
     from pathlib import Path
 
@@ -308,7 +308,9 @@ def test_the_migration_adds_the_switch_the_columns_and_the_grant():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.revision == "acqs_0001_project_ac_write"
-    assert module.down_revision == "oiod_0002_pending_restore"
+    # The parent moves whenever main gains a head (scripts/alembic-reparent.sh), so pin that it
+    # chains onto a real committed revision rather than one id.
+    assert module.down_revision and (path.parent / f"{module.down_revision}.py").exists()
     source = path.read_text()
     for needle in (
         "project_autocount_write_enabled",
