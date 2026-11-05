@@ -83,7 +83,7 @@ import {
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
 import {
-  EscalateNote,
+  EscalateDialog,
   PriceTagSelfApproval,
   buildSelfProof,
   linesWithoutTemplate,
@@ -1385,9 +1385,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   }, [requestId, router, homePath, client]);
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
-  const handleFinish = useCallback(async (
-    action: { kind: 'approve' } | { kind: 'escalate'; note: string },
-  ) => {
+  /** Everything Approve / Escalate checks before anything is sent, marked on
+   *  the form (field, row, section, scroll). True when nothing is missing.
+   *  Escalate runs it BEFORE its dialog opens (owner hand test 5 Nov, #2138). */
+  const readyToFinish = useCallback((): boolean => {
     const { next, emptyRows } = collectProblems();
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
@@ -1407,9 +1408,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       );
       openSectionForProblems(next, emptyRows.length > 0 || templateRows.length > 0);
       scrollToFirstProblem();
-      return;
+      return false;
     }
-    if (numbersInvalid()) return;
+    return !numbersInvalid();
+  }, [collectProblems, lines, openSectionForProblems, numbersInvalid]);
+
+  const handleFinish = useCallback(async (
+    action: { kind: 'approve' } | { kind: 'escalate'; note: string; neededBy: string | null },
+  ) => {
+    if (!readyToFinish()) return;
+
+    // The escalation dialog owns Need by now; the form keeps the value it sent.
+    const neededBy = action.kind === 'escalate' ? action.neededBy : neededByDate || null;
+    if (action.kind === 'escalate') setNeededByDate(action.neededBy ?? '');
 
     setSubmitting(true);
     setServerMessage(null);
@@ -1422,7 +1433,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         debtor_name: debtor?.name ?? debtorCode,
         // Review round 2: an empty date input is '', not omitted - sent as
         // null, same as the other two payload builders here, never as ''.
-        needed_by_date: neededByDate || null,
+        needed_by_date: neededBy,
         notes: notes || null,
         price_mode: priceMode,
         print_by: printBy,
@@ -1480,7 +1491,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
+  }, [readyToFinish, applyFieldErrors, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
   /** Why Approve is off on the draft form, or null when the tag can be approved. */
   const approveBlockedReason: string | null =
@@ -1764,8 +1775,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             the salesperson opened the request to look at, and their own
             answers below it are the reference, not the headline. It shows for
             longer than the review actions do (D11/AC-S4-4). */}
-        {escalateOpen && !isOwnProof && (
-          <EscalateNote onEscalate={handleEscalate} onCancel={() => setEscalateOpen(false)} />
+        {!isOwnProof && (
+          <EscalateDialog
+            open={escalateOpen}
+            onOpenChange={setEscalateOpen}
+            onEscalate={(note) => handleEscalate(note)}
+          />
         )}
 
         {isOwnProof && (
@@ -2300,14 +2315,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       </FormSection>
 
-      {/* Additional Information - Need by and Notes, both optional
-          (D-P2b): neither blocks Submit. */}
+      {/* Additional Information - Notes (optional, D-P2b). Need by moved to
+          the Escalate dialog (owner hand test 5 Nov, #2138); a revision has
+          no Escalate, so it keeps the field here. */}
       <FormSection
         title="Additional Information"
         summary={sectionSummaries.need_by}
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
+        {reviseMode && (
         <div
           className="space-y-1.5"
           {...(fieldErrors.neededBy
@@ -2326,6 +2343,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <p className="text-xs text-destructive">{fieldErrors.neededBy}</p>
           )}
         </div>
+        )}
 
         <div className="space-y-1.5">
           <Label htmlFor="notes">Notes</Label>
@@ -2427,8 +2445,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </Button>
           <Button
             variant="outline"
-            aria-expanded={draftEscalateOpen}
-            onClick={() => setDraftEscalateOpen((open) => !open)}
+            onClick={() => {
+              if (readyToFinish()) setDraftEscalateOpen(true);
+            }}
             disabled={submitting || saving}
           >
             <Send className="size-4 mr-1" />
@@ -2455,20 +2474,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </span>
         </div>
       )}
-      {!reviseMode && (approveBlockedReason || draftEscalateOpen) && (
+      {!reviseMode && approveBlockedReason && (
         <div className="space-y-2 sm:text-right">
-          {approveBlockedReason && (
-            <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
-              {approveBlockedReason}
-            </p>
-          )}
-          {draftEscalateOpen && (
-            <EscalateNote
-              onEscalate={(note) => handleFinish({ kind: 'escalate', note })}
-              onCancel={() => setDraftEscalateOpen(false)}
-            />
-          )}
+          <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
+            {approveBlockedReason}
+          </p>
         </div>
+      )}
+      {!reviseMode && (
+        <EscalateDialog
+          open={draftEscalateOpen}
+          onOpenChange={setDraftEscalateOpen}
+          needBy={neededByDate}
+          onEscalate={(note, neededBy) => handleFinish({ kind: 'escalate', note, neededBy })}
+        />
       )}
 
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>

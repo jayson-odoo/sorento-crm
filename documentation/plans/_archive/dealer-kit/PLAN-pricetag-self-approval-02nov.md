@@ -177,3 +177,17 @@ download status check, `self_review` / `can_escalate` on the detail body), `port
   production it is one fast round trip. Trigger for changing it: if Respond.io latency shows up in
   production, send the salesperson's message after the response (a background task) for every price
   tag transition at once, not only Approve.
+
+## Owner hand test #2138 (5 Nov)
+
+- Escalate to marketing checks the form first (dealer, lines, template pick, numbers: the same
+  checks and messages as Approve) and marks what is missing on the form; nothing opens until it
+  passes (`readyToFinish` in `PriceTagRequestForm.tsx`).
+- When it passes, a centred dialog (`EscalateDialog` in `PriceTagSelfApproval.tsx`, the app's
+  `Dialog`) asks "What needs fixing?" (required) and Need by (the shared `DatePicker`, dd/mm/yyyy,
+  a date after today), with Send to marketing and Cancel, full width at 375.
+- Need by left the draft form for that dialog. A draft keeps its stored value and the dialog opens
+  on it; Approve still sends the stored value. A revision (no Escalate there) keeps the field on the
+  form. The portal read view and the CRM detail still show Need by.
+- The other two Escalate buttons (gear menu, own-proof card) open the same dialog with the note only:
+  the request already exists and its Need by was set when it was created or escalated.

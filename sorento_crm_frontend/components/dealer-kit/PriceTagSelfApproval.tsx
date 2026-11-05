@@ -15,6 +15,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Loader2, PencilLine, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { DatePicker, parseDateInput } from '@/components/ui/date-picker';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { formatLocalDateToYyyyMmDd } from '@/lib/helpers';
 import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import { buildRequestSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import {
@@ -95,46 +106,99 @@ export function linesWithoutTemplate(
   ];
 }
 
-/** The note box Escalate opens: what marketing needs to fix, then Send. */
-export function EscalateNote({
+/** Today as `yyyy-mm-dd` (local), the earliest Need by marketing cannot meet. */
+function todayKey(): string {
+  return formatLocalDateToYyyyMmDd(new Date());
+}
+
+/**
+ * The lightbox Escalate opens (owner hand test 5 Nov, #2138): what marketing
+ * needs to fix, and on the draft form also the date he needs the tags by.
+ * `needBy` given (even '') shows the date field, prefilled from the draft.
+ */
+export function EscalateDialog({
+  open,
+  onOpenChange,
   onEscalate,
-  onCancel,
+  needBy,
 }: {
-  onEscalate: (note: string) => Promise<void>;
-  onCancel?: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onEscalate: (note: string, neededBy: string | null) => Promise<void>;
+  needBy?: string;
 }) {
   const [note, setNote] = useState('');
+  const [date, setDate] = useState('');
   const [sending, setSending] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setNote('');
+    setDate(needBy ?? '');
+  }, [open, needBy]);
+  const withDate = needBy !== undefined;
+  const dateTooEarly = withDate && date !== '' && date <= todayKey();
   const send = async () => {
-    if (!note.trim()) return;
+    if (!note.trim() || dateTooEarly) return;
     setSending(true);
     try {
-      await onEscalate(note.trim());
+      await onEscalate(note.trim(), withDate ? date || null : null);
+      onOpenChange(false);
     } finally {
       setSending(false);
     }
   };
   return (
-    <div className="space-y-2">
-      <Textarea
-        aria-label="What marketing needs to fix"
-        placeholder="What needs fixing?"
-        value={note}
-        maxLength={2000}
-        onChange={(event) => setNote(event.target.value)}
-      />
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void send()} disabled={!note.trim() || sending}>
-          {sending ? <Loader2 className="size-4 mr-1 animate-spin" /> : null}
-          Send to marketing
-        </Button>
-        {onCancel && (
-          <Button size="sm" variant="ghost" onClick={onCancel} disabled={sending}>
+    <Dialog open={open} onOpenChange={(next) => (sending ? undefined : onOpenChange(next))}>
+      <DialogContent aria-describedby={undefined} className="max-w-[calc(100%-2rem)] sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Escalate to marketing</DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="escalate-note">What needs fixing?</Label>
+            <Textarea
+              id="escalate-note"
+              aria-label="What marketing needs to fix"
+              value={note}
+              maxLength={2000}
+              rows={4}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </div>
+          {withDate && (
+            <div className="space-y-1.5">
+              <Label htmlFor="escalate-need-by">Need by</Label>
+              <DatePicker
+                id="escalate-need-by"
+                value={date ? parseDateInput(date) : undefined}
+                onChange={(next) => setDate(next ? formatLocalDateToYyyyMmDd(next) : '')}
+              />
+              {dateTooEarly && (
+                <p className="text-xs text-destructive">Pick a date after today.</p>
+              )}
+            </div>
+          )}
+        </DialogBody>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+            disabled={sending}
+          >
             Cancel
           </Button>
-        )}
-      </div>
-    </div>
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void send()}
+            disabled={!note.trim() || dateTooEarly || sending}
+          >
+            {sending ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Send className="size-4 mr-1" />}
+            Send to marketing
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -197,19 +261,16 @@ export function PriceTagSelfApproval({
           <PencilLine className="size-4 mr-1" />
           Edit
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          aria-expanded={noteOpen}
-          onClick={() => setNoteOpen((open) => !open)}
-        >
+        <Button variant="outline" size="sm" onClick={() => setNoteOpen(true)}>
           <Send className="size-4 mr-1" />
           Escalate to marketing
         </Button>
       </div>
-      {noteOpen && (
-        <EscalateNote onEscalate={onEscalate} onCancel={() => setNoteOpen(false)} />
-      )}
+      <EscalateDialog
+        open={noteOpen}
+        onOpenChange={setNoteOpen}
+        onEscalate={(note) => onEscalate(note)}
+      />
     </div>
   );
 

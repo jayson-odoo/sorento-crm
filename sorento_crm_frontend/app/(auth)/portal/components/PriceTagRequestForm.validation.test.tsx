@@ -49,6 +49,7 @@ vi.mock('../lib/portal-client', () => ({
   // mount for a NEW request - granted here so this suite (about save/submit
   // validation) is unaffected.
   fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
+  fetchSubmissionNeighbours: vi.fn().mockResolvedValue({ prev_id: null, next_id: null }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -524,7 +525,7 @@ describe('Escalate to marketing opens a dialog only when the form is complete', 
       attachments: [],
     });
     render(<PriceTagRequestForm requestId="req-1" />);
-    await screen.findByDisplayValue('ZZTD01');
+    await waitFor(() => expect(screen.getByLabelText('Debtor')).toHaveValue('ZZTD01'));
 
     clickEscalate();
 
