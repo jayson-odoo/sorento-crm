@@ -1794,7 +1794,8 @@ def test_r5_a_template_a_spec_sheet_uses_cannot_be_deleted_until_the_sheet_is_go
                 db.delete(sheet)
             db.commit()
             tag_template_service.delete_template(db, t["page"].id)
-            assert db.get(TagTemplate, t["page"].id) is None
+            # Archived, not removed (TAG-TEMPLATE-DELETE-CONFIRM).
+            assert db.get(TagTemplate, t["page"].id).archived_at is not None
 
 
 def test_r5_the_delete_is_refused_at_park_too():

@@ -342,7 +342,10 @@ def test_the_sweep_commits_a_batch_of_the_requesters_own_templates(api):
 
     db.expire_all()
     assert (
-        db.query(TagTemplate).filter(TagTemplate.id.in_([first, second])).count() == 0
+        db.query(TagTemplate)
+        .filter(TagTemplate.id.in_([first, second]), TagTemplate.archived_at.is_(None))
+        .count()
+        == 0
     )
 
 

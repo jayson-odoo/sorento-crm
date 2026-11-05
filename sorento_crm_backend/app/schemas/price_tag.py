@@ -862,6 +862,14 @@ class TemplateNeeds(BaseModel):
     upgrades: int = 0
 
 
+class TagTemplateUsage(BaseModel):
+    """What the tag template delete confirm names (TAG-TEMPLATE-DELETE-CONFIRM)."""
+
+    products: int
+    combos: int
+    requests: int
+
+
 class TagTemplateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
