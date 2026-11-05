@@ -13,6 +13,8 @@ import {
   Braces,
   Copy,
   Eye,
+  FlipHorizontal2,
+  FlipVertical2,
   Italic,
   LayoutTemplate,
   Link2,
@@ -1121,6 +1123,37 @@ function ImageInspector({
             }
             options={MASK_SHAPE_OPTIONS}
           />
+        </div>
+        {/* Mirror in place (PRICETAG-DESIGNER-GAPS item 1): two toggles, so
+            a tap photo can face the other way without a second upload. */}
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Flip</Label>
+          {/* Stacked, full width: side by side the second label was cut off
+              in the narrow inspector at 1280 px (crew browser pass, 5 Nov). */}
+          <div className="flex flex-col gap-1">
+            <Button
+              type="button"
+              variant={props.flipX ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 w-full justify-start text-xs"
+              aria-pressed={props.flipX === true}
+              onClick={() => onChange({ ...props, flipX: !props.flipX })}
+            >
+              <FlipHorizontal2 className="size-3.5" />
+              Flip horizontal
+            </Button>
+            <Button
+              type="button"
+              variant={props.flipY ? 'secondary' : 'outline'}
+              size="sm"
+              className="h-7 w-full justify-start text-xs"
+              aria-pressed={props.flipY === true}
+              onClick={() => onChange({ ...props, flipY: !props.flipY })}
+            >
+              <FlipVertical2 className="size-3.5" />
+              Flip vertical
+            </Button>
+          </div>
         </div>
         {/* Only when a crop is actually set (S8, AC-S8-5) - entering crop
             mode itself is the context menu's "Crop image", not this panel. */}
