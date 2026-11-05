@@ -10,16 +10,15 @@ export const VISITOR_KEY = 'sorento.quotationSign.visitor';
 
 /** A random id for this browser, kept so the backend can apply its 30-minute rule. */
 export function visitorId(): string {
-  const fresh = randomId;
   try {
     const kept = localStore.getItem(VISITOR_KEY);
     if (kept && kept.length >= 8 && kept.length <= 128) return kept;
-    const made = fresh();
+    const made = randomId();
     localStore.setItem(VISITOR_KEY, made);
     return made;
   } catch {
     // Private mode or blocked storage: a fresh id per load; the count may run one high.
-    return fresh();
+    return randomId();
   }
 }
 
