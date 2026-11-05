@@ -100,6 +100,7 @@ export interface SystemSetting {
 
   /** Sample requests (SR-CORE): submit needs a registered project / a quotation. Off by default. */
   sampleRequestRequireProject?: boolean;
+  stockDebtPoLinkEnabled?: boolean;
 
   /**
    * "Borrow from another order" (PLAN-borrow-location-only-8oct.md D1), off by default.
