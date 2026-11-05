@@ -1220,7 +1220,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
 
     fireEvent.click(screen.getByRole('button', { name: 'Templates' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Pick templates')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Pick templates' })).toBeInTheDocument();
     await waitFor(() => expect(listSpecSheets).toHaveBeenCalled());
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));

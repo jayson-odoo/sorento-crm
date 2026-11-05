@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -34,6 +35,11 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
+import {
+  CollapsiblePanel,
+  FocusShell,
+  FocusToggle,
+} from '@/app/(protected)/dealer-kit/components/FocusMode';
 import type {
   TagLayer,
   TagLayerProps,
@@ -133,6 +139,12 @@ export function SpecSheetReader({
   const blockedBy = missing.filter((m) => m === 'cover' || m === 'page');
   const blocked = blockedBy.length > 0;
   const [picking, setPicking] = React.useState(false);
+  // Full screen and the two folding side panels: the same FocusShell / FocusToggle /
+  // CollapsiblePanel the price tag designer, room designer and page builder use.
+  const [focus, setFocus] = React.useState(false);
+  const exitFocus = React.useCallback(() => setFocus(false), []);
+  const [railCollapsed, setRailCollapsed] = React.useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = React.useState(false);
 
   const listHref = `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet`;
   const sheetHref = (id: string) => `${listHref}/${id}`;
@@ -678,6 +690,14 @@ export function SpecSheetReader({
     : [];
 
   const activeNumber = activeKey ? numbers.get(activeKey) : undefined;
+  // Outside full screen the app chrome and the page header sit above the editor; in full screen
+  // only the overlay's padding and the toolbar do. The side panels lose their title row too.
+  const stackHeight = focus
+    ? 'max-h-[calc(100dvh-5.5rem)]'
+    : 'max-h-[calc(100dvh-16rem)]';
+  const panelHeight = focus
+    ? 'max-h-[calc(100dvh-7.5rem)]'
+    : 'max-h-[calc(100dvh-18rem)]';
 
   return (
     <div
@@ -703,6 +723,13 @@ export function SpecSheetReader({
       />
       {/* The system's detail-page group (DetailActions): pager, gear, then the one primary. */}
       <div className="flex flex-wrap items-center justify-end gap-2">
+        {canEdit && !blocked && (
+          // The sheet's cover / page / single item templates, picked again: the same dialog the
+          // sheet is created with, in its re-pick mode. Rows and page edits stay.
+          <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
+            Templates
+          </Button>
+        )}
         {canEdit && detail.newer_templates && (
           <Button
             size="sm"
@@ -775,8 +802,10 @@ export function SpecSheetReader({
           </p>
         </div>
       ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+        // keepMounted: toggling full screen must not remount the live canvases (their selection,
+        // undo and any edit on its way stay put).
+        <FocusShell active={focus} onExit={exitFocus} keepMounted>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
             <Button
               size="icon"
               variant="outline"
@@ -822,6 +851,11 @@ export function SpecSheetReader({
             <Button size="sm" variant="outline" onClick={() => zoomTo(null)}>
               Fit width
             </Button>
+            <FocusToggle
+              active={focus}
+              onToggle={setFocus}
+              label="spec sheet"
+            />
             {canEdit && (
               <>
                 <span className="mx-1 h-5 w-px bg-border" aria-hidden />
@@ -886,25 +920,40 @@ export function SpecSheetReader({
           )}
           <div className="relative flex min-w-0 gap-3">
             {!isMobile && (
-              <PageRail
-                pages={pages}
-                numbers={numbers}
-                currentKey={activeKey}
-                canEdit={canEdit}
-                strip={false}
-                pageMm={detail.page_size}
-                pictureOf={railPictureOf}
-                onSelect={scrollTo}
-                onReorder={(items) =>
-                  commit([...pages.filter((p) => p.key === COVER), ...items])
-                }
-                onVisibleChange={setRailVisible}
-              />
+              <CollapsiblePanel
+                title="Pages"
+                side="start"
+                collapsed={railCollapsed}
+                onToggle={(next) => {
+                  setRailCollapsed(next);
+                  // A folded rail has nothing in view: stop loading chunks for it.
+                  if (next) setRailVisible(new Set());
+                }}
+              >
+                <PageRail
+                  pages={pages}
+                  numbers={numbers}
+                  currentKey={activeKey}
+                  canEdit={canEdit}
+                  strip={false}
+                  pageMm={detail.page_size}
+                  pictureOf={railPictureOf}
+                  onSelect={scrollTo}
+                  onReorder={(items) =>
+                    commit([...pages.filter((p) => p.key === COVER), ...items])
+                  }
+                  onVisibleChange={setRailVisible}
+                  className={panelHeight}
+                />
+              </CollapsiblePanel>
             )}
             <div
               ref={scroller}
               onScroll={onScroll}
-              className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-muted"
+              className={cn(
+                'relative min-h-[20rem] min-w-0 flex-1 overflow-auto overscroll-contain rounded-lg bg-muted',
+                stackHeight,
+              )}
               data-testid="spec-sheet-stack"
             >
               <div
@@ -948,30 +997,44 @@ export function SpecSheetReader({
               </div>
             </div>
             {canEdit && !isMobile && (
-              <aside className="hidden max-h-[calc(100dvh-16rem)] min-h-[20rem] w-72 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background lg:flex">
-                {selectedLayer ? (
-                  <ReaderInspector
-                    pageKey={selection?.pageKey ?? null}
-                    layer={selectedLayer}
-                    layers={selectedLayers}
-                    controller={
-                      selection
-                        ? controllerRefFor(selection.pageKey).current
-                        : null
-                    }
-                    mode={applyMode}
-                    onModeChange={setApplyMode}
-                    onApplyAll={sendToEveryPage}
-                  />
-                ) : (
-                  <div
-                    className="p-4 text-sm text-muted-foreground"
-                    data-testid="reader-inspector-empty"
+              <div className="hidden shrink-0 lg:block">
+                <CollapsiblePanel
+                  title="Inspector"
+                  side="end"
+                  collapsed={inspectorCollapsed}
+                  onToggle={setInspectorCollapsed}
+                >
+                  <aside
+                    className={cn(
+                      'flex min-h-[20rem] w-72 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-background',
+                      panelHeight,
+                    )}
                   >
-                    Nothing selected
-                  </div>
-                )}
-              </aside>
+                    {selectedLayer ? (
+                      <ReaderInspector
+                        pageKey={selection?.pageKey ?? null}
+                        layer={selectedLayer}
+                        layers={selectedLayers}
+                        controller={
+                          selection
+                            ? controllerRefFor(selection.pageKey).current
+                            : null
+                        }
+                        mode={applyMode}
+                        onModeChange={setApplyMode}
+                        onApplyAll={sendToEveryPage}
+                      />
+                    ) : (
+                      <div
+                        className="p-4 text-sm text-muted-foreground"
+                        data-testid="reader-inspector-empty"
+                      >
+                        Nothing selected
+                      </div>
+                    )}
+                  </aside>
+                </CollapsiblePanel>
+              </div>
             )}
           </div>
           {canEdit && isMobile && (
@@ -1015,7 +1078,7 @@ export function SpecSheetReader({
               Properties
             </Button>
           )}
-        </>
+        </FocusShell>
       )}
       {canEdit && picking && (
         <CreateSpecSheetDialog
