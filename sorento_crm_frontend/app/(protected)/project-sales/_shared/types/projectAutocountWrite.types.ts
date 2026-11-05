@@ -64,4 +64,6 @@ export interface AutocountWriteCapabilities {
   enabled: boolean;
   sales_orders: AutocountCapabilityMap;
   quotations: AutocountCapabilityMap;
+  /** The book SS names; an adopted order waits until it equals its own. */
+  sales_orders_book?: string | null;
 }

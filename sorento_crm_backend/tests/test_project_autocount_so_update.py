@@ -381,6 +381,10 @@ def test_an_adopted_order_updates_with_its_core_keys_after_reading_the_document(
     fake_ss.answers[("GET", DOC_PATH)] = (
         200, done_body(details=[], last_modified="2026-10-30T07:00:00")
     )
+    # SS names the order's book (owner ruling R7), so the adopted order may be updated.
+    fake_ss.answers[("GET", "/api/v1/autocount/write-capabilities")] = (
+        200, {"book": "AED_SRT", "capabilities": caps_with()}
+    )
     _answer_edits(fake_ss)
 
     response = client.post(_url(amendment))

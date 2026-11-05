@@ -482,7 +482,7 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     autocount_last_modified = Column(String(64), nullable=True)
     # A done cancel in AutoCount: when, and by whom (a user id; no FK, it is a marker).
     autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
-    autocount_cancelled_by = Column(UUID(as_uuid=False), nullable=True)
+    autocount_cancelled_by = Column(String(100), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the

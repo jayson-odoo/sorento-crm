@@ -3357,22 +3357,26 @@ class ProjectSODraftService:
             return None, "The purchase order names no customer."
         return self.derived_location_for_customer(customer)
 
-    def autocount_doc_key(self, order: ProjectSalesOrder) -> Optional[str]:
-        """The AutoCount DocKey of this order, if it lives in AutoCount.
+    def autocount_key_info(self, order: ProjectSalesOrder) -> Tuple[Optional[str], Optional[str], bool]:
+        """(DocKey, book, adopted) of this order in AutoCount; (None, None, False) when it is not.
 
-        Its own key once the CRM created it; otherwise (an order keyed by hand from the import
-        file and adopted by ingest) the second segment of the linked core order's
-        `source_ref`, `{database}:{DocKey}`. Digits only, else None.
+        Its own stored key means the CRM created it (not adopted, book unknown here). Otherwise
+        an order keyed by hand from the import file and adopted by ingest: the key and the book
+        are the two segments of the linked core order's `source_ref`, `{book}:{DocKey}` (digits
+        only for the key). Update and Cancel on an adopted order wait until SS names its book.
         """
         if order.autocount_doc_key:
-            return order.autocount_doc_key
+            return order.autocount_doc_key, None, False
         if not order.so_id:
-            return None
+            return None, None, False
         ref = self.db.query(SalesOrder.source_ref).filter(SalesOrder.id == order.so_id).scalar()
         parts = (ref or "").strip().split(":")
         if len(parts) >= 2 and parts[1].strip().isdigit():
-            return parts[1].strip()
-        return None
+            return parts[1].strip(), parts[0].strip(), True
+        return None, None, False
+
+    def autocount_doc_key(self, order: ProjectSalesOrder) -> Optional[str]:
+        return self.autocount_key_info(order)[0]
 
     def derived_location_for_customer(
         self, customer: Customer
@@ -3572,6 +3576,7 @@ class ProjectSODraftService:
             "autocount_doc_no": order.autocount_doc_no,
             # AC-QTSO-CRM: presence only; the AutoCount key never leaves the server.
             "in_autocount": bool(self.autocount_doc_key(order)),
+            "autocount_adopted": self.autocount_key_info(order)[2],
             "autocount_cancelled": order.autocount_cancelled_at is not None,
             "area_group": order.area_group,
             "status": order.status,

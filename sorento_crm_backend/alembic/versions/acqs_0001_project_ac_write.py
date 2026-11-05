@@ -40,7 +40,7 @@ def upgrade() -> None:
             "ADD COLUMN IF NOT EXISTS autocount_doc_key VARCHAR(80), "
             "ADD COLUMN IF NOT EXISTS autocount_last_modified VARCHAR(64), "
             "ADD COLUMN IF NOT EXISTS autocount_cancelled_at TIMESTAMP, "
-            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by UUID"
+            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100)"
         )
     )
     bind.execute(
@@ -59,7 +59,7 @@ def upgrade() -> None:
             "ADD COLUMN IF NOT EXISTS autocount_edit_issue_id UUID, "
             "ADD COLUMN IF NOT EXISTS autocount_lines_issue_id UUID, "
             "ADD COLUMN IF NOT EXISTS autocount_cancelled_at TIMESTAMP, "
-            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by UUID"
+            "ADD COLUMN IF NOT EXISTS autocount_cancelled_by VARCHAR(100)"
         )
     )
     bind.execute(

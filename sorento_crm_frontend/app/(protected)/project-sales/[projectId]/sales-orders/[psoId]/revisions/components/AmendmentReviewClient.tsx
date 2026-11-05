@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
 import Link from 'next/link';
 import { GitCompareArrows } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -103,7 +104,12 @@ export function AmendmentReviewClient({
     writeAccess && published && so?.in_autocount && amendmentId
       ? {
           pending: updateInAutocount.isPending,
-          disabledReason: editCap && !editCap.enabled ? editCap.reason : null,
+          disabledReason:
+            so?.autocount_adopted && !capabilities.data?.sales_orders_book?.trim()
+              ? AUTOCOUNT_WAITING_TEXT
+              : editCap && !editCap.enabled
+                ? editCap.reason
+                : null,
           onUpdate: () =>
             updateInAutocount
               .mutateAsync(amendmentId)

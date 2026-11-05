@@ -119,6 +119,7 @@ after done answers done ("Already in AutoCount.") with no call.
 3. A header quotation reference on SO create (today only per-line `fromQuotation`), for SOs whose lines were not copied from an AutoCount QT.
 4. Resume or `GET` by actionId for QT / SO writes, so a 202 can be confirmed without waiting for the next sync.
 5. `dtlKey` of the new row in the add-line answer (today the CRM diffs `document.Details`).
+6. `/write-capabilities` returns a top-level `book` (string, e.g. `"db3"`) so the CRM can allow Update / Cancel on adopted orders (R7).
 
 ## Questions for the owner
 
@@ -179,12 +180,20 @@ Check order: permission -> switch (403 `ac_write_switched_off` "AutoCount quotat
 
 ### Frontend
 `settings` switch row beside the others; `app/models/system.ts` field; `_shared/services/projectAutocountWriteService.ts` + `_shared/hooks/useProjectAutocountWrite.ts`; `components/AutocountWriteDialog.tsx` + `lib/autocountWriteWording.ts`; worksheet button (after Download CSV); `AmendmentAutocountChangeList` "AutoCount" column + "Update in AutoCount (N)"; `SalesOrdersPanel` Decide > Cancel in AutoCount; `QuotationDocumentPageHeader` Create / Update / Decide. Each renders only when app-config switch on AND permission held; greyed with the capability reason otherwise.
-
 ### Assumed, to confirm on the hand-test SS (8114)
 PATCH body field names (`lines[].dtlKey`, `expectedLastModified`) and `document.LastModified` / `document.Details[]` key casing. The tests pin the CRM side; a mismatch is a one-line mapping fix.
 - `LastModified` time zone. `_since` reads a stamp with no zone as UTC and shows dd/mm/yyyy in Malaysia time; the AutoCount ingest reads a naive stamp as +08:00 (`autocount_doc_ingest_service.py`, ruling V1), so confirm which one SS sends and flip the one line if it is +08:00.
 - Whether SS stores a REFUSED answer under an Idempotency-Key, so that a retry with the same key and body replays the refusal (the CRM relies on a stable key and body per step; if SS does not store refusals, a retry simply sends again).
 - Adopted orders: the doc key is read from the core order's `source_ref` (`{database}:{DocKey}`) without checking `{database}` against the book the company writes to, because no per-company book mapping exists in the code (the book arrives with each pulled snapshot). Owner to say where that mapping lives before the check is added.
+
+## Owner ruling R7 (5 Nov): adopted orders wait for SS to name the book
+
+An ADOPTED order is one whose AutoCount doc key comes from the core order's `source_ref` (`{book}:{DocKey}`), not from our stored
+`autocount_doc_key`. Update and Cancel are allowed for it ONLY when SS's `/write-capabilities` answer carries a top-level string `book`
+equal (trimmed, case-insensitive) to that `{book}`. Missing, null or empty is "not named". Until then both answer 409 `ac_waiting`,
+"Waiting for AutoCount", with no write call, and the FE greys them with that reason. CRM-created orders are unaffected.
+`in_autocount` stays true for an adopted order; `autocount_adopted` (SO row and detail) says why it waits; the capabilities route returns
+`sales_orders_book`. The FE greys when the book is missing; a different book is refused by the server (the row carries no book to compare).
 
 ## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
 

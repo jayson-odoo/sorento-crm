@@ -73,6 +73,8 @@ export interface ProjectSalesOrderRow {
   in_autocount?: boolean;
   /** A done cancel in AutoCount; the Decide item greys. */
   autocount_cancelled?: boolean;
+  /** Adopted from the AutoCount book rather than created by the CRM. */
+  autocount_adopted?: boolean;
   area_group?: string | null;
   status: SalesOrderStatus;
   grouping_origin: GroupingOrigin;

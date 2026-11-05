@@ -111,12 +111,13 @@ function json(body: unknown): Response {
   return { ok: true, status: 200, json: async () => body, headers: new Headers() } as Response;
 }
 
-function salesOrder(inAutocount: boolean) {
+function salesOrder(inAutocount: boolean, adopted = false) {
   return {
     id: 'so-1',
     provisional_ref: 'PSO-000123',
     autocount_doc_no: inAutocount ? 'SO397450' : null,
     in_autocount: inAutocount,
+    autocount_adopted: adopted,
     area_group: 'TOWER',
     status: 'published',
     grouping_origin: 'area',
@@ -143,8 +144,8 @@ const ROWS = [
   { so_number: 'SO397450', line_no: 6, item_code: 'A5', verb: 'CANCEL BALANCE', old_qty: '9', new_qty: '4', autocount_sendable: false },
 ];
 
-async function openAmendment({ status = 'published', inAutocount = true } = {}) {
-  getProjectSalesOrder.mockResolvedValue(salesOrder(inAutocount));
+async function openAmendment({ status = 'published', inAutocount = true, adopted = false } = {}) {
+  getProjectSalesOrder.mockResolvedValue(salesOrder(inAutocount, adopted));
   previewAmendment.mockResolvedValue({
     from: { kind: 'schedule_version', id: 'sched-v1', version_no: 1, label: 'R1' },
     to: { kind: 'schedule_version', id: 'sched-v2', version_no: 2, label: 'REVISED 1' },
@@ -244,6 +245,14 @@ describe('Update in AutoCount on a published amendment', () => {
     expect(await screen.findByRole('button', { name: 'Update in AutoCount (3)' })).toBeEnabled();
     // The export stays beside it.
     expect(screen.getByRole('button', { name: 'Export for AutoCount' })).toBeEnabled();
+  });
+
+  it('is greyed "Waiting for AutoCount" for an adopted order while SS names no book', async () => {
+    await openAmendment({ adopted: true });
+
+    const button = await screen.findByRole('button', { name: 'Update in AutoCount (3)' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('title', 'Waiting for AutoCount');
   });
 
   it('is not rendered when the switch is off', async () => {

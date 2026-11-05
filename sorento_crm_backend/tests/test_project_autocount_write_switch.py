@@ -196,7 +196,9 @@ def test_the_capabilities_route_says_disabled_with_empty_maps_and_no_ss_call(so_
     response = client.get(f"{BASE}/autocount-write/capabilities")
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"enabled": False, "sales_orders": {}, "quotations": {}}
+    assert response.json() == {
+        "enabled": False, "sales_orders": {}, "quotations": {}, "sales_orders_book": None,
+    }
     assert fake_ss.calls == []
 
 

@@ -263,13 +263,26 @@ class ProjectAutocountWriteService:
 
     def capabilities(self, company_id: Optional[str]) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """Each op enabled or not, with the plain reason, read from SS now (never hard-coded)."""
+        return self.read_capabilities(company_id)[0]
+
+    def read_capabilities(self, company_id: Optional[str]):
+        """(ops by group, the book SS names or None). One read per service instance."""
+        cache = self.__dict__.setdefault("_caps_cache", {})
+        if company_id not in cache:
+            cache[company_id] = self._read_capabilities(company_id)
+        return cache[company_id]
+
+    def _read_capabilities(self, company_id: Optional[str]):
         try:
             body = self._gateway().write_capabilities(self.company_code(company_id))
         except FoundryxPullError as exc:
             reason = UNREACHABLE if exc.code == "UNREACHABLE" else (exc.message or "")[:_MAX_TEXT]
-            return {
-                group: {op: {"enabled": False, "reason": reason} for op in OPS} for group in _KINDS
-            }
+            return (
+                {group: {op: {"enabled": False, "reason": reason} for op in OPS} for group in _KINDS},
+                None,
+            )
+        book = body.get("book")
+        book = book.strip() if isinstance(book, str) and book.strip() else None
         entries = {
             (e.get("kind"), e.get("op")): e
             for e in (body.get("capabilities") or [])
@@ -288,7 +301,15 @@ class ProjectAutocountWriteService:
                         "reason": _REASONS.get((entry or {}).get("reasonCode"), WAITING),
                     }
             out[group] = ops
-        return out
+        return out, book
+
+    def _require_book_if_adopted(self, order: ProjectSalesOrder, book: Optional[str], adopted: bool) -> None:
+        """Owner ruling R7: an adopted order waits until SS names a book equal to its own."""
+        if not adopted:
+            return
+        _key, own, _ = self._draft.autocount_key_info(order)
+        if not book or not own or book.strip().lower() != own.strip().lower():
+            raise AppException(status_code=409, message=WAITING, code="ac_waiting")
 
     # ------------------------------------------------------------ answers
 
@@ -541,7 +562,7 @@ class ProjectAutocountWriteService:
                 message="Only a published amendment goes to AutoCount.",
                 code="ac_amendment_not_published",
             )
-        doc_key = self._draft.autocount_doc_key(order)
+        doc_key, _own_book, adopted = self._draft.autocount_key_info(order)
         if not doc_key:
             raise AppException(
                 status_code=409,
@@ -549,6 +570,8 @@ class ProjectAutocountWriteService:
                 code="ac_not_in_autocount",
             )
         doc_key = _safe_key(doc_key)
+        if adopted:
+            self._require_book_if_adopted(order, self.read_capabilities(order.company_id)[1], adopted)
         accepted, _declined = ProjectSODeltaService(self.db)._decided_rows(
             amendment, amendment.delta_json or {}
         )
@@ -675,7 +698,7 @@ class ProjectAutocountWriteService:
 
     def cancel_sales_order(self, pso_id: str, actor: Optional[dict] = None) -> Dict[str, Any]:
         order = self._draft.get_order(pso_id)
-        doc_key = self._draft.autocount_doc_key(order)
+        doc_key, _own_book, adopted = self._draft.autocount_key_info(order)
         if not doc_key:
             raise AppException(
                 status_code=409,
@@ -685,6 +708,8 @@ class ProjectAutocountWriteService:
         if order.autocount_cancelled_at is not None:
             raise AppException(status_code=409, message=ALREADY_CANCELLED, code="ac_already_cancelled")
         doc_key = _safe_key(doc_key)
+        if adopted:
+            self._require_book_if_adopted(order, self.read_capabilities(order.company_id)[1], adopted)
         cap = self.capabilities(order.company_id)["sales_orders"]["cancel_doc"]
         if not cap["enabled"]:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")

@@ -93,6 +93,8 @@ class ProjectSalesOrderRow(BaseModel):
     # AC-QTSO-CRM: the order lives in AutoCount (its key is set); the key itself is never sent.
     in_autocount: bool = False
     autocount_cancelled: bool = False
+    # Adopted from the AutoCount book (not created by the CRM): Update / Cancel wait for SS's book.
+    autocount_adopted: bool = False
     area_group: Optional[str] = None
     status: str
     grouping_origin: Optional[str] = None
