@@ -29,14 +29,19 @@ def split_set_driver_price(
 ) -> List[Tuple[Decimal, Decimal]]:
     """The driver part's ``(qty, unit_price)`` rows for ``set_qty`` sets at ``set_rate``.
 
-    The rows always total ``set_rate x set_qty`` rounded to cents, to the cent. One row when
-    the money divides evenly (always the case at 1 per set, which returns the set rate
-    untouched); two rows otherwise, the second being a single unit carrying the remainder.
-    A driver quantity that is not a whole number above 1 cannot be split that way, so it
-    goes as one row at the nearest cent (the only case where the total can miss by a cent).
+    The rows total ``set_rate x set_qty`` rounded to cents, to the cent. One row when the
+    money divides evenly (always the case at 1 per set, which returns the set rate untouched);
+    two rows otherwise, the second being a single unit carrying the remainder. The unit
+    price is rounded DOWN, so the remainder row is never cheaper than the others.
+
+    Edge cases: a driver quantity that is not a whole number above 1 (a fractional or
+    negative quantity, or a fraction of a set) cannot be split that way, so it goes as one
+    row at the nearest cent; only there can the total miss by up to half a cent per unit.
+    A driver quantity of zero (a part frozen at 0 per set, or no sets) has nothing to carry
+    the money and is returned as ``[(0, set_rate)]``.
     """
     driver_qty = set_qty * driver_qty_per_set
-    if driver_qty_per_set == _ONE or driver_qty <= 0:
+    if driver_qty_per_set == _ONE or driver_qty == 0:
         return [(driver_qty, set_rate)]
 
     total = (set_rate * set_qty).quantize(_CENTS)
