@@ -93,8 +93,10 @@ A7. **Legacy plain text stays valid.** A stored value that does not start with a
     text: each line is a paragraph. It prints exactly as today; opening it in the editor shows the same lines;
     saving writes HTML. No data migration, no script: existing descriptions are formatted by hand (Q3 b).
 A8. **Every non-tag reader gets plain text** via `plain_text()` (keeps line breaks, "• " and "1. "; drops all
-    markup): spec sheet (`project_spec_sheet_service.py`), chatbot / MCP reads, importer dry-run report, any
-    xlsx export.
+    markup): the combo importer's compare / dry-run report, and any API / MCP / chatbot reader of the two
+    columns found by grep at build. (Correction to v2: the spec sheet sets `price_tag_description: None`,
+    `project_spec_sheet_service.py:739`, so it never prints it.) The read-only combo view renders the
+    formatting, never raw tags.
 A9. **Merge fields stay safe.** `price_tag_description` holds merge fields (`{{...}}`); they resolve on TEXT
     runs after parsing, so a spec value containing `<` prints as `<` and never becomes markup.
 A10. **Never silent loss.** Overflow keeps today's layer fit rule; the live preview shows it before saving.
@@ -108,9 +110,9 @@ B2. **Existing templates start unset.** The template list shows a "Set price typ
     an unset template is offered on both LP and SP lines, exactly like today, so nothing changes on release.
     The template list can be filtered to "Price type: not set" so the owner can work through them.
 B3. **Links:** a product or combo links 1..n templates (several LP, several SP). **One default LP and one
-    default SP** per product / combo; an `LP & SP` or unset template can be the default for either. The DB
-    partial unique index on `is_default` becomes `default_for` (`list` | `selling`) on the link, unique per
-    (owner, default_for); today's default becomes the default for both on migration.
+    default SP** per product / combo; an `LP & SP` or unset template can be the default for either or both.
+    The link's `is_default` becomes two flags, `default_list` and `default_selling`, each unique per owner;
+    today's default gets both on migration (the UAC, AC-30, has the exact migration).
 B4. **The request line offers only matching templates.** LP line: LP + LP & SP + unset. SP line: SP +
     LP & SP + unset. Flipping the line's LP/SP switches to that type's default; a current pick that still
     matches is kept.
@@ -189,7 +191,7 @@ WHERE p.product_code IN ('SRTBF11416','SRTBF11415','SRTBF11829');
 
 ## Track
 
-Full track: migration (`tag_template.price_type`; `default_for` on the two link tables replacing the
-`is_default` unique index), shared-engine change (8 screens), all three renderers. **security-reviewer is
+Full track: migration (`tag_template.price_type`; `default_list` / `default_selling` on the two link
+tables replacing `is_default`), shared-engine change (8 screens), all three renderers. **security-reviewer is
 mandatory**: stored HTML from several write paths, the allow-list sanitiser (style values included), the
 no-innerHTML render on the public print page (`app/(public)/c/print/...`), and merge fields inside rich text.
