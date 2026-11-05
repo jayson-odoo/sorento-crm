@@ -5,7 +5,7 @@ import { CalendarIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 
 /** Format Date to dd/mm/yyyy (local). */
@@ -55,6 +55,10 @@ export interface DatePickerProps {
   ariaLabel?: string;
   /** Height of the typed input and the calendar-icon button, e.g. for a table cell row. */
   inputClassName?: string;
+  /** Render the calendar at the document root. Needed inside a Dialog: its transformed,
+   *  `overflow-y-auto` box otherwise lays the calendar out inside itself, clipped and
+   *  scrolling (PRICETAG-FU-2138, owner hand test 5 Nov). */
+  portal?: boolean;
 }
 
 /**
@@ -71,6 +75,7 @@ export function DatePicker({
   id,
   ariaLabel,
   inputClassName,
+  portal = false,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState(() =>
@@ -105,6 +110,22 @@ export function DatePicker({
     }
   };
 
+  const calendar = (
+    <PopoverContent
+      className="w-auto p-0"
+      align="start"
+      // Portalled, it is placed against the viewport: keep it off the screen edge.
+      {...(portal ? { collisionPadding: 8 } : {})}
+    >
+      <Calendar
+        mode="single"
+        selected={value}
+        onSelect={handleSelect}
+        initialFocus
+      />
+    </PopoverContent>
+  );
+
   return (
     <div className={cn('flex gap-2', className)}>
       <Input
@@ -135,14 +156,7 @@ export function DatePicker({
             <CalendarIcon className="h-4 w-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <Calendar
-            mode="single"
-            selected={value}
-            onSelect={handleSelect}
-            initialFocus
-          />
-        </PopoverContent>
+        {portal ? <PopoverPortal>{calendar}</PopoverPortal> : calendar}
       </Popover>
     </div>
   );
