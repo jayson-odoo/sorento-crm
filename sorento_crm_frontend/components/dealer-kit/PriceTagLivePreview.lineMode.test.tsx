@@ -106,7 +106,7 @@ describe('one line is drawn upright on a page of its own size', () => {
 });
 
 describe('lightbox heading says what the tag prints', () => {
-  it('an SP line with no selling price resolved is headed LP', async () => {
+  it('an SP line with no selling price resolved is still headed SP, never LP', async () => {
     const lookup = vi.fn(async () => {
       const r = response(['b']);
       (r.lines[0] as unknown as Record<string, unknown>).show_promo_price = true;
@@ -121,7 +121,7 @@ describe('lightbox heading says what the tag prints', () => {
         {...({ lineKey: 'b' } as object)}
       />,
     );
-    await waitFor(() => expect(screen.getByTestId('lightbox')).toHaveTextContent('C-b - LP'));
+    await waitFor(() => expect(screen.getByTestId('lightbox')).toHaveTextContent('C-b - SP'));
   });
 
   it('an SP line with a selling price resolved is headed SP', async () => {
