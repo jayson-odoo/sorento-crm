@@ -190,8 +190,12 @@ def test_Q1_filter_sort_limit_and_only_allowlisted_fields(db):
     assert out["entity"] == "order"
     rows = out["rows"]
     assert [float(r["total_amount"]) for r in rows] == [40, 30, 20]
+    from app.services.assistant_registry import ENTITIES
+
     for row in rows:
-        assert set(row) <= {"order_number", "total_amount", "id", "link"}
+        # what was asked, plus the fields the record is named by (its number and debtor)
+        assert set(row) <= {"order_number", "total_amount", "id", "link", *ENTITIES["order"].name_by}
+        assert "deliver_phone" not in row
         assert row["id"] and row["link"]
     assert out["total"] == 5
     assert out["truncated"] is True and out["restricted"] == []
@@ -520,6 +524,12 @@ def test_Q12_the_registry_is_consistent_with_the_models_and_the_permission_regis
         for rel, (target, fk) in ent.relations.items():
             assert target in ENTITIES, f"{key}.{rel}: unknown target entity {target}"
             assert fk in columns, f"{key}.{rel}: no fk column {fk}"
+        for name in ent.name_by:
+            # a naming field is always returned, so it must be allowlisted and need no slug of its own
+            assert name in ent.fields, f"{key}: name_by field {name} is not an allowlisted field"
+            assert not ent.fields[name].permission and not ent.fields[name].whole_document, f"{key}.{name}"
+        if ent.view_permission:
+            assert ent.name_by, f"{key}: a queryable entity names its rows"
 
 
 # ------------------------------------------------------------------ review round 1 (reviewer + security reviewer)
@@ -796,3 +806,96 @@ def test_R2_describe_leaves_out_a_relation_whose_module_is_off(db, monkeypatch):
     user = mk_user(db, SCM_VIEW)
     out = writes.run_as_user(db, make_ctx(user), lambda u: describe(db, u["id"], "purchase_order"))
     assert "supplier" not in out["relations"]
+
+
+# ------------------------------------------------------------------ crew browser pass on 826964f2 (5 Nov)
+
+
+def test_R3_describe_says_which_order_field_is_the_lists_agent_and_its_date(db):
+    """'Per agent' was grouped by salesman while the Delivery Orders list's Agent column is `agent`; describe must
+    say which field is which, and which date the list filters on."""
+    from app.services.assistant_registry.query import describe
+
+    user = mk_user(db, ORDERS_VIEW)
+    fields = {f["field"]: f for f in writes.run_as_user(db, make_ctx(user), lambda u: describe(db, u["id"], "order"))["fields"]}
+    assert "Agent column" in fields["agent"].get("note", "")
+    assert "per agent" in fields["agent"]["note"]
+    assert "not the list's Agent" in fields["salesman"].get("note", "")
+    assert "Order date" in fields["order_date"].get("note", "")
+    assert "not the order date" in fields["created_at"].get("note", "")
+
+
+def test_R3_rows_always_carry_the_fields_a_record_is_named_by(db):
+    """A product answer showed code and price without the name: rows carry the entity's naming fields whatever
+    was asked, and the result says to name each row by them."""
+    chain = mk_product_chain(db)
+    t = tag()
+    for i, price in enumerate(("100.00", "300.00", "200.00")):
+        row = mk_product(db, f"{t}-{i}", chain)
+        row.list_price = Decimal(price)
+    db.flush()
+    user = mk_user(db, PRODUCTS_VIEW)
+    out = core(db, user, {
+        "entity": "product", "fields": ["list_price"],
+        "filters": [{"field": "product_code", "op": "starts_with", "value": t}],
+        "sort": [{"field": "list_price", "dir": "desc"}], "limit": 2,
+    })
+    assert out["name_rows_by"] == ["product_code", "product_name"]
+    assert [(r["product_code"], r["product_name"], r["list_price"]) for r in out["rows"]] == [
+        (f"{t}-1", f"ZZT {t}-1", 300.0), (f"{t}-2", f"ZZT {t}-2", 200.0),
+    ]
+
+
+def test_R3_per_agent_counts_equal_the_delivery_orders_lists_own_filter(db):
+    """Step 7: the list filtered on Agent + Order date 1 to 31 Oct + not cancelled. Each per-agent count from
+    crm_query must equal what the list's own search (`ListQuerySearchService`, the Filters dialog's path) returns
+    for that agent, over rows that differ on every axis that could split them."""
+    from datetime import datetime
+
+    from app.schemas.list_query import FilterCondition, FilterGroup, ListSearchRequest
+    from app.services.list_query_metadata_sync_service import ListQueryMetadataSyncService
+    from app.services.list_query_registry import ADAPTERS
+    from app.services.list_query_search_service import ListQuerySearchService
+
+    ListQueryMetadataSyncService(db).sync_resource(ADAPTERS["orders"])
+    t = tag()
+    a, b = f"{t}A", f"{t}B"
+    rows = [
+        # (agent, salesman, order_date, created_at, cancelled, deleted)
+        (a, a, date(2026, 10, 1), datetime(2026, 10, 1, 2), False, False),
+        (a, b, date(2026, 10, 31), datetime(2026, 10, 31, 20), False, False),  # created 1 Nov in Malaysia
+        (a, a, date(2026, 11, 1), datetime(2026, 10, 30, 2), False, False),  # created in Oct, dated Nov
+        (a, a, date(2026, 10, 15), datetime(2026, 10, 15, 2), True, False),  # cancelled
+        (a, a, date(2026, 10, 16), datetime(2026, 10, 16, 2), False, True),  # deleted
+        (b, a, date(2026, 10, 20), datetime(2026, 10, 20, 2), False, False),
+        (b, a, date(2026, 9, 30), datetime(2026, 10, 2, 2), False, False),  # dated Sep, created in Oct
+    ]
+    for i, (agent, salesman, day, created, cancelled, deleted) in enumerate(rows):
+        mk_order(
+            db, t, i, agent=agent, salesman=salesman, order_date=day, created_at=created, is_cancelled=cancelled,
+            deleted_at=datetime(2026, 10, 17) if deleted else None,
+        )
+    db.flush()
+    user = mk_user(db, ORDERS_VIEW)
+    october = [
+        {"field": "debtor_code", "op": "eq", "value": t},
+        {"field": "order_date", "op": "between", "value": ["2026-10-01", "2026-10-31"]},
+        {"field": "is_cancelled", "op": "eq", "value": False},
+    ]
+    groups = core(db, user, {"entity": "order", "filters": october, "group_by": ["agent"]})["groups"]
+    bot = {g["agent"]: g["count"] for g in groups}
+    assert bot == {a: 2, b: 1}
+
+    def listed(agent: str) -> int:
+        conditions = [
+            FilterCondition(field_key="debtor_code", op="eq", value=t),
+            FilterCondition(field_key="agent", op="eq", value=agent),
+            FilterCondition(field_key="order_date", op="gte", value="2026-10-01"),
+            FilterCondition(field_key="order_date", op="lte", value="2026-10-31"),
+            FilterCondition(field_key="is_cancelled", op="eq", value=False),
+        ]
+        req = ListSearchRequest(resource="orders", filter=FilterGroup(op="and", children=conditions), page=1, limit=100)
+        out = writes.run_as_user(db, make_ctx(user), lambda u: ListQuerySearchService(db).search(req))
+        return int(out["pagination"]["total"])
+
+    assert {agent: listed(agent) for agent in (a, b)} == bot

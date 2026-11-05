@@ -88,7 +88,8 @@ QUERY_SCHEMA = {
         "name": QUERY,
         "description": (
             "Read CRM records as their screens show them: rows, or totals with group_by. Entity keys and fields "
-            "come from crm_describe; a field may go through a relation (supplier.name). "
+            "come from crm_describe, whose notes say which field a list column is; a field may go through a "
+            "relation (supplier.name). In the reply, name each row by its name_rows_by fields. "
             "filters: [{field, op, value}], op one of eq ne in not_in lt lte gt gte between contains starts_with "
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "

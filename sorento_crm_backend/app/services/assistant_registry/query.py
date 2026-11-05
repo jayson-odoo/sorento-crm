@@ -430,7 +430,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     asked = _list(spec, "fields", 30)
     if any(not isinstance(f, str) for f in asked):
         raise QueryRefused("invalid", "`fields` is a list of field names.")
-    wanted = list(dict.fromkeys(asked or list(entity.fields)))
+    wanted = list(dict.fromkeys([*entity.name_by, *(asked or list(entity.fields))]))
     shown = [f for f in wanted if paths.allowed(f)]
     restricted = [f for f in wanted if f not in shown]
     root = entity.model
@@ -461,7 +461,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
         out_rows.append(item)
     return {
         "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
-        "restricted": restricted,
+        "restricted": restricted, "name_rows_by": [f for f in entity.name_by if f in shown],
     }
 
 
@@ -539,6 +539,8 @@ def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[
     out = []
     for key, field in entity.fields.items():
         row = {"field": key, "label": field.label, "type": _kind(columns[field.column or key])}
+        if field.note:
+            row["note"] = field.note
         if (field.permission and field.permission not in slugs) or (field.whole_document and brand_scoped):
             row["restricted"] = True
         out.append(row)

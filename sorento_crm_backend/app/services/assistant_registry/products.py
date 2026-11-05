@@ -48,6 +48,7 @@ register(
             "created_at": FieldDef("Created at"),
         },
         relations={"brand": ("brand", "brand_id"), "category": ("category", "category_id")},
+        name_by=("product_code", "product_name"),
         screen_path="/master-data-management/products/{id}",
         pages=("/master-data-management/products",),
         routes=("GET /api/v1/master-data/products/",),

@@ -33,6 +33,7 @@ register(
             "created_at": FieldDef("Created at"),
         },
         relations={"supplier": ("supplier", "supplier_id")},
+        name_by=("po_number",),
         screen_path="/scm/purchase-orders/{id}",
         pages=("/scm/purchase-orders",),
         routes=("GET /api/v1/scm/purchase-orders",),

@@ -65,6 +65,7 @@ register(
             "root_cause": ("complaint_root_cause", "root_cause_id"),
             "resolution": ("complaint_resolution", "resolution_id"),
         },
+        name_by=("complaint_number", "customer_name"),
         screen_path="/complaint-management/complaints/{id}",
         pages=("/complaint-management",),
         routes=("GET /api/v1/complaints-management/complaints/",),

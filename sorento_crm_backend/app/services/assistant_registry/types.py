@@ -17,6 +17,8 @@ class FieldDef:
     permission: str | None = None
     #: The model attribute; None = the field key itself.
     column: str | None = None
+    #: One line for crm_describe when the field could be mistaken for another (which list column it is).
+    note: str | None = None
     #: A value over the whole record that also covers lines of other brands (an order's total, a complaint's list
     #: of product codes): refused while the session carries a contact's brand scope, whose screen recomputes or
     #: cuts it to the in-scope lines only.
@@ -42,6 +44,9 @@ class EntityDef:
     fields: dict[str, FieldDef] = field(default_factory=dict)
     #: name -> (entity key, fk column on this model), for lookups and joins.
     relations: dict[str, tuple[str, str]] = field(default_factory=dict)
+    #: The fields a person names a record by (its number or code, then its name): every row carries them, and
+    #: the result tells the model to name each row by them.
+    name_by: tuple[str, ...] = ()
     #: "/scm/purchase-orders/{id}", for row links; "" = no detail page.
     screen_path: str = ""
     #: Path prefixes where this module's actions load first (ACT-CORE).

@@ -95,7 +95,24 @@ offered when a console operator acts for someone else (an aggregate cannot be in
 ## Token measurement (AC-6)
 
 OpenAI `responses/input_tokens`, gpt-4.1 tokenizer, the same request with the in-process tool block (USER_READS,
-WRITES, plan and answer schemas) before and after: 2039 before, 2344 after, **+305 input tokens per model call** for
-a user offered the tools (2293 before the Gemini fix below, which spells out every array's items). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
+WRITES, plan and answer schemas) before and after, measured again on the head merged with main of 5 Nov evening: 2145 before, 2474 after,
+**+329 input tokens per model call** for a user offered the tools (+254 on the first head, +305 after the Gemini fix,
++329 after the naming and field-note guidance below). The MCP catalogue part of the request is unchanged. AC-6 ("no higher than before phase 1")
 is not met by this lane alone; the parent plan's lever is the module waves replacing per-module tools with
 registry entities.
+
+## Crew browser pass on 826964f2 (5 Nov) and what changed
+
+- Steps 1, 2, 4, 5 passed. Step 3 grouped "per agent" by `salesman`, while the Delivery Orders list's Agent column is
+  `agent`; step 7's counts (list 101 / 87 / 11 vs bot 99 / 86 / 11) compared the list's agent with the bot's
+  salesman. `test_R3_per_agent_counts_equal_the_delivery_orders_lists_own_filter` runs the list's own search
+  (`ListQuerySearchService`, the Filters dialog's path) against `crm_query` grouped by `agent` over rows that differ
+  on cancelled, deleted, order date vs created date and agent vs salesman: the counts are equal, so the gap was
+  the field choice. It passed before the change (a regression proof, not a red test).
+- `FieldDef.note`, shown by `crm_describe`: `agent` is the list's Agent column and the field for per agent
+  questions, `salesman` is not, `order_date` is the date the list filters on, `created_at` is not.
+- Step 6 listed products by code and price without the name although the query read it. `EntityDef.name_by`: every
+  row carries the fields a record is named by (product code and name, order number and debtor, PO number,
+  complaint number and customer), and the result's `name_rows_by` tells the model to name each row by them.
+- Steps 3 and 6 are model choices; the change gives the model the facts and the instruction, and crew's re-pass
+  is the check.
