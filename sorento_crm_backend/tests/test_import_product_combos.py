@@ -606,3 +606,62 @@ def test_every_other_row_the_import_writes_is_in_the_hosts_company_or_has_none(
     assert cover and links
     assert {a.company_id for a in cover} == {DEFAULT_COMPANY_ID}
     assert {link.company_id for link in links} == {DEFAULT_COMPANY_ID}
+
+
+# --------------------------------------------------------------------------- PRICETAG-COMBO-FORMAT
+#
+# AC-9 (the importer stores the sanitised description) and AC-12 (the compare judges text, not
+# markup). Written test-FIRST: the importer does not call `sanitise_tag_html` / `plain_text` yet.
+
+
+def _run_with_seed(db, tmp_path, photos, entries, *, apply):
+    seed_path = tmp_path / f"fmt-seed-{len(list(tmp_path.glob('fmt-seed-*.json')))}.json"
+    seed_path.write_text(json.dumps(entries))
+    report = tmp_path / f"fmt-report-{len(list(tmp_path.glob('fmt-report-*.csv')))}.csv"
+    argv = ["--file", str(seed_path), "--photos", str(photos), "--report", str(report)]
+    if apply:
+        argv.append("--apply")
+    assert _script().main(argv, db=db, out=io.StringIO()) == 0
+    with open(report, newline="", encoding="utf-8-sig") as fh:
+        return [
+            {k.strip().lower().replace(" ", "_"): v for k, v in raw.items()}
+            for raw in csv.DictReader(fh)
+        ]
+
+
+def test_ac_9_the_importer_stores_the_sanitised_description(db, catalogue, photos, tmp_path, storage):
+    """AC-9: a seed description `<p onclick=x>a</p>` is stored as `<p>a</p>` on --apply."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p onclick=x>a</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>a</p>"
+
+
+def test_ac_9_a_seed_script_tag_is_not_stored(db, catalogue, photos, tmp_path, storage):
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p>a<img src=x onerror=alert(1)><script>x</script>b</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>ab</p>"
+
+
+def test_ac_12_a_combo_whose_only_difference_is_formatting_reports_matches(
+    db, catalogue, photos, tmp_path, storage
+):
+    """AC-12: stored `<p><strong>SRTBF11416</strong> (CABINET)</p>` against the seed text
+    "SRTBF11416 (CABINET)" is "matches", not "differs" (already true today because a set
+    description is never compared; the test pins that the new plain_text compare keeps it so)."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "SRTBF11416 (CABINET)"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        combo.description = "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+        db.commit()
+
+    for apply in (False, True):
+        rows = _run_with_seed(db, tmp_path, photos, entries, apply=apply)
+        assert _by_id(rows)["C1"]["status"] == "matches", (apply, _by_id(rows)["C1"])
+    assert (
+        _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+    ), "formatting the owner added is never overwritten by the plain seed text"
