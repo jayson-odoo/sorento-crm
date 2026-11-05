@@ -718,3 +718,20 @@ def test_R1_a_customer_scoped_whatsapp_contact_is_not_offered_the_tools(db):
     # the same person on the panel answers as their screen does
     with panel_turn(user):
         assert {"crm_query", "crm_describe"} <= {r.name for r in writes.permitted_user_reads(db, ctx)}
+
+
+def test_R1_a_lookup_row_of_another_company_is_not_read_through_a_relation(db):
+    """A relation join carries the lookup's own company predicate: a PO pointing at another company's supplier
+    (bad data, but the join must not trust it) shows no supplier name."""
+    t = tag()
+    company_b = mk_company_b(db)
+    foreign = Supplier(id=str(uuid.uuid4()), company_id=company_b, supplier_code=unique_code("ZS"), supplier_name=f"{t} Foreign")
+    db.add(foreign)
+    db.flush()
+    mk_po(db, f"{t}-PO-X", foreign)
+    user = mk_user(db, SCM_VIEW)
+    out = core(db, user, {
+        "entity": "purchase_order", "fields": ["po_number", "supplier.name"],
+        "filters": [{"field": "po_number", "op": "eq", "value": f"{t}-PO-X"}],
+    })
+    assert [r["supplier.name"] for r in out["rows"]] == [None]
