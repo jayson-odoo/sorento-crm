@@ -1547,7 +1547,18 @@ class DocumentIngestService(MasterRefResolver):
             if by_ref.pop(ref, None) is None:
                 unresolved_dropped += 1
 
+        # AC-REKEY-SAME-LINE: a line AutoCount only re-keyed takes over its old row's slot in
+        # `by_ref` (the matched loop below then writes the new `source_ref` onto it), so it is
+        # neither swept as removed nor created afresh.
+        rekeyed = (
+            self._pair_rekeyed_lines(by_ref, line_values)
+            if spec.entity_type == "sales_orders"
+            else 0
+        )
+
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+        if rekeyed:
+            counts["rekeyed"] = rekeyed
         # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-6/7, write site 2): every
         # SALES ORDER line this push cancels, captured only on the TRANSITION - two
         # collection points, both guarded the same way (prior status read BEFORE the
@@ -1780,6 +1791,72 @@ class DocumentIngestService(MasterRefResolver):
             if order is not None:
                 ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
         return counts
+
+    def _pair_rekeyed_lines(
+        self, by_ref: dict[str, Any], line_values: list[dict[str, Any]]
+    ) -> int:
+        """AC-REKEY-SAME-LINE (owner, 6 Nov 2026): an AutoCount re-save can give an unchanged
+        sales order line a new DtlKey. Matched by `source_ref` alone, that read as one line
+        removed (OI rows retired, handover queued) and one created (a fresh mirror line, no OI
+        row): the demand was lost. A stored line whose ref this push no longer carries is the
+        SAME line as an incoming line whose ref matches no stored line when Seq, product,
+        ordered qty and unit price are equal, and the location too when the push names one
+        (D22). Only a pair unique on both sides counts; anything ambiguous stays a removal plus
+        a create, as before. A removed line (cancelled, not by CS or a Cancel SO document) is
+        never revived. Renames the `by_ref` key in place; returns the number of pairs.
+        """
+
+        def _num(value: Any) -> Optional[Decimal]:
+            return None if value is None else Decimal(str(value))
+
+        def _key(seq: Any, product_id: Any, qty: Any, price: Any) -> Optional[tuple]:
+            if seq is None or product_id is None:
+                return None
+            return (int(seq), str(product_id), _num(qty), _num(price))
+
+        incoming_refs = {values["source_ref"] for values in line_values}
+        old_by_key: dict[tuple, list[tuple[str, Any]]] = {}
+        for ref, row in by_ref.items():
+            if ref in incoming_refs:
+                continue
+            if (
+                row.line_status == CANCELLED
+                and row.cancelled_at is None
+                and not row.cancelled_by_cancel_doc
+            ):
+                continue
+            key = _key(row.line_no, row.product_id, row.qty_ordered, row.unit_price)
+            if key is not None:
+                old_by_key.setdefault(key, []).append((ref, row))
+
+        new_by_key: dict[tuple, list[dict[str, Any]]] = {}
+        for values in line_values:
+            if values["source_ref"] in by_ref:
+                continue
+            key = _key(
+                values.get("line_number"),
+                values.get("product_id"),
+                values.get("qty_ordered"),
+                values.get("unit_price"),
+            )
+            if key is not None:
+                new_by_key.setdefault(key, []).append(values)
+
+        paired = 0
+        for key, olds in old_by_key.items():
+            news = new_by_key.get(key) or []
+            if len(olds) != 1 or len(news) != 1:
+                continue
+            (old_ref, row), values = olds[0], news[0]
+            if "warehouse_id" in values and str(values["warehouse_id"]) != str(row.warehouse_id):
+                continue
+            by_ref[values["source_ref"]] = by_ref.pop(old_ref)
+            paired += 1
+            logger.info(
+                "AC-REKEY-SAME-LINE: SO line %s (Seq %s) re-keyed %s -> %s",
+                row.id, row.line_no, old_ref, values["source_ref"],
+            )
+        return paired
 
     def _adopt_lines(
         self,

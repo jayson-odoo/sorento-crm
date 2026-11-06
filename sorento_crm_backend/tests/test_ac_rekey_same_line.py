@@ -214,7 +214,8 @@ def test_a_different_item_is_not_a_rekey(env):
     """An item swap on the same Seq is a real replacement."""
     record, header, x, y, line_x, mirror, row_id = _world(env)
 
-    _repush(env, record, [_rekeyed(x, product_ref=env.product2_ref), y])
+    swap = _line(env, seq=SEQ_X, product_ref=env.product2_ref)  # its own ref and item code
+    _repush(env, record, [swap, y])
 
     _assert_removed(env, header, line_x, row_id)
 
@@ -246,3 +247,13 @@ def test_a_line_whose_key_did_not_change_is_untouched_by_the_rekey(env):
     _repush(env, record, [_rekeyed(x), y])
 
     assert _core(env, line_y["id"])["source_ref"] == y["source_ref"]
+
+
+def test_a_different_location_is_not_a_rekey(env):
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+    other = env.link_warehouse(env.company_a)
+    env.db.commit()
+
+    _repush(env, record, [_rekeyed(x, warehouse_ref=other), y])
+
+    _assert_removed(env, header, line_x, row_id)
