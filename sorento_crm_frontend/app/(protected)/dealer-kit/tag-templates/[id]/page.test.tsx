@@ -872,6 +872,8 @@ describe('template settings', () => {
       expect(mockUpdateSettings).toHaveBeenCalledWith('tmpl-1', {
         name: 'Kitchen Sink with 1 Tap',
         family: 'sink_combo',
+        // Item 7: the Settings form carries Price type too, sent unchanged here.
+        price_type: null,
       }),
     );
     expect(await screen.findByText('Kitchen Sink with 1 Tap')).toBeInTheDocument();
@@ -905,5 +907,45 @@ describe('template settings', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// TAG-TEMPLATE-DUPLICATE item 7: the Settings form's Width/Height and the left TAG SIZE panel's
+// W/H are ONE value (the draft doc's size), linked both ways, so the two can never disagree.
+describe('Settings size and the TAG SIZE panel are one value (item 7)', () => {
+  it('a size saved in Settings shows in the TAG SIZE panel', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.change(dialog.getByLabelText('Width (mm)'), { target: { value: '100' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
+    expect(rail.getByLabelText('Tag width (mm)')).toHaveValue(100);
+    expect(rail.getByLabelText('Tag height (mm)')).toHaveValue(58);
+  });
+
+  it('a size set in the TAG SIZE panel is what Settings opens with', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    const rail = within(screen.getByTestId('left-rail'));
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
+    const width = rail.getByLabelText('Tag width (mm)');
+    fireEvent.change(width, { target: { value: '70' } });
+    fireEvent.blur(width);
+
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByLabelText('Width (mm)')).toHaveValue(70);
+    expect(dialog.getByLabelText('Height (mm)')).toHaveValue(58);
   });
 });

@@ -55,3 +55,23 @@ Frontend `TagTemplatesList.duplicate.test.tsx`: the row button posts and navigat
    (`components/ui/data-grid-table-dnd-rows.tsx`, the SO lines pattern in
    `project-sales/[projectId]/components/SalesOrderLinesTable.tsx`). `POST /tag-templates/reorder`
    (manage) reassigns the dragged rows' own slots. New = end, duplicate = right below its source.
+7. One `TemplateSettingsForm` (`tag-templates/components/TemplateSettingsForm.tsx`): Name, Family,
+   Price type, Width, Height, same labels and validation, rendered by New (`TagTemplateDialog`) and
+   Settings (`TemplateSettingsDialog`, which now saves Price type too). The only host difference is
+   the family list (an existing template keeps its kind: price tag or spec sheet). Duplicate has no
+   dialog (it copies at once), so it has no fields to share. TAG SIZE panel vs Settings size:
+   **linked both ways**, one value (`template.doc.width_mm/height_mm`), one write path
+   (`handleResizeTemplate`); the panel keeps presets, W/H and Per A4 + Turn.
+
+## Tests (as shipped)
+
+Backend: `tests/test_tag_template_duplicate.py`, `tests/test_tag_template_list_order.py`
+(12/13 red on main before the change; per-company order kill-tested).
+Frontend: `TagTemplatesList.toolbar.test.tsx`, `TemplateRecordPager.test.tsx`,
+`InsertFieldDialog.fullToken.test.tsx`, `ComboTagPreview.switcher.test.tsx`,
+`TemplateSettingsForm.test.tsx`, plus the item 7 block in `[id]/page.test.tsx`.
+
+## Open for the owner
+
+- The product page's template pickers keep their family-then-name order (not the drag order).
+- The product itself has no Tag preview, so item 4's switcher lives on the combo preview only.

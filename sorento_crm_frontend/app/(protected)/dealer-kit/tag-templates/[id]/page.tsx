@@ -322,15 +322,23 @@ function TagTemplateEditor() {
     async (values: TemplateSettingsValues) => {
       const current = templateRef.current;
       if (!current) return;
-      if (values.name !== current.name || values.family !== current.family) {
+      const priceType = current.price_type ?? null;
+      if (
+        values.name !== current.name ||
+        values.family !== current.family ||
+        values.price_type !== priceType
+      ) {
         const updated = await updateTemplateSettings(current.id, {
           name: values.name,
           family: values.family,
+          price_type: values.price_type,
         });
-        // Only the two settings: the response's doc is the server's draft,
+        // Only the three settings: the response's doc is the server's draft,
         // which an armed autosave may be about to overwrite.
         setTemplate((prev) =>
-          prev ? { ...prev, name: updated.name, family: updated.family } : prev,
+          prev
+            ? { ...prev, name: updated.name, family: updated.family, price_type: updated.price_type }
+            : prev,
         );
       }
       if (values.width_mm !== current.doc.width_mm || values.height_mm !== current.doc.height_mm) {
@@ -678,6 +686,7 @@ function TagTemplateEditor() {
         initial={{
           name: template.name,
           family: template.family,
+          price_type: template.price_type ?? null,
           width_mm: template.doc.width_mm,
           height_mm: template.doc.height_mm,
         }}

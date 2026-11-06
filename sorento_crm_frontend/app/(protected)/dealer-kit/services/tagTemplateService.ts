@@ -358,7 +358,7 @@ export async function createTemplateFromTag(
  */
 export async function updateTemplateSettings(
   id: string,
-  settings: { name: string; family: TagTemplateFamily },
+  settings: { name: string; family: TagTemplateFamily; price_type?: TemplatePriceType | null },
 ): Promise<TagTemplate> {
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
