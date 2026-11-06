@@ -50,7 +50,7 @@ import { accessoriesOf } from './accessory-box';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
-import { isRich, parseRichText, type RichBlock } from './rich-text';
+import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -653,6 +653,11 @@ export function layerText(
     layer.text_override ??
     resolveSlotText(layer, data) ??
     (layer.props.kind === 'text' ? layer.props.text : '');
+  // Formatted content (DESIGNER-RICH-TEXT) reads as its resolved text, one line per paragraph:
+  // substituting into the markup would hand every plain reader HTML.
+  if (layer.props.kind === 'text' && isRich(raw)) {
+    return blocksPlainText(richBlocksWithFields(raw, data, mode, layer) ?? []);
+  }
   return renderMergeFields(raw, data, mode, layer);
 }
 
@@ -703,6 +708,17 @@ export function layerRichBlocks(
 
 const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
 
+/** The stored value behind a rich description token, rich or not. */
+function richTokenValue(
+  path: string,
+  data: TagBindingData | null | undefined,
+  props: TagLayerProps | undefined,
+): string | null {
+  return path === 'product.price_tag_description'
+    ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
+    : (comboOf(data)?.description ?? null);
+}
+
 /** A rich description token inside other text: the text around it and the description itself.
  *  Only a single such token with a rich value; anything else keeps the plain path. */
 function richTokenInText(
@@ -713,10 +729,7 @@ function richTokenInText(
   const found = [...source.matchAll(RICH_TOKEN)];
   if (found.length !== 1) return null;
   const [match] = found;
-  const value =
-    match[1] === 'product.price_tag_description'
-      ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
-      : (comboOf(data)?.description ?? null);
+  const value = richTokenValue(match[1], data, props);
   if (!isRich(value)) return null;
   const at = match.index ?? 0;
   return {
@@ -726,20 +739,85 @@ function richTokenInText(
   };
 }
 
-/** `value` as blocks with its merge fields resolved on the text runs; null when not rich. */
+/** `run` with `text`, its merge fields resolved. */
+function resolvedRun(
+  run: RichRun,
+  text: string,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): RichRun {
+  return { ...run, text: hasMergeField(text) ? renderMergeFields(text, data, mode, layer) : text };
+}
+
+/** A data run under a token's marks: every mark the data set itself wins, the token's marks are
+ * the default for the rest (crew ruling (a), DESIGNER-RICH-TEXT 6 Nov). */
+function underTokenMarks(token: RichRun, own: RichRun): RichRun {
+  const out: RichRun = { ...token, text: own.text };
+  for (const key of ['bold', 'italic', 'underline', 'strike', 'code'] as const) {
+    if (own[key]) out[key] = true;
+  }
+  if (own.color) out.color = own.color;
+  if (own.highlight) out.highlight = own.highlight;
+  return out;
+}
+
+/**
+ * One block of formatted layer text, with any rich description token in its runs spliced in as
+ * the description's own blocks (DESIGNER-RICH-TEXT): the text before the token joins the
+ * description's first paragraph and the text after it its last.
+ */
+function spliceRichTokens(
+  entry: RichBlock,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer: Pick<TagLayer, 'props'>,
+): RichBlock[] | null {
+  const out: RichBlock[] = [{ ...entry, runs: [] }];
+  let spliced = false;
+  for (const run of entry.runs) {
+    let at = 0;
+    for (const match of run.text.matchAll(RICH_TOKEN)) {
+      const value = richTokenValue(match[1], data, layer.props);
+      const blocks = isRich(value) ? richBlocksWithFields(value, data, mode, layer, false) : null;
+      if (!blocks) continue;
+      spliced = true;
+      const start = match.index ?? 0;
+      if (start > at) out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at, start), data, mode, layer));
+      blocks.forEach((block, index) => {
+        const runs = block.runs.map((own) => underTokenMarks(run, own));
+        if (index === 0) out[out.length - 1].runs.push(...runs);
+        else out.push({ ...block, runs });
+      });
+      at = start + match[0].length;
+    }
+    if (at < run.text.length) {
+      out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at), data, mode, layer));
+    }
+  }
+  return spliced ? out : null;
+}
+
+/** `value` as blocks with its merge fields resolved on the text runs; null when not rich.
+ *  `spliceData`: a rich description token is drawn as the description's own blocks; off for the
+ *  description itself, so one cannot pull itself in again. */
 export function richBlocksWithFields(
   value: string | null | undefined,
   data: TagBindingData | null | undefined,
   mode: MergeFieldMode,
   layer?: Pick<TagLayer, 'props'>,
+  spliceData = true,
 ): RichBlock[] | null {
   if (!isRich(value)) return null;
   const out: RichBlock[] = [];
   for (const entry of parseRichText(value)) {
+    const spliced = spliceData && layer ? spliceRichTokens(entry, data, mode, layer) : null;
+    if (spliced) {
+      out.push(...spliced);
+      continue;
+    }
     const hadField = entry.runs.some((run) => hasMergeField(run.text));
-    const runs = entry.runs.map((run) =>
-      hasMergeField(run.text) ? { ...run, text: renderMergeFields(run.text, data, mode, layer) } : run,
-    );
+    const runs = entry.runs.map((run) => resolvedRun(run, run.text, data, mode, layer));
     if (hadField && runs.every((run) => run.text.trim() === '')) continue;
     out.push({ ...entry, runs });
   }
@@ -1243,7 +1321,7 @@ export function layerDisplayName(layer: TagLayer): string {
   }
   switch (layer.props.kind) {
     case 'text':
-      return layer.props.text.slice(0, 24) || 'Text';
+      return richPlainText(layer.props.text).slice(0, 24) || 'Text';
     case 'shape':
       return layer.props.shape.replace(/_/g, ' ');
     case 'image':

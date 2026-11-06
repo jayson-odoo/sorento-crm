@@ -18,6 +18,7 @@
  * data must not quietly bind it.
  */
 
+import { richPlainText } from './rich-text';
 import type { GroupBinding, SlotBinding, TagLayer } from './tag-template-types';
 import { layerDisplayName } from './product-block';
 
@@ -123,7 +124,8 @@ function blockLabel(group: TagLayer, children: TagLayer[], ordinal: number): str
   const code = children.find((child) => child.slot_binding === 'code');
   const placeholder =
     code?.text_override ?? (code?.props.kind === 'text' ? code.props.text : null);
-  const trailing = placeholder?.trim() ? ` - ${placeholder.trim()}` : '';
+  const words = richPlainText(placeholder).trim();
+  const trailing = words ? ` - ${words}` : '';
   return `${layerDisplayName(group)} - block ${ordinal}${trailing}`;
 }
 
