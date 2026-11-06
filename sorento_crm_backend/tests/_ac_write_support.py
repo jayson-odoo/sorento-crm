@@ -603,3 +603,17 @@ def myt_today_candidates() -> set[str]:
 
     now = datetime.now(timezone.utc)
     return {now.date().isoformat(), (now + timedelta(hours=8)).date().isoformat()}
+
+
+def idem_matches(actual: str, base: str) -> bool:
+    """The Idempotency-Key is `<base>-<first 12 hex of sha256(canonical body)>` (round 6, B5)."""
+    import re
+
+    return bool(re.fullmatch(re.escape(base) + r"-[0-9a-f]{12}", actual)) and len(actual) <= 128
+
+
+def idem_for(base: str, body: dict) -> str:
+    import hashlib
+
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{base}-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"

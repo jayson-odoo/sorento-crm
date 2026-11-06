@@ -13,6 +13,8 @@ from the request.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -140,6 +142,19 @@ def _since(stored: Optional[str]) -> str:
 
 def _trim_sentence(message: Optional[str]) -> str:
     return (message or "").strip()[:_MAX_TEXT].rstrip(".").strip()
+
+
+def _idem_key(base: str, body: Dict[str, Any]) -> str:
+    """`<base>-<first 12 hex of sha256(canonical body)>` (round 6, B5).
+
+    SS replays a stored refusal for the same key and body and answers IDEMPOTENCY_CONFLICT for
+    the same key with another body, so a key fixed per record made a retry after one refusal
+    impossible. With the body in the key a corrected request is a new intent, while the same
+    request (a retry after a timeout or a 202) still replays. Longest base is
+    `crm-qt-<uuid>-<uuid>-update-lines` (93 characters), so the key stays under SS's 128.
+    """
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    return f"{base}-{hashlib.sha256(canonical.encode()).hexdigest()[:12]}"
 
 
 def _safe_key(key: Any) -> str:
@@ -590,7 +605,7 @@ class ProjectAutocountWriteService:
             return self._no_book_answer(order.company_id)
         answer = self._call(
             lambda c: c.write(
-                "documents/sales-orders", body, idempotency_key=f"crm-pso-{order.id}-create"
+                "documents/sales-orders", body, idempotency_key=_idem_key(f"crm-pso-{order.id}-create", body)
             )
         )
         result = self._interpret(answer, verb="created", debtor=body["header"]["debtorCode"])
@@ -672,7 +687,7 @@ class ProjectAutocountWriteService:
             "lines": list(edits.values()),
         }
         path = f"documents/sales-orders/{doc_key}"
-        key = f"crm-amd-{amendment.id}-update-edit"
+        key = _idem_key(f"crm-amd-{amendment.id}-update-edit", body)
         answer = self._call(lambda c: c.patch(path, body, idempotency_key=key))
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
@@ -774,7 +789,7 @@ class ProjectAutocountWriteService:
         body = {"companyCode": self._order_company_code(order)}
         path = f"documents/sales-orders/{doc_key}/cancel"
         answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=f"crm-pso-{order.id}-cancel")
+            lambda c: c.write(path, body, idempotency_key=_idem_key(f"crm-pso-{order.id}-cancel", body))
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):
@@ -863,6 +878,12 @@ class ProjectAutocountWriteService:
             self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
 
         customer = self._recipient(document)
+        if customer is None:
+            raise AppException(
+                status_code=422,
+                message="This quotation has no recipient customer.",
+                code="ac_missing_recipient",
+            )
         debtor = self._debtor_code(customer)
         location, why = (
             self._draft.derived_location_for_customer(customer)
@@ -911,7 +932,7 @@ class ProjectAutocountWriteService:
             lambda c: c.write(
                 "documents/quotations",
                 body,
-                idempotency_key=f"crm-qt-{document.id}-{issue.id}-create",
+                idempotency_key=_idem_key(f"crm-qt-{document.id}-{issue.id}-create", body),
             )
         )
         result = self._interpret(answer, verb="created", debtor=debtor)
@@ -1023,7 +1044,7 @@ class ProjectAutocountWriteService:
                 body["lines"] = patched
             answer = self._call(
                 lambda c: c.patch(
-                    f"documents/quotations/{key}", body, idempotency_key=f"{base_key}-edit"
+                    f"documents/quotations/{key}", body, idempotency_key=_idem_key(f"{base_key}-edit", body)
                 )
             )
             if not self._is_done(answer):
@@ -1047,7 +1068,7 @@ class ProjectAutocountWriteService:
                 lambda c: c.write(
                     f"documents/quotations/{key}/lines",
                     add_body,
-                    idempotency_key=f"{base_key}-lines",
+                    idempotency_key=_idem_key(f"{base_key}-lines", add_body),
                 )
             )
             if not self._is_done(add_answer):
@@ -1094,7 +1115,7 @@ class ProjectAutocountWriteService:
         body = {"companyCode": self.company_code(document.company_id)}
         path = f"documents/quotations/{key}/cancel"
         answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=f"crm-qt-{document.id}-cancel")
+            lambda c: c.write(path, body, idempotency_key=_idem_key(f"crm-qt-{document.id}-cancel", body))
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):

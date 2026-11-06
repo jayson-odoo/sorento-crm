@@ -21,6 +21,7 @@ import pytest
 
 from app.models.project_so import SEVERITY_HARD, ProjectSalesOrder, SODraftFinding
 from tests._ac_write_support import (
+    idem_matches,
     BASE,
     EDIT,
     SO_CREATE_PATH,
@@ -152,7 +153,7 @@ def test_the_idempotency_key_is_built_from_the_order_id(api, fake_ss):
     client.post(_url(world))
 
     [request] = fake_ss.to("POST", SO_CREATE_PATH)
-    assert request.headers["Idempotency-Key"] == f"crm-pso-{world.order.id}-create"
+    assert idem_matches(request.headers["Idempotency-Key"], f"crm-pso-{world.order.id}-create")
     assert request.headers["X-API-Key"]
 
 
