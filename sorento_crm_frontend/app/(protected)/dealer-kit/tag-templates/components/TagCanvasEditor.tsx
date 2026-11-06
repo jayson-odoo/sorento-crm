@@ -64,9 +64,9 @@ import {
   defaultBadgeProps,
   defaultBarcodeProps,
   defaultFeatureIconsProps,
+  defaultAccessoriesProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
-  buildAccessoriesStrip,
   buildAlternativesRow,
   buildProductBlock,
   buildSetBlock,
@@ -244,8 +244,13 @@ import {
 import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
-import { useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { useAccessoryDropToast, useFeatureIconDropToast } from './useFeatureIconDropToast';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import {
+  ACCESSORY_DEFAULT_BOX_MM,
+  accessoryBoxLayout,
+  accessoryLineCount,
+} from '@/lib/dealer-kit/accessory-box';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -544,7 +549,6 @@ type PickerState =
   | { kind: 'add-set' }
   | { kind: 'rebind'; groupId: string; mode: PickMode }
   | { kind: 'alternatives' }
-  | { kind: 'accessories' }
   | { kind: 'preview'; groupId: string; mode: PickMode };
 
 /**
@@ -1195,6 +1199,18 @@ export function TagCanvasEditor({
     });
   }, [addLayer, makeBaseLayer]);
 
+  // PRICETAG-ACCESSORIES: one data-driven box replaces the static accessories strip.
+  const handleAddAccessories = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer(
+        'accessories',
+        ACCESSORY_DEFAULT_BOX_MM.width_mm,
+        ACCESSORY_DEFAULT_BOX_MM.height_mm,
+      ),
+      props: defaultAccessoriesProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
   const closePicker = useCallback(() => {
@@ -1291,30 +1307,6 @@ export function TagCanvasEditor({
           }
           addLayers(
             buildAlternativesRow(products, {
-              newId: newLayerId,
-              x_mm: 5,
-              y_mm: Math.max(0, centerY),
-              z_index: maxZ,
-            }),
-          );
-        } else if (picker.kind === 'accessories') {
-          const items = [];
-          for (const id of ids) {
-            const product = await getProductTagData(id, promotionId ?? null);
-            const primary =
-              product.images.find((image) => image.is_primary) ?? product.images[0];
-            items.push({
-              caption: product.code,
-              source: primary
-                ? ({
-                    type: 'product_attachment' as const,
-                    attachmentId: primary.attachment_id,
-                  })
-                : null,
-            });
-          }
-          addLayers(
-            buildAccessoriesStrip(items, {
               newId: newLayerId,
               x_mm: 5,
               y_mm: Math.max(0, centerY),
@@ -3583,6 +3575,24 @@ export function TagCanvasEditor({
   }, [layers, dataOf, assetUrls, library.featureIcons]);
   useFeatureIconDropToast(featureIconFits.dropped);
 
+  // PRICETAG-ACCESSORIES (A6): the same per-layer count and toast for accessories boxes. Only a
+  // box with data previewed counts; the sample cards an unbound box draws never warn.
+  const accessoryFits = useMemo(() => {
+    const fits = new Map<string, { count: number; lines: number }>();
+    let dropped = 0;
+    for (const layer of layers) {
+      if (layer.props.kind !== 'accessories' || layer.visible === false) continue;
+      const items = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.accessories;
+      if (!items) continue;
+      const fit = { count: items.length, lines: accessoryLineCount(items) };
+      fits.set(layer.id, fit);
+      dropped += accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines)
+        .dropped;
+    }
+    return { fits, dropped };
+  }, [layers, dataOf, assetUrls, library.featureIcons]);
+  useAccessoryDropToast(accessoryFits.dropped);
+
   /**
    * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
    * rather than `selectedData`, so the Layers panel's suffix still shows with
@@ -4767,7 +4777,7 @@ export function TagCanvasEditor({
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
+        onAddAccessories={specSheet ? undefined : handleAddAccessories}
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={history.canUndo}
@@ -4999,6 +5009,7 @@ export function TagCanvasEditor({
               specKeys={library.specKeys}
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
+              accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -5033,7 +5044,7 @@ export function TagCanvasEditor({
                 ? picker.mode
                 : 'product'
         }
-        multiple={picker.kind === 'alternatives' || picker.kind === 'accessories'}
+        multiple={picker.kind === 'alternatives'}
         title={
           picker.kind === 'add-set'
             ? 'Add a product set'
@@ -5045,9 +5056,7 @@ export function TagCanvasEditor({
                   : 'Preview this block with'
                 : picker.kind === 'alternatives'
                   ? 'Add an alternatives row'
-                  : picker.kind === 'accessories'
-                    ? 'Add an accessories strip'
-                    : 'Add a product'
+                  : 'Add a product'
         }
         confirmLabel={
           picker.kind === 'rebind'

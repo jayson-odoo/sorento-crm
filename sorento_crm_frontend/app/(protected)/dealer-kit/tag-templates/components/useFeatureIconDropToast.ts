@@ -24,3 +24,19 @@ export function useFeatureIconDropToast(dropped: number): void {
     previous.current = dropped;
   }, [dropped]);
 }
+
+/** PRICETAG-ACCESSORIES (A6): the same warning for accessories that stop fitting their box. */
+export function accessoryDropToastText(dropped: number): string {
+  return dropped === 1
+    ? '1 accessory does not fit its box and will not print. Make the box bigger or the cards smaller.'
+    : `${dropped} accessories do not fit their box and will not print. Make the box bigger or the cards smaller.`;
+}
+
+/** `dropped`: how many accessories the canvas cannot draw right now, across its boxes. */
+export function useAccessoryDropToast(dropped: number): void {
+  const previous = useRef(dropped);
+  useEffect(() => {
+    if (dropped > previous.current) toast.warning(accessoryDropToastText(dropped));
+    previous.current = dropped;
+  }, [dropped]);
+}

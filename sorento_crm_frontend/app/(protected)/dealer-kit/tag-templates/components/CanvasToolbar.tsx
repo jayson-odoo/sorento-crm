@@ -106,7 +106,8 @@ interface CanvasToolbarProps {
   onAddProduct: () => void;
   onAddSet: () => void;
   onAddAlternativesRow: () => void;
-  onAddAccessoriesStrip: () => void;
+  /** PRICETAG-ACCESSORIES: the data-driven "Accessories" box. Absent hides the button. */
+  onAddAccessories?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -243,7 +244,7 @@ export function CanvasToolbar({
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
-  onAddAccessoriesStrip,
+  onAddAccessories,
   onUndo,
   onRedo,
   canUndo,
@@ -319,11 +320,9 @@ export function CanvasToolbar({
         label="Add Alternatives Row"
         onClick={onAddAlternativesRow}
       />
-      <ToolbarButton
-        icon={Sparkles}
-        label="Add Accessories Strip"
-        onClick={onAddAccessoriesStrip}
-      />
+      {onAddAccessories && (
+        <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} />
+      )}
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
