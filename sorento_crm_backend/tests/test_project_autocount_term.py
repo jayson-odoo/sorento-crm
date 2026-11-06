@@ -72,7 +72,7 @@ def test_an_so_update_never_sends_a_display_term(so_api, fake_ss):
     client.post(f"{BASE}/sales-orders/amendments/{amendment.id}/autocount")
 
     [request] = fake_ss.to("PATCH", f"{SO_CREATE_PATH}/{DOC_KEY}")
-    assert "displayTerm" not in fake_ss.body(request)["header"]
+    assert "displayTerm" not in fake_ss.body(request).get("header", {})
 
 
 TERM_REFUSALS = [
