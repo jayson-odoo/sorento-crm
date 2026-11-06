@@ -21,8 +21,11 @@ breaks, commas and " + "; one card width per horizontal box).
   `price_tag_request_lines.included_accessories` is split (`\n`, `,`, ` + `), trimmed,
   de-duplicated by `lower(name)` per company into `accessories`, then linked in written order:
   combo text -> that combo (only if its list is empty); line text -> the line's combo if it has one
-  and that list is empty, else the line's product if its list is empty. Idempotent (re-run inserts
-  nothing). Old columns stay, unread.
+  and that list is empty, else the line's product if its list is empty. Lines are taken oldest
+  first, so the oldest line's text fills an empty list and later lines are left in the NOTICE log.
+  Idempotent (re-run inserts nothing). Old columns stay, unread. `price_tag_request_lines.
+  included_accessories` is still accepted by the request API (and carried by portal revisions) but
+  nothing reads it any more; a later lane drops the column and the field together.
 
 ## API (all under `/api/v1/master-data`, products permission: view `master_data.products.view`,
 ## write `master_data.products.edit`)

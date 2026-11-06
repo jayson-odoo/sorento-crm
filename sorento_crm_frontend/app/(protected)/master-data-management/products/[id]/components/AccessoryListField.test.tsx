@@ -13,6 +13,18 @@ const service = vi.hoisted(() => ({
 }));
 vi.mock('../../../accessories/services/accessoryService', () => service);
 vi.mock('../../services/productService', () => ({ getProducts: vi.fn() }));
+// Captures the drag handler the component wires, so a reorder can be driven without a pointer.
+const dnd = vi.hoisted(() => ({ onDragEnd: null as null | ((e: unknown) => void) }));
+vi.mock('@dnd-kit/core', async (orig) => {
+  const actual = await orig<typeof import('@dnd-kit/core')>();
+  return {
+    ...actual,
+    DndContext: (props: { onDragEnd: (e: unknown) => void; children: React.ReactNode }) => {
+      dnd.onDragEnd = props.onDragEnd;
+      return <>{props.children}</>;
+    },
+  };
+});
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // The real picker is a Radix popover; a native select stands in for the pick.
@@ -63,11 +75,11 @@ const WASTE = acc('a2', 'Waste', { image: { attachment_id: 'x', url: 'http://img
 const TRAP = acc('a3', 'Trap');
 const SINK = acc('p9', 'Under-mount sink', { kind: 'product', code: 'SRT-SK1', list_price: 68 });
 
-function renderField(canEdit = true) {
+function renderField(canEdit = true, hostId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <AccessoryListField kind="product" ownerId="p1" label="Accessories" canEdit={canEdit} />
+      <AccessoryListField kind="product" ownerId="p1" label="Accessories" canEdit={canEdit} ownerHostId={hostId} />
     </QueryClientProvider>,
   );
 }
@@ -148,5 +160,32 @@ describe('AccessoryListField', () => {
     await screen.findByText('Tap');
     expect(screen.queryByLabelText('Remove Tap')).toBeNull();
     expect(screen.queryByLabelText(/Add accessory/)).toBeNull();
+  });
+
+  it('a drag reorder saves the new order', async () => {
+    service.replaceOwnerAccessories.mockResolvedValue([WASTE, TAP]);
+    renderField();
+    await screen.findByText('Tap');
+    dnd.onDragEnd?.({ active: { id: 'accessory:a1' }, over: { id: 'accessory:a2' } });
+    await waitFor(() =>
+      expect(service.replaceOwnerAccessories).toHaveBeenCalledWith('product', 'p1', [
+        { accessory_id: 'a2' },
+        { accessory_id: 'a1' },
+      ]),
+    );
+  });
+
+  it('does not offer the host product in the Add product options', async () => {
+    service.listOwnerAccessories.mockResolvedValue([]);
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [
+        { id: 'p1', product_code: 'HOST', product_name: 'Host cabinet' },
+        { id: 'p7', product_code: 'SRT-TAP', product_name: 'Basin tap' },
+      ],
+    } as never);
+    renderField(true, 'p1');
+    const picker = await screen.findByLabelText(/Add product/);
+    await waitFor(() => expect(picker.querySelector('option[value="p7"]')).not.toBeNull());
+    expect(picker.querySelector('option[value="p1"]')).toBeNull();
   });
 });

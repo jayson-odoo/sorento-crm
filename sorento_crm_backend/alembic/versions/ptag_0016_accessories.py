@@ -39,7 +39,7 @@ DDL = [
     """
     CREATE TABLE IF NOT EXISTS accessories (
         id UUID PRIMARY KEY,
-        company_id UUID REFERENCES companies(id),
+        company_id UUID NOT NULL REFERENCES companies(id),
         name VARCHAR(100) NOT NULL,
         spec VARCHAR(200),
         image_attachment_id UUID REFERENCES attachments(id) ON DELETE SET NULL,

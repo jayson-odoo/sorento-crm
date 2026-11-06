@@ -44,7 +44,12 @@ from app.services.dealer_kit.pricing import (
     resolve_prices,
 )
 from app.services.dealer_kit.product_images import gallery_images
-from app.services.accessory_service import combo_tag_accessories, names_text, product_tag_accessories
+from app.services.accessory_service import (
+    combo_tag_accessories,
+    entry_text,
+    names_text,
+    product_tag_accessories,
+)
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.product_spec_registry import display_spec_value
 
@@ -2019,16 +2024,34 @@ def pin_payload(row: dict) -> dict:
 
 
 def _accessory_fingerprint(accessories) -> list:
-    """What of an accessory list prints: name, spec and WHICH picture (never its signed URL)."""
-    return [
-        {
+    """What of an accessory list prints: name, spec and WHICH picture (never its signed URL); a
+    product entry also its code and list price ("LP: RM 68" is on the card). Library entries keep
+    exactly these three keys, so their hash does not move."""
+    out = []
+    for item in accessories or []:
+        if not isinstance(item, dict):
+            continue
+        row = {
             "name": item.get("name"),
             "spec": item.get("spec"),
             "image": (item.get("image") or {}).get("attachment_id"),
         }
-        for item in accessories or []
-        if isinstance(item, dict)
-    ]
+        if item.get("kind") == "product":
+            row["code"] = item.get("code")
+            row["list_price"] = _plain(item.get("list_price"))
+        out.append(row)
+    return out
+
+
+def _accessory_lines(accessories) -> str:
+    """The list as the change note shows it: each entry's text, plus "LP RM x" on a product."""
+    lines = []
+    for item in accessories or []:
+        text = entry_text(item)
+        if item.get("kind") == "product" and item.get("list_price") is not None:
+            text = f"{text} (LP {_money(item.get('list_price'))})"
+        lines.append(text)
+    return ", ".join(lines)
 
 
 def data_hash(row: dict) -> str:
@@ -2191,12 +2214,16 @@ def diff_pin_against_live(
             plain_text(old_combo.get("description")),
             plain_text(new_combo.get("description")),
         )
-        add(
-            "combo:free_items",
-            "Combo free items",
-            old_combo.get("free_items"),
-            new_combo.get("free_items"),
-        )
+        # PRICETAG-ACCESSORIES: compared list against list. A combo pinned before the lists
+        # existed holds the old free TEXT, which the move re-spelled ("A + B" -> "A, B"): not a
+        # change anyone made, so it is not reported (its text keeps printing until re-pinned).
+        if "accessories" in old_combo:
+            add(
+                "combo:free_items",
+                "Combo free items",
+                _accessory_lines(old_combo.get("accessories")),
+                _accessory_lines(new_combo.get("accessories")),
+            )
         add(
             "combo:options",
             "Combo options",
@@ -2209,8 +2236,8 @@ def diff_pin_against_live(
         add(
             "accessories",
             "Accessories",
-            names_text(pinned.get("accessories") or []),
-            names_text(live.get("accessories") or []),
+            _accessory_lines(pinned.get("accessories")),
+            _accessory_lines(live.get("accessories")),
         )
 
     pinned_offer = _money(pinned.get("sell_price"))

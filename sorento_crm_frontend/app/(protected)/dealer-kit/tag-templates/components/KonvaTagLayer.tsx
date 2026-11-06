@@ -1253,6 +1253,7 @@ function AccessoriesContent({
                   height={px(line.height_mm)}
                   text={texts[n]}
                   align={inner.align}
+                  verticalAlign="middle"
                   fontStyle={n === 0 ? 'bold' : 'normal'}
                   fontFamily={fontFamily}
                   fontSize={px(

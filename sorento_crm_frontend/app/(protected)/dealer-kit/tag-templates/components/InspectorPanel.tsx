@@ -345,9 +345,11 @@ export function InspectorPanel({
     layer.props.kind === 'barcode' ||
     layer.props.kind === 'text' ||
     layer.props.kind === 'image' ||
-    layer.props.kind === 'feature_icons';
+    layer.props.kind === 'feature_icons' ||
+    layer.props.kind === 'accessories';
   const readsProductData =
     layer.props.kind === 'feature_icons' ||
+    layer.props.kind === 'accessories' ||
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
@@ -1594,6 +1596,13 @@ function SubjectInspector({
   onChange: (changes: Partial<TagLayerProps>) => void;
 }) {
   const isPriceBadge = props.kind === 'price_badge';
+  // A price badge defaults to the Tag total; an accessories box to the TAG's own list (the
+  // combo's on a combo tag, card rule A3). Either way "no subject" is its own first option.
+  const defaultLabel = isPriceBadge
+    ? 'Tag total'
+    : props.kind === 'accessories'
+      ? "This tag's list"
+      : null;
   // Two inspectors can be mounted at once (a template editor beside the
   // request designer), and a hard-coded id makes the second `<label>` point
   // at the first one's select.
@@ -1611,7 +1620,7 @@ function SubjectInspector({
   const grouped = (parts ?? []).some((part) => Boolean(part.role));
   const options: SearchableSelectOption[] = parts
     ? [
-        ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
+        ...(defaultLabel ? [{ value: 'default', label: defaultLabel }] : []),
         { value: '-1', label: parentCode || 'Parent' },
         ...parts.map((part, index) => ({
           value: String(index),
@@ -1624,11 +1633,11 @@ function SubjectInspector({
         ...(!subjectSlot && subjectPart !== undefined
           ? [{ value: String(subjectPart), label: `Part ${subjectPart + 1}` }]
           : []),
-        ...slotOptions(slots, isPriceBadge),
+        ...slotOptions(slots, defaultLabel),
       ];
   const value = parts
     ? subjectPart === undefined
-      ? isPriceBadge
+      ? defaultLabel
         ? 'default'
         : '-1'
       : String(subjectPart)
@@ -1636,7 +1645,7 @@ function SubjectInspector({
       ? slotValue(subjectSlot)
       : subjectPart !== undefined
         ? String(subjectPart)
-        : isPriceBadge
+        : defaultLabel
           ? 'default'
           : 'slot:main';
   return (
@@ -1694,7 +1703,10 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
 }
 
 /** The positions a layer may read: the previewed combo's own, else the generic set. */
-function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean): SearchableSelectOption[] {
+function slotOptions(
+  slots: TagSlots | null | undefined,
+  defaultLabel: string | null,
+): SearchableSelectOption[] {
   const out: SearchableSelectOption[] = [];
   const add = (slot: SubjectSlot, code?: string, group?: string) =>
     out.push({
@@ -1703,7 +1715,7 @@ function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean):
       ...(code ? { description: code } : {}),
       ...(group ? { group } : {}),
     });
-  if (isPriceBadge) out.push({ value: 'default', label: 'Tag total' });
+  if (defaultLabel) out.push({ value: 'default', label: defaultLabel });
   add({ kind: 'main' });
   for (const position of comboPositions(slots)) add(position.slot, position.code, position.group);
   return out;

@@ -314,3 +314,16 @@ describe('three-line cards', () => {
     expect(inner.lines[2].y_mm).toBeGreaterThan(inner.lines[1].y_mm);
   });
 });
+
+describe('accessoriesOf, a request line part picked (review B1)', () => {
+  it('reads that part its own list, and -1 the main product its own', () => {
+    const data = line({
+      accessories: [DRAINER],
+      parts: [{ code: 'TAP1', name: 'TAP1', dimensions: '', accessories: [BOARD] }],
+      slots: { main: { code: 'H', name: 'H', dimensions: '', accessories: [PULLOUT] }, fixed: [], groups: [], upgrades: [] },
+    });
+    expect(accessoriesOf(data, { props: props({ subjectPart: 0 }) })).toEqual([BOARD]);
+    expect(accessoriesOf(data, { props: props({ subjectPart: -1 }) })).toEqual([PULLOUT]);
+    expect(accessoriesOf(data, { props: props() })).toEqual([DRAINER]);
+  });
+});

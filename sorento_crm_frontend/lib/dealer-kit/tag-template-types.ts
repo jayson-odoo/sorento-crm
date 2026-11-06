@@ -376,6 +376,8 @@ export interface AccessoriesLayerProps {
   fontFamily?: string;
   /** PRICETAG-COMBO-RENDER K1: a combo position whose OWN list to read; absent = the tag's list. */
   subjectSlot?: SubjectSlot;
+  /** D7: a request line's part (index into `parts`; -1 the main product) whose OWN list to read. */
+  subjectPart?: number;
 }
 
 export interface GroupLayerProps {

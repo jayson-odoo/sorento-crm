@@ -272,3 +272,29 @@ def test_a_code_from_another_company_is_not_a_product_entry(db):
     cb = seed.combo(db, seed.product(db, "ZZMIG"), "ZZT a", free_items=f"{theirs.product_code} thing")
     _move(db)
     assert _combo_entries(db, cb)[0][0] == "accessory"
+
+
+def test_a_piece_naming_the_host_itself_stays_a_library_accessory(db):
+    host = seed.product(db, "ZZMIG")
+    cb = seed.combo(db, host, "ZZT a", free_items=f"{host.product_code} spare")
+    _move(db)
+    assert _combo_entries(db, cb)[0][0] == "accessory"
+
+
+def test_a_piece_naming_a_combo_part_stays_a_library_accessory(db):
+    host = seed.product(db, "ZZMIG")
+    tap = seed.product(db, "ZZTAP")
+    cb = seed.combo(db, host, "ZZT a", parts=[{"product": tap}], free_items=f"{tap.product_code} spare")
+    _move(db)
+    assert _combo_entries(db, cb)[0][0] == "accessory"
+
+
+def test_a_line_piece_naming_its_own_product_stays_a_library_accessory(db):
+    host = seed.product(db, "ZZMIG")
+    seed.submit_one(db, host, None, [], included_accessories=f"{host.product_code} spare")
+    db.flush()
+    _move(db)
+    from app.models.accessory import ProductAccessory
+
+    (row,) = db.query(ProductAccessory).filter(ProductAccessory.product_id == host.id).all()
+    assert row.item_product_id is None and row.accessory_id is not None

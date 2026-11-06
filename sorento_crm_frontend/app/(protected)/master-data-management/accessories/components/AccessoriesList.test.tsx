@@ -18,14 +18,19 @@ const rows = vi.hoisted(() => [
   },
   { id: 'a2', name: 'Waste', spec: null, image: null, product_count: 0, combo_count: 2 },
 ]);
+const total = vi.hoisted(() => ({ value: 2 }));
+const useAccessoriesMock = vi.hoisted(() => vi.fn());
 vi.mock('../hooks/useAccessories', () => ({
-  useAccessories: () => ({
-    data: { data: rows, pagination: { total: 2, page: 1 } },
-    isLoading: false,
-    isPlaceholderData: false,
-    error: null,
-    refetch: vi.fn(),
-  }),
+  useAccessories: (params: unknown) => {
+    useAccessoriesMock(params);
+    return {
+      data: { data: rows, pagination: { total: total.value, page: 1 } },
+      isLoading: false,
+      isPlaceholderData: false,
+      error: null,
+      refetch: vi.fn(),
+    };
+  },
 }));
 const deletionRun = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useDeferredRowAction', () => ({
@@ -60,5 +65,23 @@ describe('AccessoriesList', () => {
     await user.click(screen.getByRole('button', { name: /accessory Tap actions/i }));
     await user.click(await screen.findByText('Delete accessory'));
     expect(deletionRun).toHaveBeenCalledWith({ id: 'a1', subject: 'Tap' });
+  });
+
+  it('asks the server for the next page when the pager moves', async () => {
+    total.value = 120;
+    useAccessoriesMock.mockClear();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AccessoriesList />
+      </QueryClientProvider>,
+    );
+    expect(useAccessoriesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pageIndex: 0, pageSize: 50 }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Go to next page/ }));
+    expect(useAccessoriesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pageIndex: 1, pageSize: 50 }),
+    );
+    total.value = 2;
   });
 });

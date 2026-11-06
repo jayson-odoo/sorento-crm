@@ -86,6 +86,7 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
     case 'price_badge':
     case 'barcode':
     case 'feature_icons':
+    case 'accessories':
     // Browser finding: the designer's own photo slots are `image` layers
     // (bound via `slot_binding: 'product_image'`), not `product_slot` -
     // they read product data exactly the same way and need the same

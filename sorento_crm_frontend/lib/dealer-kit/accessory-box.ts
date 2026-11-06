@@ -60,11 +60,18 @@ export function accessoriesOf(
   layer: { props?: TagLayerProps } | undefined,
 ): TagAccessory[] {
   if (!data) return [];
-  const slot =
-    layer?.props?.kind === 'accessories' ? layer.props.subjectSlot : undefined;
+  const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
+  const slot = props?.subjectSlot;
   if (slot && (data.kind === 'line' || data.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
     return partAtSlot(slots, slot)?.accessories ?? [];
+  }
+  // A request line's part picked in the request designer: that part's own list; -1 the main
+  // product's own list (its position row), never the combo's.
+  const part = props?.subjectPart;
+  if (part !== undefined && data.kind === 'line') {
+    if (part === -1) return data.line.slots?.main?.accessories ?? [];
+    return data.line.parts[part]?.accessories ?? [];
   }
   if (data.kind === 'line') return data.line.accessories ?? [];
   if (data.kind === 'product') {

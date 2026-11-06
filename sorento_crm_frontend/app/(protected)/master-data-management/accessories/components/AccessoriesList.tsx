@@ -1,14 +1,21 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type PaginationState,
+} from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { Card, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { useDeferredRowAction, useRowPending } from '@/hooks/useDeferredRowAction';
@@ -24,6 +31,8 @@ export default function AccessoriesList() {
     setValue: setSearchInput,
     debouncedValue: searchQuery,
   } = useDebouncedSearch();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Accessory | null>(null);
   // Delete asks nothing (D7): the row dims and a toast counts down with Cancel. A 409 from
@@ -37,8 +46,8 @@ export default function AccessoriesList() {
   const rowPending = useRowPending<Accessory>('accessory');
 
   const { data, isLoading, isPlaceholderData, error, refetch } = useAccessories({
-    pageIndex: 0,
-    pageSize: 100,
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
     sorting: [],
     searchQuery,
   });
@@ -59,7 +68,13 @@ export default function AccessoriesList() {
     columns,
     data: rows,
     getRowId: (row) => row.id,
+    pageCount: Math.ceil((data?.pagination?.total ?? 0) / pagination.pageSize),
+    state: { pagination },
+    onPaginationChange: setPagination,
+    columnResizeMode: 'onChange',
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: true,
   });
 
   const handleOpenChange = (open: boolean) => {
@@ -113,6 +128,9 @@ export default function AccessoriesList() {
           <CardTable>
             <DataGridTable />
           </CardTable>
+          <CardFooter>
+            <DataGridPagination />
+          </CardFooter>
         </Card>
       </DataGrid>
 

@@ -1363,13 +1363,22 @@ function renderAccessoriesLayer(
           ? `rotate(${layer.rotation_deg}deg)`
           : undefined,
         transformOrigin: layer.rotation_deg ? '0 0' : undefined,
-        boxSizing: 'border-box',
-        background: props.fill,
-        border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
-        borderRadius: `${props.cornerRadius_mm}mm`,
         fontFamily: font,
       }}
+      data-testid="accessories-box"
     >
+      {/* The frame is its own child so the cards and header share the canvas's origin (the
+          outer corner); a CSS border on this div would push every child in by its width. */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          boxSizing: 'border-box',
+          background: props.fill,
+          border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
+          borderRadius: `${props.cornerRadius_mm}mm`,
+        }}
+      />
       {box.header && (
         <div
           style={{

@@ -620,3 +620,72 @@ def test_a1_the_deferred_delete_removes_an_unused_accessory(db):
     _delete_accessory(db, {"entity_id": row.id})
     db.expire_all()
     assert db.query(Accessory).filter(Accessory.id == row.id).first() is None
+
+
+# --------------------------------------------------------------------------- review fix round 1
+
+
+def test_s1_deleting_a_product_listed_as_a_free_item_is_a_409_naming_the_holder(db):
+    from app.services.error_handler import AppException
+    from app.services.product_service import ProductService
+
+    host = seed.product(db, "ZZWB")
+    cb = seed.combo(db, host, "ZZT basin + tap")
+    waste = _waste(db)
+    db.add(ProductComboAccessory(id=str(uuid.uuid4()), combo_id=cb.id, item_product_id=waste.id, sort_order=0))
+    db.flush()
+    with pytest.raises(AppException) as raised:
+        ProductService(db).delete_product(waste.id)
+    assert raised.value.status_code == 409
+    assert host.product_code in raised.value.message and "ZZT basin + tap" in raised.value.message
+
+
+def test_s1_deleting_a_product_on_another_products_list_is_a_409(db):
+    from app.services.error_handler import AppException
+    from app.services.product_service import ProductService
+
+    host = seed.product(db, "ZZACC")
+    waste = _waste(db)
+    db.add(ProductAccessory(id=str(uuid.uuid4()), product_id=host.id, item_product_id=waste.id, sort_order=0))
+    db.flush()
+    with pytest.raises(AppException) as raised:
+        ProductService(db).delete_product(waste.id)
+    assert raised.value.status_code == 409 and host.product_code in raised.value.message
+
+
+def test_s2_a_free_products_list_price_moving_is_a_reported_change(db, signed):
+    from app.services.dealer_kit import tag_data_service
+
+    host = seed.product(db, "ZZACC")
+    waste = _waste(db)
+    db.add(ProductAccessory(id=str(uuid.uuid4()), product_id=host.id, item_product_id=waste.id, sort_order=0))
+    db.flush()
+    request = seed.submit_one(db, host, None, [])
+    db.flush()
+    pinned = tag_data_service.pin_payload(tag_data_service.resolve_tags_live(db, request)[0])
+    waste.list_price = 75
+    db.flush()
+    live = tag_data_service.resolve_tags_live(db, request)[0]
+    assert tag_data_service.data_hash(live) != tag_data_service.data_hash(pinned)
+    changes = tag_data_service.diff_pin_against_live(db, request.lines[0], pinned, live, None)
+    (change,) = [c for c in changes if c["field"] == "accessories"]
+    assert "68" in change["old"] and "75" in change["new"]
+
+
+def test_s3_a_combo_pinned_before_lists_is_not_flagged_for_its_re_spelled_text(db, signed):
+    from app.services.dealer_kit import tag_data_service
+
+    host = seed.product(db, "ZZACC")
+    cb = seed.combo(db, host, "ZZT 1 tap")
+    a, b = _accessory(db, _name("A")), _accessory(db, _name("B"))
+    _link_combo(db, cb, [a, b])
+    request = seed.submit_one(db, host, cb, [])
+    db.flush()
+    live = tag_data_service.resolve_tags_live(db, request)[0]
+    pinned = tag_data_service.pin_payload(live)
+    # As a pre-lane pin looked: old free text with " + ", no lists anywhere.
+    pinned.pop("accessories")
+    pinned["combo"] = {k: v for k, v in pinned["combo"].items() if k != "accessories"}
+    pinned["combo"]["free_items"] = f"{a.name} + {b.name}"
+    changes = tag_data_service.diff_pin_against_live(db, request.lines[0], pinned, live, None)
+    assert not [c for c in changes if c["field"].startswith("combo:free_items")], changes
