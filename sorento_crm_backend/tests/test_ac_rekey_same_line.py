@@ -169,7 +169,8 @@ def _assert_removed(env, header, line_x, row_id, expected_lines=3):
     core = _core(env, line_x["id"])
     assert core["line_status"] == "cancelled", core
     assert core["source_ref"] == line_x["source_ref"]
-    assert _row_snapshot(env, row_id)["state"] == INQUIRY_CANCELLED
+    # The OI row's fate on a removal is FP-EMAIL-ONE-TRIGGER's (#2220) to define; here only
+    # "not paired" matters: the old row kept its ref and a new row exists.
     assert len(env.so_lines(header["id"])) == expected_lines
 
 
@@ -181,6 +182,7 @@ def test_a_genuine_removal_still_retires_and_hands_over(env, monkeypatch):
     _repush(env, record, [y])
 
     _assert_removed(env, header, line_x, row_id, expected_lines=2)
+    assert _row_snapshot(env, row_id)["state"] == INQUIRY_CANCELLED
     assert len(_handover_calls(calls)) == 1
 
 
@@ -269,3 +271,72 @@ def test_a_line_removed_by_an_earlier_push_is_never_revived(env):
     _repush(env, record, [_rekeyed(x), y])
 
     _assert_removed(env, header, line_x, row_id, expected_lines=3)
+
+
+def test_a_price_with_more_decimals_than_the_column_still_pairs(env):
+    """unit_price is stored Numeric(15, 2): a 4-decimal price must compare as stored."""
+    x = _line(env, seq=SEQ_X, price="0.3850")
+    y = _line(env, seq=SEQ_Y, product_ref=env.product2_ref)
+    record = _so_record(env, lines=[x, y])
+    assert env.post(INGEST_SO, [record]).status_code == 200
+    header = env.header("sales_orders", record["source_ref"])
+    line_x = {l["source_ref"]: l for l in env.so_lines(header["id"])}[x["source_ref"]]
+    new_x = _rekeyed(x)
+
+    res = env.post(INGEST_SO, [dict(record, lines=[new_x, y])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    core = _core(env, line_x["id"])
+    assert core["source_ref"] == new_x["source_ref"]
+    assert core["line_status"] != "cancelled"
+    assert len(env.so_lines(header["id"])) == 2
+
+
+def test_a_cs_cancelled_line_rekeyed_stays_cancelled_and_is_not_duplicated(env):
+    """Card edge case: a line CS transferred to Cancel SO pairs and stays cancelled."""
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+    env.db.execute(
+        text(
+            "UPDATE sales_order_lines SET line_status = 'cancelled', cancelled_at = now()"
+            " WHERE id = :i"
+        ),
+        {"i": str(line_x["id"])},
+    )
+    env.db.commit()
+    new_x = _rekeyed(x)
+
+    _repush(env, record, [new_x, y])
+
+    core = _core(env, line_x["id"])
+    assert core["source_ref"] == new_x["source_ref"]
+    assert core["line_status"] == "cancelled"
+    assert len(env.so_lines(header["id"])) == 2
+
+
+def test_two_old_lines_on_the_same_seq_and_item_is_not_a_rekey(env):
+    """K2 on the old side: (Seq, item) shared by two stored lines is ambiguous, even when
+    only one of them has the new line's qty."""
+    x = _line(env, seq=SEQ_X)
+    z = _line(env, seq=SEQ_X, qty="5")
+    y = _line(env, seq=SEQ_Y, product_ref=env.product2_ref)
+    record = _so_record(env, lines=[x, z, y])
+    assert env.post(INGEST_SO, [record]).status_code == 200
+    header = env.header("sales_orders", record["source_ref"])
+    line_x = {l["source_ref"]: l for l in env.so_lines(header["id"])}[x["source_ref"]]
+
+    _repush(env, record, [_rekeyed(x), y])
+
+    core = _core(env, line_x["id"])
+    assert core["line_status"] == "cancelled"
+    assert core["source_ref"] == x["source_ref"]
+    assert len(env.so_lines(header["id"])) == 4
+
+
+def test_the_verdict_counts_the_rekey(env):
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+
+    res = env.post(INGEST_SO, [dict(record, lines=[_rekeyed(x), y])])
+
+    assert res.status_code == 200, res.text
+    assert '"rekeyed":1' in res.text.replace(" ", ""), res.text

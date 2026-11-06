@@ -59,7 +59,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
@@ -1806,16 +1806,20 @@ class DocumentIngestService(MasterRefResolver):
         never revived. Renames the `by_ref` key in place; returns the number of pairs.
         """
 
-        def _num(value: Any) -> Optional[Decimal]:
-            return None if value is None else Decimal(str(value))
+        def _num(value: Any, places: str) -> Optional[Decimal]:
+            # Rounded as the column stores it (qty Numeric(15, 4), unit price Numeric(15, 2),
+            # `models/order.py`): a 4-decimal price pushed again must still equal its stored self.
+            if value is None:
+                return None
+            return Decimal(str(value)).quantize(Decimal(places), rounding=ROUND_HALF_UP)
 
-        def _key(seq: Any, product_id: Any, qty: Any, price: Any) -> Optional[tuple]:
+        def _slot(seq: Any, product_id: Any) -> Optional[tuple]:
             if seq is None or product_id is None:
                 return None
-            return (int(seq), str(product_id), _num(qty), _num(price))
+            return (int(seq), str(product_id))
 
         incoming_refs = {values["source_ref"] for values in line_values}
-        old_by_key: dict[tuple, list[tuple[str, Any]]] = {}
+        old_by_slot: dict[tuple, list[tuple[str, Any]]] = {}
         for ref, row in by_ref.items():
             if ref in incoming_refs:
                 continue
@@ -1825,29 +1829,29 @@ class DocumentIngestService(MasterRefResolver):
                 and not row.cancelled_by_cancel_doc
             ):
                 continue
-            key = _key(row.line_no, row.product_id, row.qty_ordered, row.unit_price)
-            if key is not None:
-                old_by_key.setdefault(key, []).append((ref, row))
+            slot = _slot(row.line_no, row.product_id)
+            if slot is not None:
+                old_by_slot.setdefault(slot, []).append((ref, row))
 
-        new_by_key: dict[tuple, list[dict[str, Any]]] = {}
+        new_by_slot: dict[tuple, list[dict[str, Any]]] = {}
         for values in line_values:
             if values["source_ref"] in by_ref:
                 continue
-            key = _key(
-                values.get("line_number"),
-                values.get("product_id"),
-                values.get("qty_ordered"),
-                values.get("unit_price"),
-            )
-            if key is not None:
-                new_by_key.setdefault(key, []).append(values)
+            slot = _slot(values.get("line_number"), values.get("product_id"))
+            if slot is not None:
+                new_by_slot.setdefault(slot, []).append(values)
 
         paired = 0
-        for key, olds in old_by_key.items():
-            news = new_by_key.get(key) or []
+        for slot, olds in old_by_slot.items():
+            news = new_by_slot.get(slot) or []
+            # K2: unique on (Seq, product) on both sides, else no guess.
             if len(olds) != 1 or len(news) != 1:
                 continue
             (old_ref, row), values = olds[0], news[0]
+            if _num(row.qty_ordered, "0.0001") != _num(values.get("qty_ordered"), "0.0001"):
+                continue
+            if _num(row.unit_price, "0.01") != _num(values.get("unit_price"), "0.01"):
+                continue
             if "warehouse_id" in values and str(values["warehouse_id"]) != str(row.warehouse_id):
                 continue
             by_ref[values["source_ref"]] = by_ref.pop(old_ref)
