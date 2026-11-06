@@ -1002,7 +1002,12 @@ class TestAcH17PackingListQuantityAndStatusAgree:
         assert line_body["line_status"] == "partially_allocated", line_body
 
         # The PERSISTED row: the allocated figure stays unfiltered (round 5); the
-        # status follows the visible total (PL-STATUS-ROLLUP).
+        # status follows the visible total (PL-STATUS-ROLLUP). Since PACKING-LIST-RECALC
+        # the GET writes nothing; the stored row is the recompute's (the job the GET's
+        # stale check and the allocation writes queue), run here directly.
+        from app.services.procurement_service import InboundShipmentService
+
+        InboundShipmentService(db).refresh_shipment_line_statuses(shipment.id)
         db.expire_all()
         persisted = db.execute(
             text(

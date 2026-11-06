@@ -221,6 +221,16 @@ debtor's AutoCount record. A refusal for a missing term (`errorCode DEBTOR_TERM_
 `displayTerm`) reads "AutoCount needs a credit term on debtor <our debtor code>. Set it in AutoCount and try again.", with the debtor code
 from the body the CRM sent, never text taken from SS.
 
+## B5 (AC-E2E-DB3, crew decision 6 Nov): a refusal must not make every retry replay it
+
+SS replays a stored refusal for the same Idempotency-Key and body (unchanged), so fixed keys per record made a retry after one refusal
+impossible. Crew decided on #2223's shared helper (`app/services/autocount_idempotency.py`: `send_with_attempts`, `attempt_key`, a Redis
+attempt counter per intent), not a body hash. All seven write calls (SO create, SO amendment `-update-edit`, SO cancel, QT create, QT
+`-update-edit`, QT `-update-lines`, QT cancel) go through it with the same base keys as before. Attempt 0 is the base key unchanged; a
+DEFINITE refusal (outcome refused, errorCode not `IDEMPOTENCY_*`) moves the next press to `attempt_key(base, n)`; a timeout, a 202,
+`needs_attention` or an `IDEMPOTENCY_*` answer keeps the key, so a retry can only replay. No Redis means attempt 0 every press. The step
+markers still stop a resend after done.
+
 ## Owner ruling R6a (5 Nov ~10:15 MYT, "for QTSO ok a"): set money always equals the accepted quotation
 
 Raised by the security review: pricing the main (driver) part at the set's rate times its qty per set overstates the money when the

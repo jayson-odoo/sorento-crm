@@ -892,7 +892,8 @@ def make_quotation(
     issue_id: str,
     actor_user_id: str,
 ) -> ProjectQuotationDocument:
-    """A won project's salesperson turns ONE issued proposal revision into the QUOTATION.
+    """The project's salesperson turns ONE issued proposal revision into the QUOTATION (any
+    project not Lost or Dormant; #2197 dropped the won-only gate).
 
     A copy, not a re-pointing: the proposal and its issues stay exactly what the customer was
     sent, and the quotation gets its own number, its own scopes and versions (so a PO, a sample

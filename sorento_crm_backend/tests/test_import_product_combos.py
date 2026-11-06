@@ -156,6 +156,32 @@ def test_ac_8_1_apply_writes_and_a_report_is_always_produced(db, catalogue, phot
     assert len(rows) == 4
 
 
+def _free_names(db, combo) -> list[str]:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    with company_scope(db, None):
+        rows = (
+            db.query(Accessory.name)
+            .join(ProductComboAccessory, ProductComboAccessory.accessory_id == Accessory.id)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+    return [name for (name,) in rows]
+
+
+def _set_free_list(db, combo, names) -> None:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).delete()
+    for index, name in enumerate(names):
+        item = Accessory(name=name, company_id=combo.host_product.company_id)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+
+
 # --------------------------------------------------------------------------- AC-8.2
 
 
@@ -167,14 +193,37 @@ def test_ac_8_2_apply_loads_the_combo_description_free_items_and_cover(
     assert combo is not None
     assert combo.description == "Cabinet, mirror and basin set"
 
-    items = combo.free_items.split(", ")
-    assert len(items) == 2, combo.free_items
+    # PRICETAG-ACCESSORIES: free items load as the combo's accessory list, not as text.
+    items = _free_names(db, combo)
+    assert len(items) == 2, items
+    assert combo.free_items is None
     assert "ZZTTAP1" in items[0] and "Tap" in items[0]
     assert items[0].index("ZZTTAP1") < items[0].index("Tap"), "the code prefixes the label"
     assert items[1] == "Waste", "no code, so the label alone"
 
     assert combo.image_attachment_id is not None
     assert len(storage.objects) == 1, "the cover went through the storage seam once"
+
+
+def test_a_free_item_whose_code_is_a_catalogue_product_loads_as_that_product(
+    db, catalogue, photos, tmp_path, storage
+):
+    """PRICETAG-ACCESSORIES (owner, 6 Nov ~10:45): a free item with a real code is the product."""
+    from app.models.accessory import ProductComboAccessory
+
+    tap = _prod(db, "ZZTTAP1")
+    db.commit()
+    _run(db, tmp_path, photos, apply=True)
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        rows = (
+            db.query(ProductComboAccessory)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+        assert rows[0].item_product_id == tap.id and rows[0].accessory_id is None
+        assert rows[1].accessory_id is not None and rows[1].accessory.name == "Waste"
 
 
 def test_ac_8_2_components_become_fixed_parts_options_share_a_group_topups_are_upgrades(
@@ -278,7 +327,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     with company_scope(db, None):
         combo.description = "Marketing wrote this"
-        combo.free_items = "Marketing free items"
+        _set_free_list(db, combo, ["ZZT MARKETING ITEM"])
         combo.list_price = Decimal("2222.00")
         combo.sell_price = Decimal("1111.00")
         parts = _parts(db, combo)
@@ -290,7 +339,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Marketing wrote this"
-    assert combo.free_items == "Marketing free items"
+    assert _free_names(db, combo) == ["ZZT MARKETING ITEM"], "a list someone set is never overwritten"
     assert combo.list_price == Decimal("2222.00") and combo.sell_price == Decimal("1111.00")
     parts = _parts(db, combo)
     assert parts["ZZTBW"].sell_price == Decimal("222.00")
@@ -308,7 +357,7 @@ def test_ac_8_6_an_empty_description_free_items_or_cover_is_filled_but_set_ones_
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Already here", "a description already set stays"
-    assert combo.free_items, "the blank free items are filled"
+    assert _free_names(db, combo), "the empty free items list is filled"
     assert combo.image_attachment_id is not None, "the blank cover is filled"
     assert _count(db, ProductCombo) == 2
 
@@ -606,3 +655,62 @@ def test_every_other_row_the_import_writes_is_in_the_hosts_company_or_has_none(
     assert cover and links
     assert {a.company_id for a in cover} == {DEFAULT_COMPANY_ID}
     assert {link.company_id for link in links} == {DEFAULT_COMPANY_ID}
+
+
+# --------------------------------------------------------------------------- PRICETAG-COMBO-FORMAT
+#
+# AC-9 (the importer stores the sanitised description) and AC-12 (the compare judges text, not
+# markup). Written test-FIRST: the importer does not call `sanitise_tag_html` / `plain_text` yet.
+
+
+def _run_with_seed(db, tmp_path, photos, entries, *, apply):
+    seed_path = tmp_path / f"fmt-seed-{len(list(tmp_path.glob('fmt-seed-*.json')))}.json"
+    seed_path.write_text(json.dumps(entries))
+    report = tmp_path / f"fmt-report-{len(list(tmp_path.glob('fmt-report-*.csv')))}.csv"
+    argv = ["--file", str(seed_path), "--photos", str(photos), "--report", str(report)]
+    if apply:
+        argv.append("--apply")
+    assert _script().main(argv, db=db, out=io.StringIO()) == 0
+    with open(report, newline="", encoding="utf-8-sig") as fh:
+        return [
+            {k.strip().lower().replace(" ", "_"): v for k, v in raw.items()}
+            for raw in csv.DictReader(fh)
+        ]
+
+
+def test_ac_9_the_importer_stores_the_sanitised_description(db, catalogue, photos, tmp_path, storage):
+    """AC-9: a seed description `<p onclick=x>a</p>` is stored as `<p>a</p>` on --apply."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p onclick=x>a</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>a</p>"
+
+
+def test_ac_9_a_seed_script_tag_is_not_stored(db, catalogue, photos, tmp_path, storage):
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "<p>a<img src=x onerror=alert(1)><script>x</script>b</p>"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+    assert _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p>ab</p>"
+
+
+def test_ac_12_a_combo_whose_only_difference_is_formatting_reports_matches(
+    db, catalogue, photos, tmp_path, storage
+):
+    """AC-12: stored `<p><strong>SRTBF11416</strong> (CABINET)</p>` against the seed text
+    "SRTBF11416 (CABINET)" is "matches", not "differs" (already true today because a set
+    description is never compared; the test pins that the new plain_text compare keeps it so)."""
+    entries = json.loads(SEED.read_text())
+    entries[0]["combo_description"] = "SRTBF11416 (CABINET)"
+    _run_with_seed(db, tmp_path, photos, entries, apply=True)
+
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        combo.description = "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+        db.commit()
+
+    for apply in (False, True):
+        rows = _run_with_seed(db, tmp_path, photos, entries, apply=apply)
+        assert _by_id(rows)["C1"]["status"] == "matches", (apply, _by_id(rows)["C1"])
+    assert (
+        _combo(db, "ZZT 3 in 1", "ZZTH1").description == "<p><strong>SRTBF11416</strong> (CABINET)</p>"
+    ), "formatting the owner added is never overwritten by the plain seed text"

@@ -939,3 +939,30 @@ def test_a_file_over_the_byte_cap_exits_1_and_writes_nothing(db, tmp_path, monke
     assert run.code == 1
     assert _desc(db, p) is None
     assert list(tmp_path.glob("*.csv")) == []
+
+
+# --------------------------------------------------------------------------- R14 (stored value cap)
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_r14_a_description_that_sanitises_over_5000_is_reported_not_stored(db, tmp_path, apply):
+    """R14: the importer applies the same 5000 cap as the product write path. The row lands in the
+    skipped report (any reason text), is not an `update` in the changes report, and nothing is
+    stored; a normal row in the same sheet still goes through."""
+    big = _prod(db, "SRTR14BIG", text="old copy")
+    fine = _prod(db, "SRTR14OK")
+    run = _run(db, tmp_path, [("SRTR14BIG", "x" * 5001), ("SRTR14OK", "Short text")], apply=apply)
+    assert run.code == 0, run.out
+
+    assert "SRTR14BIG" in {r["product_code"] for r in run.skipped}, run.skipped
+    assert [r for r in run.changes if r["product_code"] == "SRTR14BIG" and r["status"] == "update"] == []
+    assert _desc(db, big) == "old copy"
+    assert run.change("SRTR14OK")["status"] == "update"
+    assert _desc(db, fine) == ("Short text" if apply else None)
+
+
+def test_r14_a_description_of_exactly_5000_is_still_imported(db, tmp_path):
+    p = _prod(db, "SRTR14EDGE")
+    run = _run(db, tmp_path, [("SRTR14EDGE", "x" * 5000)], apply=True)
+    assert run.code == 0, run.out
+    assert _desc(db, p) == "x" * 5000

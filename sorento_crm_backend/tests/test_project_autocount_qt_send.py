@@ -428,9 +428,8 @@ def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key
     assert body["outcome"] == "done"
     assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the PATCH step is done and is not sent again"
     first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
-    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"] == (
-        f"crm-qt-{world.document.id}-{issue2.id}-update-lines"
-    )
+    assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
+    assert first.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-lines"
     assert first.content == second.content
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id

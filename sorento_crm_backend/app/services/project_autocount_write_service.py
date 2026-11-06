@@ -44,6 +44,7 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
+from app.services.autocount_idempotency import attempt_store, send_with_attempts
 from app.services.set_driver_pricing import split_set_driver_price
 from app.services.project_so_delta_service import (
     VERB_ADVANCE,
@@ -278,6 +279,16 @@ class ProjectAutocountWriteService:
             return fn(self._gateway())
         except FoundryxPullError as exc:
             return {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message}
+
+    def _send_attempts(self, base_key: str, call) -> Dict[str, Any]:
+        """One write under the intent's current attempt key (#2223's shared helper).
+
+        Attempt 0 is the plain `base_key`; a definite refusal moves the next press of the same
+        intent to a new key so it is not answered with the stored refusal. Anything else keeps
+        the key, so a retry can only replay."""
+        return send_with_attempts(
+            attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
+        )
 
     def company_code(self, company_id: Optional[str]) -> str:
         company = self.db.query(Company).filter(Company.id == company_id).first() if company_id else None
@@ -588,10 +599,9 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(order.company_id)[1]
         if not book:
             return self._no_book_answer(order.company_id)
-        answer = self._call(
-            lambda c: c.write(
-                "documents/sales-orders", body, idempotency_key=f"crm-pso-{order.id}-create"
-            )
+        answer = self._send_attempts(
+            f"crm-pso-{order.id}-create",
+            lambda c, key: c.write("documents/sales-orders", body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="created", debtor=body["header"]["debtorCode"])
         if self._is_done(answer):
@@ -676,8 +686,10 @@ class ProjectAutocountWriteService:
             # SS finds the document by its own date; with none, it uses the date it staged.
             body["docDate"] = doc_date
         path = f"documents/sales-orders/{doc_key}"
-        key = f"crm-amd-{amendment.id}-update-edit"
-        answer = self._call(lambda c: c.patch(path, body, idempotency_key=key))
+        answer = self._send_attempts(
+            f"crm-amd-{amendment.id}-update-edit",
+            lambda c, key: c.patch(path, body, idempotency_key=key),
+        )
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
             refused["waiting"] = waiting
@@ -777,8 +789,9 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self._order_company_code(order)}
         path = f"documents/sales-orders/{doc_key}/cancel"
-        answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=f"crm-pso-{order.id}-cancel")
+        answer = self._send_attempts(
+            f"crm-pso-{order.id}-cancel",
+            lambda c, key: c.write(path, body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):
@@ -867,6 +880,12 @@ class ProjectAutocountWriteService:
             self._require_book(document.autocount_book, self.read_capabilities(document.company_id)[1])
 
         customer = self._recipient(document)
+        if customer is None:
+            raise AppException(
+                status_code=422,
+                message="This quotation has no recipient customer.",
+                code="ac_missing_recipient",
+            )
         debtor = self._debtor_code(customer)
         location, why = (
             self._draft.derived_location_for_customer(customer)
@@ -911,12 +930,9 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(document.company_id)[1]
         if not book:
             return self._no_book_answer(document.company_id)
-        answer = self._call(
-            lambda c: c.write(
-                "documents/quotations",
-                body,
-                idempotency_key=f"crm-qt-{document.id}-{issue.id}-create",
-            )
+        answer = self._send_attempts(
+            f"crm-qt-{document.id}-{issue.id}-create",
+            lambda c, key: c.write("documents/quotations", body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="created", debtor=debtor)
         if self._is_done(answer):
@@ -1028,10 +1044,9 @@ class ProjectAutocountWriteService:
                 body["docDate"] = doc_date
             if patched:
                 body["lines"] = patched
-            answer = self._call(
-                lambda c: c.patch(
-                    f"documents/quotations/{key}", body, idempotency_key=f"{base_key}-edit"
-                )
+            answer = self._send_attempts(
+                f"{base_key}-edit",
+                lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
             )
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
@@ -1050,12 +1065,11 @@ class ProjectAutocountWriteService:
                 "expectedLastModified": document.autocount_last_modified,
                 "lines": adds,
             }
-            add_answer = self._call(
-                lambda c: c.write(
-                    f"documents/quotations/{key}/lines",
-                    add_body,
-                    idempotency_key=f"{base_key}-lines",
-                )
+            add_answer = self._send_attempts(
+                f"{base_key}-lines",
+                lambda c, idem: c.write(
+                    f"documents/quotations/{key}/lines", add_body, idempotency_key=idem
+                ),
             )
             if not self._is_done(add_answer):
                 refused = self._interpret(add_answer, verb="updated", stale_since=stale_since)
@@ -1100,8 +1114,9 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self.company_code(document.company_id)}
         path = f"documents/quotations/{key}/cancel"
-        answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=f"crm-qt-{document.id}-cancel")
+        answer = self._send_attempts(
+            f"crm-qt-{document.id}-cancel",
+            lambda c, key: c.write(path, body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):

@@ -109,6 +109,28 @@ def _std(
     return {"host": host, "mirror": mirror, "white": white, "black": black, "upgrade": upgrade, "combo": cb}
 
 
+def _free_list(db, combo, names):
+    """PRICETAG-ACCESSORIES: a combo's free items are its accessory list (owner Q5, 6 Nov)."""
+    import uuid
+
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).delete()
+    for index, name in enumerate(names):
+        item = Accessory(id=str(uuid.uuid4()), name=f"{name} {uuid.uuid4().hex[:6]}", company_id=seed.SORENTO)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+    return [
+        item.name
+        for item in db.query(Accessory)
+        .join(ProductComboAccessory, ProductComboAccessory.accessory_id == Accessory.id)
+        .filter(ProductComboAccessory.combo_id == combo.id)
+        .order_by(ProductComboAccessory.sort_order)
+    ]
+
+
 def _line_parts(s, pick=None):
     """The dealer's parts: the fixed mirror, then the pick (or the Basin group left open)."""
     parts = [{"product_id": s["mirror"].id}]
@@ -133,19 +155,20 @@ def _row(db, s, pick=None, **kwargs):
 def test_ac_2_1_a_combo_line_resolves_the_whole_combo_object(db):
     s = _std(
         db,
-        combo_fields={"description": "Cabinet, mirror, basin", "free_items": "Tap, waste"},
+        combo_fields={"description": "Cabinet, mirror, basin"},
         white_sell=D("280.00"),
         upgrade_topup=D("100.00"),
         with_upgrade=True,
     )
+    names = _free_list(db, s["combo"], ["Tap", "Waste"])
     row, _request = _row(db, s)
     combo = row["combo"]
 
-    assert set(combo) == {"id", "name", "description", "free_items", "choices", "upgrades"}
+    assert set(combo) == {"id", "name", "description", "free_items", "accessories", "choices", "upgrades"}
     assert combo["id"] == s["combo"].id
     assert combo["name"] == "ZZT 4 in 1"
     assert combo["description"] == "Cabinet, mirror, basin"
-    assert combo["free_items"] == "Tap, waste"
+    assert combo["free_items"] == ", ".join(names)
 
     assert [group["role"] for group in combo["choices"]] == ["Basin"]
     options = combo["choices"][0]["options"]
@@ -215,16 +238,22 @@ def test_ac_2_2_a_picked_upgrade_is_marked_picked(db):
 # --------------------------------------------------------------------------- AC-2.3
 
 
-def test_ac_2_3_the_lines_own_accessories_text_wins(db):
-    s = _std(db, combo_fields={"free_items": "Combo tap"})
+# PRICETAG-ACCESSORIES (owner Q5, 6 Nov): one source. The line's old free text is never read;
+# the slot text is built from the combo's accessory list.
+
+
+def test_ac_2_3_the_lines_old_text_is_no_longer_read(db):
+    s = _std(db)
+    names = _free_list(db, s["combo"], ["Combo tap"])
     row, _ = _row(db, s, pick=s["white"], included_accessories="Line tap")
-    assert row["included_accessories"] == "Line tap"
+    assert row["included_accessories"] == names[0]
 
 
-def test_ac_2_3_a_blank_line_text_falls_back_to_the_combos_free_items(db):
-    s = _std(db, combo_fields={"free_items": "Combo tap, waste"})
+def test_ac_2_3_the_slot_text_is_the_combos_list(db):
+    s = _std(db)
+    names = _free_list(db, s["combo"], ["Combo tap", "Waste"])
     row, _ = _row(db, s, pick=s["white"])
-    assert row["included_accessories"] == "Combo tap, waste"
+    assert row["included_accessories"] == ", ".join(names)
 
 
 def test_ac_2_3_no_free_items_and_no_line_text_stays_empty(db):
@@ -472,11 +501,11 @@ def _fixed_combo(db):
         "ZZT pair",
         parts=[{"product": mirror}],
         description="Old text",
-        free_items="Old free",
         list_price=D("2000.00"),
         sell_price=D("1500.00"),
     )
-    return {"host": host, "mirror": mirror, "combo": cb}
+    (old_free,) = _free_list(db, cb, ["Old free"])
+    return {"host": host, "mirror": mirror, "combo": cb, "old_free": old_free}
 
 
 def _pinned_tag(db, request):
@@ -492,7 +521,7 @@ def test_ac_2_8_a_designing_tag_picks_up_changed_combo_text_and_price(crm):
     assert tag.pinned_tag_data["combo"]["description"] == "Old text"
 
     s["combo"].description = "New text"
-    s["combo"].free_items = "New free"
+    (new_free,) = _free_list(db, s["combo"], ["New free"])
     s["combo"].sell_price = D("1400.00")
     db.commit()
 
@@ -502,7 +531,7 @@ def test_ac_2_8_a_designing_tag_picks_up_changed_combo_text_and_price(crm):
     tag = _pinned_tag(db, request)
     assert tag.data_updated_at is not None
     assert tag.pinned_tag_data["combo"]["description"] == "New text"
-    assert tag.pinned_tag_data["combo"]["free_items"] == "New free"
+    assert tag.pinned_tag_data["combo"]["free_items"] == new_free
     assert D(str(tag.pinned_tag_data["sell_price"])) == D("1400.00")
     labels = " ".join(str(change) for change in (tag.data_update_changes or [])).lower()
     assert "description" in labels, "the change note names the combo description"
@@ -518,7 +547,7 @@ def test_ac_2_8_an_approved_pinned_tag_keeps_its_text_and_figures(crm):
     db.commit()
 
     s["combo"].description = "New text"
-    s["combo"].free_items = "New free"
+    (new_free,) = _free_list(db, s["combo"], ["New free"])
     s["combo"].sell_price = D("1400.00")
     db.commit()
 
@@ -526,9 +555,10 @@ def test_ac_2_8_an_approved_pinned_tag_keeps_its_text_and_figures(crm):
     db.expire_all()
     (row,) = seed.rows(db, request)
     assert row["combo"]["description"] == "Old text"
-    assert row["combo"]["free_items"] == "Old free"
+    assert row["combo"]["free_items"] == s["old_free"]
     assert row["sell_price"] == old_sell == D("1500.00")
-    assert row["included_accessories"] == "Old free", "a blank line text reads the pinned free items"
+    assert row["included_accessories"] == s["old_free"], "the pinned list, not today's"
+    assert [item["name"] for item in row["accessories"]] == [s["old_free"]]
     assert _pinned_tag(db, request).data_updated_at is None
 
 
@@ -577,7 +607,8 @@ def test_ac_2_9_the_export_payload_carries_the_combo(crm):
     assert combo is not None, "ResolvedLineData must declare `combo` or the PDF drops it"
     assert combo["name"] == "ZZT pair"
     assert combo["description"] == "Old text"
-    assert combo["free_items"] == "Old free"
+    assert combo["free_items"] == s["old_free"]
+    assert [item["name"] for item in payload["resolvedData"][tag.id]["accessories"]] == [s["old_free"]]
 
 
 # --------------------------------------------------------------------------- sell above list

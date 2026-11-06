@@ -12,6 +12,7 @@
 import {
   Banknote,
   Barcode,
+  BadgeCheck,
   Boxes,
   ChevronDown,
   Copy,
@@ -38,6 +39,7 @@ import {
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { shortcutLabel, useIsMac } from '@/lib/dealer-kit/canvas-input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
@@ -99,10 +101,13 @@ interface CanvasToolbarProps {
   onAddPriceBadge: () => void;
   onAddBadge: () => void;
   onAddBarcode: () => void;
+  /** Feature icons (PRICETAG-DESIGNER-GAPS item 3). Absent hides the button. */
+  onAddFeatureIcons?: () => void;
   onAddProduct: () => void;
   onAddSet: () => void;
   onAddAlternativesRow: () => void;
-  onAddAccessoriesStrip: () => void;
+  /** PRICETAG-ACCESSORIES: the data-driven "Accessories" box. Absent hides the button. */
+  onAddAccessories?: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -235,10 +240,11 @@ export function CanvasToolbar({
   onAddPriceBadge,
   onAddBadge,
   onAddBarcode,
+  onAddFeatureIcons,
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
-  onAddAccessoriesStrip,
+  onAddAccessories,
   onUndo,
   onRedo,
   canUndo,
@@ -257,6 +263,7 @@ export function CanvasToolbar({
   selectionIsGroup,
   trailing,
 }: CanvasToolbarProps) {
+  const mac = useIsMac();
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
     // an `sr-only` span, which is `position: absolute`, and a static row is not
@@ -299,6 +306,9 @@ export function CanvasToolbar({
       />
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
       <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
+      {onAddFeatureIcons && (
+        <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
+      )}
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
@@ -310,11 +320,9 @@ export function CanvasToolbar({
         label="Add Alternatives Row"
         onClick={onAddAlternativesRow}
       />
-      <ToolbarButton
-        icon={Sparkles}
-        label="Add Accessories Strip"
-        onClick={onAddAccessoriesStrip}
-      />
+      {onAddAccessories && (
+        <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} />
+      )}
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
@@ -324,14 +332,14 @@ export function CanvasToolbar({
         label="Undo"
         onClick={onUndo}
         disabled={!canUndo}
-        shortcut="Ctrl+Z"
+        shortcut={shortcutLabel('Z', mac)}
       />
       <ToolbarButton
         icon={Redo2}
         label="Redo"
         onClick={onRedo}
         disabled={!canRedo}
-        shortcut="Ctrl+Shift+Z"
+        shortcut={shortcutLabel('Z', mac, true)}
       />
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
@@ -342,12 +350,12 @@ export function CanvasToolbar({
         type="button"
         className="min-w-[48px] shrink-0 rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
         onClick={onZoomReset}
-        title="Zoom to 100% (Ctrl+1)"
+        title={`Zoom to 100% (${shortcutLabel('1', mac)})`}
       >
         {Math.round(zoom * 100)}%
       </button>
       <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
-      <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut="Ctrl+0" />
+      <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />
 
       <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
@@ -364,14 +372,14 @@ export function CanvasToolbar({
         label="Duplicate"
         onClick={onDuplicateSelected}
         disabled={!hasSelection}
-        shortcut="Ctrl+D"
+        shortcut={shortcutLabel('D', mac)}
       />
       <ToolbarButton
         icon={Group}
         label="Group"
         onClick={onGroupSelected}
         disabled={!hasMultiSelection}
-        shortcut="Ctrl+G"
+        shortcut={shortcutLabel('G', mac)}
       />
       <ToolbarButton
         icon={Ungroup}

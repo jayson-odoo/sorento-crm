@@ -8,6 +8,8 @@
  * button's conditional render.
  */
 
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import path from 'path';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -257,5 +259,50 @@ describe('ColorPicker', () => {
     // arriving afterwards (some browsers fire both) does not commit again.
     fireEvent(square, new PointerEvent('pointerup', { pointerId: 1 }));
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * PRICETAG-COMBO-FORMAT AC-3: the colour popover is ONE control, `components/common/ColorPicker.tsx`.
+ * The tag designer imports it from there and the old path no longer exists.
+ */
+describe('one colour control (AC-3)', () => {
+  const root = path.resolve(__dirname, '..', '..');
+  const skip = new Set(['node_modules', '.next', 'e2e', 'coverage', '.git']);
+
+  function sources(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      if (skip.has(entry.name)) return [];
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return sources(full);
+      return /\.(ts|tsx)$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  it('AC-3: the old file at the tag-templates path is gone', () => {
+    const old = path.join(root, 'app/(protected)/dealer-kit/tag-templates/components/ColorPicker.tsx');
+    expect(existsSync(old)).toBe(false);
+  });
+
+  it('AC-3: no file imports the tag-templates ColorPicker', () => {
+    const offenders = sources(root)
+      .filter((file) => !file.endsWith('ColorPicker.test.tsx'))
+      .filter((file) => {
+        const text = readFileSync(file, 'utf8');
+        if (/tag-templates\/components\/ColorPicker/.test(text)) return true;
+        // The designer's own components used the sibling import `./ColorPicker`.
+        return file.includes(`${path.sep}tag-templates${path.sep}components${path.sep}`) &&
+          /from ['"]\.\/ColorPicker['"]/.test(text);
+      })
+      .map((file) => path.relative(root, file));
+    expect(offenders).toEqual([]);
+  });
+
+  it('AC-3: the designer inspector takes the shared component', () => {
+    const inspector = readFileSync(
+      path.join(root, 'app/(protected)/dealer-kit/tag-templates/components/InspectorPanel.tsx'),
+      'utf8',
+    );
+    expect(inspector).toMatch(/from '@\/components\/common\/ColorPicker'/);
   });
 });

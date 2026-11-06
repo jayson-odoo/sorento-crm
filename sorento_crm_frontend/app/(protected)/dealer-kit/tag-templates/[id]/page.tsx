@@ -39,8 +39,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { TemplateRecordPager } from '../components/TemplateRecordPager';
 import { toast } from '@/lib/toast';
-import { History, Loader2, Maximize2, Minimize2, Save as SaveIcon, Upload } from 'lucide-react';
+import {
+  History,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Save as SaveIcon,
+  Settings2,
+  Upload,
+} from 'lucide-react';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
@@ -72,7 +81,13 @@ import {
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
+  updateTemplateSettings,
 } from '../../services/tagTemplateService';
+import { layersOutside } from '@/lib/dealer-kit/layer-bounds';
+import {
+  TemplateSettingsDialog,
+  type TemplateSettingsValues,
+} from '../components/TemplateSettingsDialog';
 import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
 import { FocusShell } from '../../components/FocusMode';
@@ -92,7 +107,18 @@ const TagVersionViewer = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[400px] w-full" /> },
 );
 
+/**
+ * One editor per template id. Prev/next (item 2) changes only the id, and keying on it unmounts
+ * the editor of the template being left, which is the editor's own unsaved-changes guard: the
+ * unmount cleanup below flushes any pending autosave before the next template loads, so a step
+ * never carries one template's state onto another.
+ */
 export default function TagTemplateEditorPage() {
+  const params = useParams<{ id: string }>();
+  return <TagTemplateEditor key={params.id} />;
+}
+
+function TagTemplateEditor() {
   const params = useParams<{ id: string }>();
 
   const [template, setTemplate] = useState<TagTemplate | null>(null);
@@ -121,6 +147,9 @@ export default function TagTemplateEditorPage() {
   // needs to know so it can say "Restoring..." (the sheet tracks its own row
   // locally).
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+
+  /** Template settings (PRICETAG-DESIGNER-GAPS item 4): name, family, size. */
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
   const [focus, setFocus] = useState(false);
@@ -271,8 +300,53 @@ export default function TagTemplateEditorPage() {
           : prev,
       );
       scheduleAutosave(draftLayers);
+      // Layers keep their place on a resize (AC-S1-5), so say when the new
+      // size cuts some off (item 4). The settings dialog says it before Save.
+      const cutOff = layersOutside(draftLayers, width_mm, height_mm);
+      if (cutOff > 0) {
+        toast.warning(
+          `${cutOff === 1 ? '1 layer sits' : `${cutOff} layers sit`} outside ${width_mm} x ${height_mm} mm and may need moving`,
+        );
+      }
     },
     [draftLayers, scheduleAutosave],
+  );
+
+  /**
+   * Template settings (item 4). Name and family are template facts, not
+   * version facts: written straight to the row, no republish, the live
+   * pointer untouched. A size change goes through the SAME draft resize the
+   * left-rail control uses, so it reaches the live tag on the next publish.
+   */
+  const handleSaveSettings = useCallback(
+    async (values: TemplateSettingsValues) => {
+      const current = templateRef.current;
+      if (!current) return;
+      const priceType = current.price_type ?? null;
+      if (
+        values.name !== current.name ||
+        values.family !== current.family ||
+        values.price_type !== priceType
+      ) {
+        const updated = await updateTemplateSettings(current.id, {
+          name: values.name,
+          family: values.family,
+          price_type: values.price_type,
+        });
+        // Only the three settings: the response's doc is the server's draft,
+        // which an armed autosave may be about to overwrite.
+        setTemplate((prev) =>
+          prev
+            ? { ...prev, name: updated.name, family: updated.family, price_type: updated.price_type }
+            : prev,
+        );
+      }
+      if (values.width_mm !== current.doc.width_mm || values.height_mm !== current.doc.height_mm) {
+        handleResizeTemplate(values.width_mm, values.height_mm);
+      }
+      toast.success('Template settings saved');
+    },
+    [handleResizeTemplate],
   );
 
   /** Per-A4 grid (S7, AC-S7-14): typed cols/rows/turn, or `null` from Auto -
@@ -445,6 +519,13 @@ export default function TagTemplateEditorPage() {
       disabled: saving || Boolean(viewing),
     },
     {
+      id: 'settings',
+      icon: Settings2,
+      label: 'Settings',
+      onClick: () => setSettingsOpen(true),
+      disabled: Boolean(viewing),
+    },
+    {
       id: 'full-screen',
       icon: focus ? Minimize2 : Maximize2,
       label: focus ? 'Exit full screen' : 'Full screen',
@@ -491,6 +572,7 @@ export default function TagTemplateEditorPage() {
               // indicator, Publish and Back to templates still do not
               // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
+                <TemplateRecordPager id={template.id} />
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
@@ -597,6 +679,21 @@ export default function TagTemplateEditorPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <TemplateSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initial={{
+          name: template.name,
+          family: template.family,
+          price_type: template.price_type ?? null,
+          width_mm: template.doc.width_mm,
+          height_mm: template.doc.height_mm,
+        }}
+        layers={draftLayers}
+        isLive={isLive}
+        onSave={handleSaveSettings}
+      />
 
       <SaveAsSizeDialog
         open={saveSizeOpen}

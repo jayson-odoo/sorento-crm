@@ -19,7 +19,16 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Label } from '@/components/ui/label';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { explicitDefaultId } from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
+import {
+  explicitDefaults,
+  linksBody,
+  type LinkDefaults,
+} from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
+import {
+  TEMPLATE_PRICE_TYPE_LABEL,
+  templateFitsLine,
+  type TemplatePriceType,
+} from '@/lib/dealer-kit/template-price-type';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
   productTagTemplatesKey,
@@ -27,6 +36,10 @@ import {
   useProductTagTemplates,
   useSetProductTagTemplates,
 } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
+
+function typeText(priceType: TemplatePriceType | null | undefined): string {
+  return priceType ? TEMPLATE_PRICE_TYPE_LABEL[priceType] : 'Not set';
+}
 
 function sizeText(width: number | null | undefined, height: number | null | undefined): string | undefined {
   return width && height ? `${width} x ${height} mm` : undefined;
@@ -65,6 +78,7 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
         value: template.id,
         label: template.name,
         description: [
+          typeText(template.price_type),
           sizeText(template.print_size.width_mm, template.print_size.height_mm),
           template.published_version_id ? null : 'Draft',
         ]
@@ -76,9 +90,16 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
 
   if (!canView) return null;
   const rows = linked.data ?? [];
-  // Only a default the user chose is sent back: a lone link is reported as the default for
+  // Only defaults the user chose are sent back: a lone link is reported as the default for
   // display, and must not be stored just because a second template was added.
-  const defaultId = explicitDefaultId(rows);
+  const defaults = explicitDefaults(rows);
+  const saveDefaults = (next: LinkDefaults) =>
+    save.mutate(
+      linksBody(
+        rows.map((row) => row.id),
+        next,
+      ),
+    );
 
   return (
     <Card>
@@ -99,7 +120,9 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
             selectedOptions={rows.map((row) => ({
               value: row.id,
               label: row.name,
-              description: sizeText(row.width_mm, row.height_mm),
+              description: [typeText(row.price_type), sizeText(row.width_mm, row.height_mm)]
+                .filter(Boolean)
+                .join(' / '),
             }))}
             onChange={(ids) => {
               const current = rows.map((row) => row.id);
@@ -108,10 +131,7 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
               // Keep every current link on the add: the removed ones go through
               // the countdown below, not this save.
               if (added.length > 0) {
-                save.mutate({
-                  template_ids: [...current, ...added],
-                  default_template_id: defaultId,
-                });
+                save.mutate(linksBody([...current, ...added], defaults));
               }
               if (removed.length > 0) {
                 const names = rows.filter((row) => removed.includes(row.id)).map((row) => row.name);
@@ -134,27 +154,43 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
             {rows.map((row) => (
               <Badge key={row.id} variant="secondary" className="font-normal" title={row.name}>
                 <span className="max-w-[16rem] truncate">{row.name}</span>
+                <span className="ml-1 text-muted-foreground">{typeText(row.price_type)}</span>
                 {row.published ? null : <span className="ml-1 text-muted-foreground">(Draft)</span>}
-                {row.is_default && rows.length > 1 ? <span className="ml-1">Default</span> : null}
+                {rows.length > 1 && row.default_list ? <span className="ml-1">Default LP</span> : null}
+                {rows.length > 1 && row.default_selling ? <span className="ml-1">Default SP</span> : null}
               </Badge>
             ))}
           </div>
         )}
         {canManage && !linked.isLoading && !linked.isError && rows.length > 1 ? (
-          <div className="space-y-1.5">
-            <Label htmlFor="product-default-template">Default template</Label>
-            <SearchableSelect
-              id="product-default-template"
-              clearable
-              value={defaultId ?? ''}
-              onChange={(id) =>
-                save.mutate({ template_ids: rows.map((row) => row.id), default_template_id: id || null })
-              }
-              options={rows.map((row) => ({ value: row.id, label: row.name }))}
-              disabled={save.isPending}
-              placeholder="Default template"
-              emptyMessage="No templates."
-            />
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(
+              [
+                ['list', 'Default LP template', defaults.list],
+                ['selling', 'Default SP template', defaults.selling],
+              ] as const
+            ).map(([kind, label, current]) => (
+              <div key={kind} className="min-w-0 space-y-1.5">
+                <Label htmlFor={`product-default-${kind}`}>{label}</Label>
+                <SearchableSelect
+                  id={`product-default-${kind}`}
+                  aria-label={label}
+                  clearable
+                  value={current}
+                  onChange={(id) => saveDefaults({ ...defaults, [kind]: id })}
+                  options={rows
+                    .filter((row) => templateFitsLine(row.price_type, kind))
+                    .map((row) => ({
+                      value: row.id,
+                      label: row.name,
+                      description: typeText(row.price_type),
+                    }))}
+                  disabled={save.isPending}
+                  placeholder={label}
+                  emptyMessage="No templates."
+                />
+              </div>
+            ))}
           </div>
         ) : null}
         {!linked.isLoading && !linked.isError && rows.length === 0 ? (

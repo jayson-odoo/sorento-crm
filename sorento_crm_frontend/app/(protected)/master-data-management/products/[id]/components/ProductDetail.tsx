@@ -34,6 +34,7 @@ import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import ProductCombosSection from './ProductCombosSection';
+import ProductAccessoriesSection from './ProductAccessoriesSection';
 import ProductTagTemplatesSection from './ProductTagTemplatesSection';
 import ProductSoldWithSection from './ProductSoldWithSection';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
@@ -602,6 +603,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                   sit on Overview rather than Suppliers because a combo is what the
                   product IS sold as, not a fact about how it is bought. */}
               <ProductCombosSection productId={productId} />
+              <ProductAccessoriesSection productId={productId} />
               <ProductTagTemplatesSection productId={productId} />
               <ProductSoldWithSection productId={productId} />
             </TabsContent>

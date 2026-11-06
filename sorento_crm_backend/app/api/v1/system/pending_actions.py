@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
 from app.models.access import Team
+from app.models.accessory import Accessory
 from app.models.base import company_scope, get_company_scope
 from app.models.certificate import Certificate
 from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
@@ -336,6 +337,7 @@ def _assert_entity_visible(
 # parked. A new record action goes here or, with its reason, in `_PARK_SCOPE_EXEMPT`
 # (tests/test_bulk_delete_company_scope.py fails until it is in one of them).
 _PARK_SCOPED_MODELS: dict = {
+    "accessory.delete": Accessory,
     "attachment.set_company": Attachment,
     "attachment_directory.set_company": AttachmentDirectory,
     "brand.delete": Brand,
