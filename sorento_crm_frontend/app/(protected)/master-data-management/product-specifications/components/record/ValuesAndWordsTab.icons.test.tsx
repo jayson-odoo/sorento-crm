@@ -69,15 +69,18 @@ const LIBRARY = [
 // The real picker is the dealer-kit one; here "Select Steam" adds one icon to the dialog's own
 // selection, which reaches the choice only through Done (SPEC-ICON-PICKER-UX).
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog', () => ({
-  AssetPickerDialog: function MockPicker(props: {
-    open: boolean;
-    libraryKind?: string;
-    selectedIds?: string[];
-    onCancel: () => void;
-    onDone?: (ids: string[]) => void;
-  }) {
+  AssetPickerDialog: (props: PickerProps) => (props.open ? <MockPicker {...props} /> : null),
+}));
+type PickerProps = {
+  open: boolean;
+  libraryKind?: string;
+  selectedIds?: string[];
+  onCancel: () => void;
+  onDone?: (ids: string[]) => void;
+};
+// Mounted on open, so it seeds from selectedIds the way the real dialog does on open.
+function MockPicker(props: PickerProps) {
     const [picked, setPicked] = React.useState<string[]>(props.selectedIds ?? []);
-    if (!props.open) return null;
     return (
       <div data-testid="icon-picker" data-kind={props.libraryKind} data-selected={(props.selectedIds ?? []).join(',')}>
         <button type="button" onClick={() => setPicked((ids) => [...ids, 'i-new'])}>
@@ -91,8 +94,7 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog
         </button>
       </div>
     );
-  },
-}));
+}
 
 import { ValuesAndWordsTab } from './ValuesAndWordsTab';
 import { buildPatchBody, projectSpecKeyDraft, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';

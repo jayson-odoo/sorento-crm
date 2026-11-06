@@ -655,25 +655,24 @@ export function ValuesAndWordsTab({
           <DataGridTable />
         </DataGrid>
       </div>
-      {/* The Dealer Kit icon library: upload or pick. Each pick appends to the choice's icons
-          and the picker stays open, so hot and cold go in one go; Done closes it. */}
+      {/* The Dealer Kit icon library (the designer's own, kind = icon). Tiles toggle a selection
+          that opens on the choice's current icons; Done writes it to the draft in the order it
+          was made, Cancel / X / click-away discard it (SPEC-ICON-PICKER-UX). */}
       <AssetPickerDialog
         open={iconPickerFor !== null}
         productImages={[]}
         allowProductPhotos={false}
         libraryKind="icon"
-        closeLabel="Done"
         title={iconPickerFor ? `Icons for ${displayName(iconPickerFor)}` : 'Icons'}
+        selectedIds={iconPickerFor ? valueIcons[iconPickerFor] ?? NO_ICON_IDS : NO_ICON_IDS}
         onCancel={() => {
           setIconPickerFor(null);
           refreshIconLibrary();
         }}
-        onPick={(source) => {
-          if (iconPickerFor && source.type === 'asset') {
-            const assetId = source.assetId;
-            setIcons(iconPickerFor, (ids) => (ids.includes(assetId) ? ids : [...ids, assetId]));
-            refreshIconLibrary();
-          }
+        onDone={(assetIds) => {
+          if (iconPickerFor) setIcons(iconPickerFor, () => assetIds);
+          setIconPickerFor(null);
+          refreshIconLibrary();
         }}
       />
     </div>
