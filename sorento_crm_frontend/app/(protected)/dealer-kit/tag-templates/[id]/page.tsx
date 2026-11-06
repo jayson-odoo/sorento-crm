@@ -39,6 +39,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
+import ListPager from '@/components/common/ListPager';
+import type { ListPagerParams } from '@/hooks/useListPager';
+import { fetchTagTemplatePage, tagTemplatePageKey } from '../lib/listQuery';
 import { toast } from '@/lib/toast';
 import {
   History,
@@ -106,7 +110,37 @@ const TagVersionViewer = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[400px] w-full" /> },
 );
 
+/**
+ * One editor per template id. Prev/next (item 2) changes only the id, and keying on it unmounts
+ * the editor of the template being left, which is the editor's own unsaved-changes guard: the
+ * unmount cleanup below flushes any pending autosave before the next template loads, so a step
+ * never carries one template's state onto another.
+ */
 export default function TagTemplateEditorPage() {
+  const params = useParams<{ id: string }>();
+  return <TagTemplateEditor key={params.id} />;
+}
+
+/** Prev/next across the Tag Templates list the reader came from, in its order and filter
+ *  (TAG-TEMPLATE-DUPLICATE item 2). Hidden on a deep link that names no list. */
+function TemplatePager({ id }: { id: string }) {
+  const queryClient = useQueryClient();
+  const fetchPage = useCallback(
+    (p: ListPagerParams) => fetchTagTemplatePage(queryClient, p),
+    [queryClient],
+  );
+  return (
+    <ListPager
+      listQueryKey={tagTemplatePageKey}
+      fetchPage={fetchPage}
+      detailPath="/dealer-kit/tag-templates"
+      currentId={id}
+      ariaLabel="template"
+    />
+  );
+}
+
+function TagTemplateEditor() {
   const params = useParams<{ id: string }>();
 
   const [template, setTemplate] = useState<TagTemplate | null>(null);
@@ -552,6 +586,7 @@ export default function TagTemplateEditorPage() {
               // indicator, Publish and Back to templates still do not
               // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
+                <TemplatePager id={template.id} />
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
