@@ -28,6 +28,23 @@ _TTL_SECONDS = 30 * 24 * 3600
 _NOT_A_REFUSAL_OF_THE_INTENT = ("IDEMPOTENCY_",)
 
 
+_store: list = []
+
+
+def attempt_store() -> Optional[Any]:
+    """The process's Redis client (1 s timeouts), or None when it cannot be built."""
+    if not _store:
+        try:
+            import redis
+
+            from app.config import settings
+
+            _store.append(redis.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1))
+        except Exception:  # noqa: BLE001
+            _store.append(None)
+    return _store[0]
+
+
 def attempt_key(base: str, attempt: int) -> str:
     """Attempt 0 is the base key unchanged; later attempts are a short hash of base + attempt."""
     if attempt <= 0:
