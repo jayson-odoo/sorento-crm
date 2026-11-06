@@ -22,7 +22,7 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { isRich, richPlainText } from '@/lib/dealer-kit/rich-text';
 import {
   isMacContextClick,
   isMacPlatform,
@@ -3704,7 +3704,10 @@ export function TagCanvasEditor({
    *  page; here it opens read-only on its plain text and never writes to the layer. */
   const editingIsDescription =
     editingLayer?.slot_binding === 'combo_description' ||
-    editingLayer?.slot_binding === 'price_tag_description';
+    editingLayer?.slot_binding === 'price_tag_description' ||
+    // The spec sheet reader (embedded) keeps its plain typing-over box, which must never show or
+    // write over formatted content's markup: there it opens read-only on the words.
+    (Boolean(embedded) && isRich(editingContent));
 
   /**
    * A sole-token layer opens the inline editor on its RESOLVED value instead

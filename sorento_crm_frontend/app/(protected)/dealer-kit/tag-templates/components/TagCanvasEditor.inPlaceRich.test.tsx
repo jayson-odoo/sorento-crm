@@ -7,6 +7,7 @@
  * Written test-FIRST: today the in-place editor is a plain textarea and Cmd+B reaches the
  * canvas's whole-layer format.
  */
+import '@/test-utils/prosemirrorGeometry';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -220,4 +221,20 @@ describe('in-place canvas editing is per-selection rich text (owner hand test FA
     expect(layer.slot_binding).toBe('code');
     expect(layer.text_override).toBe('<p><strong>Code {{product.code}}</strong></p>');
   });
+
+  it('Cmd+B whose target is the in-place editor never bolds the whole layer, wherever focus sits', async () => {
+    const onChange = vi.fn();
+    render(<TagCanvasEditor doc={docWith(layerWith('t', null, 'Plain', null))} onChange={onChange} />);
+    fireEvent.doubleClick(screen.getByTestId('layer-t'));
+    const { dom } = await inPlaceEditor();
+    // Focus is not (yet) in the editor: TipTap focuses a frame late in a real browser too.
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.body.focus();
+    fireEvent.keyDown(dom, { key: 'b', code: 'KeyB', ctrlKey: true, bubbles: true });
+    fireEvent.keyDown(dom, { key: 'Escape', bubbles: true });
+
+    await waitFor(() => expect(screen.queryByTestId('inline-rich-editor')).toBeNull());
+    expect(savedLayer(onChange, 't').props).toMatchObject({ fontWeight: defaultTextProps().fontWeight });
+  });
 });
+

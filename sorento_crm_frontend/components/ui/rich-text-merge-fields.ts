@@ -84,6 +84,9 @@ function tokenizePlugin(type: NodeType) {
   });
 }
 
+/** The selected look of a chip: the selection colour, with a ring so it reads on any background. */
+export const SELECTED_CLASS = 'merge-field-selected';
+
 /** Marks every token inside a non-empty selection: a chip is not text, so the browser's own
  * selection highlight never paints it, and a selected token has to look selected (owner hand
  * test, 6 Nov). Covers a drag across chips and a click on one (a node selection) alike. */
@@ -106,9 +109,6 @@ function selectedChipsPlugin() {
     },
   });
 }
-
-/** The selected look of a chip: the selection colour, with a ring so it reads on any background. */
-export const SELECTED_CLASS = 'merge-field-selected';
 
 export const MergeFieldNode = Node.create({
   name: 'mergeField',

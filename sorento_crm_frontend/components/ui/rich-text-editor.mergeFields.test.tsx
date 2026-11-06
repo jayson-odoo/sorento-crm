@@ -7,6 +7,7 @@
  *
  * Written test-FIRST: neither prop exists yet.
  */
+import '@/test-utils/prosemirrorGeometry';
 import * as React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import type { Editor } from '@tiptap/react';

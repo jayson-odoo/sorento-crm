@@ -6,6 +6,7 @@
  *
  * Written test-FIRST: today the Content box is a textarea and formatting is layer-wide only.
  */
+import '@/test-utils/prosemirrorGeometry';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import type { Editor } from '@tiptap/react';
 import { describe, expect, it, vi } from 'vitest';
