@@ -1,6 +1,8 @@
 # PLAN: per-selection formatting in tag designer text layers (DESIGNER-RICH-TEXT, 6 Nov)
 
-Status: Review. Small fix track (frontend only; no migration, no auth/RBAC, no new ingest). PR #2213.
+Status: Review fix round 1. Full track by size (about 1,600 changed lines, over the ~300-line small
+fix limit), though frontend only: no migration, no auth/RBAC, no new ingest, so no
+security-reviewer. PR #2213.
 UAC: `designer-rich-text-acceptance-criteria.md`.
 
 Owner ask (6 Nov ~10:30): a Text layer's Content can only be styled as a whole. Selecting

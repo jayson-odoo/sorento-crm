@@ -99,12 +99,19 @@ export type RichTextEditorProps = {
   mergeFields?: boolean;
 };
 
+/** Editors whose caret somebody has placed (a focus or a selection change). */
+const everFocused = new WeakSet<Editor>();
+
 /** Insert text holding `{{tokens}}` at the caret of a `mergeFields` editor; each complete token
  * becomes its atom. */
 export function insertMergeFieldText(editor: Editor, text: string) {
   if (!text) return;
-  editor.chain().focus().insertContent({ type: 'text', text }).run();
+  // An editor nobody has clicked into yet has its caret at the very start; the field goes after
+  // the text there, not in front of it.
+  const at = everFocused.has(editor) ? undefined : 'end';
+  editor.chain().focus(at).insertContent({ type: 'text', text }).run();
 }
+
 
 /** One serialisation for comparing a stored value with the editor's (entities, quotes). */
 function canonicalHtml(html: string): string {
@@ -628,6 +635,7 @@ export function RichTextEditor({
   toolbar = 'full',
   mergeFields = false,
 }: RichTextEditorProps) {
+  const inline = toolbar === 'inline';
   // A `mergeFields` editor holds its tokens as atoms; the value in and out keeps them as text.
   const toEditor = (html: string) => (mergeFields ? wrapMergeFieldTokens(html) : html);
   const fromEditor = (html: string) => (mergeFields ? unwrapMergeFieldTokens(html) : html);
@@ -640,7 +648,25 @@ export function RichTextEditor({
   const extensions = useMemo(() => {
     const list: ReturnType<typeof StarterKit.configure>[] | unknown[] = [
       StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
+        heading: inline ? false : { levels: [1, 2, 3] },
+        // The inline toolbar's editor holds inline formatting only: with these off, no keyboard
+        // shortcut, input rule or paste can make a block its stored format cannot draw.
+        ...(inline
+          ? {
+              bulletList: false,
+              orderedList: false,
+              listItem: false,
+              listKeymap: false,
+              blockquote: false,
+              codeBlock: false,
+              horizontalRule: false,
+              code: false,
+              link: false,
+            }
+          : {}),
+        // A merge-field value is stored as plain lines when unformatted; a hard break inside a
+        // paragraph has no plain form, so Shift+Enter is a new paragraph's job only.
+        ...(mergeFields ? { hardBreak: false } : {}),
       }),
       Link.configure({
         openOnClick: false,
@@ -679,6 +705,11 @@ export function RichTextEditor({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ];
     if (mergeFields) list.push(MergeFieldNode);
+    if (inline) {
+      // No link, highlight or alignment either: the inline toolbar has no button for them.
+      const dropped = new Set(['link', 'backgroundColor', 'textAlign']);
+      return (list as Array<{ name?: string }>).filter((ext) => !dropped.has(ext.name ?? ''));
+    }
 
     if (mentionUsersFetcher) {
       list.push(
@@ -755,7 +786,7 @@ export function RichTextEditor({
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(mentionUsersFetcher), placeholder, mergeFields]);
+  }, [Boolean(mentionUsersFetcher), placeholder, mergeFields, inline]);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -785,6 +816,12 @@ export function RichTextEditor({
         style: `min-height: ${minHeight}px;`,
       },
     },
+    onFocus: ({ editor: e }) => {
+      everFocused.add(e);
+    },
+    onSelectionUpdate: ({ editor: e }) => {
+      everFocused.add(e);
+    },
     onUpdate: ({ editor: e }) => {
       const html = fromEditor(normaliseEditorHtml(e.getHTML()));
       onChange(html === '<p></p>' ? '' : html);
@@ -809,7 +846,9 @@ export function RichTextEditor({
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(editable);
+    // `false`: toggling editability is not an edit; emitting here would hand every mount an
+    // onChange the user never made (DESIGNER-RICH-TEXT review B1).
+    editor.setEditable(editable, false);
   }, [editable, editor]);
 
   useEffect(() => {

@@ -221,8 +221,8 @@ interface InspectorPanelProps {
   onUploadFont?: () => void;
   /** Open the merge-field catalogue for this text layer (D59). */
   onInsertField?: () => void;
-  /** The Content box's editor (null once it unmounts), so Insert field lands at its caret. */
-  onContentEditorReady?: (editor: Editor | null) => void;
+  /** The Content box's editor, so Insert field lands at its caret (check `isDestroyed`). */
+  onContentEditorReady?: (editor: Editor) => void;
   /** Point this group's block at a different product or set. */
   onRebind?: (groupId: string) => void;
   /** Clear every text override inside this group. */
@@ -623,8 +623,8 @@ function TextInspector({
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
   onInsertField?: () => void;
-  /** The Content box's editor (null once it unmounts), so Insert field lands at its caret. */
-  onContentEditorReady?: (editor: Editor | null) => void;
+  /** The Content box's editor, so Insert field lands at its caret (check `isDestroyed`). */
+  onContentEditorReady?: (editor: Editor) => void;
   usedColours: string[];
 }) {
   // A slot-bound layer is edited through `text_override`, never through
@@ -649,6 +649,9 @@ function TextInspector({
   const contentLabelId = useId();
 
   const handleContent = (value: string) => {
+    // Nothing changed (the box re-reporting what it was given): writing it would turn a bound
+    // layer's live value into a typed override (review B1).
+    if (value === shown) return;
     if (bound) onUpdate({ text_override: value });
     else onChange({ ...props, text: value });
   };

@@ -25,7 +25,8 @@ export function wrapMergeFieldTokens(html: string): string {
   let changed = false;
   for (const text of texts) {
     const value = text.data;
-    const matches = [...value.matchAll(TOKEN)];
+    // `{{ }}` names no field: it stays text.
+    const matches = [...value.matchAll(TOKEN)].filter((match) => match[1].trim() !== '');
     if (matches.length === 0) continue;
     changed = true;
     const fragment = doc.createDocumentFragment();
@@ -66,6 +67,7 @@ function tokenizePlugin(type: NodeType) {
       state.doc.descendants((node, pos) => {
         if (!node.isText || !node.text?.includes('{{')) return;
         for (const match of node.text.matchAll(TOKEN)) {
+          if (match[1].trim() === '') continue;
           const from = pos + (match.index ?? 0);
           found.push({ from, to: from + match[0].length, path: match[1].trim(), marks: node.marks });
         }

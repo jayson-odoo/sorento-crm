@@ -58,7 +58,7 @@ async function mount(l: TagLayer) {
       onUpdateProps={onUpdateProps}
       resolvedText={null}
       onInsertField={vi.fn()}
-      onContentEditorReady={(e: Editor | null) => {
+      onContentEditorReady={(e: Editor) => {
         editor = e;
       }}
     />,
@@ -122,6 +122,33 @@ describe('Inspector rich Content box', () => {
       editor.chain().selectAll().toggleBold().run();
     });
     expect(onUpdate.mock.calls.at(-1)).toEqual(['t1', { text_override: '<p><strong>{{product.code}}</strong></p>' }]);
+  });
+
+  it('selecting a bound layer writes nothing: it stays linked (review B1)', async () => {
+    const onUpdate = vi.fn();
+    const onUpdateProps = vi.fn();
+    let editor: Editor | null = null;
+    render(
+      <InspectorPanel
+        layer={layer('', { slot_binding: 'name' })}
+        onUpdate={onUpdate}
+        onUpdateProps={onUpdateProps}
+        resolvedText="Oak Sofa"
+        onContentEditorReady={(e: Editor) => {
+          editor = e;
+        }}
+      />,
+    );
+    await waitFor(() => expect(editor).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(onUpdateProps).not.toHaveBeenCalled();
+  });
+
+  it('selecting an unbound layer with spaced tokens writes nothing', async () => {
+    const { onUpdateProps } = await mount(layer('{{ product.code }}'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onUpdateProps).not.toHaveBeenCalled();
   });
 
   it('a description-bound layer keeps the read-only plain box (R8)', async () => {

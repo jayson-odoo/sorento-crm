@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 
-import { ancestorsOf } from './canvas-geometry';
+import { ancestorsOf, contains, selectable } from './canvas-geometry';
 import type { TagLayer } from './tag-template-types';
 
 /** macOS (and iPadOS) writes shortcuts with the command key. */
@@ -42,15 +42,6 @@ export function isMacContextClick(e: Pick<MouseEvent, 'ctrlKey' | 'button'>, mac
   return mac && e.ctrlKey && e.button === 0;
 }
 
-function contains(layer: TagLayer, x_mm: number, y_mm: number): boolean {
-  return (
-    x_mm >= layer.x_mm &&
-    x_mm <= layer.x_mm + layer.width_mm &&
-    y_mm >= layer.y_mm &&
-    y_mm <= layer.y_mm + layer.height_mm
-  );
-}
-
 /** The outermost layer a click on `id` selects: its topmost ancestor not entered. */
 export function selectionTarget(layers: TagLayer[], id: string, entered: Set<string>): string {
   const chain = [...ancestorsOf(layers, id)].reverse();
@@ -73,8 +64,7 @@ export function layersAt(
   const hits = [...layers]
     .filter(
       (layer) =>
-        layer.visible &&
-        !layer.locked &&
+        selectable(layer) &&
         contains(layer, x_mm, y_mm) &&
         !(layer.props.kind === 'group' && entered.has(layer.id)),
     )
@@ -90,15 +80,19 @@ export function layersAt(
 /**
  * The selection after a right-click, or null to keep the current one.
  *
- * `hits` are the layers under the pointer, top first. A right-click on ANY of them that is
- * already selected keeps the whole selection, so the menu acts on it (a frame drawn over two
- * selected text boxes must not steal the click). Nothing selected under the pointer selects just
- * the top one; empty canvas keeps the selection.
+ * `drawnHit` is the layer Konva actually drew under the pointer (as the id a click selects), when
+ * it can say: it decides, so a selected background card never steals a right-click on the text
+ * drawn over it. Without it (the transparent inside of a frame, a DOM overlay), `hits` are the
+ * layer boxes under the pointer, top first, and a right-click on ANY of them that is already
+ * selected keeps the whole selection, so a frame over two selected text boxes cannot steal it.
+ * Nothing selected under the pointer selects just the top one; empty canvas keeps the selection.
  */
 export function selectionForContextMenu(
   selected: ReadonlySet<string>,
   hits: string[],
+  drawnHit?: string | null,
 ): Set<string> | null {
+  if (drawnHit) return selected.has(drawnHit) ? null : new Set([drawnHit]);
   if (hits.length === 0) return null;
   if (hits.some((id) => selected.has(id))) return null;
   return new Set([hits[0]]);

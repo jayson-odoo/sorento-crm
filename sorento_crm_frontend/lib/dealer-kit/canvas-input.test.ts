@@ -56,6 +56,13 @@ describe('selectionForContextMenu', () => {
     expect(selectionForContextMenu(selected, ['c', 'frame'])).toEqual(new Set(['c']));
   });
 
+  it('the layer Konva drew under the pointer decides when it reports one (review S3)', () => {
+    // A selected background card under an unselected text: right-click on the text selects it.
+    expect(selectionForContextMenu(new Set(['card']), ['text', 'card'], 'text')).toEqual(new Set(['text']));
+    // A selected text under a frame (Konva hits the text through the frame's transparent inside).
+    expect(selectionForContextMenu(selected, ['frame', 'a'], 'a')).toBeNull();
+  });
+
   it('keeps the selection on empty canvas', () => {
     expect(selectionForContextMenu(selected, [])).toBeNull();
   });

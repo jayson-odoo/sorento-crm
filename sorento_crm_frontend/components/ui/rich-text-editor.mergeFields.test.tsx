@@ -7,6 +7,7 @@
  *
  * Written test-FIRST: neither prop exists yet.
  */
+import * as React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import type { Editor } from '@tiptap/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -93,7 +94,7 @@ describe('mergeFields', () => {
   it('insertMergeFieldText puts a token node at the caret', async () => {
     const { editor, html } = await mount('<p>Code: !</p>', { mergeFields: true });
     act(() => {
-      editor.commands.setTextSelection(7);
+      editor.chain().focus().setTextSelection(7).run();
       insertMergeFieldText(editor, '{{product.code}}');
     });
     expect(html()).toBe('<p>Code: {{product.code}}!</p>');
@@ -112,5 +113,85 @@ describe('mergeFields', () => {
   it('without mergeFields a token stays plain text (existing callers)', async () => {
     const { editor } = await mount('<p>{{product.code}}</p>');
     expect(tokenNodes(editor)).toEqual([]);
+  });
+
+  it('mounting emits no change', async () => {
+    const { onChange } = await mount('<p>{{product.code}}</p>', { mergeFields: true });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('typing a quote or & mid-text keeps the caret (value fed back by the parent)', async () => {
+    const onChange = vi.fn();
+    let editor: Editor | null = null;
+    function Host() {
+      const [value, setValue] = React.useState('<p>ab</p>');
+      return (
+        <RichTextEditor
+          mergeFields
+          value={value}
+          onChange={(html) => {
+            onChange(html);
+            setValue(html);
+          }}
+          onEditorReady={(e) => {
+            editor = e;
+          }}
+        />
+      );
+    }
+    render(<Host />);
+    await waitFor(() => expect(editor).not.toBeNull());
+    act(() => {
+      editor!.commands.setTextSelection(2);
+      editor!.commands.insertContent('"&');
+    });
+    act(() => {
+      editor!.commands.insertContent('X');
+    });
+    expect(onChange.mock.calls.at(-1)![0]).toBe('<p>a"&amp;Xb</p>');
+  });
+
+  it('a mergeFields editor has no hard break: Shift+Enter cannot make a line the plain format cannot hold', async () => {
+    const { editor } = await mount('<p>abc</p>', { mergeFields: true });
+    expect(editor.schema.nodes.hardBreak).toBeUndefined();
+  });
+});
+
+describe('toolbar="inline" holds inline formatting only', () => {
+  it.each(['heading', 'bulletList', 'orderedList', 'blockquote', 'codeBlock', 'horizontalRule'])(
+    'has no %s node (no shortcut, input rule or paste can make one)',
+    async (name) => {
+      const { editor } = await mount('<p>x</p>', { toolbar: 'inline', mergeFields: true });
+      expect(editor.schema.nodes[name]).toBeUndefined();
+    },
+  );
+
+  it('has no inline code mark', async () => {
+    const { editor } = await mount('<p>x</p>', { toolbar: 'inline', mergeFields: true });
+    expect(editor.schema.marks.code).toBeUndefined();
+  });
+
+  it('pasted list / heading HTML lands as paragraphs', async () => {
+    const { editor, html } = await mount('<p>x</p>', { toolbar: 'inline', mergeFields: true });
+    act(() => {
+      editor.commands.setContent('<h1>T</h1><ul><li><p>a</p></li></ul>', { emitUpdate: true });
+    });
+    expect(html()).not.toMatch(/<(h1|ul|li|pre|hr)/);
+  });
+});
+
+describe('merge-field edge cases', () => {
+  it('{{ }} with an empty path stays text', async () => {
+    const { editor } = await mount('<p>{{ }}</p>', { mergeFields: true });
+    expect(tokenNodes(editor)).toEqual([]);
+  });
+
+  it('Insert field into a never-focused editor lands at the end', async () => {
+    const { editor, html } = await mount('<p>Price</p>', { mergeFields: true });
+    act(() => {
+      insertMergeFieldText(editor, '{{product.list_price}}');
+    });
+    expect(html()).toBe('<p>Price{{product.list_price}}</p>');
   });
 });

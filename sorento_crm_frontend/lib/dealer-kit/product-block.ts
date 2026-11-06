@@ -1379,7 +1379,7 @@ export function layerDisplayName(layer: TagLayer): string {
   }
   switch (layer.props.kind) {
     case 'text':
-      return (isRich(layer.props.text) ? richPlainText(layer.props.text) : layer.props.text).slice(0, 24) || 'Text';
+      return richPlainText(layer.props.text).slice(0, 24) || 'Text';
     case 'shape':
       return layer.props.shape.replace(/_/g, ' ');
     case 'image':

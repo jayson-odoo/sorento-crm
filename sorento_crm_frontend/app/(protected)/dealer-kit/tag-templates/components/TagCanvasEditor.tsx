@@ -2947,18 +2947,14 @@ export function TagCanvasEditor({
             return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
           })()
         : null;
-      // Every layer under the pointer, top first; the one Konva actually drew there leads, so a
-      // frame drawn over the text (transparent inside) does not win a hit on the text below it.
+      // Every layer box under the pointer, top first, and the layer Konva actually drew there:
+      // a frame drawn over the text (transparent inside) does not win a hit on the text below it.
       const hits = point ? layersAt(layers, point.x_mm, point.y_mm, entered) : [];
       const konvaId = konvaLayerIdAt(e);
-      if (konvaId) {
-        const target = resolveTarget(konvaId);
-        hits.splice(0, hits.length, target, ...hits.filter((id) => id !== target));
-      }
-      // The menu shows the layer items whenever something under the pointer is (or becomes)
-      // selected; a right-click on a layer that is already part of the selection keeps all of it.
-      setMenuOnEmpty(hits.length === 0);
-      const next = selectionForContextMenu(selectedIds, hits);
+      const drawnHit = konvaId ? resolveTarget(konvaId) : null;
+      // A right-click on a layer that is already part of the selection keeps all of it.
+      setMenuOnEmpty(!drawnHit && hits.length === 0);
+      const next = selectionForContextMenu(selectedIds, hits, drawnHit);
       if (next) setSelectedIds(next);
     },
     [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
