@@ -45,7 +45,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DataGridScroller, DataGridTable } from '@/components/ui/data-grid-table';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
@@ -311,31 +311,25 @@ export function TagTemplatesList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bulkDelete?.batchId]);
 
-  // The list state rides on the editor's URL so its prev/next walks these rows (item 2). The grid
-  // appends page/limit/sort/query itself (`rowHref`); the filters ride in the href's own query.
-  const filterSearch = useMemo(() => {
-    const params = new URLSearchParams();
-    for (const f of FILTERS) {
-      const value = filters[f.key];
-      if (value) params.set(f.key, value);
-    }
-    return params.toString();
-  }, [filters]);
-  const rowHref = useCallback(
-    (row: TagTemplate) =>
-      `/dealer-kit/tag-templates/${row.id}${filterSearch ? `?${filterSearch}` : ''}`,
-    [filterSearch],
-  );
-  /** The editor URL with the WHOLE list state, for a push that is not a row click. */
-  const editorHref = useCallback(
-    (id: string) => {
-      const search = buildDetailSearch(
+  // The list state rides on the editor's URL so its prev/next walks these rows (item 2): page,
+  // sort, search AND filters, since the pager can only rebuild what the URL names
+  // (`useListPager`). The grid also appends its own page/sort and `from` to a row link.
+  const listSearch = useCallback(
+    (extra: Record<string, string | undefined> = {}) =>
+      buildDetailSearch(
         { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
-        { ...filters, from: id },
-      );
-      return `/dealer-kit/tag-templates/${id}${search ? `?${search}` : ''}`;
-    },
+        { ...filters, ...extra },
+      ),
     [filters, pagination.pageIndex, pagination.pageSize, searchQuery, sorting],
+  );
+  const rowHref = useCallback(
+    (row: TagTemplate) => `/dealer-kit/tag-templates/${row.id}?${listSearch()}`,
+    [listSearch],
+  );
+  /** The editor URL with the whole list state, for a push that is not a row click. */
+  const editorHref = useCallback(
+    (id: string) => `/dealer-kit/tag-templates/${id}?${listSearch({ from: id })}`,
+    [listSearch],
   );
 
   // Duplicate (TAG-TEMPLATE-DUPLICATE): the copy is a new draft right below its source; it opens
@@ -702,10 +696,14 @@ export function TagTemplatesList() {
               </div>
             ) : null}
             {reorderable ? (
-              <DataGridTableDndRows
-                handleDragEnd={handleRowDragEnd}
-                dataIds={table.getRowModel().rows.map((row) => row.id)}
-              />
+              // The grid's own scroller, as the SO lines table does: without it the wide
+              // table overflows the card instead of scrolling sideways.
+              <DataGridScroller>
+                <DataGridTableDndRows
+                  handleDragEnd={handleRowDragEnd}
+                  dataIds={table.getRowModel().rows.map((row) => row.id)}
+                />
+              </DataGridScroller>
             ) : (
               <DataGridTable />
             )}

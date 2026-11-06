@@ -155,7 +155,7 @@ _SORTABLE = {
         cast(TagTemplate.print_size["height_mm"].astext, Float),
     ],
     "created_at": lambda: [TagTemplate.created_at],
-    # Draft before Live ascending, then the live version number.
+    # Draft before Live ascending (the live/draft flag only).
     "published": lambda: [TagTemplate.published_version_id.isnot(None)],
 }
 

@@ -148,3 +148,89 @@ def test_filters_are_multi_select(api):
         assert _names(client, stem, "status=draft") == [f"{stem} 2", f"{stem} 3"]
         assert _names(client, stem, "status=live,draft") == [f"{stem} 1", f"{stem} 2", f"{stem} 3"]
         assert _names(client, stem, "price_type=selling&family=toilet") == []
+
+
+def test_the_manual_order_is_numbered_per_company(api):
+    """A duplicate's shift and a new template's number stay inside the caller's company: the
+    other company's rows never move, and its numbers never push this company's next one."""
+    import uuid
+
+    from app.models.company import Company
+
+    from app.models.base import get_company_scope, set_company_scope
+
+    db, _as, scope = api
+
+    def order_and_company(template_id: str) -> tuple[int, str]:
+        # Read with the system scope (every company), then put the caller's scope back.
+        saved = get_company_scope(db)
+        set_company_scope(db, None)
+        try:
+            row = db.query(TagTemplate).filter(TagTemplate.id == template_id).one()
+            return row.sort_order, str(row.company_id)
+        finally:
+            set_company_scope(db, saved)
+
+    stem = unique_code("Co")
+    with TestClient(app) as client:
+        mine_a = _make(client, f"{stem} mine A")
+        mine_b = _make(client, f"{stem} mine B")
+
+    other = str(uuid.uuid4())
+    db.add(Company(id=other, name="ZZT other co", code=unique_code("ZZTC")))
+    db.commit()
+    scope(other)
+    with TestClient(app) as client:
+        theirs_1 = _make(client, f"{stem} theirs 1")
+        theirs_2 = _make(client, f"{stem} theirs 2")
+        # Numbered from 1 in their own company, whatever this company's numbers are.
+        assert order_and_company(theirs_1) == (1, other)
+        assert client.post(f"{BASE}/{theirs_1}/duplicate").status_code == 201
+
+    db.expire_all()
+    mine_orders = (order_and_company(mine_a)[0], order_and_company(mine_b)[0])
+    assert order_and_company(theirs_2)[0] == 3  # shifted below their duplicate
+
+    scope("00000000-0000-0000-0000-000000000001")
+    with TestClient(app) as client:
+        mine_c = _make(client, f"{stem} mine C")
+    db.expire_all()
+    # This company's rows did not move, and its next number follows its OWN maximum.
+    assert (order_and_company(mine_a)[0], order_and_company(mine_b)[0]) == mine_orders
+    assert order_and_company(mine_c)[0] == mine_orders[1] + 1
+
+
+def test_a_duplicate_outside_a_request_shifts_only_its_own_company(api):
+    """The service filters by company itself, not only through the request's scope listener: a
+    caller with the system scope (a script, the worker) must not shift another company's rows."""
+    import uuid
+
+    from app.models.base import get_company_scope, set_company_scope
+    from app.models.company import Company
+    from app.services.dealer_kit import tag_template_service
+
+    db, _as, scope = api
+    stem = unique_code("Sys")
+    with TestClient(app) as client:
+        mine = [_make(client, f"{stem} mine {n}") for n in range(3)]
+
+    other = str(uuid.uuid4())
+    db.add(Company(id=other, name="ZZT other co", code=unique_code("ZZTC")))
+    db.commit()
+    scope(other)
+    with TestClient(app) as client:
+        theirs = _make(client, f"{stem} theirs")
+
+    saved = get_company_scope(db)
+    set_company_scope(db, None)  # the system principal: sees every company
+    try:
+        before = {i: db.get(TagTemplate, i).sort_order for i in mine}
+        source = db.get(TagTemplate, theirs)
+        clone = tag_template_service.duplicate(db, source)
+        db.expire_all()
+        assert {i: db.get(TagTemplate, i).sort_order for i in mine} == before
+        assert db.get(TagTemplate, clone.id).sort_order == source.sort_order + 1
+        assert str(db.get(TagTemplate, clone.id).company_id) == other
+        assert tag_template_service.next_sort_order(db, other) == source.sort_order + 2
+    finally:
+        set_company_scope(db, saved)

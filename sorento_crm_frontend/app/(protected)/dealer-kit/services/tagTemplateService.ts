@@ -43,8 +43,9 @@ const BASE = '/api/v1/dealer-kit/tag-templates';
 // ---------------------------------------------------------------------------
 
 export interface TemplateListFilter {
-  /** Multi-select, comma-joined (`list,unset`); `unset` = templates with no price type yet. */
-  price_type?: TemplatePriceType | 'unset' | string;
+  /** Multi-select, comma-joined (`list,unset`): list, selling, both, or `unset` = no price type
+   *  yet. */
+  price_type?: string;
   /** Multi-select family codes, comma-joined. */
   family?: string;
   /** `live` and/or `draft`, comma-joined. */

@@ -220,6 +220,17 @@ describe('item 5: standard toolbar, server filters and sort', () => {
     }
   });
 
+  it('the row link carries the search for the editor pager', async () => {
+    draw();
+    await screen.findByText('BF_SP');
+    fireEvent.change(screen.getByLabelText('Search templates'), { target: { value: 'BF' } });
+    await waitFor(() => expect(lastFilter()).toMatchObject({ query: 'BF' }));
+    fireEvent.click(body().getByText('BF_LP'));
+    await waitFor(() => expect(nav.push).toHaveBeenCalled());
+    const params = new URLSearchParams(String(nav.push.mock.calls.at(-1)![0]).split('?')[1]);
+    expect(params.get('query')).toBe('BF');
+  });
+
   it('the row link carries the filters for the editor pager', async () => {
     draw();
     await screen.findByText('BF_SP');

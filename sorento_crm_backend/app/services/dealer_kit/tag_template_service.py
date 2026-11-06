@@ -23,6 +23,7 @@ neither.
 """
 from __future__ import annotations
 
+import copy
 import logging
 from datetime import datetime
 from typing import Optional
@@ -333,7 +334,7 @@ def duplicate(db: Session, source: TagTemplate, *, created_by: Optional[str] = N
         )
     else:
         position = next_sort_order(db, company_id)
-    copy = TagTemplate(
+    clone = TagTemplate(
         name=_copy_name(db, source),
         family=source.family,
         doc=_deep_copy(source.doc),
@@ -343,18 +344,16 @@ def duplicate(db: Session, source: TagTemplate, *, created_by: Optional[str] = N
         sort_order=position,
     )
     if company_id:
-        copy.company_id = company_id
-    db.add(copy)
+        clone.company_id = company_id
+    db.add(clone)
     db.flush()
     db.commit()
-    db.refresh(copy)
-    return copy
+    db.refresh(clone)
+    return clone
 
 
 def _deep_copy(value):
-    import copy as _copy
-
-    return _copy.deepcopy(value) if value is not None else value
+    return copy.deepcopy(value) if value is not None else value
 
 
 def reorder(db: Session, template_ids: list[str]) -> int:
