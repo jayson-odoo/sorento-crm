@@ -143,7 +143,7 @@ def test_order_and_delay_rows_go_as_one_patch_with_docdate_expected_last_modifie
     [patch] = fake_ss.to("PATCH", DOC_PATH)
     body = fake_ss.body(patch)
     assert body["companyCode"] == "SRT"
-    assert body["docDate"] in myt_today_candidates()
+    assert "docDate" not in body and "docDate" not in (body.get("header") or {})
     assert body["expectedLastModified"] == LAST_MODIFIED
     by_key = {str(l["dtlKey"]): l for l in body["lines"]}
     assert set(by_key) == {str(DTL_1), str(DTL_2)}, "CHANGE SO NO and CANCEL BALANCE must not ride the PATCH"

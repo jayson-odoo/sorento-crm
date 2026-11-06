@@ -276,7 +276,7 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
     [patch] = fake_ss.to("PATCH", QT_DOC_PATH)
     body = fake_ss.body(patch)
     assert body["companyCode"] == "SRT"
-    assert body["docDate"] in myt_today_candidates()
+    assert "docDate" not in body and "docDate" not in body["header"]
     assert body["expectedLastModified"] == "2026-10-21T08:00:00"
     assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-edit"
     db.refresh(world.document)
