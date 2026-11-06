@@ -496,11 +496,12 @@ def test_ac_rl_20_a_removed_so_line_retires_its_live_rows_like_transfer_to_cance
     assert core["cancelled_at"] is None and core["cancelled_by_id"] is None
 
 
-def test_ac_rl_20_a_removed_so_line_hands_the_cancelled_rows_over_to_purchasing(
+def test_fp_email_one_trigger_s1_a_removed_so_line_emails_purchasing_nothing(
     env, monkeypatch
 ):
-    """The same purchasing handover Transfer to Cancel SO produces: one
-    `order_inquiry_handover` dispatch, every line a plain CANCEL."""
+    """FP-EMAIL-ONE-TRIGGER S1 (owner, 6 Nov 2026; SO398322): an AutoCount push is not the
+    board Confirm, so it emails purchasing nothing - no handover CANCEL, no changed-with-links
+    notice - even for a linked row. Supersedes AC-RL-20's "hands the rows over"."""
     po = _push_po(env)
     record, header, line_x, y = _push_so(env)
     _so_mirror_row(
@@ -512,10 +513,12 @@ def test_ac_rl_20_a_removed_so_line_hands_the_cancelled_rows_over_to_purchasing(
 
     _remove_so_line_x(env, record, y)
 
-    matches = _handover_calls(calls)
-    assert len(matches) == 1, [c["trigger_type"] for c in calls]
-    lines = matches[0]["context"]["handover"]["lines"]
-    assert lines and all(line["remark"] == "CANCEL" for line in lines), lines
+    oi_mail = [
+        c["trigger_type"]
+        for c in calls
+        if c["trigger_type"] in ("order_inquiry_handover", "order_inquiry_changed_with_links")
+    ]
+    assert oi_mail == [], oi_mail
 
 
 def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_only_flagged(env):
