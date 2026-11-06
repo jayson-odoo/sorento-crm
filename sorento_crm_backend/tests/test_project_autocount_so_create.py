@@ -123,7 +123,7 @@ def test_the_lines_carry_item_uom_qty_price_location_and_delivery_date(api, fake
     ]
     first, second = lines
     assert first["description"] == world.line1.description
-    assert first["uom"] == world.line1.uom == "UNIT"
+    assert first["uom"] == world.product.base_uom.uom_code
     assert D(first["qty"]) == 100
     assert D(first["unitPrice"]) == D("392.85")
     assert first["deliveryDate"] == "2026-07-01"
