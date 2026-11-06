@@ -949,3 +949,24 @@ describe('Settings size and the TAG SIZE panel are one value (item 7)', () => {
     expect(dialog.getByLabelText('Height (mm)')).toHaveValue(58);
   });
 });
+
+describe('Settings price type (item 7)', () => {
+  it('a price type change ALONE is saved through the settings PUT', async () => {
+    mockGet.mockResolvedValue(templateFixture({ price_type: 'list' } as never));
+    mockUpdateSettings.mockResolvedValue(templateFixture({ price_type: 'selling' } as never));
+    render(<TagTemplateEditorPage />);
+
+    await screen.findByTestId('canvas-editor');
+    fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(within(dialog.getByRole('group', { name: 'Price type' })).getByRole('radio', { name: 'SP' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(mockUpdateSettings).toHaveBeenCalledWith(
+        'tmpl-1',
+        expect.objectContaining({ price_type: 'selling' }),
+      ),
+    );
+  });
+});

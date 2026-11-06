@@ -46,7 +46,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridScroller, DataGridTable } from '@/components/ui/data-grid-table';
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
@@ -228,7 +229,7 @@ export function TagTemplatesList() {
   const templatesQuery = useQuery({
     queryKey: tagTemplateListKey(listQuery),
     queryFn: () => fetchTagTemplateList(listQuery),
-    placeholderData: keepPreviousData,
+    ...LIST_QUERY_OPTIONS,
   });
   const templates = useMemo(() => templatesQuery.data ?? [], [templatesQuery.data]);
   const isLoading = templatesQuery.isLoading;
@@ -681,6 +682,7 @@ export function TagTemplatesList() {
             table={table}
             recordCount={templates.length}
             isLoading={isLoading}
+            isPlaceholderData={templatesQuery.isPlaceholderData}
             error={loadError}
             onRetry={() => void fetchData()}
             tableLayout={{ width: 'fixed', columnsResizable: true }}
