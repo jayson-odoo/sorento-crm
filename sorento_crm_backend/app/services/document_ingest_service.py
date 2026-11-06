@@ -1751,9 +1751,10 @@ class DocumentIngestService(MasterRefResolver):
             oi_service = ProjectOrderInquiryService(self.db)
             if spec.entity_type == "purchase_orders":
                 oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
-            elif spec.entity_type == "sales_orders":
-                # Retire BEFORE the flag below, which then only meets actioned rows.
-                oi_service.retire_rows_for_removed_so_lines(removed_lines)
+            # A REMOVED SALES ORDER line retires nothing here (FP-EMAIL-ONE-TRIGGER Q1 (a),
+            # owner 6 Nov 2026; SO398322): the removal waits on the board as this push's
+            # planning-change `cancelled` row, and CS's Confirm retires its order inquiry rows
+            # and tells purchasing (`planning_change_service._retire_inquiry_rows`).
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

@@ -6351,21 +6351,16 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         reason: str = "Removed in AutoCount",
-        notify: bool = True,
     ) -> int:
         """AC-REMOVED-LINES (owner, 26 Oct 2026): a sales order line AutoCount REMOVED has its
-        order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them - the
-        calls `ProjectSupplyService.cancel_lines` makes after writing the core line (drafts
-        dropped, `retire_rows_for_cancelled_lines`, the purchasing handover) - but the core
-        line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
-        board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
-        share. Handover lines are queued only for lines whose rows actually retired. Call
-        before `flag_rows_for_cancelled_lines`, which then meets the rows still live on the line
-        (actioned ones) and runs them through `auto_confirm`.
+        order inquiry rows retired as CS's Transfer to Cancel SO retires them (drafts dropped,
+        `retire_rows_for_cancelled_lines`), but the core line gets no `cancelled_at` /
+        `cancelled_by_id` / `cancel_reason`: those mean the CS board.
 
-        `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
-        call queued for after the commit, the purchasing handover and the changed-with-links
-        notice, is dropped again, so it retires rows and sends nothing.
+        Only `scripts/release_removed_autocount_lines.py` calls this now: the ingest leaves a
+        removed line for the board (FP-EMAIL-ONE-TRIGGER Q1 (a)). It emails nobody: whatever it
+        queues for purchasing is dropped at the commit, which is not a board Confirm
+        (`mark_board_confirm`).
         """
         from app.services import project_line_draft_service
 
@@ -6373,47 +6368,16 @@ class ProjectOrderInquiryService:
         if not lines:
             return 0
         core_ids = [str(line.id) for line in lines]
-        queue_keys = (_HANDOVER_PENDING_KEY, _CHANGED_WITH_LINKS_PENDING_KEY)
-        queued_before = {key: len(self.db.info.get(key) or []) for key in queue_keys}
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
             core_ids,
             company_id=str(lines[0].company_id) if lines[0].company_id else None,
         )
-        retired = self.retire_rows_for_cancelled_lines(
+        return self.retire_rows_for_cancelled_lines(
             [(cid, reason) for cid in core_ids],
             actor_user_id=actor_user_id,
             note_text=reason,
         )
-        if not notify:
-            for key in queue_keys:
-                if key in self.db.info:
-                    del self.db.info[key][queued_before[key]:]
-            return retired
-        queued = {
-            str(item.get("so_line_id"))
-            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])
-        }
-        if queued:
-            mirrors = (
-                self.db.query(ProjectSalesOrderLine)
-                .filter(
-                    ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids),
-                    ProjectSalesOrderLine.id.in_(list(queued)),
-                )
-                .all()
-            )
-            core_by_id = {str(line.id): line for line in lines}
-            by_pso: Dict[str, List[Tuple[ProjectSalesOrderLine, Any]]] = defaultdict(list)
-            for mirror in mirrors:
-                core = core_by_id.get(str(mirror.core_sales_order_line_id))
-                if core is not None:
-                    by_pso[str(mirror.project_sales_order_id)].append((mirror, core))
-            for pso_id, pairs in by_pso.items():
-                self.record_cancelled_lines(
-                    pso_id=pso_id, cancelled=pairs, actor_user_id=actor_user_id
-                )
-        return retired
 
     def retire_rows_for_cancelled_lines(
         self,
