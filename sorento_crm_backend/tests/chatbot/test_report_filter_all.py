@@ -591,11 +591,10 @@ def test_h15_a_company_name_that_is_also_a_debtor_type_asks_company_or_brand_onc
 @pytest.mark.usefixtures("all_on", "said_as_on")
 @pytest.mark.parametrize("brands", [["Sorento", "Cabana"], ["Sorento"]], ids=["step8", "step14"])
 @pytest.mark.parametrize("said_as", ["both", "brand"])
-def test_k8_company_and_brand_of_one_name_follow_its_said_as_never_the_company_slot_alone(rbot, world, brands, said_as) -> None:
-    """Crew re-check steps 8 / 14 (after a clear: no company held), the object writing company Sorento beside brands.
-    The name's slot is the entity's said_as, never the object's company slot alone: "Sorento brand only" parses write
-    company Sorento too (ON-2, F2, tf-29, the R3 equivalence), so a company slot beside said_as brand is not applied.
-    said_as both (prompt edit 10: a name the message calls company AND brand) applies both."""
+def test_k8_an_object_naming_the_company_and_the_brand_of_one_name_runs_both(rbot, world, brands, said_as) -> None:
+    """Crew re-check steps 8 / 14a (after a clear: no company held): the object writes company Sorento AND brands with
+    SORENTO. The object is final (round 6): both run, whatever the entity's said_as says. Round 5 let said_as brand drop
+    the object's company (the CP-5 branch, `report_ask.py:3681` on dcd1fd81), so the display disagreed with the parse."""
     sorento, _m = world
     _hold(rbot, None, group_by="channel")
     ents = [_said("Sorento", said_as, "company, brand"), *([_ent("Cabana", "brand", "CABANA", "brands")] if "Cabana" in brands else [])]
@@ -604,7 +603,7 @@ def test_k8_company_and_brand_of_one_name_follow_its_said_as_never_the_company_s
     text, calls = rbot.say(v, "Sorento company, Sorento brand")
     assert _ran(calls), f"K8: nothing ran: {text!r}"
     args = _args(calls)
-    assert bool(args.get("company") == DEFAULT_COMPANY_ID) == (said_as == "both"), f"K8 company ({said_as}): {args}"
+    assert args.get("company") == DEFAULT_COMPANY_ID, f"K8 company ({said_as}): {args}"
     assert len(args.get("brand_ids") or []) >= len(brands), f"K8 brands: {args}"
 
 
@@ -647,3 +646,68 @@ def test_k1_a_total_frame_beside_this_messages_own_axis_is_that_breakdown(rbot, 
     v = _v("sales_report", ra, basis="delivered", group_by="channel", sales_company=sorento, domain_in_message=True, **SEPF)
     text, calls = rbot.say(v, "Total sale delivered September 2026 Sorento company, show dealer and project")
     assert _args(calls).get("group_by") == "channel", f"K1: {_args(calls)}"
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize("channel", [None, ALL], ids=["channel-null", "channel-all"])
+def test_k1b_a_total_with_no_axis_in_the_object_takes_this_messages_own_axis(rbot, world, channel) -> None:
+    """Crew re-check step 1 on v78: the object came back frame total with NO group_by, so the K1 rule never fired. The
+    parse's top-level `group_by` is this message's own reading (prompt: from the current message only): a total whose
+    object names no axis, beside this message's own axis that is not the held one and not a one-value slot, is that
+    breakdown."""
+    sorento, _m = world
+    ra = _ra2("total", basis="delivered", group_by=None, company=sorento, brands=["SORENTO"], channel=channel, **SEP)
+    v = _v("sales_report", ra, _ent("sorento", "brand", "SORENTO", "brand"), basis="delivered", group_by="channel",
+           sales_company=sorento, domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "Total sale delivered September 2026 Sorento company, Sorento brand, show dealer and project")
+    args = _args(calls)
+    assert args.get("group_by") == "channel" and args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_k1c_lock_a_total_with_no_axis_anywhere_stays_one_figure(rbot, world) -> None:
+    sorento, _m = world
+    ra = _ra2("total", basis="delivered", group_by=None, company=sorento, **SEP)
+    v = _v("sales_report", ra, basis="delivered", group_by=None, sales_company=sorento, domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "Total sale delivered September 2026 Sorento company")
+    assert not _args(calls).get("group_by"), _args(calls)
+
+
+# fa-16 / fa-20 / fa-36 as recorded objects (gold `parser_report_filter_all.jsonl`): the object the ALL prompt should write,
+# and the miss crew recorded on the 6 Nov re-check, replayed through the engine on the world's names.
+
+
+def _fa_clear(rbot, sorento, **slots: Any):
+    _hold_all_kinds(rbot, sorento)
+    every = {slot: _all_of(slot) for slot, *_rest in _KINDS.values()}
+    every.update(slots)
+    ra = _ra2(None, basis=None, group_by=None, measure=None, date_from=None, date_to=None, **every)
+    return _args(rbot.say(_follow("sales_analysis", ra, basis=None, group_by=None), "clear")[1])
+
+
+@pytest.mark.usefixtures("all_on")
+@pytest.mark.parametrize("row", ["fa-16 tak payah filter apa2, semua", "fa-20 start over without any filter, same month"])
+def test_fa16_fa20_the_gold_clear_all_object_clears_company_and_channel_too(rbot, world, row) -> None:
+    sorento, _m = world
+    args = _fa_clear(rbot, sorento)
+    assert not args.get("company") and not args.get("channel"), f"{row}: {args}"
+    assert args.get("basis") == "delivered" and args.get("group_by") == "month" and args.get("date_from") == "2026-09-01", args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_fa16_fa20_the_recorded_miss_keeps_the_channel_because_the_object_kept_it(rbot, world) -> None:
+    """Crew 6 Nov: fa-16 / fa-20 parsed channel "dealer" (and company) as held while clearing the lists. The code applies
+    the object as written: the kept channel is the parser's, not a code drop or refill."""
+    sorento, _m = world
+    args = _fa_clear(rbot, sorento, channel="dealer")
+    assert args.get("channel") == "dealer" and not args.get("brand_ids") and not args.get("customer_ids"), args
+
+
+@pytest.mark.usefixtures("all_on")
+def test_fa36_the_gold_step1_object_is_the_dealer_project_breakdown(rbot, world) -> None:
+    sorento, _m = world
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", company=sorento, brands=["SORENTO"], **SEP)
+    v = _v("sales_analysis", ra, _ent("sorento", "brand", "SORENTO", "brand"), basis="delivered", group_by="channel",
+           sales_company=sorento, domain_in_message=True, **SEPF)
+    args = _args(rbot.say(v, "Total sale delivered September 2026 Sorento company, Sorento brand, show dealer and project")[1])
+    assert args.get("group_by") == "channel" and args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), args
