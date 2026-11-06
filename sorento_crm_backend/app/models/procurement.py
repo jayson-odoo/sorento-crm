@@ -422,7 +422,10 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    updated_at = Column(DateTime(timezone=False), nullable=True)
+    # `onupdate` (PACKING-LIST-RECALC follow-up): ORM-side only, no DDL. The hourly
+    # sweep's watermark reads this column to find containers whose inputs changed;
+    # nothing stamped it before. Also applies to a bulk `query.update()`.
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
     spo_allocated_quantity = Column(Integer, default=0, nullable=False)
     quantity_received = Column(Integer, default=0, nullable=False)
     line_status = Column(String(50), default="in_transit", nullable=False)
@@ -530,7 +533,10 @@ class SPOAllocation(Base, CompanyScopedMixin):
         nullable=True,
     )
     synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
-    updated_at = Column(DateTime(timezone=False), nullable=True)
+    # `onupdate` (PACKING-LIST-RECALC follow-up): ORM-side only, no DDL. The hourly
+    # sweep's watermark reads this column to find containers whose inputs changed;
+    # nothing stamped it before. Also applies to a bulk `query.update()`.
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     # --- the document the line belongs to (migration 420) ----------------------------
     #: Which feed wrote it: `scm_spo_history` / `scm_po_history` / `scm_upload` for an
@@ -812,7 +818,10 @@ class PickingLine(Base, CompanyScopedMixin):
     destination_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     synced_to_excel = Column(Boolean, default=False, server_default="false", nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    updated_at = Column(DateTime(timezone=False), nullable=True)
+    # `onupdate` (PACKING-LIST-RECALC follow-up): ORM-side only, no DDL. The hourly
+    # sweep's watermark reads this column to find containers whose inputs changed;
+    # nothing stamped it before. Also applies to a bulk `query.update()`.
+    updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
     # AutoCount GRN ingest (#1354 S2, plan 2.5). `qty` is AutoCount's exact quantity; the
     # integer quantity columns above carry it rounded. `purchase_order_id` is the
     # document-number link from `OurPONo`; the line links are `po_line_id` /

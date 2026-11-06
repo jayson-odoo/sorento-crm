@@ -1347,28 +1347,33 @@ class InboundShipmentService:
             line.spo_allocated_quantity = alloc
             line.quantity_received = recv
             line.line_status = status
-        previous_status = shipment.shipment_status
-        shipment.shipment_status = rollup_shipment_status(
-            shipment.shipment_status, *line_status_counts(line.line_status for line in lines)
-        )
-        if shipment.shipment_status != previous_status:
-            from app.services import audit_service
+        from app.services.scm.packing_list_recalc import recomputing
 
-            audit_service.record(
-                self.db,
-                event="packing_list.status_recalculated",
-                entity_type="inbound_shipments",
-                entity_id=str(shipment.id),
-                old_values={"shipment_status": previous_status},
-                new_values={"shipment_status": shipment.shipment_status},
-                reason=trigger or "writer",
-                description=(
-                    f"Packing list status recalculated automatically: "
-                    f"{previous_status or '-'} to {shipment.shipment_status or '-'}"
-                ),
-                company_id=str(shipment.company_id) if shipment.company_id else None,
+        # The header write below (and the audit row's flush of it) is this recompute's
+        # own output, not an input change: it must not queue another run of itself.
+        with recomputing(self.db, shipment.id):
+            previous_status = shipment.shipment_status
+            shipment.shipment_status = rollup_shipment_status(
+                shipment.shipment_status, *line_status_counts(line.line_status for line in lines)
             )
-        self.db.commit()
+            if shipment.shipment_status != previous_status:
+                from app.services import audit_service
+
+                audit_service.record(
+                    self.db,
+                    event="packing_list.status_recalculated",
+                    entity_type="inbound_shipments",
+                    entity_id=str(shipment.id),
+                    old_values={"shipment_status": previous_status},
+                    new_values={"shipment_status": shipment.shipment_status},
+                    reason=trigger or "writer",
+                    description=(
+                        f"Packing list status recalculated automatically: "
+                        f"{previous_status or '-'} to {shipment.shipment_status or '-'}"
+                    ),
+                    company_id=str(shipment.company_id) if shipment.company_id else None,
+                )
+            self.db.commit()
 
     def stored_figures_stale(self, shipment: InboundShipment) -> bool:
         """Whether a recompute would change anything stored on this shipment (its lines'

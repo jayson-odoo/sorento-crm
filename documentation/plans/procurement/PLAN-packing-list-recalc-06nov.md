@@ -1,7 +1,6 @@
 # PLAN: packing list status recompute on input change (PACKING-LIST-RECALC)
 
-Status: built, reviewer READY, owner hand test pending (normal track: the diff is about 1,000 lines,
-over the ~300 small-fix limit; no migration, no RBAC, no new ingest surface)
+Status: #2215 merged; follow-up #2218 in review (small fix track: about 300 lines, no migration, no RBAC)
 
 ## Problem
 Prod (YMMU7738143): an SPO had no container number. The ref was fixed in AutoCount; the next
@@ -37,3 +36,16 @@ No registry or config: one listener because the inputs have many writers today (
 
 ## UAC
 See `packing-list-recalc-acceptance-criteria.md`.
+
+## Follow-up (#2218, after crew's adversarial review of #2215)
+- Hand-run scripts (`scripts/*.py`) open `app.database.SessionLocal` without importing
+  `app.main` / `worker.py`, so they never registered the listener. It is now registered at
+  the bottom of `app/database.py`, where the session factory is built.
+- The hourly sweep visits open containers PLUS every container whose inputs were written
+  since the previous sweep (`changed_shipment_ids`; watermark in Redis key
+  `pl-recalc:sweep-watermark`, 24h when absent, 10 min overlap). `spo_allocations`,
+  `inbound_shipment_lines` and `picking_lines` gained an ORM-side `onupdate=func.now()` on
+  `updated_at` (no DDL), which nothing stamped before. Limit: a bulk delete or raw SQL leaves
+  no timestamp; such a writer calls `packing_list_recalc.mark_stale`.
+- The header's `shipment_status` / `company_id` are watched; the recompute's own write is
+  excluded (`recomputing`), so it never queues itself.

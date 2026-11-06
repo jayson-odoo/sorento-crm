@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
 from typing import Iterable, Optional
 
 from sqlalchemy import event, func, inspect, select
@@ -56,6 +57,13 @@ ALLOCATION_INPUTS = (
 #: only `spo_allocated_quantity` / `quantity_received` / `line_status` / `company_id`,
 #: none of which is here, so it never queues itself.
 SHIPMENT_LINE_INPUTS = ("quantity_shipped", "product_id", "shipment_id", "created_at")
+#: `InboundShipment` columns the recompute reads: the rollup starts from the stored
+#: header status, and the line self-heal follows the header's company. The recompute's
+#: own header write is excluded (`recomputing`), so it never queues itself.
+SHIPMENT_INPUTS = ("shipment_status", "company_id")
+
+_RECOMPUTING_KEY = "packing_list_recalc_recomputing"
+WATERMARK_KEY = "pl-recalc:sweep-watermark"
 #: GRN header columns that decide whether its picks count (approved goods receipts)
 #: and which SPO an allocation-less pick is matched to.
 PICKING_HEADER_INPUTS = ("picking_status", "picking_type", "spo_number")
@@ -105,6 +113,7 @@ def _collect(session: Session, _flush_context) -> None:
     Runs after the SQL went out but before the history is reset, so an
     allocation moved from container A to B names both."""
     from app.models.procurement import (
+        InboundShipment,
         InboundShipmentLine,
         PickingHeader,
         PickingLine,
@@ -130,6 +139,11 @@ def _collect(session: Session, _flush_context) -> None:
                 continue
             _, values = _history_values(obj, "inbound_shipment_id", deleted=kind == "deleted")
             shipment_ids.update(str(v) for v in values if v)
+        elif isinstance(obj, InboundShipment):
+            if kind != "dirty" or not _changed(obj, SHIPMENT_INPUTS):
+                continue  # a new header has no lines yet; a deleted one has nothing left
+            if obj.id and str(obj.id) not in session.info.get(_RECOMPUTING_KEY, ()):
+                shipment_ids.add(str(obj.id))
         elif isinstance(obj, InboundShipmentLine):
             if kind == "dirty" and not _changed(obj, SHIPMENT_LINE_INPUTS):
                 continue
@@ -346,6 +360,103 @@ def mark_stale(session: Session, shipment_ids: Iterable[str]) -> None:
     """Note containers to recompute after this session's outermost commit, for a
     writer the listener cannot see (a bulk `query.delete()` / raw SQL)."""
     _note(session, shipment_ids)
+
+
+@contextmanager
+def recomputing(session: Session, shipment_id: str):
+    """While the recompute writes a header's status, that write is not an input
+    change: without this, every status the recompute moved would queue one more
+    (no-op) run of itself."""
+    active = session.info.setdefault(_RECOMPUTING_KEY, set())
+    active.add(str(shipment_id))
+    try:
+        yield
+    finally:
+        active.discard(str(shipment_id))
+
+
+# --------------------------------------------------------------------- the sweep
+def changed_shipment_ids(db: Session, since) -> set[str]:
+    """Containers whose inputs were written at or after `since`: the header itself, its
+    lines, the allocations linked to it, and GRN picks / headers reaching it (through
+    the pick's allocation, or the header's SPO number for an allocation-less pick).
+    Inserts count through `coalesce(updated_at, created_at)`. A row hard-deleted
+    around the ORM leaves nothing to read; such a writer calls `mark_stale`."""
+    from sqlalchemy import or_
+
+    from app.models.procurement import (
+        InboundShipment,
+        InboundShipmentLine,
+        PickingHeader,
+        PickingLine,
+        SPOAllocation,
+    )
+
+    shipments = InboundShipment.__table__
+    lines = InboundShipmentLine.__table__
+    alloc = SPOAllocation.__table__
+    picks = PickingLine.__table__
+    headers = PickingHeader.__table__
+
+    def _touched(table):
+        return func.coalesce(table.c.updated_at, table.c.created_at) >= since
+
+    statements = [
+        select(shipments.c.id).where(shipments.c.updated_at >= since),
+        select(lines.c.shipment_id).where(_touched(lines)),
+        select(alloc.c.inbound_shipment_id).where(
+            _touched(alloc), alloc.c.inbound_shipment_id.isnot(None)
+        ),
+        select(alloc.c.inbound_shipment_id)
+        .select_from(picks.join(alloc, alloc.c.id == picks.c.spo_allocation_id))
+        .where(
+            or_(_touched(picks), picks.c.picking_header_id.in_(
+                select(headers.c.id).where(headers.c.updated_at >= since)
+            )),
+            alloc.c.inbound_shipment_id.isnot(None),
+        ),
+        select(alloc.c.inbound_shipment_id).where(
+            alloc.c.inbound_shipment_id.isnot(None),
+            _spo_key_expr(alloc.c.spo_number).in_(
+                select(_spo_key_expr(headers.c.spo_number)).where(
+                    headers.c.updated_at >= since, headers.c.spo_number.isnot(None)
+                )
+            ),
+        ),
+    ]
+    conn = db.connection()
+    found: set[str] = set()
+    for statement in statements:
+        found.update(str(r[0]) for r in conn.execute(statement.distinct()) if r[0])
+    return found
+
+
+def read_watermark():
+    """When the last sweep started (naive, DB clock), or None when unknown."""
+    from datetime import datetime
+
+    try:
+        from app.services.queue_service import redis_conn
+
+        raw = redis_conn.get(WATERMARK_KEY)
+        return datetime.fromisoformat(raw.decode()) if raw else None
+    except Exception:  # noqa: BLE001 - unknown watermark = the fallback window
+        logger.warning("packing_list_recalc.watermark_read_failed", exc_info=True)
+        return None
+
+
+def write_watermark(value) -> None:
+    try:
+        from app.services.queue_service import redis_conn
+
+        redis_conn.set(WATERMARK_KEY, value.isoformat())
+    except Exception:  # noqa: BLE001 - the next sweep falls back to its window
+        logger.warning("packing_list_recalc.watermark_write_failed", exc_info=True)
+
+
+def db_now(db: Session):
+    """The clock `func.now()` stamps `updated_at` with, as a naive timestamp."""
+    return db.execute(select(func.localtimestamp())).scalar()
 
 
 # --------------------------------------------------------------------- dispatch

@@ -160,7 +160,7 @@ def nightly_relink_all_containers(db: Session) -> int:
     return relinked
 
 
-def nightly_refresh_open_containers(db: Session) -> int:
+def nightly_refresh_open_containers(db: Session, *, since=None) -> int:
     """SPO-DEDUPE-ALL: recompute the stored received figures of every shipment
     not yet fully received. They are otherwise refreshed only when the packing
     list page is opened or an ingest/allocation write touches the shipment, so a
@@ -168,20 +168,47 @@ def nightly_refresh_open_containers(db: Session) -> int:
     row) left the chatbot's "incoming" reading the stale figure (GCXU6137164:
     stored 95 of 99, 4 reported incoming, packing list showed 99/99).
 
+    PACKING-LIST-RECALC follow-up: plus every container whose inputs were written
+    since the last sweep (`packing_list_recalc.changed_shipment_ids`), received or
+    not, so a change made around the listener (a script's bulk update) that should
+    take a Fully Received container back is caught too. `since` defaults to the
+    watermark the previous sweep left in Redis (24 hours when there is none, 10
+    minutes of overlap against clock skew); the watermark moves only when `since`
+    was not given, i.e. on the scheduled sweep.
+
     Each shipment is refreshed and committed on its own; one that fails is
     rolled back, logged and skipped. Returns how many were refreshed.
     """
+    from datetime import timedelta
+
     from app.services.procurement_service import InboundShipmentService
+    from app.services.scm import packing_list_recalc
+
+    scheduled = since is None
+    started = packing_list_recalc.db_now(db)
+    if scheduled:
+        watermark = packing_list_recalc.read_watermark()
+        since = (watermark or started - timedelta(hours=24)) - timedelta(minutes=10)
 
     service = InboundShipmentService(db)
+    shipment_ids = list(service.open_shipment_ids())
+    seen = set(shipment_ids)
+    for shipment_id in sorted(packing_list_recalc.changed_shipment_ids(db, since)):
+        if shipment_id not in seen:
+            shipment_ids.append(shipment_id)
+            seen.add(shipment_id)
+    db.rollback()  # end the read transaction before the per-shipment commits
+
     refreshed = 0
-    for shipment_id in service.open_shipment_ids():
+    for shipment_id in shipment_ids:
         try:
             service.refresh_shipment_line_statuses(shipment_id, trigger="sweep")
             refreshed += 1
         except Exception:  # noqa: BLE001 - one bad shipment must not stop the sweep
             db.rollback()
             logger.exception("open container refresh failed for %s", shipment_id)
+    if scheduled:
+        packing_list_recalc.write_watermark(started)
     return refreshed
 
 
