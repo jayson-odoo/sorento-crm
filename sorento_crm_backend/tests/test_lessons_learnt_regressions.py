@@ -124,3 +124,87 @@ def test_mcp_tool_catalog_is_readable_from_the_backend_alone():
     assert len(build_capability_documents(include_planned=False)) > 50
     assert build_live_capability_summary(include_tools=False)["summary"]["total_tools"] > 50
     assert len(rank_tools("stock balance in the warehouse", [], 3)) == 3
+
+
+# ---------------------------------------------------------------------------
+# LESSON 122: "The purchasing email has ONE trigger, the board Confirm" (owner, 6 Nov 2026:
+# "I only want the email to purchasing to have 1 trigger, which is this button"; SO398322, an
+# AutoCount re-key retired an order inquiry row and auto-emailed purchasing a false cancel).
+# The gate: `mark_purchasing_email_trigger` marks the root transaction of a press that may email
+# purchasing; the handover drain sends only for a marked one and changed-with-links queues only
+# inside one. Owner, 18:10: if any integration / sync path ever emails purchasing again, a test
+# must fail. The heavy guards (Postgres) are named below; these two cheap ones keep them, and
+# the gate's callers, from quietly going away.
+# ---------------------------------------------------------------------------
+
+_BACKEND = __import__("pathlib").Path(__file__).resolve().parents[1]
+
+#: Every place allowed to mark a write as a purchasing email trigger: the board Confirm seam
+#: both Confirm routes share, and Publish amendment (the owner's named exception, Q4).
+_PURCHASING_TRIGGER_CALLERS = {
+    ("app/api/v1/projects/fulfilment_planning.py", "_confirm_with_possible_rejects"),
+    ("app/api/v1/projects/sales_orders.py", "publish_amendment"),
+}
+
+#: The heavy guards and what each must keep covering.
+_PURCHASING_EMAIL_GUARDS = {
+    "tests/test_purchasing_email_tripwire_so_po.py": (
+        "SO line removed", "SO line added", "SO qty changed", "SO date changed",
+        "SO item changed", "SO line re-keyed", "SO header cancelled",
+        "test_an_autocount_po_push_removing_a_linked_line_emails_purchasing_nothing",
+        "test_an_autocount_po_push_that_reruns_auto_confirm_emails_purchasing_nothing",
+        "test_positive_control_the_tripwire_sees_a_confirm_shaped_write",
+    ),
+    "tests/test_purchasing_email_tripwire_docs.py": (
+        "test_an_autocount_cancel_so_document_emails_purchasing_nothing",
+        "test_an_autocount_delivery_order_emails_purchasing_nothing",
+        "test_an_autocount_goods_received_note_emails_purchasing_nothing",
+        "test_positive_control_the_tripwire_sees_a_confirm_shaped_write",
+    ),
+    "tests/scm/test_purchasing_email_one_trigger.py": (
+        "test_structural_a_handover_queued_outside_a_trigger_is_dropped_and_logged",
+        "test_the_same_apply_outside_a_trigger_emails_nobody",
+    ),
+}
+
+
+def test_only_the_board_confirm_and_publish_amendment_mark_a_purchasing_email_trigger():
+    """A new caller of `mark_purchasing_email_trigger` (an ingest, a script, a service) is a
+    second trigger of the purchasing email: red until the owner rules it in here."""
+    import ast
+
+    found = set()
+    for path in sorted((_BACKEND / "app").rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        parents = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[child] = node
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = getattr(func, "id", None) or getattr(func, "attr", None)
+            if name != "mark_purchasing_email_trigger":
+                continue
+            owner = node
+            while owner in parents and not isinstance(
+                owner, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                owner = parents[owner]
+            found.add((str(path.relative_to(_BACKEND)), getattr(owner, "name", "<module>")))
+
+    assert found == _PURCHASING_TRIGGER_CALLERS, found
+
+
+def test_the_purchasing_email_guards_still_cover_every_integration_path():
+    """Deleting or thinning the tripwire is red too: each guard file is still there and still
+    names every scenario the owner asked for (SO line removed / added / qty / date / item /
+    re-keyed, header cancelled, PO line removed, PO auto-confirm, Cancel SO document, DO, GRN),
+    with its positive control."""
+    for relative, needles in _PURCHASING_EMAIL_GUARDS.items():
+        path = _BACKEND / relative
+        assert path.exists(), f"{relative} is gone: the purchasing-email regression guard"
+        source = path.read_text()
+        missing = [needle for needle in needles if needle not in source]
+        assert not missing, f"{relative} no longer covers {missing}"

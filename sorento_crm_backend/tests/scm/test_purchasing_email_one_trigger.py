@@ -161,3 +161,42 @@ def test_q4_publish_amendment_marks_its_transaction(monkeypatch):
 
     assert body == {"status": "published"}
     assert seen["marked"] is True
+
+
+def test_structural_a_handover_queued_outside_a_trigger_is_dropped_and_logged(
+    api, monkeypatch, caplog
+):
+    """Owner, 6 Nov 2026 (18:10): a structural guard, so a future path that bypasses the gate
+    is red. Lines queued by a write that is NOT a purchasing trigger (no
+    `mark_purchasing_email_trigger` on its root transaction) are dropped at the commit with a
+    log line naming the count, and no changed-with-links notice is even queued. Listed in
+    `tests/test_lessons_learnt_regressions.py`."""
+    import logging
+
+    from app.services.project_order_inquiry_service import (
+        _CHANGED_WITH_LINKS_PENDING_KEY,
+        _HANDOVER_PENDING_KEY,
+    )
+
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    batch = _amended_batch(client, world)
+    calls.clear()
+    caplog.set_level(logging.INFO, logger="app.services.project_order_inquiry_service")
+
+    planning_change_service.apply(world.db, str(batch.id), world.actor)
+    queued = list(world.db.info.get(_HANDOVER_PENDING_KEY) or [])
+    assert queued, "fixture: the apply queues handover lines (what a regression would send)"
+    assert not world.db.info.get(_CHANGED_WITH_LINKS_PENDING_KEY)
+    world.db.commit()
+
+    assert [c for c in calls if c["trigger_type"].startswith("order_inquiry")] == []
+    assert not world.db.info.get(_HANDOVER_PENDING_KEY), "dropped, not left to a later commit"
+    dropped = [
+        r.getMessage() for r in caplog.records if "not a purchasing trigger" in r.getMessage()
+    ]
+    assert dropped == [
+        f"order_inquiry_handover: {len(queued)} line(s) not sent, the write was not a purchasing"
+        " trigger"
+    ], dropped
