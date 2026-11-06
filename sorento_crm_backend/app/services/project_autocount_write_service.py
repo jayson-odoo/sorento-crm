@@ -653,6 +653,7 @@ class ProjectAutocountWriteService:
 
         company = self._order_company_code(order)
         expected = order.autocount_last_modified
+        doc_date = None
         if not expected:
             # Adopted order: nothing read back yet, so read the document before the PATCH.
             try:
@@ -665,12 +666,15 @@ class ProjectAutocountWriteService:
                 failed["waiting"] = waiting
                 return failed
             expected = (held.get("document") or held).get("LastModified")
+            doc_date = _iso_date((held.get("document") or held).get("DocDate"))
         body = {
             "companyCode": company,
-            "docDate": _today(),
             "expectedLastModified": expected,
             "lines": list(edits.values()),
         }
+        if doc_date:
+            # SS finds the document by its own date; with none, it uses the date it staged.
+            body["docDate"] = doc_date
         path = f"documents/sales-orders/{doc_key}"
         key = f"crm-amd-{amendment.id}-update-edit"
         answer = self._call(lambda c: c.patch(path, body, idempotency_key=key))
@@ -945,6 +949,7 @@ class ProjectAutocountWriteService:
                 verb="updated",
             )
         held = list((held_doc.get("document") or held_doc).get("Details") or [])
+        doc_date = _iso_date((held_doc.get("document") or held_doc).get("DocDate"))
         used: set = set()
         patched: List[dict] = []
         adds: List[dict] = []
@@ -1016,10 +1021,11 @@ class ProjectAutocountWriteService:
         if need_patch:
             body = {
                 "companyCode": company,
-                "docDate": _today(),
                 "header": {"remark1": remark},
                 "expectedLastModified": stale_since,
             }
+            if doc_date:
+                body["docDate"] = doc_date
             if patched:
                 body["lines"] = patched
             answer = self._call(
