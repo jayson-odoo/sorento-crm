@@ -1,6 +1,6 @@
 # PLAN - AC-REKEY-SAME-LINE: an AutoCount re-keyed SO line is not a removal
 
-Status: built, in review (6 Nov 2026); owner approved (a) automatic with the delivery date in the key and the delivered guard. Track: small fix (no migration, no auth/RBAC change).
+Status: built, reviewed READY, PR #2219 open (6 Nov 2026); owner approved (a) automatic with the delivery date in the key and the delivered guard. Track: small fix (no migration, no auth/RBAC change).
 
 Lane AC-REKEY-SAME-LINE, 6 Nov 2026. Behaviour card: `ac-rekey-same-line-behaviour-card.md`.
 
