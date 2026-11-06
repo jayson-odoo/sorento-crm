@@ -12,7 +12,7 @@ fresh row for every unmatched incoming line (`:1660-1672`), and treats every `by
 longer carries as REMOVED (`:1681-1724`) -> `retire_rows_for_removed_so_lines` (`:1756`,
 `project_order_inquiry_service.py:6313`) retires its OI rows and queues the purchasing handover.
 The new row then gets a project mirror line via `mirror_missing_lines` (`:1771-1782`) with no OI row.
-SO398322 Seq 2552: DtlKey 44806451 -> 46204553, nothing else changed: demand of 118 lost.
+Lane brief case (4 Nov): one SO line got a new DtlKey, nothing else changed: demand of 118 lost.
 
 ## After this lane
 
@@ -26,44 +26,30 @@ SO398322 Seq 2552: DtlKey 44806451 -> 46204553, nothing else changed: demand of 
 
 - K1 Match key: same SO header (already implied, `_sync_lines` is per header) + same AutoCount
   `Seq` (`sales_order_lines.line_no`, `models/order.py:843`; payload `line_number`, `:1393-1396`) +
-  same resolved `product_id`. Only a line whose old DtlKey is ABSENT from this push and whose new
+  same resolved `product_id` + same `qty_ordered` + same `unit_price` + same warehouse (when the push
+  names one; D22 leaves it out otherwise, `:1352-1360`). Only a line whose old DtlKey is ABSENT from this push and whose new
   DtlKey matches NO existing row can pair. Both Seq values must be non-NULL.
 - K2 Uniqueness: a pair is made only when exactly one leftover row and exactly one new incoming line
   share that (Seq, product). Anything ambiguous falls back to today's behaviour (never a guess).
-- K3 Everything else (qty, price, location, delivery date, remark) is NOT part of the key: once paired,
-  the row takes the push's values exactly as a same-key re-push would (qty change -> the existing
-  qty-change paths run, as for any edit).
+- K3 Everything else (delivery date, remark, delivered qty) is NOT part of the key: once paired, the
+  row takes the push's values exactly as a same-key re-push would.
 - K4 Only sales orders. PO lines are out of scope (no evidence of PO re-keys in the brief).
 - K5 The re-key path calls no email or notification code at all; it is a key rename before the
   normal matched loop. Sales-order-only, no migration, no new column.
 
-## Real examples
+## Real examples (crew census on the 4 Nov prod copy, read-only; identifiers kept off the branch)
 
-1. SO398322 Seq 2552 CB2805A-DIY 118 @ 19.35 BRW-BB, DtlKey 44806451 -> 46204553 (4 Nov 09:28):
-   paired (Seq 2552 + CB2805A-DIY unique on both sides; the other four CB2805A-DIY lines are Seq
-   544/1328/1624/2312 and keep their own DtlKeys). Core line fad57dc2 keeps its id; OI-2609-0149
-   stays live at 118; no handover; no mirror line 8b6ca35f.
-2. Same SO, 3 Nov PVC 3 -> PVC 5 swaps: item differs -> NOT paired -> removal + create as today.
-   UNVERIFIED whether those swaps kept the same Seq; either way the item differs.
-3-5. UNVERIFIED (no DB access from the sandbox). Census query for crew on `sorento_prod_1104`
-   (re-keys that already happened leave a cancelled AutoCount line and a live one on the same SO,
-   Seq and product):
+1. SO "A" (the brief's case), 4 Nov: one line re-keyed, Seq + item + qty + price + location equal,
+   new row created within 5 s of the old cancel. Its OI row (qty 118) was retired and one handover
+   email queued. After: paired; the core line keeps its id and the OI row stays live.
+2. SO "B", 29 Oct: 25 lines re-keyed in one re-save, every field but DtlKey equal. No OI rows, no
+   email, but 25 cancelled + 25 new rows. After: 25 in-place updates.
+3. Near misses, 91 old lines on four SOs (24 Sep, 3 Nov, and two more): same SO + item, same moment,
+   but a DIFFERENT Seq or qty. They read as real restructures and must NOT pair. This is why the
+   key below includes qty, price and location, not Seq + item alone.
+4. Same SO as 1, 3 Nov: item swaps (one product for another): item differs, not paired, as today.
 
-```sql
-SELECT so.so_number, o.line_no, p.code, o.source_ref AS old_ref, n.source_ref AS new_ref,
-       o.qty_ordered AS old_qty, n.qty_ordered AS new_qty, o.updated_at, n.created_at
-FROM sales_order_lines o
-JOIN sales_order_lines n ON n.sales_order_id = o.sales_order_id AND n.line_no = o.line_no
-     AND n.product_id = o.product_id AND n.id <> o.id AND n.created_at >= o.created_at
-JOIN sales_orders so ON so.id = o.sales_order_id
-JOIN products p ON p.id = o.product_id
-WHERE o.source_system = 'autocount' AND o.line_status = 'cancelled' AND o.cancelled_at IS NULL
-  AND n.line_status <> 'cancelled' AND so.status <> 'cancelled'
-ORDER BY n.created_at DESC LIMIT 50;
-```
-
-   The same query with `n.line_no <> o.line_no` (and same product, same qty) shows whether
-   AutoCount ever renumbers Seq on a re-save; if it does, K1 misses those and they stay removals.
+Census: 26 true pairs in total (1 + 25); 0 seen with Seq + item equal and only qty changed.
 
 ## Edge cases
 
@@ -83,12 +69,12 @@ ORDER BY n.created_at DESC LIMIT 50;
 
 ## Questions (recommendation first)
 
-- Q1 Key fields: (a) SO + Seq + item, everything else may change (K1/K3) / (b) also require qty,
-  price and location equal. Rec (a): Seq + item already identifies the line uniquely (the 5
-  CB2805A-DIY lines differ by Seq), and (b) turns "re-key plus a qty edit" back into the 118-loss bug.
-- Q2 Seq renumbered by AutoCount on re-save: (a) out of scope, needs the census above first / (b) add
-  a fallback on item + qty + price when Seq differs. Rec (a): the brief shows the item+qty+price key
-  is ambiguous on this very SO; no structural key without Seq.
+- Q1 Key fields: (a) SO + Seq + item only / (b) also qty, price and location equal (K1). Rec (b)
+  (revised after the census): every true re-key had all of them equal, and the 91 near misses that
+  must not pair differ in Seq or qty.
+- Q2 Seq renumbered by AutoCount on re-save: (a) no match (stays a removal) / (b) fallback on item +
+  qty + price when Seq differs. Rec (a): the census shows no true re-key with a changed Seq, and the
+  different-Seq near misses are real restructures.
 - Q3 Old key used later by a DO/PO: (a) accept (old key resolves to nothing) / (b) keep the old key as
   an alias (new column, migration). Rec (a): minimum change; revisit if the census shows DOs on old keys.
 - Q4 Trace: SO lines are `__audit_skip__` (`models/order.py:759`), so no row audit exists.

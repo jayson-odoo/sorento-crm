@@ -2,12 +2,11 @@
 
 Status: Plan (behaviour card pending owner answers). Track: small fix (no migration, no auth/RBAC change expected).
 
-Lane AC-REKEY-SAME-LINE, 6 Nov 2026. Behaviour card: `ac-rekey-same-line-behaviour-card.md` (to follow).
+Lane AC-REKEY-SAME-LINE, 6 Nov 2026. Behaviour card: `ac-rekey-same-line-behaviour-card.md`.
 
 ## Problem
 
-SO398322, 4 Nov 2026: an AutoCount re-save gave line Seq 2552 (CB2805A-DIY 118 @ 19.35) a new
-DtlKey (44806451 -> 46204553). CRM matches SO lines only by `source_ref`
+4 Nov 2026: an AutoCount re-save gave one SO line (qty 118) a new DtlKey, nothing else changed. CRM matches SO lines only by `source_ref`
 (`AED_SORENTO:<DocKey>:<DtlKey>`), so ingest cancelled the old core line, created a new one, and
 the removed-line sweep retired the Order Inquiry row and queued the purchasing handover email.
 The demand of 118 was lost.
