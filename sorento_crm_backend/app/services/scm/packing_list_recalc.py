@@ -139,11 +139,11 @@ def _collect(session: Session, _flush_context) -> None:
             if kind == "dirty" and not _changed(obj, PICKING_LINE_INPUTS):
                 continue
             _, values = _history_values(obj, "spo_allocation_id", deleted=kind == "deleted")
-            values = [v for v in values if v]
-            allocation_ids.update(str(v) for v in values)
-            if not values:
-                # A pick with no allocation counts through its header's SPO number
-                # (the received reader's orphan match); only then is the header read.
+            allocation_ids.update(str(v) for v in values if v)
+            if not values or any(v is None for v in values):
+                # A pick with no allocation (now or before this flush) counts through
+                # its header's SPO number (the received reader's orphan match); only
+                # then is the header read.
                 _, headers = _history_values(obj, "picking_header_id", deleted=kind == "deleted")
                 header_ids.update(str(v) for v in headers if v)
         elif isinstance(obj, PickingHeader):
@@ -366,19 +366,29 @@ def dispatch_recalc(shipment_ids: Iterable[str]) -> None:
 
         queue = Queue("scm_recalc", connection=redis_conn)
         for shipment_id in ids:
-            job_id = f"{JOB_ID_PREFIX}{shipment_id}"
-            try:
-                existing = Job.fetch(job_id, connection=redis_conn)
-                status = existing.get_status(refresh=False)
+            base = f"{JOB_ID_PREFIX}{shipment_id}"
+            # The job id, then one re-run id for writes landing while it runs. Re-using
+            # a RUNNING job's id would overwrite its hash, and the worker deletes that
+            # hash when the run ends (result_ttl=0): the re-queued id would then be
+            # skipped at dequeue. A waiting job at either id already covers this write.
+            job_id = None
+            waiting = False
+            for candidate in (base, f"{base}-rerun"):
+                try:
+                    status = Job.fetch(candidate, connection=redis_conn).get_status(refresh=False)
+                except NoSuchJobError:
+                    job_id = candidate
+                    break
                 if status in ("queued", "deferred", "scheduled"):
-                    continue
-                if status == "started":
-                    # Re-using the running job's id would overwrite its hash, and the
-                    # worker deletes that hash when the run ends (result_ttl=0): the
-                    # re-queued id would then be skipped at dequeue. A fresh id instead.
-                    job_id = f"{JOB_ID_PREFIX}{shipment_id}-{uuid.uuid4().hex[:12]}"
-            except NoSuchJobError:
-                pass
+                    waiting = True
+                    break
+                if status != "started":
+                    job_id = candidate
+                    break
+            if waiting:
+                continue
+            if job_id is None:  # both running: a one-off id, never lost
+                job_id = f"{base}-{uuid.uuid4().hex[:12]}"
             queue.enqueue(
                 "app.tasks.packing_list_recalc_tasks.recalc_packing_list_job",
                 shipment_id,

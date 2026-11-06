@@ -408,9 +408,19 @@ def test_dispatch_skips_a_container_whose_job_is_still_waiting(monkeypatch):
     # Review B2: while the job runs, a new write queues under a FRESH id (re-using the
     # running job's id would let the worker's cleanup delete the re-queued job).
     jobs[f"pl-recalc-{sid}"] = "started"
+    for _ in range(5):
+        packing_list_recalc.dispatch_recalc([sid])
+    assert enqueued == [f"pl-recalc-{sid}", f"pl-recalc-{sid}-rerun"]
+
+    # Both running: a one-off id rather than a lost write.
+    jobs[f"pl-recalc-{sid}-rerun"] = "started"
     packing_list_recalc.dispatch_recalc([sid])
-    assert len(enqueued) == 2
-    assert enqueued[1].startswith(f"pl-recalc-{sid}-")
+    assert len(enqueued) == 3 and enqueued[2].startswith(f"pl-recalc-{sid}-")
+
+    # The first run finished: its own id is free again.
+    jobs[f"pl-recalc-{sid}"] = "finished"
+    packing_list_recalc.dispatch_recalc([sid])
+    assert enqueued[3] == f"pl-recalc-{sid}"
 
 
 def test_dispatch_falls_back_inline_when_redis_is_down(monkeypatch):

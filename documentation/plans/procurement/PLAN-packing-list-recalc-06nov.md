@@ -1,6 +1,7 @@
 # PLAN: packing list status recompute on input change (PACKING-LIST-RECALC)
 
-Status: built, in review (small fix track: no migration, no RBAC, no new ingest surface)
+Status: built, reviewer READY, owner hand test pending (normal track: the diff is about 1,000 lines,
+over the ~300 small-fix limit; no migration, no RBAC, no new ingest surface)
 
 ## Problem
 Prod (YMMU7738143): an SPO had no container number. The ref was fixed in AutoCount; the next
@@ -23,7 +24,9 @@ refresh. One forgotten writer among about fifteen that each had to remember to c
   the recompute reads; the old AND new `inbound_shipment_id`), `PickingLine` and `PickingHeader`
   (GRN) rows resolved to containers through their allocation and SPO number. After commit it
   queues one RQ job per container on the new fast queue `scm_recalc`, job id
-  `pl-recalc-<shipment id>`, skipped while that job is still waiting (burst de-dupe). Redis
+  `pl-recalc-<shipment id>` (a write landing while it runs uses `...-rerun`), skipped while a
+  job for that container is still waiting (burst de-dupe). Only the outermost commit
+  dispatches; a savepoint release folds its notes into the parent level. Redis
   unreachable: recompute inline on a fresh session. A root rollback forgets the noted set.
 - The packing list GET reads only. If the stored figures would change
   (`stored_figures_stale`), it queues the recompute instead of writing.
