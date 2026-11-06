@@ -1712,8 +1712,11 @@ class DocumentIngestService(MasterRefResolver):
                 # re-confirmed on every later push of the same reduced document.
                 if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
                     newly_cancelled_so_line_ids.append(row.id)
+                # Only a PO line's removal acts here (its links are released below); a removed
+                # SO line waits on the board (FP-EMAIL-ONE-TRIGGER Q1 (a)).
                 if (
-                    id(row) in removed_ids
+                    spec.entity_type == "purchase_orders"
+                    and id(row) in removed_ids
                     and prior_line_status != CANCELLED
                     and header.status != CANCELLED
                 ):
@@ -1748,13 +1751,13 @@ class DocumentIngestService(MasterRefResolver):
         if removed_lines and (line_values or dropped_refs):
             from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-            oi_service = ProjectOrderInquiryService(self.db)
-            if spec.entity_type == "purchase_orders":
-                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
             # A REMOVED SALES ORDER line retires nothing here (FP-EMAIL-ONE-TRIGGER Q1 (a),
             # owner 6 Nov 2026; SO398322): the removal waits on the board as this push's
             # planning-change `cancelled` row, and CS's Confirm retires its order inquiry rows
             # and tells purchasing (`planning_change_service._retire_inquiry_rows`).
+            ProjectOrderInquiryService(self.db).release_removed_lines(
+                po_line_ids=[r.id for r in removed_lines]
+            )
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

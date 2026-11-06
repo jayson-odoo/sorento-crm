@@ -83,6 +83,12 @@ Not through the queue, so untouched by the gate: the "Send to purchasing" resend
   `cancelled` row for the line, and CS's board Confirm retires the rows and emails the CANCEL
   (`planning_change_service._retire_inquiry_rows`). Tested end to end in
   `tests/test_ac_removed_lines_ingest.py`.
+  Trade-offs of (a), until CS presses Confirm (review, 6 Nov): the removed line's rows read
+  acknowledged but stay live (`flag_rows_for_cancelled_lines` -> `auto_confirm`); its PO/SPO links
+  stay claimed; a draft on the line is not deleted (`delete_drafts_for_lines` ran only in the
+  ingest retire). If the post-commit `_run_planning_change_hook` fails, no `cancelled` row exists
+  and the rows stay live: the recovery is `scripts/release_removed_autocount_lines.py --apply`.
+  If CS declines the `cancelled` row, the rows stay live on a cancelled line.
 - Q2 (a): the standalone `POST /planning-changes/{id}/apply` route is deleted (no more AutoCount SO
   book uploads; no frontend caller). The board Confirm applies a batch (K4, still live: every SO
   push builds a batch). Tests that used the route as a harness call the service via

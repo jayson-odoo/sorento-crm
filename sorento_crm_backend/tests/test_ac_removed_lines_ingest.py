@@ -532,6 +532,7 @@ def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cance
     for row_id in rows:
         snap = _row_snapshot(env, row_id)
         assert snap["state"] == INQUIRY_CANCELLED, (row_id, snap)
+        assert snap["link_lines"] == [], (row_id, snap)
         audits = (
             env.db.query(AuditLog)
             .filter(AuditLog.entity_id == row_id, AuditLog.event == "OI_ROW_CANCELLED")
@@ -859,3 +860,27 @@ def test_ac_rl_47_guard_a_claim_naming_a_removed_so_line_is_left_in_place(env):
     ).mappings().first()
     assert row is not None, "the claim must stay"
     assert str(row["so_line_id"]) == str(line_x["id"]) and str(row["po_line_id"]) == po.line_b
+
+
+def test_fp_email_one_trigger_an_unmarked_retire_of_linked_rows_emails_nobody(env, monkeypatch):
+    """The changed-with-links half of the gate (review B1): retiring LINKED rows outside a
+    purchasing trigger (here the reconciliation script's call) queues no
+    `order_inquiry_changed_with_links` notice and sends no handover."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    record, header, line_x, y, rows = _three_rows_on_x(env)
+    assert any(rows.values()), "fixture: at least one row carries a link"
+    core = env.db.get(SalesOrderLine, str(line_x["id"]))
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+
+    retired = ProjectOrderInquiryService(env.db).retire_rows_for_removed_so_lines([core])
+    env.db.commit()
+
+    assert retired == len(rows), retired
+    oi_mail = [
+        c["trigger_type"]
+        for c in calls
+        if c["trigger_type"] in ("order_inquiry_handover", "order_inquiry_changed_with_links")
+    ]
+    assert oi_mail == [], oi_mail
