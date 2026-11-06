@@ -14,3 +14,15 @@
   recomputes inline.
 - AC-7 Every automatic header status change leaves an audit entry with old and new status.
 - AC-8 Open packing lists are re-swept hourly.
+
+## Follow-up (#2218)
+- AC-9 A hand-run script that only imports `app.database` has the recompute listener.
+  (`test_a_script_session_has_the_recalc_listener`)
+- AC-10 A change made around the listener (a bulk `query.update()`) that should take a Fully
+  Received container back is caught by the next hourly sweep through the `updated_at`
+  watermark; an untouched container is not revisited.
+  (`test_sweep_takes_a_fully_received_container_back_after_a_change_the_listener_missed`,
+  `test_the_watched_updated_at_columns_are_stamped_by_the_orm`)
+- AC-11 Editing the header's status or company queues the recompute; the recompute's own
+  header write does not queue another run. (`test_header_status_or_company_edit_queues_the_recompute`,
+  `test_the_recompute_does_not_queue_itself`)

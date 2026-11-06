@@ -45,7 +45,10 @@ See `packing-list-recalc-acceptance-criteria.md`.
   since the previous sweep (`changed_shipment_ids`; watermark in Redis key
   `pl-recalc:sweep-watermark`, 24h when absent, 10 min overlap). `spo_allocations`,
   `inbound_shipment_lines` and `picking_lines` gained an ORM-side `onupdate=func.now()` on
-  `updated_at` (no DDL), which nothing stamped before. Limit: a bulk delete or raw SQL leaves
-  no timestamp; such a writer calls `packing_list_recalc.mark_stale`.
+  `updated_at` (no DDL), which nothing stamped before. Raw-SQL `UPDATE`s in
+  `scripts/fix_product_duplicates.py` and `scripts/dedupe_spo_number_format.py` now stamp
+  `updated_at` (`stamp_sql`). Limit: a raw DELETE leaves no row to stamp; such a writer calls
+  `packing_list_recalc.mark_stale`. `scripts/oneoff/dedupe_spo_standalone.py` (raw SQL
+  throughout) already refreshes every shipment it touched itself at the end of its apply.
 - The header's `shipment_status` / `company_id` are watched; the recompute's own write is
   excluded (`recomputing`), so it never queues itself.
