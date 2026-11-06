@@ -9,7 +9,7 @@
  * (whichever form the implementation passes them in, the value `unset` must be in them).
  * Mocks follow `TagTemplatesList.test.tsx`.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 

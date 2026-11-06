@@ -130,12 +130,6 @@ function draw(description: string | null) {
   return { rerender: (text: string | null) => view.rerender(tree(text)) };
 }
 
-const drawn = () => viewer.payloads.filter(Boolean).at(-1) as {
-  resolvedData: Record<string, Record<string, unknown>>;
-  images: Record<string, string>;
-};
-const resolvedLine = () => Object.values(drawn().resolvedData)[0];
-
 const lp = link({ id: 'tpl-lp', name: 'BF_LP', price_type: 'list', default_list: true });
 const sp = link({ id: 'tpl-sp', name: 'BF_SP', price_type: 'selling', default_selling: true });
 const extra = link({ id: 'tpl-x', name: 'BF_EXTRA', price_type: 'selling' });

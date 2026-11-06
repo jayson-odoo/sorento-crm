@@ -236,7 +236,7 @@ export function TagTemplatesList() {
 
   const fetchData = useCallback(async () => {
     try {
-      await queryClient.invalidateQueries({ queryKey: ['tag-templates', 'list'], throwOnError: true });
+      await queryClient.invalidateQueries({ queryKey: ['tag-templates', 'list'] }, { throwOnError: true });
     } catch (e) {
       // Rows already on screen stay; the grid shows the failure only in place of no rows.
       toast.error(e instanceof Error ? e.message : 'Could not refresh the templates.');

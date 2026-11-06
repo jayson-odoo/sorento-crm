@@ -1,6 +1,6 @@
 # PLAN: duplicate a tag template (TAG-TEMPLATE-DUPLICATE, 6 Nov)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface).
+Status: in progress, code + tests green in sandbox (full track: item 6 carries an additive migration `ttord_0001_tag_template_sort`).
 
 Owner (6 Nov ~10:10): "template needs to have duplicate function also".
 
@@ -34,3 +34,24 @@ Owner (6 Nov ~10:10): "template needs to have duplicate function also".
 Backend `tests/test_tag_template_duplicate.py`: identical doc, new id, draft (no pointer, no versions),
 no product/combo links, source untouched, `(copy)` / `(copy 2)` naming, archived source 404, view-only user 403.
 Frontend `TagTemplatesList.duplicate.test.tsx`: the row button posts and navigates to the copy.
+
+## Owner add-ons (6 Nov, same lane)
+
+2. Editor prev/next + "N / M": the shared `components/common/ListPager.tsx` (`useListPager`) in the
+   editor header (`tag-templates/components/TemplateRecordPager.tsx`). Its page comes from
+   `tag-templates/lib/listQuery.ts`, the same function and React Query key the list uses, so order,
+   search and filters carry over from the row link. The editor is keyed on the id: a step unmounts
+   the old editor, whose cleanup flushes the pending autosave (the editor's existing unsaved guard).
+3. Insert field: the token sits on its own monospace line under the label and wraps; the row's
+   `title` is the full token; the Radix viewport's `display: table` box is forced to `block`.
+4. Combo Tag preview: `ToggleGroup` (`components/ui/toggle-group.tsx`) of the linked templates,
+   Default LP, Default SP, then the rest; opens on the first; Open (DesignViewer) opens what is drawn.
+   The product itself has no Tag preview today, so this applies where the preview exists (combos).
+5. List toolbar: the standard `DataGridListToolbar` (`components/ui/data-grid-list-toolbar.tsx`)
+   `filters: { kind: 'custom' }` + chips + search, as `PriceTagRequestsList.tsx` does; Price type,
+   Family and Status multi-select (`SearchableMultiSelect`, `lib/list-filters/multiValue.ts`);
+   every column sorts on the server (`GET /tag-templates?sort=&dir=`).
+6. Drag reorder: `DataGridTableDndRows` + `DataGridTableDndRowHandle`
+   (`components/ui/data-grid-table-dnd-rows.tsx`, the SO lines pattern in
+   `project-sales/[projectId]/components/SalesOrderLinesTable.tsx`). `POST /tag-templates/reorder`
+   (manage) reassigns the dragged rows' own slots. New = end, duplicate = right below its source.
