@@ -11,8 +11,6 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  LineTagData,
-  TagBindingData,
   TagLayer,
   TagTemplateDoc,
 } from '@/lib/dealer-kit/tag-template-types';
@@ -87,8 +85,6 @@ import { TagCanvasEditor } from './TagCanvasEditor';
 
 // -- The document under test -------------------------------------------------
 
-const HTML = '<p><strong>SRTBF11416</strong> (CABINET)</p><p>L400xW345xH390mm</p>';
-const PLAIN = 'SRTBF11416 (CABINET)\nL400xW345xH390mm';
 
 function layerWith(id: string, slot: string | null, text: string, override: string | null): TagLayer {
   return {
@@ -163,7 +159,8 @@ describe('in-place canvas editing is per-selection rich text (owner hand test FA
       }
     });
     editor.chain().focus().setTextSelection({ from, to }).run();
-    fireEvent.keyDown(dom, { key: 'b', code: 'KeyB', metaKey: true, ctrlKey: true, bubbles: true });
+    // jsdom is not macOS, so the editor's Mod key is Ctrl (Cmd on a Mac).
+    fireEvent.keyDown(dom, { key: 'b', code: 'KeyB', ctrlKey: true, bubbles: true });
     fireEvent.keyDown(dom, { key: 'Escape', bubbles: true });
 
     await waitFor(() => expect(screen.queryByTestId('inline-rich-editor')).toBeNull());

@@ -9,6 +9,7 @@
 import { mergeAttributes, Node } from '@tiptap/react';
 import type { NodeType } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 const TOKEN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const ATTR = 'data-merge-field';
@@ -83,6 +84,32 @@ function tokenizePlugin(type: NodeType) {
   });
 }
 
+/** Marks every token inside a non-empty selection: a chip is not text, so the browser's own
+ * selection highlight never paints it, and a selected token has to look selected (owner hand
+ * test, 6 Nov). Covers a drag across chips and a click on one (a node selection) alike. */
+function selectedChipsPlugin() {
+  return new Plugin({
+    key: new PluginKey('mergeFieldSelected'),
+    props: {
+      decorations(state) {
+        const { from, to, empty } = state.selection;
+        if (empty) return null;
+        const decorations: Decoration[] = [];
+        state.doc.nodesBetween(from, to, (node, pos) => {
+          if (node.type.name !== 'mergeField') return;
+          if (pos >= from && pos + node.nodeSize <= to) {
+            decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: SELECTED_CLASS }));
+          }
+        });
+        return decorations.length ? DecorationSet.create(state.doc, decorations) : null;
+      },
+    },
+  });
+}
+
+/** The selected look of a chip: the selection colour, with a ring so it reads on any background. */
+export const SELECTED_CLASS = 'merge-field-selected';
+
 export const MergeFieldNode = Node.create({
   name: 'mergeField',
   group: 'inline',
@@ -108,7 +135,12 @@ export const MergeFieldNode = Node.create({
     return [
       'span',
       mergeAttributes(HTMLAttributes, {
-        class: 'rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
+        class: [
+          'rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300',
+          '[&.merge-field-selected]:bg-sky-300 [&.merge-field-selected]:text-sky-950',
+          '[&.merge-field-selected]:ring-2 [&.merge-field-selected]:ring-sky-600',
+          'dark:[&.merge-field-selected]:bg-sky-700 dark:[&.merge-field-selected]:text-white',
+        ].join(' '),
       }),
       `{{${node.attrs.path}}}`,
     ];
@@ -119,6 +151,6 @@ export const MergeFieldNode = Node.create({
   },
 
   addProseMirrorPlugins() {
-    return [tokenizePlugin(this.type)];
+    return [tokenizePlugin(this.type), selectedChipsPlugin()];
   },
 });

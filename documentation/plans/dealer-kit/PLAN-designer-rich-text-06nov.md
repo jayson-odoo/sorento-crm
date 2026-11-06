@@ -1,6 +1,6 @@
 # PLAN: per-selection formatting in tag designer text layers (DESIGNER-RICH-TEXT, 6 Nov)
 
-Status: Crew pass fix round (item 12, right-click under a filled frame); crew pass 11/12 PASS. Full track by size (about 1,600 changed lines, over the ~300-line small
+Status: Owner hand test fix round (in-place canvas formatting, selected chip); right-click/Group PASS. Full track by size (about 1,600 changed lines, over the ~300-line small
 fix limit), though frontend only: no migration, no auth/RBAC, no new ingest, so no
 security-reviewer. PR #2213.
 UAC: `designer-rich-text-acceptance-criteria.md`.
@@ -38,9 +38,15 @@ frame layer, so Group is never enabled; the context menu shows `Ctrl+` on macOS.
   formatted layer text is spliced in as the data's own blocks. Crew ruling (a), 6 Nov: union, the
   description keeps every mark set on the product / combo page; the token's marks are only the
   default for unmarked text.
-- D5. Formatted content is edited in the Inspector; the canvas double-click editor opens it
-  read-only on its plain text (R16 precedent). Clipboard words, Layers panel names and preview
-  labels read plain text.
+- D5. Owner hand test 6 Nov (supersedes the read-only interim): the canvas in-place editor is the
+  same rich model as the Inspector's Content box (shared editor, `toolbar="none"`, `mergeFields`,
+  stored through `contentFromEditorHtml`), so Cmd+B / I / U on a canvas selection marks only that
+  range and the layer-level weight is untouched. Its plain read-only modes stay: a sole token
+  previewing its resolved value, a description slot (R16). The spec sheet reader page (embedded
+  canvas) keeps its plain typing-over box. Clipboard words, Layers panel names and preview labels
+  read plain text.
+- D7. Owner hand test 6 Nov: a token chip inside the selection (drag across it, or a click on it)
+  carries `merge-field-selected`, drawn in the selection colour with a ring.
 - D6 (owner bug). Right-click keeps the selection when ANY selected layer is under the pointer,
   even below unselected layers drawn on top of it (a frame, a card; crew pass item 12 ruling, which
   supersedes review S3's "drawn layer decides"); otherwise the layer Konva actually hit is selected

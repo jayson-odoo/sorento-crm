@@ -116,6 +116,19 @@ function docWith(layer: TagLayer): TagTemplateDoc {
   return { width_mm: 60, height_mm: 40, layers: [layer] };
 }
 
+
+/** DESIGNER-RICH-TEXT: the designer's in-place editor for a layer's own content is the rich
+ *  editor; its TipTap instance sits on its own DOM element. */
+async function inPlace(): Promise<{ dom: HTMLElement; editor: import('@tiptap/react').Editor }> {
+  const host = await screen.findByTestId('inline-rich-editor');
+  const dom = await waitFor(() => {
+    const el = host.querySelector<HTMLElement>('.ProseMirror');
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  return { dom, editor: (dom as unknown as { editor: import('@tiptap/react').Editor }).editor };
+}
+
 describe('inline edit of a description-bound layer (R16)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -158,12 +171,12 @@ describe('inline edit of a description-bound layer (R16)', () => {
     render(<TagCanvasEditor doc={docWith(layerWith('p', null, 'Original', null))} onChange={onChange} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-p'));
-    const editor = (await screen.findByTestId('inline-text-editor')) as HTMLTextAreaElement;
+    const { dom, editor } = await inPlace();
 
-    expect(editor.readOnly).toBe(false);
-    expect(editor.value).toBe('Original');
-    fireEvent.change(editor, { target: { value: 'Edited' } });
-    fireEvent.blur(editor);
+    expect(dom.getAttribute('contenteditable')).toBe('true');
+    expect(dom.textContent).toBe('Original');
+    editor.chain().focus().selectAll().insertContent('Edited').run();
+    fireEvent.keyDown(dom, { key: 'Escape', bubbles: true });
     await waitFor(() => expect(screen.getByTestId('layer-p')).toHaveTextContent('Edited'));
   });
 });

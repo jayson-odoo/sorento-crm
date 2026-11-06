@@ -21,6 +21,14 @@ Plan: `PLAN-designer-rich-text-06nov.md`.
   panel name, clipboard words, preview label) never show markup.
   Test: `product-block.layer-rich.test.tsx`, existing dealer-kit suites.
 
+- AC-10 (owner hand test 6 Nov). Double-click a text box on the canvas, select only line 2
+  (`{{combo.description}}`), Cmd+B: only that line is bold, in the canvas and the Inspector; the
+  layer-level Bold stays off. Same for Italic / Underline. Unformatted in-place typing stays plain.
+  Test: `TagCanvasEditor.inPlaceRich.test.tsx`; real Chromium run (Playwright, not committed).
+- AC-11 (owner hand test 6 Nov). A selected token chip looks selected (selection colour + ring)
+  whether it was clicked or dragged across; a chip outside the selection does not.
+  Test: `rich-text-editor.mergeFields.test.tsx`; real Chromium run.
+
 ## Right-click and shortcuts (owner bug)
 
 - AC-7. Two text boxes selected, right-click where one of them lies, even under a frame or card

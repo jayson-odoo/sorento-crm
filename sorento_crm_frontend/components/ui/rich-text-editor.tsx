@@ -89,9 +89,11 @@ export type RichTextEditorProps = {
   'aria-labelledby'?: string;
   /**
    * `inline`: bold, italic, underline, strike and text colour only (the tag designer's Content
-   * box, whose block layout is the layer's own). Default: the full toolbar.
+   * box, whose block layout is the layer's own). `none`: the same inline-only editor with no
+   * toolbar and no box chrome or type styles of its own, for the tag canvas's in-place editor,
+   * which sits over the drawn text in the layer's own face. Default: the full toolbar.
    */
-  toolbar?: 'full' | 'inline';
+  toolbar?: 'full' | 'inline' | 'none';
   /**
    * `{{path}}` tokens become one atomic node each: a mark covers a token whole and a selection
    * never splits it. Value in and out still carries them as plain `{{path}}` text.
@@ -634,7 +636,8 @@ export function RichTextEditor({
   toolbar = 'full',
   mergeFields = false,
 }: RichTextEditorProps) {
-  const inline = toolbar === 'inline';
+  const inline = toolbar === 'inline' || toolbar === 'none';
+  const bare = toolbar === 'none';
   // A `mergeFields` editor holds its tokens as atoms; the value in and out keeps them as text.
   const toEditor = (html: string) => (mergeFields ? wrapMergeFieldTokens(html) : html);
   const fromEditor = (html: string) => (mergeFields ? unwrapMergeFieldTokens(html) : html);
@@ -798,7 +801,10 @@ export function RichTextEditor({
       attributes: {
         ...(id ? { id } : {}),
         ...(labelledBy ? { 'aria-labelledby': labelledBy } : {}),
-        class: cn(
+        class: bare
+          ? // The host styles the text (font, size, colour); paragraphs carry no margin of their own.
+            'h-full w-full whitespace-pre-wrap focus:outline-none [&_p]:m-0'
+          : cn(
           'prose prose-sm dark:prose-invert max-w-none px-3 py-2 focus:outline-none',
           '[&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-3',
           // Force list markers - Tailwind preflight removes them on ul/ol
@@ -812,7 +818,7 @@ export function RichTextEditor({
           '[&_.is-editor-empty:first-child::before]:text-muted-foreground',
           '[&_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]',
         ),
-        style: `min-height: ${minHeight}px;`,
+        style: bare ? '' : `min-height: ${minHeight}px;`,
       },
     },
     onFocus: ({ editor: e }) => {
@@ -859,11 +865,12 @@ export function RichTextEditor({
   return (
     <div
       className={cn(
-        'rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring',
+        !bare && 'rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring',
         className,
       )}
     >
-      {toolbar === 'inline' ? <InlineToolbar editor={editor} /> : <Toolbar editor={editor} />}
+      {toolbar === 'inline' && <InlineToolbar editor={editor} />}
+      {toolbar === 'full' && <Toolbar editor={editor} />}
       <EditorContent editor={editor} />
     </div>
   );

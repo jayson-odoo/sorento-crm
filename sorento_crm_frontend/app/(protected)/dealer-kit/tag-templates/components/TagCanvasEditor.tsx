@@ -22,7 +22,7 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { isRich, richPlainText } from '@/lib/dealer-kit/rich-text';
+import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import {
   isMacContextClick,
   isMacPlatform,
@@ -3132,10 +3132,12 @@ export function TagCanvasEditor({
       // the inline editor specifically (N2): any OTHER input keeps the normal
       // `isInput` guard, so Cmd+B while typing a name in "Save as template"
       // types a B there instead of bolding the canvas underneath it.
-      // The Inspector's Content box (a rich editor) owns its own Cmd+B / I / U: they format the
-      // selection there, never the whole layer (DESIGNER-RICH-TEXT).
+      // A rich editor (the Inspector's Content box, the in-place canvas editor) owns its own
+      // Cmd+B / I / U: they format the selection there, never the whole layer (DESIGNER-RICH-TEXT).
+      // Either signal counts: the key's own target, or where focus sits.
       const inRichEditor = Boolean(
-        (document.activeElement as HTMLElement | null)?.closest?.('.ProseMirror'),
+        (e.target as HTMLElement | null)?.closest?.('.ProseMirror') ||
+          (document.activeElement as HTMLElement | null)?.closest?.('.ProseMirror'),
       );
       const formatShortcutsAllowed = (!isInput || Boolean(editingLayerId)) && !inRichEditor;
       if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
@@ -3702,10 +3704,7 @@ export function TagCanvasEditor({
    *  page; here it opens read-only on its plain text and never writes to the layer. */
   const editingIsDescription =
     editingLayer?.slot_binding === 'combo_description' ||
-    editingLayer?.slot_binding === 'price_tag_description' ||
-    // DESIGNER-RICH-TEXT: formatted content is edited in the Inspector's rich Content box; the
-    // plain inline editor shows its text read-only rather than writing plain text over the marks.
-    isRich(editingContent);
+    editingLayer?.slot_binding === 'price_tag_description';
 
   /**
    * A sole-token layer opens the inline editor on its RESOLVED value instead
@@ -4587,6 +4586,11 @@ export function TagCanvasEditor({
                   // The template editor shows a data field's value read-only; a spec sheet page
                   // types over it (that page only), starting from what it prints.
                   readOnly={editingIsDescription || (editingResolvedValue != null && !embedded)}
+                  // DESIGNER-RICH-TEXT: the designer edits the layer's own content as rich text in
+                  // place, the same model as the Inspector's Content box; a resolved value or a
+                  // description stays the plain box.
+                  // The spec sheet reader (embedded) keeps its plain typing-over box.
+                  rich={!embedded && !editingIsDescription && editingResolvedValue == null}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}

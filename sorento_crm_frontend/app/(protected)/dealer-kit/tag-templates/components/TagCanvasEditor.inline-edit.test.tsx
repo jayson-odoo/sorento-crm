@@ -119,6 +119,19 @@ function twoLooseTextLayersDoc(): TagTemplateDoc {
   };
 }
 
+
+/** DESIGNER-RICH-TEXT: the designer's in-place editor for a layer's own content is the rich
+ *  editor; its TipTap instance sits on its own DOM element. */
+async function inPlace(): Promise<{ dom: HTMLElement; editor: import('@tiptap/react').Editor }> {
+  const host = await screen.findByTestId('inline-rich-editor');
+  const dom = await waitFor(() => {
+    const el = host.querySelector<HTMLElement>('.ProseMirror');
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  return { dom, editor: (dom as unknown as { editor: import('@tiptap/react').Editor }).editor };
+}
+
 describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -129,8 +142,8 @@ describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)
     render(<TagCanvasEditor doc={twoLooseTextLayersDoc()} onChange={onChange} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-a'));
-    const editor = await screen.findByTestId('inline-text-editor');
-    fireEvent.change(editor, { target: { value: 'Edited A' } });
+    const { editor } = await inPlace();
+    editor.chain().focus().selectAll().insertContent('Edited A').run();
 
     // Clicking a DIFFERENT text layer while still editing - this used to
     // either discard the edit or write it onto layer b.
@@ -140,7 +153,7 @@ describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)
       expect(screen.getByTestId('layer-a')).toHaveTextContent('Edited A'),
     );
     expect(screen.getByTestId('layer-b')).toHaveTextContent('Original B');
-    expect(screen.queryByTestId('inline-text-editor')).toBeNull();
+    expect(screen.queryByTestId('inline-rich-editor')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     const saved = onChange.mock.calls.at(-1)?.[0] as TagTemplateDoc;
@@ -155,11 +168,11 @@ describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)
     render(<TagCanvasEditor doc={twoLooseTextLayersDoc()} onChange={onChange} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-a'));
-    await screen.findByTestId('inline-text-editor');
+    await inPlace();
 
     fireEvent.click(screen.getByTestId('layer-b'));
 
-    await waitFor(() => expect(screen.queryByTestId('inline-text-editor')).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId('inline-rich-editor')).toBeNull());
     expect(screen.getByTestId('layer-a')).toHaveTextContent('Original A');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -261,12 +274,10 @@ describe('TagCanvasEditor inline edit - sole-token layer opens resolved (S3)', (
     render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-mixed'));
-    const editor = (await screen.findByTestId(
-      'inline-text-editor',
-    )) as HTMLTextAreaElement;
+    const { dom } = await inPlace();
 
-    expect(editor.value).toBe('Code {{product.code}}');
-    expect(editor).not.toHaveAttribute('readonly');
+    expect(dom.textContent).toBe('Code {{product.code}}');
+    expect(dom.getAttribute('contenteditable')).toBe('true');
   });
 
   it('a plain text layer still opens raw and editable (AC-S3-3)', async () => {
@@ -274,12 +285,10 @@ describe('TagCanvasEditor inline edit - sole-token layer opens resolved (S3)', (
     render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-plain'));
-    const editor = (await screen.findByTestId(
-      'inline-text-editor',
-    )) as HTMLTextAreaElement;
+    const { dom } = await inPlace();
 
-    expect(editor.value).toBe('Plain words');
-    expect(editor).not.toHaveAttribute('readonly');
+    expect(dom.textContent).toBe('Plain words');
+    expect(dom.getAttribute('contenteditable')).toBe('true');
   });
 
   it('opens a BOUND layer typed over with a token on the resolved code too (AC-S3-5)', async () => {
@@ -317,11 +326,9 @@ describe('TagCanvasEditor inline edit - sole-token layer opens resolved (S3)', (
     render(<TagCanvasEditor doc={doc} onChange={vi.fn()} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-code'));
-    const editor = (await screen.findByTestId(
-      'inline-text-editor',
-    )) as HTMLTextAreaElement;
+    const { dom } = await inPlace();
 
-    expect(editor.value).toBe('{{product.code}}');
-    expect(editor).not.toHaveAttribute('readonly');
+    expect(dom.textContent).toBe('{{product.code}}');
+    expect(dom.getAttribute('contenteditable')).toBe('true');
   });
 });
