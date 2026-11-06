@@ -13,6 +13,8 @@ import type { Editor } from '@tiptap/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { RichTextEditor, insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
 
 async function mount(initial: string, extra: Record<string, unknown> = {}) {
   const onChange = vi.fn();
@@ -121,19 +123,18 @@ describe('mergeFields', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('typing a quote or & mid-text keeps the caret (value fed back by the parent)', async () => {
-    const onChange = vi.fn();
+  it('typing a quote mid-text keeps the caret when the value comes back the Inspector way', async () => {
+    // The Inspector stores `contentFromEditorHtml(html)` and hands back `toEditorHtml(stored)`,
+    // which writes `"` as `&quot;`: only a comparison of one serialisation keeps that from
+    // resetting the editor (and its caret) on every keystroke.
     let editor: Editor | null = null;
     function Host() {
-      const [value, setValue] = React.useState('<p>ab</p>');
+      const [stored, setStored] = React.useState('ab');
       return (
         <RichTextEditor
           mergeFields
-          value={value}
-          onChange={(html) => {
-            onChange(html);
-            setValue(html);
-          }}
+          value={toEditorHtml(stored)}
+          onChange={(html) => setStored(contentFromEditorHtml(html))}
           onEditorReady={(e) => {
             editor = e;
           }}
@@ -143,13 +144,9 @@ describe('mergeFields', () => {
     render(<Host />);
     await waitFor(() => expect(editor).not.toBeNull());
     act(() => {
-      editor!.commands.setTextSelection(2);
-      editor!.commands.insertContent('"&');
+      editor!.chain().focus().setTextSelection(2).insertContent('"').run();
     });
-    act(() => {
-      editor!.commands.insertContent('X');
-    });
-    expect(onChange.mock.calls.at(-1)![0]).toBe('<p>a"&amp;Xb</p>');
+    expect(editor!.state.selection.from).toBe(3);
   });
 
   it('a mergeFields editor has no hard break: Shift+Enter cannot make a line the plain format cannot hold', async () => {

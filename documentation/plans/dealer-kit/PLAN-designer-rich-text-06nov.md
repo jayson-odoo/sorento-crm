@@ -1,6 +1,6 @@
 # PLAN: per-selection formatting in tag designer text layers (DESIGNER-RICH-TEXT, 6 Nov)
 
-Status: Review fix round 1. Full track by size (about 1,600 changed lines, over the ~300-line small
+Status: Merge-ready pending owner hand test (reviewer READY after round 1). Full track by size (about 1,600 changed lines, over the ~300-line small
 fix limit), though frontend only: no migration, no auth/RBAC, no new ingest, so no
 security-reviewer. PR #2213.
 UAC: `designer-rich-text-acceptance-criteria.md`.
@@ -53,3 +53,5 @@ frame layer, so Group is never enabled; the context menu shows `Ctrl+` on macOS.
   Trigger to revisit: any new consumer that would render layer text as HTML.
 - Escape while the canvas context menu is open still reaches the canvas Escape handler
   (deselects). Existing behaviour, not part of this ask.
+- Owner bug #2 (Shift+click picking up extra layers) was retracted by the owner as a misreport;
+  nothing built for it.

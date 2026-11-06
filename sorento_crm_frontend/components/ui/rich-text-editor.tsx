@@ -112,7 +112,6 @@ export function insertMergeFieldText(editor: Editor, text: string) {
   editor.chain().focus(at).insertContent({ type: 'text', text }).run();
 }
 
-
 /** One serialisation for comparing a stored value with the editor's (entities, quotes). */
 function canonicalHtml(html: string): string {
   if (!html || typeof DOMParser === 'undefined') return html;
