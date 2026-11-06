@@ -18,11 +18,15 @@ The real SO is only READ (`PICK_SQL`), never written. Pushes run the SO ingest t
 `/external/ingest/sales_orders` does (`DocumentIngestService.ingest`, the commit, then the
 route's `_run_document_hooks`), in this process: no HTTP, no API key.
 
-AUTOMATIONS. The dev copies keep the purchasing automations switched off. For the test, `--apply`
-switches ON exactly one `order_inquiry_handover` automation (the oldest whose conditions pass for
-a project order) and one `order_inquiry_undone` automation, and points their recipients at
-`HANDTEST_ADDRESS` only (`.invalid`, so it can never be delivered). The previous `enabled` and
-`recipient_config` of each are saved to `STATE_DIR` first; `--cleanup` restores them exactly.
+AUTOMATIONS. The handover rows route by class AND raiser (`order_inquiry.raisedBy` "is any of"
+[users]), so both hand-test inquiries are raised by a user the rows name: `--raiser-email` if
+listed, else the E2E staff user (`E2E_EMAIL`, env or the frontend's `.env.local`) if listed, else
+the first ACTIVE listed user. With that raiser, `--apply` switches ON exactly one
+`order_inquiry_handover` automation (the oldest whose conditions pass for a project order) and
+one `order_inquiry_undone` automation, pointing their recipients at `HANDTEST_ADDRESS` only
+(`.invalid`, so it can never be delivered), and switches OFF any other enabled row of the two
+triggers that would also fire for the hand-test orders (it would mail real people). Every row it
+touches is saved to `STATE_DIR` first; `--cleanup` restores each exactly.
 
 NO EMAIL IS SENT. The only recipient is an `.invalid` address and the copies' SMTP host is
 `smtp.invalid`. Mails this process queues are never handed to the send job (`_hold_back_mail`),
@@ -207,9 +211,12 @@ def _core_line(db, header_id: str, seq: int):
     )
 
 
-def _adopt(db, header_id: str, *, with_row: bool) -> None:
-    """Adopt into Fulfilment Planning (as CS's classification does), and for the removal case
-    one inquiry with a raised, acknowledged ORDER row on line Seq 10."""
+def _adopt(db, header_id: str, *, raiser: Optional[str], with_row: bool) -> None:
+    """Adopt into Fulfilment Planning (as CS's classification does) and open the order's one
+    order inquiry, raised by `raiser` (the purchasing automations route by
+    `order_inquiry.raisedBy`; the owner's later Confirm reuses this inquiry, so its email
+    routes the same way). For the removal case, one raised, acknowledged ORDER row on line
+    Seq 10."""
     from app.models.order import SalesOrder
     from app.models.project_so import (
         ACK_ACKNOWLEDGED,
@@ -225,28 +232,26 @@ def _adopt(db, header_id: str, *, with_row: bool) -> None:
     db.get(SalesOrder, header_id).demand_class = "project"
     db.flush()
     ProjectSOAdoptionService(db).adopt(header_id, actor_user_id=_actor(db))
-    if not with_row:
-        db.commit()
-        return
     order = db.query(ProjectSalesOrder).filter(ProjectSalesOrder.so_id == header_id).one()
-    core = _core_line(db, header_id, SEQ_SUBJECT)
-    mirror = (
-        db.query(ProjectSalesOrderLine)
-        .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core.id))
-        .one()
-    )
-    inquiry = ProjectOrderInquiryService(db).ensure_inquiry(order, actor_user_id=_actor(db))
-    db.add(OrderInquiryRow(
-        company_id=order.company_id,
-        order_inquiry_id=inquiry.id,
-        so_line_id=mirror.id,
-        item_code=_product_code(db, core.product_id),
-        qty=core.qty_ordered,
-        delivery_date=core.required_date,
-        verb=IV_ORDER,
-        state=INQUIRY_RAISED,
-        ack_state=ACK_ACKNOWLEDGED,
-    ))
+    inquiry = ProjectOrderInquiryService(db).ensure_inquiry(order, actor_user_id=raiser)
+    if with_row:
+        core = _core_line(db, header_id, SEQ_SUBJECT)
+        mirror = (
+            db.query(ProjectSalesOrderLine)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core.id))
+            .one()
+        )
+        db.add(OrderInquiryRow(
+            company_id=order.company_id,
+            order_inquiry_id=inquiry.id,
+            so_line_id=mirror.id,
+            item_code=_product_code(db, core.product_id),
+            qty=core.qty_ordered,
+            delivery_date=core.required_date,
+            verb=IV_ORDER,
+            state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED,
+        ))
     db.commit()
 
 
@@ -313,7 +318,82 @@ def _state_file(db) -> Path:
     return STATE_DIR / f"fp-email-{name}.json"
 
 
-def _switch_on(db) -> list[str]:
+RAISED_BY_FACT = "order_inquiry.raisedBy"
+
+
+def _listed_raisers(tree: Any) -> list[str]:
+    """The user ids an automation's rule tree lets through on `order_inquiry.raisedBy` ("is
+    any of"), in order."""
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        for rule in node.get("rules") or []:
+            if rule.get("kind") == "group":
+                walk(rule)
+            elif (
+                rule.get("fact") == RAISED_BY_FACT
+                and rule.get("operator") == "in"
+                and rule.get("valueKind") != "fact"
+            ):
+                value = rule.get("value")
+                for item in value if isinstance(value, list) else [value]:
+                    if item and str(item) not in found:
+                        found.append(str(item))
+
+    walk(tree)
+    return found
+
+
+def _e2e_email() -> Optional[str]:
+    """The E2E staff login (`E2E_EMAIL`), from the environment or the frontend's
+    `.env.local`, as browser verification reads it."""
+    if os.environ.get("E2E_EMAIL"):
+        return os.environ["E2E_EMAIL"].strip()
+    env_local = Path(HERE).parents[1] / "sorento_crm_frontend" / ".env.local"
+    if env_local.exists():
+        for line in env_local.read_text().splitlines():
+            if line.startswith("E2E_EMAIL="):
+                return line.split("=", 1)[1].strip().strip("'\"") or None
+    return None
+
+
+def _choose_raiser(db, rows: list, raiser_email: Optional[str]) -> Optional[str]:
+    """Who the hand-test inquiries are raised by: a user an enabled-for-test handover
+    automation's condition names (`order_inquiry.raisedBy`), preferring `--raiser-email`, then
+    the E2E staff user, then the first ACTIVE listed user. None when no automation routes by
+    raiser (every row then passes on class alone)."""
+    from app.models.user import User
+
+    listed: list[str] = []
+    for row in rows:
+        for user_id in _listed_raisers(row.conditions_json):
+            if user_id not in listed:
+                listed.append(user_id)
+    if not listed:
+        return None
+    active = {
+        str(user_id): (email or "").lower()
+        for user_id, email in db.query(User.id, User.email).filter(
+            User.id.in_(listed), User.status == "ACTIVE", User.is_trashed.is_(False)
+        )
+    }
+    for wanted in (raiser_email, _e2e_email()):
+        if wanted:
+            for user_id in listed:
+                if active.get(user_id) == wanted.lower():
+                    return user_id
+    for user_id in listed:
+        if user_id in active:
+            return user_id
+    raise SystemExit(
+        "the handover automations route by order_inquiry.raisedBy, but none of the users "
+        "they name is an active user"
+    )
+
+
+def _switch_on(db, raiser: Optional[str]) -> list[str]:
     """One handover and one undone automation, on, mailing only the hand-test address. The
     originals are saved before the first change and never overwritten by a re-run."""
     from app.models.automation import Automation
@@ -323,6 +403,7 @@ def _switch_on(db) -> list[str]:
     saved = json.loads(path.read_text()) if path.exists() else {}
     chosen = []
     service = AutomationService(db)
+    context = {"sales_order_class": "project", "raised_by": raiser}
     for trigger in TRIGGERS:
         rows = (
             db.query(Automation)
@@ -330,13 +411,19 @@ def _switch_on(db) -> list[str]:
             .order_by(Automation.created_at.asc())
             .all()
         )
-        context = {"sales_order_class": "project", "raised_by": None}
         passing = service.passing_rows(trigger, context, rows) if rows else []
         if not passing:
-            raise SystemExit(f"no {trigger} automation whose conditions pass for a project order")
-        row = next((r for r in passing if str(r.id) in saved), passing[0])
+            raise SystemExit(
+                f"no {trigger} automation whose conditions pass for a project order raised by "
+                f"{raiser or 'nobody in particular'}"
+            )
+        row = next(
+            (r for r in passing if saved.get(str(r.id), {}).get("role") == "chosen"),
+            passing[0],
+        )
         if str(row.id) not in saved:
             saved[str(row.id)] = {
+                "role": "chosen",
                 "enabled": row.enabled,
                 "recipient_config": row.recipient_config,
             }
@@ -348,7 +435,19 @@ def _switch_on(db) -> list[str]:
             "include_actor": False,
             "one_email": True,
         }
-        chosen.append(row.name)
+        chosen.append(f"{row.name} ({trigger})")
+        # Any OTHER row that would also fire for the hand-test orders mails real people:
+        # off for the test (saved and restored like the chosen one).
+        for other in passing:
+            if other is row or not other.enabled:
+                continue
+            saved.setdefault(str(other.id), {
+                "role": "off",
+                "enabled": other.enabled,
+                "recipient_config": other.recipient_config,
+            })
+            other.enabled = False
+            chosen.append(f"switched off for the test: {other.name}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(saved, indent=2))
     db.commit()
@@ -427,13 +526,29 @@ def _pick(db, so_number: Optional[str]) -> dict:
     return pick
 
 
-def apply(db, so_number: Optional[str] = None, *, pick: Optional[dict] = None) -> dict:
+def apply(
+    db,
+    so_number: Optional[str] = None,
+    *,
+    pick: Optional[dict] = None,
+    raiser_email: Optional[str] = None,
+) -> dict:
     """Returns what it checked, per order (the test reads it)."""
+    from app.models.automation import Automation
     from app.models.base import company_scope
+    from app.models.user import User
 
-    names = _switch_on(db)
+    handover_rows = (
+        db.query(Automation).filter(Automation.trigger_type == TRIGGERS[0]).all()
+    )
+    raiser = _choose_raiser(db, handover_rows, raiser_email)
+    raiser_shown = (
+        db.query(User.email).filter(User.id == raiser).scalar() if raiser else "no one in particular"
+    )
+    print(f"hand-test inquiries raised by: {raiser_shown}")
+    names = _switch_on(db, raiser)
     print(f"automations on for the test, mailing {HANDTEST_ADDRESS} only: {', '.join(names)}")
-    report: dict[str, Any] = {}
+    report: dict[str, Any] = {"raiser": raiser}
     for scenario, number, doc_key in ORDERS:
         header = _header(db, doc_key)
         if header is None:
@@ -442,7 +557,7 @@ def apply(db, so_number: Optional[str] = None, *, pick: Optional[dict] = None) -
                 _push(db, str(pick["company_id"]),
                       _record(pick, number, doc_key, with_subject=True))
                 header = _header(db, doc_key)
-                _adopt(db, str(header.id), with_row=scenario == "remove")
+                _adopt(db, str(header.id), raiser=raiser, with_row=scenario == "remove")
             print(f"  built {number}")
         if scenario != "remove":
             report[scenario] = {"so_number": header.so_number}
@@ -557,6 +672,9 @@ def main() -> int:
     action.add_argument("--hold", action="store_true", help="cancel pending hand-test mails")
     action.add_argument("--cleanup", action="store_true", help="delete the orders, restore")
     parser.add_argument("--so", help="clone this real SO number")
+    parser.add_argument("--raiser-email",
+                        help="raise the hand-test inquiries as this user, when a handover "
+                             "automation's raisedBy condition names them")
     parser.add_argument("--allow-db", metavar="NAME",
                         help="accept this exact database name as a dev database")
     args = parser.parse_args()
@@ -593,7 +711,7 @@ def main() -> int:
         _hold_back_mail()
         print(f"database {name} ({addr or 'unix socket'})")
         if args.apply:
-            apply(db, args.so)
+            apply(db, args.so, raiser_email=args.raiser_email)
         elif args.hold:
             print(f"held back (cancelled) pending hand-test mails: {_cancel_held_mail(db)}")
         else:

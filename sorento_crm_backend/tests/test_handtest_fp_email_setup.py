@@ -9,6 +9,7 @@ captured (`_captured_dispatches`), so no automation actually runs. Postgres only
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -35,22 +36,56 @@ _spec.loader.exec_module(script)
 ORIGINAL_RECIPIENTS = {"role_ids": ["zzt-purchasing"], "include_actor": True}
 
 
+def _user(db, *, active: bool) -> str:
+    from app.models.user import User
+
+    user_id = str(uuid.uuid4())
+    db.add(User(
+        id=user_id, email=f"{user_id}@zzt.test", name="ZZT",
+        status="ACTIVE" if active else "INACTIVE",
+    ))
+    db.flush()
+    return user_id
+
+
+def _class_and_raiser(cls: str, raisers: list) -> dict:
+    return {
+        "combinator": "and",
+        "rules": [
+            {"fact": "order_inquiry.salesOrderClass", "operator": "eq", "value": cls},
+            {"fact": "order_inquiry.raisedBy", "operator": "in", "value": raisers},
+        ],
+    }
+
+
 def _automations(db) -> dict:
+    """The copy's shape (sorento_prod_1104, 6 Nov): the Project and Dealer handover rows are
+    on and route by class AND raiser; "Order inquiry undone" is off, with no conditions."""
     template = EmailTemplate(
-        code=f"zzt-fp-email-{date.today().isoformat()}-{id(db)}",
+        code=f"zzt-fp-email-{uuid.uuid4().hex[:12]}",
         name="ZZT", subject="OI", body_html="<p>x</p>",
     )
     db.add(template)
     db.flush()
+    inactive, active, dealer_only = (
+        _user(db, active=False), _user(db, active=True), _user(db, active=True)
+    )
+    spec = {
+        "project": ("order_inquiry_handover", True, _class_and_raiser("project", [inactive, active])),
+        "dealer": ("order_inquiry_handover", True, _class_and_raiser("retail", [dealer_only])),
+        "undone": ("order_inquiry_undone", False, None),
+    }
     rows = {}
-    for trigger in script.TRIGGERS:
+    for key, (trigger, enabled, conditions) in spec.items():
         row = Automation(
-            name=f"ZZT {trigger}", trigger_type=trigger, enabled=False,
+            name=f"ZZT {key}", trigger_type=trigger, enabled=enabled,
             email_template_id=template.id, recipient_config=dict(ORIGINAL_RECIPIENTS),
+            conditions_json=conditions,
         )
         db.add(row)
-        rows[trigger] = row
+        rows[key] = row
     db.commit()
+    rows["active_raiser"] = active
     return rows
 
 
@@ -92,14 +127,37 @@ def test_the_autocount_removal_emails_nobody_and_waits_on_the_board(built):
     assert _handover_calls(calls) == [], [c["trigger_type"] for c in calls]
 
 
-def test_apply_switches_on_one_automation_per_trigger_mailing_only_the_test_address(built):
+def test_apply_raises_the_inquiries_as_an_active_user_the_project_row_lets_through(built):
+    """Crew on the copy (6 Nov): with no raiser no handover row passed. The raiser is the
+    first ACTIVE user the Project row's `raisedBy` "is any of" names (the inactive one is
+    skipped), and both hand-test inquiries carry it."""
+    from app.models.project_so import OrderInquiry, ProjectSalesOrder
+
     env, calls, automations, report = built
-    for row in automations.values():
+    assert report["raiser"] == automations["active_raiser"]
+    for _, _, doc_key in script.ORDERS:
+        header = script._header(env.db, doc_key)
+        raised_by = (
+            env.db.query(OrderInquiry.raised_by)
+            .join(ProjectSalesOrder, ProjectSalesOrder.id == OrderInquiry.project_sales_order_id)
+            .filter(ProjectSalesOrder.so_id == str(header.id))
+            .scalar()
+        )
+        assert str(raised_by) == automations["active_raiser"]
+
+
+def test_apply_switches_on_the_project_and_undone_rows_mailing_only_the_test_address(built):
+    env, calls, automations, report = built
+    for key in ("project", "undone"):
+        row = automations[key]
         env.db.refresh(row)
-        assert row.enabled is True
+        assert row.enabled is True, key
         assert row.recipient_config["extra_emails"] == [script.HANDTEST_ADDRESS]
         assert row.recipient_config["role_ids"] == []
         assert row.recipient_config["include_actor"] is False
+    dealer = automations["dealer"]
+    env.db.refresh(dealer)
+    assert dealer.enabled is True and dealer.recipient_config == ORIGINAL_RECIPIENTS
 
 
 def test_apply_again_changes_nothing(built):
@@ -171,8 +229,36 @@ def test_cleanup_restores_every_automation_and_removes_both_orders(built):
     script.cleanup(env.db)
 
     env.db.expire_all()
-    for row in automations.values():
-        assert row.enabled is False
-        assert row.recipient_config == ORIGINAL_RECIPIENTS
+    assert [automations[k].enabled for k in ("project", "dealer", "undone")] == [True, True, False]
+    for key in ("project", "dealer", "undone"):
+        assert automations[key].recipient_config == ORIGINAL_RECIPIENTS, key
     assert all(script._header(env.db, doc_key) is None for _, _, doc_key in script.ORDERS)
     assert not script._state_file(env.db).exists()
+
+
+def test_a_second_row_that_would_also_fire_is_off_for_the_test_and_restored(
+    env, monkeypatch, tmp_path
+):
+    """Only the hand-test address may be mailed: another enabled row that passes for the
+    hand-test orders (it would mail its real recipients) is switched off by `--apply` and
+    switched back on by `--cleanup`."""
+    monkeypatch.setattr(script, "STATE_DIR", tmp_path)
+    _register(None)
+    _captured_dispatches(monkeypatch)
+    automations = _automations(env.db)
+    twin = Automation(
+        name="ZZT project twin", trigger_type="order_inquiry_handover", enabled=True,
+        email_template_id=automations["project"].email_template_id,
+        recipient_config=dict(ORIGINAL_RECIPIENTS),
+        conditions_json=_class_and_raiser("project", [automations["active_raiser"]]),
+    )
+    env.db.add(twin)
+    env.db.commit()
+
+    script.apply(env.db, pick=_pick(env))
+    env.db.refresh(twin)
+    assert twin.enabled is False
+
+    script.cleanup(env.db)
+    env.db.expire_all()
+    assert twin.enabled is True and twin.recipient_config == ORIGINAL_RECIPIENTS
