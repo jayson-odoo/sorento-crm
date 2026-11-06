@@ -111,8 +111,36 @@ def built(env, monkeypatch, tmp_path):
     _register(None)
     calls = _captured_dispatches(monkeypatch)
     automations = _automations(env.db)
-    report = script.apply(env.db, pick=_pick(env))
+    pick = _pick(env)
+    report = _as_the_script(env.db, lambda: script.apply(env.db, pick=pick))
     return env, calls, automations, report
+
+
+def _as_the_script(db, call):
+    """Run `call` the way the script runs on a copy: in its own SessionLocal nothing sets a
+    company scope (UNSET reads nothing company-owned, fail closed) until `_prepare_session`
+    does. Crew on the copy, 6 Nov: `_core_line` found no Seq 10 line. Tests hid it, because
+    `tests/conftest.py` defaults every session's scope to Sorento on `after_begin`; that default
+    is off for the call and the session's own scope is dropped, then both are put back for the
+    rest of the test."""
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+
+    from tests import conftest
+
+    listener = conftest._default_company_scope_for_tests
+    had = "company_scope" in db.info
+    before = db.info.pop("company_scope", None)
+    event.remove(Session, "after_begin", listener)
+    try:
+        script._prepare_session(db)
+        return call()
+    finally:
+        event.listen(Session, "after_begin", listener)
+        if had:
+            db.info["company_scope"] = before
+        else:
+            db.info.pop("company_scope", None)
 
 
 def test_the_autocount_removal_emails_nobody_and_waits_on_the_board(built):
@@ -163,7 +191,7 @@ def test_apply_switches_on_the_project_and_undone_rows_mailing_only_the_test_add
 def test_apply_again_changes_nothing(built):
     env, calls, automations, report = built
 
-    again = script.apply(env.db)
+    again = _as_the_script(env.db, lambda: script.apply(env.db))
 
     assert again["remove"]["pushed_now"] is False
     assert again["remove"]["oi_row_states"] == ["raised"]
@@ -226,7 +254,7 @@ def test_cleanup_restores_every_automation_and_removes_both_orders(built):
     env.db.commit()
     assert len(_handover_calls(calls)) == 1
 
-    script.cleanup(env.db)
+    _as_the_script(env.db, lambda: script.cleanup(env.db))
 
     env.db.expire_all()
     assert [automations[k].enabled for k in ("project", "dealer", "undone")] == [True, True, False]
@@ -255,10 +283,11 @@ def test_a_second_row_that_would_also_fire_is_off_for_the_test_and_restored(
     env.db.add(twin)
     env.db.commit()
 
-    script.apply(env.db, pick=_pick(env))
+    pick = _pick(env)
+    _as_the_script(env.db, lambda: script.apply(env.db, pick=pick))
     env.db.refresh(twin)
     assert twin.enabled is False
 
-    script.cleanup(env.db)
+    _as_the_script(env.db, lambda: script.cleanup(env.db))
     env.db.expire_all()
     assert twin.enabled is True and twin.recipient_config == ORIGINAL_RECIPIENTS

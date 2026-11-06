@@ -471,6 +471,27 @@ def _restore(db) -> int:
     return len(saved)
 
 
+def _prepare_session(db) -> None:
+    """What the API does for this session before any read: the listeners it registers at
+    startup (as `handtest_1679_setup.py` does), and a company scope. A fresh SessionLocal has
+    none (UNSET), and UNSET reads nothing company-owned (fail closed), so every read here came
+    back empty on the copy (crew, 6 Nov: no Seq 10 line). The script reads across companies
+    like an API-key call with no contact identity (`None`, all companies); each push and
+    adoption still runs inside `company_scope(<the order's company>)`, which stamps its
+    writes and is restored to this on exit."""
+    from app.models.base import set_company_scope
+    from app.services.audit_service import register_audit_listeners
+    from app.services.company_scope import register_company_scope_listeners
+    from app.services.project_order_inquiry_service import (
+        register_order_inquiry_post_commit_dispatch,
+    )
+
+    register_audit_listeners()
+    register_company_scope_listeners()
+    register_order_inquiry_post_commit_dispatch()
+    set_company_scope(db, None)
+
+
 def _hold_back_mail() -> None:
     """Mails this process queues are never handed to the send job (the only reader of a
     pending delivery, `notification_tasks.send_notification_deliveries`); every other job
@@ -489,27 +510,41 @@ def _hold_back_mail() -> None:
 
 
 def _cancel_held_mail(db) -> int:
-    """Every pending delivery to the hand-test address: cancelled, never sent."""
+    """Every hand-test mail not yet sent: cancelled, never sent. Two places hold one. The
+    Outgoing Mails delivery stays `pending` until the send job runs, which marks it `queued` and
+    writes an `email_outbox` row (`notification_tasks.py`); the outbox drainer sends only
+    `pending` outbox rows (`email_outbox_tasks.py`). Both are cancelled here; Outgoing Mails
+    keeps its row as the evidence."""
+    from app.models.email_outbox import EmailOutbox
     from app.models.notification import Notification, NotificationDelivery
 
     ids = [
-        notification_id
+        str(notification_id)
         for (notification_id,) in db.query(Notification.id).filter(
             Notification.data["recipient_emails"].astext.contains(HANDTEST_ADDRESS)
         )
     ]
-    if not ids:
-        return 0
-    count = (
-        db.query(NotificationDelivery)
-        .filter(
-            NotificationDelivery.notification_id.in_([str(i) for i in ids]),
-            NotificationDelivery.status == "pending",
+    count = 0
+    if ids:
+        count = (
+            db.query(NotificationDelivery)
+            .filter(
+                NotificationDelivery.notification_id.in_(ids),
+                NotificationDelivery.status.in_(("pending", "queued")),
+            )
+            .update(
+                {
+                    NotificationDelivery.status: "cancelled",
+                    NotificationDelivery.error_message: HELD_BACK,
+                },
+                synchronize_session=False,
+            )
         )
-        .update(
-            {NotificationDelivery.status: "cancelled", NotificationDelivery.error_message: HELD_BACK},
-            synchronize_session=False,
-        )
+    db.query(EmailOutbox).filter(
+        EmailOutbox.recipient_email == HANDTEST_ADDRESS, EmailOutbox.status == "pending"
+    ).update(
+        {EmailOutbox.status: "cancelled", EmailOutbox.cancel_reason: HELD_BACK},
+        synchronize_session=False,
     )
     db.commit()
     return count
@@ -688,11 +723,6 @@ def main() -> int:
         return 2
 
     from app.database import SessionLocal
-    from app.services.audit_service import register_audit_listeners
-    from app.services.company_scope import register_company_scope_listeners
-    from app.services.project_order_inquiry_service import (
-        register_order_inquiry_post_commit_dispatch,
-    )
 
     db = SessionLocal()
     try:
@@ -704,10 +734,7 @@ def main() -> int:
             print(f"Refused: {refusal}.", file=sys.stderr)
             return 2
         db.rollback()
-        # What the API registers at startup (as `handtest_1679_setup.py` does).
-        register_audit_listeners()
-        register_company_scope_listeners()
-        register_order_inquiry_post_commit_dispatch()
+        _prepare_session(db)
         _hold_back_mail()
         print(f"database {name} ({addr or 'unix socket'})")
         if args.apply:
