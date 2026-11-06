@@ -36,9 +36,10 @@ describe('InsertFieldDialog full tokens', () => {
     const row = token!.closest('button')!;
     expect(row.className).not.toMatch(CLIPPING);
     expect(row).toHaveAttribute('title', '{{product.price_tag_description}}');
-    const style = window.getComputedStyle(token!);
-    expect(style.textOverflow).not.toBe('ellipsis');
-    expect(style.textOverflow).not.toBe('clip');
+    // jsdom has no stylesheet, so the class list above is the rendered truth; an inline style
+    // must not reintroduce an ellipsis either.
+    expect(token!.style.textOverflow).not.toBe('ellipsis');
+    expect(token!.style.overflow).not.toBe('hidden');
   });
 
   it('puts the token on its own line under the label', () => {

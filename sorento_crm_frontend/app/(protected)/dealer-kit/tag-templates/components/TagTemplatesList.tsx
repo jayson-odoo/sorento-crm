@@ -420,6 +420,8 @@ export function TagTemplatesList() {
       },
       {
         id: 'price_type',
+        // An accessor makes the header sortable; the ORDER itself is the server's (item 5).
+        accessorFn: (row) => row.price_type ?? '',
         header: ({ column }) => <DataGridColumnHeader column={column} title="Price type" />,
         size: 140,
         cell: ({ row }) => (
@@ -431,6 +433,8 @@ export function TagTemplatesList() {
       },
       {
         id: 'print_size',
+        // An accessor makes the header sortable; the ORDER itself is the server's (item 5).
+        accessorFn: (row) => row.print_size.width_mm * row.print_size.height_mm,
         header: ({ column }) => <DataGridColumnHeader column={column} title="Print Size" />,
         size: 120,
         cell: ({ row }) => {
@@ -456,6 +460,8 @@ export function TagTemplatesList() {
       },
       {
         id: 'published',
+        // An accessor makes the header sortable; the ORDER itself is the server's (item 5).
+        accessorFn: (row) => row.published_version_no ?? 0,
         header: ({ column }) => <DataGridColumnHeader column={column} title="Status" />,
         size: 100,
         cell: ({ row }) =>

@@ -39,10 +39,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
-import ListPager from '@/components/common/ListPager';
-import type { ListPagerParams } from '@/hooks/useListPager';
-import { fetchTagTemplatePage, tagTemplatePageKey } from '../lib/listQuery';
+import { TemplateRecordPager } from '../components/TemplateRecordPager';
 import { toast } from '@/lib/toast';
 import {
   History,
@@ -119,25 +116,6 @@ const TagVersionViewer = dynamic(
 export default function TagTemplateEditorPage() {
   const params = useParams<{ id: string }>();
   return <TagTemplateEditor key={params.id} />;
-}
-
-/** Prev/next across the Tag Templates list the reader came from, in its order and filter
- *  (TAG-TEMPLATE-DUPLICATE item 2). Hidden on a deep link that names no list. */
-function TemplatePager({ id }: { id: string }) {
-  const queryClient = useQueryClient();
-  const fetchPage = useCallback(
-    (p: ListPagerParams) => fetchTagTemplatePage(queryClient, p),
-    [queryClient],
-  );
-  return (
-    <ListPager
-      listQueryKey={tagTemplatePageKey}
-      fetchPage={fetchPage}
-      detailPath="/dealer-kit/tag-templates"
-      currentId={id}
-      ariaLabel="template"
-    />
-  );
 }
 
 function TagTemplateEditor() {
@@ -586,7 +564,7 @@ function TagTemplateEditor() {
               // indicator, Publish and Back to templates still do not
               // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
-                <TemplatePager id={template.id} />
+                <TemplateRecordPager id={template.id} />
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}

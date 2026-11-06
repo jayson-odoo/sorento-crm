@@ -145,7 +145,7 @@ describe('ComboTagPreview linked-template switcher (item 4)', () => {
     state.links = [extra, sp, lp];
     draw(null);
     const group = await screen.findByRole('group', { name: 'Template to preview' });
-    const names = Array.from(group.querySelectorAll('button')).map((b) => b.textContent);
+    const names = Array.from(group.querySelectorAll('[role="radio"]')).map((b) => b.textContent);
     expect(names).toEqual(['BF_LP', 'BF_SP', 'BF_EXTRA']);
   });
 
@@ -157,7 +157,7 @@ describe('ComboTagPreview linked-template switcher (item 4)', () => {
       tag_template_id: 'tpl-lp',
       price_type: 'list',
     });
-    expect(screen.getByRole('radio', { name: /BF_LP/ })).toHaveAttribute('aria-checked', 'true');
+    expect(await screen.findByRole('radio', { name: /BF_LP/ })).toHaveAttribute('aria-checked', 'true');
   });
 
   it('opens on the first linked when there is no Default LP', async () => {
@@ -171,7 +171,7 @@ describe('ComboTagPreview linked-template switcher (item 4)', () => {
     state.links = [lp, sp];
     draw(null);
     await waitFor(() => expect(previewTags).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole('radio', { name: /BF_SP/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /BF_SP/ }));
 
     await waitFor(() =>
       expect(sentLines(previewTags.mock.calls.at(-1)!)[0]).toMatchObject({

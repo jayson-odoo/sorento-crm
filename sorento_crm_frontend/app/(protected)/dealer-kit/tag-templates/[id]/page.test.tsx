@@ -23,6 +23,12 @@ vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warni
 import { toast } from '@/lib/toast';
 const mockToastSuccess = vi.mocked(toast.success);
 
+// The header's prev/next pager has its own test (TemplateRecordPager.test.tsx); this page's tests
+// have no QueryClientProvider for it.
+vi.mock('../components/TemplateRecordPager', () => ({
+  TemplateRecordPager: () => <div data-testid="template-pager" />,
+}));
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'tmpl-1' }),
   usePathname: () => '/dealer-kit/tag-templates/tmpl-1',
