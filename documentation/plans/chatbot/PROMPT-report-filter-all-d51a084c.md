@@ -2,8 +2,8 @@
 
 - Base: production v72, md5 `d29c19830b22aa47403a88ddcb8e817d`. This is the v202 text the owner published, less two v71
   lines; the exact file is `prompt-prod-v72-d29c1983.txt`.
-- Result: md5 `5a58739ad208e2a2bc4d081c9087816c` (round 3, edits 1-9); the exact file is `prompt-report-filter-all.txt`.
-  Round 2 was md5 `e9421dede66c100a5f75db1db7c6a1e2` (edits 1-7) and round 1 was md5
+- Result: md5 `d51a084c46ea5afee1a6775ced30f607` (round 4, edits 1-10); the exact file is `prompt-report-filter-all.txt`.
+  Round 3 was md5 `5a58739ad208e2a2bc4d081c9087816c` (edits 1-9, crew v77, targeted re-check 6 Nov). Round 2 was md5 `e9421dede66c100a5f75db1db7c6a1e2` (edits 1-7) and round 1 was md5
   `698e137b692ff61ce48bf1c1e4aa7571` (edits 1-4); crew gated both (below).
   `tests/chatbot/test_report_filter_all.py::test_p1_*` pins both md5s.
 - Not published: only the owner moves the production label.
@@ -44,6 +44,12 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
    `the word brand -> brands only (company stays as held);` becomes
    `the word brand -> brands only (company stays as held; a reply that picks brand for a name the assistant asked about never writes that name in company);`
 
+10. (round 4, crew re-check steps 8 / 14: "Sorento company, Sorento brand" ran the brand only) On the entity line,
+    `"said_as": what said_as_text says: "company", "brand", "both" (both words); null whenever said_as_text is null }` gains
+    `; a name this message calls a company in one place and a brand in another is ONE entity whose said_as_text holds both words and whose said_as is "both" }`.
+    The code reads a name's slot from said_as, never from the object's company slot alone ("brand only" parses also write
+    the company: ON-2, F2, tf-29), and since round 4 of the code it merges two entities of one name (company + brand = both).
+
 ## Gate (crew runs it on the Mac; this sandbox has no Gemini key and no prod-copy DB)
 
 - Gold: `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl`, 28 rows. 16 of them are EN / BM / ZH mixes in the owner's style (clear every filter with no keyword, one slot to ALL). The other 12: clear brand, all brands, any agent, clear
@@ -64,6 +70,8 @@ v72 (no `["ALL"]`) keeps the temporary adapter `report_ask._legacy_all`.
 | crew 6 Nov | e9421ded | semantic_carry sc-01..16 | 13/16 | sc-01, sc-15, sc-16 |
 
 Crew spend 6 Nov: gate 0.336 + replays 0.207 + console pass 0.091 = USD 0.633 of 0.70, ledgered by crew.
+
+| crew 6 Nov targeted re-check, v77 | 5a58739a | fa-13/14/18/30/32, steps 9-11, 14 clears, 15, EN clear-all, T5-T9 smoke | PASS | FAIL: steps 8, 14, 16 (company with the word Sorento), 17 (from 16); fa-16 / fa-20 keep channel dealer; fa-36 / step 1 no split on the first turn |
 
 Gold corrections for round 3 (no live run from this sandbox):
 - fa-06, fa-13..20 and fa-29..34 expected ALL in slots the Held report holds EMPTY. The prompt says such a slot is copied

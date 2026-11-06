@@ -1,7 +1,7 @@
 # PLAN: report filters - explicit ALL, parser object final
 
-Status: Build round 4 (crew gate 6 Nov fixes) done, crew re-gate next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
-Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-5a58739a.md`.
+Status: Build round 5 (crew re-check 6 Nov fixes) done, crew re-check next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
+Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-d51a084c.md`.
 
 ## Owner pain
 
@@ -89,7 +89,7 @@ updated to the 3 Nov ruling.
 
 ## Prompt and gold
 
-Prompt candidate 5a58739a (round 3; earlier e9421ded, 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-5a58739a.md`. The gold rows are in
+Prompt candidate d51a084c (round 4; earlier 5a58739a, e9421ded, 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-d51a084c.md`. The gold rows are in
 `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (28 rows, 16 of them EN / BM / ZH mixes of clear all and of one slot). Crew runs the eval gate (cap USD 0.70, ORG key,
 ledgered) and the #2156 replays on the Mac (crew Q5). Never published by the lane; only the owner moves the label.
 
@@ -121,3 +121,16 @@ asks a word in both tables).
 | 3 | Step 14: "Sorento company, Sorento brand" kept only the brand | same as 2 (the other entity order) | same (H8 brand-first) |
 | 4 | fa-13 `clear all filter`, fa-14 `buang semua filter`, fa-16 `tak payah filter apa2, semua`, fa-18 `全部 la, 不要 filter`, fa-20 `start over without any filter, same month` | Each: (a) the parser kept the held channel dealer and company Sorento (it cleared only the lists), and (b) a gold error of mine: those rows expected ALL in account_types and products, which the Held report holds empty and the prompt says to copy empty | (a) prompt edit 8; (b) gold corrected (also fa-06, fa-29..34) |
 | 5 | ON-6 "SORENTO: brand, account type or company?" (R2, step 15) | Code + data. Account types are the customers' stored `autocount_debtor_type` (AutoCount data, `parser.py:1487`, `ask_params.account_type_options`), not a seed. 1104 is a production copy, so production almost certainly stores the same SORENTO type (not verified: no prod access) | `_account_plan`: a brand word that is one of the contact's own companies (2+ companies, from data) is that company or its brand, never asked as an account type; `_company_or_brand` asks company or brand once (owner rule). "Sorento account type" (said) still reads the type. Tests C6-1(a), S2, C6-2(b), R1-b, R5-1, R5-1c updated (they set up the old three-way question; the last four only needed some kind question and now use a brand-and-type word that is no company) |
+
+## Crew targeted re-check (6 Nov, v77 = 5a58739a, head 6ffc293e)
+
+No recorded parse objects reached the sandbox; each fix below is pinned by a replay test of the parse shape it assumes.
+
+| Finding | Which is right / cause | Fix |
+|---|---|---|
+| Step 8: the parser wrote company Sorento, the report shows no Company line | The code is following the design: a name that is both a company and a brand takes its slot from the entity's `said_as`, never from the object's company slot alone, because "Sorento brand only" parses also write company Sorento (ON-2, F2, tf-29, the R3 equivalence). The object's company plus a one-entity `said_as` brand is that shape. The message meant both, so the parser's `said_as` was wrong (or one of two entities lacked its typed word). A second field, top-level `sales_company`, was tried as a tie-breaker and rejected: R3's "brand only" parse carries it too | prompt edit 10 (one entity, `said_as` both); two entities of one name already merge (round 4, H8). K8 pins both directions |
+| Step 14: "Sorento company, Sorento brand" shows the brand only | same | same |
+| Step 16: "brand" after the company-or-brand question shows Company Sorento + Brand SORENTO | Code. The open question's held ask (`_held_object`) carried the first turn's company Sorento, which is the very reading the question asks about, and `_keep_held` put it back on the answer. An object echoing that company beside a declared "brand" pick was also applied | the open company-or-brand question no longer holds the asked name as the company, and a declared brand pick drops an object company of that name (K16, both variants; the owner's "a brand answer replaces the company reading") |
+| Step 17 | inherits 16 | as 16 |
+| fa-36 / step 1: no Dealer / Project split on the first turn | Parser frame total. When the parse also carries the axis, code now runs it: a total frame beside an axis this message names itself (not the held one) whose slot is not one value is that breakdown (K1). A one-value slot (AF-1's noisy "brand") or a copied held axis stays a total. A parse with no axis at all stays the parser's | `from_object` frame rule |
+| fa-16 / fa-20 keep channel dealer | Parser (edit 8 already says company and channel are filters like the lists) | none new; watch in the re-gate |
