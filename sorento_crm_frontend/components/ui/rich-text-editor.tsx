@@ -49,6 +49,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator';
 import { Toggle } from '@/components/ui/toggle';
 import { cn } from '@/lib/utils';
+import {
+  MergeFieldNode,
+  unwrapMergeFieldTokens,
+  wrapMergeFieldTokens,
+} from '@/components/ui/rich-text-merge-fields';
 
 /** Item the mention popup expects. Loosely shaped so callers can map their
  * own user list (e.g. `getUsersSelect()` returning `{ id, name, email }`). */
@@ -82,7 +87,30 @@ export type RichTextEditorProps = {
   /** Put on the editable element, so a visible label can name it. */
   id?: string;
   'aria-labelledby'?: string;
+  /**
+   * `inline`: bold, italic, underline, strike and text colour only (the tag designer's Content
+   * box, whose block layout is the layer's own). Default: the full toolbar.
+   */
+  toolbar?: 'full' | 'inline';
+  /**
+   * `{{path}}` tokens become one atomic node each: a mark covers a token whole and a selection
+   * never splits it. Value in and out still carries them as plain `{{path}}` text.
+   */
+  mergeFields?: boolean;
 };
+
+/** Insert text holding `{{tokens}}` at the caret of a `mergeFields` editor; each complete token
+ * becomes its atom. */
+export function insertMergeFieldText(editor: Editor, text: string) {
+  if (!text) return;
+  editor.chain().focus().insertContent({ type: 'text', text }).run();
+}
+
+/** One serialisation for comparing a stored value with the editor's (entities, quotes). */
+function canonicalHtml(html: string): string {
+  if (!html || typeof DOMParser === 'undefined') return html;
+  return new DOMParser().parseFromString(html, 'text/html').body.innerHTML;
+}
 
 const RGB = /rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/gi;
 
@@ -286,6 +314,42 @@ function ColorPopoverButton({
         </Button>
       </PopoverContent>
     </Popover>
+  );
+}
+
+function InlineToolbar({ editor }: { editor: Editor }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1">
+      <ToolbarButton
+        title="Bold"
+        active={editor.isActive('bold')}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <Bold className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Italic"
+        active={editor.isActive('italic')}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <Italic className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Underline"
+        active={editor.isActive('underline')}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        <UnderlineIcon className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        title="Strikethrough"
+        active={editor.isActive('strike')}
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+      >
+        <Strikethrough className="size-4" />
+      </ToolbarButton>
+      <ColorPopoverButton editor={editor} kind="color" />
+    </div>
   );
 }
 
@@ -557,7 +621,12 @@ export function RichTextEditor({
   onEditorReady,
   id,
   'aria-labelledby': labelledBy,
+  toolbar = 'full',
+  mergeFields = false,
 }: RichTextEditorProps) {
+  // A `mergeFields` editor holds its tokens as atoms; the value in and out keeps them as text.
+  const toEditor = (html: string) => (mergeFields ? wrapMergeFieldTokens(html) : html);
+  const fromEditor = (html: string) => (mergeFields ? unwrapMergeFieldTokens(html) : html);
   // Stash the fetcher in a ref so the Mention extension's closure can read
   // the latest version without re-creating the editor when the prop changes.
   const fetcherRef = useRef(mentionUsersFetcher);
@@ -605,6 +674,7 @@ export function RichTextEditor({
       BackgroundColor,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
     ];
+    if (mergeFields) list.push(MergeFieldNode);
 
     if (mentionUsersFetcher) {
       list.push(
@@ -681,13 +751,13 @@ export function RichTextEditor({
     }
     return list;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [Boolean(mentionUsersFetcher), placeholder]);
+  }, [Boolean(mentionUsersFetcher), placeholder, mergeFields]);
 
   const editor = useEditor({
     immediatelyRender: false,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     extensions: extensions as any[],
-    content: value || '',
+    content: toEditor(value || ''),
     editable,
     editorProps: {
       transformPastedHTML: stripPastedStyles,
@@ -712,7 +782,7 @@ export function RichTextEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
-      const html = normaliseEditorHtml(e.getHTML());
+      const html = fromEditor(normaliseEditorHtml(e.getHTML()));
       onChange(html === '<p></p>' ? '' : html);
     },
   });
@@ -720,10 +790,15 @@ export function RichTextEditor({
   // Keep editor in sync if parent resets the value (e.g. after load from API).
   useEffect(() => {
     if (!editor) return;
-    const current = normaliseEditorHtml(editor.getHTML());
+    const current = fromEditor(normaliseEditorHtml(editor.getHTML()));
     const incoming = value || '';
-    if (incoming !== current && !(incoming === '' && current === '<p></p>')) {
-      editor.commands.setContent(incoming, { emitUpdate: false });
+    // A `mergeFields` editor compares one serialisation of each side, so a value that only differs
+    // in how a quote or an entity is written does not reset the caret mid-typing.
+    const same = mergeFields
+      ? canonicalHtml(incoming) === canonicalHtml(current)
+      : incoming === current;
+    if (!same && !(incoming === '' && current === '<p></p>')) {
+      editor.commands.setContent(toEditor(incoming), { emitUpdate: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
@@ -746,7 +821,7 @@ export function RichTextEditor({
         className,
       )}
     >
-      <Toolbar editor={editor} />
+      {toolbar === 'inline' ? <InlineToolbar editor={editor} /> : <Toolbar editor={editor} />}
       <EditorContent editor={editor} />
     </div>
   );

@@ -91,12 +91,12 @@ describe('mergeFields', () => {
   });
 
   it('insertMergeFieldText puts a token node at the caret', async () => {
-    const { editor, html } = await mount('<p>Code: </p>', { mergeFields: true });
+    const { editor, html } = await mount('<p>Code: !</p>', { mergeFields: true });
     act(() => {
       editor.commands.setTextSelection(7);
       insertMergeFieldText(editor, '{{product.code}}');
     });
-    expect(html()).toBe('<p>Code: {{product.code}}</p>');
+    expect(html()).toBe('<p>Code: {{product.code}}!</p>');
     expect(tokenNodes(editor).map((t) => t.path)).toEqual(['product.code']);
   });
 
