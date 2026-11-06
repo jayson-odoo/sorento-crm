@@ -136,7 +136,9 @@ const resolvedLine = () => Object.values(drawn().resolvedData)[0];
 
 describe('ComboTagPreview asks the staff preview service (R18)', () => {
   it('R18: sends ONE product line for the host and combo, on the SP default as selling', async () => {
-    state.links = [link({ default_selling: true, default_list: true })];
+    // TAG-TEMPLATE-DUPLICATE item 4: a link that is BOTH defaults now opens as the LP default
+    // (owner 6 Nov: Default LP first); the SP-only default is still drawn as selling.
+    state.links = [link({ default_selling: true })];
     draw('<p>draft</p>');
     await waitFor(() => expect(previewTags).toHaveBeenCalled());
 

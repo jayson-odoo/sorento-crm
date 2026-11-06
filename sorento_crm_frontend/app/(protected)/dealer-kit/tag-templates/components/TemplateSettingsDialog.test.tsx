@@ -42,7 +42,7 @@ function renderDialog(overrides: Partial<React.ComponentProps<typeof TemplateSet
     <TemplateSettingsDialog
       open
       onOpenChange={onOpenChange}
-      initial={{ name: 'Wash Basin Combo Price Tag', family: 'sink_combo', width_mm: 85, height_mm: 130 }}
+      initial={{ name: 'Wash Basin Combo Price Tag', family: 'sink_combo', price_type: null, width_mm: 85, height_mm: 130 }}
       layers={LAYERS}
       onSave={onSave}
       {...overrides}
@@ -74,6 +74,7 @@ describe('TemplateSettingsDialog', () => {
       expect(onSave).toHaveBeenCalledWith({
         name: 'Kitchen Sink with 1 Tap',
         family: 'ala_carte',
+        price_type: null,
         width_mm: 85,
         height_mm: 130,
       }),
@@ -131,13 +132,13 @@ describe('TemplateSettingsDialog', () => {
   });
 
   it('offers only spec sheet families on a spec sheet template', () => {
-    renderDialog({ initial: { name: 'Cover', family: 'spec_cover', width_mm: 210, height_mm: 297 } });
+    renderDialog({ initial: { name: 'Cover', family: 'spec_cover', price_type: null, width_mm: 210, height_mm: 297 } });
     const values = Array.from(family().options).map((o) => o.value);
     expect(values).toEqual(['spec_cover', 'spec_page']);
   });
 
   it('keeps a family no longer in the list as an option, so it is not blanked', () => {
-    renderDialog({ initial: { name: 'Old', family: 'toilet' as never, width_mm: 85, height_mm: 58 } });
+    renderDialog({ initial: { name: 'Old', family: 'toilet' as never, price_type: null, width_mm: 85, height_mm: 58 } });
     expect(family().value).toBe('toilet');
   });
 

@@ -1,8 +1,9 @@
 'use client';
 
 /**
- * Edit an existing template's name, family and print size
- * (PRICETAG-DESIGNER-GAPS item 4).
+ * Edit an existing template's name, family, price type and print size
+ * (PRICETAG-DESIGNER-GAPS item 4), through the SAME `TemplateSettingsForm` "New tag template"
+ * uses (TAG-TEMPLATE-DUPLICATE item 7).
  *
  * The host decides how each change is written: on the editor page the name
  * and family go straight to the template row (they are not versioned), and a
@@ -23,11 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { NumberInput } from '@/components/ui/number-input';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
+import { parseNumberDraft } from '@/lib/number-field';
 import { layersOutside } from '@/lib/dealer-kit/layer-bounds';
 import {
   SPEC_SHEET_FAMILIES,
@@ -36,10 +33,18 @@ import {
   type TagLayer,
   type TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplatePriceType } from '@/lib/dealer-kit/template-price-type';
+import {
+  TemplateSettingsForm,
+  templateSettingsErrors,
+  templateSettingsValid,
+  type TemplateSettingsDraft,
+} from './TemplateSettingsForm';
 
 export interface TemplateSettingsValues {
   name: string;
   family: TagTemplateFamily;
+  price_type: TemplatePriceType | null;
   width_mm: number;
   height_mm: number;
 }
@@ -55,8 +60,6 @@ interface TemplateSettingsDialogProps {
   /** Throws to keep the dialog open with the error shown. */
   onSave: (values: TemplateSettingsValues) => Promise<void>;
 }
-
-const MIN_MM = 10;
 
 /**
  * A price tag stays a price tag and a spec sheet page stays a page: the editor
@@ -78,10 +81,7 @@ export function TemplateSettingsDialog({
   isLive = false,
   onSave,
 }: TemplateSettingsDialogProps) {
-  const [name, setName] = useState(initial.name);
-  const [family, setFamily] = useState<TagTemplateFamily>(initial.family);
-  const [widthMm, setWidthMm] = useState<number | null>(initial.width_mm);
-  const [heightMm, setHeightMm] = useState<number | null>(initial.height_mm);
+  const [draft, setDraft] = useState<TemplateSettingsDraft>(initial);
   const [checked, setChecked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,10 +89,7 @@ export function TemplateSettingsDialog({
   // Re-seed on every open, so a cancelled edit never lingers.
   useEffect(() => {
     if (open) {
-      setName(initial.name);
-      setFamily(initial.family);
-      setWidthMm(initial.width_mm);
-      setHeightMm(initial.height_mm);
+      setDraft(initial);
       setChecked(false);
       setError(null);
     }
@@ -101,27 +98,25 @@ export function TemplateSettingsDialog({
 
   const options = useMemo(() => familyOptions(initial.family), [initial.family]);
 
-  const width = parseNumberDraft(widthMm);
-  const height = parseNumberDraft(heightMm);
-  const sizeValid =
-    !numberFieldError(widthMm, { min: MIN_MM }) && !numberFieldError(heightMm, { min: MIN_MM });
+  const errors = templateSettingsErrors(draft);
+  const width = parseNumberDraft(draft.width_mm);
+  const height = parseNumberDraft(draft.height_mm);
+  const sizeValid = !errors.width_mm && !errors.height_mm;
   const sizeChanged =
     sizeValid && (width !== initial.width_mm || height !== initial.height_mm);
   const cutOff = sizeChanged ? layersOutside(layers, width as number, height as number) : 0;
-
-  const widthError = checked ? numberFieldError(widthMm, { min: MIN_MM }) : undefined;
-  const heightError = checked ? numberFieldError(heightMm, { min: MIN_MM }) : undefined;
-  const canSubmit = name.trim().length > 0 && !saving;
+  const canSubmit = !errors.name && !saving;
 
   const submit = async () => {
     setError(null);
     setChecked(true);
-    if (!sizeValid) return;
+    if (!templateSettingsValid(draft)) return;
     setSaving(true);
     try {
       await onSave({
-        name: name.trim(),
-        family,
+        name: draft.name.trim(),
+        family: draft.family,
+        price_type: draft.price_type,
         width_mm: width as number,
         height_mm: height as number,
       });
@@ -138,46 +133,16 @@ export function TemplateSettingsDialog({
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Template settings</DialogTitle>
-          <DialogDescription>Name, product family and print size.</DialogDescription>
+          <DialogDescription>Name, product family, price type and print size.</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="ts-name">Name</Label>
-            <Input id="ts-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <Label>Family</Label>
-            <SearchableSelect
-              value={family}
-              onChange={(v: string) => setFamily(v as TagTemplateFamily)}
-              options={options}
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="ts-width">Width (mm)</Label>
-              <NumberInput
-                id="ts-width"
-                value={widthMm}
-                min={MIN_MM}
-                onValueChange={setWidthMm}
-                error={widthError}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="ts-height">Height (mm)</Label>
-              <NumberInput
-                id="ts-height"
-                value={heightMm}
-                min={MIN_MM}
-                onValueChange={setHeightMm}
-                error={heightError}
-              />
-            </div>
-          </div>
+          <TemplateSettingsForm
+            value={draft}
+            onChange={setDraft}
+            familyOptions={options}
+            showErrors={checked}
+          />
 
           {sizeChanged && (
             <Alert variant="warning" size="sm" role="status">

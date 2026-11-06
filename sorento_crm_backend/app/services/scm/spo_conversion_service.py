@@ -3456,6 +3456,22 @@ def unwind(db: Session, shipment_id: str, purchase_order_id: Optional[str] = Non
                 OrderLinkClaim.spo_allocation_id.in_(allocation_ids),
                 OrderLinkClaim.source == "planner",
             ).delete(synchronize_session=False)
+        # PACKING-LIST-RECALC: a bulk delete goes around the ORM listener, so the
+        # containers these allocations fed are noted for their recompute by hand.
+        from app.services.scm.packing_list_recalc import mark_stale
+
+        mark_stale(
+            db,
+            [
+                row[0]
+                for row in db.query(SPOAllocation.inbound_shipment_id)
+                .filter(
+                    SPOAllocation.po_line_id.in_(po_line_ids),
+                    SPOAllocation.inbound_shipment_id.isnot(None),
+                )
+                .distinct()
+            ],
+        )
         deleted_allocations = (
             db.query(SPOAllocation)
             .filter(SPOAllocation.po_line_id.in_(po_line_ids))
