@@ -135,7 +135,8 @@ function pickSellPrice(data: TagBindingData, slots: TagSlots, slot: Extract<Subj
   const group = slots.groups[slot.group];
   const pick = group?.picks[slot.index];
   if (!pick) return '';
-  const options = comboOf(data)?.choices.find((choice) => choice.role === group.role)?.options ?? [];
+  const choices = comboOf(data)?.choices ?? [];
+  const options = (choices.find((choice) => choice.role === group.role) ?? choices[slot.group])?.options ?? [];
   const option =
     options.find((o) => pick.product_id && o.product_id === pick.product_id) ??
     options.find((o) => o.code === pick.code);
