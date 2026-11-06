@@ -1,7 +1,7 @@
 # PLAN: report filters - explicit ALL, parser object final
 
-Status: Build round 5 (crew re-check 6 Nov fixes) done, crew re-check next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
-Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-d51a084c.md`.
+Status: Build round 6 (crew re-check on v78) done, crew re-check next (lane REPORT-FILTER-ALL, PR #2209; standard track: no migration, no auth change).
+Started 5 Nov 2026. UAC: `report-filter-all-acceptance-criteria.md`. Prompt: `PROMPT-report-filter-all-289da7e5.md`.
 
 ## Owner pain
 
@@ -57,7 +57,7 @@ In the sales / outstanding report chatbot, follow-ups like "clear brand", "clear
 |---|---|---|
 | `_carry` (`report_ask.py:3684-3710` on main) | CP-1 / C6-2: the object drops a held filter the message did not touch | `_keep_held` (empty + held + no ALL keeps), FA-1 |
 | `_carry`'s `widened_kinds` read | B5-B7 "all brands" / "clear the brand filter" clear despite `brands: []` | ALL (`_read_all`), FA-1 / FA-2; legacy prompt: `_legacy_all`, CL-1..6 |
-| `_carry`'s `named & hints` skip (a kind this message names is never carried) | "sorento company only" over a held SORENTO brand (TF-28, HT1-2) | said_as (`_word_kinds`) drops the brand when the message calls the name the company (R3, TF-28, HT1-2); the `_MOVES` guard keeps a moved name from refilling, U4 |
+| `_carry`'s `named & hints` skip (a kind this message names is never carried) | "sorento company only" over a held SORENTO brand (TF-28, HT1-2) | said_as (`_word_kinds`) drops the brand when the message calls the name the company (R3, TF-28, HT1-2); the `_MOVES` guard keeps a moved name from refilling, U4. Since round 6 said_as brand no longer drops an object company (the object is final) |
 | `_carry`'s brand + account type as ONE kind (`_CARRY_KINDS`) | a word moved between brands and account_types | the `_MOVES` guard (brands with account_types), U4 |
 | `_carry`'s `answering` channel rule (CP-1: the channel carried only while a question is open) | the held channel kept on a reply | `_keep_held` for every turn (owner 3 Nov: a full new ask keeps the channel), FA-6, SC-8 updated |
 | HT1-18 echo rule (`report_ask.py:3589-3605` on main, keyed on top-level `sales_company`) | v202 "Sorenth" echo over a held Sorento | `_held_spelling`, FA-5c (now also with `sales_company` null, which the old rule refused). The old rule's entity guard is kept (a company this message types is never an echo, R2 / U5b); its `sales_company` guard is replaced by "none of the contact's own" |
@@ -89,7 +89,7 @@ updated to the 3 Nov ruling.
 
 ## Prompt and gold
 
-Prompt candidate d51a084c (round 4; earlier 5a58739a, e9421ded, 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-d51a084c.md`. The gold rows are in
+Prompt candidate 289da7e5 (round 5; earlier d51a084c, 5a58739a, e9421ded, 698e137b), on the v72 base d29c1983: `PROMPT-report-filter-all-289da7e5.md`. The gold rows are in
 `scripts/chatbot_eval/gold/parser_report_filter_all.jsonl` (28 rows, 16 of them EN / BM / ZH mixes of clear all and of one slot). Crew runs the eval gate (cap USD 0.70, ORG key,
 ledgered) and the #2156 replays on the Mac (crew Q5). Never published by the lane; only the owner moves the label.
 
@@ -134,3 +134,11 @@ No recorded parse objects reached the sandbox; each fix below is pinned by a rep
 | Step 17 | inherits 16 | as 16 |
 | fa-36 / step 1: no Dealer / Project split on the first turn | Parser frame total. When the parse also carries the axis, code now runs it: a total frame beside an axis this message names itself (not the held one) whose slot is not one value is that breakdown (K1). A one-value slot (AF-1's noisy "brand") or a copied held axis stays a total. A parse with no axis at all stays the parser's | `from_object` frame rule |
 | fa-16 / fa-20 keep channel dealer | Parser (edit 8 already says company and channel are filters like the lists) | none new; watch in the re-gate |
+
+## Crew re-check on v78 (6 Nov, d51a084c, head dcd1fd81): round 6
+
+| Finding | Cause (file:line on dcd1fd81) | Fix (red first: 652e81bf) |
+|---|---|---|
+| Step 14a: "Sorento company, Sorento brand" parsed company Sorento + brand SORENTO, report showed the brand only | Code. Probed through the engine across seven entity shapes after a real clear-all: only one Sorento entity with `said_as` brand loses the company. `report_ask.py:3681` (`elif slot == "brand" and same: ask["company"] = held_company`, the CP-5 branch) replaced the object's company with the held one, none after the clear-all | branch deleted: the object's company is applied as written (K8, both said_as variants). Flips four tests that locked the override for "brand only" parses that also wrote the company (tf-29, F2, R3-2, R3-4): "brand only" is brand only when the parse leaves the company null (HT1-3, the one-name bullet) |
+| Step 1: frame total with no group_by | Parser dropped the axis from the object, so the K1 rule had nothing to read | prompt edit 11; code: a total whose object names no axis takes the parse's top-level `group_by` (this message's own reading) under the K1 guards (K1b); with no axis anywhere it stays one figure (K1c) |
+| fa-16 / fa-20 / fa-36 | not run by crew; replayed here as recorded objects | the gold clear-all object clears company + channel and keeps period / basis / axis; the recorded miss (channel dealer in the object) keeps dealer because the object kept it (a parser miss, no code drop); fa-36's gold object is the Dealer / Project breakdown |

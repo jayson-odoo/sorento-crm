@@ -3582,6 +3582,11 @@ def from_object(
     )
     held_axis = (held_ask or {}).get("group_by") if carrying else None
     axis = jsc.js_string(ask.get("group_by") or "").strip().lower() or None
+    if frame == "total" and axis is None:
+        # Crew re-check step 1 on v78: the object came back total with no axis; the parse's top-level `group_by` is this
+        # message's own reading (the prompt: from the current message only). It is the candidate the rule below weighs.
+        own = jsc.js_string(verdict.get("group_by") or "").strip().lower()
+        axis = own or None
     own_slot = _AXIS_SLOTS.get(axis or "")
     if (
         frame == "total" and axis is not None and axis != held_axis and own_slot
@@ -3672,14 +3677,13 @@ def from_object(
         ask, verdict, focus, picked, company=own_company, companies=companies, said_as_text=said_as_text
     ):
         if slot is not None:
-            # HT1, one rule: the parser's own slot for a name that is one of the contact's companies. Company or both: the
-            # name is the ask's company. Brand: a same-name company the object put in is not applied (ON-2); the held
-            # company carries instead, as with no company named (owner Q3), so the held one itself stays (CP-5).
+            # HT1: the parser's own slot for a name that is one of the contact's companies. Company or both: the name is
+            # the ask's company. Brand: the brand only, and the object's own company slot stays as written: the object is
+            # final (REPORT-FILTER-ALL round 6, crew re-check step 14a, where said_as brand used to drop an object company
+            # of the same name and the display disagreed with the parse).
             same = _squash(ask.get("company") or "") == _squash(word)
             if slot != "brand" and not same:
                 ask["company"] = word
-            elif slot == "brand" and same:
-                ask["company"] = held_company
         if how in ("brand", BOTH_KIND_OPTION[0]):  # M2: the both option keeps the word as the brand beside the company
             entities.append(_entity(word, "brand"))
         elif how == "account_type":
