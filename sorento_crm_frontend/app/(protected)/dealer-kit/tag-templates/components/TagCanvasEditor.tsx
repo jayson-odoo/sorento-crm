@@ -29,6 +29,7 @@ import {
   layersAt,
   selectionForContextMenu,
   shortcutLabel,
+  useIsMac,
 } from '@/lib/dealer-kit/canvas-input';
 import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
@@ -643,10 +644,8 @@ export function TagCanvasEditor({
   // renders, so it doubles as the required "getServerSnapshot"-free selector.
   const clipboard = useSyncExternalStore(subscribeTagClipboard, getTagClipboard);
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
-  /** macOS: menus write shortcuts with the command symbol. Read after mount (no navigator on the
-   * server). */
-  const [mac, setMac] = useState(false);
-  useEffect(() => setMac(isMacPlatform()), []);
+  /** macOS: menus write shortcuts with the command symbol. */
+  const mac = useIsMac();
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
   /** Feature icons: the icon library dialog, opened from the layer's inspector. */

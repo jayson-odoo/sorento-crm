@@ -103,4 +103,9 @@ describe('shortcutLabel', () => {
     expect(shortcutLabel('G', true)).toBe('⌘G');
     expect(shortcutLabel('G', false)).toBe('Ctrl+G');
   });
+
+  it('writes Shift the platform way', () => {
+    expect(shortcutLabel('Z', true, true)).toBe('⇧⌘Z');
+    expect(shortcutLabel('Z', false, true)).toBe('Ctrl+Shift+Z');
+  });
 });

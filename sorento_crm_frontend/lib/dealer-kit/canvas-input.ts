@@ -3,6 +3,8 @@
  * whole stack of layers under the pointer (DESIGNER-RICH-TEXT owner bug, 6 Nov).
  */
 
+import { useEffect, useState } from 'react';
+
 import { ancestorsOf } from './canvas-geometry';
 import type { TagLayer } from './tag-template-types';
 
@@ -12,9 +14,18 @@ export function isMacPlatform(): boolean {
   return /Mac|iPod|iPhone|iPad/.test(navigator.platform ?? '');
 }
 
-/** A shortcut as the menu writes it: `⌘G` on macOS, `Ctrl+G` elsewhere. */
-export function shortcutLabel(key: string, mac: boolean): string {
-  return mac ? `⌘${key}` : `Ctrl+${key}`;
+/** A shortcut as menus and tooltips write it: `⌘G` / `⇧⌘Z` on macOS, `Ctrl+G` /
+ * `Ctrl+Shift+Z` elsewhere. */
+export function shortcutLabel(key: string, mac: boolean, shift = false): string {
+  if (mac) return `${shift ? '⇧' : ''}⌘${key}`;
+  return `Ctrl+${shift ? 'Shift+' : ''}${key}`;
+}
+
+/** Whether this browser is macOS, read after mount (there is no navigator on the server). */
+export function useIsMac(): boolean {
+  const [mac, setMac] = useState(false);
+  useEffect(() => setMac(isMacPlatform()), []);
+  return mac;
 }
 
 type Modifiers = Pick<MouseEvent, 'shiftKey' | 'metaKey' | 'ctrlKey'>;
