@@ -143,8 +143,15 @@ class TestCli:
 
 
 class TestNightly:
-    def test_the_nightly_sweep_heals_a_stale_open_container(self, env):
+    def test_the_nightly_sweep_heals_a_stale_open_container(self, env, monkeypatch):
         from app.services.rules.shipping_order_rules import nightly_refresh_open_containers
+        from app.services.scm import packing_list_recalc
+
+        # A scheduled-style call (no `since`) reads and writes the sweep watermark; keep
+        # it off the shared Redis a dev scheduler may also be reading.
+        written = []
+        monkeypatch.setattr(packing_list_recalc, "read_watermark", lambda: None)
+        monkeypatch.setattr(packing_list_recalc, "write_watermark", written.append)
 
         case = _deduped_and_stale(env)
         set_company_scope(env.db, None)  # what `scheduler_session()` sets
@@ -152,6 +159,7 @@ class TestNightly:
         refreshed = nightly_refresh_open_containers(env.db)
 
         assert refreshed >= 1
+        assert len(written) == 1  # the scheduled sweep moves its watermark
         assert _stored(env, case) == (99, "received")
 
     def test_open_shipment_ids_skips_fully_received_shipments(self, env):

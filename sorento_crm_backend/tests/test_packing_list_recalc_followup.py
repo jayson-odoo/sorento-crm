@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.services.scm import packing_list_recalc
@@ -60,7 +60,10 @@ def _now(env):
     return env.db.execute(select(func.localtimestamp())).scalar()
 
 
-def test_sweep_takes_a_fully_received_container_back_after_a_change_the_listener_missed(env, dispatched):
+def _received_container(env, dispatched):
+    """A Fully Received container with one linked allocation, every row of it then
+    backdated two days: the test runs in ONE transaction, so `now()` never moves, and
+    without backdating every stamp would sit at `since` and prove nothing (review B1)."""
     container = _container()
     shipment_id, line_id, _ = _packing_list(env, container=container, qty=10)
     record = _spo_record(
@@ -71,20 +74,50 @@ def test_sweep_takes_a_fully_received_container_back_after_a_change_the_listener
     assert env.post(INGEST_SPO, [record]).status_code == 200
     _run_dispatched(env, dispatched)
     assert _stored(env, shipment_id, line_id)[0] == "fully_received"
+    old = "now() - interval '2 days'"
+    env.db.execute(text(
+        f"UPDATE inbound_shipments SET updated_at = {old}, created_at = {old} WHERE id = :s"
+    ), {"s": shipment_id})
+    env.db.execute(text(
+        f"UPDATE inbound_shipment_lines SET updated_at = NULL, created_at = {old} WHERE shipment_id = :s"
+    ), {"s": shipment_id})
+    env.db.execute(text(
+        f"UPDATE spo_allocations SET updated_at = NULL, created_at = {old} WHERE spo_number = :n"
+    ), {"n": record["spo_number"]})
+    env.db.commit()
+    return shipment_id, line_id, record["spo_number"]
 
-    since = _now(env)
+
+def test_the_watched_updated_at_columns_are_stamped_by_the_orm():
+    from app.models.procurement import InboundShipmentLine, PickingLine
+
+    for model in (SPOAllocation, InboundShipmentLine, PickingLine):
+        assert model.__table__.c.updated_at.onupdate is not None, model.__name__
+
+
+def test_sweep_takes_a_fully_received_container_back_after_a_change_the_listener_missed(env, dispatched):
+    shipment_id, line_id, spo_number = _received_container(env, dispatched)
+    control_id, control_line, _ = _received_container(env, dispatched)
+    since = env.db.execute(select(func.localtimestamp() - text("interval '1 day'"))).scalar()
+    assert packing_list_recalc.changed_shipment_ids(env.db, since) & {shipment_id, control_id} == set()
+
     # A script retiring the line in bulk: no ORM instance, so no flush listener.
-    env.db.query(SPOAllocation).filter(SPOAllocation.spo_number == record["spo_number"]).update(
+    env.db.query(SPOAllocation).filter(SPOAllocation.spo_number == spo_number).update(
         {"retired_at": datetime.now(timezone.utc).replace(tzinfo=None)},
         synchronize_session=False,
     )
     env.db.commit()
     assert dispatched == []
 
+    changed = packing_list_recalc.changed_shipment_ids(env.db, since)
+    assert shipment_id in changed
+    assert control_id not in changed  # nobody touched it
+
     from app.services.rules.shipping_order_rules import nightly_refresh_open_containers
 
     nightly_refresh_open_containers(env.db, since=since)
     assert _stored(env, shipment_id, line_id)[0] == "in_transit"
+    assert _stored(env, control_id, control_line)[0] == "fully_received"
 
 
 def test_header_status_or_company_edit_queues_the_recompute(env, dispatched):

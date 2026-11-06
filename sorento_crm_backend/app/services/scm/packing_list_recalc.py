@@ -431,6 +431,20 @@ def changed_shipment_ids(db: Session, since) -> set[str]:
     return found
 
 
+#: Tables whose `updated_at` the sweep reads. A raw-SQL writer of one of them appends
+#: `stamp_sql(table)` to its SET list so the watermark sweep sees the change.
+STAMPED_TABLES = frozenset(
+    {"spo_allocations", "picking_lines", "picking_headers", "inbound_shipment_lines", "inbound_shipments"}
+)
+
+
+def stamp_sql(table: str) -> str:
+    """`, updated_at = now()` for a watched table (schema prefix and quotes ignored),
+    else empty: for a raw `UPDATE {table} SET ...` built from a variable table name."""
+    bare = table.rsplit(".", 1)[-1].strip('"')
+    return ", updated_at = now()" if bare in STAMPED_TABLES else ""
+
+
 def read_watermark():
     """When the last sweep started (naive, DB clock), or None when unknown."""
     from datetime import datetime

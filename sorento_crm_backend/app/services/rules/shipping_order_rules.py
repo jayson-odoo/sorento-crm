@@ -172,9 +172,11 @@ def nightly_refresh_open_containers(db: Session, *, since=None) -> int:
     since the last sweep (`packing_list_recalc.changed_shipment_ids`), received or
     not, so a change made around the listener (a script's bulk update) that should
     take a Fully Received container back is caught too. `since` defaults to the
-    watermark the previous sweep left in Redis (24 hours when there is none, 10
-    minutes of overlap against clock skew); the watermark moves only when `since`
-    was not given, i.e. on the scheduled sweep.
+    watermark the previous sweep left in Redis (24 hours when there is none). The
+    10 minutes of overlap cover transactions still open when the previous sweep read:
+    `now()` stamps a row with its TRANSACTION's start, so a write committed after that
+    read can carry an earlier stamp. The watermark moves only when `since` was not
+    given, i.e. on the scheduled sweep.
 
     Each shipment is refreshed and committed on its own; one that fails is
     rolled back, logged and skipped. Returns how many were refreshed.
