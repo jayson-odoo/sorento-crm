@@ -18,6 +18,7 @@
  */
 
 import type {
+  TagAccessory,
   TagCombo,
   FeatureIconsLayerProps,
   TagSpecValue,
@@ -45,6 +46,7 @@ import {
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
 import { featureIconsFor, type FeatureIcon } from './feature-icons';
+import { accessoriesOf } from './accessory-box';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
@@ -84,6 +86,7 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
     case 'price_badge':
     case 'barcode':
     case 'feature_icons':
+    case 'accessories':
     // Browser finding: the designer's own photo slots are `image` layers
     // (bound via `slot_binding: 'product_image'`), not `product_slot` -
     // they read product data exactly the same way and need the same
@@ -104,6 +107,7 @@ function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
     case 'barcode':
     case 'image':
     case 'feature_icons':
+    case 'accessories':
       return props.subjectSlot;
     default:
       return undefined;
@@ -1273,70 +1277,6 @@ export function buildAlternativesRow(
   return layers;
 }
 
-export interface AccessoryItem {
-  /** Shown under the picture. */
-  caption: string;
-  /** The picture, when there is one. */
-  source: { type: 'asset'; assetId: string } | { type: 'product_attachment'; attachmentId: string } | null;
-}
-
-const ACCESSORY_WIDTH_MM = 24;
-const ACCESSORY_TITLE_HEIGHT_MM = 6;
-
-/** The titled strip of small pictures with captions ("Accessories Included"). */
-export function buildAccessoriesStrip(
-  items: AccessoryItem[],
-  opts: BuildOptions & { title?: string },
-): TagLayer[] {
-  const layers = materialise(
-    [
-      {
-        type: 'text',
-        x: 0,
-        y: 0,
-        w: Math.max(ACCESSORY_WIDTH_MM, items.length * ACCESSORY_WIDTH_MM),
-        h: ACCESSORY_TITLE_HEIGHT_MM,
-        props: text(opts.title ?? 'Accessories Included', {
-          fontSize: 9,
-          fontWeight: 700,
-        }),
-      },
-    ],
-    opts,
-  );
-
-  let z = opts.z_index + 1;
-  items.forEach((item, index) => {
-    const x = index * ACCESSORY_WIDTH_MM;
-    layers.push(
-      ...materialise(
-        [
-          {
-            type: 'image',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 1,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 18,
-            props: { ...defaultImageProps(), source: item.source },
-          },
-          {
-            type: 'text',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 20,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 6,
-            props: text(item.caption, { fontSize: 7, align: 'center' }),
-          },
-        ],
-        { newId: opts.newId, x_mm: opts.x_mm, y_mm: opts.y_mm, z_index: z },
-      ),
-    );
-    z += 2;
-  });
-
-  return layers;
-}
-
 // ---------------------------------------------------------------------------
 // What a layer shows right now
 // ---------------------------------------------------------------------------
@@ -1363,6 +1303,8 @@ export interface TagLayerDisplay {
   code?: string | null;
   /** Feature icons: the matched library icons with a signed URL, in display order. */
   icons?: { id: string; url: string }[];
+  /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
+  accessories?: TagAccessory[];
 }
 
 /**
@@ -1394,6 +1336,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Barcode';
     case 'feature_icons':
       return 'Feature icons';
+    case 'accessories':
+      return 'Accessories';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -1481,6 +1425,10 @@ export function layerDisplay(
 
     case 'feature_icons':
       return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
+
+    case 'accessories':
+      // No data bound (the template editor with nothing previewed): absent, so samples draw.
+      return data ? { accessories: accessoriesOf(data, layer) } : {};
 
     default:
       return undefined;

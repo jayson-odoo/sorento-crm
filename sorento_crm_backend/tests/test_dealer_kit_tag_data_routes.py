@@ -368,7 +368,10 @@ def test_product_tag_data_keeps_every_field(api):
         # request line) can resolve `{{product.price_tag_description}}`
         # the same way the canvas already does off a line binding.
         "price_tag_description",
+        # PRICETAG-ACCESSORIES: the product's own accessory list (an Ala Carte tag prints it).
+        "accessories",
     }
+    assert body["accessories"] == []
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
     assert body["dimensions"] == "800 x 500 x 220 mm"

@@ -23,6 +23,7 @@ from app.api.v1.master_data import (
     product_companions,
     product_alternatives,
     product_combos,
+    accessories,
     product_compatibility,
     sales_agents,
     catalogue_photo_readings,
@@ -60,6 +61,9 @@ router.include_router(
 # hang one on. Registered here beside product_companions, the #779 precedent this
 # slice copies.
 router.include_router(product_combos.router, tags=["product-combos"])
+# PRICETAG-ACCESSORIES: no prefix, same reason (`/accessories`, `/products/{id}/accessories`,
+# `/product-combos/{id}/accessories`).
+router.include_router(accessories.router, tags=["accessories"])
 # NO prefix either: `/products/{id}/compatibility` and `/product-compatibility/...`.
 router.include_router(product_compatibility.router, tags=["product-compatibility"])
 router.include_router(

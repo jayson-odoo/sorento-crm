@@ -1299,6 +1299,7 @@ class ProductService:
         self._reject_if_companion_rule_dependency(product_id)
         self._reject_if_new_product_application_link(product_id)
         self._reject_if_on_quotation(product_id)
+        self._reject_if_listed_as_free_item(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1330,6 +1331,35 @@ class ProductService:
             raise handle_conflict(
                 f"This product was opened for new product application {row[0]}. "
                 "Undo that line first."
+            )
+
+    def _reject_if_listed_as_free_item(self, product_id: str) -> None:
+        """PRICETAG-ACCESSORIES: a product listed as another product's or a combo's free item holds
+        it (RESTRICT). Answer with a 409 naming the holder by code instead of the bare
+        IntegrityError's 500."""
+        from app.models.accessory import ProductAccessory, ProductComboAccessory
+        from app.models.product_combo import ProductCombo
+
+        holder = (
+            self.db.query(Product.product_code)
+            .join(ProductAccessory, ProductAccessory.product_id == Product.id)
+            .filter(ProductAccessory.item_product_id == product_id)
+            .first()
+        )
+        if holder is not None:
+            raise handle_conflict(
+                f"This product is listed as an accessory of {holder[0]}. Remove it there first."
+            )
+        combo = (
+            self.db.query(Product.product_code, ProductCombo.name)
+            .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+            .join(ProductComboAccessory, ProductComboAccessory.combo_id == ProductCombo.id)
+            .filter(ProductComboAccessory.item_product_id == product_id)
+            .first()
+        )
+        if combo is not None:
+            raise handle_conflict(
+                f'This product is a free item of combo "{combo[1]}" on {combo[0]}. Remove it there first.'
             )
 
     def _reject_if_on_quotation(self, product_id) -> None:

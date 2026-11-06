@@ -110,6 +110,7 @@ export function ComboTagPreview({
         id: combo.id,
         name: combo.name,
         free_items: null,
+        accessories: [],
         choices: [],
         upgrades: [],
         ...(row.combo ?? {}),
