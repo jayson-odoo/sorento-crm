@@ -212,10 +212,11 @@ def _after_commit(session: Session) -> None:
         logger.warning("packing_list_recalc.dispatch_failed", exc_info=True)
 
 
-def _after_rollback(session: Session) -> None:
-    # A full rollback: nothing this transaction noted happened. (A savepoint rollback
-    # leaves the set alone - one extra idempotent recompute is the cheaper mistake.)
-    if not session.in_transaction():
+def _after_soft_rollback(session: Session, previous_transaction) -> None:
+    # The outermost transaction rolled back: nothing it noted happened. A savepoint
+    # rollback (one record of an ingest batch) leaves the set alone - one extra
+    # idempotent recompute is the cheaper mistake.
+    if previous_transaction.parent is None:
         session.info.pop(_PENDING_KEY, None)
 
 
@@ -226,7 +227,7 @@ def register_packing_list_recalc_listeners() -> None:
         return
     event.listen(Session, "after_flush", _collect)
     event.listen(Session, "after_commit", _after_commit)
-    event.listen(Session, "after_rollback", _after_rollback)
+    event.listen(Session, "after_soft_rollback", _after_soft_rollback)
     _registered = True
 
 
