@@ -192,3 +192,56 @@ describe('merge-field edge cases', () => {
     expect(html()).toBe('<p>Price{{product.list_price}}</p>');
   });
 });
+
+// Owner hand test, 6 Nov (FAIL 2): a selected token chip showed no highlight, so he could not
+// tell whether it was selected. A chip inside the selection carries a visible selected class.
+describe('a selected token chip shows that it is selected', () => {
+  const chip = (container: HTMLElement, path: string) =>
+    container.querySelector<HTMLElement>(`.ProseMirror [data-merge-field="${path}"]`)!;
+
+  it('a text selection across a chip marks it selected', async () => {
+    const { container, editor } = await mount('<p>Code {{product.code}} end</p>', { mergeFields: true });
+    act(() => {
+      editor.chain().setTextSelection({ from: 2, to: 8 }).run();
+    });
+    expect(chip(container, 'product.code').classList).toContain('merge-field-selected');
+  });
+
+  it('a click selection of the chip itself marks it selected', async () => {
+    const { container, editor } = await mount('<p>Code {{product.code}} end</p>', { mergeFields: true });
+    act(() => {
+      editor.chain().setNodeSelection(6).run();
+    });
+    expect(chip(container, 'product.code').classList).toContain('merge-field-selected');
+  });
+
+  it('a chip outside the selection, or a collapsed caret, is not marked', async () => {
+    const { container, editor } = await mount('<p>{{product.code}} and {{spec.width}}</p>', {
+      mergeFields: true,
+    });
+    act(() => {
+      editor.chain().setTextSelection({ from: 2, to: 6 }).run();
+    });
+    expect(chip(container, 'spec.width').classList).not.toContain('merge-field-selected');
+    act(() => {
+      editor.chain().setTextSelection(2).run();
+    });
+    expect(chip(container, 'product.code').classList).not.toContain('merge-field-selected');
+  });
+});
+
+describe('toolbar="none" (the canvas in-place editor)', () => {
+  it('renders no toolbar and no box chrome, only the editable text', async () => {
+    const { container } = await mount('<p>x</p>', { toolbar: 'none', mergeFields: true });
+    expect(screen.queryByRole('button')).toBeNull();
+    const dom = container.querySelector<HTMLElement>('.ProseMirror')!;
+    expect(dom.className).not.toMatch(/\bprose\b/);
+  });
+
+  it('holds inline formatting only, like the inline toolbar', async () => {
+    const { editor } = await mount('<p>x</p>', { toolbar: 'none', mergeFields: true });
+    expect(editor.schema.nodes.heading).toBeUndefined();
+    expect(editor.schema.nodes.bulletList).toBeUndefined();
+    expect(editor.schema.marks.bold).toBeDefined();
+  });
+});

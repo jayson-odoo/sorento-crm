@@ -168,38 +168,9 @@ describe('inline edit of a description-bound layer (R16)', () => {
   });
 });
 
-// DESIGNER-RICH-TEXT: a layer whose OWN content is formatted is edited in the Inspector's rich
-// Content box. The plain canvas editor shows its text read-only and never writes plain text over
-// the marks; Cmd+B typed in the Content box formats the selection there, never the whole layer.
+// DESIGNER-RICH-TEXT: Cmd+B typed in the Inspector's Content box formats the selection there,
+// never the whole layer. (In-place editing of formatted content: TagCanvasEditor.inPlaceRich.test.tsx.)
 describe('a layer with formatted own content (DESIGNER-RICH-TEXT)', () => {
-  const OWN = '<p><strong>{{product.code}}</strong></p><p>LP</p>';
-
-  it('double-click opens the inline editor read-only on the plain text', async () => {
-    render(<TagCanvasEditor doc={docWith(layerWith('r', null, OWN, null))} onChange={vi.fn()} />);
-
-    fireEvent.doubleClick(screen.getByTestId('layer-r'));
-    const editor = (await screen.findByTestId('inline-text-editor')) as HTMLTextAreaElement;
-
-    expect(editor.readOnly).toBe(true);
-    expect(editor.value).toBe('{{product.code}}\nLP');
-  });
-
-  it('leaving the inline editor writes nothing over the formatted content', async () => {
-    const onChange = vi.fn();
-    render(<TagCanvasEditor doc={docWith(layerWith('r', null, OWN, null))} onChange={onChange} />);
-
-    fireEvent.doubleClick(screen.getByTestId('layer-r'));
-    const editor = await screen.findByTestId('inline-text-editor');
-    fireEvent.change(editor, { target: { value: 'typed over it' } });
-    fireEvent.blur(editor);
-    await waitFor(() => expect(screen.queryByTestId('inline-text-editor')).toBeNull());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    const saved = onChange.mock.calls.at(-1)![0] as TagTemplateDoc;
-    const layer = saved.layers.find((l) => l.id === 'r')!;
-    expect(layer.props.kind === 'text' && layer.props.text).toBe(OWN);
-  });
-
   it('Cmd+B with focus in the Inspector Content box does not bold the whole layer', async () => {
     const onChange = vi.fn();
     const { container } = render(
