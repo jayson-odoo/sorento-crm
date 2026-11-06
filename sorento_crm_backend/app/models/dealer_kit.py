@@ -759,6 +759,9 @@ class TagTemplate(Base, CompanyScopedMixin):
     # product/combo links and request lines survive and a restore is `archived_at = NULL`.
     # Archived templates are hidden from every list and picker.
     archived_at = Column(DateTime(timezone=False), nullable=True)
+    # TAG-TEMPLATE-DUPLICATE item 6: the list's shared manual (drag) order, its default order.
+    # Numbered within the company; NULL sorts last (created_at breaks the tie).
+    sort_order = Column(Integer, nullable=True)
 
     published_version = relationship(
         "TagTemplateVersion", foreign_keys=[published_version_id]
