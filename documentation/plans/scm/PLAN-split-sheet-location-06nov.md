@@ -1,37 +1,38 @@
-# PLAN: Review split shows the line's own location (SPLIT-SHEET-LOCATION)
+# PLAN: Detect an SO line location change (SPLIT-SHEET-LOCATION)
 
-Status: in progress. Small fix track (one coder, one reviewer, no migration).
+Status: waiting on owner answers to the behaviour card (PR comment `crew-ask`). Size M, one lane,
+no migration expected.
 
 ## Journey
 
 Owner, 6 Nov: the Fulfilment Planning board shows SO429664 line SRTWT8239-GM at "BRW-BB" (its
-AutoCount line location), but "Confirm SO429664" step 1 "Review split" shows "BRW". The sheet must
-show the line's own AutoCount location, same as the board.
+AutoCount line location), but "Confirm SO429664" step 1 "Review split" shows "BRW". Rescope
+(owner, 6 Nov ~16:15): this is a LOCATION CHANGE on the SO line that the system must detect the
+same way it detects a qty, delivery date or item code change. Do not just switch the sheet.
 
-## Cause
+## Findings (origin/main)
 
-`LineSplitService.line_facts` (`app/services/project_line_split_service.py`) computed
-`location = line.stock_location or <core warehouse code>`. The project line's `stock_location` is
-written by OI import / confirm paths and can be a pool/group code ("BRW"). The board reads
-`fact.own_code` = core SO line warehouse (`project_supply_service.py` `own_code`), and
-`ProjectOrderInquiryService._stock_location` names the core warehouse as the line's own location.
+- `outstanding_diff._classify_identity` compares item, qty and date on an id-paired line, never
+  location, so an ESB push that only moves the warehouse reads `unchanged` and `build_batch`
+  drops it. The only trace is an `OrderInquiryConflict` row nobody can see (no FE).
+- `projects.sales_order_lines.stock_location` is set to the core warehouse at adoption and at
+  every supply Confirm (`_restamp_stock_location`), or to what CS typed on the SO draft: it is
+  the location the line was last planned at.
+- The split sheet (`LineSplitService.line_facts`) prefers `stock_location`, so it shows the old
+  planned location while the board shows the current AutoCount one.
 
-## Fix
+## Proposed rule (pending owner answers)
 
-`line_facts` prefers the core line's warehouse code; `line.stock_location` is only a fallback for
-a line with no reconciled core warehouse (otherwise the cell would be blank).
-
-## Consumers of `LineFacts.location` (behaviour after the fix)
-
-- Split sheet GET payload `location` and its sort key (item, location, line no): now the core code.
-- Save validation "a split can only sit on a line of the same item and location": compares core
-  codes. Two lines at the same AutoCount warehouse are now always compatible even if their
-  projects `stock_location` differ; lines at different AutoCount warehouses that share a pool
-  code are no longer compatible (correct: they are different places).
-- Confirm handover email row `stock_location` (`project_order_inquiry_service.py`): reads
-  `f.line.stock_location or f.location`, so unchanged whenever stock_location is set.
+1. Diff: `_classify_identity` also compares location; a location-only move is a new kind
+   `location_changed`; combined with another change it rides on that row.
+2. Row: `from_json` / `to_json` carry `location` when it differed.
+3. Board: cell reads changed, old -> new location. CS re-confirms.
+4. Purchasing: only via the board Confirm. Applying restamps `stock_location` and live OI rows;
+   handover email verb `CHANGE_LOCATION` ("NEW LOCATION").
+5. Review split: current AutoCount location, old planned location marked when different.
+6. Optional backfill for lines already moved (owner question 1).
 
 ## Tests
 
-`tests/scm/test_split_sheet_location.py`: a line whose `stock_location` is a different code from
-its core warehouse reads the core code on the sheet (red before the fix).
+Red first, seeded SO429664-shaped data (planned BRW, AutoCount BRW-BB): diff classification,
+`build_batch` row and from/to, board annotation, Confirm handover verb, split sheet location.
