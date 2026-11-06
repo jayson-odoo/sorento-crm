@@ -27,6 +27,7 @@ from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.stock_debt_snapshot import StockDebtSnapshotRow
+from app.services.autocount_idempotency import attempt_store, send_with_attempts
 from app.services.error_handler import AppException, handle_not_found
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
 from app.services.project_supply_service import ProjectSupplyService
@@ -342,6 +343,17 @@ class StockDebtPoLinkService:
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:64]
 
+    def _send_intent(self, path: str, body: Dict[str, Any], po_line: PurchaseOrderLine) -> Dict[str, Any]:
+        """`_send` under the intent's key; after a definite AutoCount refusal the next press of the
+        same intent goes as a new attempt (STOCKDEBT-LINK-IDEM-KEY), since the Shared Service
+        replays a stored refusal for the same key and body forever. Any unconfirmed answer keeps
+        the key, so a timeout retry still replays and never splits the PO row twice."""
+        return send_with_attempts(
+            attempt_store(),
+            self._intent_key(path, body, po_line),
+            lambda key: self._send(path, body, key=key),
+        )
+
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
         try:
             return FoundryxAutocountClient(self.db).write(path, body, idempotency_key=key)
@@ -487,7 +499,7 @@ class StockDebtPoLinkService:
                 body["soDocDate"] = so.order_date.isoformat()
             if po.issue_date:
                 body["docDate"] = po.issue_date.isoformat()
-            answer = self._send("po-links", body, key=self._intent_key("po-links", body, po_line))
+            answer = self._send_intent("po-links", body, po_line)
             linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
                                         qty=_num(qty), company_code=company_code, linked_line=linked))
@@ -517,7 +529,7 @@ class StockDebtPoLinkService:
             body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
             if po.issue_date:
                 body["docDate"] = po.issue_date.isoformat()
-            answer = self._send("po-links/unlink", body, key=self._intent_key("po-links/unlink", body, po_line))
+            answer = self._send_intent("po-links/unlink", body, po_line)
             self._apply_safely(answer, po_line, None)
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
                                         qty=_num(po_line.qty_ordered), company_code=company_code))
@@ -545,7 +557,7 @@ class StockDebtPoLinkService:
                 body["docDate"] = po.issue_date.isoformat()
             if so.order_date:
                 body["soDocDate"] = so.order_date.isoformat()
-            answer = self._send("po-links/relink", body, key=self._intent_key("po-links/relink", body, po_line))
+            answer = self._send_intent("po-links/relink", body, po_line)
             linked = self._apply_safely(answer, po_line, so_line.source_ref.strip())
             results.append(self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
                                         qty=_num(po_line.qty_ordered), company_code=company_code,
