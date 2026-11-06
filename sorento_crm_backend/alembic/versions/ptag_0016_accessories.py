@@ -20,7 +20,7 @@ Every statement is idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, skip a
 exists), so the same SQL is safe on a database that already holds it. Additive only.
 
 Revision ID: ptag_0016_accessories
-Revises: dkfi_0001_spec_value_icons
+Revises: ttord_0001_tag_template_sort
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ptag_0016_accessories"
-down_revision = "dkfi_0001_spec_value_icons"
+down_revision = "ttord_0001_tag_template_sort"
 branch_labels = None
 depends_on = None
 
