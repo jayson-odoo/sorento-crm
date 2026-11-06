@@ -18,6 +18,7 @@
  */
 
 import type {
+  TagAccessory,
   TagCombo,
   FeatureIconsLayerProps,
   TagSpecValue,
@@ -45,6 +46,7 @@ import {
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
 import { featureIconsFor, type FeatureIcon } from './feature-icons';
+import { accessoriesOf } from './accessory-box';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
@@ -104,6 +106,7 @@ function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
     case 'barcode':
     case 'image':
     case 'feature_icons':
+    case 'accessories':
       return props.subjectSlot;
     default:
       return undefined;
@@ -1285,6 +1288,8 @@ export interface TagLayerDisplay {
   code?: string | null;
   /** Feature icons: the matched library icons with a signed URL, in display order. */
   icons?: { id: string; url: string }[];
+  /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
+  accessories?: TagAccessory[];
 }
 
 /**
@@ -1316,6 +1321,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Barcode';
     case 'feature_icons':
       return 'Feature icons';
+    case 'accessories':
+      return 'Accessories';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -1403,6 +1410,14 @@ export function layerDisplay(
 
     case 'feature_icons':
       return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
+
+    case 'accessories': {
+      // The badge's own picture rides in `imageUrl`, like a badge layer's.
+      const badgeUrl = layer.props.badgeAssetId ? (assetUrls[layer.props.badgeAssetId] ?? null) : null;
+      return data
+        ? { accessories: accessoriesOf(data, layer), imageUrl: badgeUrl }
+        : { imageUrl: badgeUrl };
+    }
 
     default:
       return undefined;

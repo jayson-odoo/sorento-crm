@@ -1327,10 +1327,15 @@ class TagAccessory(BaseModel):
     """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
     Declared on every tag shape below or `response_model` drops it without a word."""
 
+    #: `accessory` (library item) or `product` (a catalogue product listed as a free item, whose
+    #: `code`, description as `name`, photo and `list_price` are read live).
+    kind: str = "accessory"
     id: str
     name: str
     spec: Optional[str] = None
     image: Optional[TagAccessoryImage] = None
+    code: Optional[str] = None
+    list_price: Optional[float] = None
 
 
 class TagComboOption(BaseModel):

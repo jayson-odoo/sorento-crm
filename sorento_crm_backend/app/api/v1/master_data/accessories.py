@@ -16,7 +16,7 @@ from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.accessory import (
     AccessoryCreate,
-    AccessoryIdsIn,
+    AccessoryItemsIn,
     AccessoryImageOut,
     AccessoryListOut,
     AccessoryOut,
@@ -27,6 +27,18 @@ from app.services.accessory_service import AccessoryService
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
+
+
+def _items(payload: AccessoryItemsIn) -> list[dict]:
+    """The ordered entries, each id checked to be a UUID (a malformed one is a 422, not a 500)."""
+    out = []
+    for item in payload.items:
+        if item.accessory_id:
+            validate_uuid_path(item.accessory_id, resource="Accessory")
+        if item.product_id:
+            validate_uuid_path(item.product_id, resource="Product")
+        out.append(item.model_dump())
+    return out
 
 VIEW = "master_data.products.view"
 EDIT = "master_data.products.edit"
@@ -125,14 +137,12 @@ def list_product_accessories(
 @router.put("/products/{product_id}/accessories", response_model=AccessoryListOut)
 def set_product_accessories(
     product_id: str,
-    payload: AccessoryIdsIn,
+    payload: AccessoryItemsIn,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(product_id, resource="Product")
-    for value in payload.accessory_ids:
-        validate_uuid_path(value, resource="Accessory")
-    return {"data": AccessoryService(db).set_product_list(product_id, payload.accessory_ids)}
+    return {"data": AccessoryService(db).set_product_list(product_id, _items(payload))}
 
 
 @router.get("/product-combos/{combo_id}/accessories", response_model=AccessoryListOut)
@@ -148,11 +158,9 @@ def list_combo_accessories(
 @router.put("/product-combos/{combo_id}/accessories", response_model=AccessoryListOut)
 def set_combo_accessories(
     combo_id: str,
-    payload: AccessoryIdsIn,
+    payload: AccessoryItemsIn,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(combo_id, resource="Combo")
-    for value in payload.accessory_ids:
-        validate_uuid_path(value, resource="Accessory")
-    return {"data": AccessoryService(db).set_combo_list(combo_id, payload.accessory_ids)}
+    return {"data": AccessoryService(db).set_combo_list(combo_id, _items(payload))}

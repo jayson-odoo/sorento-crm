@@ -114,6 +114,16 @@ def free_item_names(items) -> list[str]:
     return out
 
 
+def _free_product(db, code: str, company_id) -> Optional[Product]:
+    """The product a free item's code names, in the host's company; None for no code or no match."""
+    if not code:
+        return None
+    statement = db.query(Product).filter(func.upper(Product.product_code) == code.upper())
+    if company_id is not None:
+        statement = statement.filter(Product.company_id == company_id)
+    return statement.first()
+
+
 def _has_free_list(db, combo_id: str) -> bool:
     """The combo already lists its free items: a load never overwrites a list someone set."""
     return (
@@ -438,8 +448,23 @@ def process_entry(
             service.update(combo_id, update_fields)
         if want_free:
             accessories = AccessoryService(db)
-            ids = [accessories.find_or_create(name, host.company_id).id for name in free_names]
-            accessories.set_combo_list(combo_id, ids)
+            combo_row = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+            in_combo = {host.id} | {part.part_product_id for part in (combo_row.parts if combo_row else [])}
+            items, seen = [], set()
+            for free in entry.get("free_items") or []:
+                text = f"{(free.get('code') or '').strip()} {(free.get('label') or '').strip()}".strip()
+                if not text:
+                    continue
+                # Owner, 6 Nov ~10:45: a free item with a catalogue code is that PRODUCT, read live.
+                product = _free_product(db, (free.get("code") or "").strip(), host.company_id)
+                if product is not None and product.id not in in_combo:
+                    key = ("product_id", product.id)
+                else:
+                    key = ("accessory_id", accessories.find_or_create(text, host.company_id).id)
+                if key not in seen:
+                    seen.add(key)
+                    items.append({key[0]: key[1]})
+            accessories.set_combo_list(combo_id, items)
         if prune:
             for product_id, part in have.items():
                 if product_id not in want and product_id not in held_back:

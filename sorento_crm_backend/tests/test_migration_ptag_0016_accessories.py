@@ -233,3 +233,42 @@ def test_an_ala_carte_line_text_fills_its_product_when_empty(db):
     db.flush()
     _move(db)
     assert _product_names(db, host) == [name]
+
+
+# --------------------------------------------------------------------------- product entries
+# Owner, 6 Nov ~10:45: a free item can be a real product. The importer wrote "CODE label"; a piece
+# whose FIRST word is a product code of the same company becomes a product entry.
+
+
+def _combo_entries(db, combo):
+    from app.models.accessory import ProductComboAccessory
+
+    rows = (
+        db.query(ProductComboAccessory)
+        .filter(ProductComboAccessory.combo_id == combo.id)
+        .order_by(ProductComboAccessory.sort_order)
+        .all()
+    )
+    return [("product", r.item_product_id) if r.item_product_id else ("accessory", r.accessory_id) for r in rows]
+
+
+def test_a_piece_led_by_a_product_code_becomes_a_product_entry(db):
+    waste = seed.product(db, "ZZWASTE")
+    host = seed.product(db, "ZZMIG")
+    other = _tag("CHOPPING BOARD")
+    cb = seed.combo(db, host, "ZZT a", free_items=f"{waste.product_code} Popup waste, {other}")
+    _move(db)
+    entries = _combo_entries(db, cb)
+    assert entries[0] == ("product", waste.id)
+    assert entries[1][0] == "accessory"
+    assert _library(db, [f"{waste.product_code} Popup waste"]) == [], "no library row for a product"
+
+
+def test_a_code_from_another_company_is_not_a_product_entry(db):
+    from tests.test_product_combos import MOCHA, _mocha
+
+    _mocha(db)
+    theirs = seed.product(db, "ZZTHEIRS", company_id=MOCHA)
+    cb = seed.combo(db, seed.product(db, "ZZMIG"), "ZZT a", free_items=f"{theirs.product_code} thing")
+    _move(db)
+    assert _combo_entries(db, cb)[0][0] == "accessory"

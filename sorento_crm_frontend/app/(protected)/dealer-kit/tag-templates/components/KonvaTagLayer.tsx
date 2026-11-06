@@ -17,8 +17,10 @@ import { useMemo } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
+  AccessoriesLayerProps,
   FeatureIconsLayerProps,
   LayerPadding,
+  TagAccessory,
   TagLayer,
   TagLayerProps,
   TextLayerProps,
@@ -43,6 +45,12 @@ import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-tex
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
+import {
+  accessoryBoxLayout,
+  accessoryCardInner,
+  ptToMm,
+  sampleAccessories,
+} from '@/lib/dealer-kit/accessory-box';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -380,6 +388,20 @@ function LayerContent({
           scale={scale}
           props={props}
           icons={display?.icons ?? []}
+        />
+      );
+
+    case 'accessories':
+      return (
+        <AccessoriesContent
+          w={w}
+          h={h}
+          widthMm={widthMm}
+          heightMm={heightMm}
+          scale={scale}
+          props={props}
+          accessories={display?.accessories}
+          badgeUrl={display?.imageUrl ?? null}
         />
       );
 
@@ -1100,6 +1122,173 @@ function FeatureIconsContent({
           <ImageContent w={size} h={size} url={icons[i].url} fit="contain" maskShape="none" />
         </Group>
       ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Accessories box (PRICETAG-ACCESSORIES)
+// ---------------------------------------------------------------------------
+
+/**
+ * The styled box with one mini-card per accessory, laid out by `accessoryBoxLayout` (the print page
+ * uses the same function). `accessories` undefined = nothing bound (the template editor with no
+ * preview): two sample cards so the box can be styled. An empty list: the dashed "Accessories"
+ * outline here, nothing on print (A7).
+ */
+function AccessoriesContent({
+  w,
+  h,
+  widthMm,
+  heightMm,
+  scale,
+  props,
+  accessories,
+  badgeUrl,
+}: {
+  w: number;
+  h: number;
+  widthMm: number;
+  heightMm: number;
+  scale: number;
+  props: AccessoriesLayerProps;
+  accessories: TagAccessory[] | undefined;
+  badgeUrl: string | null;
+}) {
+  const items = accessories ?? sampleAccessories();
+  const box = accessoryBoxLayout(items.length, props, widthMm, heightMm);
+  if (box.shown === 0) {
+    return (
+      <>
+        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Text
+          width={w}
+          height={h}
+          text="Accessories"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 8)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+  const px = (mm: number) => mm2px(mm, scale);
+  const fontFamily = props.fontFamily || undefined;
+  return (
+    <>
+      <Rect
+        width={px(box.boxWidth_mm)}
+        height={px(box.boxHeight_mm)}
+        fill={props.fill}
+        stroke={props.stroke}
+        strokeWidth={px(props.strokeWidth_mm)}
+        cornerRadius={px(props.cornerRadius_mm)}
+      />
+      {box.header && (
+        <Text
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          text={props.headerText}
+          align="center"
+          verticalAlign="middle"
+          fontStyle="bold"
+          fontFamily={fontFamily}
+          fontSize={px(ptToMm(props.headerFontSize))}
+          fill={props.headerColor}
+          wrap="none"
+          ellipsis
+        />
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        const inner = accessoryCardInner(card, props, Boolean(item.image?.url));
+        return (
+          <Group key={`${item.id}-${i}`} x={px(card.x_mm)} y={px(card.y_mm)}>
+            <Rect
+              width={px(card.width_mm)}
+              height={px(card.height_mm)}
+              fill={props.cardFill}
+              cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
+            />
+            {inner.image && (
+              <Group x={px(inner.image.x_mm)} y={px(inner.image.y_mm)}>
+                <ImageContent
+                  w={px(inner.image.width_mm)}
+                  h={px(inner.image.height_mm)}
+                  url={item.image?.url ?? null}
+                  fit="contain"
+                  maskShape="none"
+                />
+              </Group>
+            )}
+            <Text
+              x={px(inner.name.x_mm)}
+              y={px(inner.name.y_mm)}
+              width={px(inner.name.width_mm)}
+              height={px(inner.name.height_mm)}
+              text={item.name}
+              align={inner.align}
+              fontStyle="bold"
+              fontFamily={fontFamily}
+              fontSize={px(ptToMm(props.nameFontSize))}
+              fill={props.textColor}
+              wrap="none"
+              ellipsis
+            />
+            {item.spec ? (
+              <Text
+                x={px(inner.spec.x_mm)}
+                y={px(inner.spec.y_mm)}
+                width={px(inner.spec.width_mm)}
+                height={px(inner.spec.height_mm)}
+                text={item.spec}
+                align={inner.align}
+                fontFamily={fontFamily}
+                fontSize={px(ptToMm(props.specFontSize))}
+                fill={props.textColor}
+                wrap="none"
+                ellipsis
+              />
+            ) : null}
+          </Group>
+        );
+      })}
+      {box.badge && (
+        <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
+          {badgeUrl ? (
+            <ImageContent
+              w={px(box.badge.width_mm)}
+              h={px(box.badge.height_mm)}
+              url={badgeUrl}
+              fit="contain"
+              maskShape="none"
+            />
+          ) : (
+            <>
+              <Ellipse
+                x={px(box.badge.width_mm / 2)}
+                y={px(box.badge.height_mm / 2)}
+                radiusX={px(box.badge.width_mm / 2)}
+                radiusY={px(box.badge.height_mm / 2)}
+                fill={props.badgeColor}
+              />
+              <Text
+                width={px(box.badge.width_mm)}
+                height={px(box.badge.height_mm)}
+                text="+"
+                align="center"
+                verticalAlign="middle"
+                fontStyle="bold"
+                fontSize={px(box.badge.height_mm * 0.9)}
+                fill="#ffffff"
+              />
+            </>
+          )}
+        </Group>
+      )}
     </>
   );
 }

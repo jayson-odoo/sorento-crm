@@ -205,6 +205,27 @@ def test_ac_8_2_apply_loads_the_combo_description_free_items_and_cover(
     assert len(storage.objects) == 1, "the cover went through the storage seam once"
 
 
+def test_a_free_item_whose_code_is_a_catalogue_product_loads_as_that_product(
+    db, catalogue, photos, tmp_path, storage
+):
+    """PRICETAG-ACCESSORIES (owner, 6 Nov ~10:45): a free item with a real code is the product."""
+    from app.models.accessory import ProductComboAccessory
+
+    tap = _prod(db, "ZZTTAP1")
+    db.commit()
+    _run(db, tmp_path, photos, apply=True)
+    combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
+    with company_scope(db, None):
+        rows = (
+            db.query(ProductComboAccessory)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+        assert rows[0].item_product_id == tap.id and rows[0].accessory_id is None
+        assert rows[1].accessory_id is not None and rows[1].accessory.name == "Waste"
+
+
 def test_ac_8_2_components_become_fixed_parts_options_share_a_group_topups_are_upgrades(
     db, catalogue, photos, tmp_path, storage
 ):

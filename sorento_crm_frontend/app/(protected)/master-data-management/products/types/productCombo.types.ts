@@ -13,6 +13,8 @@
  * never sold, and the chatbot searches sets; combos are invisible to it.
  */
 
+import type { AccessoryEntry } from '../../accessories/types/accessory.types';
+
 /** One part on a combo, as the reader sees it - never a bare id. */
 export interface ProductComboPartRow {
   id: string;
@@ -50,9 +52,10 @@ export interface ProductComboRow {
   sort_order: number;
   /** PRICETAG-COMBO: printed on the tag; a blank price prints no price (never a sum of the parts). */
   description?: string | null;
-  free_items?: string | null;
   list_price?: number | string | null;
   sell_price?: number | string | null;
+  /** PRICETAG-ACCESSORIES: the combo's own ordered list; replaces the old free text. */
+  accessories?: AccessoryEntry[];
   parts: ProductComboPartRow[];
   /** Optional so an older fixture/mock omitting it still type-checks;
    *  the backend always sends the key (null with no picture). */
@@ -92,7 +95,6 @@ export interface ProductComboUpdate {
   name?: string;
   sort_order?: number;
   description?: string | null;
-  free_items?: string | null;
   list_price?: number | null;
   sell_price?: number | null;
 }

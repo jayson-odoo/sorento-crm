@@ -378,7 +378,7 @@ def product_tag_data(
         # figure now (Slice A), so the currency has to travel as its own field.
         "currency": prices.currency if prices else DEFAULT_CURRENCY,
         # PRICETAG-ACCESSORIES: the product's OWN list, in order (an Ala Carte tag prints it).
-        "accessories": product_tag_accessories(db, product.id),
+        "accessories": product_tag_accessories(db, product.id, viewer),
     }
 
 
@@ -1216,7 +1216,7 @@ def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
             )
     # PRICETAG-ACCESSORIES: the combo's own list (never the host's), and `free_items` is now
     # built from it, so the `combo.free_items` merge field and the data-change diff keep working.
-    accessories = combo_tag_accessories(db, combo.id)
+    accessories = combo_tag_accessories(db, combo.id, viewer)
     return {
         "id": combo.id,
         "name": combo.name,

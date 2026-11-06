@@ -8,10 +8,13 @@ documentation/plans/dealer-kit/PLAN-pricetag-accessories-06nov.md):
 2. The `accessory_image` attachment type, seeded by code. Pictures are stored with
    `entity_type = 'general'`, so the attachments CHECK is not rebuilt.
 3. `move_free_text`: every non-blank `product_combos.free_items` and
-   `price_tag_request_lines.included_accessories` is split (line breaks, commas, " + "),
-   de-duplicated by name ignoring case into the library, and listed in written order: combo
-   text on that combo; line text on the line's combo when it has one, else on the line's product;
-   never over a list that already exists (a NOTICE names what was left). Old columns stay.
+   `price_tag_request_lines.included_accessories` is split (line breaks, commas, " + ") and listed
+   in written order: combo text on that combo; line text on the line's combo when it has one, else
+   on the line's product; never over a list that already exists (a NOTICE names what was left).
+   A piece whose first word is a product code of the same company (the importer wrote
+   "CODE label") becomes a PRODUCT entry (owner, 6 Nov ~10:45), unless that product is the host
+   itself or already a part of the combo; any other piece becomes a library accessory,
+   de-duplicated by name ignoring case. Old columns stay.
 
 Every statement is idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, skip a list that
 exists), so the same SQL is safe on a database that already holds it. Additive only.
@@ -52,27 +55,37 @@ DDL = [
     CREATE TABLE IF NOT EXISTS product_accessories (
         id UUID PRIMARY KEY,
         product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-        accessory_id UUID NOT NULL REFERENCES accessories(id) ON DELETE RESTRICT,
+        accessory_id UUID REFERENCES accessories(id) ON DELETE RESTRICT,
+        item_product_id UUID REFERENCES products(id) ON DELETE RESTRICT,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        CONSTRAINT uq_product_accessories_pair UNIQUE (product_id, accessory_id)
+        CONSTRAINT ck_product_accessories_one_item CHECK ((accessory_id IS NULL) <> (item_product_id IS NULL)),
+        CONSTRAINT uq_product_accessories_pair UNIQUE (product_id, accessory_id),
+        CONSTRAINT uq_product_accessories_product UNIQUE (product_id, item_product_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_product_accessories_product_id ON product_accessories (product_id)",
     "CREATE INDEX IF NOT EXISTS ix_product_accessories_accessory_id "
     "ON product_accessories (accessory_id)",
+    "CREATE INDEX IF NOT EXISTS ix_product_accessories_item_product_id "
+    "ON product_accessories (item_product_id)",
     """
     CREATE TABLE IF NOT EXISTS product_combo_accessories (
         id UUID PRIMARY KEY,
         combo_id UUID NOT NULL REFERENCES product_combos(id) ON DELETE CASCADE,
-        accessory_id UUID NOT NULL REFERENCES accessories(id) ON DELETE RESTRICT,
+        accessory_id UUID REFERENCES accessories(id) ON DELETE RESTRICT,
+        item_product_id UUID REFERENCES products(id) ON DELETE RESTRICT,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        CONSTRAINT uq_product_combo_accessories_pair UNIQUE (combo_id, accessory_id)
+        CONSTRAINT ck_product_combo_accessories_one_item CHECK ((accessory_id IS NULL) <> (item_product_id IS NULL)),
+        CONSTRAINT uq_product_combo_accessories_pair UNIQUE (combo_id, accessory_id),
+        CONSTRAINT uq_product_combo_accessories_product UNIQUE (combo_id, item_product_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_product_combo_accessories_combo_id "
     "ON product_combo_accessories (combo_id)",
     "CREATE INDEX IF NOT EXISTS ix_product_combo_accessories_accessory_id "
     "ON product_combo_accessories (accessory_id)",
+    "CREATE INDEX IF NOT EXISTS ix_product_combo_accessories_item_product_id "
+    "ON product_combo_accessories (item_product_id)",
     "INSERT INTO attachment_types "
     "(id, code, type_name, allowed_extensions, max_file_size_mb, created_at) "
     "SELECT gen_random_uuid(), 'accessory_image', 'Accessory Image', "
@@ -88,12 +101,13 @@ DECLARE
     piece text;
     pos integer;
     acc uuid;
+    item uuid;
     to_combo uuid;
     to_product uuid;
 BEGIN
     -- Combo "Free items" -> that combo's list, unless it already has one.
     FOR r IN
-        SELECT c.id AS combo_id, p.company_id, c.free_items AS txt
+        SELECT c.id AS combo_id, c.host_product_id AS host_id, p.company_id, c.free_items AS txt
         FROM product_combos c
         JOIN products p ON p.id = c.host_product_id
         WHERE coalesce(btrim(c.free_items), '') <> ''
@@ -107,16 +121,31 @@ BEGIN
     + r"""') AS t
             WHERE btrim(t) <> ''
         LOOP
-            SELECT a.id INTO acc FROM accessories a
-            WHERE a.company_id IS NOT DISTINCT FROM r.company_id AND lower(a.name) = lower(piece)
+            SELECT p2.id INTO item FROM products p2
+            WHERE p2.company_id IS NOT DISTINCT FROM r.company_id
+              AND upper(p2.product_code) = upper(split_part(piece, ' ', 1))
+              AND p2.id <> r.host_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM product_combo_parts cp
+                  WHERE cp.combo_id = r.combo_id AND cp.part_product_id = p2.id
+              )
             LIMIT 1;
-            IF acc IS NULL THEN
-                acc := gen_random_uuid();
-                INSERT INTO accessories (id, company_id, name) VALUES (acc, r.company_id, piece);
+            IF item IS NOT NULL THEN
+                INSERT INTO product_combo_accessories (id, combo_id, item_product_id, sort_order)
+                VALUES (gen_random_uuid(), r.combo_id, item, pos)
+                ON CONFLICT (combo_id, item_product_id) DO NOTHING;
+            ELSE
+                SELECT a.id INTO acc FROM accessories a
+                WHERE a.company_id IS NOT DISTINCT FROM r.company_id AND lower(a.name) = lower(piece)
+                LIMIT 1;
+                IF acc IS NULL THEN
+                    acc := gen_random_uuid();
+                    INSERT INTO accessories (id, company_id, name) VALUES (acc, r.company_id, piece);
+                END IF;
+                INSERT INTO product_combo_accessories (id, combo_id, accessory_id, sort_order)
+                VALUES (gen_random_uuid(), r.combo_id, acc, pos)
+                ON CONFLICT (combo_id, accessory_id) DO NOTHING;
             END IF;
-            INSERT INTO product_combo_accessories (id, combo_id, accessory_id, sort_order)
-            VALUES (gen_random_uuid(), r.combo_id, acc, pos)
-            ON CONFLICT (combo_id, accessory_id) DO NOTHING;
             pos := pos + 1;
         END LOOP;
     END LOOP;
@@ -155,6 +184,28 @@ BEGIN
     + r"""') AS t
             WHERE btrim(t) <> ''
         LOOP
+            SELECT p2.id INTO item FROM products p2
+            WHERE p2.company_id IS NOT DISTINCT FROM r.company_id
+              AND upper(p2.product_code) = upper(split_part(piece, ' ', 1))
+              AND p2.id <> r.product_id
+              AND (to_combo IS NULL OR NOT EXISTS (
+                  SELECT 1 FROM product_combo_parts cp
+                  WHERE cp.combo_id = to_combo AND cp.part_product_id = p2.id
+              ))
+            LIMIT 1;
+            IF item IS NOT NULL THEN
+                IF to_combo IS NOT NULL THEN
+                    INSERT INTO product_combo_accessories (id, combo_id, item_product_id, sort_order)
+                    VALUES (gen_random_uuid(), to_combo, item, pos)
+                    ON CONFLICT (combo_id, item_product_id) DO NOTHING;
+                ELSE
+                    INSERT INTO product_accessories (id, product_id, item_product_id, sort_order)
+                    VALUES (gen_random_uuid(), to_product, item, pos)
+                    ON CONFLICT (product_id, item_product_id) DO NOTHING;
+                END IF;
+                pos := pos + 1;
+                CONTINUE;
+            END IF;
             SELECT a.id INTO acc FROM accessories a
             WHERE a.company_id IS NOT DISTINCT FROM r.company_id AND lower(a.name) = lower(piece)
             LIMIT 1;

@@ -46,6 +46,14 @@ vi.mock('@/components/ui/rich-text-editor', () => {
 vi.mock('./ComboTagPreview', () => ({ ComboTagPreview: () => null }));
 
 vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+// The accessory list has its own suite; here it stands in as a labelled marker.
+vi.mock('./AccessoryListField', () => ({
+  AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
+    <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
+      {props.label}
+    </div>
+  ),
+}));
 
 vi.mock('./AddComboModal', () => ({
   AddComboModal: () => null,
@@ -141,7 +149,6 @@ const COMBO = {
   sort_order: 0,
   parts: [MIRROR, WHITE, BLACK, STONE],
   description: 'Cabinet, mirror and basin',
-  free_items: 'Tap, waste',
   list_price: 2500,
   sell_price: 1999,
   created_at: '2026-11-01T00:00:00Z',
@@ -171,7 +178,10 @@ describe('Combos card, combo fields (AC-6.1)', () => {
     expect(scope.getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
     expect(scope.getByLabelText(/^Sell price \(RM\)/i)).toHaveValue(1999);
     expect(scope.getByLabelText(/^Description/i)).toHaveValue('<p>Cabinet, mirror and basin</p>');
-    expect(scope.getByLabelText(/^Free items/i)).toHaveValue('Tap, waste');
+    // Free items is the accessory list now, not a text box.
+    expect(scope.queryByLabelText(/^Free items/i)).toBeNull();
+    expect(scope.getByTestId('accessory-list')).toHaveTextContent('Free items');
+    expect(scope.getByTestId('accessory-list')).toHaveAttribute('data-owner', 'combo-3');
   });
 
   it('saves a changed combo price through the combo update hook with a number', () => {
@@ -187,18 +197,14 @@ describe('Combos card, combo fields (AC-6.1)', () => {
     expect(Object.keys(calls[0].write)).toEqual(['list_price']);
   });
 
-  it('saves a changed description and free items', () => {
+  it('saves a changed description', () => {
     const block = renderCard();
     const description = within(block).getByLabelText(/^Description/i);
     fireEvent.change(description, { target: { value: 'New text' } });
     fireEvent.blur(description);
-    const free = within(block).getByLabelText(/^Free items/i);
-    fireEvent.change(free, { target: { value: 'Tap' } });
-    fireEvent.blur(free);
 
     expect(written(updateComboMutate)).toEqual([
       { comboId: 'combo-3', write: { description: 'New text' } },
-      { comboId: 'combo-3', write: { free_items: 'Tap' } },
     ]);
   });
 
@@ -261,9 +267,8 @@ describe('Combos card, combo fields (AC-6.1)', () => {
 
     expect(scope.getByText(/List price/i)).toBeInTheDocument();
     expect(scope.getByText(/Sell price/i)).toBeInTheDocument();
-    expect(scope.getByText(/Free items/i)).toBeInTheDocument();
+    expect(scope.getByTestId('accessory-list')).toHaveAttribute('data-can-edit', 'false');
     expect(scope.getByText('Cabinet, mirror and basin')).toBeInTheDocument();
-    expect(scope.getByText('Tap, waste')).toBeInTheDocument();
     expect(scope.getByText(/2,?500/)).toBeInTheDocument();
     expect(scope.queryByLabelText(/^List price \(RM\)/i)).toBeNull();
     expect(scope.queryByLabelText(/^Description/i)).toBeNull();

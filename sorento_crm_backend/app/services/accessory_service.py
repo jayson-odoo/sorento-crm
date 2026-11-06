@@ -82,40 +82,89 @@ def image_of(db: Session, attachment_id: Optional[str]) -> Optional[Dict[str, st
 
 
 def tag_accessory(db: Session, accessory: Accessory) -> Dict[str, Any]:
-    """One accessory as a price tag carries it."""
+    """One library accessory as a price tag carries it."""
     return {
+        "kind": "accessory",
         "id": accessory.id,
         "name": accessory.name,
         "spec": accessory.spec,
         "image": image_of(db, accessory.image_attachment_id),
+        "code": None,
+        "list_price": None,
     }
 
 
-def product_tag_accessories(db: Session, product_id: str) -> List[Dict[str, Any]]:
-    """The product's own list, in order, as the tag carries it."""
-    rows = (
+def tag_product_entry(db: Session, product: Product, viewer=None) -> Dict[str, Any]:
+    """A catalogue product listed as a free item (owner, 6 Nov ~10:45): its code, description
+    (else name), lead photo and list price, all read live for this viewer."""
+    from app.services.dealer_kit.pricing import resolve_prices
+    from app.services.dealer_kit.product_images import gallery_images
+    from app.services.dealer_kit.tag_data_service import staff_viewer
+
+    viewer = viewer or staff_viewer()
+    prices = resolve_prices(db, [product], viewer, None).get(product.id)
+    images = gallery_images(db, product, viewer)
+    lead = next((image for image in images if image.get("is_primary")), images[0] if images else None)
+    return {
+        "kind": "product",
+        "id": product.id,
+        "name": (product.description or "").strip() or product.product_name or product.product_code,
+        "spec": None,
+        "image": {"attachment_id": lead["attachment_id"], "url": lead["url"]} if lead else None,
+        "code": product.product_code,
+        "list_price": prices.list_price if prices else None,
+    }
+
+
+def _tag_entries(db: Session, links, viewer=None) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for link in links:
+        if link.item_product_id:
+            if link.item_product is not None:
+                out.append(tag_product_entry(db, link.item_product, viewer))
+        elif link.accessory is not None:
+            out.append(tag_accessory(db, link.accessory))
+    return out
+
+
+def _product_links(db: Session, product_id: str):
+    return (
         db.query(ProductAccessory)
         .filter(ProductAccessory.product_id == product_id)
         .order_by(ProductAccessory.sort_order, ProductAccessory.id)
         .all()
     )
-    return [tag_accessory(db, row.accessory) for row in rows if row.accessory is not None]
 
 
-def combo_tag_accessories(db: Session, combo_id: str) -> List[Dict[str, Any]]:
-    """The combo's own list, in order. Never the host product's (owner ruling Q1)."""
-    rows = (
+def _combo_links(db: Session, combo_id: str):
+    return (
         db.query(ProductComboAccessory)
         .filter(ProductComboAccessory.combo_id == combo_id)
         .order_by(ProductComboAccessory.sort_order, ProductComboAccessory.id)
         .all()
     )
-    return [tag_accessory(db, row.accessory) for row in rows if row.accessory is not None]
+
+
+def product_tag_accessories(db: Session, product_id: str, viewer=None) -> List[Dict[str, Any]]:
+    """The product's own list, in order, as the tag carries it."""
+    return _tag_entries(db, _product_links(db, product_id), viewer)
+
+
+def combo_tag_accessories(db: Session, combo_id: str, viewer=None) -> List[Dict[str, Any]]:
+    """The combo's own list, in order. Never the host product's (owner ruling Q1)."""
+    return _tag_entries(db, _combo_links(db, combo_id), viewer)
+
+
+def entry_text(item: Dict[str, Any]) -> str:
+    """`DRAINER`, or `SRTW5000 Popup Waste 80mm` for a product entry."""
+    if item.get("kind") == "product":
+        return " ".join(part for part in (item.get("code"), item.get("name")) if part)
+    return item.get("name") or ""
 
 
 def names_text(accessories: Iterable[Dict[str, Any]]) -> str:
     """`DRAINER, PULL OUT DRAINER`: what the old free-text slots now print, built from the list."""
-    return ", ".join(item["name"] for item in accessories if item.get("name"))
+    return ", ".join(text for text in (entry_text(item) for item in accessories) if text)
 
 
 class AccessoryService:
@@ -275,23 +324,24 @@ class AccessoryService:
 
     def product_list(self, product_id: str) -> List[Dict[str, Any]]:
         self._product_or_404(product_id)
-        rows = (
-            self.db.query(ProductAccessory)
-            .filter(ProductAccessory.product_id == product_id)
-            .order_by(ProductAccessory.sort_order, ProductAccessory.id)
-            .all()
-        )
-        return self._serialize_links(rows)
+        return self._serialize_links(_product_links(self.db, product_id))
 
-    def set_product_list(self, product_id: str, accessory_ids: List[str]) -> List[Dict[str, Any]]:
+    def set_product_list(self, product_id: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         product = self._product_or_404(product_id)
-        accessories = self._resolve_ids(accessory_ids, product.company_id)
+        resolved = self._resolve_items(items, product.company_id, refused={product.id: "A product cannot list itself"})
         self.db.query(ProductAccessory).filter(ProductAccessory.product_id == product_id).delete(
             synchronize_session=False
         )
         self.db.flush()
-        for index, item in enumerate(accessories):
-            self.db.add(ProductAccessory(product_id=product_id, accessory_id=item.id, sort_order=index))
+        for index, (kind, row) in enumerate(resolved):
+            self.db.add(
+                ProductAccessory(
+                    product_id=product_id,
+                    accessory_id=row.id if kind == "accessory" else None,
+                    item_product_id=row.id if kind == "product" else None,
+                    sort_order=index,
+                )
+            )
         self.db.commit()
         return self.product_list(product_id)
 
@@ -301,24 +351,30 @@ class AccessoryService:
 
     def combo_list_rows(self, combo_id: str) -> List[Dict[str, Any]]:
         """The combo's list with no scope check: for a caller that already resolved the combo."""
-        rows = (
-            self.db.query(ProductComboAccessory)
-            .filter(ProductComboAccessory.combo_id == combo_id)
-            .order_by(ProductComboAccessory.sort_order, ProductComboAccessory.id)
-            .all()
-        )
-        return self._serialize_links(rows)
+        return self._serialize_links(_combo_links(self.db, combo_id))
 
-    def set_combo_list(self, combo_id: str, accessory_ids: List[str]) -> List[Dict[str, Any]]:
+    def set_combo_list(self, combo_id: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         combo = self._combo_or_404(combo_id)
         host = self._product_or_404(combo.host_product_id)
-        accessories = self._resolve_ids(accessory_ids, host.company_id)
+        # One list of free products, never two: a product already IN the combo (a part) is not
+        # also its free item, and the host is the combo itself.
+        refused = {host.id: "The combo's own product cannot be its free item"}
+        for part in combo.parts or []:
+            refused.setdefault(part.part_product_id, "This product is already a part of this combo")
+        resolved = self._resolve_items(items, host.company_id, refused=refused)
         self.db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo_id).delete(
             synchronize_session=False
         )
         self.db.flush()
-        for index, item in enumerate(accessories):
-            self.db.add(ProductComboAccessory(combo_id=combo_id, accessory_id=item.id, sort_order=index))
+        for index, (kind, row) in enumerate(resolved):
+            self.db.add(
+                ProductComboAccessory(
+                    combo_id=combo_id,
+                    accessory_id=row.id if kind == "accessory" else None,
+                    item_product_id=row.id if kind == "product" else None,
+                    sort_order=index,
+                )
+            )
         self.db.commit()
         return self.combo_list(combo_id)
 
@@ -339,24 +395,51 @@ class AccessoryService:
     # ------------------------------------------------------------------ helpers
 
     def _serialize_links(self, links) -> List[Dict[str, Any]]:
-        items = [link.accessory for link in links if link.accessory is not None]
-        counts = self._counts([item.id for item in items])
-        return [self.serialize(item, counts) for item in items]
+        accessories = [link.accessory for link in links if not link.item_product_id and link.accessory]
+        counts = self._counts([item.id for item in accessories])
+        out: List[Dict[str, Any]] = []
+        for link in links:
+            if link.item_product_id:
+                if link.item_product is not None:
+                    out.append({**tag_product_entry(self.db, link.item_product), "product_count": 0, "combo_count": 0})
+            elif link.accessory is not None:
+                out.append(self.serialize(link.accessory, counts))
+        return out
 
-    def _resolve_ids(self, accessory_ids: List[str], company_id: Optional[str]) -> List[Accessory]:
-        ids = [str(value) for value in accessory_ids or []]
-        if len(set(ids)) != len(ids):
-            raise AppException(status_code=422, message="An accessory can be listed only once")
-        if not ids:
-            return []
-        found = {row.id: row for row in self.db.query(Accessory).filter(Accessory.id.in_(ids)).all()}
-        out: List[Accessory] = []
-        for value in ids:
-            row = found.get(value)
-            # Another company's accessory reads exactly like a missing one.
+    def _resolve_items(
+        self, items: List[Dict[str, Any]], company_id: Optional[str], *, refused: Dict[str, str]
+    ) -> List[tuple]:
+        """`[("accessory", Accessory) | ("product", Product)]` in order, each named once, each of
+        the list owner's company (another company's id reads exactly like a missing one)."""
+        wanted: List[tuple] = []
+        for item in items or []:
+            accessory_id, product_id = item.get("accessory_id"), item.get("product_id")
+            if bool(accessory_id) == bool(product_id):
+                raise AppException(status_code=422, message="Each entry names one accessory or one product")
+            wanted.append(("accessory", str(accessory_id)) if accessory_id else ("product", str(product_id)))
+        if len(set(wanted)) != len(wanted):
+            raise AppException(status_code=422, message="An entry can be listed only once")
+
+        accessory_ids = [value for kind, value in wanted if kind == "accessory"]
+        product_ids = [value for kind, value in wanted if kind == "product"]
+        accessories = (
+            {row.id: row for row in self.db.query(Accessory).filter(Accessory.id.in_(accessory_ids)).all()}
+            if accessory_ids
+            else {}
+        )
+        products = (
+            {row.id: row for row in self.db.query(Product).filter(Product.id.in_(product_ids)).all()}
+            if product_ids
+            else {}
+        )
+        out: List[tuple] = []
+        for kind, value in wanted:
+            row = (accessories if kind == "accessory" else products).get(value)
             if row is None or (company_id is not None and row.company_id not in (None, company_id)):
-                raise handle_not_found("Accessory", value)
-            out.append(row)
+                raise handle_not_found("Accessory" if kind == "accessory" else "Product", value)
+            if kind == "product" and value in refused:
+                raise AppException(status_code=422, message=refused[value])
+            out.append((kind, row))
         return out
 
     def _counts(self, ids: List[str]) -> Dict[str, tuple]:

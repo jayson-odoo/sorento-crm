@@ -106,6 +106,14 @@ def _link_combo(db, combo, accessories):
     db.flush()
 
 
+def _items(*accessory_ids, products=()) -> dict:
+    """A PUT body: accessories by id, then products (`products` as (index, product_id) to place)."""
+    items = [{"accessory_id": value} for value in accessory_ids]
+    for index, product_id in products:
+        items.insert(index, {"product_id": product_id})
+    return {"items": items}
+
+
 def _name(stem: str) -> str:
     return unique_code(f"ZZT {stem}").upper()
 
@@ -239,15 +247,15 @@ def test_a2_product_list_replaces_in_order(db, monkeypatch):
     drainer, pullout, board = (_accessory(db, _name(n)) for n in ("DRAINER", "PULLOUT", "BOARD"))
     url = PRODUCT_LIST.format(product_id=host.id)
 
-    put = client.put(url, json={"accessory_ids": [pullout.id, drainer.id]})
+    put = client.put(url, json=_items(pullout.id, drainer.id))
     assert put.status_code == 200, put.text
     assert [row["id"] for row in put.json()["data"]] == [pullout.id, drainer.id]
 
-    again = client.put(url, json={"accessory_ids": [board.id, pullout.id]})
+    again = client.put(url, json=_items(board.id, pullout.id))
     assert [row["id"] for row in again.json()["data"]] == [board.id, pullout.id]
     assert [row["id"] for row in client.get(url).json()["data"]] == [board.id, pullout.id]
 
-    assert client.put(url, json={"accessory_ids": []}).json()["data"] == []
+    assert client.put(url, json=_items()).json()["data"] == []
 
 
 def test_a2_product_list_refuses_duplicates_and_unknown_ids(db, monkeypatch):
@@ -255,15 +263,15 @@ def test_a2_product_list_refuses_duplicates_and_unknown_ids(db, monkeypatch):
     host = _product(db, "ZZACC")
     item = _accessory(db, _name("ONE"))
     url = PRODUCT_LIST.format(product_id=host.id)
-    assert client.put(url, json={"accessory_ids": [item.id, item.id]}).status_code == 422
-    assert client.put(url, json={"accessory_ids": [str(uuid.uuid4())]}).status_code == 404
+    assert client.put(url, json=_items(item.id, item.id)).status_code == 422
+    assert client.put(url, json=_items(str(uuid.uuid4()))).status_code == 404
 
 
 def test_a2_product_list_needs_edit(db, monkeypatch):
     client = _caller(db, {VIEW}, monkeypatch)
     host = _product(db, "ZZACC")
     assert client.get(PRODUCT_LIST.format(product_id=host.id)).status_code == 200
-    put = client.put(PRODUCT_LIST.format(product_id=host.id), json={"accessory_ids": []})
+    put = client.put(PRODUCT_LIST.format(product_id=host.id), json=_items())
     assert put.status_code == 403
 
 
@@ -273,7 +281,7 @@ def test_a2_combo_list_is_independent_of_the_product_list(db, monkeypatch):
     combo = _combo(db, host, "ZZT 1 tap")
     drainer, pullout = _accessory(db, _name("DRAINER")), _accessory(db, _name("PULLOUT"))
 
-    put = client.put(COMBO_LIST.format(combo_id=combo.id), json={"accessory_ids": [drainer.id, pullout.id]})
+    put = client.put(COMBO_LIST.format(combo_id=combo.id), json=_items(drainer.id, pullout.id))
     assert put.status_code == 200, put.text
     assert client.get(PRODUCT_LIST.format(product_id=host.id)).json()["data"] == []
 
@@ -311,8 +319,14 @@ def test_a3_product_tag_data_carries_the_products_list(db, signed):
     _link_product(db, host, [drainer, board])
     data = product_tag_data(db, host, staff_viewer())
     assert data["accessories"] == [
-        {"id": drainer.id, "name": drainer.name, "spec": "390x300x140, Depth: 160mm", "image": None},
-        {"id": board.id, "name": board.name, "spec": None, "image": None},
+        {
+            "kind": "accessory", "id": drainer.id, "name": drainer.name,
+            "spec": "390x300x140, Depth: 160mm", "image": None, "code": None, "list_price": None,
+        },
+        {
+            "kind": "accessory", "id": board.id, "name": board.name,
+            "spec": None, "image": None, "code": None, "list_price": None,
+        },
     ]
 
 
@@ -481,3 +495,128 @@ def test_a9_a_row_with_no_list_hashes_as_before(db, signed):
     row = tag_data_service.resolve_tags_live(db, request)[0]
     without_key = {k: v for k, v in row.items() if k != "accessories"}
     assert tag_data_service.data_hash(row) == tag_data_service.data_hash(without_key)
+
+
+
+# --------------------------------------------------------------------------- product entries
+# Owner, 6 Nov ~10:45: a list entry is EITHER a library accessory OR a real catalogue product
+# (combo SRTWB7065 with a FREE SRTW5000 popup waste). Product facts come live from the product.
+
+
+def _waste(db):
+    product = seed.product(db, "ZZWASTE", list_price="68.00")
+    product.description = "Popup Waste 80mm (w/o Overflow) Brass"
+    db.flush()
+    return product
+
+
+def test_p1_a_list_mixes_accessories_and_products_in_order(db, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    waste = _waste(db)
+    waste.company_id = host.company_id
+    drainer = _accessory(db, _name("DRAINER"))
+    url = PRODUCT_LIST.format(product_id=host.id)
+    put = client.put(url, json=_items(drainer.id, products=[(0, waste.id)]))
+    assert put.status_code == 200, put.text
+    first, second = put.json()["data"]
+    assert first["kind"] == "product" and first["id"] == waste.id
+    assert first["code"] == waste.product_code
+    assert first["name"] == "Popup Waste 80mm (w/o Overflow) Brass", "the description, not the code"
+    assert float(first["list_price"]) == 68.0
+    assert second["kind"] == "accessory" and second["id"] == drainer.id and second["code"] is None
+
+
+def test_p1_a_product_cannot_list_itself(db, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    put = client.put(PRODUCT_LIST.format(product_id=host.id), json=_items(products=[(0, host.id)]))
+    assert put.status_code == 422, put.text
+
+
+def test_p1_a_combo_part_cannot_also_be_its_free_item(db, monkeypatch):
+    from tests.test_product_combos import _part
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    tap = _product(db, "ZZTAP")
+    combo = _combo(db, host, "ZZT 1 tap")
+    _part(db, combo, tap)
+    url = COMBO_LIST.format(combo_id=combo.id)
+    assert client.put(url, json=_items(products=[(0, tap.id)])).status_code == 422
+    assert client.put(url, json=_items(products=[(0, host.id)])).status_code == 422
+
+
+def test_p1_the_same_product_twice_is_refused(db, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    other = _product(db, "ZZOTHER")
+    body = _items(products=[(0, other.id), (1, other.id)])
+    assert client.put(PRODUCT_LIST.format(product_id=host.id), json=body).status_code == 422
+
+
+def test_p1_an_entry_names_exactly_one_thing(db, monkeypatch):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZACC")
+    other = _product(db, "ZZOTHER")
+    item = _accessory(db, _name("BOTH"))
+    body = {"items": [{"accessory_id": item.id, "product_id": other.id}]}
+    assert client.put(PRODUCT_LIST.format(product_id=host.id), json=body).status_code == 422
+    assert client.put(PRODUCT_LIST.format(product_id=host.id), json={"items": [{}]}).status_code == 422
+
+
+def test_p2_a_combo_line_prints_a_free_product_live(db, signed):
+    host = seed.product(db, "ZZWB")
+    cb = seed.combo(db, host, "ZZT basin + tap")
+    waste = _waste(db)
+    db.add(
+        ProductComboAccessory(
+            id=str(uuid.uuid4()), combo_id=cb.id, item_product_id=waste.id, sort_order=0
+        )
+    )
+    db.flush()
+    request = seed.submit_one(db, host, cb, [])
+    db.flush()
+    (row,) = seed.rows(db, request)
+    (entry,) = row["accessories"]
+    assert entry["kind"] == "product"
+    assert entry["id"] == waste.id
+    assert entry["code"] == waste.product_code
+    assert entry["name"] == "Popup Waste 80mm (w/o Overflow) Brass"
+    assert float(entry["list_price"]) == 68.0
+    assert entry["spec"] is None
+    assert row["included_accessories"] == f"{waste.product_code} Popup Waste 80mm (w/o Overflow) Brass"
+
+
+def test_p2_a_library_entry_carries_kind_accessory(db, signed):
+    from app.services.dealer_kit.tag_data_service import product_tag_data, staff_viewer
+
+    host = seed.product(db, "ZZACC")
+    board = _accessory(db, _name("BOARD"))
+    _link_product(db, host, [board])
+    (entry,) = product_tag_data(db, host, staff_viewer())["accessories"]
+    assert entry["kind"] == "accessory" and entry["code"] is None and entry["list_price"] is None
+
+
+# --------------------------------------------------------------------------- deferred delete
+
+
+def test_a1_delete_is_a_deferred_record_action_on_the_products_edit_permission():
+    import app.services.record_actions  # noqa: F401  (registers the actions)
+    from app.api.v1.system.pending_actions import _PARK_SCOPED_MODELS
+    from app.services.form_action_registry import get_action
+
+    action = get_action("accessory.delete")
+    assert action is not None
+    assert action.entity_types == ("accessory",)
+    assert action.permission == "master_data.products.edit"
+    assert _PARK_SCOPED_MODELS["accessory.delete"] is Accessory
+
+
+def test_a1_the_deferred_delete_removes_an_unused_accessory(db):
+    from app.services.record_actions import _delete_accessory
+
+    row = _accessory(db, _name("DEFERRED"))
+    _delete_accessory(db, {"entity_id": row.id})
+    db.expire_all()
+    assert db.query(Accessory).filter(Accessory.id == row.id).first() is None

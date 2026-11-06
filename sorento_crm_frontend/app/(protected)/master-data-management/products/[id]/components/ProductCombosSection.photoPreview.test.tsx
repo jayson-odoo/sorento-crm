@@ -19,6 +19,14 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+// The accessory list has its own suite; here it stands in as a labelled marker.
+vi.mock('./AccessoryListField', () => ({
+  AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
+    <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
+      {props.label}
+    </div>
+  ),
+}));
 vi.mock('./AddComboModal', () => ({ AddComboModal: () => null }));
 vi.mock('@/components/common/SearchableSelect', () => ({ SearchableSelect: () => null }));
 
