@@ -651,7 +651,7 @@ def ladder_steps_on(monkeypatch):
 def as_board_confirm():
     """FP-EMAIL-ONE-TRIGGER: run the test as if every write were the board Confirm.
 
-    Only a root transaction the board Confirm marked (`mark_board_confirm`) emails purchasing.
+    Only a root transaction the board Confirm marked (`mark_purchasing_email_trigger`) emails purchasing.
     A suite that pins WHAT the handover / changed-with-links email says, by calling the
     service (`ProjectSupplyService.confirm`, `planning_change_service.apply`, ...) rather than
     the Confirm route, opts in with `pytestmark = pytest.mark.usefixtures("as_board_confirm")`.
@@ -660,11 +660,11 @@ def as_board_confirm():
     from sqlalchemy import event
     from sqlalchemy.orm import Session
 
-    from app.services.project_order_inquiry_service import _BOARD_CONFIRM_TX_KEY
+    from app.services.project_order_inquiry_service import _PURCHASING_TRIGGER_TX_KEY
 
     def _mark(session, transaction, connection):  # noqa: ANN001
         if transaction.parent is None:
-            session.info.setdefault(_BOARD_CONFIRM_TX_KEY, []).append(transaction)
+            session.info.setdefault(_PURCHASING_TRIGGER_TX_KEY, []).append(transaction)
 
     event.listen(Session, "after_begin", _mark)
     try:

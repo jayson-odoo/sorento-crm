@@ -199,7 +199,6 @@ POST /order-inquiries/{row_id}/reject
 POST /order-inquiry-rows/mark
 POST /order-inquiry-rows/{row_id}/place-on-po
 POST /order-inquiry-rows/{row_id}/unplace
-POST /planning-changes/{batch_id}/apply
 POST /projects/
 POST /projects/ai-extract
 POST /projects/clash-preview

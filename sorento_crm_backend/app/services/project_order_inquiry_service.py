@@ -309,11 +309,11 @@ _UNDO_PENDING_KEY = "oi_undo_pending"
 _UNDO_COMMITTED_TX_KEY = "oi_undo_committed_tx"
 
 #: FP-EMAIL-ONE-TRIGGER (owner, 6 Nov 2026: "I only want the email to purchasing to have 1
-#: trigger, which is this button"): the ROOT transactions a board Confirm ran in
-#: (`mark_board_confirm`). The handover drain sends only for one of these, and
+#: trigger, which is this button"): the ROOT transactions a purchasing email trigger ran in
+#: (`mark_purchasing_email_trigger`). The handover drain sends only for one of these, and
 #: `_dispatch_changed_with_links` queues only inside one, so no other path (AutoCount ingest,
-#: the standalone planning-change apply, a script) can email purchasing whatever it records.
-_BOARD_CONFIRM_TX_KEY = "oi_board_confirm_tx"
+#: a script, a service call) can email purchasing whatever it records.
+_PURCHASING_TRIGGER_TX_KEY = "oi_purchasing_trigger_tx"
 
 #: `Session.info` key for the `order_inquiry_rejected` email + the raiser's in-app notice
 #: (`PLAN-oi-reject-notify-13oct.md`), one item per order inquiry a reject touched, queued
@@ -346,24 +346,30 @@ def _transaction_chain(session) -> List[Any]:
     return chain
 
 
-def mark_board_confirm(session) -> None:
-    """Mark the ROOT transaction this session is in as a board Confirm (FP-EMAIL-ONE-TRIGGER).
+def mark_purchasing_email_trigger(session) -> None:
+    """Mark the ROOT transaction this session is in as one that may email purchasing
+    (FP-EMAIL-ONE-TRIGGER, owner 6 Nov 2026).
 
-    Called ONLY by the board Confirm routes, from `fulfilment_planning._confirm_with_possible_
-    rejects`, the seam both share. A purchasing handover line any write queues is sent only
-    when the root transaction it was queued under carries this mark, and a changed-with-links
-    notice is queued only inside one. The mark ends with that transaction, committed or not
-    (`_fire_pending_handover`), so it never outlives the Confirm it was made for."""
+    Two callers, both a person's press, and no others:
+    - the board Confirm (`fulfilment_planning._confirm_with_possible_rejects`, the seam both
+      Confirm routes share): THE trigger;
+    - Publish amendment (`projects/sales_orders.publish_amendment`): kept as it was by the
+      owner (Q4, "not used yet"), an exception named in
+      `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`.
+    A purchasing handover line any write queues is sent only when the root transaction it was
+    queued under carries this mark, and a changed-with-links notice is queued only inside one.
+    The mark ends with that transaction, committed or not (`_fire_pending_handover`)."""
     session.connection()  # autobegin, so there is a root transaction to mark
     root = _transaction_chain(session)[-1]
-    marked = session.info.setdefault(_BOARD_CONFIRM_TX_KEY, [])
+    marked = session.info.setdefault(_PURCHASING_TRIGGER_TX_KEY, [])
     if not any(tx is root for tx in marked):
         marked.append(root)
 
 
-def _in_board_confirm(session) -> bool:
-    """True when the session's current root transaction was marked by `mark_board_confirm`."""
-    marked = session.info.get(_BOARD_CONFIRM_TX_KEY)
+def _may_email_purchasing(session) -> bool:
+    """True when the session's current root transaction carries
+    `mark_purchasing_email_trigger`'s mark."""
+    marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
     if not marked:
         return False
     chain = _transaction_chain(session)
@@ -4592,8 +4598,8 @@ class ProjectOrderInquiryService:
         """
         if not had_link:
             return
-        if not _in_board_confirm(self.db):
-            # FP-EMAIL-ONE-TRIGGER: only the board Confirm emails purchasing.
+        if not _may_email_purchasing(self.db):
+            # FP-EMAIL-ONE-TRIGGER: only a marked trigger emails purchasing.
             return
         try:
             from app.services.automation_triggers import build_order_inquiry_link
@@ -6360,7 +6366,7 @@ class ProjectOrderInquiryService:
         Only `scripts/release_removed_autocount_lines.py` calls this now: the ingest leaves a
         removed line for the board (FP-EMAIL-ONE-TRIGGER Q1 (a)). It emails nobody: whatever it
         queues for purchasing is dropped at the commit, which is not a board Confirm
-        (`mark_board_confirm`).
+        (`mark_purchasing_email_trigger`).
         """
         from app.services import project_line_draft_service
 
@@ -15666,17 +15672,17 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # (see `_mark_handover_transaction_committed`'s own guard), so there is
             # nothing to prune here.
             return
-        # FP-EMAIL-ONE-TRIGGER: was this root a board Confirm? Its mark ends with it, whatever
+        # FP-EMAIL-ONE-TRIGGER: was this root a purchasing email trigger? Its mark ends with it, whatever
         # way it ended, so a later write on the same session is judged on its own.
-        marked = session.info.get(_BOARD_CONFIRM_TX_KEY)
-        was_board_confirm = False
+        marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
+        was_trigger = False
         if marked:
             still_marked = [tx for tx in marked if tx is not transaction]
-            was_board_confirm = len(still_marked) != len(marked)
+            was_trigger = len(still_marked) != len(marked)
             if still_marked:
-                session.info[_BOARD_CONFIRM_TX_KEY] = still_marked
+                session.info[_PURCHASING_TRIGGER_TX_KEY] = still_marked
             else:
-                session.info.pop(_BOARD_CONFIRM_TX_KEY, None)
+                session.info.pop(_PURCHASING_TRIGGER_TX_KEY, None)
         # Which saved lines a Confirm told (`record_saved_lines`) lives only as long as the
         # write it belongs to, so a later apply never forgets its own lines on its account.
         session.info.pop(_SAVED_TOLD_KEY, None)
@@ -15711,11 +15717,11 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             session.info[_HANDOVER_PENDING_KEY] = remaining
         else:
             session.info.pop(_HANDOVER_PENDING_KEY, None)
-        if not was_board_confirm:
+        if not was_trigger:
             # The ONE gate: purchasing is emailed from the board Confirm and nowhere else.
             # The rows this write changed stand; nobody is emailed about them.
             logger.info(
-                "order_inquiry_handover: %d line(s) not sent, the write was not a board Confirm",
+                "order_inquiry_handover: %d line(s) not sent, the write was not a purchasing trigger",
                 len(concluded),
             )
             return

@@ -512,7 +512,7 @@ def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cance
     is the one email purchasing gets for it, every line a CANCEL."""
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
-    from app.services.project_order_inquiry_service import mark_board_confirm
+    from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
 
     record, header, line_x, y, rows = _three_rows_on_x(env)
     _remove_so_line_x(env, record, y)
@@ -524,7 +524,7 @@ def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cance
     _register(None)
     calls = _captured_dispatches(monkeypatch)
 
-    mark_board_confirm(env.db)
+    mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()
     env.db.expire_all()
