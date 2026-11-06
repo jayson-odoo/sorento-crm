@@ -1,7 +1,7 @@
 # PLAN: price tag "Accessories included" (PRICETAG-ACCESSORIES, 6 Nov)
 
-Status: Plan. Measured; behaviour card (`CARD-pricetag-accessories-06nov.md`) goes to
-the owner (crew-ask on the PR), waiting for Q1-Q5 before the Lavish mock. Track: full (expected migration + new master data).
+Status: Plan. Card answered by the owner 6 Nov ~10:00 (`CARD-pricetag-accessories-06nov.md`);
+Lavish mock `pricetag-accessories-mock.html` out for approval. Track: full (expected migration + new master data).
 
 Owner ask (6 Nov ~09:45 MYT): price tag 148 x 105 mm for sink SRTKS7846 carries a rounded
 "ACCESSORIES INCLUDED" box with 3 mini-cards (picture + name + spec): CHOPPING BOARD, COLANDER

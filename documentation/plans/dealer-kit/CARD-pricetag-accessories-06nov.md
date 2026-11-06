@@ -1,6 +1,101 @@
 # CARD: "Accessories included" box on price tags (PRICETAG-ACCESSORIES, 6 Nov)
 
-Behaviour card. **Waiting for the owner's answers to Q1-Q5.** No mock or build before they land.
+Behaviour card. **Answered by the owner 6 Nov ~10:00; "Owner rulings" and "Rules (v2)" below win
+over the original proposal (kept further down for the record).** Mock:
+`pricetag-accessories-mock.html` (same folder). No build before the owner approves the mock.
+
+## Owner rulings (6 Nov ~10:00)
+
+Four real tags for **SRTKS7061-BL**: Ala Carte (no accessories box); Combo with 1 tap (box headed
+"FREE" with DRAINER + PULL OUT DRAINER, vertical, beside the tap); a variant of it; Combo with 2 taps
+(box headed "ACCESSORIES INCLUDED", HORIZONTAL row DRAINER, PULL OUT DRAINER, under the sink).
+
+- Q1: lists live on BOTH the product and the combo, **independently**. A product often has none
+  while its combo has free items, so a combo does **not** inherit the product's list.
+- Q2 (a): whoever may edit products; library under Master Data > Products.
+- Q3: each box is set **vertical OR horizontal** (both are on real tags).
+- Q4 (a): one free short spec line.
+- Q5: **MERGE with what exists.** Combo "Free items" and the request-line included text become this
+  one system: existing values migrate into library items + lists (de-duplicated by name), one source
+  of truth, no two parallel features.
+- Header text and the optional "+" badge are **set per box on the template** ("FREE" vs
+  "ACCESSORIES INCLUDED").
+
+## Measured for the merge
+
+- Combo "Free items" is a 2000-char free text box on the product page
+  (`ProductCombosSection.tsx:607-613`), saved by `product_combo_service.py:288-289`, sent to the tag
+  as `combo.free_items` (`tag_data_service.py:1214`).
+- The request-line text `included_accessories` has **no screen that writes it**: the portal form
+  always sends `''` (`app/(auth)/portal/components/PriceTagRequestForm.tsx:1013`); only the API
+  payload (`price_tag_request_service.py:535`) and the revision carry-over
+  (`portal_revision_service.py:514-556`) touch it. Its only reader is the tag ("line text wins, else
+  combo free items", `tag_data_service.py:973-975`, `:1816-1818`).
+- Templates bind the text slot `included_accessories` ("Accessories") to a text layer
+  (`InspectorPanel.tsx:84`, `product-block.ts:472`); the seeded sink combo uses it as the strip title.
+
+## Rules (v2, after the rulings)
+
+A1. **Accessories library** (Master Data > Products > Accessories): picture (optional, attachments
+    pipeline like the combo picture), name (required, unique per company ignoring case), spec (one
+    short line, optional). DataGrid + modal create/edit + deferred-action delete; delete refused while
+    a product or combo lists it (the message names them).
+A2. **Two independent lists**, each ordered by drag, picked from the library (create-in-place from
+    the picker allowed): "Accessories included" on the product page Overview, and "Free items" on each
+    combo block (replaces the free text box). A combo never falls back to its host product's list.
+A3. **Which list a tag shows:** a combo tag shows the combo's list; an Ala Carte tag shows the
+    product's list. Empty = no box.
+A4. **Designer layer "Accessories"** (replaces "Add accessories strip"): per box on the template
+    `direction` vertical | horizontal, header text (default "ACCESSORIES INCLUDED"), "+" badge on/off
+    (+ its picture from the Badge library), fill, border colour/width, corner radius, header font
+    size/colour, card picture size, name/spec font size, gap, and "Reads from" (main item or a combo
+    position, like a photo layer).
+A5. **Cards in list order;** vertical stacks top to bottom, horizontal runs left to right. Fewer
+    cards = the box closes up from the bottom (vertical) or the right (horizontal); its top-left
+    corner stays put; other layers never move.
+A6. **Too many:** only WHOLE cards print. Inspector: "2 of 5 accessories do not fit this box. Make
+    the box bigger or the cards smaller." Sheet toast per tag, the same hook feature icons use.
+A7. **No list / empty list:** frame, header and badge do not print. Designer without a preview
+    product draws 2 sample cards so the box can be styled.
+A8. **No picture:** name + spec take the card's full width (vertical) or the picture's space
+    (horizontal); nothing grey prints.
+A9. **Pinned tags freeze the list** like every other product fact; library edits reach a tag when it
+    is re-pinned.
+A10. **One layout function** (`accessoryBoxLayout`) for canvas, request preview and print.
+A11. **One source of truth:** the old text slot `included_accessories` stays bindable so existing
+    templates keep printing, but its text is now built from the list ("DRAINER, PULL OUT DRAINER").
+    The request line no longer carries its own text (no screen ever wrote it).
+A12. **Migration (one-off data move, additive schema):** every non-blank combo `free_items` and
+    request-line `included_accessories` is split into items (on line breaks, and on commas/"+"
+    between items, Q-M1), trimmed, de-duplicated by name ignoring case into the library (name =
+    the piece, spec empty, no picture), and attached in their written order: combo text -> that
+    combo's list; line text -> the line's combo list if it has a combo and that list is empty, else
+    the line's product list if empty; anything that would overwrite a different list is written to
+    the migration report instead. Old columns stay in the DB (additive only), unread; a later lane
+    drops them.
+
+## Open before build (in the mock crew-ask)
+
+Q-M1. Splitting old free text: (a) **split on line breaks, commas and " + "** (recommended; crew to
+      paste the distinct values first so a spec such as "390x300x140, Depth: 160mm" is not cut) /
+      (b) each old text becomes ONE item as written.
+Q-M2. Horizontal card size: (a) **every card the same width, set on the box** (recommended; matches
+      the 2-tap tag) / (b) each card as wide as its name.
+
+Crew, measure on the dev DB for Q-M1:
+
+```sql
+SELECT 'combo' AS src, free_items AS txt, count(*) FROM product_combos
+ WHERE coalesce(trim(free_items), '') <> '' GROUP BY free_items
+UNION ALL
+SELECT 'line', included_accessories, count(*) FROM price_tag_request_lines
+ WHERE coalesce(trim(included_accessories), '') <> '' GROUP BY included_accessories
+ORDER BY 1, 3 DESC;
+```
+
+---
+
+# Original proposal (superseded where the rulings differ)
 
 Owner (6 Nov ~09:45): tag 148 x 105 mm for sink SRTKS7846. In the middle, a rounded box with a "+"
 badge and the header "ACCESSORIES INCLUDED", holding 3 stacked mini-cards (picture + name + spec):
