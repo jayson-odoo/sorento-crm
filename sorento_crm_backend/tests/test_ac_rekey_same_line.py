@@ -257,3 +257,15 @@ def test_a_different_location_is_not_a_rekey(env):
     _repush(env, record, [_rekeyed(x, warehouse_ref=other), y])
 
     _assert_removed(env, header, line_x, row_id)
+
+
+def test_a_line_removed_by_an_earlier_push_is_never_revived(env):
+    """A removed line (cancelled by an earlier push) stays a removed record; an identical line
+    AutoCount adds later is a new line."""
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+    _repush(env, record, [y])
+    _assert_removed(env, header, line_x, row_id, expected_lines=2)
+
+    _repush(env, record, [_rekeyed(x), y])
+
+    _assert_removed(env, header, line_x, row_id, expected_lines=3)
