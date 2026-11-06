@@ -66,26 +66,35 @@ const LIBRARY = [
     { id: 'i-cold', name: 'Cold', kind: 'icon', tags: [], url: 'https://cdn/cold.png', thumb_url: null, mime_type: 'image/png' },
     { id: 'i-new', name: 'Steam', kind: 'icon', tags: [], url: 'https://cdn/steam.png', thumb_url: null, mime_type: 'image/png' },
 ];
-// The real picker is the dealer-kit one; here it picks the one icon the test names.
+// The real picker is the dealer-kit one; here "Select Steam" adds one icon to the dialog's own
+// selection, which reaches the choice only through Done (SPEC-ICON-PICKER-UX).
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog', () => ({
-  AssetPickerDialog: (props: {
-    open: boolean;
-    libraryKind?: string;
-    closeLabel?: string;
-    onCancel: () => void;
-    onPick: (s: { type: 'asset'; assetId: string }) => void;
-  }) =>
-    props.open ? (
-      <div data-testid="icon-picker" data-kind={props.libraryKind}>
-        <button type="button" onClick={() => props.onPick({ type: 'asset', assetId: 'i-new' })}>
-          Pick Steam
+  AssetPickerDialog: (props: PickerProps) => (props.open ? <MockPicker {...props} /> : null),
+}));
+type PickerProps = {
+  open: boolean;
+  libraryKind?: string;
+  selectedIds?: string[];
+  onCancel: () => void;
+  onDone?: (ids: string[]) => void;
+};
+// Mounted on open, so it seeds from selectedIds the way the real dialog does on open.
+function MockPicker(props: PickerProps) {
+    const [picked, setPicked] = React.useState<string[]>(props.selectedIds ?? []);
+    return (
+      <div data-testid="icon-picker" data-kind={props.libraryKind} data-selected={(props.selectedIds ?? []).join(',')}>
+        <button type="button" onClick={() => setPicked((ids) => [...ids, 'i-new'])}>
+          Select Steam
         </button>
         <button type="button" onClick={props.onCancel}>
-          {props.closeLabel ?? 'Cancel'}
+          Cancel
+        </button>
+        <button type="button" onClick={() => props.onDone?.(picked)}>
+          Done
         </button>
       </div>
-    ) : null,
-}));
+    );
+}
 
 import { ValuesAndWordsTab } from './ValuesAndWordsTab';
 import { buildPatchBody, projectSpecKeyDraft, type SpecKeyDraft } from '../../hooks/useSpecKeyRecord';
@@ -170,12 +179,17 @@ describe('ValuesAndWordsTab icons column', () => {
     expect(screen.queryByRole('button', { name: /remove hot/i })).toBeNull();
   });
 
-  it('a pick from the icon library appends to the value, in that order', async () => {
+  it('opens the icon library with the choice\'s icons selected; Done applies the selection in order', async () => {
     render(withClient(<EditHarness row={waterSupply()} />));
     await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Mixer' }));
     expect(screen.getByTestId('icon-picker')).toHaveAttribute('data-kind', 'icon');
-    fireEvent.click(screen.getByRole('button', { name: 'Pick Steam' }));
+    expect(screen.getByTestId('icon-picker')).toHaveAttribute('data-selected', 'i-hot,i-cold');
+    fireEvent.click(screen.getByRole('button', { name: 'Select Steam' }));
+    // Selecting changes nothing until Done.
+    expect(latest?.valueIcons.mixer).toEqual(['i-hot', 'i-cold']);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.queryByTestId('icon-picker')).toBeNull();
     expect(latest?.valueIcons.mixer).toEqual(['i-hot', 'i-cold', 'i-new']);
     // Re-queried each time: the grid remounts a cell when its column definitions change.
     await waitFor(() => expect(within(mixerCell()).getByTitle('Steam')).toBeInTheDocument());
@@ -202,19 +216,28 @@ describe('ValuesAndWordsTab icons column', () => {
 });
 
 describe('ValuesAndWordsTab icon picker, fix round', () => {
-  it('stays open after a pick so several icons go in at once, and Done closes it', async () => {
+  it('Cancel discards the selection, and either close refreshes the icon library', async () => {
     const spy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     render(withClient(<EditHarness row={waterSupply()} />));
     await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Mixer' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Pick Steam' }));
-    expect(screen.getByTestId('icon-picker')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Select Steam' }));
     spy.mockClear();
-    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByTestId('icon-picker')).toBeNull();
-    // An icon uploaded in the picker must reach the list the cell names icons from.
+    expect(latest?.valueIcons.mixer).toEqual(['i-hot', 'i-cold']);
+    // An icon uploaded in the picker (then cancelled) is still in the library the cell names from.
     expect(spy).toHaveBeenCalledWith({ queryKey: ['dealer-kit', 'icon-library'] });
     spy.mockRestore();
+  });
+
+  it('Done with the selection unchanged keeps the choice as it was', async () => {
+    render(withClient(<EditHarness row={waterSupply()} />));
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Cold Only' }));
+    expect(screen.getByTestId('icon-picker')).toHaveAttribute('data-selected', 'i-cold');
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(latest?.valueIcons.cold_only).toEqual(['i-cold']);
   });
 
   it('gives each move and remove button a 28px hit area', async () => {
@@ -241,7 +264,8 @@ describe('ValuesAndWordsTab icons on a yes/no specification', () => {
     render(withClient(<EditHarness row={pullOut} />));
     await loaded();
     fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Yes' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Pick Steam' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select Steam' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     expect(latest?.valueIcons.true).toEqual(['i-new']);
   });
 });
