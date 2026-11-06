@@ -19,7 +19,21 @@ Suppliers (1088) and sales agents (133) went straight from hapi to CRM ingest (n
 
 ## Results
 
-(filled in as the passes land)
+Every write below was made from the CRM UI (headless browser) on the db3 test book and read back with
+hapi. "SS" = local SS #224 + #225 merged (from the second link run on).
+
+| ID | Operation | Result | AutoCount read-back after | CRM side |
+| --- | --- | --- | --- | --- |
+| E1 | Stock Debt split link 4, FXT-1106-PO1 row 12128 (21 @ HQ) -> FXT-1106-SO1 row 12130 (HQ) | PASS (3rd run; run 1 hit B1, run 2 hit B3) | 12128 = 17 @ HQ; new 12139 = 4 @ HQ, FromSODtlKey 12130 | 1 row per AutoCount row; link in `from_so_line_ref` = `DB3:12129:12130` |
+| E2 | Split + relocate 5 -> SO1 row 12131 (BRW-AM) | PASS | 12128 = 12 @ HQ; new 12141 = 5 @ BRW-AM, FromSODtlKey 12131 | `DB3:12127:12141` linked to `DB3:12129:12131`; no duplicates, nothing removed |
+| E1b | Split 2 on a PO with a BLANK purchase agent: FXT-1106-PO2 row 12133 (3 @ HQ) -> FXT-1106-SO2 row 12135 | PASS on SS #225 (B1 fix; request carried no PurchaseAgent) | 12133 = 1 @ HQ; new 12146 = 2 @ HQ, FromSODtlKey 12135 | link stored, no duplicates |
+| G1 | Over-link guard (SO1 HQ line already covered) | PASS | no write | "Link to PO... Already covered by PO FXT-1106-PO1" greyed |
+| R2 | Whole-row link (PO2 row 3 = SO2 need 3) | PASS (refused before any write) | PO2 unchanged | "Linking the whole PO line: Waiting for AutoCount" |
+| R3 | Unlink / move PO to another SO | PASS (greyed) | n/a | "Unlink from PO... Waiting for AutoCount", "Move PO to another sales order... Waiting for AutoCount" |
+| R4 | SPO link / unlink | PASS at SS (no SPO with rows in db3, no CRM screen offers it) | n/a | SS `VENDOR_UNSUPPORTED` (table below) |
+| E4 | Quotation "Create in AutoCount" (QT-2026-0001, project PPF2611001) | PASS after the #2173 UOM fix (run 1 refused by AutoCount for UOM "EA", F10) | QT-000006, DocKey 12147: debtor 300-S057, DisplayTerm "Net 90 days" (SS #224), rows 12148 SRTKT38SS 3 @ BRW-AM 285, 12149 SRTKT1631SS 2 @ BRW-AM 235, UOM UNIT | CRM stores QT-000006 on the document |
+| E5 | Quotation update (v2, qty 3 -> 5, re-issued + accepted) | FAIL (B6) | QT-000006 unchanged | "AutoCount refused: AutoCount returned an error." |
+| R5 | Delete in AutoCount | PASS (not offered) | n/a | quotation gear has no AutoCount delete |
 
 ## Findings
 
@@ -35,6 +49,9 @@ Suppliers (1088) and sales agents (133) went straight from hapi to CRM ingest (n
 | B2 | SS write-back | On `VENDOR_ERROR` the answer's `message` is empty although `ac_write_action.response_json` holds AutoCount's text, so the CRM can only say "AutoCount did not accept it. Nothing was changed." | Carry the vendor text in `message` (same crew-note) |
 | B3 | CRM main (#2168) | `stock_debt_po_link_service.py:335-343` `_intent_key` = hash(path + body + PO row qty). After a `vendor_error` that wrote nothing, the row qty is unchanged, so every later attempt sends the same Idempotency-Key and SS replays the stored failure (502) without calling AutoCount: the link can never be retried from the UI, even after the cause is fixed in AutoCount | Add the PO's AutoCount `LastModified` (or an attempt nonce after a definite refusal) to the key; or SS stops replaying a stored `vendor_error` that wrote nothing |
 | B4 | AutoCount + SS verify | Split link: SS sends the new linked row with `UnitPrice 1.0` and `DeliveryDate 2026-11-20` (ac_write_action request), AutoCount stores the transferred row with `UnitPrice 0.0` and no delivery date, and SS answers `done`. FXT-1106-PO1 Total went 21 -> 12 after E1+E2 (9 units now priced 0). Same shape on 4 Nov FXT-1104d-1 | AutoCount question (does a FromSO transfer row ignore UnitPrice/DeliveryDate?); SS read-back verify should compare price/date on the new row and answer `mismatch` |
+| B5 | CRM #2173 | Create/update/cancel idempotency keys are fixed per document or order (`project_autocount_write_service.py:570, :754, :881, :981, :1064`). SS replays a stored answer for the same body and answers `IDEMPOTENCY_CONFLICT` for another body (SS `write_back/operations.py:851-856`). After one AutoCount refusal a corrected retry is refused (seen live: 409, shown as "AutoCount refused: . Nothing was changed."); a project SO can never be created after one refusal | Add a short body hash to the key. Posted on #2173 |
+| B6 | CRM #2173 vs SS | QT update (:941) and SO update (:659) first call `read_document` = `GET /api/v1/autocount/documents/{kind}/{docKey}` (`foundryx_autocount_client.py:294-298`); SS has only POST/PATCH document routes (`write_v1.py:274-365`) -> 405 -> every update fails | Crew decision (a): SS adds the GET route on #225 |
+| F10 | CRM #2173 + SS preset | CRM sent the project line uom `EA`; AutoCount items are `UNIT` (prod: products.base_uom UNIT 11,491 of 12,031; project SO lines EA 21,931). Refused "The value of column ItemCode and UOM in table Quotation Detail does not exist in its master file." | FIXED on #2173 (crew rule: send the product's AutoCount base UOM): red ea752b64, fix 96b64bba, test af6d22ac, reviewer READY |
 | F7 | CRM #2173 | A quotation with no recipient party is refused `ac_missing_debtor` "No debtor code on the customer." before SS is called (correct refusal, misleading text) | Say "This quotation has no recipient customer" when `recipient_party_id` is empty |
 | F8 | CRM project sales (UNVERIFIED as a product bug) | In the register wizard the customer pick did not stick on this copy (4274 customers); setting the customer afterwards with Edit project created no developer party, so the proposal and quotation carry no recipient. Staging fix: a developer party for 300-S057 linked to the project and both documents | Worth a separate look; out of this lane's scope |
 | F9 | Staging data | The derived quotation location needs customer -> sales agent -> agent location group -> `BRW-<group>`. Customers were pushed before sales agents existed, so no agent link; staging fix: 300-S057 linked to its db3 agent, agent group `AM` | Push agents before customers (runbook order) |
