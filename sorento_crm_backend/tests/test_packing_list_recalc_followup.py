@@ -144,3 +144,10 @@ def test_the_recompute_does_not_queue_itself(env, dispatched):
     assert shipment_id in _run_dispatched(env, dispatched)
     assert _stored(env, shipment_id, line_id)[0] == "fully_received"
     assert dispatched == []
+
+
+def test_stamp_sql_stamps_only_the_watched_tables():
+    """Raw-SQL script writers append this to their SET list (review nit, K7)."""
+    assert packing_list_recalc.stamp_sql("public.spo_allocations") == ", updated_at = now()"
+    assert packing_list_recalc.stamp_sql('"picking_lines"') == ", updated_at = now()"
+    assert packing_list_recalc.stamp_sql("purchase_orders") == ""
