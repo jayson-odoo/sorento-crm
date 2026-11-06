@@ -225,17 +225,22 @@ export function runsText(runs: RichRun[]): string {
   return runs.map((run) => run.text).join('');
 }
 
-/** Same rules as the server's `plain_text`: lines per block, "• " / "1. " per item, no markup. */
-export function richPlainText(value: string | null | undefined): string {
-  if (!value) return '';
-  if (!isRich(value)) return value;
-  return parseRichText(value)
+/** Blocks as plain lines: one line per block, "• " / "1. " per item, no markup. */
+export function blocksPlainText(blocks: RichBlock[]): string {
+  return blocks
     .map((entry) => {
       const text = runsText(entry.runs);
       if (entry.kind !== 'li') return text;
       return `${'  '.repeat((entry.level ?? 1) - 1)}${entry.marker ?? '•'} ${text}`;
     })
     .join('\n');
+}
+
+/** Same rules as the server's `plain_text`: lines per block, "• " / "1. " per item, no markup. */
+export function richPlainText(value: string | null | undefined): string {
+  if (!value) return '';
+  if (!isRich(value)) return value;
+  return blocksPlainText(parseRichText(value));
 }
 
 const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
