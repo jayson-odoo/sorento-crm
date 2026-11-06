@@ -49,6 +49,7 @@ import {
 } from '@/lib/dealer-kit/polygon-path';
 import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
 import {
+  LETTER_SPACING_MM_PER_UNIT,
   LIST_INDENT_MM,
   runFace,
   textFace,
@@ -65,8 +66,11 @@ import {
   accessoryBoxLayout,
   accessoryCardInner,
   accessoryCardLines,
+  accessoryHeaderStyle,
   accessoryLineCount,
+  accessoryLineStyle,
   fitLinePt,
+  type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
@@ -1351,6 +1355,7 @@ function renderAccessoriesLayer(
   const font = props.fontFamily
     ? `'${props.fontFamily}', sans-serif`
     : undefined;
+  const headerStyle = accessoryHeaderStyle(props);
 
   return (
     <div
@@ -1369,17 +1374,24 @@ function renderAccessoriesLayer(
       data-testid="accessories-box"
     >
       {/* The frame is its own child so the cards and header share the canvas's origin (the
-          outer corner); a CSS border on this div would push every child in by its width. */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          boxSizing: 'border-box',
-          background: props.fill,
-          border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
-          borderRadius: `${props.cornerRadius_mm}mm`,
-        }}
-      />
+          outer corner); a CSS border on this div would push every child in by its width. With
+          the header on the border the frame starts at the header's middle (the layout says). */}
+      {box.frame && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.frame.x_mm}mm`,
+            top: `${box.frame.y_mm}mm`,
+            width: `${box.frame.width_mm}mm`,
+            height: `${box.frame.height_mm}mm`,
+            boxSizing: 'border-box',
+            background: props.fill,
+            border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
+            borderRadius: `${props.cornerRadius_mm}mm`,
+          }}
+          data-testid="accessories-frame"
+        />
+      )}
       {box.header && (
         <div
           style={{
@@ -1389,10 +1401,10 @@ function renderAccessoriesLayer(
             width: `${box.header.width_mm}mm`,
             height: `${box.header.height_mm}mm`,
             lineHeight: `${box.header.height_mm}mm`,
-            textAlign: 'center',
-            fontWeight: 700,
+            // On the border: the header background breaks the border behind the text (legend).
+            background: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
             fontSize: `${box.header.fontSize_pt}pt`,
-            color: props.headerColor,
             // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
             whiteSpace: 'nowrap',
           }}
@@ -1435,8 +1447,11 @@ function renderAccessoriesLayer(
                 }}
               />
             )}
-            {inner.lines.map((line, n) =>
-              texts[n] ? (
+            {inner.lines.map((line, n) => {
+              if (!texts[n]) return null;
+              const style = accessoryLineStyle(props, n);
+              const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+              return (
                 <div
                   key={n}
                   style={{
@@ -1446,24 +1461,17 @@ function renderAccessoriesLayer(
                     width: `${line.width_mm}mm`,
                     height: `${line.height_mm}mm`,
                     lineHeight: `${line.height_mm}mm`,
-                    textAlign: inner.align,
-                    fontWeight: n === 0 ? 700 : 400,
+                    ...accessoryTextCss(style, style.align),
                     // Shrunk to fit by `fitLinePt`, the canvas's own rule: never an ellipsis.
-                    fontSize: `${fitLinePt(
-                      texts[n],
-                      line.width_mm,
-                      n === 0 ? props.nameFontSize : props.specFontSize,
-                      n === 0,
-                    )}pt`,
-                    color: props.textColor,
+                    fontSize: `${fitLinePt(texts[n], line.width_mm, basePt, style.bold)}pt`,
                     whiteSpace: 'nowrap',
                   }}
                   data-testid="accessories-line"
                 >
                   {texts[n]}
                 </div>
-              ) : null,
-            )}
+              );
+            })}
           </div>
         );
       })}
@@ -1489,4 +1497,25 @@ function renderAccessoriesLayer(
       )}
     </div>
   );
+}
+
+/** CSS for one accessory text role, the same style the canvas sets on its Konva text. */
+function accessoryTextCss(
+  style: AccessoryLineStyle,
+  align: 'left' | 'center' | 'right',
+): CSSProperties {
+  const decoration = [style.underline && 'underline', style.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
+  return {
+    textAlign: align,
+    fontWeight: style.fontWeight,
+    fontStyle: style.italic ? 'italic' : undefined,
+    textDecoration: decoration || undefined,
+    fontFamily: style.fontFamily ? `'${style.fontFamily}', sans-serif` : undefined,
+    letterSpacing: style.letterSpacing
+      ? `${style.letterSpacing * LETTER_SPACING_MM_PER_UNIT}mm`
+      : undefined,
+    color: style.color,
+  };
 }

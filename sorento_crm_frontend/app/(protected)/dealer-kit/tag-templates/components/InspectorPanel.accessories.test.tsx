@@ -59,12 +59,68 @@ describe('Inspector, accessories box', () => {
     expect(screen.getByLabelText('Card width (mm)')).toBeInTheDocument();
   });
 
-  it('turns the plus badge off', () => {
+  it('the "+" badge is off on a new box and turns on with its own switch', () => {
     const onUpdateProps = vi.fn();
     render(<InspectorPanel layer={box()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Show the plus badge' }));
-    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ showBadge: false }));
+    const badge = screen.getByRole('checkbox', { name: 'Show the plus badge' });
+    expect(badge).toHaveAttribute('aria-checked', 'false');
+    fireEvent.click(badge);
+    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ showBadge: true }));
   });
+
+  it('item layout: picture above text (default) or left of text', () => {
+    const onUpdateProps = vi.fn();
+    render(<InspectorPanel layer={box()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
+    expect(screen.getByRole('radio', { name: 'Picture above text' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('radio', { name: 'Picture left of text' }));
+    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ itemLayout: 'side' }));
+  });
+
+  it('header: hide it, or set it on the border', () => {
+    const onUpdateProps = vi.fn();
+    render(<InspectorPanel layer={box()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
+    expect(screen.getByRole('checkbox', { name: 'Header on the border' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Header on the border' }));
+    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ headerOnBorder: false }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show header' }));
+    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ showHeader: false }));
+  });
+
+  it('a hidden header hides its text box and style', () => {
+    render(
+      <InspectorPanel
+        layer={box({ props: { ...defaultAccessoriesProps(), showHeader: false } })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+    expect(screen.queryByLabelText('Header text')).toBeNull();
+    expect(screen.queryByText('Header text style')).toBeNull();
+  });
+
+  it('the frame can be switched off', () => {
+    const onUpdateProps = vi.fn();
+    render(<InspectorPanel layer={box()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Show frame' }));
+    expect(onUpdateProps).toHaveBeenCalledWith('acc1', expect.objectContaining({ showFrame: false }));
+  });
+
+  it('name and spec text use the text layer typography controls (italic on the spec)', () => {
+    const onUpdateProps = vi.fn();
+    render(<InspectorPanel layer={box()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
+    expect(screen.getByText('Name text')).toBeInTheDocument();
+    expect(screen.getByText('Spec text')).toBeInTheDocument();
+    // Header, name, spec: one Italic toggle each, in that order.
+    const italics = screen.getAllByRole('button', { name: 'Italic' });
+    expect(italics).toHaveLength(3);
+    fireEvent.click(italics[2]);
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'acc1',
+      expect.objectContaining({ specStyle: expect.objectContaining({ italic: true }) }),
+    );
+    expect(screen.queryByLabelText('Line Height')).toBeNull();
+  });
+
 
   it('warns how many of the previewed accessories do not fit', () => {
     render(

@@ -40,7 +40,13 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
-import { canvasTextHeight, runFace, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import {
+  canvasTextHeight,
+  LETTER_SPACING_MM_PER_UNIT,
+  runFace,
+  textFace,
+  textLayerLines,
+} from '@/lib/dealer-kit/text-layout';
 import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-text';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
@@ -49,10 +55,13 @@ import {
   accessoryBoxLayout,
   accessoryCardInner,
   accessoryCardLines,
+  accessoryHeaderStyle,
   accessoryLineCount,
+  accessoryLineStyle,
   fitLinePt,
   ptToMm,
   sampleAccessories,
+  type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import { useHtmlImage } from './useHtmlImage';
 
@@ -1188,17 +1197,30 @@ function AccessoriesContent({
     );
   }
   const px = (mm: number) => mm2px(mm, scale);
-  const fontFamily = props.fontFamily || undefined;
+  const header = accessoryHeaderStyle(props);
   return (
     <>
-      <Rect
-        width={px(box.boxWidth_mm)}
-        height={px(box.boxHeight_mm)}
-        fill={props.fill}
-        stroke={props.stroke}
-        strokeWidth={px(props.strokeWidth_mm)}
-        cornerRadius={px(props.cornerRadius_mm)}
-      />
+      {box.frame && (
+        <Rect
+          y={px(box.frame.y_mm)}
+          width={px(box.frame.width_mm)}
+          height={px(box.frame.height_mm)}
+          fill={props.fill}
+          stroke={props.stroke}
+          strokeWidth={px(props.strokeWidth_mm)}
+          cornerRadius={px(props.cornerRadius_mm)}
+        />
+      )}
+      {box.header?.onBorder && (
+        // Breaks the border behind a header that sits on it (legend style).
+        <Rect
+          x={px(box.header.x_mm)}
+          y={px(box.header.y_mm)}
+          width={px(box.header.width_mm)}
+          height={px(box.header.height_mm)}
+          fill={props.headerBackground || '#ffffff'}
+        />
+      )}
       {box.header && (
         <Text
           x={px(box.header.x_mm)}
@@ -1206,23 +1228,20 @@ function AccessoriesContent({
           width={px(box.header.width_mm)}
           height={px(box.header.height_mm)}
           text={props.headerText}
-          align="center"
+          align={box.header.onBorder ? 'center' : header.align}
           verticalAlign="middle"
-          fontStyle="bold"
-          fontFamily={fontFamily}
+          fontStyle={konvaFontStyle(header)}
+          textDecoration={konvaDecoration(header)}
+          fontFamily={header.fontFamily ?? undefined}
+          letterSpacing={px(header.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
           fontSize={px(ptToMm(box.header.fontSize_pt))}
-          fill={props.headerColor}
+          fill={header.color}
           wrap="none"
         />
       )}
       {box.cards.map((card, i) => {
         const item = items[i];
-        const inner = accessoryCardInner(
-          card,
-          props,
-          Boolean(item.image?.url),
-          lineCount,
-        );
+        const inner = accessoryCardInner(card, props, Boolean(item.image?.url), lineCount);
         const texts = accessoryCardLines(item);
         return (
           <Group key={`${item.id}-${i}`} x={px(card.x_mm)} y={px(card.y_mm)}>
@@ -1243,8 +1262,11 @@ function AccessoriesContent({
                 />
               </Group>
             )}
-            {inner.lines.map((line, n) =>
-              texts[n] ? (
+            {inner.lines.map((line, n) => {
+              if (!texts[n]) return null;
+              const style = accessoryLineStyle(props, n);
+              const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+              return (
                 <Text
                   key={n}
                   x={px(line.x_mm)}
@@ -1252,25 +1274,18 @@ function AccessoriesContent({
                   width={px(line.width_mm)}
                   height={px(line.height_mm)}
                   text={texts[n]}
-                  align={inner.align}
+                  align={style.align}
                   verticalAlign="middle"
-                  fontStyle={n === 0 ? 'bold' : 'normal'}
-                  fontFamily={fontFamily}
-                  fontSize={px(
-                    ptToMm(
-                      fitLinePt(
-                        texts[n],
-                        line.width_mm,
-                        n === 0 ? props.nameFontSize : props.specFontSize,
-                        n === 0,
-                      ),
-                    ),
-                  )}
-                  fill={props.textColor}
+                  fontStyle={konvaFontStyle(style)}
+                  textDecoration={konvaDecoration(style)}
+                  fontFamily={style.fontFamily ?? undefined}
+                  letterSpacing={px(style.letterSpacing * LETTER_SPACING_MM_PER_UNIT)}
+                  fontSize={px(ptToMm(fitLinePt(texts[n], line.width_mm, basePt, style.bold)))}
+                  fill={style.color}
                   wrap="none"
                 />
-              ) : null,
-            )}
+              );
+            })}
           </Group>
         );
       })}
@@ -1299,4 +1314,16 @@ function AccessoriesContent({
       )}
     </>
   );
+}
+
+/** Konva's `fontStyle` for an accessory text role: "normal", "bold", "italic" or "italic bold". */
+function konvaFontStyle(style: AccessoryLineStyle): string {
+  return [style.italic && 'italic', style.bold && 'bold'].filter(Boolean).join(' ') || 'normal';
+}
+
+/** Konva's `textDecoration`: "underline", "line-through", both, or "". */
+function konvaDecoration(style: AccessoryLineStyle): string {
+  return [style.underline && 'underline', style.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
 }

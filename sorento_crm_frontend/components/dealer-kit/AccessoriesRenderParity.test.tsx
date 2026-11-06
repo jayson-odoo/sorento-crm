@@ -27,6 +27,11 @@ vi.mock('react-konva', () => {
           data-h={String(props.height ?? '')}
           data-text={String(props.text ?? '')}
           data-size={String(props.fontSize ?? '')}
+          data-y={String(props.y ?? 0)}
+          data-align={String(props.align ?? '')}
+          data-style={String(props.fontStyle ?? '')}
+          data-family={String(props.fontFamily ?? '')}
+          data-fill={String(props.fill ?? '')}
           data-dash={props.dash ? 'dashed' : ''}
         >
           {props.children}
@@ -94,7 +99,15 @@ function boxLayer(direction: 'vertical' | 'horizontal'): TagLayer {
   return {
     id: 'acc', type: 'accessories', x_mm: 3, y_mm: 4, width_mm: 60, height_mm: 60, rotation_deg: 0,
     z_index: 1, locked: false, visible: true, slot_binding: null, text_override: null,
-    props: { ...defaultAccessoriesProps(), direction, headerText: 'ACCESSORIES INCLUDED' },
+    // A styled box: the owner's options must draw the same on every surface.
+    props: {
+      ...defaultAccessoriesProps(),
+      direction,
+      headerText: 'ACCESSORIES INCLUDED',
+      itemLayout: direction === 'vertical' ? 'stacked' : 'side',
+      nameStyle: { fontWeight: 700, fontFamily: 'Brand Sans', align: 'right', color: '#aa0000' },
+      specStyle: { italic: true },
+    },
   } as unknown as TagLayer;
 }
 
@@ -114,20 +127,35 @@ function doc(layer: TagLayer, tagIds: string[]): TagSheetDoc {
   } as TagSheetDoc;
 }
 
-type Drawn = { width: number; height: number; header: { text: string; pt: number }; lines: { text: string; pt: number }[] };
+type Line = { text: string; pt: number; align: string; italic: boolean; family: string; color: string };
+type Drawn = {
+  width: number;
+  frame: { top: number; height: number };
+  header: Line;
+  lines: Line[];
+};
+
+function htmlLine(el: HTMLElement): Line {
+  return {
+    text: el.textContent ?? '',
+    pt: parseFloat(el.style.fontSize),
+    align: el.style.textAlign,
+    italic: el.style.fontStyle === 'italic',
+    family: (el.style.fontFamily || '').split(',')[0].replace(/['"]/g, '').trim(),
+    color: el.style.color,
+  };
+}
 
 /** Read the box off the HTML renderers (print page and print preview), in mm and pt. */
 function readHtml(container: HTMLElement): Drawn[] {
   return [...container.querySelectorAll<HTMLElement>('[data-testid="accessories-box"]')].map((box) => {
     const header = box.querySelector<HTMLElement>('[data-testid="accessories-header"]')!;
+    const frame = box.querySelector<HTMLElement>('[data-testid="accessories-frame"]')!;
     return {
       width: parseFloat(box.style.width),
-      height: parseFloat(box.style.height),
-      header: { text: header.textContent ?? '', pt: parseFloat(header.style.fontSize) },
-      lines: [...box.querySelectorAll<HTMLElement>('[data-testid="accessories-line"]')].map((l) => ({
-        text: l.textContent ?? '',
-        pt: parseFloat(l.style.fontSize),
-      })),
+      frame: { top: parseFloat(frame.style.top), height: parseFloat(frame.style.height) },
+      header: htmlLine(header),
+      lines: [...box.querySelectorAll<HTMLElement>('[data-testid="accessories-line"]')].map(htmlLine),
     };
   });
 }
@@ -139,11 +167,18 @@ function readCanvas(container: HTMLElement, frameW: number): Drawn {
   const texts = [...container.querySelectorAll('[data-konva="text"]')].map((t) => ({
     text: t.getAttribute('data-text') ?? '',
     pt: Number(t.getAttribute('data-size')) / SCALE / ptToMm(1),
+    align: t.getAttribute('data-align') ?? '',
+    italic: (t.getAttribute('data-style') ?? '').includes('italic'),
+    family: t.getAttribute('data-family') ?? '',
+    color: t.getAttribute('data-fill') ?? '',
   }));
   const [header, ...lines] = texts.filter((t) => t.text !== '+');
   return {
     width: Number(frame.getAttribute('data-w')) / SCALE,
-    height: Number(frame.getAttribute('data-h')) / SCALE,
+    frame: {
+      top: Number(frame.getAttribute('data-y')) / SCALE,
+      height: Number(frame.getAttribute('data-h')) / SCALE,
+    },
     header,
     lines,
   };
@@ -182,11 +217,20 @@ describe.each(['vertical', 'horizontal'] as const)('one doc, three renderers (%s
 
     const canvas = readCanvas(await drawCanvas(layer, rows.t1), print[0].width);
     close(canvas.width, print[0].width);
-    close(canvas.height, print[0].height);
+    close(canvas.frame.top, print[0].frame.top);
+    close(canvas.frame.height, print[0].frame.height);
     expect(canvas.header.text).toBe(print[0].header.text);
     close(canvas.header.pt, print[0].header.pt);
     expect(canvas.lines.map((l) => l.text)).toEqual(print[0].lines.map((l) => l.text));
-    canvas.lines.forEach((l, i) => close(l.pt, print[0].lines[i].pt));
+    canvas.lines.forEach((l, i) => {
+      const p = print[0].lines[i];
+      close(l.pt, p.pt);
+      expect([l.align, l.italic, l.family]).toEqual([p.align, p.italic, p.family]);
+    });
+    // The owner's styles reach every surface: name right-aligned in the brand face, spec italic.
+    expect(print[0].lines[0]).toMatchObject({ align: 'right', family: 'Brand Sans', italic: false });
+    expect(print[0].lines[1]).toMatchObject({ italic: true });
+    expect(canvas.lines[0].color).toBe('#aa0000');
     // Nothing is cut: every name and the header print whole (no ellipsis anywhere).
     expect(print[0].lines.map((l) => l.text)).toContain('PULL OUT DRAINER');
     expect(print[0].lines.every((l) => !l.text.endsWith('...'))).toBe(true);

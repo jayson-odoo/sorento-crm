@@ -17,6 +17,8 @@ import {
   estimateHeaderWidth,
   estimateLineWidth,
   fitLinePt,
+  accessoryLineStyle,
+  itemLayoutOf,
   accessoryHeaderHeight,
   accessoryLineCount,
   sampleAccessories,
@@ -177,7 +179,7 @@ describe('accessoryBoxLayout', () => {
   });
 
   it('vertical: cards stack under the header, full inner width, gap between (A5)', () => {
-    const p = props({ direction: 'vertical', gap_mm: 2 });
+    const p = props({ direction: 'vertical', gap_mm: 2, headerOnBorder: false });
     const out = accessoryBoxLayout(2, p, 40, 80);
     const header = accessoryHeaderHeight(p);
     expect(out.shown).toBe(2);
@@ -246,12 +248,16 @@ describe('sampleAccessories', () => {
 });
 
 describe('defaultAccessoriesProps', () => {
-  it('defaults to a vertical box headed ACCESSORIES INCLUDED with the badge on', () => {
+  it('a new box: vertical, header ACCESSORIES INCLUDED on the border, picture above text, no badge', () => {
     expect(defaultAccessoriesProps()).toMatchObject({
       kind: 'accessories',
       direction: 'vertical',
       headerText: 'ACCESSORIES INCLUDED',
-      showBadge: true,
+      showHeader: true,
+      showFrame: true,
+      headerOnBorder: true,
+      itemLayout: 'stacked',
+      showBadge: false,
     });
   });
 });
@@ -417,5 +423,120 @@ describe('card lines shrink, never truncate (crew pass 3: "PULL OUT DR..." at 60
     expect(fitLinePt('390x300x140, Depth: 160mm', 30, 6.5, false)).toBeGreaterThan(
       fitLinePt('390x300x140, Depth: 160mm', 30, 6.5, true),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Owner hand test (6 Nov ~15:00): "too rigid, too hard coded"
+// ---------------------------------------------------------------------------
+
+/** A box saved before these options existed: no itemLayout / showHeader / showFrame / headerOnBorder. */
+function legacy(over: Partial<AccessoriesLayerProps> = {}): AccessoriesLayerProps {
+  const p = { ...defaultAccessoriesProps(), showBadge: true, ...over } as Partial<AccessoriesLayerProps>;
+  delete p.itemLayout;
+  delete p.showHeader;
+  delete p.showFrame;
+  delete p.headerOnBorder;
+  return p as AccessoriesLayerProps;
+}
+
+describe('item layout (picture above text vs picture left of text)', () => {
+  it('a saved box keeps what it drew: vertical = picture left, horizontal = picture above', () => {
+    expect(itemLayoutOf(legacy({ direction: 'vertical' }))).toBe('side');
+    expect(itemLayoutOf(legacy({ direction: 'horizontal' }))).toBe('stacked');
+  });
+
+  it('picture above text: picture on top, lines under it, centred, in a VERTICAL box', () => {
+    const p = props({ direction: 'vertical', itemLayout: 'stacked' });
+    const card = accessoryBoxLayout(1, p, 60, 80).cards[0];
+    const inner = accessoryCardInner(card, p, true, 2);
+    expect(inner.image!.y_mm).toBeLessThan(inner.lines[0].y_mm);
+    expect(inner.lines[0].y_mm).toBeGreaterThanOrEqual(inner.image!.y_mm + inner.image!.height_mm);
+    expect(inner.align).toBe('center');
+  });
+
+  it('picture left of text works in a HORIZONTAL box too', () => {
+    const p = props({ direction: 'horizontal', itemLayout: 'side', cardWidth_mm: 40 });
+    const card = accessoryBoxLayout(1, p, 100, 40).cards[0];
+    const inner = accessoryCardInner(card, p, true, 2);
+    expect(inner.lines[0].x_mm).toBeGreaterThanOrEqual(inner.image!.x_mm + inner.image!.width_mm);
+    expect(inner.align).toBe('left');
+  });
+
+  it('a stacked card is taller than a side card (picture plus text, not beside)', () => {
+    const side = accessoryBoxLayout(1, props({ itemLayout: 'side' }), 60, 80).cards[0];
+    const stacked = accessoryBoxLayout(1, props({ itemLayout: 'stacked' }), 60, 80).cards[0];
+    expect(stacked.height_mm).toBeGreaterThan(side.height_mm);
+  });
+});
+
+describe('header: show / hide, on the border (legend)', () => {
+  it('hidden header: no header and the cards start right under the top padding', () => {
+    const out = accessoryBoxLayout(1, props({ showHeader: false }), 60, 80);
+    expect(out.header).toBeNull();
+    expect(out.cards[0].y_mm).toBeCloseTo(ACCESSORY_BOX_PAD_MM);
+  });
+
+  it('on the border: header centred on the top edge, frame starts at its middle', () => {
+    const p = props({ headerOnBorder: true, showBadge: false });
+    const out = accessoryBoxLayout(1, p, 60, 80);
+    const h = out.header!;
+    expect(h.y_mm).toBe(0);
+    expect(h.x_mm + h.width_mm / 2).toBeCloseTo(out.boxWidth_mm / 2);
+    expect(h.width_mm).toBeLessThan(out.boxWidth_mm - 2 * ACCESSORY_BOX_PAD_MM);
+    expect(out.frame!.y_mm).toBeCloseTo(h.height_mm / 2);
+    expect(out.frame!.y_mm + out.frame!.height_mm).toBeCloseTo(out.boxHeight_mm);
+    expect(out.cards[0].y_mm).toBeGreaterThanOrEqual(h.height_mm);
+  });
+
+  it('inside the frame (not on the border): the frame is the whole box', () => {
+    const out = accessoryBoxLayout(1, props({ headerOnBorder: false }), 60, 80);
+    expect(out.frame).toEqual({ x_mm: 0, y_mm: 0, width_mm: 60, height_mm: out.boxHeight_mm });
+  });
+
+  it('no frame: nothing to draw around the cards', () => {
+    expect(accessoryBoxLayout(1, props({ showFrame: false }), 60, 80).frame).toBeNull();
+  });
+
+  it('a saved box draws as before: header inside the frame, frame is the box', () => {
+    const out = accessoryBoxLayout(1, legacy(), 60, 80);
+    expect(out.frame!.y_mm).toBe(0);
+    expect(out.header!.y_mm).toBeCloseTo(ACCESSORY_BOX_PAD_MM * 0.5);
+  });
+});
+
+describe('text styles (the TypographyControls every text layer uses)', () => {
+  it('name and spec read their own style; defaults: name bold, centred when stacked', () => {
+    const p = props({ itemLayout: 'stacked' });
+    expect(accessoryLineStyle(p, 0)).toMatchObject({ bold: true, align: 'center' });
+    expect(accessoryLineStyle(p, 1)).toMatchObject({ bold: false, align: 'center' });
+  });
+
+  it('a set style wins: family, weight, italic, underline, colour, alignment', () => {
+    const p = props({
+      itemLayout: 'side',
+      nameStyle: { fontFamily: 'Brand Sans', fontWeight: 400, italic: true, align: 'right' },
+      specStyle: { underline: true, color: '#ff0000' },
+    });
+    expect(accessoryLineStyle(p, 0)).toMatchObject({
+      fontFamily: 'Brand Sans', bold: false, italic: true, align: 'right',
+    });
+    expect(accessoryLineStyle(p, 1)).toMatchObject({ underline: true, color: '#ff0000', align: 'left' });
+  });
+
+  it('a regular-weight name shrinks less than a bold one (fit follows the weight)', () => {
+    const bold = accessoryBoxLayout(1, props({ headerText: 'ACCESSORIES INCLUDED' }), 45, 80).header!.fontSize_pt;
+    const regular = accessoryBoxLayout(
+      1, props({ headerText: 'ACCESSORIES INCLUDED', headerStyle: { fontWeight: 400 } }), 45, 80,
+    ).header!.fontSize_pt;
+    expect(regular).toBeGreaterThanOrEqual(bold);
+  });
+});
+
+describe('default box with picture-above cards', () => {
+  it('fits 3 stacked cards, a product entry included', () => {
+    const p = props();
+    const { width_mm, height_mm } = ACCESSORY_DEFAULT_BOX_MM;
+    expect(accessoryBoxLayout(3, p, width_mm, height_mm, 3)).toMatchObject({ shown: 3, dropped: 0 });
   });
 });

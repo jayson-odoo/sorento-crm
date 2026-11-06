@@ -10,7 +10,13 @@
 import { useCallback, useId, useMemo } from 'react';
 import type { AccessoriesLayerProps, FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
-import { accessoryBoxLayout } from '@/lib/dealer-kit/accessory-box';
+import {
+  accessoryBoxLayout,
+  accessoryHeaderStyle,
+  accessoryLineStyle,
+  itemLayoutOf,
+  type AccessoryLineStyle,
+} from '@/lib/dealer-kit/accessory-box';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -589,6 +595,8 @@ export function InspectorPanel({
               boxWidth_mm={layer.width_mm}
               boxHeight_mm={layer.height_mm}
               usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
@@ -869,6 +877,7 @@ function TypographyControls({
   onUploadFont,
   margin,
   onMarginChange,
+  singleLine = false,
 }: {
   values: TypographyValues;
   onChange: (changes: TypographyChanges) => void;
@@ -885,6 +894,8 @@ function TypographyControls({
    */
   margin?: LayerPadding;
   onMarginChange?: (margin: LayerPadding) => void;
+  /** One line of data text (an accessory's header, name or spec): no line height, no padding. */
+  singleLine?: boolean;
 }) {
   return (
     <>
@@ -995,13 +1006,15 @@ function TypographyControls({
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <NumberInput
-          label="Line Height"
-          value={values.lineHeight}
-          onChange={(v) => onChange({ lineHeight: v })}
-          step={0.1}
-          min={0.5}
-        />
+        {!singleLine && (
+          <NumberInput
+            label="Line Height"
+            value={values.lineHeight}
+            onChange={(v) => onChange({ lineHeight: v })}
+            step={0.1}
+            min={0.5}
+          />
+        )}
         <NumberInput
           label="Letter Spacing"
           value={values.letterSpacing}
@@ -1015,13 +1028,15 @@ function TypographyControls({
           <SidesInput value={margin} onChange={onMarginChange} />
         </div>
       )}
-      <div className="flex flex-col gap-1">
-        <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
-        <SidesInput
-          value={values.padding}
-          onChange={(padding) => onChange({ padding })}
-        />
-      </div>
+      {!singleLine && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
+          <SidesInput
+            value={values.padding}
+            onChange={(padding) => onChange({ padding })}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -1879,9 +1894,11 @@ const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: stri
  * the whole props object, so a change never drops the subject.
  */
 /**
- * PRICETAG-ACCESSORIES: the box's own look (card rule A4). Header text and the "+" badge are per
- * box (owner, 6 Nov: "FREE" on one tag, "ACCESSORIES INCLUDED" on another); vertical or horizontal
- * per box (Q3). Warns when the previewed list does not fit, the feature icons pattern (A6).
+ * PRICETAG-ACCESSORIES: the box's own look, every part of it set per box (owner hand test,
+ * 6 Nov ~15:00: "too rigid, too hard coded"). Item layout (picture above or left of the text),
+ * frame on/off, header shown/hidden/on the border, the "+" badge on/off, and the header, name and
+ * spec text set with the SAME TypographyControls a text layer uses. Warns when the previewed list
+ * does not fit (A6).
  */
 function AccessoriesInspector({
   props,
@@ -1889,6 +1906,8 @@ function AccessoriesInspector({
   boxWidth_mm,
   boxHeight_mm,
   usedColours,
+  fontOptions,
+  onUploadFont,
   onChange,
 }: {
   props: AccessoriesLayerProps;
@@ -1896,17 +1915,72 @@ function AccessoriesInspector({
   boxWidth_mm: number;
   boxHeight_mm: number;
   usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
   onChange: (changes: Partial<AccessoriesLayerProps>) => void;
 }) {
   const headerId = useId();
   const dropped = fit
     ? accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
     : 0;
-  return (
+  const showHeader = props.showHeader !== false;
+  const showFrame = props.showFrame !== false;
+  const itemLayout = itemLayoutOf(props);
+
+  /** One text role's TypographyControls: size and colour live on their own props. */
+  const textRole = (
+    title: string,
+    styleKey: 'headerStyle' | 'nameStyle' | 'specStyle',
+    sizeKey: 'headerFontSize' | 'nameFontSize' | 'specFontSize',
+    resolved: AccessoryLineStyle,
+    onColour: (value: string) => void,
+  ) => (
     <section className="flex flex-col gap-2">
+      <h5 className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h5>
+      <TypographyControls
+        singleLine
+        values={{
+          fontFamily: resolved.fontFamily ?? '',
+          fontSize: props[sizeKey],
+          fontWeight: resolved.fontWeight,
+          italic: resolved.italic,
+          underline: resolved.underline,
+          strikethrough: resolved.strikethrough,
+          align: resolved.align,
+          lineHeight: null,
+          letterSpacing: resolved.letterSpacing,
+          padding: ZERO_PADDING,
+        }}
+        onChange={(changes) => {
+          // Line height and padding are not offered (singleLine); size lives on its own prop.
+          const { fontSize, fontFamily, fontWeight, italic, underline, strikethrough, align, letterSpacing } =
+            changes;
+          const style = Object.fromEntries(
+            Object.entries({ fontFamily, fontWeight, italic, underline, strikethrough, align, letterSpacing })
+              .filter(([, value]) => value !== undefined),
+          );
+          const next: Partial<AccessoriesLayerProps> = {
+            [styleKey]: { ...(props[styleKey] ?? {}), ...style },
+          };
+          if (fontSize !== undefined) next[sizeKey] = fontSize;
+          onChange(next);
+        }}
+        colour={resolved.color}
+        onColourChange={onColour}
+        usedColours={usedColours}
+        fontOptions={fontOptions}
+        onUploadFont={onUploadFont}
+      />
+    </section>
+  );
+
+  return (
+    <section className="flex flex-col gap-3">
       <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Accessories
       </h4>
+
+      {/* Layout */}
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Direction</Label>
         <ToggleGroup
@@ -1927,90 +2001,25 @@ function AccessoriesInspector({
         </ToggleGroup>
       </div>
       <div className="flex flex-col gap-1">
-        <Label htmlFor={headerId} className="text-xs text-muted-foreground">
-          Header text
-        </Label>
-        <Input
-          id={headerId}
-          className="h-7 px-2 text-xs"
-          value={props.headerText}
-          maxLength={60}
-          onChange={(e) => onChange({ headerText: e.target.value })}
-        />
+        <Label className="text-xs text-muted-foreground">Item layout</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={itemLayout}
+          onValueChange={(next: string) => {
+            if (next) onChange({ itemLayout: next as 'stacked' | 'side' });
+          }}
+        >
+          <ToggleGroupItem value="stacked" className="flex-1 text-xs">
+            Picture above text
+          </ToggleGroupItem>
+          <ToggleGroupItem value="side" className="flex-1 text-xs">
+            Picture left of text
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <NumberInput
-          label="Header size (pt)"
-          value={props.headerFontSize}
-          onChange={(v) => onChange({ headerFontSize: v })}
-          step={0.5}
-          min={4}
-          max={72}
-        />
-        <ColorPicker
-          label="Header colour"
-          value={props.headerColor}
-          onChange={(v) => onChange({ headerColor: v })}
-          usedColours={usedColours}
-        />
-      </div>
-      <label className="flex items-center gap-1.5 text-xs">
-        <Checkbox
-          checked={props.showBadge}
-          onCheckedChange={(v) => onChange({ showBadge: !!v })}
-          aria-label="Show the plus badge"
-        />
-        &quot;+&quot; badge
-      </label>
-      {props.showBadge && (
-        <ColorPicker
-          label="Badge colour"
-          value={props.badgeColor}
-          onChange={(v) => onChange({ badgeColor: v })}
-          usedColours={usedColours}
-        />
-      )}
-      <div className="grid grid-cols-2 gap-2">
-        <ColorPicker
-          label="Box fill"
-          value={props.fill}
-          onChange={(v) => onChange({ fill: v })}
-          usedColours={usedColours}
-        />
-        <ColorPicker
-          label="Border colour"
-          value={props.stroke}
-          onChange={(v) => onChange({ stroke: v })}
-          usedColours={usedColours}
-        />
-        <NumberInput
-          label="Border (mm)"
-          value={props.strokeWidth_mm}
-          onChange={(v) => onChange({ strokeWidth_mm: v })}
-          step={0.1}
-          min={0}
-          max={5}
-        />
-        <NumberInput
-          label="Corner radius (mm)"
-          value={props.cornerRadius_mm}
-          onChange={(v) => onChange({ cornerRadius_mm: v })}
-          step={0.5}
-          min={0}
-          max={50}
-        />
-        <ColorPicker
-          label="Card fill"
-          value={props.cardFill}
-          onChange={(v) => onChange({ cardFill: v })}
-          usedColours={usedColours}
-        />
-        <ColorPicker
-          label="Text colour"
-          value={props.textColor}
-          onChange={(v) => onChange({ textColor: v })}
-          usedColours={usedColours}
-        />
         <NumberInput
           label="Picture size (mm)"
           value={props.imageSize_mm}
@@ -2027,22 +2036,6 @@ function AccessoriesInspector({
           min={0}
           max={50}
         />
-        <NumberInput
-          label="Name size (pt)"
-          value={props.nameFontSize}
-          onChange={(v) => onChange({ nameFontSize: v })}
-          step={0.5}
-          min={3}
-          max={48}
-        />
-        <NumberInput
-          label="Spec size (pt)"
-          value={props.specFontSize}
-          onChange={(v) => onChange({ specFontSize: v })}
-          step={0.5}
-          min={3}
-          max={48}
-        />
         {props.direction === 'horizontal' && (
           <NumberInput
             label="Card width (mm)"
@@ -2053,7 +2046,129 @@ function AccessoriesInspector({
             max={300}
           />
         )}
+        <ColorPicker
+          label="Card fill"
+          value={props.cardFill}
+          onChange={(v) => onChange({ cardFill: v })}
+          usedColours={usedColours}
+        />
       </div>
+
+      {/* Frame */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={showFrame}
+          onCheckedChange={(v) => onChange({ showFrame: !!v })}
+          aria-label="Show frame"
+        />
+        Show frame
+      </label>
+      {showFrame && (
+        <div className="grid grid-cols-2 gap-2">
+          <ColorPicker
+            label="Box fill"
+            value={props.fill}
+            onChange={(v) => onChange({ fill: v })}
+            usedColours={usedColours}
+          />
+          <ColorPicker
+            label="Border colour"
+            value={props.stroke}
+            onChange={(v) => onChange({ stroke: v })}
+            usedColours={usedColours}
+          />
+          <NumberInput
+            label="Border (mm)"
+            value={props.strokeWidth_mm}
+            onChange={(v) => onChange({ strokeWidth_mm: v })}
+            step={0.1}
+            min={0}
+            max={5}
+          />
+          <NumberInput
+            label="Corner radius (mm)"
+            value={props.cornerRadius_mm}
+            onChange={(v) => onChange({ cornerRadius_mm: v })}
+            step={0.5}
+            min={0}
+            max={50}
+          />
+        </div>
+      )}
+
+      {/* Header */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={showHeader}
+          onCheckedChange={(v) => onChange({ showHeader: !!v })}
+          aria-label="Show header"
+        />
+        Show header
+      </label>
+      {showHeader && (
+        <>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={headerId} className="text-xs text-muted-foreground">
+              Header text
+            </Label>
+            <Input
+              id={headerId}
+              className="h-7 px-2 text-xs"
+              value={props.headerText}
+              maxLength={60}
+              onChange={(e) => onChange({ headerText: e.target.value })}
+            />
+          </div>
+          {showFrame && (
+            <label className="flex items-center gap-1.5 text-xs">
+              <Checkbox
+                checked={Boolean(props.headerOnBorder)}
+                onCheckedChange={(v) => onChange({ headerOnBorder: !!v })}
+                aria-label="Header on the border"
+              />
+              Header on the border
+            </label>
+          )}
+          {showFrame && props.headerOnBorder && (
+            <ColorPicker
+              label="Behind the header"
+              value={props.headerBackground || '#ffffff'}
+              onChange={(v) => onChange({ headerBackground: v })}
+              usedColours={usedColours}
+            />
+          )}
+          {textRole('Header text style', 'headerStyle', 'headerFontSize', accessoryHeaderStyle(props), (v) =>
+            onChange({ headerColor: v }),
+          )}
+        </>
+      )}
+
+      {/* Name and spec */}
+      {textRole('Name text', 'nameStyle', 'nameFontSize', accessoryLineStyle(props, 0), (v) =>
+        onChange({ nameStyle: { ...(props.nameStyle ?? {}), color: v } }),
+      )}
+      {textRole('Spec text', 'specStyle', 'specFontSize', accessoryLineStyle(props, 1), (v) =>
+        onChange({ specStyle: { ...(props.specStyle ?? {}), color: v } }),
+      )}
+
+      {/* Badge */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.showBadge}
+          onCheckedChange={(v) => onChange({ showBadge: !!v })}
+          aria-label="Show the plus badge"
+        />
+        Show &quot;+&quot; badge
+      </label>
+      {props.showBadge && (
+        <ColorPicker
+          label="Badge colour"
+          value={props.badgeColor}
+          onChange={(v) => onChange({ badgeColor: v })}
+          usedColours={usedColours}
+        />
+      )}
+
       {dropped > 0 && fit && (
         <Alert variant="warning" size="sm" role="status">
           <AlertDescription>

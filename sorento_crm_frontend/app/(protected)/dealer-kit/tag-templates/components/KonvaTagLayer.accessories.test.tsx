@@ -102,9 +102,9 @@ describe('canvas draws the shared layout', () => {
     expect(box.shown).toBe(3);
     const c = await draw(l, LIST);
     const rects = [...c.querySelectorAll('[data-konva="rect"]')];
-    const frame = rects.find((r) => r.getAttribute('data-w') === String(box.boxWidth_mm * SCALE));
+    const frame = rects.find((r) => r.getAttribute('data-w') === String(box.frame!.width_mm * SCALE));
     expect(frame).toBeDefined();
-    expect(Number(frame!.getAttribute('data-h'))).toBeCloseTo(box.boxHeight_mm * SCALE);
+    expect(Number(frame!.getAttribute('data-h'))).toBeCloseTo(box.frame!.height_mm * SCALE);
     const texts = [...c.querySelectorAll('[data-konva="text"]')].map((t) => t.getAttribute('data-text'));
     expect(texts.indexOf('CHOPPING BOARD')).toBeLessThan(texts.indexOf('COLANDER'));
     expect(texts.indexOf('COLANDER')).toBeLessThan(texts.indexOf('SRTW5000'));

@@ -1,4 +1,4 @@
-crew-handtest: PRICETAG-ACCESSORIES (round 5: replaces round 4; a previewed PRODUCT now shows its own list, crew runs every command, COLANDER is seeded with a picture)
+crew-handtest: PRICETAG-ACCESSORIES (round 6: replaces round 5; the box is no longer hard coded: picture above or left of text, header shown / hidden / on the border, frame on/off, "+" badge off by default, header, name and spec styled like any tag text)
 
 ## URL
 crew test copy
@@ -9,60 +9,48 @@ crew test copy
   - SRTKS7061-BL "Kitchen sink with 1 tap (hand test)": part SRTWT7202; Free items DRAINER, PULL OUT DRAINER.
   - SRTKS7061-BL "Kitchen sink with 2 taps (hand test)": parts SRTWT7202 + SRTKT1632SS; same Free items.
   - SRTWB7065 "Basin with tap (hand test)": part SRTWT7202; Free items = product SRTW5000.
-  - Library accessory COLANDER with spec `390x300x140, Depth: 160mm` and a picture (if the copy cannot store pictures the seed says so; then step 3 uploads one).
-- After the session crew runs the cleanup: `... seed_accessories_handtest.py --cleanup --apply` (removes the three "(hand test)" combos and unused `crew-pass-...` accessories).
-- Steps 1-20: the E2E staff user (or the owner's own login).
-- Steps 21-26 (a real request in the request designer and the print preview) are for the OWNER: his own login can Impersonate a salesperson; crew helpers have neither a salesperson password nor Impersonate. The same parity is proven automatically in `sorento_crm_frontend/components/dealer-kit/AccessoriesRenderParity.test.tsx` (one doc and one request row through the request designer's canvas, the print preview and the print page).
+  - Library accessory COLANDER with spec `390x300x140, Depth: 160mm` and a picture.
+- After the session crew runs the cleanup: `... seed_accessories_handtest.py --cleanup --apply`.
+- Product SRTKS7846's own "Accessories included" list is CHOPPING BOARD, COLANDER, DRAINER (set it in the app if it is not: product page > Overview > Accessories included).
+- Steps 1-14: the E2E staff user (or the owner's own login). Steps 15-18 are for the OWNER (Impersonate); the same parity is proven automatically in `sorento_crm_frontend/components/dealer-kit/AccessoriesRenderParity.test.tsx`.
 - The toast `Font Century Gothic Bold could not be loaded` is not part of this lane (see the crew-note on round 3); ignore it.
 
 ## Steps
-1. From the sidebar, open Master Data > Products > Accessories.
-2. Click "Add accessory", type Name `drainer` (lower case), Save.
-3. Open COLANDER, click "Upload picture" and choose any jpg; close and reopen COLANDER.
-4. Open COLANDER, click Replace and choose a different jpg.
-5. Click Remove, then upload the first jpg again.
-6. Open product SRTKS7846, tab Overview, section "Accessories included", and add CHOPPING BOARD, COLANDER, DRAINER in that order.
-7. Drag DRAINER above COLANDER and reload the page.
-8. Drag DRAINER back below COLANDER and reload the page.
-9. Open product SRTWT7202 (the tap), tab Overview, and look at "Accessories included".
-10. Open SRTKS7061-BL > Combos > "Kitchen sink with 1 tap (hand test)" and look at "Free items".
-11. Do the same on "Kitchen sink with 2 taps (hand test)".
-12. Open SRTWB7065 > "Basin with tap (hand test)" > Free items, then try to add product SRTWT7202.
-13. Back in Master Data > Products > Accessories, open DRAINER's row menu, click Delete and wait 10 seconds.
-14. Dealer Kit > Tag templates: open the 148 x 105 mm sink template (or any template about that size) and click "Add Accessories" in the toolbar. Keep the box at the size it is added at (60 x 60 mm).
-15. Drag the box's right edge in to 45 mm wide, then back to 60.
-16. Click the eye of the template's product block (or "Preview the whole tag" on the frame) and pick product SRTKS7846.
-17. Preview with combo SRTKS7061-BL "Kitchen sink with 1 tap (hand test)" and set Header text `FREE`.
-18. Set Direction Horizontal, untick the "+" badge, and preview with "Kitchen sink with 2 taps (hand test)".
-19. Clear the combo preview, then click the product block's eye (or "Preview the whole tag") and pick product SRTWT7202.
-20. Preview with combo SRTWB7065 "Basin with tap (hand test)", then Save the template.
-21. OWNER: User Management > Users, open a salesperson linked to customers, row or page action "Impersonate user", confirm.
-22. OWNER, as that salesperson: Dealer Kit > Price tag requests > New, pick one of the salesperson's debtors, add three lines on this template: SRTKS7846 (no combo), SRTKS7061-BL with combo "Kitchen sink with 1 tap (hand test)", and SRTWT7202 (no combo); submit. End the impersonation from the banner.
-23. OWNER, back as himself: open that request from Dealer Kit > Price tag requests and click Design (request designer); look at each tag's Accessories box.
-24. OWNER: open the request's print preview (the design preview on the request page, or Download PDF) and compare each tag with step 23.
+1. Dealer Kit > Tag templates: open the 148 x 105 mm sink template (or any template about that size) and click "Add Accessories" in the toolbar. Keep the size it is added at (60 x 80 mm).
+2. Click the eye of the template's product block (or "Preview the whole tag" on the frame) and pick product SRTKS7846.
+3. Select the Accessories box and look at the inspector, top to bottom.
+4. In the inspector, Item layout: click "Picture left of text"; then click "Picture above text" again.
+5. Untick "Header on the border".
+6. Tick "Header on the border" again, then change Header text to `FREE`.
+7. Untick "Show header"; then tick it again.
+8. Untick "Show frame"; then tick it again.
+9. Tick "Show "+" badge"; then untick it.
+10. In "Name text": pick another font in Font Family, set Font Size 10, click Italic, set the colour to red, set Align to Left.
+11. In "Spec text": click Underline and set Align to Right.
+12. Set Direction Horizontal and preview with combo SRTKS7061-BL "Kitchen sink with 2 taps (hand test)".
+13. Clear the combo preview and preview the product block with SRTWT7202 (no accessories list).
+14. Save the template, reopen it.
+15. OWNER: User Management > Users, open a salesperson linked to customers, "Impersonate user", confirm.
+16. OWNER, as that salesperson: Dealer Kit > Price tag requests > New, pick one of the salesperson's debtors, add two lines on this template: SRTKS7846 (no combo) and SRTWT7202 (no combo); submit; end the impersonation from the banner.
+17. OWNER, as himself: open that request, click Design (request designer), look at both tags.
+18. OWNER: open the request's print preview (the design preview on the request page, or Download PDF) and compare with step 17.
 
 ## Expected
-1. The Accessories list shows the 23 migrated rows plus any you added, with columns Picture, Name, Spec, Used on.
-2. Refused with `An accessory called "drainer" already exists`; no second DRAINER row.
-3. COLANDER shows the picture thumbnail in the modal and in the list's Picture column.
-4. Replace swaps the thumbnail.
-5. Remove shows "No picture"; the re-upload shows the picture again.
-6. The section lists CHOPPING BOARD, COLANDER (with picture), DRAINER in that order, each with its spec.
-7. After the reload: CHOPPING BOARD, DRAINER, COLANDER.
-8. After the reload: CHOPPING BOARD, COLANDER, DRAINER.
-9. "Accessories included" shows the empty state "No accessories".
-10. Free items: DRAINER (`390x300x140, Depth: 160mm`), then PULL OUT DRAINER.
-11. The same two entries, same order.
-12. SRTW5000 shows in bold with `Popup Waste 80mm (w/o Overflow) Brass`, `LP: RM 68` and its photo; adding SRTWT7202 is refused with the toast `This product is already a part of this combo`.
-13. The button counts down with a Cancel; when it lapses the delete is refused with a message starting `Used on`, and DRAINER stays.
-14. A 60 x 60 mm rounded box: round orange "+" at its top-left, header `ACCESSORIES INCLUDED` fully visible and centred (first letter not under the badge), 2 sample cards.
-15. At 45 mm wide the header is still the whole text, just smaller (never "..."); back at 60 mm it is full size.
-16. The box shows SRTKS7846's OWN list (step 6), not sample cards: all three cards fit at the default size, stacked: CHOPPING BOARD; COLANDER with its picture and `390x300x140, Depth: 160mm`; DRAINER with `390x300x140, Depth: 160mm`. No "do not fit" warning.
-17. Two cards, DRAINER and PULL OUT DRAINER, under the header `FREE`.
-18. Both cards side by side in the default-size box (no "do not fit" warning), no badge, box closes up from the right. Every card name is whole: `PULL OUT DRAINER` prints in full, in a smaller size if needed, never `PULL OUT DR...`.
-19. SRTWT7202's own list is empty, so the box shows no cards, only its dashed "Accessories" outline (never the sample cards; nothing would print).
-20. One card: SRTW5000 / Popup Waste 80mm (w/o Overflow) Brass / LP: RM 68, with the product photo.
-21. The app shows the impersonation banner with the salesperson's name.
-22. The request is submitted with three lines; the banner ends.
-23. Three tags: tag 1 (SRTKS7846): CHOPPING BOARD, COLANDER, DRAINER; tag 2 (1-tap combo): DRAINER, PULL OUT DRAINER under the template's header; tag 3 (SRTWT7202): only the dashed outline.
-24. Tags 1 and 2 show the same cards, same order, same box size, header and name sizes as in step 23; tag 3 prints no box at all (no frame, no header, no badge).
+1. A box like the printed Dealer Kit one: a rounded frame with `ACCESSORIES INCLUDED` sitting ON its top border (the border broken behind the text), NO "+" badge, and sample cards each with the picture on top and the name, then the spec, centred under it.
+2. SRTKS7846's own list in that look: CHOPPING BOARD, COLANDER (with its picture and `390x300x140, Depth: 160mm`), DRAINER (`390x300x140, Depth: 160mm`), stacked, each picture above its bold centred name and centred spec. No "do not fit" warning.
+3. Sections in order: Direction, Item layout ("Picture above text" selected), Picture size, Gap, Card fill; "Show frame" (ticked) with Box fill, Border colour, Border, Corner radius; "Show header" (ticked) with Header text `ACCESSORIES INCLUDED`, "Header on the border" (ticked), "Behind the header" colour, Header text style; Name text; Spec text (each with Font Family, Font Size, Bold / Italic / Underline / Strikethrough, Font Weight, colour, Align, Letter Spacing); "Show "+" badge" (unticked).
+4. "Picture left of text": every card has its picture on the left and the name and spec left-aligned beside it; back to "Picture above text": picture on top, text centred.
+5. The header moves inside the frame, under its top edge; the frame's top border is continuous.
+6. The header is back on the border and reads `FREE`, whole, centred.
+7. Unticked: no header at all and the cards move up; ticked: `FREE` is back.
+8. Unticked: no border and no box fill, only the cards; ticked: the frame is back.
+9. Ticked: a round "+" at the frame's top-left, its colour picker appears; unticked: gone.
+10. Every card name shows in the chosen font, about 10 pt (smaller only if a long name needs it to fit, never "..."), italic, red, left-aligned.
+11. Every spec line is underlined and right-aligned.
+12. Both combo cards (DRAINER, PULL OUT DRAINER) side by side with the same styles; names whole.
+13. SRTWT7202 has no list: only the dashed "Accessories" outline on the canvas (nothing would print).
+14. Every setting from steps 4-12 is still there after reopening.
+15. The app shows the impersonation banner with the salesperson's name.
+16. The request is submitted with two lines; the banner ends.
+17. Tag 1 (SRTKS7846): the styled box with CHOPPING BOARD, COLANDER, DRAINER. Tag 2 (SRTWT7202): only the dashed outline.
+18. Tag 1 prints the same box: same frame, same header on the border, same cards in the same order, same fonts, sizes, colours and alignment as in step 17. Tag 2 prints no box at all.

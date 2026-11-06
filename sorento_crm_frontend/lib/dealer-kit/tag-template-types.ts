@@ -352,9 +352,42 @@ export interface FeatureIconsLayerProps {
  * Header text and the "+" badge are the box's own (owner, 6 Nov: "FREE" on one tag,
  * "ACCESSORIES INCLUDED" on another).
  */
+/**
+ * One text role of an Accessories box (header, name, spec), set with the same TypographyControls
+ * every text layer uses. Size lives in the box's own `*FontSize` prop; everything here is optional
+ * and falls back to the box's defaults, so a box saved before these existed draws unchanged.
+ */
+export interface AccessoryTextStyle {
+  fontFamily?: string | null;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  letterSpacing?: number;
+  color?: string;
+}
+
 export interface AccessoriesLayerProps {
   kind: 'accessories';
   direction: 'vertical' | 'horizontal';
+  /**
+   * Owner hand test (6 Nov ~15:00): each card is a picture ABOVE its text (stacked, centred, the
+   * printed Dealer Kit box) or LEFT of it. Absent on a box saved before: vertical drew side,
+   * horizontal drew stacked (`itemLayoutOf`).
+   */
+  itemLayout?: 'stacked' | 'side';
+  /** Absent = shown (a box saved before hid its header only by clearing the text). */
+  showHeader?: boolean;
+  /** Absent = shown. */
+  showFrame?: boolean;
+  /** The header sits ON the top border (legend style), the border broken behind it. Absent = no. */
+  headerOnBorder?: boolean;
+  /** What shows behind a header on the border (the tag's own background). */
+  headerBackground?: string;
+  headerStyle?: AccessoryTextStyle;
+  nameStyle?: AccessoryTextStyle;
+  specStyle?: AccessoryTextStyle;
   headerText: string;
   headerFontSize: number;
   headerColor: string;
@@ -1048,10 +1081,19 @@ export function defaultAccessoriesProps(): AccessoriesLayerProps {
   return {
     kind: 'accessories',
     direction: 'vertical',
+    // Owner hand test (6 Nov ~15:00): the printed Dealer Kit box. A frame with the header on its
+    // top border, each item a picture above a centred bold name and spec; no "+" badge.
+    itemLayout: 'stacked',
+    showHeader: true,
+    showFrame: true,
+    headerOnBorder: true,
+    headerBackground: '#ffffff',
+    nameStyle: { fontWeight: 700 },
+    specStyle: { fontWeight: 400 },
     headerText: 'ACCESSORIES INCLUDED',
     headerFontSize: 9,
     headerColor: '#1f4d36',
-    showBadge: true,
+    showBadge: false,
     badgeColor: '#c2410c',
     fill: '#f3f7f4',
     stroke: '#1f4d36',
