@@ -1,6 +1,6 @@
 # PLAN: spec icon picker - select, then Done; one asset library (SPEC-ICON-PICKER-UX)
 
-Status: in review (small fix track: FE + one BE route, no migration, no auth/RBAC change)
+Status: #2214 merged; follow-up #2216 in review (first save on shipped rules, review round)
 
 ## Journey
 
@@ -63,3 +63,14 @@ commit; a refused save rolls back). A refusal names the running spec and when it
 holder labels its lock connection). The GET revalidates on every read (`no-cache`, ETag 304).
 
 Tests: `sorento_crm_backend/tests/test_spec_display_only_save.py`.
+
+## Round 2 (#2216, follow-up after #2214 merged: review + crew browser pass on 99699469e)
+
+- Review B1/N1: a label Postgres refuses (NUL) no longer pools a connection holding the lock;
+  the holder name is printable ASCII, set best effort after the lock.
+- Review B2/B3: the pooled-connection reset and "Done replaces the list" are now guarded
+  (kill-tested).
+- Review S1: the before-fingerprint is re-taken from committed state once the slot is held.
+- Crew finding: the FIRST save of a key reading the shipped rules (Flush type, Finish) counted
+  as a reading change (shipped rules carry `_seed`), took the slot and re-read products. The
+  reading now compares rules by cleaned builder, so it is no change.

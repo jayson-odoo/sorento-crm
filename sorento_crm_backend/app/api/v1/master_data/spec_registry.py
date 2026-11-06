@@ -1348,6 +1348,11 @@ def update_spec_key(
             except Exception:
                 db.rollback()
                 raise
+            # Taken again now the slot is held, from what is COMMITTED (a session of its
+            # own: this one's identity map already carries the edit). Another key's save
+            # may have landed since the first one, and `reread_after_save` judges whether
+            # the stored fingerprint was current against it (review S1).
+            fingerprint_before = _committed_fingerprint(db)
         db.commit()
         db.refresh(row)
 
@@ -1368,14 +1373,36 @@ def update_spec_key(
 
 # The fields that change what a product reads: a rule, a scope, a cap, or a choice taken
 # away (a rule setting a suppressed value stops firing, `configured_rules`; review S-10).
+def _committed_fingerprint(db: Session) -> str:
+    """`rules_fingerprint` of the committed registry, read beside `db`'s unsaved edits."""
+    with Session(bind=db.get_bind(), autoflush=False) as fresh:
+        return product_spec_rederive.rules_fingerprint(fresh)
+
+
 _READING_FIELDS = {"derivation_rules", "applies_when", "max_value", "suppressed_values"}
 
 
 def _reading(row) -> tuple:
+    """How the row reads products, compared by MEANING: a rule is its cleaned builder.
+
+    Shipped rules carry bookkeeping a stored rule does not (`_seed`), so a key that read the
+    shipped rules and is now saved with those same rules stored (the record page re-sends what
+    it shows on the first save) reads exactly as before (crew pass on #2214).
+    """
     from app.services.product_spec_derivation import stored_or_shipped_rules
+    from app.services.product_spec_rules import builder_of, builder_identity, clean_builder
+
+    def meaning(rule):
+        builder = builder_of(rule)
+        if not builder:
+            return rule
+        try:
+            return builder_identity(clean_builder(builder))
+        except Exception:  # noqa: BLE001 - an odd legacy rule compares as it is stored
+            return builder_identity(builder)
 
     return (
-        stored_or_shipped_rules(row),
+        [meaning(rule) for rule in stored_or_shipped_rules(row)],
         dict(row.applies_when or {}),
         row.max_value,
         sorted(str(v) for v in (row.suppressed_values or [])),
