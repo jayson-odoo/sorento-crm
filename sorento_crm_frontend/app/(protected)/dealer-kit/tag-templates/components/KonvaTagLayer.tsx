@@ -48,6 +48,8 @@ import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoryBoxLayout,
   accessoryCardInner,
+  accessoryCardLines,
+  accessoryLineCount,
   ptToMm,
   sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
@@ -401,7 +403,6 @@ function LayerContent({
           scale={scale}
           props={props}
           accessories={display?.accessories}
-          badgeUrl={display?.imageUrl ?? null}
         />
       );
 
@@ -1144,7 +1145,6 @@ function AccessoriesContent({
   scale,
   props,
   accessories,
-  badgeUrl,
 }: {
   w: number;
   h: number;
@@ -1153,14 +1153,27 @@ function AccessoriesContent({
   scale: number;
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
-  badgeUrl: string | null;
 }) {
   const items = accessories ?? sampleAccessories();
-  const box = accessoryBoxLayout(items.length, props, widthMm, heightMm);
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(
+    items.length,
+    props,
+    widthMm,
+    heightMm,
+    lineCount,
+  );
   if (box.shown === 0) {
     return (
       <>
-        <Rect width={w} height={h} fill="transparent" stroke="#3b82f6" strokeWidth={1} dash={[4, 4]} />
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+          stroke="#3b82f6"
+          strokeWidth={1}
+          dash={[4, 4]}
+        />
         <Text
           width={w}
           height={h}
@@ -1204,7 +1217,13 @@ function AccessoriesContent({
       )}
       {box.cards.map((card, i) => {
         const item = items[i];
-        const inner = accessoryCardInner(card, props, Boolean(item.image?.url));
+        const inner = accessoryCardInner(
+          card,
+          props,
+          Boolean(item.image?.url),
+          lineCount,
+        );
+        const texts = accessoryCardLines(item);
         return (
           <Group key={`${item.id}-${i}`} x={px(card.x_mm)} y={px(card.y_mm)}>
             <Rect
@@ -1224,69 +1243,51 @@ function AccessoriesContent({
                 />
               </Group>
             )}
-            <Text
-              x={px(inner.name.x_mm)}
-              y={px(inner.name.y_mm)}
-              width={px(inner.name.width_mm)}
-              height={px(inner.name.height_mm)}
-              text={item.name}
-              align={inner.align}
-              fontStyle="bold"
-              fontFamily={fontFamily}
-              fontSize={px(ptToMm(props.nameFontSize))}
-              fill={props.textColor}
-              wrap="none"
-              ellipsis
-            />
-            {item.spec ? (
-              <Text
-                x={px(inner.spec.x_mm)}
-                y={px(inner.spec.y_mm)}
-                width={px(inner.spec.width_mm)}
-                height={px(inner.spec.height_mm)}
-                text={item.spec}
-                align={inner.align}
-                fontFamily={fontFamily}
-                fontSize={px(ptToMm(props.specFontSize))}
-                fill={props.textColor}
-                wrap="none"
-                ellipsis
-              />
-            ) : null}
+            {inner.lines.map((line, n) =>
+              texts[n] ? (
+                <Text
+                  key={n}
+                  x={px(line.x_mm)}
+                  y={px(line.y_mm)}
+                  width={px(line.width_mm)}
+                  height={px(line.height_mm)}
+                  text={texts[n]}
+                  align={inner.align}
+                  fontStyle={n === 0 ? 'bold' : 'normal'}
+                  fontFamily={fontFamily}
+                  fontSize={px(
+                    ptToMm(n === 0 ? props.nameFontSize : props.specFontSize),
+                  )}
+                  fill={props.textColor}
+                  wrap="none"
+                  ellipsis
+                />
+              ) : null,
+            )}
           </Group>
         );
       })}
       {box.badge && (
         <Group x={px(box.badge.x_mm)} y={px(box.badge.y_mm)}>
-          {badgeUrl ? (
-            <ImageContent
-              w={px(box.badge.width_mm)}
-              h={px(box.badge.height_mm)}
-              url={badgeUrl}
-              fit="contain"
-              maskShape="none"
+          <>
+            <Ellipse
+              x={px(box.badge.width_mm / 2)}
+              y={px(box.badge.height_mm / 2)}
+              radiusX={px(box.badge.width_mm / 2)}
+              radiusY={px(box.badge.height_mm / 2)}
+              fill={props.badgeColor}
             />
-          ) : (
-            <>
-              <Ellipse
-                x={px(box.badge.width_mm / 2)}
-                y={px(box.badge.height_mm / 2)}
-                radiusX={px(box.badge.width_mm / 2)}
-                radiusY={px(box.badge.height_mm / 2)}
-                fill={props.badgeColor}
-              />
-              <Text
-                width={px(box.badge.width_mm)}
-                height={px(box.badge.height_mm)}
-                text="+"
-                align="center"
-                verticalAlign="middle"
-                fontStyle="bold"
-                fontSize={px(box.badge.height_mm * 0.9)}
-                fill="#ffffff"
-              />
-            </>
-          )}
+            <Text
+              width={px(box.badge.width_mm)}
+              height={px(box.badge.height_mm)}
+              text="+"
+              align="center"
+              verticalAlign="middle"
+              fontStyle="bold"
+              fontSize={px(box.badge.height_mm * 0.9)}
+              fill="#ffffff"
+            />
+          </>
         </Group>
       )}
     </>

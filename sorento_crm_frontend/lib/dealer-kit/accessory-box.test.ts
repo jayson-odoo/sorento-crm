@@ -10,7 +10,10 @@ import {
   ACCESSORY_BOX_PAD_MM,
   accessoriesOf,
   accessoryBoxLayout,
+  accessoryCardInner,
+  accessoryCardLines,
   accessoryHeaderHeight,
+  accessoryLineCount,
   sampleAccessories,
 } from './accessory-box';
 import {
@@ -243,5 +246,71 @@ describe('defaultAccessoriesProps', () => {
       headerText: 'ACCESSORIES INCLUDED',
       showBadge: true,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Product entries (owner, 6 Nov ~10:45: FREE SRTW5000 on combo SRTWB7065)
+// ---------------------------------------------------------------------------
+
+const WASTE: TagAccessory = {
+  kind: 'product',
+  id: 'p-waste',
+  name: 'Popup Waste 80mm (w/o Overflow) Brass',
+  spec: null,
+  image: { attachment_id: 'att-w', url: 'https://cdn.test/waste.jpg' },
+  code: 'SRTW5000',
+  list_price: 68,
+};
+
+describe('accessoryCardLines', () => {
+  it('a library accessory prints its name then its spec', () => {
+    expect(accessoryCardLines(DRAINER)).toEqual(['DRAINER', '390x300x140, Depth: 160mm']);
+  });
+
+  it('an accessory with no spec prints its name alone', () => {
+    expect(accessoryCardLines(PULLOUT)).toEqual(['PULL OUT DRAINER']);
+  });
+
+  it('a product prints code, description and LP', () => {
+    expect(accessoryCardLines(WASTE)).toEqual([
+      'SRTW5000',
+      'Popup Waste 80mm (w/o Overflow) Brass',
+      'LP: RM 68',
+    ]);
+  });
+
+  it('a product with no list price leaves the LP line out', () => {
+    expect(accessoryCardLines({ ...WASTE, list_price: null })).toEqual([
+      'SRTW5000',
+      'Popup Waste 80mm (w/o Overflow) Brass',
+    ]);
+  });
+});
+
+describe('accessoryLineCount', () => {
+  it('is 2 for accessories only and 3 once a product is listed, so every card matches', () => {
+    expect(accessoryLineCount([DRAINER, PULLOUT])).toBe(2);
+    expect(accessoryLineCount([DRAINER, WASTE])).toBe(3);
+  });
+});
+
+describe('three-line cards', () => {
+  it('are taller than two-line ones, in both directions', () => {
+    for (const direction of ['vertical', 'horizontal'] as const) {
+      const p = props({ direction, imageSize_mm: 4 });
+      const two = accessoryBoxLayout(1, p, 60, 60, 2).cards[0];
+      const three = accessoryBoxLayout(1, p, 60, 60, 3).cards[0];
+      expect(three.height_mm).toBeGreaterThan(two.height_mm);
+    }
+  });
+
+  it('place a third line under the second', () => {
+    const p = props({ direction: 'vertical' });
+    const card = accessoryBoxLayout(1, p, 60, 60, 3).cards[0];
+    const inner = accessoryCardInner(card, p, true, 3);
+    expect(inner.lines).toHaveLength(3);
+    expect(inner.lines[1].y_mm).toBeGreaterThan(inner.lines[0].y_mm);
+    expect(inner.lines[2].y_mm).toBeGreaterThan(inner.lines[1].y_mm);
   });
 });

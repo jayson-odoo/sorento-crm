@@ -11,7 +11,8 @@ import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { useAccessories, useDeleteAccessory } from '../hooks/useAccessories';
+import { useDeferredRowAction, useRowPending } from '@/hooks/useDeferredRowAction';
+import { useAccessories } from '../hooks/useAccessories';
 import { buildAccessoryColumns } from './AccessoryColumns';
 import AccessoryFormDialog from './AccessoryFormDialog';
 import type { Accessory } from '../types/accessory.types';
@@ -25,7 +26,15 @@ export default function AccessoriesList() {
   } = useDebouncedSearch();
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Accessory | null>(null);
-  const deleteMutation = useDeleteAccessory();
+  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel. A 409 from
+  // the server (still listed on products or combos) surfaces when the window lapses.
+  const deletion = useDeferredRowAction({
+    actionKey: 'accessory.delete',
+    entityType: 'accessory',
+    successMessage: 'Accessory deleted',
+    invalidateKeys: [['accessories'], ['owner-accessories']],
+  });
+  const rowPending = useRowPending<Accessory>('accessory');
 
   const { data, isLoading, isPlaceholderData, error, refetch } = useAccessories({
     pageIndex: 0,
@@ -38,7 +47,9 @@ export default function AccessoriesList() {
   const columns = useMemo(
     () =>
       buildAccessoryColumns({
-        onDelete: canEdit ? (accessory) => deleteMutation.mutate(accessory.id) : undefined,
+        onDelete: canEdit
+          ? (accessory) => deletion.run({ id: accessory.id, subject: accessory.name })
+          : undefined,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canEdit],
@@ -65,6 +76,7 @@ export default function AccessoriesList() {
         error={error}
         onRetry={() => void refetch()}
         isPlaceholderData={isPlaceholderData}
+        rowPending={rowPending}
         onRowClick={(row) => {
           setEditing(row);
           setFormOpen(true);

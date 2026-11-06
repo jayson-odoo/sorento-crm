@@ -8,8 +8,9 @@
  */
 
 import { useCallback, useId, useMemo } from 'react';
-import type { FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type { AccessoriesLayerProps, FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import { accessoryBoxLayout } from '@/lib/dealer-kit/accessory-box';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -253,6 +254,9 @@ interface InspectorPanelProps {
   onManageIcons?: () => void;
   /** Feature icons: how many icons the previewed product reads for the selected layer. */
   featureIconCount?: number;
+  /** Accessories: how many entries the previewed tag lists for the selected layer, and how many
+   *  text lines its cards take (`accessoryLineCount`). Absent with nothing previewed. */
+  accessoryFit?: { count: number; lines: number };
 }
 
 export function InspectorPanel({
@@ -283,6 +287,7 @@ export function InspectorPanel({
   specKeys,
   onManageIcons,
   featureIconCount,
+  accessoryFit,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -572,6 +577,16 @@ export function InspectorPanel({
               onManageIcons={onManageIcons}
               iconCount={featureIconCount ?? 0}
               boxWidth_mm={layer.width_mm}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+            />
+          )}
+          {layer.props.kind === 'accessories' && (
+            <AccessoriesInspector
+              props={layer.props}
+              fit={accessoryFit}
+              boxWidth_mm={layer.width_mm}
+              boxHeight_mm={layer.height_mm}
+              usedColours={usedColours}
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
@@ -1851,6 +1866,194 @@ const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: stri
  * icons is the spec registry's (each spec's Icon order), never the layer's. Every write carries
  * the whole props object, so a change never drops the subject.
  */
+/**
+ * PRICETAG-ACCESSORIES: the box's own look (card rule A4). Header text and the "+" badge are per
+ * box (owner, 6 Nov: "FREE" on one tag, "ACCESSORIES INCLUDED" on another); vertical or horizontal
+ * per box (Q3). Warns when the previewed list does not fit, the feature icons pattern (A6).
+ */
+function AccessoriesInspector({
+  props,
+  fit,
+  boxWidth_mm,
+  boxHeight_mm,
+  usedColours,
+  onChange,
+}: {
+  props: AccessoriesLayerProps;
+  fit?: { count: number; lines: number };
+  boxWidth_mm: number;
+  boxHeight_mm: number;
+  usedColours: string[];
+  onChange: (changes: Partial<AccessoriesLayerProps>) => void;
+}) {
+  const headerId = useId();
+  const dropped = fit
+    ? accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
+    : 0;
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Accessories
+      </h4>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Direction</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={props.direction}
+          onValueChange={(next: string) => {
+            if (next) onChange({ direction: next as AccessoriesLayerProps['direction'] });
+          }}
+        >
+          <ToggleGroupItem value="vertical" className="flex-1 text-xs">
+            Vertical
+          </ToggleGroupItem>
+          <ToggleGroupItem value="horizontal" className="flex-1 text-xs">
+            Horizontal
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={headerId} className="text-xs text-muted-foreground">
+          Header text
+        </Label>
+        <Input
+          id={headerId}
+          className="h-7 px-2 text-xs"
+          value={props.headerText}
+          maxLength={60}
+          onChange={(e) => onChange({ headerText: e.target.value })}
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="Header size (pt)"
+          value={props.headerFontSize}
+          onChange={(v) => onChange({ headerFontSize: v })}
+          step={0.5}
+          min={4}
+          max={72}
+        />
+        <ColorPicker
+          label="Header colour"
+          value={props.headerColor}
+          onChange={(v) => onChange({ headerColor: v })}
+          usedColours={usedColours}
+        />
+      </div>
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.showBadge}
+          onCheckedChange={(v) => onChange({ showBadge: !!v })}
+          aria-label="Show the plus badge"
+        />
+        &quot;+&quot; badge
+      </label>
+      {props.showBadge && (
+        <ColorPicker
+          label="Badge colour"
+          value={props.badgeColor}
+          onChange={(v) => onChange({ badgeColor: v })}
+          usedColours={usedColours}
+        />
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <ColorPicker
+          label="Box fill"
+          value={props.fill}
+          onChange={(v) => onChange({ fill: v })}
+          usedColours={usedColours}
+        />
+        <ColorPicker
+          label="Border colour"
+          value={props.stroke}
+          onChange={(v) => onChange({ stroke: v })}
+          usedColours={usedColours}
+        />
+        <NumberInput
+          label="Border (mm)"
+          value={props.strokeWidth_mm}
+          onChange={(v) => onChange({ strokeWidth_mm: v })}
+          step={0.1}
+          min={0}
+          max={5}
+        />
+        <NumberInput
+          label="Corner radius (mm)"
+          value={props.cornerRadius_mm}
+          onChange={(v) => onChange({ cornerRadius_mm: v })}
+          step={0.5}
+          min={0}
+          max={50}
+        />
+        <ColorPicker
+          label="Card fill"
+          value={props.cardFill}
+          onChange={(v) => onChange({ cardFill: v })}
+          usedColours={usedColours}
+        />
+        <ColorPicker
+          label="Text colour"
+          value={props.textColor}
+          onChange={(v) => onChange({ textColor: v })}
+          usedColours={usedColours}
+        />
+        <NumberInput
+          label="Picture size (mm)"
+          value={props.imageSize_mm}
+          onChange={(v) => onChange({ imageSize_mm: v })}
+          step={0.5}
+          min={0}
+          max={100}
+        />
+        <NumberInput
+          label="Gap (mm)"
+          value={props.gap_mm}
+          onChange={(v) => onChange({ gap_mm: v })}
+          step={0.5}
+          min={0}
+          max={50}
+        />
+        <NumberInput
+          label="Name size (pt)"
+          value={props.nameFontSize}
+          onChange={(v) => onChange({ nameFontSize: v })}
+          step={0.5}
+          min={3}
+          max={48}
+        />
+        <NumberInput
+          label="Spec size (pt)"
+          value={props.specFontSize}
+          onChange={(v) => onChange({ specFontSize: v })}
+          step={0.5}
+          min={3}
+          max={48}
+        />
+        {props.direction === 'horizontal' && (
+          <NumberInput
+            label="Card width (mm)"
+            value={props.cardWidth_mm}
+            onChange={(v) => onChange({ cardWidth_mm: v })}
+            step={0.5}
+            min={5}
+            max={300}
+          />
+        )}
+      </div>
+      {dropped > 0 && fit && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {dropped} of {fit.count} accessories do not fit this box. Make the box bigger or the cards
+            smaller.
+          </AlertDescription>
+        </Alert>
+      )}
+    </section>
+  );
+}
+
 function FeatureIconsInspector({
   props,
   onManageIcons,

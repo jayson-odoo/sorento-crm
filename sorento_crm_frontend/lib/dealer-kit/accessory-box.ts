@@ -7,6 +7,7 @@
  * Card: documentation/plans/dealer-kit/CARD-pricetag-accessories-06nov.md (A3, A5-A8).
  * Everything is in millimetres inside the layer's own box; (0, 0) is its top-left corner.
  */
+import { formatTagPrice } from './price-badge';
 import type {
   AccessoriesLayerProps,
   SubjectSlot,
@@ -28,7 +29,10 @@ const LINE = 1.2;
 // Which list (A3)
 // ---------------------------------------------------------------------------
 
-function partAtSlot(slots: TagSlots | null | undefined, slot: SubjectSlot): TagPartData | null {
+function partAtSlot(
+  slots: TagSlots | null | undefined,
+  slot: SubjectSlot,
+): TagPartData | null {
   if (!slots) return null;
   switch (slot.kind) {
     case 'main':
@@ -56,7 +60,8 @@ export function accessoriesOf(
   layer: { props?: TagLayerProps } | undefined,
 ): TagAccessory[] {
   if (!data) return [];
-  const slot = layer?.props?.kind === 'accessories' ? layer.props.subjectSlot : undefined;
+  const slot =
+    layer?.props?.kind === 'accessories' ? layer.props.subjectSlot : undefined;
   if (slot && (data.kind === 'line' || data.kind === 'product')) {
     const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
     return partAtSlot(slots, slot)?.accessories ?? [];
@@ -118,19 +123,55 @@ type LayoutProps = Pick<
 >;
 
 /** The header band's height; 0 when the header text is blank. */
-export function accessoryHeaderHeight(props: Pick<AccessoriesLayerProps, 'headerText' | 'headerFontSize'>): number {
+export function accessoryHeaderHeight(
+  props: Pick<AccessoriesLayerProps, 'headerText' | 'headerFontSize'>,
+): number {
   if (!props.headerText || !props.headerText.trim()) return 0;
   return Math.max(0, props.headerFontSize) * PT_TO_MM * LINE + 1;
 }
 
-/** Name line + spec line, always both, so every card in a box is the same height. */
-function textBlockHeight(props: Pick<AccessoriesLayerProps, 'nameFontSize' | 'specFontSize'>): number {
-  return (Math.max(0, props.nameFontSize) + Math.max(0, props.specFontSize)) * PT_TO_MM * LINE;
+/**
+ * The text a card prints, line by line: a library accessory its name then its spec; a product its
+ * code, its description and "LP: RM 68" (owner, 6 Nov ~10:45). The first line is the bold one.
+ */
+export function accessoryCardLines(item: TagAccessory): string[] {
+  if (item.kind === 'product') {
+    const lines = [item.code ?? '', item.name].filter(
+      (line) => line && line.trim(),
+    );
+    if (item.list_price != null)
+      lines.push(`LP: ${formatTagPrice(item.list_price)}`);
+    return lines;
+  }
+  return [item.name, item.spec ?? ''].filter((line) => line && line.trim());
 }
 
-function cardSize(props: LayoutProps, boxWidth_mm: number): { w: number; h: number } {
+/** How many text lines every card in a box reserves: 3 once a product is listed, else 2. */
+export function accessoryLineCount(items: readonly TagAccessory[]): number {
+  return items.some((item) => item.kind === 'product') ? 3 : 2;
+}
+
+/** The first (bold) line at the name size, every other line at the spec size, so every card in a
+ *  box is the same height whatever it holds. */
+function textBlockHeight(
+  props: Pick<AccessoriesLayerProps, 'nameFontSize' | 'specFontSize'>,
+  lines: number,
+): number {
+  const rest = Math.max(0, lines - 1);
+  return (
+    (Math.max(0, props.nameFontSize) + rest * Math.max(0, props.specFontSize)) *
+    PT_TO_MM *
+    LINE
+  );
+}
+
+function cardSize(
+  props: LayoutProps,
+  boxWidth_mm: number,
+  lines: number,
+): { w: number; h: number } {
   const image = Math.max(0, props.imageSize_mm);
-  const text = textBlockHeight(props);
+  const text = textBlockHeight(props, lines);
   if (props.direction === 'horizontal') {
     return {
       w: Math.max(0, props.cardWidth_mm),
@@ -158,6 +199,7 @@ export function accessoryBoxLayout(
   props: LayoutProps,
   boxWidth_mm: number,
   boxHeight_mm: number,
+  lines = 2,
 ): AccessoryBoxLayout {
   const total = Math.max(0, Math.floor(count));
   const empty = (dropped: number): AccessoryBoxLayout => ({
@@ -175,7 +217,7 @@ export function accessoryBoxLayout(
   const gap = Math.max(0, props.gap_mm);
   const headerH = accessoryHeaderHeight(props);
   const top = pad + headerH;
-  const { w, h } = cardSize(props, boxWidth_mm);
+  const { w, h } = cardSize(props, boxWidth_mm, lines);
   if (!(w > 0) || !(h > 0)) return empty(total);
 
   const cards: AccessoryRect[] = [];
@@ -183,24 +225,42 @@ export function accessoryBoxLayout(
     if (top + h > boxHeight_mm - pad + EPS) return empty(total);
     while (
       cards.length < total &&
-      pad + (cards.length + 1) * w + cards.length * gap <= boxWidth_mm - pad + EPS
+      pad + (cards.length + 1) * w + cards.length * gap <=
+        boxWidth_mm - pad + EPS
     ) {
-      cards.push({ x_mm: pad + cards.length * (w + gap), y_mm: top, width_mm: w, height_mm: h });
+      cards.push({
+        x_mm: pad + cards.length * (w + gap),
+        y_mm: top,
+        width_mm: w,
+        height_mm: h,
+      });
     }
   } else {
     while (
       cards.length < total &&
-      top + (cards.length + 1) * h + cards.length * gap <= boxHeight_mm - pad + EPS
+      top + (cards.length + 1) * h + cards.length * gap <=
+        boxHeight_mm - pad + EPS
     ) {
-      cards.push({ x_mm: pad, y_mm: top + cards.length * (h + gap), width_mm: w, height_mm: h });
+      cards.push({
+        x_mm: pad,
+        y_mm: top + cards.length * (h + gap),
+        width_mm: w,
+        height_mm: h,
+      });
     }
   }
   const shown = cards.length;
   if (shown === 0) return empty(total);
 
   const last = cards[shown - 1];
-  const outW = props.direction === 'horizontal' ? last.x_mm + last.width_mm + pad : boxWidth_mm;
-  const outH = props.direction === 'horizontal' ? boxHeight_mm : last.y_mm + last.height_mm + pad;
+  const outW =
+    props.direction === 'horizontal'
+      ? last.x_mm + last.width_mm + pad
+      : boxWidth_mm;
+  const outH =
+    props.direction === 'horizontal'
+      ? boxHeight_mm
+      : last.y_mm + last.height_mm + pad;
   const badgeSize = Math.max(3.5, headerH > 0 ? headerH : 4);
   return {
     cards,
@@ -208,8 +268,23 @@ export function accessoryBoxLayout(
     dropped: total - shown,
     boxWidth_mm: outW,
     boxHeight_mm: outH,
-    header: headerH > 0 ? { x_mm: pad, y_mm: pad * 0.5, width_mm: outW - 2 * pad, height_mm: headerH } : null,
-    badge: props.showBadge ? { x_mm: pad * 0.5, y_mm: pad * 0.5, width_mm: badgeSize, height_mm: badgeSize } : null,
+    header:
+      headerH > 0
+        ? {
+            x_mm: pad,
+            y_mm: pad * 0.5,
+            width_mm: outW - 2 * pad,
+            height_mm: headerH,
+          }
+        : null,
+    badge: props.showBadge
+      ? {
+          x_mm: pad * 0.5,
+          y_mm: pad * 0.5,
+          width_mm: badgeSize,
+          height_mm: badgeSize,
+        }
+      : null,
   };
 }
 
@@ -220,31 +295,53 @@ export function accessoryBoxLayout(
  */
 export function accessoryCardInner(
   card: AccessoryRect,
-  props: Pick<AccessoriesLayerProps, 'direction' | 'imageSize_mm' | 'nameFontSize' | 'specFontSize'>,
+  props: Pick<
+    AccessoriesLayerProps,
+    'direction' | 'imageSize_mm' | 'nameFontSize' | 'specFontSize'
+  >,
   hasImage: boolean,
-): { image: AccessoryRect | null; name: AccessoryRect; spec: AccessoryRect; align: 'left' | 'center' } {
+  lines = 2,
+): {
+  image: AccessoryRect | null;
+  lines: AccessoryRect[];
+  align: 'left' | 'center';
+} {
   const p = ACCESSORY_CARD_PAD_MM;
   const img = Math.max(0, props.imageSize_mm);
-  const nameH = Math.max(0, props.nameFontSize) * PT_TO_MM * LINE;
-  const specH = Math.max(0, props.specFontSize) * PT_TO_MM * LINE;
+  const firstH = Math.max(0, props.nameFontSize) * PT_TO_MM * LINE;
+  const restH = Math.max(0, props.specFontSize) * PT_TO_MM * LINE;
+  const blockH = textBlockHeight(props, lines);
+  const rows = (x: number, top: number, width: number): AccessoryRect[] =>
+    Array.from({ length: Math.max(1, lines) }, (_, i) => ({
+      x_mm: x,
+      y_mm: top + (i === 0 ? 0 : firstH + (i - 1) * restH),
+      width_mm: width,
+      height_mm: i === 0 ? firstH : restH,
+    }));
   if (props.direction === 'horizontal') {
-    const image = hasImage ? { x_mm: p, y_mm: p, width_mm: card.width_mm - 2 * p, height_mm: img } : null;
-    const textTop = hasImage ? p + img + p : (card.height_mm - nameH - specH) / 2;
+    const image = hasImage
+      ? { x_mm: p, y_mm: p, width_mm: card.width_mm - 2 * p, height_mm: img }
+      : null;
+    const textTop = hasImage ? p + img + p : (card.height_mm - blockH) / 2;
     return {
       image,
-      name: { x_mm: p, y_mm: textTop, width_mm: card.width_mm - 2 * p, height_mm: nameH },
-      spec: { x_mm: p, y_mm: textTop + nameH, width_mm: card.width_mm - 2 * p, height_mm: specH },
+      lines: rows(p, textTop, card.width_mm - 2 * p),
       align: 'center',
     };
   }
-  const image = hasImage ? { x_mm: p, y_mm: (card.height_mm - img) / 2, width_mm: img, height_mm: img } : null;
+  const image = hasImage
+    ? {
+        x_mm: p,
+        y_mm: (card.height_mm - img) / 2,
+        width_mm: img,
+        height_mm: img,
+      }
+    : null;
   const textX = hasImage ? p + img + p : p;
   const textW = Math.max(0, card.width_mm - textX - p);
-  const textTop = (card.height_mm - nameH - specH) / 2;
   return {
     image,
-    name: { x_mm: textX, y_mm: textTop, width_mm: textW, height_mm: nameH },
-    spec: { x_mm: textX, y_mm: textTop + nameH, width_mm: textW, height_mm: specH },
+    lines: rows(textX, (card.height_mm - blockH) / 2, textW),
     align: 'left',
   };
 }

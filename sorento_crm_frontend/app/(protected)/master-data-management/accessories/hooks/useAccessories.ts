@@ -4,7 +4,6 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createAccessory,
-  deleteAccessory,
   deleteAccessoryImage,
   getAccessories,
   listOwnerAccessories,
@@ -58,19 +57,6 @@ export function useUpdateAccessory() {
       toast.success('Accessory saved');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to save the accessory'),
-  });
-}
-
-export function useDeleteAccessory() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => deleteAccessory(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
-      toast.success('Accessory deleted');
-    },
-    // The 409 names the products and combos still listing it.
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete the accessory'),
   });
 }
 

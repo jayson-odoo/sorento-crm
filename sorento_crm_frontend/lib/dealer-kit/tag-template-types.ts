@@ -358,9 +358,8 @@ export interface AccessoriesLayerProps {
   headerText: string;
   headerFontSize: number;
   headerColor: string;
+  /** The round "+" badge on the box's top-left corner. */
   showBadge: boolean;
-  /** A Badge library asset for the "+"; empty draws a plain round "+". */
-  badgeAssetId?: string;
   badgeColor: string;
   fill: string;
   stroke: string;
@@ -773,12 +772,19 @@ export interface TagComboUpgrade {
   picked: boolean;
 }
 
-/** PRICETAG-ACCESSORIES: one accessory as a tag carries it. */
+/**
+ * PRICETAG-ACCESSORIES: one entry of an accessory list as a tag carries it. A library accessory
+ * (`kind` 'accessory' or absent): name + spec. A catalogue product listed as a free item (`kind`
+ * 'product', owner 6 Nov ~10:45): `code`, its description as `name`, `list_price`, read live.
+ */
 export interface TagAccessory {
+  kind?: 'accessory' | 'product';
   id: string;
   name: string;
   spec: string | null;
   image: { attachment_id: string; url: string } | null;
+  code?: string | null;
+  list_price?: number | null;
 }
 
 /** The combo a tag's line names. Null on a line with no combo and on an older pin. */

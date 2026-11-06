@@ -18,6 +18,7 @@ import type {
   PlacedTag,
   SlotBinding,
   SpecSheetDocFields,
+  TagAccessory,
   TagBindingData,
   TagCombo,
   TagImage,
@@ -59,6 +60,13 @@ import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
 import { featureIconRow, featureIconsFor, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import {
+  accessoriesOf,
+  accessoryBoxLayout,
+  accessoryCardInner,
+  accessoryCardLines,
+  accessoryLineCount,
+} from '@/lib/dealer-kit/accessory-box';
 import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
@@ -83,6 +91,8 @@ export interface ResolvedLineData {
   sell_price: number | null;
   show_promo_price: boolean;
   included_accessories: string;
+  /** PRICETAG-ACCESSORIES: the list the "Accessories" box draws. Absent on an older pin. */
+  accessories?: TagAccessory[];
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
@@ -1034,6 +1044,7 @@ function TagRenderer({
           {layer.type === 'badge' && renderBadgeLayer(layer, media)}
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
           {layer.type === 'feature_icons' && renderFeatureIconsLayer(layer, media, binding)}
+          {layer.type === 'accessories' && renderAccessoriesLayer(layer, media, binding)}
         </div>
       ))}
     </div>
@@ -1310,6 +1321,157 @@ function renderFeatureIconsLayer(
           }}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * PRICETAG-ACCESSORIES: the "Accessories" box, laid out by `accessoryBoxLayout` - the SAME function
+ * the editor canvas and the request preview draw with (card rule A10). No list, or nothing fits:
+ * nothing at all prints, not even the frame (A7). Font sizes are points, positions millimetres.
+ */
+function renderAccessoriesLayer(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+) {
+  const props = layer.props;
+  if (props.kind !== 'accessories') return null;
+  const items = accessoriesOf(binding, layer);
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(
+    items.length,
+    props,
+    layer.width_mm,
+    layer.height_mm,
+    lineCount,
+  );
+  if (box.shown === 0) return null;
+  const font = props.fontFamily
+    ? `'${props.fontFamily}', sans-serif`
+    : undefined;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${box.boxWidth_mm}mm`,
+        height: `${box.boxHeight_mm}mm`,
+        transform: layer.rotation_deg
+          ? `rotate(${layer.rotation_deg}deg)`
+          : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        boxSizing: 'border-box',
+        background: props.fill,
+        border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
+        borderRadius: `${props.cornerRadius_mm}mm`,
+        fontFamily: font,
+      }}
+    >
+      {box.header && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.header.x_mm}mm`,
+            top: `${box.header.y_mm}mm`,
+            width: `${box.header.width_mm}mm`,
+            height: `${box.header.height_mm}mm`,
+            lineHeight: `${box.header.height_mm}mm`,
+            textAlign: 'center',
+            fontWeight: 700,
+            fontSize: `${props.headerFontSize}pt`,
+            color: props.headerColor,
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {props.headerText}
+        </div>
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        const url = item.image
+          ? (media.images?.[item.image.attachment_id] ?? item.image.url)
+          : null;
+        const inner = accessoryCardInner(card, props, Boolean(url), lineCount);
+        const texts = accessoryCardLines(item);
+        return (
+          <div
+            key={`${item.id}-${i}`}
+            style={{
+              position: 'absolute',
+              left: `${card.x_mm}mm`,
+              top: `${card.y_mm}mm`,
+              width: `${card.width_mm}mm`,
+              height: `${card.height_mm}mm`,
+              background: props.cardFill,
+              borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
+            }}
+          >
+            {inner.image && url && (
+              <img
+                src={url}
+                alt={item.name}
+                style={{
+                  position: 'absolute',
+                  left: `${inner.image.x_mm}mm`,
+                  top: `${inner.image.y_mm}mm`,
+                  width: `${inner.image.width_mm}mm`,
+                  height: `${inner.image.height_mm}mm`,
+                  objectFit: 'contain',
+                }}
+              />
+            )}
+            {inner.lines.map((line, n) =>
+              texts[n] ? (
+                <div
+                  key={n}
+                  style={{
+                    position: 'absolute',
+                    left: `${line.x_mm}mm`,
+                    top: `${line.y_mm}mm`,
+                    width: `${line.width_mm}mm`,
+                    height: `${line.height_mm}mm`,
+                    lineHeight: `${line.height_mm}mm`,
+                    textAlign: inner.align,
+                    fontWeight: n === 0 ? 700 : 400,
+                    fontSize: `${n === 0 ? props.nameFontSize : props.specFontSize}pt`,
+                    color: props.textColor,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {texts[n]}
+                </div>
+              ) : null,
+            )}
+          </div>
+        );
+      })}
+      {box.badge && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.badge.x_mm}mm`,
+            top: `${box.badge.y_mm}mm`,
+            width: `${box.badge.width_mm}mm`,
+            height: `${box.badge.height_mm}mm`,
+            lineHeight: `${box.badge.height_mm}mm`,
+            borderRadius: '50%',
+            background: props.badgeColor,
+            color: '#ffffff',
+            textAlign: 'center',
+            fontWeight: 900,
+            fontSize: `${box.badge.height_mm * 0.9}mm`,
+          }}
+        >
+          +
+        </div>
+      )}
     </div>
   );
 }

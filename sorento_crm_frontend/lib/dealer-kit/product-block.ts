@@ -1198,70 +1198,6 @@ export function buildAlternativesRow(
   return layers;
 }
 
-export interface AccessoryItem {
-  /** Shown under the picture. */
-  caption: string;
-  /** The picture, when there is one. */
-  source: { type: 'asset'; assetId: string } | { type: 'product_attachment'; attachmentId: string } | null;
-}
-
-const ACCESSORY_WIDTH_MM = 24;
-const ACCESSORY_TITLE_HEIGHT_MM = 6;
-
-/** The titled strip of small pictures with captions ("Accessories Included"). */
-export function buildAccessoriesStrip(
-  items: AccessoryItem[],
-  opts: BuildOptions & { title?: string },
-): TagLayer[] {
-  const layers = materialise(
-    [
-      {
-        type: 'text',
-        x: 0,
-        y: 0,
-        w: Math.max(ACCESSORY_WIDTH_MM, items.length * ACCESSORY_WIDTH_MM),
-        h: ACCESSORY_TITLE_HEIGHT_MM,
-        props: text(opts.title ?? 'Accessories Included', {
-          fontSize: 9,
-          fontWeight: 700,
-        }),
-      },
-    ],
-    opts,
-  );
-
-  let z = opts.z_index + 1;
-  items.forEach((item, index) => {
-    const x = index * ACCESSORY_WIDTH_MM;
-    layers.push(
-      ...materialise(
-        [
-          {
-            type: 'image',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 1,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 18,
-            props: { ...defaultImageProps(), source: item.source },
-          },
-          {
-            type: 'text',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 20,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 6,
-            props: text(item.caption, { fontSize: 7, align: 'center' }),
-          },
-        ],
-        { newId: opts.newId, x_mm: opts.x_mm, y_mm: opts.y_mm, z_index: z },
-      ),
-    );
-    z += 2;
-  });
-
-  return layers;
-}
-
 // ---------------------------------------------------------------------------
 // What a layer shows right now
 // ---------------------------------------------------------------------------
@@ -1411,13 +1347,9 @@ export function layerDisplay(
     case 'feature_icons':
       return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
 
-    case 'accessories': {
-      // The badge's own picture rides in `imageUrl`, like a badge layer's.
-      const badgeUrl = layer.props.badgeAssetId ? (assetUrls[layer.props.badgeAssetId] ?? null) : null;
-      return data
-        ? { accessories: accessoriesOf(data, layer), imageUrl: badgeUrl }
-        : { imageUrl: badgeUrl };
-    }
+    case 'accessories':
+      // No data bound (the template editor with nothing previewed): absent, so samples draw.
+      return data ? { accessories: accessoriesOf(data, layer) } : {};
 
     default:
       return undefined;
