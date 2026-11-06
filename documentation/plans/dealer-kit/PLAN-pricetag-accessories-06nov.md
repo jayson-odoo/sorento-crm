@@ -1,7 +1,8 @@
 # PLAN: price tag "Accessories included" (PRICETAG-ACCESSORIES, 6 Nov)
 
-Status: Build. Card answered 6 Nov ~10:00 (`CARD-pricetag-accessories-06nov.md`, rules A1-A12),
-mock approved 10:23 (`pricetag-accessories-mock.html`). Track: full (migration + new master data).
+Status: Review. Card answered 6 Nov ~10:00 (`CARD-pricetag-accessories-06nov.md`, rules A1-A16
+incl. the 10:45 product-entry addendum), mock approved 10:23 (`pricetag-accessories-mock.html`),
+build complete on PR #2211. Track: full (migration + new master data).
 Q-M1 / Q-M2 unanswered at build start: built on the recommendations (split old text on line
 breaks, commas and " + "; one card width per horizontal box).
 
@@ -11,9 +12,9 @@ breaks, commas and " + "; one card width per horizontal box).
   String(200) NULL, `image_attachment_id` FK attachments SET NULL, `created_by`, timestamps.
   Unique index `(company_id, lower(name))`.
 - `product_accessories`: `id`, `product_id` FK products CASCADE, `accessory_id` FK accessories
-  RESTRICT, `sort_order`; unique `(product_id, accessory_id)`.
-- `product_combo_accessories`: `id`, `combo_id` FK product_combos CASCADE, `accessory_id` FK
-  accessories RESTRICT, `sort_order`; unique `(combo_id, accessory_id)`.
+  RESTRICT NULL, `item_product_id` FK products RESTRICT NULL (exactly one set, CHECK), `sort_order`;
+  unique `(product_id, accessory_id)` and `(product_id, item_product_id)`.
+- `product_combo_accessories`: same shape keyed by `combo_id` FK product_combos CASCADE.
 - Attachment type `accessory_image` seeded by code (insert only). Stored with `entity_type =
   'general'` (no CHECK rebuild).
 - Data step (A12): every non-blank `product_combos.free_items` and
@@ -34,15 +35,19 @@ breaks, commas and " + "; one card width per horizontal box).
   it there first."
 - `POST /accessories/{id}/image` (multipart `file`, jpg/jpeg/png/webp, 10 MB) -> `{attachment_id,
   url}`; `DELETE /accessories/{id}/image` -> 204.
-- `GET /products/{id}/accessories` -> `{data: AccessoryOut[]}` in order.
-  `PUT /products/{id}/accessories {accessory_ids: [...]}` -> same, replaces the ordered list
-  (duplicates -> 422, unknown id -> 404).
-- `PUT /product-combos/{id}/accessories {accessory_ids}` -> `{data}`. `ProductComboOut` gains
-  `accessories: AccessoryOut[]`; `free_items` is no longer accepted on PATCH.
+- `GET /products/{id}/accessories` -> `{data: Entry[]}` in order, Entry = AccessoryOut plus
+  `kind: 'accessory'|'product'`, `code`, `list_price` (product entries: id = product id, name =
+  description else name, live LP and lead photo).
+  `PUT /products/{id}/accessories {items: [{accessory_id}|{product_id}]}` -> same, replaces the
+  ordered list (duplicates or an entry naming both/neither -> 422, the host itself -> 422, unknown
+  or other-company id -> 404).
+- `GET|PUT /product-combos/{id}/accessories`, same shapes; a product that is a part of the combo
+  -> 422. `ProductComboOut` gains `accessories`; `free_items` is no longer read or written.
+- Library delete is the deferred record action `accessory.delete` (products edit permission).
 
 ## Tag payload
 
-`TagAccessory = {id, name, spec, image: {attachment_id, url} | null}`.
+`TagAccessory = {kind, id, name, spec, image: {attachment_id, url} | null, code, list_price}`.
 - `product_tag_data` (and every part row) gains `accessories` = the product's own list.
 - `_combo_object` gains `accessories` = the combo's own list; its `free_items` becomes the names
   joined with ", " (keeps the `combo.free_items` merge field and the data-change diff working).

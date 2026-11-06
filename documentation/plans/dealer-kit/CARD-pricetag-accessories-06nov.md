@@ -21,6 +21,24 @@ Four real tags for **SRTKS7061-BL**: Ala Carte (no accessories box); Combo with 
 - Header text and the optional "+" badge are **set per box on the template** ("FREE" vs
   "ACCESSORIES INCLUDED").
 
+## Owner addendum (6 Nov ~10:45): free items can be real products
+
+Example: wash basin combo SRTWB7065 + SRTWT7202 tap + a "FREE" box holding SRTW5000 (Popup Waste
+80mm (w/o Overflow) Brass, LP: RM 68). Measured first: combos do NOT model free components
+(`ProductComboPart` is fixed / choice / upgrade only; a fixed part never prices into a combo tag,
+`pricing.py:666`), so there was no list of free products to reuse. Built:
+
+A13. A list entry (product list or combo list) is EITHER a library accessory OR a catalogue
+     product. A product entry's code, description (else name), lead photo and list price are read
+     live; its card prints code, description and "LP: RM 68". Same box, same direction, header
+     per box.
+A14. One list of free products: a product that is already a part of the combo, or the host itself,
+     cannot also be its free item (422).
+A15. The free-text move and the combo importer turn a piece whose first word is a product code of
+     the same company ("SRTW5000 Popup waste") into a PRODUCT entry; anything else is a library
+     accessory.
+A16. The "+" badge is drawn (on/off and colour per box), not a library picture.
+
 ## Measured for the merge
 
 - Combo "Free items" is a 2000-char free text box on the product page
