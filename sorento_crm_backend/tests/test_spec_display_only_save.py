@@ -29,6 +29,7 @@ def _key(db, **fields) -> ProductSpecRegistry:
         label="Spout",
         data_type="enum",
         allowed_values=["mixer", "cold_only"],
+        synonyms={"mixer": ["mixer"], "cold_only": ["cold only"]},
         source="user",
         **fields,
     )
