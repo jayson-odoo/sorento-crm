@@ -1802,9 +1802,9 @@ class DocumentIngestService(MasterRefResolver):
         SAME line as an incoming line whose ref matches no stored line when Seq, product,
         ordered qty, unit price and delivery date are equal, the location too when the push
         names one (D22), and nothing was delivered on either side or moved against the old
-        line (owner, 6 Nov). Only a pair unique on (Seq, product) on both sides counts; anything ambiguous stays a removal plus
-        a create, as before. A removed line (cancelled, not by CS or a Cancel SO document) is
-        never revived. Renames the `by_ref` key in place; returns the number of pairs.
+        line (owner, 6 Nov). Only a pair unique on (Seq, product) on both sides counts;
+        anything ambiguous stays a removal plus a create, as before. A removed line
+        (cancelled, not by CS or a Cancel SO document) is never revived. Renames the `by_ref` key in place; returns the number of pairs.
         """
 
         def _num(value: Any, places: str) -> Optional[Decimal]:
