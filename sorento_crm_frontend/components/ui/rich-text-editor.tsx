@@ -277,12 +277,14 @@ function LinkPopoverButton({ editor }: { editor: Editor }) {
 function ColorPopoverButton({
   editor,
   kind,
+  label: labelOverride,
 }: {
   editor: Editor;
   kind: 'color' | 'highlight';
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const label = kind === 'color' ? 'Text colour' : 'Highlight';
+  const label = labelOverride ?? (kind === 'color' ? 'Text colour' : 'Highlight');
   const attribute = kind === 'color' ? 'color' : 'backgroundColor';
   const current = (editor.getAttributes('textStyle')[attribute] as string | undefined) ?? '';
   const Icon = kind === 'color' ? Baseline : Highlighter;
@@ -317,38 +319,40 @@ function ColorPopoverButton({
   );
 }
 
+/** The tag designer's Content box: its buttons act on the selection, beside the layer's own
+ * whole-text Bold / Italic toggles, so they are named for the selection. */
 function InlineToolbar({ editor }: { editor: Editor }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1">
       <ToolbarButton
-        title="Bold"
+        title="Bold selection"
         active={editor.isActive('bold')}
         onClick={() => editor.chain().focus().toggleBold().run()}
       >
         <Bold className="size-4" />
       </ToolbarButton>
       <ToolbarButton
-        title="Italic"
+        title="Italic selection"
         active={editor.isActive('italic')}
         onClick={() => editor.chain().focus().toggleItalic().run()}
       >
         <Italic className="size-4" />
       </ToolbarButton>
       <ToolbarButton
-        title="Underline"
+        title="Underline selection"
         active={editor.isActive('underline')}
         onClick={() => editor.chain().focus().toggleUnderline().run()}
       >
         <UnderlineIcon className="size-4" />
       </ToolbarButton>
       <ToolbarButton
-        title="Strikethrough"
+        title="Strikethrough selection"
         active={editor.isActive('strike')}
         onClick={() => editor.chain().focus().toggleStrike().run()}
       >
         <Strikethrough className="size-4" />
       </ToolbarButton>
-      <ColorPopoverButton editor={editor} kind="color" />
+      <ColorPopoverButton editor={editor} kind="color" label="Selection colour" />
     </div>
   );
 }

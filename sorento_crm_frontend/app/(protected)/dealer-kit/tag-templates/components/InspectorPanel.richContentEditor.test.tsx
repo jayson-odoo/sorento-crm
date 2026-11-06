@@ -71,7 +71,7 @@ describe('Inspector rich Content box', () => {
   it('is the rich editor with the inline toolbar, not a textarea', async () => {
     const { container } = await mount(layer(OWNER_TEXT));
     expect(container.querySelector('textarea')).toBeNull();
-    for (const name of ['Bold', 'Italic', 'Underline', 'Strikethrough', 'Text colour']) {
+    for (const name of ['Bold selection', 'Italic selection', 'Underline selection', 'Strikethrough selection', 'Selection colour']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: 'Heading 1' })).not.toBeInTheDocument();

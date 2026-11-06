@@ -59,7 +59,10 @@ import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from '@/components/common/ColorPicker';
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
+import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
 
 // ---------------------------------------------------------------------------
 // Slot binding options
@@ -218,6 +221,8 @@ interface InspectorPanelProps {
   onUploadFont?: () => void;
   /** Open the merge-field catalogue for this text layer (D59). */
   onInsertField?: () => void;
+  /** The Content box's editor (null once it unmounts), so Insert field lands at its caret. */
+  onContentEditorReady?: (editor: Editor | null) => void;
   /** Point this group's block at a different product or set. */
   onRebind?: (groupId: string) => void;
   /** Clear every text override inside this group. */
@@ -265,6 +270,7 @@ export function InspectorPanel({
   fontOptions,
   onUploadFont,
   onInsertField,
+  onContentEditorReady,
   onChooseImage,
   onChooseBadge,
   onRebind,
@@ -533,6 +539,7 @@ export function InspectorPanel({
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
               onInsertField={onInsertField}
+              onContentEditorReady={onContentEditorReady}
               usedColours={usedColours}
             />
           )}
@@ -605,6 +612,7 @@ function TextInspector({
   fontOptions,
   onUploadFont,
   onInsertField,
+  onContentEditorReady,
   usedColours,
 }: {
   layer: TagLayer;
@@ -615,6 +623,8 @@ function TextInspector({
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
   onInsertField?: () => void;
+  /** The Content box's editor (null once it unmounts), so Insert field lands at its caret. */
+  onContentEditorReady?: (editor: Editor | null) => void;
   usedColours: string[];
 }) {
   // A slot-bound layer is edited through `text_override`, never through
@@ -677,12 +687,27 @@ function TextInspector({
               )}
             </div>
           </div>
-          <textarea
-            className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
-            value={shown}
-            readOnly={descriptionBound}
-            onChange={(e) => handleContent(e.target.value)}
-          />
+          {descriptionBound ? (
+            <textarea
+              className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
+              value={shown}
+              readOnly
+            />
+          ) : (
+            // DESIGNER-RICH-TEXT: bold / italic / underline / strike / colour per selection; the
+            // layer's font, size, weight and colour stay the default for unmarked text. Content
+            // with no formatting is stored as plain text, as before (`contentFromEditorHtml`).
+            <RichTextEditor
+              key={layer.id}
+              toolbar="inline"
+              mergeFields
+              minHeight={60}
+              className="text-xs [&_.ProseMirror]:px-2 [&_.ProseMirror]:py-1 [&_.ProseMirror_p]:my-0"
+              value={toEditorHtml(shown)}
+              onChange={(html) => handleContent(contentFromEditorHtml(html))}
+              onEditorReady={onContentEditorReady}
+            />
+          )}
           {overridden && !dynamic && (
             <span className="flex items-center gap-1 text-2xs text-amber-600">
               <Link2Off className="size-3" />

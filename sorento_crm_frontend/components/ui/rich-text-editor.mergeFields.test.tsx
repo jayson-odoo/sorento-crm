@@ -42,12 +42,12 @@ const tokenNodes = (editor: Editor) => {
 };
 
 describe('toolbar="inline"', () => {
-  it('shows exactly bold, italic, underline, strike and text colour', async () => {
+  it('shows exactly bold, italic, underline, strike and colour, named for the selection', async () => {
     await mount('<p>x</p>', { toolbar: 'inline' });
-    for (const name of ['Bold', 'Italic', 'Underline', 'Strikethrough', 'Text colour']) {
+    for (const name of ['Bold selection', 'Italic selection', 'Underline selection', 'Strikethrough selection', 'Selection colour']) {
       expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
-    for (const name of ['Heading 1', 'Bullet list', 'Highlight', 'Add link', 'Inline code', 'Align left']) {
+    for (const name of ['Heading 1', 'Bullet list', 'Highlight', 'Add link', 'Inline code', 'Align left', 'Bold']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
   });
