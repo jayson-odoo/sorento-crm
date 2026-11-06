@@ -22,6 +22,9 @@ import ScaledSheet, { sheetPixelSize } from './ScaledSheet';
 import DesignLightbox, { type DesignDownload } from './DesignLightbox';
 import type { DesignReview } from './DesignPinLayer';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
+import { accessoryDrops } from '@/lib/dealer-kit/accessory-drops';
+import { FeatureIconDropWarning } from './FeatureIconDropWarning';
 
 interface DesignViewerProps {
   /** Section title. `Design` on both surfaces today. */
@@ -100,6 +103,23 @@ export default function DesignViewer({
 
   const openLightbox = useCallback(() => setLightboxOpen(true), []);
 
+  // Feature icons that will not print because their box is too narrow (crew pass, 5 Nov).
+  const iconDrops = useMemo(
+    () =>
+      featureIconDrops(
+        payload?.doc ?? null,
+        (tagId) => payload?.resolvedData?.[tagId] ?? null,
+        payload?.featureIcons,
+        payload?.assets,
+      ),
+    [payload],
+  );
+  // PRICETAG-ACCESSORIES (A6): accessories whose box is too small, the same warning.
+  const accDrops = useMemo(
+    () => accessoryDrops(payload?.doc ?? null, (tagId) => payload?.resolvedData?.[tagId] ?? null),
+    [payload],
+  );
+
   const body = () => {
     if (loading) return <SectionSkeleton rows={6} />;
     if (!payload?.doc || sheetCount === 0) {
@@ -173,6 +193,7 @@ export default function DesignViewer({
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-4">
+          {!loading && <FeatureIconDropWarning drops={iconDrops} accessoryDrops={accDrops} className="mb-2" />}
           {body()}
           {footer}
         </CardContent>

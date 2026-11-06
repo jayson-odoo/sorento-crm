@@ -25,7 +25,12 @@ import type {
   TagBindingData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
-import { kitLibraryClient, resetKitLibraryCache } from '@/lib/dealer-kit/kit-library-cache';
+import {
+  FEATURE_ICONS_KEY,
+  kitLibraryClient,
+  resetKitLibraryCache,
+} from '@/lib/dealer-kit/kit-library-cache';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import {
   ensureFontsLoaded,
   ensureSeedFontsLoaded,
@@ -40,7 +45,11 @@ import {
   listFontAssets,
   type KitAsset,
 } from '../../services/assetService';
-import { listSpecKeys } from '../../services/tagDataService';
+import {
+  listFeatureIcons,
+  listSpecKeys,
+  type FeatureIconWithUrl,
+} from '../../services/tagDataService';
 import type { SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { STATIC_FONT_OPTIONS } from './InspectorPanel';
 
@@ -178,6 +187,8 @@ export interface KitLibrary {
   fonts: KitAsset[];
   /** The spec vocabulary the Insert field dialog offers under Specs (D58). */
   specKeys: SpecKeyOption[];
+  /** Feature icons: every icon each spec value carries, in display order (one per value). */
+  featureIcons: FeatureIcon[];
   /** Google fallbacks plus every uploaded brand font. */
   fontOptions: SearchableSelectOption[];
   reload: () => Promise<void>;
@@ -192,6 +203,9 @@ export interface KitLibrary {
 const libraryClient = kitLibraryClient;
 const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
 const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
+/** Feature icons: the spec-value icon list the print page gets too, with signed URLs. */
+export { FEATURE_ICONS_KEY };
+const NO_FEATURE_ICONS: FeatureIconWithUrl[] = [];
 const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
 export { resetKitLibraryCache };
 const NO_ASSETS: KitAsset[] = [];
@@ -208,6 +222,10 @@ export function useKitLibrary(): KitLibrary {
     { queryKey: FONTS_KEY, queryFn: () => listFontAssets() },
     libraryClient,
   );
+  const featureIconsQuery = useQuery(
+    { queryKey: FEATURE_ICONS_KEY, queryFn: async () => listFeatureIcons() },
+    libraryClient,
+  );
   // A registry read that fails leaves the Specs group empty rather than stopping the canvas.
   const specKeysQuery = useQuery(
     {
@@ -218,12 +236,14 @@ export function useKitLibrary(): KitLibrary {
   );
   const assets = assetsQuery.data ?? NO_ASSETS;
   const fonts = fontsQuery.data ?? NO_ASSETS;
+  const iconRows = featureIconsQuery.data ?? NO_FEATURE_ICONS;
   const specKeys = specKeysQuery.data ?? NO_SPEC_KEYS;
 
   const reload = useCallback(async () => {
     await Promise.all([
       libraryClient.refetchQueries({ queryKey: ASSETS_KEY }),
       libraryClient.refetchQueries({ queryKey: FONTS_KEY }),
+      libraryClient.refetchQueries({ queryKey: FEATURE_ICONS_KEY }),
     ]);
   }, []);
 
@@ -278,6 +298,9 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).map((a) => (a.id === id ? { ...a, name } : a));
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
+    libraryClient.setQueryData<FeatureIconWithUrl[]>(FEATURE_ICONS_KEY, (prev) =>
+      (prev ?? []).map((icon) => (icon.id === id ? { ...icon, name } : icon)),
+    );
   }, []);
 
   /** The row was deleted on the server; drop it from every list it was in. */
@@ -286,15 +309,21 @@ export function useKitLibrary(): KitLibrary {
       (prev ?? []).filter((a) => a.id !== id);
     libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
     libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
+    libraryClient.setQueryData<FeatureIconWithUrl[]>(FEATURE_ICONS_KEY, (prev) =>
+      (prev ?? []).filter((icon) => icon.id !== id),
+    );
   }, []);
 
   const assetUrls = useMemo(() => {
     const map: Record<string, string> = {};
+    for (const icon of iconRows) {
+      if (icon.url) map[icon.id] = icon.url;
+    }
     for (const asset of assets) {
       if (asset.url) map[asset.id] = asset.url;
     }
     return map;
-  }, [assets]);
+  }, [assets, iconRows]);
 
   const thumbUrls = useMemo(() => {
     const map: Record<string, string> = {};
@@ -303,6 +332,12 @@ export function useKitLibrary(): KitLibrary {
     }
     return map;
   }, [assets]);
+
+  // The rule only (id, name, spec_key, values); the URL went into `assetUrls` above.
+  const featureIcons = useMemo<FeatureIcon[]>(
+    () => iconRows.map(({ id, name, spec_key, values }) => ({ id, name, spec_key, values })),
+    [iconRows],
+  );
 
   const fontOptions = useMemo(() => {
     const brand = fonts.map((font) => ({
@@ -322,6 +357,7 @@ export function useKitLibrary(): KitLibrary {
     thumbUrls,
     fonts,
     specKeys,
+    featureIcons,
     fontOptions,
     reload,
     remember,

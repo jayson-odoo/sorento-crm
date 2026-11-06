@@ -210,7 +210,6 @@ def test_ac_1_2_combo_patch_sets_the_four_fields_and_the_list_returns_them(db, m
         COMBO.format(combo_id=combo.id),
         json={
             "description": "Cabinet, mirror and basin",
-            "free_items": "Tap, waste",
             "list_price": "2500.00",
             "sell_price": "1999.00",
         },
@@ -218,7 +217,6 @@ def test_ac_1_2_combo_patch_sets_the_four_fields_and_the_list_returns_them(db, m
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["description"] == "Cabinet, mirror and basin"
-    assert body["free_items"] == "Tap, waste"
     assert _num(body["list_price"]) == Decimal("2500.00")
     assert _num(body["sell_price"]) == Decimal("1999.00")
 
@@ -226,7 +224,6 @@ def test_ac_1_2_combo_patch_sets_the_four_fields_and_the_list_returns_them(db, m
     assert listed.status_code == 200, listed.text
     (row,) = listed.json()["data"]
     assert row["description"] == "Cabinet, mirror and basin"
-    assert row["free_items"] == "Tap, waste"
     assert _num(row["list_price"]) == Decimal("2500.00")
     assert _num(row["sell_price"]) == Decimal("1999.00")
 
@@ -243,7 +240,6 @@ def test_ac_1_2_combo_patch_leaves_an_omitted_field_alone_and_clears_an_explicit
             url,
             json={
                 "description": "Keep me",
-                "free_items": "Tap",
                 "list_price": "100.00",
                 "sell_price": "80.00",
             },
@@ -257,7 +253,6 @@ def test_ac_1_2_combo_patch_leaves_an_omitted_field_alone_and_clears_an_explicit
     body = renamed.json()
     assert body["name"] == "4 in 1"
     assert body["description"] == "Keep me"
-    assert body["free_items"] == "Tap"
     assert _num(body["list_price"]) == Decimal("100.00")
     assert _num(body["sell_price"]) == Decimal("80.00")
 
@@ -267,7 +262,6 @@ def test_ac_1_2_combo_patch_leaves_an_omitted_field_alone_and_clears_an_explicit
     body = cleared.json()
     assert body["description"] is None
     assert body["sell_price"] is None
-    assert body["free_items"] == "Tap"
     assert _num(body["list_price"]) == Decimal("100.00")
 
 
@@ -425,7 +419,7 @@ def test_ac_1_5_a_combo_edit_lands_on_the_audit_trail_with_the_new_values(db, mo
 
     response = client.patch(
         COMBO.format(combo_id=combo.id),
-        json={"description": "Audited text", "free_items": "Tap", "list_price": "10.00"},
+        json={"description": "Audited text", "list_price": "10.00"},
     )
     assert response.status_code == 200, response.text
 
@@ -436,7 +430,6 @@ def test_ac_1_5_a_combo_edit_lands_on_the_audit_trail_with_the_new_values(db, mo
     for row in rows:
         merged.update(row.new_values or {})
     assert merged.get("description") == "Audited text"
-    assert merged.get("free_items") == "Tap"
     assert "list_price" in merged
 
 
@@ -462,7 +455,8 @@ def test_ac_1_5_a_part_edit_lands_on_the_audit_trail_with_the_new_values(db, mon
     assert merged["is_upgrade"] in (True, "true", "True")
 
 
-@pytest.mark.parametrize("field,limit", [("description", 5000), ("free_items", 2000)])
+# PRICETAG-ACCESSORIES: `free_items` is no longer written through the PATCH (the list replaced it).
+@pytest.mark.parametrize("field,limit", [("description", 5000)])
 def test_a_text_over_its_limit_is_422_and_at_the_limit_is_saved(db, monkeypatch, field, limit):
     host = _product(db, "SRTBF20")
     combo = _combo(db, host, "3 in 1")

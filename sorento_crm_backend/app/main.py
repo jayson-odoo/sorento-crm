@@ -356,6 +356,12 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register audit listeners: {str(e)}", exc_info=True)
     try:
+        # PACKING-LIST-RECALC: a change to a packing list's inputs queues its recompute.
+        from app.services.scm.packing_list_recalc import register_packing_list_recalc_listeners
+        register_packing_list_recalc_listeners()
+    except Exception as e:
+        logging.error(f"Failed to register packing list recalc listeners: {str(e)}", exc_info=True)
+    try:
         from app.services.embedding_change_listener import register_embedding_change_listeners
         register_embedding_change_listeners()
         logging.info("Embedding change listeners registered")

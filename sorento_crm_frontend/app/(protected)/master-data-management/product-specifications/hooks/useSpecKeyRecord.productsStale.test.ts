@@ -20,6 +20,9 @@ import { useSpecKeyRecord } from './useSpecKeyRecord';
 import type { SpecRegistryKey } from '../types/productSpec.types';
 
 const ROW: SpecRegistryKey = {
+  id: 'k-finish',
+  parser_hint: null,
+  label_owned: false,
   spec_key: 'finish',
   label: 'Finish',
   data_type: 'enum',
@@ -49,7 +52,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) =>
   React.createElement(QueryClientProvider, { client }, children);
 
 const productsKeyCalls = (spy: ReturnType<typeof vi.spyOn>) =>
-  spy.mock.calls.filter(([filters]) => {
+  spy.mock.calls.filter(([filters]: unknown[]) => {
     const key = (filters as { queryKey?: unknown[] } | undefined)?.queryKey;
     return Array.isArray(key) && key[0] === 'spec-key-products' && key[1] === 'finish';
   });

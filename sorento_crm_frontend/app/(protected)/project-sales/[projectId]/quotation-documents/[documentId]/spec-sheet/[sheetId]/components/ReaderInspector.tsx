@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import { Button } from '@/components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
@@ -69,31 +69,24 @@ export function ReaderInspector({
       data-page-key={pageKey ?? ''}
     >
       {layer && (
-        <div
-          className="flex flex-wrap items-center gap-1 px-2 pt-2"
-          role="group"
-          aria-label="Apply to"
-        >
-          <span className="me-1 text-xs text-muted-foreground">Apply to</span>
-          <Button
-            type="button"
+        // A segmented control (the toggle group the designer's own Inspector uses for B/I/U):
+        // one row, two short options. Radix lets a single group be emptied by clicking the
+        // picked option again; an empty value is ignored so one option is always picked.
+        <div className="flex items-center gap-2 px-2 pt-2">
+          <span className="text-xs text-muted-foreground">Apply to</span>
+          <ToggleGroup
+            type="single"
+            variant="outline"
             size="sm"
-            variant={mode === 'page' ? 'primary' : 'outline'}
-            aria-pressed={mode === 'page'}
-            onClick={() => onModeChange('page')}
+            aria-label="Apply to"
+            value={mode}
+            onValueChange={(next: string) => {
+              if (next === 'page' || next === 'all') onModeChange(next);
+            }}
           >
-            This page
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === 'all' ? 'primary' : 'outline'}
-            className="h-auto whitespace-normal text-start"
-            aria-pressed={mode === 'all'}
-            onClick={() => onModeChange('all')}
-          >
-            Every page of this sheet (each becomes an edited page)
-          </Button>
+            <ToggleGroupItem value="page">This page</ToggleGroupItem>
+            <ToggleGroupItem value="all">Every page</ToggleGroupItem>
+          </ToggleGroup>
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">

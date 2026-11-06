@@ -43,7 +43,9 @@ MOCHA = "00000000-0000-0000-0000-000000000002"
 def _link_default(db, product_id: str, default_id: str, *other_ids: str) -> None:
     from app.models.dealer_kit import ProductTagTemplate
 
-    db.add(ProductTagTemplate(product_id=product_id, template_id=default_id, is_default=True))
+    db.add(ProductTagTemplate(
+            product_id=product_id, template_id=default_id, default_list=True, default_selling=True
+        ))
     for template_id in other_ids:
         db.add(ProductTagTemplate(product_id=product_id, template_id=template_id))
     db.flush()
@@ -62,7 +64,10 @@ def _combo_link(db, combo_id: str, *template_ids: str, default: str | None = Non
     for template_id in template_ids:
         db.add(
             ComboTagTemplate(
-                combo_id=combo_id, template_id=template_id, is_default=(template_id == default)
+                combo_id=combo_id,
+                template_id=template_id,
+                default_list=(template_id == default),
+                default_selling=(template_id == default),
             )
         )
     db.flush()
@@ -101,7 +106,7 @@ class TestProductDefault:
         )
         assert res.status_code == 200, res.text
         assert _defaults(res.json()) == [b]
-        assert db.query(ProductTagTemplate).filter_by(product_id=product, is_default=True).count() == 1
+        assert db.query(ProductTagTemplate).filter_by(product_id=product, default_list=True, default_selling=True).count() == 1
 
         listed = c.get(f"{DK}/products/{product}/tag-templates").json()
         assert _defaults(listed) == [b]
@@ -118,7 +123,7 @@ class TestProductDefault:
         res = c.put(url, json={"template_ids": [a, b], "default_template_id": b})
         assert res.status_code == 200, res.text
         assert _defaults(res.json()) == [b]
-        assert db.query(ProductTagTemplate).filter_by(product_id=product, is_default=True).count() == 1
+        assert db.query(ProductTagTemplate).filter_by(product_id=product, default_list=True, default_selling=True).count() == 1
 
     def test_a_default_that_is_not_among_the_ids_is_422_and_writes_nothing(self, env):
         from app.models.dealer_kit import ProductTagTemplate
@@ -294,7 +299,7 @@ class TestComboLinks:
         assert {row["id"] for row in res.json()} == {a, b, x}
         assert _defaults(res.json()) == [b]
         assert {row["id"]: row["published"] for row in res.json()}[x] is False
-        assert db.query(ComboTagTemplate).filter_by(combo_id=combo.id, is_default=True).count() == 1
+        assert db.query(ComboTagTemplate).filter_by(combo_id=combo.id, default_list=True, default_selling=True).count() == 1
 
         listed = c.get(url)
         assert listed.status_code == 200
@@ -611,7 +616,7 @@ class TestDefaultSurvivesOneToTwo:
 
         return {
             r.template_id
-            for r in db.query(ComboTagTemplate).filter_by(combo_id=combo_id, is_default=True)
+            for r in db.query(ComboTagTemplate).filter_by(combo_id=combo_id, default_list=True, default_selling=True)
         }
 
     @staticmethod
@@ -620,7 +625,7 @@ class TestDefaultSurvivesOneToTwo:
 
         return {
             r.template_id
-            for r in db.query(ProductTagTemplate).filter_by(product_id=product_id, is_default=True)
+            for r in db.query(ProductTagTemplate).filter_by(product_id=product_id, default_list=True, default_selling=True)
         }
 
     def test_combo_unlink_to_one_then_add_a_second_keeps_a_default(self, env):

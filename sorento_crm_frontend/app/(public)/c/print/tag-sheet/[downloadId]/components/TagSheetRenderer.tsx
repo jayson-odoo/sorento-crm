@@ -18,7 +18,9 @@ import type {
   PlacedTag,
   SlotBinding,
   SpecSheetDocFields,
+  TagAccessory,
   TagBindingData,
+  TagCombo,
   TagImage,
   TagLayer,
   TagOpenGroup,
@@ -26,10 +28,12 @@ import type {
   TagSheetDoc,
   TagSheet,
   TagSpecValue,
+  TextLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
   layerShownFor,
+  layerRichBlocks,
   layerText,
   priceBadgeInput,
   resolveBarcodeValue,
@@ -44,10 +48,31 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { barcodeSvg, svgDataUrl } from '@/lib/dealer-kit/barcode';
-import { textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
+import {
+  LETTER_SPACING_MM_PER_UNIT,
+  LIST_INDENT_MM,
+  runFace,
+  textFace,
+  textLayerLines,
+  type RichLine,
+} from '@/lib/dealer-kit/text-layout';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { cssFlipTransform } from '@/lib/dealer-kit/image-flip';
+import { featureIconRow, featureIconsFor, type FeatureIcon } from '@/lib/dealer-kit/feature-icons';
+import {
+  accessoriesOf,
+  accessoryBoxLayout,
+  accessoryCardInner,
+  accessoryCardLines,
+  accessoryHeaderStyle,
+  accessoryLineCount,
+  accessoryLineStyle,
+  fitLinePt,
+  type AccessoryLineStyle,
+} from '@/lib/dealer-kit/accessory-box';
+import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,6 +96,8 @@ export interface ResolvedLineData {
   sell_price: number | null;
   show_promo_price: boolean;
   included_accessories: string;
+  /** PRICETAG-ACCESSORIES: the list the "Accessories" box draws. Absent on an older pin. */
+  accessories?: TagAccessory[];
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
@@ -100,6 +127,8 @@ export interface ResolvedLineData {
   /** Staff-authored tag copy (r10 S4), what `{{product.price_tag_description}}`
    *  draws. Null for a set line. */
   price_tag_description?: string | null;
+  /** The combo this line prints (PRICETAG-COMBO). */
+  combo?: TagCombo | null;
   /** PS-SPEC-SHEET: a project spec sheet page's own fields (absent on a price tag). */
   brand?: string;
   drawing?: TagImage | null;
@@ -121,6 +150,8 @@ export interface ResolvedLineData {
 export interface TagSheetMedia {
   assets?: Record<string, string>;
   images?: Record<string, string>;
+  /** Rule-carrying library icons, for `feature_icons` layers (contract B7). */
+  featureIcons?: FeatureIcon[];
 }
 
 interface TagSheetRendererProps extends TagSheetMedia {
@@ -190,13 +221,25 @@ function paddingCss(padding: LayerPadding | undefined): string {
 function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLineData | null }) {
   const props = layer.props;
   const epoch = useFontsEpoch();
-  const text = props.kind === 'text' ? layerText(layer, bindingOf(resolved), 'print') : '';
+  const binding = bindingOf(resolved);
+  // A rich description keeps its merge fields out of the markup: they resolve on the parsed runs.
+  const blocks = useMemo(
+    () => (props.kind === 'text' ? layerRichBlocks(layer, binding, 'print') : null),
+    [layer, props.kind, binding],
+  );
+  const text = props.kind === 'text' && !blocks ? layerText(layer, binding, 'print') : '';
   const lines = useMemo(() => {
     void epoch; // re-measure once a face has loaded
-    return props.kind === 'text'
+    return props.kind === 'text' && !blocks
       ? textLayerLines(props, text, layer.width_mm, layer.height_mm)
       : [];
-  }, [props, text, layer.width_mm, layer.height_mm, epoch]);
+  }, [props, blocks, text, layer.width_mm, layer.height_mm, epoch]);
+  const richLines = useMemo(() => {
+    void epoch;
+    return props.kind === 'text' && blocks
+      ? textLayerLines(props, blocks, layer.width_mm, layer.height_mm)
+      : null;
+  }, [props, blocks, layer.width_mm, layer.height_mm, epoch]);
 
   if (props.kind !== 'text') return null;
   const face = textFace(props);
@@ -228,7 +271,55 @@ function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLin
         whiteSpace: 'pre',
       }}
     >
-      {lines.join('\n')}
+      {richLines ? richLines.map((line, index) => <RichLineView key={index} line={line} props={props} />) : lines.join('\n')}
+    </div>
+  );
+}
+
+/**
+ * One line of a rich description: React spans only (never `innerHTML`), one per run, in the same
+ * face the canvas draws it in. The line is already broken (`white-space: pre`); a list item's
+ * marker hangs to the left of the text.
+ */
+function RichLineView({ line, props }: { line: RichLine; props: TextLayerProps }) {
+  const first = line[0];
+  const height = `${first.lineHeight_mm}mm`;
+  return (
+    <div
+      style={{
+        textAlign: first.align,
+        paddingLeft: first.indent_mm ? `${first.indent_mm}mm` : undefined,
+        minHeight: height,
+        whiteSpace: 'pre',
+      }}
+    >
+      {line.map((run, index) => {
+        const runFaceOf = runFace(props, run, run.sizeFactor);
+        const bold = !!run.bold;
+        const decoration = [
+          (props.underline || run.underline) && 'underline',
+          (props.strikethrough || run.strike) && 'line-through',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const style: CSSProperties = {
+          ...(bold ? { fontWeight: Math.max(700, props.fontWeight || 400) } : {}),
+          ...(run.italic ? { fontStyle: 'italic' } : {}),
+          ...(run.code ? { fontFamily: runFaceOf.fontFamily } : {}),
+          ...(run.sizeFactor !== 1 ? { fontSize: `${runFaceOf.fontSize_mm}mm` } : {}),
+          ...(decoration ? { textDecoration: decoration } : {}),
+          ...(run.color ? { color: run.color } : {}),
+          ...(run.highlight ? { backgroundColor: run.highlight } : {}),
+          ...(run.marker
+            ? { display: 'inline-block', width: `${LIST_INDENT_MM}mm`, marginLeft: `-${LIST_INDENT_MM}mm` }
+            : {}),
+        };
+        return (
+          <span key={index} style={style}>
+            {run.text}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -342,6 +433,21 @@ function renderImageLayer(
   const circle = props.maskShape === 'circle';
   // No photo prints nothing: the grey box is an editor placeholder, not part of a tag.
   if (!url) return null;
+  const mirror = cssFlipTransform(props);
+  const picture = isCropped(props.cropRect) ? (
+    <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
+  ) : (
+    <img
+      src={url}
+      alt=""
+      style={{
+        width: '100%',
+        height: '100%',
+        objectFit:
+          props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+      }}
+    />
+  );
 
   return (
     <div
@@ -360,19 +466,25 @@ function renderImageLayer(
         justifyContent: 'center',
       }}
     >
-      {isCropped(props.cropRect) ? (
-        <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
-      ) : (
-        <img
-          src={url}
-          alt=""
+      {mirror ? (
+        // Mirror the whole fitted picture about the layer box, the same thing
+        // the canvas does (`konvaFlip`). A wrapper only when flipped, so an
+        // old document prints the exact tree it always did.
+        <div
           style={{
             width: '100%',
             height: '100%',
-            objectFit:
-              props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            transform: mirror,
           }}
-        />
+        >
+          {picture}
+        </div>
+      ) : (
+        picture
       )}
     </div>
   );
@@ -936,6 +1048,8 @@ function TagRenderer({
           {layer.type === 'price_badge' && renderPriceBadgeLayer(layer, resolved)}
           {layer.type === 'badge' && renderBadgeLayer(layer, media)}
           {layer.type === 'barcode' && <BarcodeLayer layer={layer} resolved={resolved} />}
+          {layer.type === 'feature_icons' && renderFeatureIconsLayer(layer, media, binding)}
+          {layer.type === 'accessories' && renderAccessoriesLayer(layer, media, binding)}
         </div>
       ))}
     </div>
@@ -1104,11 +1218,12 @@ export default function TagSheetRenderer({
   resolvedData,
   assets,
   images,
+  featureIcons,
   preview = false,
   previewScale = 0.3,
 }: TagSheetRendererProps) {
   const imposition = doc.imposition;
-  const media: TagSheetMedia = { assets, images };
+  const media: TagSheetMedia = { assets, images, featureIcons };
 
   if (preview) {
     return (
@@ -1157,4 +1272,250 @@ export default function TagSheetRenderer({
       ))}
     </>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Feature icons (PRICETAG-DESIGNER-GAPS item 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * The subject's matched icons as `<img alt=name>`, packed by `featureIconRow` - the SAME two
+ * functions the canvas draws with. An icon with no signed URL is skipped and takes no space; no
+ * match prints nothing (the designer's dashed outline has no business on a physical tag).
+ */
+function renderFeatureIconsLayer(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+) {
+  const props = layer.props;
+  if (props.kind !== 'feature_icons') return null;
+
+  const icons = featureIconsFor(subjectSpecs(binding, layer), media.featureIcons ?? []).filter(
+    (icon) => media.assets?.[icon.id],
+  );
+  const xs = featureIconRow(icons.length, props, layer.width_mm);
+  if (xs.length === 0) return null;
+  const top = (layer.height_mm - props.iconSize_mm) / 2;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${layer.width_mm}mm`,
+        height: `${layer.height_mm}mm`,
+        transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        overflow: 'hidden',
+      }}
+    >
+      {xs.map((x, i) => (
+        <img
+          key={`${icons[i].id}-${i}`}
+          src={media.assets?.[icons[i].id]}
+          alt={icons[i].name}
+          style={{
+            position: 'absolute',
+            left: `${x}mm`,
+            top: `${top}mm`,
+            width: `${props.iconSize_mm}mm`,
+            height: `${props.iconSize_mm}mm`,
+            objectFit: 'contain',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * PRICETAG-ACCESSORIES: the "Accessories" box, laid out by `accessoryBoxLayout` - the SAME function
+ * the editor canvas and the request preview draw with (card rule A10). No list, or nothing fits:
+ * nothing at all prints, not even the frame (A7). Font sizes are points, positions millimetres.
+ */
+function renderAccessoriesLayer(
+  layer: TagLayer,
+  media: TagSheetMedia,
+  binding: TagBindingData | null,
+) {
+  const props = layer.props;
+  if (props.kind !== 'accessories') return null;
+  const items = accessoriesOf(binding, layer);
+  const lineCount = accessoryLineCount(items);
+  const box = accessoryBoxLayout(
+    items.length,
+    props,
+    layer.width_mm,
+    layer.height_mm,
+    lineCount,
+  );
+  if (box.shown === 0) return null;
+  const font = props.fontFamily
+    ? `'${props.fontFamily}', sans-serif`
+    : undefined;
+  const headerStyle = accessoryHeaderStyle(props);
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${layer.x_mm}mm`,
+        top: `${layer.y_mm}mm`,
+        width: `${box.boxWidth_mm}mm`,
+        height: `${box.boxHeight_mm}mm`,
+        transform: layer.rotation_deg
+          ? `rotate(${layer.rotation_deg}deg)`
+          : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+        fontFamily: font,
+      }}
+      data-testid="accessories-box"
+    >
+      {/* The frame is its own child so the cards and header share the canvas's origin (the
+          outer corner); a CSS border on this div would push every child in by its width. With
+          the header on the border the frame starts at the header's middle (the layout says). */}
+      {box.frame && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.frame.x_mm}mm`,
+            top: `${box.frame.y_mm}mm`,
+            width: `${box.frame.width_mm}mm`,
+            height: `${box.frame.height_mm}mm`,
+            boxSizing: 'border-box',
+            background: props.fill,
+            border: `${props.strokeWidth_mm}mm solid ${props.stroke}`,
+            borderRadius: `${props.cornerRadius_mm}mm`,
+          }}
+          data-testid="accessories-frame"
+        />
+      )}
+      {box.header && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.header.x_mm}mm`,
+            top: `${box.header.y_mm}mm`,
+            width: `${box.header.width_mm}mm`,
+            height: `${box.header.height_mm}mm`,
+            lineHeight: `${box.header.height_mm}mm`,
+            // On the border: the header background breaks the border behind the text (legend).
+            background: box.header.onBorder ? props.headerBackground || '#ffffff' : undefined,
+            ...accessoryTextCss(headerStyle, box.header.onBorder ? 'center' : headerStyle.align),
+            fontSize: `${box.header.fontSize_pt}pt`,
+            // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
+            whiteSpace: 'nowrap',
+          }}
+          data-testid="accessories-header"
+        >
+          {props.headerText}
+        </div>
+      )}
+      {box.cards.map((card, i) => {
+        const item = items[i];
+        const url = item.image
+          ? (media.images?.[item.image.attachment_id] ?? item.image.url)
+          : null;
+        const inner = accessoryCardInner(card, props, Boolean(url), lineCount);
+        const texts = accessoryCardLines(item);
+        return (
+          <div
+            key={`${item.id}-${i}`}
+            style={{
+              position: 'absolute',
+              left: `${card.x_mm}mm`,
+              top: `${card.y_mm}mm`,
+              width: `${card.width_mm}mm`,
+              height: `${card.height_mm}mm`,
+              background: props.cardFill,
+              borderRadius: `${Math.min(props.cornerRadius_mm, 1.5)}mm`,
+            }}
+          >
+            {inner.image && url && (
+              <img
+                src={url}
+                alt={item.name}
+                style={{
+                  position: 'absolute',
+                  left: `${inner.image.x_mm}mm`,
+                  top: `${inner.image.y_mm}mm`,
+                  width: `${inner.image.width_mm}mm`,
+                  height: `${inner.image.height_mm}mm`,
+                  objectFit: 'contain',
+                }}
+              />
+            )}
+            {inner.lines.map((line, n) => {
+              if (!texts[n]) return null;
+              const style = accessoryLineStyle(props, n);
+              const basePt = n === 0 ? props.nameFontSize : props.specFontSize;
+              return (
+                <div
+                  key={n}
+                  style={{
+                    position: 'absolute',
+                    left: `${line.x_mm}mm`,
+                    top: `${line.y_mm}mm`,
+                    width: `${line.width_mm}mm`,
+                    height: `${line.height_mm}mm`,
+                    lineHeight: `${line.height_mm}mm`,
+                    ...accessoryTextCss(style, style.align),
+                    // Shrunk to fit by `fitLinePt`, the canvas's own rule: never an ellipsis.
+                    fontSize: `${fitLinePt(texts[n], line.width_mm, basePt, style.bold)}pt`,
+                    whiteSpace: 'nowrap',
+                  }}
+                  data-testid="accessories-line"
+                >
+                  {texts[n]}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+      {box.badge && (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${box.badge.x_mm}mm`,
+            top: `${box.badge.y_mm}mm`,
+            width: `${box.badge.width_mm}mm`,
+            height: `${box.badge.height_mm}mm`,
+            lineHeight: `${box.badge.height_mm}mm`,
+            borderRadius: '50%',
+            background: props.badgeColor,
+            color: '#ffffff',
+            textAlign: 'center',
+            fontWeight: 900,
+            fontSize: `${box.badge.height_mm * 0.9}mm`,
+          }}
+        >
+          +
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** CSS for one accessory text role, the same style the canvas sets on its Konva text. */
+function accessoryTextCss(
+  style: AccessoryLineStyle,
+  align: 'left' | 'center' | 'right',
+): CSSProperties {
+  const decoration = [style.underline && 'underline', style.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
+  return {
+    textAlign: align,
+    fontWeight: style.fontWeight,
+    fontStyle: style.italic ? 'italic' : undefined,
+    textDecoration: decoration || undefined,
+    fontFamily: style.fontFamily ? `'${style.fontFamily}', sans-serif` : undefined,
+    letterSpacing: style.letterSpacing
+      ? `${style.letterSpacing * LETTER_SPACING_MM_PER_UNIT}mm`
+      : undefined,
+    color: style.color,
+  };
 }

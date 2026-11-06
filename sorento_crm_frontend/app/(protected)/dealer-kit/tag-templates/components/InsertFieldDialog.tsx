@@ -156,7 +156,14 @@ export function InsertFieldDialog({
             className="h-8 text-xs"
           />
 
-          <ScrollArea className="h-56 rounded-md border">
+          {/* Radix's viewport wraps its content in a `display: table` box that grows to the
+              widest row, so a long token pushed the row past the dialog and was clipped
+              (owner 6 Nov). Forcing that box to `block` keeps every row at the dialog's width
+              and lets the token wrap on its own line instead. */}
+          <ScrollArea
+            className="h-56 rounded-md border"
+            viewportClassName="[&>div]:!block"
+          >
             <div className="flex flex-col p-1">
               {grouped.map((section) => (
                 <div key={section.group}>
@@ -167,13 +174,16 @@ export function InsertFieldDialog({
                     <button
                       key={field.path}
                       type="button"
-                      className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs hover:bg-accent"
+                      className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded px-2 py-1 text-left text-xs hover:bg-accent"
                       onClick={() => insert(field)}
+                      title={field.token}
                     >
-                      <span className="truncate" title={field.label}>
-                        {field.label}
-                      </span>
-                      <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                      <span className="w-full break-words">{field.label}</span>
+                      {/* The FULL token on its own line, wrapping, never clipped. */}
+                      <span
+                        data-testid="merge-field-token"
+                        className="w-full break-all whitespace-normal font-mono text-2xs text-muted-foreground"
+                      >
                         {field.token}
                       </span>
                     </button>

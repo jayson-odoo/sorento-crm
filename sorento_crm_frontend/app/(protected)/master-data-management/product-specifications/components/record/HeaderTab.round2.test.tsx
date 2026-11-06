@@ -41,6 +41,9 @@ import { buildPatchBody, projectSpecKeyDraft, type SpecKeyDraft } from '../../ho
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 const CAPACITY: SpecRegistryKey = {
+  id: 'k-capacity',
+  parser_hint: null,
+  label_owned: false,
   spec_key: 'capacity_oz',
   label: 'Capacity (oz)',
   data_type: 'numeric',

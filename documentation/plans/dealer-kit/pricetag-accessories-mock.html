@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Price tag accessories</title>
+<!--
+  PRICETAG-ACCESSORIES mock v1 (CARD-pricetag-accessories-06nov.md, rules A1-A12, owner rulings 6 Nov ~10:00).
+  Real case: SRTKS7061-BL. Ala Carte (no box); Combo with 1 tap (vertical box "FREE" beside the tap);
+  Combo with 2 taps (horizontal box "ACCESSORIES INCLUDED" under the sink). Static, no data fetch.
+  Prices and tap codes on the tags are placeholders (layout only); pictures are line drawings.
+
+  Element -> component map (reuse first; NEW only where named):
+  A.  Accessories library (Master Data > Products > Accessories)
+        list: same shape as app/(protected)/master-data-management/brands/components/BrandsList.tsx + BrandTable.tsx
+              (DataGrid, tableLayout fixed + columnsResizable, buildDataGridParams via lib/api-client, rowHref)
+        create/edit modal: as brands/components/BrandFormDialog.tsx (react-hook-form + zod schema like brands/forms/brand-schema.ts)
+        picture: the combo picture control, ProductCombosSection.tsx ComboImageControl (:353), moved to
+                 components/common so both use it; BE attachments row like product_combo_service.py:360-392
+        delete: deferred-action delete (recordActions.tsx pattern), refused while listed (409 names the products/combos)
+        NEW: app/(protected)/master-data-management/accessories/* ; BE app/models/accessory.py (accessories,
+             product_accessories, product_combo_accessories), app/api/v1/master_data/accessories.py
+  B1. Product page "Accessories included" section, Overview tab, after ProductCombosSection
+        app/(protected)/master-data-management/products/[id]/components/ProductDetail.tsx (:604-606)
+        NEW AccessoryListField.tsx: components/common/SearchableSelect (add one, create-in-place like
+        SearchableMultiSelect.createOption) + drag order with @dnd-kit/sortable (as tag-templates/components/LayersPanel.tsx:44-48)
+  B2. Combo block "Free items": the same AccessoryListField replaces the TextField at ProductCombosSection.tsx:607-613
+        (and the ReadOnlyField at :625)
+  C1. Designer toolbar "Accessories" replaces "Add accessories strip"
+        app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar.tsx (:323)
+  C2. Layer type 'accessories' in lib/dealer-kit/tag-template-types.ts (beside FeatureIconsLayerProps :336);
+        drawn by tag-templates/components/KonvaTagLayer.tsx (beside case 'feature_icons' :373)
+  C3. Inspector: NEW AccessoriesInspector in tag-templates/components/InspectorPanel.tsx (beside FeatureIconsInspector :569);
+        colours = components/common/ColorPicker.tsx; direction = components/ui/toggle-group; badge picture =
+        AssetPickerDialog.tsx (uploadKind 'badge'); "Reads from" = the photo layer's subjectSlot picker
+  C4. Fit warning: same block as InspectorPanel.tsx:1868-1915; sheet toast = useFeatureIconDropToast.ts pattern
+  D.  Print + preview: TagSheetRenderer.tsx (beside feature icons :1278) and DesignViewer, all through
+        NEW lib/dealer-kit/accessory-box.ts accessoryBoxLayout() (one function, like feature-icons.ts featureIconFit :83)
+        data: tag_data_service.py product payload (:350) + _combo_object (:1178) gain `accessories: [{id,name,spec,image_url}]`
+  E.  Migration report: one-off script output (no screen); alembic data step, additive schema only
+-->
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --primary:#1b84ff; --danger:#dc2626; --dangerbg:#fef2f2; --warn:#b45309; --warnbg:#fffbeb; --sel:#eef4ff; --ok:#047857; --okbg:#ecfdf5; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; } }
+  :root[data-theme="dark"] { --bg:#0f1115; --card:#171a21; --fg:#e5e7eb; --muted:#9ca3af; --line:#2a2f3a; --warnbg:#2b2110; --dangerbg:#2a1414; --sel:#1b2540; --okbg:#0f2a20; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, sans-serif; padding:16px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:28px 0 8px; }
+  h3 { font-size:14px; margin:0 0 8px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; max-width:1040px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:16px; }
+  .row > * { min-width:0; max-width:100%; }
+  .row > .grow { flex:1 1 320px; min-width:0; }
+  .lbl { display:block; font-size:13px; font-weight:500; margin-bottom:6px; }
+  .field { margin-bottom:12px; }
+  .input { border:1px solid var(--line); border-radius:8px; padding:6px 10px; background:var(--card); color:var(--fg); font-size:13px; min-height:32px; display:flex; align-items:center; gap:6px; }
+  .input .ph { color:var(--muted); }
+  .btn { border:1px solid var(--line); background:var(--card); color:var(--fg); border-radius:8px; padding:6px 12px; font-size:13px; white-space:nowrap; }
+  .btn.primary { background:var(--primary); color:#fff; border-color:var(--primary); }
+  .btn.sm { padding:3px 8px; font-size:12px; }
+  .hdr { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  th { color:var(--muted); font-weight:500; font-size:12px; border-top:0; }
+  .tablewrap { overflow-x:auto; }
+  .tablewrap table { min-width:560px; }
+  .pill { display:inline-block; border-radius:999px; padding:1px 8px; font-size:11px; white-space:nowrap; background:var(--sel); color:var(--primary); }
+  .pill.warn { background:var(--warnbg); color:var(--warn); }
+  .pic { width:36px; height:36px; border:1px solid var(--line); border-radius:6px; background:#fff; display:flex; align-items:center; justify-content:center; flex:none; }
+  .pic svg { width:28px; height:28px; }
+  .pic.none { background:var(--bg); color:var(--muted); font-size:9px; text-align:center; }
+  .list { border:1px solid var(--line); border-radius:8px; }
+  .li { display:flex; align-items:center; gap:10px; padding:8px 10px; border-top:1px solid var(--line); }
+  .li:first-child { border-top:0; }
+  .li .grip { color:var(--muted); cursor:grab; font-size:14px; }
+  .li .txt { flex:1; min-width:0; }
+  .li .txt b { display:block; font-size:13px; }
+  .li .txt span { font-size:12px; color:var(--muted); }
+  .x { border:0; background:transparent; color:var(--muted); font-size:16px; padding:2px 6px; }
+  .empty { border:1px dashed var(--line); border-radius:8px; padding:14px; }
+  .empty b { display:block; font-size:13px; } .empty span { font-size:12px; color:var(--muted); }
+  .modal { border:1px solid var(--line); border-radius:12px; background:var(--card); box-shadow:0 10px 30px rgba(0,0,0,.15); padding:16px; max-width:440px; }
+  .drop { border:1px dashed var(--line); border-radius:8px; padding:10px; display:flex; gap:10px; align-items:center; font-size:12px; color:var(--muted); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg span { padding:4px 10px; font-size:12px; } .seg .on { background:var(--primary); color:#fff; } .seg .off { color:var(--muted); }
+  .sw { display:inline-block; width:14px; height:14px; border-radius:3px; border:1px solid var(--line); vertical-align:middle; }
+  .warnbox { background:var(--warnbg); color:var(--warn); border-radius:8px; padding:8px 10px; font-size:12px; }
+  .insp { width:300px; max-width:100%; border:1px solid var(--line); border-radius:10px; padding:12px; background:var(--card); }
+  .insp .g2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .toggle { display:inline-block; width:30px; height:17px; border-radius:999px; background:var(--primary); position:relative; vertical-align:middle; }
+  .toggle::after { content:""; position:absolute; right:2px; top:2px; width:13px; height:13px; border-radius:50%; background:#fff; }
+  .note { font-size:12px; color:var(--muted); margin-top:6px; }
+
+  /* Printed tag, 148 x 105 mm at 3.2 px/mm; always white paper, so fixed colours */
+  .tagwrap { overflow-x:auto; max-width:100%; padding:6px; }
+  .tag { position:relative; width:474px; height:336px; background:#fff; border:1px solid #d1d5db; color:#111; font-family:Arial, Helvetica, sans-serif; flex:none; overflow:hidden; }
+  .tag .band { position:absolute; left:0; right:0; top:0; height:26px; background:#1f4d36; color:#fff; font:italic 700 14px Georgia, serif; display:flex; align-items:center; justify-content:center; }
+  .tag .ph { position:absolute; display:flex; align-items:center; justify-content:center; }
+  .tag .ph svg { width:100%; height:100%; }
+  .tag .t { position:absolute; font-size:11px; line-height:1.25; }
+  .tag .code { font-weight:800; font-size:15px; color:#1f4d36; }
+  .tag .price { position:absolute; font-weight:900; font-size:26px; color:#8b4513; }
+  .tag .price small { font-size:11px; font-weight:700; margin-right:2px; }
+  .tag .cap { position:absolute; font-size:9px; text-align:center; color:#374151; }
+  .tag.edit { outline:2px solid var(--primary); outline-offset:4px; }
+  /* The accessories box */
+  .acc { position:absolute; border:1.5px solid #1f4d36; border-radius:10px; background:#f3f7f4; padding:20px 6px 6px; display:flex; gap:5px; }
+  .acc.v { flex-direction:column; }
+  .acc.h { flex-direction:row; }
+  .acc .head { position:absolute; left:0; right:0; top:4px; text-align:center; font-weight:800; font-size:10px; letter-spacing:.06em; color:#1f4d36; }
+  .acc .plus { position:absolute; left:-7px; top:-7px; width:18px; height:18px; border-radius:50%; background:#c2410c; color:#fff; font:900 14px/18px Arial; text-align:center; }
+  .acc .mc { background:#fff; border-radius:6px; border:1px solid #d6e2da; display:flex; gap:5px; align-items:center; padding:3px 5px; }
+  .acc.v .mc { height:38px; }
+  .acc.h .mc { flex-direction:column; width:84px; padding:4px; gap:2px; text-align:center; }
+  .acc .mc .im { width:32px; height:30px; flex:none; display:flex; align-items:center; justify-content:center; }
+  .acc.h .mc .im { width:56px; height:34px; }
+  .acc .mc .im svg { width:100%; height:100%; }
+  .acc .mc b { display:block; font-size:8.5px; line-height:1.1; }
+  .acc .mc i { display:block; font-style:normal; font-size:7px; color:#4b5563; line-height:1.15; }
+  .acc .drop-line { position:absolute; left:6px; right:6px; bottom:-1px; border-bottom:2px dashed #dc2626; }
+  .mm { font-size:11px; color:var(--muted); margin-top:6px; }
+</style>
+</head>
+<body>
+
+<!-- Line drawings reused below -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="sink" viewBox="0 0 120 70"><rect x="2" y="6" width="116" height="58" rx="5" fill="#d1d5db" stroke="#4b5563"/><rect x="10" y="14" width="46" height="42" rx="6" fill="#9ca3af"/><rect x="62" y="14" width="46" height="42" rx="6" fill="#9ca3af"/><circle cx="33" cy="35" r="4" fill="#374151"/><circle cx="85" cy="35" r="4" fill="#374151"/></symbol>
+    <symbol id="tap" viewBox="0 0 40 70"><rect x="14" y="40" width="12" height="26" rx="3" fill="#6b7280"/><path d="M20 42 V14 Q20 4 30 4 Q38 4 38 14 V22" stroke="#6b7280" stroke-width="5" fill="none"/><rect x="4" y="44" width="10" height="4" rx="2" fill="#374151"/></symbol>
+    <symbol id="drainer" viewBox="0 0 60 40"><rect x="3" y="6" width="54" height="28" rx="3" fill="#e5e7eb" stroke="#4b5563"/><g stroke="#6b7280" stroke-width="2"><line x1="12" y1="10" x2="12" y2="30"/><line x1="20" y1="10" x2="20" y2="30"/><line x1="28" y1="10" x2="28" y2="30"/><line x1="36" y1="10" x2="36" y2="30"/><line x1="44" y1="10" x2="44" y2="30"/><line x1="52" y1="10" x2="52" y2="30"/></g></symbol>
+    <symbol id="pullout" viewBox="0 0 60 40"><rect x="8" y="10" width="44" height="22" rx="3" fill="#e5e7eb" stroke="#4b5563"/><rect x="2" y="17" width="8" height="8" rx="2" fill="#6b7280"/><rect x="50" y="17" width="8" height="8" rx="2" fill="#6b7280"/><g fill="#9ca3af"><circle cx="18" cy="21" r="2"/><circle cx="26" cy="21" r="2"/><circle cx="34" cy="21" r="2"/><circle cx="42" cy="21" r="2"/></g></symbol>
+    <symbol id="board" viewBox="0 0 60 40"><rect x="4" y="6" width="52" height="28" rx="4" fill="#d6b48a" stroke="#7c5a32"/><circle cx="48" cy="13" r="3" fill="#fff" stroke="#7c5a32"/></symbol>
+    <symbol id="colander" viewBox="0 0 60 40"><path d="M8 12 H52 L46 34 H14 Z" fill="#e5e7eb" stroke="#4b5563"/><g fill="#6b7280"><circle cx="22" cy="20" r="1.5"/><circle cx="30" cy="20" r="1.5"/><circle cx="38" cy="20" r="1.5"/><circle cx="26" cy="27" r="1.5"/><circle cx="34" cy="27" r="1.5"/></g></symbol>
+  </defs>
+</svg>
+
+<h1>Price tag accessories</h1>
+<p class="muted">Mock v1, 6 Nov 2026. Static. Built on SRTKS7061-BL from your 4 real tags. Prices and tap codes on the tags are placeholders; only the layout is being approved.</p>
+
+<!-- ============================================================ A -->
+<h2>A. Accessories library (Master Data &rsaquo; Products &rsaquo; Accessories)</h2>
+<div class="row">
+  <div class="card grow">
+    <div class="hdr"><h3 style="margin:0">Accessories</h3><button class="btn primary">Add accessory</button></div>
+    <div class="row" style="gap:8px;margin-bottom:10px"><div class="input" style="flex:1 1 220px"><span class="ph">Search accessories</span></div></div>
+    <div class="tablewrap">
+      <table>
+        <colgroup><col style="width:56px"><col style="width:28%"><col><col style="width:150px"></colgroup>
+        <thead><tr><th>Picture</th><th>Name</th><th>Spec</th><th>Used on</th></tr></thead>
+        <tbody>
+          <tr><td><div class="pic"><svg><use href="#drainer"/></svg></div></td><td><b>DRAINER</b></td><td title="390x300x140, Depth: 160mm">390x300x140, Depth: 160mm</td><td>14 products, 22 combos</td></tr>
+          <tr><td><div class="pic"><svg><use href="#pullout"/></svg></div></td><td><b>PULL OUT DRAINER</b></td><td class="muted">No spec</td><td>0 products, 9 combos</td></tr>
+          <tr><td><div class="pic"><svg><use href="#colander"/></svg></div></td><td><b>COLANDER</b></td><td>390x300x140, Depth: 160mm</td><td>3 products, 4 combos</td></tr>
+          <tr><td><div class="pic"><svg><use href="#board"/></svg></div></td><td><b>CHOPPING BOARD</b></td><td class="muted">No spec</td><td>5 products, 6 combos</td></tr>
+          <tr><td><div class="pic none">No picture</div></td><td><b>SOAP DISPENSER</b></td><td class="muted">No spec</td><td>0 products, 2 combos</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Usage counts are illustrative. A row opens its detail page; Delete is the deferred-action countdown, refused while the accessory is listed ("Used on 3 products and 4 combos: remove it there first.").</p>
+  </div>
+  <div class="modal" role="dialog" aria-label="Edit accessory" style="flex:0 1 380px">
+    <h3>Edit accessory</h3>
+    <div class="field"><span class="lbl">Picture</span>
+      <div class="drop"><div class="pic" style="width:56px;height:56px"><svg style="width:46px;height:46px"><use href="#drainer"/></svg></div><div>Same picture control as a combo's picture: replace or remove.<br><button class="btn sm" style="margin-top:6px">Replace</button> <button class="btn sm">Remove</button></div></div>
+    </div>
+    <div class="field"><span class="lbl">Name <span style="color:var(--danger)">*</span></span><div class="input">DRAINER</div></div>
+    <div class="field"><span class="lbl">Spec</span><div class="input">390x300x140, Depth: 160mm</div><div class="note">One short line, printed as typed.</div></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><button class="btn">Cancel</button><button class="btn primary">Save</button></div>
+  </div>
+</div>
+
+<!-- ============================================================ B -->
+<h2>B. Product page: SRTKS7061-BL, Overview tab</h2>
+<div class="card">
+  <div class="muted" style="margin-bottom:10px">Products &rsaquo; SRTKS7061-BL</div>
+  <div class="row">
+    <div class="grow">
+      <h3>Accessories included</h3>
+      <div class="empty"><b>No accessories</b><span>The Ala Carte tag shows no accessories box.</span></div>
+      <div class="input" style="margin-top:8px"><span class="ph">Add an accessory</span></div>
+      <p class="note">B1. The product's own list, independent of its combos (ruling Q1).</p>
+    </div>
+    <div class="grow">
+      <h3>Combos &rsaquo; Kitchen sink with 1 tap</h3>
+      <span class="lbl">Free items</span>
+      <div class="list">
+        <div class="li"><span class="grip" aria-label="Drag to reorder" title="Drag to reorder">&#8942;&#8942;</span><div class="pic"><svg><use href="#drainer"/></svg></div><div class="txt"><b>DRAINER</b><span>390x300x140, Depth: 160mm</span></div><button class="x" aria-label="Remove DRAINER" title="Remove">&times;</button></div>
+        <div class="li"><span class="grip" aria-label="Drag to reorder" title="Drag to reorder">&#8942;&#8942;</span><div class="pic"><svg><use href="#pullout"/></svg></div><div class="txt"><b>PULL OUT DRAINER</b><span class="muted">No spec</span></div><button class="x" aria-label="Remove PULL OUT DRAINER" title="Remove">&times;</button></div>
+      </div>
+      <div class="input" style="margin-top:8px"><span class="ph">Add an accessory, or type a new name</span></div>
+      <p class="note">B2. Replaces the old "Free items" text box. Each combo keeps its own list; "Kitchen sink with 2 taps" has the same two items in its own list.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ C -->
+<h2>C. Tag designer: the "Accessories" box (template "Kitchen sink with 1 tap")</h2>
+<div class="card">
+  <div class="row" style="align-items:flex-start">
+    <div class="grow">
+      <div class="row" style="gap:6px;margin-bottom:10px">
+        <button class="btn sm">Text</button><button class="btn sm">Image</button><button class="btn sm">Shape</button><button class="btn sm">Price</button><button class="btn sm">Feature icons</button><button class="btn sm primary">Accessories</button>
+      </div>
+      <div class="tagwrap"><div class="tag edit" aria-label="Designer canvas">
+        <div class="band">Sorento</div>
+        <div class="ph" style="left:14px;top:40px;width:250px;height:150px"><svg><use href="#sink"/></svg></div>
+        <div class="ph" style="left:300px;top:36px;width:56px;height:96px"><svg><use href="#tap"/></svg></div>
+        <div class="cap" style="left:278px;top:134px;width:100px">Tap code</div>
+        <div class="acc v" style="left:330px;top:156px;width:130px;outline:1.5px dashed #1b84ff;outline-offset:3px">
+          <span class="plus">+</span><div class="head">FREE</div>
+          <div class="mc"><div class="im"><svg><use href="#drainer"/></svg></div><div><b>Sample accessory</b><i>Spec line</i></div></div>
+          <div class="mc"><div class="im"><svg><use href="#pullout"/></svg></div><div><b>Sample accessory</b><i>Spec line</i></div></div>
+        </div>
+        <div class="t code" style="left:14px;top:206px">Product code</div>
+        <div class="t" style="left:14px;top:228px;width:280px">Description</div>
+        <div class="price" style="left:14px;top:280px"><small>RM</small>0,000</div>
+      </div></div>
+      <p class="mm">Without a preview product the box draws 2 sample cards so it can be styled (A7). "Add accessories strip" is gone from the toolbar; templates that already used it keep their layers.</p>
+    </div>
+    <div class="insp" aria-label="Inspector">
+      <h3>Accessories</h3>
+      <div class="field"><span class="lbl">Reads from</span><div class="input">Main item (the combo)</div></div>
+      <div class="field"><span class="lbl">Direction</span><span class="seg"><span class="on">Vertical</span><span class="off">Horizontal</span></span></div>
+      <div class="field"><span class="lbl">Header text</span><div class="input">FREE</div></div>
+      <div class="field"><span class="lbl">"+" badge <span class="toggle" role="switch" aria-checked="true" aria-label="Show badge"></span></span><div class="input"><span class="sw" style="background:#c2410c"></span> Badge: Plus (orange) <button class="btn sm" style="margin-left:auto">Change</button></div></div>
+      <div class="g2">
+        <div class="field"><span class="lbl">Fill</span><div class="input"><span class="sw" style="background:#f3f7f4"></span>#F3F7F4</div></div>
+        <div class="field"><span class="lbl">Border</span><div class="input"><span class="sw" style="background:#1f4d36"></span>0.5 mm</div></div>
+        <div class="field"><span class="lbl">Corner radius</span><div class="input">3 mm</div></div>
+        <div class="field"><span class="lbl">Gap</span><div class="input">1.5 mm</div></div>
+        <div class="field"><span class="lbl">Header size</span><div class="input">10 pt</div></div>
+        <div class="field"><span class="lbl">Header colour</span><div class="input"><span class="sw" style="background:#1f4d36"></span>#1F4D36</div></div>
+        <div class="field"><span class="lbl">Picture size</span><div class="input">10 mm</div></div>
+        <div class="field"><span class="lbl">Name / spec size</span><div class="input">8 / 7 pt</div></div>
+      </div>
+      <p class="note">Preview with combo "Kitchen sink with 1 tap": 2 of 2 accessories fit, no warning.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ D -->
+<h2>D. Printed tags, SRTKS7061-BL (148 x 105 mm)</h2>
+<div class="card">
+  <div class="row">
+    <div>
+      <h3>1. Ala Carte: no box</h3>
+      <div class="tagwrap"><div class="tag">
+        <div class="band">Sorento</div>
+        <div class="ph" style="left:60px;top:40px;width:354px;height:170px"><svg><use href="#sink"/></svg></div>
+        <div class="t code" style="left:14px;top:222px">SRTKS7061-BL</div>
+        <div class="t" style="left:14px;top:244px;width:280px">Description</div>
+        <div class="price" style="left:14px;top:280px"><small>RM</small>0,000</div>
+      </div></div>
+      <p class="mm">The product's list is empty, so nothing prints (A3, A7).</p>
+    </div>
+    <div>
+      <h3>2. Combo with 1 tap: vertical "FREE" beside the tap</h3>
+      <div class="tagwrap"><div class="tag">
+        <div class="band">Sorento</div>
+        <div class="ph" style="left:14px;top:40px;width:250px;height:150px"><svg><use href="#sink"/></svg></div>
+        <div class="ph" style="left:300px;top:36px;width:56px;height:96px"><svg><use href="#tap"/></svg></div>
+        <div class="cap" style="left:278px;top:134px;width:100px">Tap code</div>
+        <div class="acc v" style="left:330px;top:156px;width:130px">
+          <span class="plus">+</span><div class="head">FREE</div>
+          <div class="mc"><div class="im"><svg><use href="#drainer"/></svg></div><div><b>DRAINER</b><i>390x300x140, Depth: 160mm</i></div></div>
+          <div class="mc"><div class="im"><svg><use href="#pullout"/></svg></div><div><b>PULL OUT DRAINER</b></div></div>
+        </div>
+        <div class="t code" style="left:14px;top:206px">SRTKS7061-BL + Tap</div>
+        <div class="t" style="left:14px;top:228px;width:280px">Kitchen sink with 1 tap</div>
+        <div class="price" style="left:14px;top:280px"><small>RM</small>0,000</div>
+      </div></div>
+      <p class="mm">Box reads the combo's own list (A2, A3). The variant tag is the same box on its own template.</p>
+    </div>
+    <div>
+      <h3>3. Combo with 2 taps: horizontal "ACCESSORIES INCLUDED" under the sink</h3>
+      <div class="tagwrap"><div class="tag">
+        <div class="band">Sorento</div>
+        <div class="ph" style="left:14px;top:34px;width:230px;height:126px"><svg><use href="#sink"/></svg></div>
+        <div class="ph" style="left:276px;top:34px;width:50px;height:86px"><svg><use href="#tap"/></svg></div>
+        <div class="ph" style="left:372px;top:34px;width:50px;height:86px"><svg><use href="#tap"/></svg></div>
+        <div class="cap" style="left:252px;top:122px;width:100px">Tap code 1</div>
+        <div class="cap" style="left:348px;top:122px;width:100px">Tap code 2</div>
+        <div class="acc h" style="left:30px;top:168px">
+          <div class="head">ACCESSORIES INCLUDED</div>
+          <div class="mc"><div class="im"><svg><use href="#drainer"/></svg></div><b>DRAINER</b><i>390x300x140, Depth: 160mm</i></div>
+          <div class="mc"><div class="im"><svg><use href="#pullout"/></svg></div><b>PULL OUT DRAINER</b></div>
+        </div>
+        <div class="t code" style="left:240px;top:178px">SRTKS7061-BL + 2 Taps</div>
+        <div class="t" style="left:240px;top:200px;width:220px">Kitchen sink with 2 taps</div>
+        <div class="price" style="left:240px;top:280px"><small>RM</small>0,000</div>
+      </div></div>
+      <p class="mm">No "+" badge on this box: switched off on the template. Box closes up from the right (A5).</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ D2 -->
+<h2>D2. Edge cases</h2>
+<div class="card">
+  <div class="row" style="align-items:flex-start">
+    <div>
+      <h3>Too many: 5 listed, 3 fit (designer)</h3>
+      <div class="tagwrap"><div class="tag edit" style="height:336px">
+        <div class="band">Sorento</div>
+        <div class="ph" style="left:14px;top:40px;width:250px;height:150px"><svg><use href="#sink"/></svg></div>
+        <div class="acc v" style="left:300px;top:36px;width:160px;height:182px;overflow:hidden;outline:1.5px dashed #1b84ff;outline-offset:3px">
+          <span class="plus">+</span><div class="head">ACCESSORIES INCLUDED</div>
+          <div class="mc"><div class="im"><svg><use href="#board"/></svg></div><div><b>CHOPPING BOARD</b></div></div>
+          <div class="mc"><div class="im"><svg><use href="#colander"/></svg></div><div><b>COLANDER</b><i>390x300x140, Depth: 160mm</i></div></div>
+          <div class="mc"><div class="im"><svg><use href="#drainer"/></svg></div><div><b>DRAINER</b><i>390x300x140, Depth: 160mm</i></div></div>
+        </div>
+        <div class="t code" style="left:14px;top:206px">Preview: a sink with 5</div>
+      </div></div>
+    </div>
+    <div class="grow" style="max-width:360px">
+      <div class="warnbox" role="status">2 of 5 accessories do not fit this box. Make the box bigger or the cards smaller.</div>
+      <p class="note">Inspector warning (A6), the same block feature icons use. Only whole cards print; PULL OUT DRAINER and SOAP DISPENSER are dropped, never cut in half. On a request's sheet the toast reads: "Tag 2a: 2 accessories do not fit their box and will not print."</p>
+      <h3 style="margin-top:16px">No picture</h3>
+      <div style="position:relative;height:60px">
+        <div class="acc v" style="left:0;top:0;width:160px;padding-top:6px">
+          <div class="mc" style="height:30px"><div><b>SOAP DISPENSER</b><i>Spec line uses the full width</i></div></div>
+        </div>
+      </div>
+      <p class="note">Name and spec take the picture's space; nothing grey prints (A8).</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ E -->
+<h2>E. One system: migrating the old free text (report, no screen)</h2>
+<div class="card">
+  <div class="tablewrap">
+    <table>
+      <colgroup><col style="width:24%"><col style="width:30%"><col><col style="width:120px"></colgroup>
+      <thead><tr><th>Where</th><th>Old text</th><th>Becomes the list</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Combo "Kitchen sink with 1 tap"</td><td title="DRAINER, PULL OUT DRAINER">DRAINER, PULL OUT DRAINER</td><td>DRAINER &rsaquo; PULL OUT DRAINER</td><td><span class="pill">Moved</span></td></tr>
+        <tr><td>Combo (another sink)</td><td>drainer</td><td>DRAINER (same library item, name matched ignoring case)</td><td><span class="pill">Moved</span></td></tr>
+        <tr><td>Request line, combo list already set</td><td>CHOPPING BOARD</td><td>Not written: the combo already lists different items</td><td><span class="pill warn">In report</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Rows are illustrative until crew pastes the real distinct values (card Q-M1). The old "Accessories" text field on templates keeps printing, now built from the list ("DRAINER, PULL OUT DRAINER").</p>
+</div>
+
+</body>
+</html>

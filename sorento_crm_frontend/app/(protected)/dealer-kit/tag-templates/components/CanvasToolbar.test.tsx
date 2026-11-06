@@ -31,7 +31,7 @@ function renderToolbar(trailing?: ToolbarTrailingAction[]) {
       onAddProduct={noop}
       onAddSet={noop}
       onAddAlternativesRow={noop}
-      onAddAccessoriesStrip={noop}
+      onAddAccessories={noop}
       onUndo={noop}
       onRedo={noop}
       canUndo={false}

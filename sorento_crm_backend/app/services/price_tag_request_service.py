@@ -320,6 +320,7 @@ class PriceTagRequestService:
         lines: list[dict],
         *,
         carry_tags: dict[tuple, list[dict]] | None = None,
+        kept_picks: set[tuple] | None = None,
         viewer=None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
@@ -545,6 +546,14 @@ class PriceTagRequestService:
                         product_id=product_id,
                         sent=line_data.get("tag_template_id"),
                         combo_id=combo_id,
+                        price_type=price_type,
+                        # AC-37: a re-sent pick equal to the one this line already stored, for
+                        # the same price type, is not re-checked.
+                        kept={
+                            template_id
+                            for (pid, cid, ptype, template_id) in (kept_picks or set())
+                            if pid == product_id and cid == combo_id and ptype == price_type
+                        },
                     ),
                 )
             )
@@ -1005,10 +1014,15 @@ Marketing's own work is not part of the form's payload, so it is captured
             ]
             for old in request.lines
         }
+        kept_picks = {
+            (old.product_id, old.combo_id, old.price_type or request.price_mode, old.tag_template_id)
+            for old in request.lines
+            if old.tag_template_id
+        }
         request.lines.clear()
         db.flush()
         PriceTagRequestService._add_lines(
-            db, request, lines, carry_tags=carry_tags, viewer=viewer
+            db, request, lines, carry_tags=carry_tags, kept_picks=kept_picks, viewer=viewer
         )
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not

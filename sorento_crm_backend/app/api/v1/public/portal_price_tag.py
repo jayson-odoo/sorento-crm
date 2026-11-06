@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
@@ -932,6 +932,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     def portal_lookup_product_tag_templates(
         product_id: str,
         combo_id: Optional[str] = Query(None),
+        price_type: Optional[Literal["list", "selling"]] = Query(None),
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
@@ -946,7 +947,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             return [
                 ProductTagTemplateItem(**item)
                 for item in product_tag_template_service.published_items(
-                    db, product_id, combo_id
+                    db, product_id, combo_id, price_type
                 )
             ]
 
@@ -975,6 +976,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
                 assets=result["assets"],
                 images=result["images"],
                 fonts=result["fonts"],
+                feature_icons=result["feature_icons"],
             )
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             result = product_tag_template_service.preview(
@@ -989,6 +991,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
             assets=result["assets"],
             images=result["images"],
             fonts=result["fonts"],
+            feature_icons=result["feature_icons"],
         )
 
 

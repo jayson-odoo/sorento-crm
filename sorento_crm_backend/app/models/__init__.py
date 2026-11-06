@@ -9,6 +9,7 @@ from app.models.country import Country
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.models.product_combo import ProductCombo, ProductComboPart
+from app.models.accessory import Accessory, ProductAccessory, ProductComboAccessory
 from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetProposal
 from app.models.product_compatibility import ProductCompatibility
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
