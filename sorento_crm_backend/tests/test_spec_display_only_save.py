@@ -139,14 +139,53 @@ def test_the_refusal_names_the_change_that_is_running(api):
 
 
 def test_the_label_does_not_outlive_the_read_on_a_pooled_connection():
-    """The holder's connection goes back to the pool: it must not keep naming a finished read."""
+    """The holder's connection goes back to the pool: it must not keep naming a finished read
+    (a later unlabelled holder on it would be reported as the old spec)."""
     from app.services import product_spec_preview
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
         token = product_spec_preview.begin_catalogue_read(db, label="Water supply")
+        connection, _key = product_spec_preview._DATABASE_LOCKS[token]
+        assert connection.execute(text("SHOW application_name")).scalar().startswith(
+            "sorento-spec-read:"
+        )
+        raw = connection.connection.dbapi_connection
         product_spec_preview.end_catalogue_read(token)
+        # Checked on the SAME driver connection, now pooled (closing returns it, not ends it).
+        cursor = raw.cursor()
+        cursor.execute("SHOW application_name")
+        name = cursor.fetchone()[0]
+        cursor.close()
+        raw.rollback()  # hand it back to the pool with no transaction open
+        assert not name.startswith("sorento-spec-read:")
         assert product_spec_preview.running_catalogue_read(db) is None
+
+
+def test_a_label_postgres_would_refuse_never_strands_the_lock():
+    """A NUL in a spec label: naming the holder fails, the lock is still taken and given back."""
+    from app.services import product_spec_preview
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        token = product_spec_preview.begin_catalogue_read(db, label="bad\x00label \u00e9")
+        product_spec_preview.end_catalogue_read(token)
+        again = product_spec_preview.begin_catalogue_read(db)
+        product_spec_preview.end_catalogue_read(again)
+
+
+def test_a_non_ascii_label_is_named_in_readable_ascii():
+    from app.services import product_spec_preview
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        token = product_spec_preview.begin_catalogue_read(db, label="Gr\u00f6\u00dfe Water supply")
+        try:
+            running = product_spec_preview.running_catalogue_read(db)
+        finally:
+            product_spec_preview.end_catalogue_read(token)
+    assert running is not None
+    assert running["label"] == "Gre Water supply"
 
 
 def test_the_registry_list_is_revalidated_on_every_read(api):
@@ -158,3 +197,25 @@ def test_the_registry_list_is_revalidated_on_every_read(api):
     assert "max-age=60" not in cache
     assert "no-cache" in cache
     assert response.headers.get("etag")
+
+
+def test_a_first_save_of_a_key_reading_the_shipped_rules_is_not_a_reading_change(api):
+    """Crew pass on #2214: Flush type / Finish had no stored rules; the record page sends the
+    rules it SHOWS (`effective_rules`, each with a `_uid`), and the first save counted that as a
+    change, took the slot and re-read products. Stored-now-equal-to-shipped is no change."""
+    from tests.test_product_spec_fix_round2 import _shipped_key_row
+
+    client, db = api
+    row = _shipped_key_row(db)
+    assert row.derivation_rules is None
+    shown = next(k for k in client.get(BASE).json()["keys"] if k["spec_key"] == row.spec_key)
+    assert shown["effective_rules"], "the fixture key must read with shipped rules"
+    sent = [{**rule, "_uid": f"r{i}"} for i, rule in enumerate(shown["effective_rules"])]
+    with _OtherProcessRead(db):
+        response = client.patch(
+            f"{BASE}/{row.spec_key}",
+            json={"label": row.label, "derivation_rules": sent, "suppressed_values": [], "icon_order": 2},
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["products_updated"] == 0
+    assert response.json()["icon_order"] == 2
