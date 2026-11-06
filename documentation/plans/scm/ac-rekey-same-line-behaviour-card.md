@@ -64,10 +64,12 @@ Census: 26 true pairs in total (1 + 25); 0 seen with Seq + item equal and only q
 ## Edge cases
 
 - Two candidates (same Seq + item twice on either side): K2 falls back, today's behaviour.
-- Old line already cancelled (CS Transfer to Cancel SO, `cancelled_at` set): pairs, and stays
-  cancelled through the existing guard (`:1612-1620`); better than a fresh open line.
-- Partly delivered old line: `qty_delivered` comes from the push like any update; nothing lost
-  because the row id (the allocations, picking and DO links hang off it) is kept.
+- Old line already cancelled by CS (Transfer to Cancel SO, `cancelled_at` set, nothing delivered):
+  pairs, and stays cancelled through the existing guard (`:1612-1620`); better than a fresh open
+  line. A line cancelled by an AutoCount Cancel SO document never pairs in practice: its
+  `qty_delivered` includes `qty_cancelled` (`models/order.py:768-770`), so K6 rejects it.
+- Partly or fully delivered old line, or one with a DO or stock transfer against it: never pairs
+  (K6); it takes the ordinary removal path, and the new line is created as today.
 - DO pulled against the OLD DtlKey after the re-key: DO line lookup is by DtlKey
   (`autocount_doc_ingest_service.py:917-924`), and also PO `from_so_line_ref` / stock-debt links by
   SO `source_ref` (`scm/stock_debt_po_link_service.py:500`, `scm/order_link_service.py:203`). After
