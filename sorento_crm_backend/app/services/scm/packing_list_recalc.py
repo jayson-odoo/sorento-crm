@@ -24,6 +24,7 @@ hourly) is the safety net for anything that writes around the ORM.
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Iterable, Optional
 
 from sqlalchemy import event, func, inspect, select
@@ -48,10 +49,13 @@ ALLOCATION_INPUTS = (
     "stated_received",
     "qty_cancelled",
     "retired_at",
-    "line_status",
-    "receipt_status",
     "spo_number",
 )
+#: `InboundShipmentLine` columns the recompute reads (`quantity_shipped`, the product,
+#: the container, and `created_at`, the apportion order). The recompute itself writes
+#: only `spo_allocated_quantity` / `quantity_received` / `line_status` / `company_id`,
+#: none of which is here, so it never queues itself.
+SHIPMENT_LINE_INPUTS = ("quantity_shipped", "product_id", "shipment_id", "created_at")
 #: GRN header columns that decide whether its picks count (approved goods receipts)
 #: and which SPO an allocation-less pick is matched to.
 PICKING_HEADER_INPUTS = ("picking_status", "picking_type", "spo_number")
@@ -100,7 +104,12 @@ def _collect(session: Session, _flush_context) -> None:
 
     Runs after the SQL went out but before the history is reset, so an
     allocation moved from container A to B names both."""
-    from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
+    from app.models.procurement import (
+        InboundShipmentLine,
+        PickingHeader,
+        PickingLine,
+        SPOAllocation,
+    )
 
     shipment_ids: set[str] = set()
     allocation_ids: set[str] = set()
@@ -121,13 +130,22 @@ def _collect(session: Session, _flush_context) -> None:
                 continue
             _, values = _history_values(obj, "inbound_shipment_id", deleted=kind == "deleted")
             shipment_ids.update(str(v) for v in values if v)
+        elif isinstance(obj, InboundShipmentLine):
+            if kind == "dirty" and not _changed(obj, SHIPMENT_LINE_INPUTS):
+                continue
+            _, values = _history_values(obj, "shipment_id", deleted=kind == "deleted")
+            shipment_ids.update(str(v) for v in values if v)
         elif isinstance(obj, PickingLine):
             if kind == "dirty" and not _changed(obj, PICKING_LINE_INPUTS):
                 continue
             _, values = _history_values(obj, "spo_allocation_id", deleted=kind == "deleted")
-            allocation_ids.update(str(v) for v in values if v)
-            _, headers = _history_values(obj, "picking_header_id", deleted=kind == "deleted")
-            header_ids.update(str(v) for v in headers if v)
+            values = [v for v in values if v]
+            allocation_ids.update(str(v) for v in values)
+            if not values:
+                # A pick with no allocation counts through its header's SPO number
+                # (the received reader's orphan match); only then is the header read.
+                _, headers = _history_values(obj, "picking_header_id", deleted=kind == "deleted")
+                header_ids.update(str(v) for v in headers if v)
         elif isinstance(obj, PickingHeader):
             if kind == "dirty" and not _changed(obj, PICKING_HEADER_INPUTS):
                 continue
@@ -140,8 +158,72 @@ def _collect(session: Session, _flush_context) -> None:
         shipment_ids.update(
             _resolve(session, allocation_ids=allocation_ids, spo_keys=spo_keys, header_ids=header_ids)
         )
-    if shipment_ids:
-        session.info.setdefault(_PENDING_KEY, set()).update(shipment_ids)
+    _note(session, shipment_ids)
+
+
+def _before_flush(session: Session, _flush_context, _instances) -> None:
+    """The OLD container of an allocation (or the old allocation of a pick) whose
+    instance was expired by an earlier commit before being re-pointed: such an
+    instance carries no `history.deleted`, so after the flush the old value is gone.
+    Read it here, before the UPDATE goes out. One SELECT per such flush, only for
+    re-pointed rows with no loaded old value."""
+    from app.models.procurement import PickingLine, SPOAllocation
+
+    unknown_alloc: set[str] = set()
+    unknown_pick: set[str] = set()
+    for obj in session.dirty:
+        if isinstance(obj, SPOAllocation):
+            column, bucket = "inbound_shipment_id", unknown_alloc
+        elif isinstance(obj, PickingLine):
+            column, bucket = "spo_allocation_id", unknown_pick
+        else:
+            continue
+        history = inspect(obj).attrs[column].history
+        if history.added and not history.deleted and not history.unchanged and obj.id:
+            bucket.add(str(obj.id))
+    if not unknown_alloc and not unknown_pick:
+        return
+    alloc = SPOAllocation.__table__
+    conn = session.connection()
+    old: set[str] = set()
+    if unknown_alloc:
+        old.update(
+            str(r[0])
+            for r in conn.execute(
+                select(alloc.c.inbound_shipment_id).where(
+                    alloc.c.id.in_(sorted(unknown_alloc)), alloc.c.inbound_shipment_id.isnot(None)
+                )
+            )
+        )
+    if unknown_pick:
+        picks = PickingLine.__table__
+        old.update(
+            str(r[0])
+            for r in conn.execute(
+                select(alloc.c.inbound_shipment_id)
+                .select_from(picks.join(alloc, alloc.c.id == picks.c.spo_allocation_id))
+                .where(picks.c.id.in_(sorted(unknown_pick)), alloc.c.inbound_shipment_id.isnot(None))
+            )
+        )
+    _note(session, old)
+
+
+def _current_transaction(session: Session):
+    """The innermost transaction in progress: a SAVEPOINT if one is open, else the root."""
+    return session.get_nested_transaction() or session.get_transaction()
+
+
+def _note(session: Session, shipment_ids: Iterable[str]) -> None:
+    """Record containers against the CURRENT transaction level, so a savepoint that
+    rolls back takes its own notes with it and a savepoint release does not fire."""
+    ids = {str(s) for s in shipment_ids if s}
+    if not ids:
+        return
+    transaction = _current_transaction(session)
+    if transaction is None:
+        return
+    buckets = session.info.setdefault(_PENDING_KEY, {})
+    buckets.setdefault(transaction, set()).update(ids)
 
 
 def _resolve(session: Session, *, allocation_ids: set, spo_keys: set, header_ids: set) -> set[str]:
@@ -202,21 +284,43 @@ def _resolve(session: Session, *, allocation_ids: set, spo_keys: set, header_ids
 
 
 def _after_commit(session: Session) -> None:
-    pending = session.info.pop(_PENDING_KEY, None)
-    if not pending:
+    """Dispatch only on the OUTERMOST commit. `SessionTransaction.commit()` fires
+    `after_commit` on a SAVEPOINT release too, and the AutoCount ingest wraps every
+    record in one: firing there queued the recompute while the route's own transaction
+    was still open, so the job could read the old rows (and the inline fallback could
+    wait on its own caller's row lock). Same per-level scheme as
+    `product_spec_change_listener`: a release folds its notes into the parent level."""
+    buckets = session.info.get(_PENDING_KEY)
+    if not buckets:
+        return
+    transaction = _current_transaction(session)
+    notes = buckets.pop(transaction, None) if transaction is not None else None
+    if transaction is not None and transaction.parent is not None:
+        if notes:
+            buckets.setdefault(transaction.parent, set()).update(notes)
+        return
+    # The outermost commit. Any bucket left for another level belongs to a level that
+    # ended without its own commit: dropped, never fired.
+    session.info.pop(_PENDING_KEY, None)
+    if not notes:
         return
     dispatch = session.info.get(_DISPATCH_KEY) or dispatch_recalc
     try:
-        dispatch(sorted(pending))
+        dispatch(sorted(notes))
     except Exception:  # noqa: BLE001 - the write already committed; the sweep catches up
         logger.warning("packing_list_recalc.dispatch_failed", exc_info=True)
 
 
-def _after_soft_rollback(session: Session, previous_transaction) -> None:
-    # The outermost transaction rolled back: nothing it noted happened. A savepoint
-    # rollback (one record of an ingest batch) leaves the set alone - one extra
-    # idempotent recompute is the cheaper mistake.
-    if previous_transaction.parent is None:
+def _after_rollback(session: Session) -> None:
+    """A rollback drops only the level it ends; the outermost one drops everything."""
+    buckets = session.info.get(_PENDING_KEY)
+    if not buckets:
+        return
+    transaction = _current_transaction(session)
+    if transaction is None:
+        return
+    buckets.pop(transaction, None)
+    if transaction.parent is None or not buckets:
         session.info.pop(_PENDING_KEY, None)
 
 
@@ -225,23 +329,23 @@ def register_packing_list_recalc_listeners() -> None:
     global _registered
     if _registered:
         return
+    event.listen(Session, "before_flush", _before_flush)
     event.listen(Session, "after_flush", _collect)
     event.listen(Session, "after_commit", _after_commit)
-    event.listen(Session, "after_soft_rollback", _after_soft_rollback)
+    event.listen(Session, "after_rollback", _after_rollback)
     _registered = True
 
 
 def pending_shipment_ids(session: Session) -> set[str]:
-    """What the current transaction has noted so far (tests and diagnostics)."""
-    return set(session.info.get(_PENDING_KEY) or ())
+    """What the open transaction (every level) has noted so far (tests, diagnostics)."""
+    buckets = session.info.get(_PENDING_KEY) or {}
+    return {sid for ids in buckets.values() for sid in ids}
 
 
 def mark_stale(session: Session, shipment_ids: Iterable[str]) -> None:
-    """Note containers to recompute after this session's next commit, for a writer
-    whose change the listener cannot see (raw SQL)."""
-    ids = {str(s) for s in shipment_ids if s}
-    if ids:
-        session.info.setdefault(_PENDING_KEY, set()).update(ids)
+    """Note containers to recompute after this session's outermost commit, for a
+    writer the listener cannot see (a bulk `query.delete()` / raw SQL)."""
+    _note(session, shipment_ids)
 
 
 # --------------------------------------------------------------------- dispatch
@@ -265,8 +369,14 @@ def dispatch_recalc(shipment_ids: Iterable[str]) -> None:
             job_id = f"{JOB_ID_PREFIX}{shipment_id}"
             try:
                 existing = Job.fetch(job_id, connection=redis_conn)
-                if existing.get_status(refresh=False) in ("queued", "deferred", "scheduled"):
+                status = existing.get_status(refresh=False)
+                if status in ("queued", "deferred", "scheduled"):
                     continue
+                if status == "started":
+                    # Re-using the running job's id would overwrite its hash, and the
+                    # worker deletes that hash when the run ends (result_ttl=0): the
+                    # re-queued id would then be skipped at dequeue. A fresh id instead.
+                    job_id = f"{JOB_ID_PREFIX}{shipment_id}-{uuid.uuid4().hex[:12]}"
             except NoSuchJobError:
                 pass
             queue.enqueue(

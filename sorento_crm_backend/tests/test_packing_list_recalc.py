@@ -46,7 +46,14 @@ def dispatched(env):
     """Capture what the listener dispatches instead of queueing it on Redis."""
     packing_list_recalc.register_packing_list_recalc_listeners()
     calls: list[list[str]] = []
-    env.db.info[packing_list_recalc._DISPATCH_KEY] = lambda ids: calls.append(list(ids))
+
+    def _capture(ids):
+        # Review B1: a dispatch must only ever happen at the OUTERMOST commit, never on
+        # a SAVEPOINT release (the AutoCount ingest wraps each record in one).
+        assert not env.db.in_nested_transaction(), "dispatched on a savepoint release"
+        calls.append(list(ids))
+
+    env.db.info[packing_list_recalc._DISPATCH_KEY] = _capture
     yield calls
     env.db.info.pop(packing_list_recalc._DISPATCH_KEY, None)
 
@@ -138,6 +145,8 @@ def test_container_arriving_on_a_later_push_recomputes_the_packing_list(env, dis
     rows = _spo_rows(env, record["spo_number"])
     assert [str(r["inbound_shipment_id"]) for r in rows] == [shipment_id]
 
+    # One dispatch, at the route's own commit, not one per record savepoint.
+    assert len(dispatched) == 1
     assert shipment_id in _run_dispatched(env, dispatched)
     header, stored = _stored(env, shipment_id, line_id)
     assert stored == {
@@ -256,6 +265,58 @@ def test_rollback_dispatches_nothing(env, dispatched):
     assert dispatched == []
 
 
+def test_savepoint_rollback_drops_only_its_own_notes(env, dispatched):
+    container_a, container_b = _container(), _container()
+    a_id, _, _ = _packing_list(env, container=container_a)
+    b_id, _, _ = _packing_list(env, container=container_b)
+    record = _spo_record(
+        env, supplier_ref=env.supplier_ref,
+        lines=[_spo_line(env, line_number=1), _spo_line(env, line_number=2)],
+    )
+    assert env.post(INGEST_SPO, [record]).status_code == 200
+    _run_dispatched(env, dispatched)
+    from app.models.procurement import SPOAllocation
+
+    first, second = (
+        env.db.query(SPOAllocation)
+        .filter(SPOAllocation.spo_number == record["spo_number"])
+        .order_by(SPOAllocation.spo_line_number)
+        .all()
+    )
+    kept = env.db.begin_nested()
+    first.inbound_shipment_id = a_id
+    env.db.flush()
+    kept.commit()
+    assert dispatched == []  # a savepoint release dispatches nothing
+    dropped = env.db.begin_nested()
+    second.inbound_shipment_id = b_id
+    env.db.flush()
+    dropped.rollback()
+    env.db.commit()
+    assert dispatched == [[a_id]]
+
+
+def test_expired_allocation_repointed_names_its_old_container(env, dispatched):
+    """Review should-fix 3: an instance expired by an earlier commit carries no old
+    value in its history; the old container is read before the UPDATE goes out."""
+    container_a, container_b = _container(), _container()
+    a_id, _, _ = _packing_list(env, container=container_a)
+    b_id, _, _ = _packing_list(env, container=container_b)
+    record = _spo_record(
+        env, supplier_ref=env.supplier_ref, lines=[_spo_line(env, line_number=1)],
+        container_number=container_a,
+    )
+    assert env.post(INGEST_SPO, [record]).status_code == 200
+    _run_dispatched(env, dispatched)
+    from app.models.procurement import SPOAllocation
+
+    row = env.db.query(SPOAllocation).filter(SPOAllocation.spo_number == record["spo_number"]).one()
+    env.db.commit()  # expires `row`
+    row.inbound_shipment_id = b_id
+    env.db.commit()
+    assert {a_id, b_id} <= {sid for batch in dispatched for sid in batch}
+
+
 # ------------------------------------------------------------------- the GET
 def test_packing_list_get_reads_and_queues_instead_of_writing(env, dispatched, monkeypatch):
     """The page GET writes nothing; stale stored figures queue the recompute."""
@@ -286,10 +347,14 @@ def test_packing_list_get_reads_and_queues_instead_of_writing(env, dispatched, m
     res = env.client.get(f"/api/v1/procurement/packing-lists/{shipment_id}")
     assert res.status_code == 200, res.text
     body = res.json()
-    # The response is computed live ...
+    # The response is computed live, header included ...
     assert body["shipment_lines"][0]["line_status"] == "received"
+    assert body["shipment_status"] == "fully_received"
     # ... the stored row is left alone, and the recompute is queued.
-    assert _stored(env, shipment_id, line_id)[1]["line_status"] == "in_transit"
+    assert _stored(env, shipment_id, line_id) == (
+        "in_transit",
+        {"line_status": "in_transit", "quantity_received": 0, "spo_allocated_quantity": 0},
+    )
     assert queued == [[shipment_id]]
 
     # Current figures: nothing queued.
@@ -340,9 +405,12 @@ def test_dispatch_skips_a_container_whose_job_is_still_waiting(monkeypatch):
         packing_list_recalc.dispatch_recalc([sid])
     assert enqueued == [f"pl-recalc-{sid}"]
 
+    # Review B2: while the job runs, a new write queues under a FRESH id (re-using the
+    # running job's id would let the worker's cleanup delete the re-queued job).
     jobs[f"pl-recalc-{sid}"] = "started"
     packing_list_recalc.dispatch_recalc([sid])
-    assert enqueued == [f"pl-recalc-{sid}"] * 2
+    assert len(enqueued) == 2
+    assert enqueued[1].startswith(f"pl-recalc-{sid}-")
 
 
 def test_dispatch_falls_back_inline_when_redis_is_down(monkeypatch):

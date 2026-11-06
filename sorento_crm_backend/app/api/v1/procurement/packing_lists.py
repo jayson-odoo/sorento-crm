@@ -405,6 +405,23 @@ def get_packing_list(
             )
             setattr(line, "related_spo_allocations", related_spo_by_product.get(product_key, []))
             setattr(line, "related_grns", related_grns_by_product.get(product_key, []))
+        # The header the same way, in memory only (PACKING-LIST-RECALC): the rollup of
+        # the live line statuses above, so the page never shows received lines under a
+        # stale header while the queued recompute catches the stored one up.
+        # `set_committed_value`: the instance is not marked dirty, so no later autoflush
+        # in this request can write the display value.
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        from app.services.procurement_service import line_status_counts, rollup_shipment_status
+
+        set_committed_value(
+            shipment,
+            "shipment_status",
+            rollup_shipment_status(
+                shipment.shipment_status,
+                *line_status_counts(line.line_status for line in shipment.shipment_lines),
+            ),
+        )
         return shipment
     except HTTPException:
         raise

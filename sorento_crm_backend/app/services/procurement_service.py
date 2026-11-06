@@ -1382,6 +1382,8 @@ class InboundShipmentService:
         for line in lines:
             alloc, recv, status = figures[str(line.id)]
             statuses.append(status)
+            if shipment.company_id and line.company_id != shipment.company_id:
+                return True  # the refresh's company self-heal has work to do
             if (
                 int(line.spo_allocated_quantity or 0) != alloc
                 or int(line.quantity_received or 0) != recv
