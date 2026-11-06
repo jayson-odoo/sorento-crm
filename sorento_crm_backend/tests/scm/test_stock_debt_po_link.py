@@ -89,16 +89,18 @@ class MemoryStore:
         return self.data.get(name)
 
     def set(self, name, value, ex=None):
-        self.data[name] = str(value)
+        self.data[name] = str(value).encode()  # Redis answers bytes
         return True
 
 
 @pytest.fixture(autouse=True)
 def refusal_store(monkeypatch):
+    from app.services import autocount_idempotency as idem
     from app.services.scm import stock_debt_po_link_service as svc
 
     store = MemoryStore()
-    monkeypatch.setattr(svc, "_refusal_store", lambda: store, raising=False)
+    monkeypatch.setattr(idem, "_down_until", 0.0)
+    monkeypatch.setattr(svc, "attempt_store", lambda: store)
     return store
 
 
@@ -647,7 +649,7 @@ def test_no_refusal_store_falls_back_to_the_intent_key(scm_app, fake_ss, monkeyp
         def set(self, name, value, ex=None):
             raise ConnectionError("redis down")
 
-    monkeypatch.setattr(svc, "_refusal_store", lambda: Down())
+    monkeypatch.setattr(svc, "attempt_store", lambda: Down())
     w = _world(scm_app, fake_ss)
     fake_ss.answers["/api/v1/autocount/po-links"] = _REFUSED
     for _ in range(2):
@@ -849,3 +851,22 @@ def test_the_switch_ships_off_and_is_readable_without_settings_access(scm_app, f
     assert cfg.json()["stock_debt_po_link_enabled"] is False
     _switch(w["db"], True)
     assert w["c"].get("/api/v1/user-management/settings/app-config").json()["stock_debt_po_link_enabled"] is True
+
+
+def test_a_failing_store_is_skipped_for_a_while(monkeypatch):
+    """Redis down: one timeout, then the rest of the request (every other line) skips it."""
+    from app.services import autocount_idempotency as idem
+
+    calls = []
+
+    class Down:
+        def get(self, name):
+            calls.append(name)
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(idem, "_client", lambda: Down())
+    monkeypatch.setattr(idem, "_down_until", 0.0)
+    refused = {"outcome": "refused", "errorCode": "FIELD_REQUIRED"}
+    for _ in range(3):
+        assert idem.send_with_attempts(idem.attempt_store(), "base", lambda key: refused) == refused
+    assert len(calls) == 1

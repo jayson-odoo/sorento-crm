@@ -35,11 +35,6 @@ from app.services.scm.demand import demand_qty
 
 logger = logging.getLogger(__name__)
 
-
-def _refusal_store():
-    """Where a refused intent's next attempt number is kept (Redis); tests swap it."""
-    return attempt_store()
-
 #: The four actions the drill offers, as `/write-capabilities` names them on purchase orders.
 ACTIONS = ("split_link", "link_row", "unlink_row", "relink_row")
 _PO_KIND = "purchase-orders"
@@ -354,7 +349,7 @@ class StockDebtPoLinkService:
         replays a stored refusal for the same key and body forever. Any unconfirmed answer keeps
         the key, so a timeout retry still replays and never splits the PO row twice."""
         return send_with_attempts(
-            _refusal_store(),
+            attempt_store(),
             self._intent_key(path, body, po_line),
             lambda key: self._send(path, body, key=key),
         )

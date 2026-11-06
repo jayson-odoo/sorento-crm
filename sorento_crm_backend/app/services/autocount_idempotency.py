@@ -15,34 +15,49 @@ plain intent key: the old behaviour, never a fresh key per press.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import logging
+import time
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 _PREFIX = "sorento:autocount_write:attempt:"
-# Long enough to outlive the Shared Service's stored answer for the key.
+# A choice, not a measured SS retention: if the count expires first, the next press replays the
+# stored refusals and walks forward again (never a write twice).
 _TTL_SECONDS = 30 * 24 * 3600
 # The key was refused because another request holds or used it, not because AutoCount said no.
 _NOT_A_REFUSAL_OF_THE_INTENT = ("IDEMPOTENCY_",)
 
 
-_store: list = []
+# After a store error, skip it for this long: a down Redis must not cost its timeout per line.
+_DOWN_SECONDS = 60
+_down_until = 0.0
+
+
+@functools.lru_cache(maxsize=1)
+def _client() -> Optional[Any]:
+    try:
+        import redis
+
+        from app.config import settings
+
+        return redis.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def attempt_store() -> Optional[Any]:
-    """The process's Redis client (1 s timeouts), or None when it cannot be built."""
-    if not _store:
-        try:
-            import redis
+    """The process's Redis client (1 s timeouts); None when it cannot be built or just failed."""
+    if time.monotonic() < _down_until:
+        return None
+    return _client()
 
-            from app.config import settings
 
-            _store.append(redis.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1))
-        except Exception:  # noqa: BLE001
-            _store.append(None)
-    return _store[0]
+def _store_failed() -> None:
+    global _down_until
+    _down_until = time.monotonic() + _DOWN_SECONDS
 
 
 def attempt_key(base: str, attempt: int) -> str:
@@ -76,6 +91,7 @@ def send_with_attempts(
             attempt = int(store.get(name) or 0)
         except Exception:  # noqa: BLE001
             logger.warning("autocount write: attempt store unreachable, using the intent key")
+            _store_failed()
             store = None
     answer = send(attempt_key(base_key, attempt))
     if store is not None and is_definite_refusal(answer):
@@ -83,4 +99,5 @@ def send_with_attempts(
             store.set(name, attempt + 1, ex=_TTL_SECONDS)
         except Exception:  # noqa: BLE001
             logger.warning("autocount write: could not record the refusal for a new attempt")
+            _store_failed()
     return answer
