@@ -4,7 +4,7 @@ Owner ruling 6 Nov 2026: "I only want the email to purchasing to have 1 trigger,
 button" (Fulfilment Planning, "Confirm N orders"). Plan + behaviour card:
 `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`.
 
-The gate is structural: `board_confirm_scope` marks the ROOT transaction a board Confirm runs in,
+The gate is structural: `mark_board_confirm` marks the ROOT transaction a board Confirm runs in,
 and the post-commit drains send the purchasing handover only for a marked transaction. These tests
 pin K4 (a planning-change batch applied BY the board Confirm still emails) against S2 (the same
 apply from the standalone route emails nothing). S1 (AutoCount ingest) lives beside its siblings in
@@ -45,9 +45,9 @@ def _amended_batch(client, world):
 
 
 def test_k4_a_batch_applied_inside_the_board_confirm_emails_purchasing(api, monkeypatch):
-    """K4: the board's Confirm on a `?batch=` board runs the apply inside its scope: one
+    """K4: the board's Confirm on a `?batch=` board marks its transaction before the apply: one
     handover email, as before."""
-    from app.services.project_order_inquiry_service import board_confirm_scope
+    from app.services.project_order_inquiry_service import mark_board_confirm
 
     client, world = api
     _register(world)
@@ -55,8 +55,8 @@ def test_k4_a_batch_applied_inside_the_board_confirm_emails_purchasing(api, monk
     batch = _amended_batch(client, world)
     calls.clear()
 
-    with board_confirm_scope(world.db):
-        planning_change_service.apply(world.db, str(batch.id), world.actor)
+    mark_board_confirm(world.db)
+    planning_change_service.apply(world.db, str(batch.id), world.actor)
     world.db.commit()
 
     assert len(_handover_calls(calls)) == 1, [c["trigger_type"] for c in calls]
@@ -97,12 +97,12 @@ def test_s2_the_same_apply_outside_any_scope_emails_nobody(api, monkeypatch):
     assert _handover_calls(calls) == [], [c["trigger_type"] for c in calls]
 
 
-def test_a_rolled_back_scope_leaves_no_mark_behind(api, monkeypatch):
+def test_a_rolled_back_mark_leaves_no_mark_behind(api, monkeypatch):
     """The mark is per root transaction: a later, unscoped write on the same session is not
     sent on an earlier Confirm's account."""
     from app.services.project_order_inquiry_service import (
         _BOARD_CONFIRM_TX_KEY,
-        board_confirm_scope,
+        mark_board_confirm,
     )
 
     client, world = api
@@ -111,8 +111,7 @@ def test_a_rolled_back_scope_leaves_no_mark_behind(api, monkeypatch):
     batch = _amended_batch(client, world)
     calls.clear()
 
-    with board_confirm_scope(world.db):
-        pass
+    mark_board_confirm(world.db)
     world.db.rollback()
     assert not world.db.info.get(_BOARD_CONFIRM_TX_KEY)
 
