@@ -1800,8 +1800,9 @@ class DocumentIngestService(MasterRefResolver):
         removed (OI rows retired, handover queued) and one created (a fresh mirror line, no OI
         row): the demand was lost. A stored line whose ref this push no longer carries is the
         SAME line as an incoming line whose ref matches no stored line when Seq, product,
-        ordered qty and unit price are equal, and the location too when the push names one
-        (D22). Only a pair unique on both sides counts; anything ambiguous stays a removal plus
+        ordered qty, unit price and delivery date are equal, the location too when the push
+        names one (D22), and nothing was delivered on either side or moved against the old
+        line (owner, 6 Nov). Only a pair unique on (Seq, product) on both sides counts; anything ambiguous stays a removal plus
         a create, as before. A removed line (cancelled, not by CS or a Cancel SO document) is
         never revived. Renames the `by_ref` key in place; returns the number of pairs.
         """
@@ -1854,6 +1855,16 @@ class DocumentIngestService(MasterRefResolver):
                 continue
             if "warehouse_id" in values and str(values["warehouse_id"]) != str(row.warehouse_id):
                 continue
+            # Owner, 6 Nov: the delivery date is part of the key too.
+            if values.get("required_date") != row.required_date:
+                continue
+            # Owner, 6 Nov (delivered guard): a new DtlKey is a new AutoCount row, so what was
+            # delivered stays on the old one. Only an undelivered line nothing was delivered or
+            # moved against is the same line; anything else stays a removal.
+            if _num(row.qty_delivered, "0.0001") or _num(values.get("qty_delivered"), "0.0001"):
+                continue
+            if self._so_line_has_movement(str(row.id)):
+                continue
             by_ref[values["source_ref"]] = by_ref.pop(old_ref)
             paired += 1
             logger.info(
@@ -1861,6 +1872,20 @@ class DocumentIngestService(MasterRefResolver):
                 row.id, row.line_no, old_ref, values["source_ref"],
             )
         return paired
+
+    def _so_line_has_movement(self, so_line_id: str) -> bool:
+        """AC-REKEY-SAME-LINE delivered guard: a DO line (`order_lines.sales_order_line_id`)
+        or a stock transfer (`projects.stock_transfers.so_line_id`) points at this SO line."""
+        from app.models.order import OrderLine
+        from app.models.stock_transfer import StockTransfer
+
+        for model, column in (
+            (OrderLine, OrderLine.sales_order_line_id),
+            (StockTransfer, StockTransfer.so_line_id),
+        ):
+            if self.db.query(model.id).filter(column == so_line_id).limit(1).first():
+                return True
+        return False
 
     def _adopt_lines(
         self,

@@ -150,17 +150,17 @@ def test_a_rekeyed_line_creates_no_new_project_line(env):
 
 
 def test_a_rekeyed_line_takes_non_key_changes_like_any_update(env):
-    """K3: delivered qty / required date are not part of the key."""
+    """K3: the remark and description are not part of the key."""
     record, header, x, y, line_x, mirror, row_id = _world(env)
 
-    _repush(env, record, [_rekeyed(x, qty_delivered="18", required_date="2027-02-01"), y])
+    _repush(env, record, [_rekeyed(x, line_remark="ZZT re-saved", product_name="ZZT desc"), y])
 
     got = env.db.execute(
-        text("SELECT qty_delivered, required_date FROM sales_order_lines WHERE id = :i"),
+        text("SELECT line_remark, description FROM sales_order_lines WHERE id = :i"),
         {"i": str(line_x["id"])},
     ).mappings().one()
-    assert float(got["qty_delivered"]) == 18
-    assert str(got["required_date"]) == "2027-02-01"
+    assert got["line_remark"] == "ZZT re-saved"
+    assert got["description"] == "ZZT desc"
     assert len(env.so_lines(header["id"])) == 2
 
 
@@ -340,3 +340,84 @@ def test_the_verdict_counts_the_rekey(env):
 
     assert res.status_code == 200, res.text
     assert '"rekeyed":1' in res.text.replace(" ", ""), res.text
+
+
+# ================================================= owner additions, 6 Nov: date + delivered guard
+def test_a_different_delivery_date_is_not_a_rekey(env):
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+
+    _repush(env, record, [_rekeyed(x, required_date="2027-02-01"), y])
+
+    _assert_removed(env, header, line_x, row_id)
+
+
+def test_the_same_delivery_date_still_pairs(env):
+    x = _line(env, seq=SEQ_X, required_date="2027-03-15")
+    y = _line(env, seq=SEQ_Y, product_ref=env.product2_ref)
+    record = _so_record(env, lines=[x, y])
+    assert env.post(INGEST_SO, [record]).status_code == 200
+    header = env.header("sales_orders", record["source_ref"])
+    line_x = {l["source_ref"]: l for l in env.so_lines(header["id"])}[x["source_ref"]]
+    new_x = _rekeyed(x)
+
+    _repush(env, record, [new_x, y])
+
+    assert _core(env, line_x["id"])["source_ref"] == new_x["source_ref"]
+    assert len(env.so_lines(header["id"])) == 2
+
+
+def test_an_old_line_with_delivered_qty_is_not_a_rekey(env):
+    x = _line(env, seq=SEQ_X, qty_delivered="50")
+    y = _line(env, seq=SEQ_Y, product_ref=env.product2_ref)
+    record = _so_record(env, lines=[x, y])
+    assert env.post(INGEST_SO, [record]).status_code == 200
+    header = env.header("sales_orders", record["source_ref"])
+    line_x = {l["source_ref"]: l for l in env.so_lines(header["id"])}[x["source_ref"]]
+
+    # AutoCount's re-created row starts with nothing transferred.
+    _repush(env, record, [_rekeyed(x, qty_delivered="0"), y])
+
+    core = _core(env, line_x["id"])
+    assert core["line_status"] == "cancelled" and core["source_ref"] == x["source_ref"]
+    assert len(env.so_lines(header["id"])) == 3
+
+
+def test_a_new_line_arriving_with_delivered_qty_is_not_a_rekey(env):
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+
+    _repush(env, record, [_rekeyed(x, qty_delivered="10"), y])
+
+    _assert_removed(env, header, line_x, row_id)
+
+
+def test_an_old_line_with_a_do_against_it_is_not_a_rekey(env):
+    from ._sales_report_do_seed import seed_do
+
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+    seed_do(
+        env.db,
+        customer_id=None,
+        order_date=None,
+        company_id=env.company_a,
+        lines=[{
+            "product_id": str(line_x["product_id"]),
+            "warehouse_id": str(line_x["warehouse_id"]),
+            "qty": 0,
+            "sales_order_line_id": str(line_x["id"]),
+        }],
+    )
+    env.db.commit()
+
+    _repush(env, record, [_rekeyed(x), y])
+
+    _assert_removed(env, header, line_x, row_id)
+
+
+def test_an_old_line_with_a_stock_transfer_against_it_is_not_a_rekey(env):
+    record, header, x, y, line_x, mirror, row_id = _world(env)
+    env.stock_transfer(str(line_x["id"]))
+    env.db.commit()
+
+    _repush(env, record, [_rekeyed(x), y])
+
+    _assert_removed(env, header, line_x, row_id)

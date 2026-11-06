@@ -1,6 +1,11 @@
 # Behaviour card - AC-REKEY-SAME-LINE: an AutoCount re-keyed SO line is the SAME line
 
 Lane AC-REKEY-SAME-LINE, 6 Nov 2026. Code: origin/main 2cc1b2c5. Plan: `PLAN-ac-rekey-same-line-06nov.md`.
+
+**Owner decision, 6 Nov ~15:15: (a) AUTOMATIC**, with two additions now in K1 and K6: the delivery
+date is part of the key, and the delivered guard. Q2 no match on a Seq change, Q3 accept, Q4 log
+line + `rekeyed` count, Q5 SO only, all as recommended. Anything that does not pair takes the
+ordinary removal path (which, per FP-EMAIL-ONE-TRIGGER Q1, waits on the board for CS Confirm).
 Data: the cloud worker cannot reach `sorento_prod_1104` (sandbox rule: no shared DB), so every
 data claim below is either from the lane brief or marked UNVERIFIED with the query crew can run.
 
@@ -26,13 +31,18 @@ Lane brief case (4 Nov): one SO line got a new DtlKey, nothing else changed: dem
 
 - K1 Match key: same SO header (already implied, `_sync_lines` is per header) + same AutoCount
   `Seq` (`sales_order_lines.line_no`, `models/order.py:843`; payload `line_number`, `:1393-1396`) +
-  same resolved `product_id` + same `qty_ordered` + same `unit_price` + same warehouse (when the push
-  names one; D22 leaves it out otherwise, `:1352-1360`). Only a line whose old DtlKey is ABSENT from this push and whose new
+  same resolved `product_id` + same `qty_ordered` + same `unit_price` (both compared as the columns
+  round them) + same `required_date` (owner, 6 Nov) + same warehouse (when the push names one; D22
+  leaves it out otherwise, `:1352-1360`). Only a line whose old DtlKey is ABSENT from this push and whose new
   DtlKey matches NO existing row can pair. Both Seq values must be non-NULL.
 - K2 Uniqueness: a pair is made only when exactly one leftover row and exactly one new incoming line
   share that (Seq, product). Anything ambiguous falls back to today's behaviour (never a guess).
-- K3 Everything else (delivery date, remark, delivered qty) is NOT part of the key: once paired, the
-  row takes the push's values exactly as a same-key re-push would.
+- K3 Everything else (remark, description) is NOT part of the key: once paired, the row takes the
+  push's values exactly as a same-key re-push would.
+- K6 Delivered guard (owner, 6 Nov): pair only when the old row has `qty_delivered` 0, no DO line
+  (`order_lines.sales_order_line_id`) and no stock transfer (`projects.stock_transfers.so_line_id`)
+  points at it, and the new line arrives with `qty_delivered` 0. A new DtlKey is a new AutoCount
+  row, so whatever was delivered stays on the old one; crew census: all 26 real pairs pass this.
 - K4 Only sales orders. PO lines are out of scope (no evidence of PO re-keys in the brief).
 - K5 The re-key path calls no email or notification code at all; it is a key rename before the
   normal matched loop. Sales-order-only, no migration, no new column.
