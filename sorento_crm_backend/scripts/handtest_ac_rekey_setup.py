@@ -37,6 +37,10 @@ Refuses on anything but a dev database on this machine, with exactly the checks 
 variable, a dev / ci / test / copy database name (or `--allow-db <name>`), and the address
 Postgres itself reports being loopback or a unix socket.
 
+The held-back count needs the "Order inquiry to purchasing" automation enabled and a user with a
+purchasing role; on the shared dev DB the automation is off, so every push reports 0 and nothing
+is queued at all. The owner's hand test: `documentation/plans/scm/ac-rekey-same-line-handtest.md`.
+
 Run from sorento_crm_backend/ with the copy's env (its DATABASE_URL):
     venv/bin/python scripts/handtest_ac_rekey_setup.py --apply
     venv/bin/python scripts/handtest_ac_rekey_setup.py --cleanup
