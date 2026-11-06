@@ -69,7 +69,8 @@ interface AssetPickerDialogProps {
   /**
    * Select mode (with `onDone`): a tile click toggles a selected state and applies nothing; Done
    * hands back the selection in the order it was made, starting from these ids. Cancel, the X and
-   * a click away discard it. An upload joins the grid already selected.
+   * a click away discard it. An upload joins the grid already selected. Library tiles only:
+   * product photos still go through `onPick`, so pair this with `allowProductPhotos={false}`.
    */
   selectedIds?: string[];
   onDone?: (assetIds: string[]) => void;

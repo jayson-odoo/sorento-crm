@@ -356,21 +356,44 @@ def busy_message(running: dict | None) -> str:
     )
 
 
+def _name_holder(connection, label: str) -> None:
+    """Label the lock's connection; best effort, the lock stands either way.
+
+    Printable ASCII only: Postgres stores `application_name` as escaped ASCII (a NUL is
+    refused outright), and keeps 63 bytes, so the label goes last where only it is cut.
+    """
+    safe = "".join(ch for ch in label if " " <= ch <= "~").strip()
+    if not safe:
+        return
+    name = f"{_HOLDER_PREFIX}{int(time.time())}:{safe}"[:63]
+    try:
+        connection.execute(text("SELECT set_config('application_name', :n, false)"), {"n": name})
+        connection.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("could not name the catalogue-read holder", exc_info=True)
+        try:
+            connection.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _take_database_lock(token: str, db: Session, label: str | None = None) -> bool:
     from app.database import engine
 
     key = catalogue_read_lock_key(db)
     connection = engine.connect()
+    taken = False
     try:
         taken = connection.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
-        if taken and label:
-            # Postgres keeps 63 bytes of it; the label is last so only it is cut.
-            name = f"{_HOLDER_PREFIX}{int(time.time())}:{label}".encode()[:63].decode(errors="ignore")
-            connection.execute(text("SELECT set_config('application_name', :n, false)"), {"n": name})
         connection.commit()
     except Exception:
+        if taken:
+            # `close()` alone would pool the connection with the session lock still held.
+            connection.invalidate()
         connection.close()
         raise
+    if taken and label:
+        _name_holder(connection, label)
     if not taken:
         connection.close()
         return False

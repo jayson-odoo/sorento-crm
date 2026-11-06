@@ -86,6 +86,9 @@ function MockPicker(props: PickerProps) {
         <button type="button" onClick={() => setPicked((ids) => [...ids, 'i-new'])}>
           Select Steam
         </button>
+        <button type="button" onClick={() => setPicked((ids) => ids.filter((id) => id !== 'i-hot'))}>
+          Deselect Hot
+        </button>
         <button type="button" onClick={props.onCancel}>
           Cancel
         </button>
@@ -229,6 +232,15 @@ describe('ValuesAndWordsTab icon picker, fix round', () => {
     // An icon uploaded in the picker (then cancelled) is still in the library the cell names from.
     expect(spy).toHaveBeenCalledWith({ queryKey: ['dealer-kit', 'icon-library'] });
     spy.mockRestore();
+  });
+
+  it('Done after unselecting an icon takes it off the choice', async () => {
+    render(withClient(<EditHarness row={waterSupply()} />));
+    await loaded();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose icons for Mixer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Deselect Hot' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(latest?.valueIcons.mixer).toEqual(['i-cold']);
   });
 
   it('Done with the selection unchanged keeps the choice as it was', async () => {
