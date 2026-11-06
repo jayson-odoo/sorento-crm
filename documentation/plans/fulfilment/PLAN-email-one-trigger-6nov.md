@@ -1,6 +1,6 @@
 # PLAN: purchasing email has exactly one trigger (board Confirm)
 
-Status: Plan (behaviour card posted, waiting on owner answers). Track: M, LEAD pattern.
+Status: Review (built; owner answers Q1-Q5 recorded below). Track: M, LEAD pattern.
 
 ## Owner ruling (6 Nov 2026)
 "the rule of thumb is, I only want the email to purchasing to have 1 trigger, which is this button"
@@ -39,10 +39,10 @@ root commit:
 | K3 | Withdraw a confirmed line, inside that Confirm | FP:1604 -> PSS:8321 `uncover_lines` -> POI:7627 `retire_rows_for_dropped_lines` -> `_retire_uncovered_rows` POI:6440 | handover | KEEP (only as part of K1) |
 | K4 | Board Confirm on a board holding a pending AutoCount / planning change batch | FP:1732 `_confirm_a_planning_change` -> FP:1823 PCS `apply` -> PCS:4551 `_apply_one_order` -> PCS:3986 `_retire_inquiry_rows` (4042) + POI:7733 `derive_for_book_change` -> `_write` (7894, 7907) | handover | KEEP (it is the button) |
 | S1 | SYSTEM: AutoCount SO push removes a line (SO398322) | `document_ingest_service.py:1756` -> POI:6313 `retire_rows_for_removed_so_lines(notify=True)` -> 6348 retire + 6378 `record_cancelled_lines` | handover CANCEL + changed_with_links | STOP |
-| S2 | "Apply planning changes" standalone route | `planning_changes.py:98` -> PCS `apply` (same as K4) | handover | STOP (no frontend caller: `planningChangeService.ts:113` defines it, nothing imports it) |
-| S3 | "Send to purchasing" resend button | `order_inquiries.py:1490` -> `oi_handover_resend.py:175` `build_handover_email` + `send_match`, which runs even when the automation is switched off (`automation_service.py:339-345`) | handover | STOP (Q3) |
-| S4 | Project sales "Publish amendment" | `projects/sales_orders.py:894` -> `project_so_delta_service.py:844` -> POI:7662 `derive_for_amendment` -> `_write` | handover | STOP (Q4) |
-| S5 | Purchasing Reject uncovers the CS confirmation | POI:10045 `_uncover_rejected_lines` -> PSS:8321 `uncover_lines` -> `_retire_uncovered_rows` | handover to purchasing about purchasing's own reject | STOP |
+| S2 | "Apply planning changes" standalone route | `planning_changes.py:98` -> PCS `apply` (same as K4) | handover | route DELETED (Q2) |
+| S3 | "Send to purchasing" resend button | `order_inquiries.py:1490` -> `oi_handover_resend.py:175` `build_handover_email` + `send_match`, which runs even when the automation is switched off (`automation_service.py:339-345`) | handover | KEEP, exception (Q3) |
+| S4 | Project sales "Publish amendment" | `projects/sales_orders.py:894` -> `project_so_delta_service.py:844` -> POI:7662 `derive_for_amendment` -> `_write` | handover | KEEP, exception (Q4) |
+| S5 | Purchasing Reject uncovers the CS confirmation | POI:10045 `_uncover_rejected_lines` -> PSS:8321 `uncover_lines` -> `_retire_uncovered_rows` | none: already dropped by `_uncover_and_notify_rejection` (POI ~9806, test AC-RJ-9) | already STOP |
 | S6 | Board "Undo last Confirm" | `record_actions.py:2542` -> `undo_last_confirm` -> POI:5830 `_record_undo` | order_inquiry_undone | KEEP (Q5) |
 | S7 | One-off script | `scripts/oneoff/oi_closed_line_cleanup.py:219` | handover | STOP (falls out of the gate) |
 
@@ -60,16 +60,44 @@ purchasing's own request, not fulfilment planning).
 
 ## The gate (one, structural)
 
-`purchasing_handover_scope(db)`: a context manager entered ONLY by the two board Confirm route
-handlers (FP `confirm_supply`, FP `_run_confirm_many`'s per-order write). `_record_handover` and
-`_dispatch_changed_with_links` queue nothing outside it (a log line names the dropped kind and row), so
-every other path above stops by construction, with no per-path `notify` flags. The `notify` flag on
-`retire_rows_for_removed_so_lines` retires with it.
+`mark_purchasing_email_trigger(session)` (POI) marks the ROOT transaction the session is in. Two
+callers, both a person's press:
+- the board Confirm: `fulfilment_planning._confirm_with_possible_rejects`, the seam both Confirm
+  routes share (K1-K4);
+- Publish amendment: `projects/sales_orders.publish_amendment` (Q4 exception).
 
-## Open questions
+`_fire_pending_handover` sends the handover only when the concluded root transaction carries the
+mark (the mark is dropped as that transaction ends, committed or not), and
+`_dispatch_changed_with_links` queues only inside a marked transaction. Every other path keeps
+writing what it writes and emails nobody, with no per-path flag; the `notify` flag on
+`retire_rows_for_removed_so_lines` is gone.
 
-Posted as the crew-ask on the PR; answers recorded here.
+Not through the queue, so untouched by the gate: the "Send to purchasing" resend (Q3 exception,
+`oi_handover_resend`) and the Undo last Confirm email (Q5, its own `order_inquiry_undone` queue).
 
-## Steps
-1. Behaviour card (above), owner answers.
-2. Gate, red tests first per path, kill test, reviewer.
+## Owner answers (6 Nov 2026)
+
+- Q1 (a): an AutoCount-removed SO line no longer retires its OI rows at ingest
+  (`document_ingest_service.py`, the `retire_rows_for_removed_so_lines` call is gone). The push's
+  planning-change batch (`api/v1/external/ingest.py` `_run_planning_change_hook`) carries a
+  `cancelled` row for the line, and CS's board Confirm retires the rows and emails the CANCEL
+  (`planning_change_service._retire_inquiry_rows`). Tested end to end in
+  `tests/test_ac_removed_lines_ingest.py`.
+- Q2 (a): the standalone `POST /planning-changes/{id}/apply` route is deleted (no more AutoCount SO
+  book uploads; no frontend caller). The board Confirm applies a batch (K4, still live: every SO
+  push builds a batch). Tests that used the route as a harness call the service via
+  `tests/test_planning_changes.apply_batch`.
+- Q3: "Send to purchasing" resend stays: the owner's manual button, an exception.
+- Q4: Publish amendment keeps its email ("not used yet"): an exception, marked in its route.
+- Q5 (a): the Undo last Confirm email stays.
+
+## Tests
+
+- `tests/scm/test_purchasing_email_one_trigger.py`: K4 emails; the same apply unmarked emails
+  nobody; the apply route is gone; the mark ends with its transaction; Publish amendment marks.
+- `tests/test_ac_removed_lines_ingest.py`: S1 push emails nothing; Q1 rows wait for the board;
+  the board Confirm retires them and emails one CANCEL.
+- `tests/test_oi_closed_line_cleanup.py`: S7 script emails nobody.
+- Suites that pin the email's CONTENT through a service call opt in to
+  `pytest.mark.usefixtures("as_board_confirm")` (`tests/conftest.py`).
+- Kill test: with the gate disabled, the unmarked-apply, mark-lifetime and S7 tests fail.

@@ -15672,8 +15672,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # (see `_mark_handover_transaction_committed`'s own guard), so there is
             # nothing to prune here.
             return
-        # FP-EMAIL-ONE-TRIGGER: was this root a purchasing email trigger? Its mark ends with it, whatever
-        # way it ended, so a later write on the same session is judged on its own.
+        # FP-EMAIL-ONE-TRIGGER: was this root a purchasing email trigger? Its mark ends with
+        # it, whatever way it ended, so a later write on the same session is judged on its own.
         marked = session.info.get(_PURCHASING_TRIGGER_TX_KEY)
         was_trigger = False
         if marked:
@@ -15721,7 +15721,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # The ONE gate: purchasing is emailed from the board Confirm and nowhere else.
             # The rows this write changed stand; nobody is emailed about them.
             logger.info(
-                "order_inquiry_handover: %d line(s) not sent, the write was not a purchasing trigger",
+                "order_inquiry_handover: %d line(s) not sent, the write was not a purchasing"
+                " trigger",
                 len(concluded),
             )
             return

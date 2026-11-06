@@ -651,7 +651,8 @@ def ladder_steps_on(monkeypatch):
 def as_board_confirm():
     """FP-EMAIL-ONE-TRIGGER: run the test as if every write were the board Confirm.
 
-    Only a root transaction the board Confirm marked (`mark_purchasing_email_trigger`) emails purchasing.
+    Only a root transaction marked by `mark_purchasing_email_trigger` (the board Confirm)
+    emails purchasing.
     A suite that pins WHAT the handover / changed-with-links email says, by calling the
     service (`ProjectSupplyService.confirm`, `planning_change_service.apply`, ...) rather than
     the Confirm route, opts in with `pytestmark = pytest.mark.usefixtures("as_board_confirm")`.
