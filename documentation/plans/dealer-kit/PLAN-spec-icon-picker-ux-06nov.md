@@ -1,6 +1,6 @@
 # PLAN: spec icon picker - select, then Done; one asset library (SPEC-ICON-PICKER-UX)
 
-Status: in progress (small fix track: FE only, no migration, no auth/RBAC change)
+Status: in review (small fix track: FE + one BE route, no migration, no auth/RBAC change)
 
 ## Journey
 
@@ -40,3 +40,26 @@ It is the same library: one table, one endpoint, one dialog component.
 - `AssetPickerDialog.select.test.tsx`: toggle shows selected, order kept, pre-selected, Done
   returns ids, Cancel returns nothing, upload pre-selects, designer filter sends `kind`.
 - `ValuesAndWordsTab.icons.test.tsx`: Done replaces the draft list; cancel leaves it unchanged.
+
+## Add-on (owner, PROD 6 Nov): "Products are still being updated" on an Icon order save
+
+Findings:
+
+- The message is `CATALOGUE_READ_BUSY` (`app/services/product_spec_preview.py:286`), the ONE
+  catalogue-read slot (in-process token + Postgres advisory lock) that a spec PATCH, a rule/value
+  remove and a rules preview share.
+- `icon_order` / `value_icons` are not reading fields (`spec_registry.py` `_READING_FIELDS`) and
+  never start a re-read, but the PATCH took the slot whenever any reading field was in the
+  payload, and the record page (`useSpecKeyRecord.ts` `buildPatchBody`) always sends the rules,
+  cap and taken-away choices. So an Icon order save queued behind another key's re-read, which
+  runs synchronously in that key's save request while holding the slot.
+- The AutoCount / SS item pull takes neither the slot nor its lock (no caller outside the spec
+  screens); it cannot have held it.
+- Stale icon order on Details: the registry GET said `private, max-age=60`, so a refetch inside
+  that minute could come from the browser's copy and overwrite the saved row in the cache.
+
+Fix: the PATCH takes the slot only when the applied save really changes the reading (before the
+commit; a refused save rolls back). A refusal names the running spec and when it started (the
+holder labels its lock connection). The GET revalidates on every read (`no-cache`, ETag 304).
+
+Tests: `sorento_crm_backend/tests/test_spec_display_only_save.py`.
