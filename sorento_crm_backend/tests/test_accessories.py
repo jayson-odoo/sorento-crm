@@ -723,3 +723,13 @@ def test_sec_write_routes_take_a_signed_in_user_not_an_api_key():
     source = Path(accessories.__file__).read_text()
     assert "require_permission_with_api_key(EDIT)" not in source
     assert source.count("require_permission(EDIT)") == 7
+
+
+def test_crew_an_ala_carte_line_with_no_list_carries_none(db, signed):
+    """Crew pass (6 Nov): no entries / Ala Carte = no box. The row says so with an empty list."""
+    host = seed.product(db, "ZZACC")
+    request = seed.submit_one(db, host, None, [])
+    db.flush()
+    (row,) = seed.rows(db, request)
+    assert row["accessories"] == []
+    assert row["included_accessories"] == ""

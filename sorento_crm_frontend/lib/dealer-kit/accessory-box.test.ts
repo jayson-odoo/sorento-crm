@@ -327,3 +327,19 @@ describe('accessoriesOf, a request line part picked (review B1)', () => {
     expect(accessoriesOf(data, { props: props() })).toEqual([DRAINER]);
   });
 });
+
+describe('header beside the "+" badge (crew pass 6 Nov: "CCESSORIES INCLUDED" at 45 mm)', () => {
+  it('the header starts after the badge and stays centred in the box', () => {
+    const out = accessoryBoxLayout(1, props({ showBadge: true }), 45, 60);
+    const badgeRight = out.badge!.x_mm + out.badge!.width_mm;
+    expect(out.header!.x_mm).toBeGreaterThan(badgeRight);
+    const rightGap = out.boxWidth_mm - (out.header!.x_mm + out.header!.width_mm);
+    expect(rightGap).toBeCloseTo(out.header!.x_mm);
+  });
+
+  it('with the badge off the header uses the full inner width', () => {
+    const out = accessoryBoxLayout(1, props({ showBadge: false }), 45, 60);
+    expect(out.header!.x_mm).toBeCloseTo(ACCESSORY_BOX_PAD_MM);
+    expect(out.header!.width_mm).toBeCloseTo(45 - 2 * ACCESSORY_BOX_PAD_MM);
+  });
+});

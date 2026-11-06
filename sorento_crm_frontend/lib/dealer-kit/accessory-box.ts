@@ -269,6 +269,9 @@ export function accessoryBoxLayout(
       ? boxHeight_mm
       : last.y_mm + last.height_mm + pad;
   const badgeSize = Math.max(3.5, headerH > 0 ? headerH : 4);
+  // The header clears the badge (crew pass, 6 Nov: at 45 mm the "+" hid the first letter): the same
+  // inset on both sides, so the text stays centred in the box.
+  const headerInset = props.showBadge ? pad * 0.5 + badgeSize + 0.5 : pad;
   return {
     cards,
     shown,
@@ -278,9 +281,9 @@ export function accessoryBoxLayout(
     header:
       headerH > 0
         ? {
-            x_mm: pad,
+            x_mm: headerInset,
             y_mm: pad * 0.5,
-            width_mm: outW - 2 * pad,
+            width_mm: Math.max(0, outW - 2 * headerInset),
             height_mm: headerH,
           }
         : null,
