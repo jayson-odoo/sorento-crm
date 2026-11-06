@@ -275,4 +275,110 @@ def create_and_publish(
     )
     db.add(template)
     db.flush()  # `template.id` has to exist before the version can reference it
+    template.sort_order = next_sort_order(db, template.company_id)  # end of the manual order
     return publish(db, template, created_by=created_by)
+
+
+# ---------------------------------------------------------------------------
+# Manual order and duplicate (TAG-TEMPLATE-DUPLICATE, owner 6 Nov)
+# ---------------------------------------------------------------------------
+
+
+def next_sort_order(db: Session, company_id: Optional[str]) -> int:
+    """The number that puts a new template at the END of its company's manual order."""
+    query = db.query(func.coalesce(func.max(TagTemplate.sort_order), 0))
+    query = query.filter(
+        TagTemplate.company_id == company_id if company_id else TagTemplate.company_id.is_(None)
+    )
+    return int(query.scalar() or 0) + 1
+
+
+def _copy_name(db: Session, source: TagTemplate) -> str:
+    """"<name> (copy)", then "(copy 2)", "(copy 3)"... the first one no live template in the
+    source's company already carries. Trimmed to the column's 255 characters."""
+    taken_query = db.query(TagTemplate.name).filter(
+        TagTemplate.archived_at.is_(None),
+        TagTemplate.name.like(f"{source.name[:200]}%"),
+    )
+    if source.company_id:
+        taken_query = taken_query.filter(TagTemplate.company_id == source.company_id)
+    taken = {row[0] for row in taken_query}
+    n = 1
+    while True:
+        suffix = " (copy)" if n == 1 else f" (copy {n})"
+        candidate = f"{source.name[: 255 - len(suffix)]}{suffix}"
+        if candidate not in taken:
+            return candidate
+        n += 1
+
+
+def duplicate(db: Session, source: TagTemplate, *, created_by: Optional[str] = None) -> TagTemplate:
+    """A new DRAFT template carrying the source's latest document.
+
+    The draft (`source.doc`) IS the latest state: every edit saves there and a publish snapshots
+    it, so the live version is never newer than it. Family, price type and print size come along;
+    links, defaults, versions and request lines do not (they belong to the source). Assets are
+    referenced by id inside the layers, so nothing is re-uploaded. The copy sits right below the
+    source in the manual order.
+    """
+    company_id = source.company_id
+    if source.sort_order is not None:
+        position = source.sort_order + 1
+        shift = db.query(TagTemplate).filter(TagTemplate.sort_order >= position)
+        shift = shift.filter(
+            TagTemplate.company_id == company_id if company_id else TagTemplate.company_id.is_(None)
+        )
+        shift.update(
+            {TagTemplate.sort_order: TagTemplate.sort_order + 1}, synchronize_session=False
+        )
+    else:
+        position = next_sort_order(db, company_id)
+    copy = TagTemplate(
+        name=_copy_name(db, source),
+        family=source.family,
+        doc=_deep_copy(source.doc),
+        print_size=_deep_copy(source.print_size),
+        price_type=source.price_type,
+        created_by=created_by,
+        sort_order=position,
+    )
+    if company_id:
+        copy.company_id = company_id
+    db.add(copy)
+    db.flush()
+    db.commit()
+    db.refresh(copy)
+    return copy
+
+
+def _deep_copy(value):
+    import copy as _copy
+
+    return _copy.deepcopy(value) if value is not None else value
+
+
+def reorder(db: Session, template_ids: list[str]) -> int:
+    """Put `template_ids` in this order, using the order slots those same rows hold now.
+
+    The list may show a filtered or paged subset, so the dragged rows trade places among
+    THEMSELVES: their current positions (sorted) are handed back out in the new order, and every
+    row not in the list keeps its own. A missing or foreign id refuses the whole call (no
+    existence oracle, same rule as `bulk_delete`).
+    """
+    ids = list(dict.fromkeys(str(i) for i in template_ids if i))
+    if not ids:
+        return 0
+    rows = _scoped(db).filter(TagTemplate.id.in_(ids)).all()
+    if {row.id for row in rows} != set(ids):
+        raise _not_found()
+    by_id = {row.id: row for row in rows}
+    # A row with no number yet goes after every numbered one of its company.
+    fallback = next_sort_order(db, rows[0].company_id)
+    slots = sorted(
+        row.sort_order if row.sort_order is not None else fallback + i
+        for i, row in enumerate(rows)
+    )
+    for slot, template_id in zip(slots, ids):
+        by_id[template_id].sort_order = slot
+    db.commit()
+    return len(ids)

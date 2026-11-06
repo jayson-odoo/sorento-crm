@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
+from pydantic import BaseModel, Field
+from sqlalchemy import Float, asc, cast, desc, nulls_last, or_
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
 
@@ -40,6 +43,7 @@ from app.schemas.price_tag import (
 from app.services.dealer_kit import product_tag_template_service, tag_data_service, tag_template_service
 from app.services.dealer_kit.template_needs import template_needs
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 
 router = APIRouter(prefix="/tag-templates", tags=["tag-templates"])
 
@@ -94,9 +98,20 @@ def list_tag_templates(
             "pointer, and each one's PUBLISHED doc rather than its draft."
         ),
     ),
-    price_type: Optional[Literal["list", "selling", "both", "unset"]] = Query(
-        None, description="Filter by price type; `unset` = not set yet."
+    price_type: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by price type, multi-select (comma-joined or repeated): "
+            "list, selling, both, or `unset` = not set yet."
+        ),
     ),
+    family: Optional[list[str]] = Query(None, description="Filter by family, multi-select."),
+    status_filter: Optional[list[str]] = Query(
+        None, alias="status", description="`live` and/or `draft`, multi-select."
+    ),
+    query_text: Optional[str] = Query(None, alias="query", max_length=200),
+    sort: Optional[str] = Query(None, description="Column to sort by; omitted = manual order."),
+    dir: Literal["asc", "desc"] = Query("asc"),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -105,14 +120,59 @@ def list_tag_templates(
         .options(joinedload(TagTemplate.published_version))
         .filter(TagTemplate.archived_at.is_(None))
     )
-    if price_type == "unset":
-        query = query.filter(TagTemplate.price_type.is_(None))
-    elif price_type:
-        query = query.filter(TagTemplate.price_type == price_type)
+    price_types = multi_values(price_type, "price_type") or []
+    if price_types:
+        named = [p for p in price_types if p != "unset"]
+        clauses = []
+        if named:
+            clauses.append(TagTemplate.price_type.in_(named))
+        if "unset" in price_types:
+            clauses.append(TagTemplate.price_type.is_(None))
+        query = query.filter(or_(*clauses))
+    families = multi_values(family, "family")
+    if families:
+        query = query.filter(TagTemplate.family.in_(families))
+    statuses = set(multi_values(status_filter, "status") or [])
+    if statuses == {"live"}:
+        query = query.filter(TagTemplate.published_version_id.isnot(None))
+    elif statuses == {"draft"}:
+        query = query.filter(TagTemplate.published_version_id.is_(None))
+    if query_text and query_text.strip():
+        query = query.filter(TagTemplate.name.ilike(f"%{query_text.strip()}%"))
     if published:
         query = query.filter(TagTemplate.published_version_id.isnot(None))
-    templates = query.order_by(TagTemplate.family, TagTemplate.name).all()
+    templates = query.order_by(*_order_by(sort, dir, published=published)).all()
     return [_response_for(t, published=published) for t in templates]
+
+
+#: Every list column sorts on the server (owner rule 6 Nov: all columns sortable).
+_SORTABLE = {
+    "name": lambda: [TagTemplate.name],
+    "family": lambda: [TagTemplate.family],
+    "price_type": lambda: [TagTemplate.price_type],
+    "print_size": lambda: [
+        cast(TagTemplate.print_size["width_mm"].astext, Float),
+        cast(TagTemplate.print_size["height_mm"].astext, Float),
+    ],
+    "created_at": lambda: [TagTemplate.created_at],
+    # Draft before Live ascending, then the live version number.
+    "published": lambda: [TagTemplate.published_version_id.isnot(None)],
+}
+
+
+def _order_by(sort: Optional[str], direction: str, *, published: bool) -> list:
+    """The list order: a named column (unknown names are ignored), else the request designer's
+    family/name order for `published=1`, else the shared manual order (item 6)."""
+    tie = [TagTemplate.created_at, TagTemplate.id]
+    if sort in _SORTABLE:
+        way = desc if direction == "desc" else asc
+        return [nulls_last(way(col)) for col in _SORTABLE[sort]()] + [
+            nulls_last(asc(TagTemplate.sort_order)),
+            *tie,
+        ]
+    if published:
+        return [TagTemplate.family, TagTemplate.name]
+    return [nulls_last(asc(TagTemplate.sort_order)), *tie]
 
 
 # PRICETAG-TEMPLATE-PER-PRODUCT: declared before ``/{template_id}`` for the
@@ -204,6 +264,24 @@ def create_tag_template_from_tag(
     return _response_for(t)
 
 
+class TagTemplateReorderIn(BaseModel):
+    """The rows the reader dragged, top to bottom (the rows on screen)."""
+
+    template_ids: list[str] = Field(..., min_length=1, max_length=1000)
+
+
+# DECLARED BEFORE ``/{template_id}``, same reason as ``/resolve-preview`` above.
+@router.post("/reorder", response_model=dict)
+def reorder_tag_templates(
+    payload: TagTemplateReorderIn,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Save the list's manual order (item 6). One order, shared by everyone in the company;
+    only a user who can edit templates may change it."""
+    return {"reordered": tag_template_service.reorder(db, payload.template_ids)}
+
+
 @router.get("/{template_id}", response_model=TagTemplateResponse)
 def get_tag_template(
     template_id: str,
@@ -242,8 +320,29 @@ def create_tag_template(
     )
     db.add(t)
     db.flush()
+    # A new template goes to the END of the manual order (item 6).
+    t.sort_order = tag_template_service.next_sort_order(db, t.company_id)
     db.commit()
     return TagTemplateResponse.model_validate(t)
+
+
+@router.post(
+    "/{template_id}/duplicate",
+    response_model=TagTemplateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_tag_template(
+    template_id: str,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """TAG-TEMPLATE-DUPLICATE: a new DRAFT "<name> (copy)" carrying the source's latest
+    document, family, price type and print size, placed right below the source. An archived
+    source answers 404 like a missing one."""
+    source = _get_template_or_404(db, template_id)
+    return _response_for(
+        tag_template_service.duplicate(db, source, created_by=_user_id(user))
+    )
 
 
 @router.put("/{template_id}", response_model=TagTemplateResponse)
