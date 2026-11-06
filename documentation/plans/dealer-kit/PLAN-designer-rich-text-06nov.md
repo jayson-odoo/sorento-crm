@@ -1,6 +1,6 @@
 # PLAN: per-selection formatting in tag designer text layers (DESIGNER-RICH-TEXT, 6 Nov)
 
-Status: Merge-ready pending owner hand test (reviewer READY after round 1). Full track by size (about 1,600 changed lines, over the ~300-line small
+Status: Crew pass fix round (item 12, right-click under a filled frame); crew pass 11/12 PASS. Full track by size (about 1,600 changed lines, over the ~300-line small
 fix limit), though frontend only: no migration, no auth/RBAC, no new ingest, so no
 security-reviewer. PR #2213.
 UAC: `designer-rich-text-acceptance-criteria.md`.
@@ -41,10 +41,12 @@ frame layer, so Group is never enabled; the context menu shows `Ctrl+` on macOS.
 - D5. Formatted content is edited in the Inspector; the canvas double-click editor opens it
   read-only on its plain text (R16 precedent). Clipboard words, Layers panel names and preview
   labels read plain text.
-- D6 (owner bug). Right-click keeps the selection when ANY layer under the pointer is selected;
-  an unselected layer is selected alone, preferring the layer Konva actually hit; empty canvas
-  keeps the selection. Cmd+click (macOS) / Ctrl+click (elsewhere) is additive; a macOS Ctrl+click
-  never changes the selection. Menu shortcuts use the command symbol on macOS.
+- D6 (owner bug). Right-click keeps the selection when ANY selected layer is under the pointer,
+  even below unselected layers drawn on top of it (a frame, a card; crew pass item 12 ruling, which
+  supersedes review S3's "drawn layer decides"); otherwise the layer Konva actually hit is selected
+  alone (the top box when Konva reports none); empty canvas keeps the selection. Cmd+click
+  (macOS) / Ctrl+click (elsewhere) is additive; a macOS Ctrl+click never changes the selection.
+  Menu shortcuts and toolbar tooltips use the command symbol on macOS.
 
 ## Not built
 

@@ -23,10 +23,12 @@ Plan: `PLAN-designer-rich-text-06nov.md`.
 
 ## Right-click and shortcuts (owner bug)
 
-- AC-7. Two text boxes selected, right-click on one of them (even under a frame drawn on top):
-  both stay selected and Group is enabled. Test: `TagCanvasEditor.context-selection.test.tsx`.
-- AC-8. Right-click on an unselected layer selects just it (the layer Konva hit, not a frame
-  over it); on empty canvas the selection is kept.
+- AC-7. Two text boxes selected, right-click where one of them lies, even under a frame or card
+  drawn on top of it (filled or not): both stay selected and Group is enabled. Any selected layer
+  under the pointer wins over unselected layers drawn over it (crew pass item 12, 6 Nov).
+  Test: `TagCanvasEditor.context-selection.test.tsx`, `canvas-input.test.ts`.
+- AC-8. Right-click where no selected layer lies selects just the layer Konva drew there (the top
+  box when Konva reports none); on empty canvas the selection is kept.
   Test: `TagCanvasEditor.context-selection.test.tsx`, `canvas-input.test.ts`.
 - AC-9. macOS: Cmd+click adds to the selection, Ctrl+click (system right-click) leaves it alone,
   Cmd+G groups, the menu shows `⌘X ⌘C ⌘V ⌘D ⌘G ⌘A`. Elsewhere `Ctrl+`.

@@ -80,20 +80,21 @@ export function layersAt(
 /**
  * The selection after a right-click, or null to keep the current one.
  *
- * `drawnHit` is the layer Konva actually drew under the pointer (as the id a click selects), when
- * it can say: it decides, so a selected background card never steals a right-click on the text
- * drawn over it. Without it (the transparent inside of a frame, a DOM overlay), `hits` are the
- * layer boxes under the pointer, top first, and a right-click on ANY of them that is already
- * selected keeps the whole selection, so a frame over two selected text boxes cannot steal it.
- * Nothing selected under the pointer selects just the top one; empty canvas keeps the selection.
+ * `hits` are the layer boxes under the pointer, top first; `drawnHit` is the layer Konva actually
+ * drew there (as the id a click selects), when it can say.
+ *  1. ANY selected layer under the pointer keeps the whole selection, so the menu acts on it: a
+ *     selected layer under the pointer wins over unselected shapes drawn on top of it (a frame,
+ *     a background card), which is how Group stays reachable (crew pass item 12, 6 Nov).
+ *  2. Otherwise the layer Konva drew is selected alone; without one, the top box.
+ *  3. Empty canvas keeps the selection.
  */
 export function selectionForContextMenu(
   selected: ReadonlySet<string>,
   hits: string[],
   drawnHit?: string | null,
 ): Set<string> | null {
-  if (drawnHit) return selected.has(drawnHit) ? null : new Set([drawnHit]);
-  if (hits.length === 0) return null;
-  if (hits.some((id) => selected.has(id))) return null;
-  return new Set([hits[0]]);
+  const under = drawnHit ? [drawnHit, ...hits] : hits;
+  if (under.some((id) => selected.has(id))) return null;
+  if (under.length === 0) return null;
+  return new Set([under[0]]);
 }

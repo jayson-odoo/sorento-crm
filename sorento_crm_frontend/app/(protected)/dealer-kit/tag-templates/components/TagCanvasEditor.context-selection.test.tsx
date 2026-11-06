@@ -173,6 +173,19 @@ describe('right-click keeps a multi-selection (owner bug, 6 Nov)', () => {
     expect(isDisabled(groupItem())).toBe(false);
   });
 
+  it('crew pass item 12: Konva hits a FRAME drawn over a selected text box: both stay selected, Group enabled', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={doc(text('a', 5, 1), text('b', 40, 2), frame())} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId('layer-a'));
+    fireEvent.click(screen.getByTestId('layer-b'));
+    konvaHit = 'frame';
+
+    rightClick(container, INSIDE_A);
+
+    expect(isDisabled(groupItem())).toBe(false);
+  });
+
   it('Konva reports the text it hit: still kept', () => {
     const { container } = render(
       <TagCanvasEditor doc={doc(text('a', 5, 1), text('b', 40, 2), frame())} onChange={vi.fn()} />,

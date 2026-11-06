@@ -56,11 +56,19 @@ describe('selectionForContextMenu', () => {
     expect(selectionForContextMenu(selected, ['c', 'frame'])).toEqual(new Set(['c']));
   });
 
-  it('the layer Konva drew under the pointer decides when it reports one (review S3)', () => {
-    // A selected background card under an unselected text: right-click on the text selects it.
-    expect(selectionForContextMenu(new Set(['card']), ['text', 'card'], 'text')).toEqual(new Set(['text']));
-    // A selected text under a frame (Konva hits the text through the frame's transparent inside).
-    expect(selectionForContextMenu(selected, ['frame', 'a'], 'a')).toBeNull();
+  it('a selected layer under the pointer wins over an unselected one drawn on top (crew pass item 12)', () => {
+    // Konva hits a filled frame drawn over selected text box `a`: the selection is kept.
+    expect(selectionForContextMenu(selected, ['frame', 'a'], 'frame')).toBeNull();
+    // Same when the selected layer under the pointer is a full-tag background card.
+    expect(selectionForContextMenu(new Set(['card']), ['text', 'card'], 'text')).toBeNull();
+  });
+
+  it('nothing selected under the pointer: the layer Konva drew is selected, not the top box', () => {
+    expect(selectionForContextMenu(selected, ['frame', 'c'], 'c')).toEqual(new Set(['c']));
+  });
+
+  it('Konva reports a selected layer the boxes missed: kept', () => {
+    expect(selectionForContextMenu(selected, [], 'a')).toBeNull();
   });
 
   it('keeps the selection on empty canvas', () => {
