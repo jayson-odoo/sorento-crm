@@ -3293,6 +3293,12 @@ def _held_object(focus: Any) -> tuple[dict[str, Any] | None, str | None]:
             # to the company and / or brands).
             held = [str(h.get("word")) for h in jsc.array(extras.get("kind_held")) if isinstance(h, dict) and h.get("word")]
             ask["company_or_brand"] = list(dict.fromkeys(held))
+            # REPORT-FILTER-ALL (crew re-check step 16): the company reading of that name is what the question asks, so it
+            # is not held: a "brand" answer leaves no company behind for `_keep_held` to put back (the company and both
+            # answers set it, `from_object`'s `kind_company` pick).
+            asked = {_squash(w) for w in held} | {_squash(x) for x in jsc.array(extras.get("kind_company"))[1:]}
+            if _squash(ask.get("company") or "") in asked:
+                ask["company"] = None
         asking = jsc.js_string(slot.get("asking") or "").strip()
         if asking == "kind" and extras.get("kind_both"):
             return ask, COMPANY_OR_BRAND_WORDS
@@ -3559,6 +3565,14 @@ def from_object(
         # C6-1: the company option of the word question: the word is that company (`_word_kinds` drops it as a word).
         # M2: the both option is that company AND the brand (`_word_kinds` keeps the word as a brand).
         ask["company"] = own_company = str(jsc.array(kind_company)[-1])
+    elif (
+        pick is not None and pick[0] == "kind" and pick[1] == "brand" and jsc.array(kind_company)
+        and _squash(ask.get("company") or "") in {_squash(x) for x in jsc.array(kind_company)[1:]}
+    ):
+        # REPORT-FILTER-ALL (crew re-check step 16, owner: a "brand" answer replaces the company reading of the name, it
+        # does not add to it): the declared brand pick settles the asked name, so the object's company of that same
+        # name is no filter.
+        ask["company"] = own_company = None
     basis = ask["basis"] if ask.get("basis") in BASES else None
     outstanding = ask.get("kind") == "outstanding" or basis in OUTSTANDING_KINDS
     # C6-2: the held report carries into this one unless the message starts another report kind or resets the topic.
@@ -3568,6 +3582,16 @@ def from_object(
     )
     held_axis = (held_ask or {}).get("group_by") if carrying else None
     axis = jsc.js_string(ask.get("group_by") or "").strip().lower() or None
+    own_slot = _AXIS_SLOTS.get(axis or "")
+    if (
+        frame == "total" and axis is not None and axis != held_axis and own_slot
+        and not (len(names(own_slot)) == 1 if own_slot != "channel" else ask.get("channel") in ("dealer", "project"))
+    ):
+        # REPORT-FILTER-ALL (crew re-check step 1 / fa-36): a total frame beside an axis this message names itself (none
+        # held, or another one) whose own slot is not one value is that slot's values side by side: the breakdown
+        # (prompt edit 6). An axis over a slot the ask filters to ONE value is one row (C6-2, AF-1's noisy "brand"), and
+        # a copied held axis under a total is still dropped (below).
+        frame = ask["frame"] = "breakdown"
     if frame == "total":
         axis = None  # M1: one figure; the held axis and count are not carried, so no count or measure is asked
     elif frame == "breakdown" and axis is None:

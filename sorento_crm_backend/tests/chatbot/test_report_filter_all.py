@@ -581,3 +581,69 @@ def test_h15_a_company_name_that_is_also_a_debtor_type_asks_company_or_brand_onc
     text, calls = rbot.say(v, "brand")
     args = _args(calls)
     assert args.get("brand_ids") and not args.get("company"), f"H16: the brand answer set the company: {args}"
+
+
+# ------------------------------------------------------------------------------------------ crew re-check 6 Nov (round 5)
+# No recorded objects reached this sandbox; each test names the parse shape it assumes (crew: replay the real step 8, 14,
+# 16 and 1 objects through these to confirm).
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+@pytest.mark.parametrize("brands", [["Sorento", "Cabana"], ["Sorento"]], ids=["step8", "step14"])
+@pytest.mark.parametrize("said_as", ["both", "brand"])
+def test_k8_company_and_brand_of_one_name_follow_its_said_as_never_the_company_slot_alone(rbot, world, brands, said_as) -> None:
+    """Crew re-check steps 8 / 14 (after a clear: no company held), the object writing company Sorento beside brands.
+    The name's slot is the entity's said_as, never the object's company slot alone: "Sorento brand only" parses write
+    company Sorento too (ON-2, F2, tf-29, the R3 equivalence), so a company slot beside said_as brand is not applied.
+    said_as both (prompt edit 10: a name the message calls company AND brand) applies both."""
+    sorento, _m = world
+    _hold(rbot, None, group_by="channel")
+    ents = [_said("Sorento", said_as, "company, brand"), *([_ent("Cabana", "brand", "CABANA", "brands")] if "Cabana" in brands else [])]
+    ra = _ra2(None, basis="delivered", group_by="channel", company=sorento, brands=brands, **SEP)
+    v = _follow("sales_analysis", ra, *ents, group_by="channel", sales_company=sorento, **SEPF)
+    text, calls = rbot.say(v, "Sorento company, Sorento brand")
+    assert _ran(calls), f"K8: nothing ran: {text!r}"
+    args = _args(calls)
+    assert bool(args.get("company") == DEFAULT_COMPANY_ID) == (said_as == "both"), f"K8 company ({said_as}): {args}"
+    assert len(args.get("brand_ids") or []) >= len(brands), f"K8 brands: {args}"
+
+
+@pytest.mark.usefixtures("all_on", "said_as_on")
+@pytest.mark.parametrize("answer_company", [None, "Sorento"], ids=["object-company-null", "object-company-echo"])
+def test_k16_a_brand_answer_to_the_company_or_brand_question_is_the_brand_across_every_company(
+    rbot, world, answer_company
+) -> None:
+    """Crew re-check step 16: "Sorento total sale delivered September 2026" whose object also wrote company Sorento (the
+    Known companies line) asks company or brand; "brand" then showed Company Sorento + Brand SORENTO. The brand answer
+    replaces the company reading of that name: no company, whether the reply's object leaves the company null or echoes
+    the asked name."""
+    from tests.chatbot.test_report_totals_filters import _kind_slot, _option_position, _ra3
+
+    _sorento_debtor_type(rbot)
+    ra = _ra3(["Sorento"], basis="delivered", company="Sorento", **SEP)
+    ra["frame"] = "total"
+    first = _v("sales_report", ra, _said("Sorento", None, ""), basis="delivered", sales_company="Sorento",
+               domain_in_message=True, **SEPF)
+    text, calls = rbot.say(first, "Sorento total sale delivered September 2026")
+    slot = _kind_slot(rbot)
+    assert not _ran(calls) and slot.get("asking") == "kind", f"setup: {text!r} {_ran(calls)}"
+    pos = _option_position(slot, "brand")
+    ra2 = _ra3([], basis="delivered", company=answer_company, brands=["SORENTO"], **SEP)
+    ra2["frame"] = "total"
+    v = _v("sales_ranking", ra2, basis="delivered", continuation=True, entity_op="reuse", domain_in_message=False,
+           open_question_answer=_pick_of(pos), reference_positions=[pos], **SEPF)
+    text, calls = rbot.say(v, "brand")
+    args = _args(calls)
+    assert args.get("brand_ids") and not args.get("company"), f"K16: the brand answer kept the company: {args}"
+
+
+@pytest.mark.usefixtures("all_on")
+def test_k1_a_total_frame_beside_this_messages_own_axis_is_that_breakdown(rbot, world) -> None:
+    """Crew re-check step 1 / fa-36: "Total sale delivered September 2026 Sorento company, Sorento brand, show dealer and
+    project" parsed frame total WITH group_by channel on a fresh thread. The axis is this message's own (no report held,
+    so not a copied one): the breakdown runs. A total over a copied held axis still drops it (G1b, AF-3)."""
+    sorento, _m = world
+    ra = _ra2("total", basis="delivered", group_by="channel", company=sorento, **SEP)
+    v = _v("sales_report", ra, basis="delivered", group_by="channel", sales_company=sorento, domain_in_message=True, **SEPF)
+    text, calls = rbot.say(v, "Total sale delivered September 2026 Sorento company, show dealer and project")
+    assert _args(calls).get("group_by") == "channel", f"K1: {_args(calls)}"
