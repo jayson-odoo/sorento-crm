@@ -241,6 +241,11 @@ def fake_ss(monkeypatch) -> FakeSS:
 
     fake = FakeSS()
     monkeypatch.setattr(client_mod, "TRANSPORT", httpx.MockTransport(fake.handler), raising=False)
+    # No Redis for the attempt counter unless a test installs a store (round 6b): every press
+    # then uses the plain base key.
+    from app.services import project_autocount_write_service as svc_mod
+
+    monkeypatch.setattr(svc_mod, "attempt_store", lambda: None)
     return fake
 
 
@@ -603,17 +608,3 @@ def myt_today_candidates() -> set[str]:
 
     now = datetime.now(timezone.utc)
     return {now.date().isoformat(), (now + timedelta(hours=8)).date().isoformat()}
-
-
-def idem_matches(actual: str, base: str) -> bool:
-    """The Idempotency-Key is `<base>-<first 12 hex of sha256(canonical body)>` (round 6, B5)."""
-    import re
-
-    return bool(re.fullmatch(re.escape(base) + r"-[0-9a-f]{12}", actual)) and len(actual) <= 128
-
-
-def idem_for(base: str, body: dict) -> str:
-    import hashlib
-
-    raw = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
-    return f"{base}-{hashlib.sha256(raw.encode()).hexdigest()[:12]}"

@@ -18,7 +18,6 @@ import pytest
 
 from tests._pg_fixture import blank_session
 from tests._ac_write_support import (
-    idem_matches,
     BOOK,
     BASE,
     CAPS_PATH,
@@ -186,7 +185,7 @@ def test_so_cancel_with_cancel_doc_on_posts_the_cancel(so_api, fake_ss):
 
     assert response.status_code == 200, response.text
     [request] = fake_ss.to("POST", cancel_path)
-    assert idem_matches(request.headers["Idempotency-Key"], f"crm-pso-{world.order.id}-cancel")
+    assert request.headers["Idempotency-Key"] == f"crm-pso-{world.order.id}-cancel"
     assert fake_ss.body(request)["companyCode"] == "SRT"
     assert response.json()["outcome"] == "done"
     assert [r for r in fake_ss.calls if r.method == "DELETE"] == [], "never delete a document"
@@ -255,7 +254,7 @@ def test_quotation_cancel_with_cancel_doc_on_posts_the_cancel(qt_api, fake_ss):
 
     assert response.status_code == 200, response.text
     [request] = fake_ss.to("POST", cancel_path)
-    assert idem_matches(request.headers["Idempotency-Key"], f"crm-qt-{world.document.id}-cancel")
+    assert request.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-cancel"
     assert fake_ss.body(request)["companyCode"] == "SRT"
 
 

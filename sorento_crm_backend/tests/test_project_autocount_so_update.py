@@ -20,7 +20,6 @@ import pytest
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.project_so import ProjectSalesOrderLine
 from tests._ac_write_support import (
-    idem_matches,
     BOOK,
     BASE,
     DOC_KEY,
@@ -150,7 +149,7 @@ def test_order_and_delay_rows_go_as_one_patch_with_docdate_expected_last_modifie
     assert set(by_key) == {str(DTL_1), str(DTL_2)}, "CHANGE SO NO and CANCEL BALANCE must not ride the PATCH"
     assert D(by_key[str(DTL_1)]["qty"]) == 120
     assert by_key[str(DTL_2)]["deliveryDate"] == "2027-01-07"
-    assert idem_matches(patch.headers["Idempotency-Key"], f"crm-amd-{amendment.id}-update-edit")
+    assert patch.headers["Idempotency-Key"] == f"crm-amd-{amendment.id}-update-edit"
     assert fake_ss.to("POST", LINES_PATH) == [], "a new product is never a row, so no add-line"
 
 

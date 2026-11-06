@@ -13,8 +13,6 @@ from the request.
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -46,6 +44,7 @@ from app.models.projects import (
 )
 from app.services.error_handler import AppException
 from app.services.foundryx_autocount_client import FoundryxAutocountClient, FoundryxPullError
+from app.services.autocount_idempotency import attempt_store, send_with_attempts
 from app.services.set_driver_pricing import split_set_driver_price
 from app.services.project_so_delta_service import (
     VERB_ADVANCE,
@@ -142,19 +141,6 @@ def _since(stored: Optional[str]) -> str:
 
 def _trim_sentence(message: Optional[str]) -> str:
     return (message or "").strip()[:_MAX_TEXT].rstrip(".").strip()
-
-
-def _idem_key(base: str, body: Dict[str, Any]) -> str:
-    """`<base>-<first 12 hex of sha256(canonical body)>` (round 6, B5).
-
-    SS replays a stored refusal for the same key and body and answers IDEMPOTENCY_CONFLICT for
-    the same key with another body, so a key fixed per record made a retry after one refusal
-    impossible. With the body in the key a corrected request is a new intent, while the same
-    request (a retry after a timeout or a 202) still replays. Longest base is
-    `crm-qt-<uuid>-<uuid>-update-lines` (93 characters), so the key stays under SS's 128.
-    """
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
-    return f"{base}-{hashlib.sha256(canonical.encode()).hexdigest()[:12]}"
 
 
 def _safe_key(key: Any) -> str:
@@ -293,6 +279,16 @@ class ProjectAutocountWriteService:
             return fn(self._gateway())
         except FoundryxPullError as exc:
             return {"outcome": "gateway_error", "errorCode": exc.code, "message": exc.message}
+
+    def _send_attempts(self, base_key: str, call) -> Dict[str, Any]:
+        """One write under the intent's current attempt key (#2223's shared helper).
+
+        Attempt 0 is the plain `base_key`; a definite refusal moves the next press of the same
+        intent to a new key so it is not answered with the stored refusal. Anything else keeps
+        the key, so a retry can only replay."""
+        return send_with_attempts(
+            attempt_store(), base_key, lambda key: self._call(lambda c: call(c, key))
+        )
 
     def company_code(self, company_id: Optional[str]) -> str:
         company = self.db.query(Company).filter(Company.id == company_id).first() if company_id else None
@@ -603,10 +599,9 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(order.company_id)[1]
         if not book:
             return self._no_book_answer(order.company_id)
-        answer = self._call(
-            lambda c: c.write(
-                "documents/sales-orders", body, idempotency_key=_idem_key(f"crm-pso-{order.id}-create", body)
-            )
+        answer = self._send_attempts(
+            f"crm-pso-{order.id}-create",
+            lambda c, key: c.write("documents/sales-orders", body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="created", debtor=body["header"]["debtorCode"])
         if self._is_done(answer):
@@ -687,8 +682,10 @@ class ProjectAutocountWriteService:
             "lines": list(edits.values()),
         }
         path = f"documents/sales-orders/{doc_key}"
-        key = _idem_key(f"crm-amd-{amendment.id}-update-edit", body)
-        answer = self._call(lambda c: c.patch(path, body, idempotency_key=key))
+        answer = self._send_attempts(
+            f"crm-amd-{amendment.id}-update-edit",
+            lambda c, key: c.patch(path, body, idempotency_key=key),
+        )
         if not self._is_done(answer):
             refused = self._interpret(answer, verb="updated", stale_since=expected)
             refused["waiting"] = waiting
@@ -788,8 +785,9 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self._order_company_code(order)}
         path = f"documents/sales-orders/{doc_key}/cancel"
-        answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=_idem_key(f"crm-pso-{order.id}-cancel", body))
+        answer = self._send_attempts(
+            f"crm-pso-{order.id}-cancel",
+            lambda c, key: c.write(path, body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):
@@ -928,12 +926,9 @@ class ProjectAutocountWriteService:
         book = self.read_capabilities(document.company_id)[1]
         if not book:
             return self._no_book_answer(document.company_id)
-        answer = self._call(
-            lambda c: c.write(
-                "documents/quotations",
-                body,
-                idempotency_key=_idem_key(f"crm-qt-{document.id}-{issue.id}-create", body),
-            )
+        answer = self._send_attempts(
+            f"crm-qt-{document.id}-{issue.id}-create",
+            lambda c, key: c.write("documents/quotations", body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="created", debtor=debtor)
         if self._is_done(answer):
@@ -1042,10 +1037,9 @@ class ProjectAutocountWriteService:
             }
             if patched:
                 body["lines"] = patched
-            answer = self._call(
-                lambda c: c.patch(
-                    f"documents/quotations/{key}", body, idempotency_key=_idem_key(f"{base_key}-edit", body)
-                )
+            answer = self._send_attempts(
+                f"{base_key}-edit",
+                lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
             )
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
@@ -1064,12 +1058,11 @@ class ProjectAutocountWriteService:
                 "expectedLastModified": document.autocount_last_modified,
                 "lines": adds,
             }
-            add_answer = self._call(
-                lambda c: c.write(
-                    f"documents/quotations/{key}/lines",
-                    add_body,
-                    idempotency_key=_idem_key(f"{base_key}-lines", add_body),
-                )
+            add_answer = self._send_attempts(
+                f"{base_key}-lines",
+                lambda c, idem: c.write(
+                    f"documents/quotations/{key}/lines", add_body, idempotency_key=idem
+                ),
             )
             if not self._is_done(add_answer):
                 refused = self._interpret(add_answer, verb="updated", stale_since=stale_since)
@@ -1114,8 +1107,9 @@ class ProjectAutocountWriteService:
             raise AppException(status_code=409, message=cap["reason"] or WAITING, code="ac_waiting")
         body = {"companyCode": self.company_code(document.company_id)}
         path = f"documents/quotations/{key}/cancel"
-        answer = self._call(
-            lambda c: c.write(path, body, idempotency_key=_idem_key(f"crm-qt-{document.id}-cancel", body))
+        answer = self._send_attempts(
+            f"crm-qt-{document.id}-cancel",
+            lambda c, key: c.write(path, body, idempotency_key=key),
         )
         result = self._interpret(answer, verb="cancelled")
         if self._is_done(answer):

@@ -20,7 +20,6 @@ from decimal import Decimal
 import pytest
 
 from tests._ac_write_support import (
-    idem_matches,
     BOOK,
     BASE,
     QT_CREATE_PATH,
@@ -193,7 +192,7 @@ def test_the_idempotency_key_names_the_document_and_the_issue(api, fake_ss):
     client.post(_url(world))
 
     [request] = fake_ss.to("POST", QT_CREATE_PATH)
-    assert idem_matches(request.headers["Idempotency-Key"], f"crm-qt-{world.document.id}-{world.issue.id}-create")
+    assert request.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{world.issue.id}-create"
 
 
 def test_the_result_note_names_the_skipped_line_and_the_exploded_set(api, fake_ss):
@@ -279,7 +278,7 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
     assert body["companyCode"] == "SRT"
     assert body["header"]["docDate"] in myt_today_candidates()
     assert body["expectedLastModified"] == "2026-10-21T08:00:00"
-    assert idem_matches(patch.headers["Idempotency-Key"], f"crm-qt-{world.document.id}-{issue2.id}-update-edit")
+    assert patch.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-edit"
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id
     assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
@@ -430,7 +429,7 @@ def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key
     assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1, "the PATCH step is done and is not sent again"
     first, second = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
     assert first.headers["Idempotency-Key"] == second.headers["Idempotency-Key"]
-    assert idem_matches(first.headers["Idempotency-Key"], f"crm-qt-{world.document.id}-{issue2.id}-update-lines")
+    assert first.headers["Idempotency-Key"] == f"crm-qt-{world.document.id}-{issue2.id}-update-lines"
     assert first.content == second.content
     db.refresh(world.document)
     assert world.document.autocount_issue_id == issue2.id

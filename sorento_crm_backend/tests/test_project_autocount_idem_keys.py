@@ -1,10 +1,10 @@
-"""AC-QTSO-CRM round 6 (B5, F7): the Idempotency-Key carries the body, so a corrected retry goes.
+"""AC-QTSO-CRM round 6/6b (B5, F7): a refusal must not make every retry replay the refusal.
 
-Crew's rule (db3 end to end): SS replays a stored refusal for the same key and body and answers
-IDEMPOTENCY_CONFLICT for the same key with another body, so a fixed key per record made a retry
-after one refusal impossible. Every key is `<base>-<first 12 hex of sha256(canonical body)>`,
-canonical = `json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)`, at most 128
-ASCII characters.
+Crew's decision (6 Nov, round 6b): #2223's shared helper (`autocount_idempotency`), not a body hash.
+SS replays a stored refusal for the same key and body, so a refusal made every retry impossible. Attempt
+0 is the plain base key; a DEFINITE refusal (outcome refused, errorCode not IDEMPOTENCY_*) moves the next
+press of the same intent to `attempt_key(base, n)`. A timeout, a 202, `needs_attention` or an
+IDEMPOTENCY_* answer keeps the key. With no store every press uses the base key.
 """
 from __future__ import annotations
 
@@ -29,8 +29,6 @@ from tests._ac_write_support import (
     detail,
     done_body,
     fake_ss,  # noqa: F401  (fixture)
-    idem_for,
-    idem_matches,
     put_in_autocount,
     refused_body,
     BOOK,
@@ -72,21 +70,63 @@ def _qt_in_autocount(db, world, *, newer_issue=False):
     return issue2
 
 
-# --------------------------------------------------------------------------- the format, every call site
+# --------------------------------------------------------------------------- attempts (round 6b)
+#
+# Crew's decision: #2223's `autocount_idempotency` helper, not a body hash. Attempt 0 is the plain
+# base key; a DEFINITE refusal (outcome refused, errorCode not IDEMPOTENCY_*) moves the next press of
+# the same intent to `attempt_key(base, n)`. Anything else keeps the key so a retry can only replay.
 
 
-def test_so_create_key_is_base_plus_the_body_hash(so_api, fake_ss):
+class DictStore:
+    """A Redis-like store: `get`, `set(ex=)`."""
+
+    def __init__(self):
+        self.data = {}
+
+    def get(self, name):
+        return self.data.get(name)
+
+    def set(self, name, value, ex=None):
+        self.data[name] = value
+
+
+@pytest.fixture
+def store(monkeypatch):
+    from app.services import project_autocount_write_service as svc
+
+    s = DictStore()
+    monkeypatch.setattr(svc, "attempt_store", lambda: s)
+    return s
+
+
+def _no_store(monkeypatch):
+    from app.services import project_autocount_write_service as svc
+
+    monkeypatch.setattr(svc, "attempt_store", lambda: None)
+
+
+def _refused(code="ITEM_NOT_FOUND"):
+    return (422, refused_body(code, "no"))
+
+
+def _so_url(world):
+    return f"{BASE}/sales-orders/{world.order.id}/autocount"
+
+
+# ---- each of the seven sites goes through the helper, at attempt 0 with the plain base key
+
+
+def test_so_create_uses_the_base_key_at_attempt_zero(so_api, fake_ss, store):
     client, _db, world = so_api
     fake_ss.answers[("POST", SO_CREATE_PATH)] = (200, done_body())
 
-    client.post(f"{BASE}/sales-orders/{world.order.id}/autocount")
+    client.post(_so_url(world))
 
     [request] = fake_ss.to("POST", SO_CREATE_PATH)
-    assert idem_matches(_key(request), f"crm-pso-{world.order.id}-create")
-    assert _key(request) == idem_for(f"crm-pso-{world.order.id}-create", _body(request))
+    assert _key(request) == f"crm-pso-{world.order.id}-create"
 
 
-def test_so_update_key_is_base_plus_the_body_hash(so_api, fake_ss):
+def test_so_update_uses_the_base_key_at_attempt_zero(so_api, fake_ss, store):
     client, db, world = so_api
     put_in_autocount(db, world)
     amendment = add_amendment(db, world, [delay_row(world, world.line2, "2027-01-07")])
@@ -96,10 +136,10 @@ def test_so_update_key_is_base_plus_the_body_hash(so_api, fake_ss):
     client.post(f"{BASE}/sales-orders/amendments/{amendment.id}/autocount")
 
     [request] = fake_ss.to("PATCH", SO_DOC)
-    assert _key(request) == idem_for(f"crm-amd-{amendment.id}-update-edit", _body(request))
+    assert _key(request) == f"crm-amd-{amendment.id}-update-edit"
 
 
-def test_so_cancel_key_is_base_plus_the_body_hash(so_api, fake_ss):
+def test_so_cancel_uses_the_base_key_at_attempt_zero(so_api, fake_ss, store):
     client, db, world = so_api
     put_in_autocount(db, world)
     db.commit()
@@ -109,21 +149,20 @@ def test_so_cancel_key_is_base_plus_the_body_hash(so_api, fake_ss):
     client.post(f"{BASE}/sales-orders/{world.order.id}/autocount/cancel")
 
     [request] = fake_ss.to("POST", f"{SO_DOC}/cancel")
-    assert _key(request) == idem_for(f"crm-pso-{world.order.id}-cancel", _body(request))
+    assert _key(request) == f"crm-pso-{world.order.id}-cancel"
 
 
-def test_qt_create_key_is_base_plus_the_body_hash(qt_api, fake_ss):
+def test_qt_create_uses_the_base_key_at_attempt_zero(qt_api, fake_ss, store):
     client, _db, world = qt_api
     fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY))
 
     client.post(f"{BASE}/quotation-documents/{world.document.id}/autocount")
 
     [request] = fake_ss.to("POST", QT_CREATE_PATH)
-    base = f"crm-qt-{world.document.id}-{world.issue.id}-create"
-    assert _key(request) == idem_for(base, _body(request)) and len(_key(request)) <= 128
+    assert _key(request) == f"crm-qt-{world.document.id}-{world.issue.id}-create"
 
 
-def test_qt_update_step_keys_are_base_plus_the_body_hash(qt_api, fake_ss):
+def test_qt_update_steps_use_their_base_keys_at_attempt_zero(qt_api, fake_ss, store):
     client, db, world = qt_api
     issue2 = _qt_in_autocount(db, world, newer_issue=True)
     from app.models.projects import ProjectQuotationLine
@@ -150,12 +189,10 @@ def test_qt_update_step_keys_are_base_plus_the_body_hash(qt_api, fake_ss):
     [patch] = fake_ss.to("PATCH", QT_DOC)
     [lines] = fake_ss.to("POST", f"{QT_DOC}/lines")
     base = f"crm-qt-{world.document.id}-{issue2.id}-update"
-    assert _key(patch) == idem_for(f"{base}-edit", _body(patch))
-    assert _key(lines) == idem_for(f"{base}-lines", _body(lines))
-    assert len(_key(lines)) <= 128
+    assert _key(patch) == f"{base}-edit" and _key(lines) == f"{base}-lines"
 
 
-def test_qt_cancel_key_is_base_plus_the_body_hash(qt_api, fake_ss):
+def test_qt_cancel_uses_the_base_key_at_attempt_zero(qt_api, fake_ss, store):
     client, db, world = qt_api
     _qt_in_autocount(db, world)
     fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
@@ -164,42 +201,133 @@ def test_qt_cancel_key_is_base_plus_the_body_hash(qt_api, fake_ss):
     client.post(f"{BASE}/quotation-documents/{world.document.id}/autocount/cancel")
 
     [request] = fake_ss.to("POST", f"{QT_DOC}/cancel")
-    assert _key(request) == idem_for(f"crm-qt-{world.document.id}-cancel", _body(request))
+    assert _key(request) == f"crm-qt-{world.document.id}-cancel"
 
 
-# --------------------------------------------------------------------------- a corrected body goes
+# ---- a definite refusal moves the next press on and it goes through
 
 
-def test_a_corrected_body_after_a_refusal_sends_a_different_key(so_api, fake_ss):
+def test_so_create_after_a_refusal_goes_under_the_next_attempt_key(so_api, fake_ss, store):
+    from app.services.autocount_idempotency import attempt_key
+
+    client, _db, world = so_api
+    base = f"crm-pso-{world.order.id}-create"
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = _refused()
+    assert client.post(_so_url(world)).json()["outcome"] == "refused"
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = (200, done_body())
+
+    assert client.post(_so_url(world)).json()["outcome"] == "done"
+
+    first, second = fake_ss.to("POST", SO_CREATE_PATH)
+    assert _key(first) == base and _key(second) == attempt_key(base, 1)
+
+
+def test_qt_create_after_a_refusal_goes_under_the_next_attempt_key(qt_api, fake_ss, store):
+    from app.services.autocount_idempotency import attempt_key
+
+    client, _db, world = qt_api
+    base = f"crm-qt-{world.document.id}-{world.issue.id}-create"
+    url = f"{BASE}/quotation-documents/{world.document.id}/autocount"
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = _refused()
+    client.post(url)
+    fake_ss.answers[("POST", QT_CREATE_PATH)] = (200, done_body(doc_no="QT000777", doc_key=QT_KEY))
+
+    assert client.post(url).json()["outcome"] == "done"
+
+    first, second = fake_ss.to("POST", QT_CREATE_PATH)
+    assert _key(first) == base and _key(second) == attempt_key(base, 1)
+
+
+def test_so_cancel_after_a_refusal_goes_under_the_next_attempt_key(so_api, fake_ss, store):
+    from app.services.autocount_idempotency import attempt_key
+
     client, db, world = so_api
-    url = f"{BASE}/sales-orders/{world.order.id}/autocount"
-    fake_ss.answers[("POST", SO_CREATE_PATH)] = (422, refused_body("ITEM_NOT_FOUND", "no such item"))
-    assert client.post(url).json()["outcome"] == "refused"
-    # CS corrects the order (a quantity), which changes the body we send.
+    put_in_autocount(db, world)
+    db.commit()
+    base = f"crm-pso-{world.order.id}-cancel"
+    url = f"{BASE}/sales-orders/{world.order.id}/autocount/cancel"
+    fake_ss.answers[("GET", CAPS_PATH)] = (200, {"book": BOOK, "capabilities": caps_with(cancel_doc=(True, None))})
+    fake_ss.answers[("POST", f"{SO_DOC}/cancel")] = _refused("HAS_DELIVERIES")
+    client.post(url)
+    fake_ss.answers[("POST", f"{SO_DOC}/cancel")] = (200, done_body())
+
+    assert client.post(url).json()["outcome"] == "done"
+
+    first, second = fake_ss.to("POST", f"{SO_DOC}/cancel")
+    assert _key(first) == base and _key(second) == attempt_key(base, 1)
+
+
+def test_a_corrected_body_after_a_refusal_goes_under_the_new_attempt_key(so_api, fake_ss, store):
+    from app.services.autocount_idempotency import attempt_key
+
+    client, db, world = so_api
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = _refused()
+    client.post(_so_url(world))
     world.line1.qty = world.line1.qty + 1
     db.commit()
     fake_ss.answers[("POST", SO_CREATE_PATH)] = (200, done_body())
 
-    assert client.post(url).json()["outcome"] == "done"
+    assert client.post(_so_url(world)).json()["outcome"] == "done"
 
     first, second = fake_ss.to("POST", SO_CREATE_PATH)
-    assert _key(first) != _key(second)
     assert _body(first) != _body(second)
+    assert _key(second) == attempt_key(f"crm-pso-{world.order.id}-create", 1)
 
 
-def test_an_identical_body_retried_sends_the_same_key(so_api, fake_ss):
+# ---- anything that is not a definite refusal keeps the key
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param((202, {**done_body(), "outcome": "pending_verification"}), id="pending-202"),
+        pytest.param((200, {**done_body(), "outcome": "needs_attention"}), id="needs-attention"),
+        pytest.param((422, refused_body("IDEMPOTENCY_CONFLICT", "key used")), id="idempotency-conflict"),
+        pytest.param((409, refused_body("IDEMPOTENCY_CONFLICT", "key used", outcome="refused")), id="conflict-409"),
+    ],
+)
+def test_a_retry_keeps_the_same_key_unless_the_refusal_was_definite(so_api, fake_ss, store, answer):
     client, _db, world = so_api
-    url = f"{BASE}/sales-orders/{world.order.id}/autocount"
-    fake_ss.answers[("POST", SO_CREATE_PATH)] = (202, {**done_body(), "outcome": "pending_verification"})
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = answer
 
-    client.post(url)
-    client.post(url)
+    client.post(_so_url(world))
+    client.post(_so_url(world))
 
     first, second = fake_ss.to("POST", SO_CREATE_PATH)
-    assert _key(first) == _key(second) and first.content == second.content
+    assert _key(first) == _key(second) == f"crm-pso-{world.order.id}-create"
 
 
-def test_the_step_marker_still_stops_a_resend_after_done(so_api, fake_ss):
+def test_a_timeout_keeps_the_same_key(so_api, fake_ss, store):
+    import httpx
+
+    client, _db, world = so_api
+
+    def slow(request):
+        raise httpx.ReadTimeout("slow")
+
+    # Only the write times out; the capability read (which names the book) answers.
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = slow
+
+    client.post(_so_url(world))
+    client.post(_so_url(world))
+
+    posts = [r for r in fake_ss.calls if r.method == "POST"]
+    assert len(posts) == 2 and _key(posts[0]) == _key(posts[1]) == f"crm-pso-{world.order.id}-create"
+
+
+def test_with_no_store_every_press_uses_the_base_key(so_api, fake_ss, monkeypatch):
+    _no_store(monkeypatch)
+    client, _db, world = so_api
+    fake_ss.answers[("POST", SO_CREATE_PATH)] = _refused()
+
+    client.post(_so_url(world))
+    client.post(_so_url(world))
+
+    first, second = fake_ss.to("POST", SO_CREATE_PATH)
+    assert _key(first) == _key(second) == f"crm-pso-{world.order.id}-create"
+
+
+def test_the_step_marker_still_stops_a_resend_after_done(so_api, fake_ss, store):
     client, db, world = so_api
     put_in_autocount(db, world)
     amendment = add_amendment(db, world, [delay_row(world, world.line2, "2027-01-07")])
