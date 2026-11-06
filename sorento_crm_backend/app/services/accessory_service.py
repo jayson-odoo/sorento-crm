@@ -266,7 +266,9 @@ class AccessoryService:
 
         attachment_id = str(uuid.uuid4())
         safe_name = (filename or "accessory").rsplit("/", 1)[-1][:255]
-        key = f"{STORAGE_PREFIX}/{attachment_id}/{safe_name}"
+        # The client's filename never reaches the storage key (security review L1: `%2F`, `?`, `#`
+        # survive into a key that `extract_key` later decodes); it is kept as the display name only.
+        key = f"{STORAGE_PREFIX}/{attachment_id}.{ext}"
         provider = default_provider()
         stored_key, _url = get_backend(provider).upload_file(
             file_content=content, file_path=key, content_type=mime

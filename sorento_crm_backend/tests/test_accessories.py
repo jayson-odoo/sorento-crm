@@ -12,6 +12,7 @@ and `tests/_ptag_combo_seed.py` (request lines). Synthetic names only.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -689,3 +690,36 @@ def test_s3_a_combo_pinned_before_lists_is_not_flagged_for_its_re_spelled_text(d
     pinned["combo"]["free_items"] = f"{a.name} + {b.name}"
     changes = tag_data_service.diff_pin_against_live(db, request.lines[0], pinned, live, None)
     assert not [c for c in changes if c["field"].startswith("combo:free_items")], changes
+
+
+def test_sec_the_storage_key_never_carries_the_client_filename(db, monkeypatch, storage):
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    row = _accessory(db, _name("KEYED"))
+    response = client.post(
+        ACCESSORY_IMAGE.format(accessory_id=row.id),
+        files={"file": ("..%2F..%2Fother%2Fvictim.jpg", _jpg_bytes(), "image/jpeg")},
+    )
+    assert response.status_code == 200, response.text
+    (key,) = storage.objects
+    assert key == f"accessory_image/{response.json()['attachment_id']}.jpg"
+
+
+def test_sec_an_oversized_upload_is_refused(db, monkeypatch, storage):
+    from app.services.accessory_service import MAX_IMAGE_BYTES
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    row = _accessory(db, _name("BIG"))
+    response = client.post(
+        ACCESSORY_IMAGE.format(accessory_id=row.id),
+        files={"file": ("big.jpg", b"\xff" * (MAX_IMAGE_BYTES + 10), "image/jpeg")},
+    )
+    assert response.status_code == 422
+    assert storage.objects == {}
+
+
+def test_sec_write_routes_take_a_signed_in_user_not_an_api_key():
+    from app.api.v1.master_data import accessories
+
+    source = Path(accessories.__file__).read_text()
+    assert "require_permission_with_api_key(EDIT)" not in source
+    assert source.count("require_permission(EDIT)") == 7

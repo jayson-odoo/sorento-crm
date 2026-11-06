@@ -1,6 +1,6 @@
 # PLAN: price tag "Accessories included" (PRICETAG-ACCESSORIES, 6 Nov)
 
-Status: Review. Card answered 6 Nov ~10:00 (`CARD-pricetag-accessories-06nov.md`, rules A1-A16
+Status: Merge-ready (reviewer READY, security-reviewer no HIGH/MEDIUM, L1-L3 fixed). Card answered 6 Nov ~10:00 (`CARD-pricetag-accessories-06nov.md`, rules A1-A16
 incl. the 10:45 product-entry addendum), mock approved 10:23 (`pricetag-accessories-mock.html`),
 build complete on PR #2211. Track: full (migration + new master data).
 Q-M1 / Q-M2 unanswered at build start: built on the recommendations (split old text on line
