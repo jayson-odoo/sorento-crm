@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 import uuid
 from collections import OrderedDict
 
@@ -302,13 +303,70 @@ def catalogue_read_lock_key(db: Session) -> int:
     return int.from_bytes(digest[:8], "big", signed=True)
 
 
-def _take_database_lock(token: str, db: Session) -> bool:
+# The holder names itself on its lock connection (`application_name`), so a refused caller in
+# ANY worker can say which change is running and since when (SPEC-ICON-PICKER-UX). No table:
+# the name lives exactly as long as the lock's connection holds it.
+_HOLDER_PREFIX = "sorento-spec-read:"
+
+
+def _lock_ids(key: int) -> tuple[int, int]:
+    """`pg_locks`' (classid, objid) for a bigint advisory key."""
+    unsigned = key & 0xFFFFFFFFFFFFFFFF
+    return unsigned >> 32, unsigned & 0xFFFFFFFF
+
+
+def running_catalogue_read(db: Session) -> dict | None:
+    """Who holds the catalogue read `db` would wait on: ``{"label", "seconds"}``, or None.
+
+    None when nothing holds it, or the holder did not name itself (another tool's lock).
+    """
+    classid, objid = _lock_ids(catalogue_read_lock_key(db))
+    name = db.execute(
+        text(
+            "SELECT a.application_name FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+            "WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1 "
+            "AND l.classid = CAST(:c AS oid) AND l.objid = CAST(:o AS oid) "
+            "AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+            "LIMIT 1"
+        ),
+        {"c": classid, "o": objid},
+    ).scalar()
+    if not name or not name.startswith(_HOLDER_PREFIX):
+        return None
+    started, _, label = name[len(_HOLDER_PREFIX):].partition(":")
+    try:
+        seconds = max(0, int(time.time()) - int(started))
+    except ValueError:
+        return None
+    return {"label": label or "another specification", "seconds": seconds}
+
+
+def busy_message(running: dict | None) -> str:
+    if running is None:
+        return CATALOGUE_READ_BUSY
+    seconds = running["seconds"]
+    since = (
+        f"{seconds} second{'' if seconds == 1 else 's'} ago"
+        if seconds < 120
+        else f"{seconds // 60} minutes ago"
+    )
+    return (
+        f"Products are being re-read after a change to {running['label']} "
+        f"(started {since}). Try again once it finishes."
+    )
+
+
+def _take_database_lock(token: str, db: Session, label: str | None = None) -> bool:
     from app.database import engine
 
     key = catalogue_read_lock_key(db)
     connection = engine.connect()
     try:
         taken = connection.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}).scalar()
+        if taken and label:
+            # Postgres keeps 63 bytes of it; the label is last so only it is cut.
+            name = f"{_HOLDER_PREFIX}{int(time.time())}:{label}".encode()[:63].decode(errors="ignore")
+            connection.execute(text("SELECT set_config('application_name', :n, false)"), {"n": name})
         connection.commit()
     except Exception:
         connection.close()
@@ -329,6 +387,8 @@ def _release_database_lock(token: str | None) -> None:
     connection, key = held
     try:
         connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        # Pooled: the next borrower must not go on naming a finished read.
+        connection.execute(text("RESET application_name"))
         connection.commit()
     except Exception:  # noqa: BLE001
         logger.warning("spec catalogue-read lock release failed", exc_info=True)
@@ -343,15 +403,21 @@ def _release_database_lock(token: str | None) -> None:
         connection.close()
 
 
-def _busy():
+def _busy(db: Session | None = None):
     from app.services.error_handler import AppException
 
+    running = None
+    if db is not None:
+        try:
+            running = running_catalogue_read(db)
+        except Exception:  # noqa: BLE001 - the plain sentence still answers
+            logger.warning("could not name the running catalogue read", exc_info=True)
     return AppException(
-        status_code=409, message=CATALOGUE_READ_BUSY, code="spec_catalogue_read_running"
+        status_code=409, message=busy_message(running), code="spec_catalogue_read_running"
     )
 
 
-def _claim(token: str, db: Session | None, refusal) -> None:
+def _claim(token: str, db: Session | None, refusal, label: str | None = None) -> None:
     """Take both halves of the slot for `token`, or raise and hold neither."""
     global _RUNNING_JOB_ID
     with _RUNNING_LOCK:
@@ -360,17 +426,17 @@ def _claim(token: str, db: Session | None, refusal) -> None:
         _RUNNING_JOB_ID = token
     taken = False
     try:
-        taken = db is None or _take_database_lock(token, db)
+        taken = db is None or _take_database_lock(token, db, label)
     finally:
         if not taken:
             with _RUNNING_LOCK:
                 if _RUNNING_JOB_ID == token:
                     _RUNNING_JOB_ID = None
     if not taken:
-        raise _busy()
+        raise _busy(db)
 
 
-def begin_catalogue_read(db: Session | None = None) -> str:
+def begin_catalogue_read(db: Session | None = None, label: str | None = None) -> str:
     """Take the ONE catalogue-read slot for a save's re-read, or refuse with a 409.
 
     A rule save, a rule remove and a preview each read the whole catalogue for one key,
@@ -381,7 +447,7 @@ def begin_catalogue_read(db: Session | None = None) -> str:
     Give the token back with `end_catalogue_read`.
     """
     token = f"save-{uuid.uuid4().hex[:12]}"
-    _claim(token, db, lambda _holder: _busy())
+    _claim(token, db, lambda _holder: _busy(db), label)
     return token
 
 
@@ -407,7 +473,7 @@ def start(spec_key: str, rules: list[dict], db: Session | None = None) -> str:
     def refusal(holder: str):
         # A save holding the slot is not a preview (review N-4): say what is running.
         if holder.startswith("save-"):
-            return _busy()
+            return _busy(db)
         return AppException(
             status_code=409,
             message="A preview is already running. Wait for it to finish.",
@@ -416,7 +482,7 @@ def start(spec_key: str, rules: list[dict], db: Session | None = None) -> str:
         )
 
     job_id = uuid.uuid4().hex[:12]
-    _claim(job_id, db, refusal)
+    _claim(job_id, db, refusal, label=f"{spec_key} (preview)")
 
     _remember(job_id, {"status": "pending", "spec_key": spec_key})
     try:
