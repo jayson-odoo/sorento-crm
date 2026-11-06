@@ -1302,8 +1302,15 @@ class InboundShipmentService:
             query = query.filter(InboundShipment.company_id == company_id)
         return [str(row[0]) for row in query.order_by(InboundShipment.created_at, InboundShipment.id).all()]
 
-    def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
+    def refresh_shipment_line_statuses(self, shipment_id: str, *, trigger: Optional[str] = None) -> None:
         """Recompute and persist line_status for all lines of this shipment (for n8n/API).
+
+        The ONE recompute of a packing list's stored figures. Called by writers
+        directly and, since PACKING-LIST-RECALC, by the `scm_recalc` job every input
+        change queues (`app/services/scm/packing_list_recalc.py`), so it must stay
+        idempotent: a second run over unchanged inputs writes nothing new. When the
+        header status moves, an audit EVENT `packing_list.status_recalculated` records
+        old and new status and what triggered it (`trigger`, default `writer`).
 
         The lines are read off the RELATIONSHIP, never with a direct query on
         `InboundShipmentLine`. The company-scope filter is applied to a statement's
@@ -1340,10 +1347,49 @@ class InboundShipmentService:
             line.spo_allocated_quantity = alloc
             line.quantity_received = recv
             line.line_status = status
+        previous_status = shipment.shipment_status
         shipment.shipment_status = rollup_shipment_status(
             shipment.shipment_status, *line_status_counts(line.line_status for line in lines)
         )
+        if shipment.shipment_status != previous_status:
+            from app.services import audit_service
+
+            audit_service.record(
+                self.db,
+                event="packing_list.status_recalculated",
+                entity_type="inbound_shipments",
+                entity_id=str(shipment.id),
+                old_values={"shipment_status": previous_status},
+                new_values={"shipment_status": shipment.shipment_status},
+                reason=trigger or "writer",
+                description=(
+                    f"Packing list status recalculated automatically: "
+                    f"{previous_status or '-'} to {shipment.shipment_status or '-'}"
+                ),
+                company_id=str(shipment.company_id) if shipment.company_id else None,
+            )
         self.db.commit()
+
+    def stored_figures_stale(self, shipment: InboundShipment) -> bool:
+        """Whether a recompute would change anything stored on this shipment (its lines'
+        figures or its header status). Read-only: the packing list GET asks this and
+        queues the recompute instead of writing inside a read."""
+        lines = list(shipment.shipment_lines)
+        if not lines:
+            return False
+        figures = self.compute_shipment_line_figures(shipment)
+        statuses = []
+        for line in lines:
+            alloc, recv, status = figures[str(line.id)]
+            statuses.append(status)
+            if (
+                int(line.spo_allocated_quantity or 0) != alloc
+                or int(line.quantity_received or 0) != recv
+                or (line.line_status or None) != status
+            ):
+                return True
+        rolled = rollup_shipment_status(shipment.shipment_status, *line_status_counts(statuses))
+        return rolled != shipment.shipment_status
 
     def compute_shipment_line_figures(self, shipment: InboundShipment) -> dict[str, tuple[int, int, str]]:
         """`line id -> (spo_allocated_quantity, quantity_received, line_status)` as

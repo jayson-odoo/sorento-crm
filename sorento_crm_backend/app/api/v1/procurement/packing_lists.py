@@ -269,11 +269,16 @@ def get_packing_list(
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
         from app.services.scm import spo_supply
+        from app.services.scm.packing_list_recalc import dispatch_recalc
 
-        # Refresh and persist line_status so n8n/API always have current value in DB
-        service.refresh_shipment_line_statuses(shipment_id)
-        # Reload shipment so line_status is in memory (refresh committed)
-        shipment = service.get_shipment(shipment_id)
+        # PACKING-LIST-RECALC: this GET reads, it never writes. The stored figures are
+        # kept current by the recompute every input change queues
+        # (`app/services/scm/packing_list_recalc.py`) and the hourly open-container
+        # sweep. Should the stored figures still disagree with what they would be now
+        # (a writer that went around the ORM), queue the same recompute rather than
+        # writing inside a read; the lines below are computed live either way.
+        if shipment is not None and service.stored_figures_stale(shipment):
+            dispatch_recalc([str(shipment.id)])
         # SPO allocated total per product on this shipment. Round 3 N1 (reviewer): this
         # and the related-SPO strip below are a listing, same as every grid
         # PLAN-hide-retired-spo-lines already hides a retired line from - a retired
