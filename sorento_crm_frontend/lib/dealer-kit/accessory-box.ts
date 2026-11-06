@@ -39,6 +39,25 @@ export const ACCESSORY_DEFAULT_BOX_MM = { width_mm: 60, height_mm: 60 };
 const HEADER_EM_PER_CHAR = 0.72;
 const HEADER_MIN_PT = 3;
 
+/** Average advance of a regular-weight character, in em (spec lines, LP). */
+const LINE_EM_PER_CHAR = 0.6;
+const LINE_MIN_PT = 3;
+
+/** The width (mm) a card line takes at `fontSize_pt`, as the layout estimates it. */
+export function estimateLineWidth(text: string, fontSize_pt: number, bold: boolean): number {
+  return text.trim().length * (bold ? HEADER_EM_PER_CHAR : LINE_EM_PER_CHAR) * fontSize_pt * PT_TO_MM;
+}
+
+/**
+ * The font size (pt) a card line prints at: its set size when it fits `width_mm`, else shrunk to
+ * fit (crew pass 3: no ellipsis on a tag, the header rule). Canvas and print both call this.
+ */
+export function fitLinePt(text: string, width_mm: number, basePt: number, bold: boolean): number {
+  const needed = estimateLineWidth(text, basePt, bold);
+  if (!(needed > width_mm) || needed <= 0) return basePt;
+  return Math.max(LINE_MIN_PT, (basePt * Math.max(0, width_mm)) / needed);
+}
+
 /** The width (mm) the header text takes at `fontSize_pt`, as the layout estimates it. */
 export function estimateHeaderWidth(text: string, fontSize_pt: number): number {
   return text.trim().length * HEADER_EM_PER_CHAR * fontSize_pt * PT_TO_MM;

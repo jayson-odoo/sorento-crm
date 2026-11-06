@@ -15,6 +15,8 @@ import {
   accessoryCardInner,
   accessoryCardLines,
   estimateHeaderWidth,
+  estimateLineWidth,
+  fitLinePt,
   accessoryHeaderHeight,
   accessoryLineCount,
   sampleAccessories,
@@ -396,6 +398,24 @@ describe('the header shrinks, never truncates', () => {
     expect(out.header!.fontSize_pt).toBeLessThan(9);
     expect(estimateHeaderWidth('ACCESSORIES INCLUDED', out.header!.fontSize_pt)).toBeLessThanOrEqual(
       out.header!.width_mm + 1e-9,
+    );
+  });
+});
+
+describe('card lines shrink, never truncate (crew pass 3: "PULL OUT DR..." at 60 mm)', () => {
+  it('keeps the set size when the line fits', () => {
+    expect(fitLinePt('DRAINER', 40, 8, true)).toBe(8);
+  });
+
+  it('shrinks a long name into its line width', () => {
+    const pt = fitLinePt('PULL OUT DRAINER', 24, 8, true);
+    expect(pt).toBeLessThan(8);
+    expect(estimateLineWidth('PULL OUT DRAINER', pt, true)).toBeLessThanOrEqual(24 + 1e-9);
+  });
+
+  it('a regular-weight line uses the narrower average and shrinks less', () => {
+    expect(fitLinePt('390x300x140, Depth: 160mm', 30, 6.5, false)).toBeGreaterThan(
+      fitLinePt('390x300x140, Depth: 160mm', 30, 6.5, true),
     );
   });
 });

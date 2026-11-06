@@ -50,6 +50,7 @@ import {
   accessoryCardInner,
   accessoryCardLines,
   accessoryLineCount,
+  fitLinePt,
   ptToMm,
   sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
@@ -1256,11 +1257,17 @@ function AccessoriesContent({
                   fontStyle={n === 0 ? 'bold' : 'normal'}
                   fontFamily={fontFamily}
                   fontSize={px(
-                    ptToMm(n === 0 ? props.nameFontSize : props.specFontSize),
+                    ptToMm(
+                      fitLinePt(
+                        texts[n],
+                        line.width_mm,
+                        n === 0 ? props.nameFontSize : props.specFontSize,
+                        n === 0,
+                      ),
+                    ),
                   )}
                   fill={props.textColor}
                   wrap="none"
-                  ellipsis
                 />
               ) : null,
             )}

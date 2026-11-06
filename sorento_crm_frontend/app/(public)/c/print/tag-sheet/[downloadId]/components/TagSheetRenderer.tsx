@@ -66,6 +66,7 @@ import {
   accessoryCardInner,
   accessoryCardLines,
   accessoryLineCount,
+  fitLinePt,
 } from '@/lib/dealer-kit/accessory-box';
 import { subjectSpecs } from '@/lib/dealer-kit/product-block';
 
@@ -1447,12 +1448,17 @@ function renderAccessoriesLayer(
                     lineHeight: `${line.height_mm}mm`,
                     textAlign: inner.align,
                     fontWeight: n === 0 ? 700 : 400,
-                    fontSize: `${n === 0 ? props.nameFontSize : props.specFontSize}pt`,
+                    // Shrunk to fit by `fitLinePt`, the canvas's own rule: never an ellipsis.
+                    fontSize: `${fitLinePt(
+                      texts[n],
+                      line.width_mm,
+                      n === 0 ? props.nameFontSize : props.specFontSize,
+                      n === 0,
+                    )}pt`,
                     color: props.textColor,
                     whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
                   }}
+                  data-testid="accessories-line"
                 >
                   {texts[n]}
                 </div>
