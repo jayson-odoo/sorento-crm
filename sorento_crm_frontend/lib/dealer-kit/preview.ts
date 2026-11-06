@@ -133,7 +133,8 @@ function blockLabel(group: TagLayer, children: TagLayer[], ordinal: number): str
  * specs with no slot of its own (PRICETAG-DESIGNER-GAPS item 3).
  */
 function readsProduct(layer: TagLayer): boolean {
-  if (layer.props.kind === 'feature_icons') return true;
+  // PRICETAG-ACCESSORIES: an Accessories box reads the product's (or combo's) own list.
+  if (layer.props.kind === 'feature_icons' || layer.props.kind === 'accessories') return true;
   return layer.slot_binding !== null && PRODUCT_SLOTS.includes(layer.slot_binding);
 }
 
@@ -202,5 +203,12 @@ export function previewBindingFor(
   if (owner) return previews[owner.id];
 
   if (!readsProduct(layer)) return undefined;
-  return previews[WHOLE_TAG_BLOCK_ID];
+  const whole = previews[WHOLE_TAG_BLOCK_ID];
+  if (whole || layer.props.kind !== 'accessories') return whole;
+  // PRICETAG-ACCESSORIES (crew pass 4, 6 Nov): a loose Accessories box sits beside the product
+  // block rather than inside it, and previewing that block's product must show THAT product's
+  // own list, not sample cards. Only when exactly one block is previewed: two at once leave it
+  // ambiguous, and the box keeps to the whole-tag eye.
+  const blocks = Object.values(previews);
+  return blocks.length === 1 ? blocks[0] : undefined;
 }

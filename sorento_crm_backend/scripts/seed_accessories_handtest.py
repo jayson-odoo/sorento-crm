@@ -15,6 +15,9 @@ WHAT IT CREATES (company SRT by default; every name ends in "(hand test)" so it 
   "390x300x140, Depth: 160mm" when it has none).
 * SRTKS7061-BL "Kitchen sink with 2 taps (hand test)": fixed parts = both taps; same Free items.
 * SRTWB7065 "Basin with tap (hand test)": fixed part = SRTWT7202; Free items = product SRTW5000.
+* Library accessory COLANDER with the spec "390x300x140, Depth: 160mm" and a drawn picture, when
+  it has none (crew pass 4: the owner should see a picture on a card). A picture that cannot be
+  stored (no storage access on the copy) is reported and skipped; nothing else depends on it.
 
 Idempotent: a combo that exists by host + name is reused, a missing part is added, and the Free
 items list is set to exactly the above. Nothing else is touched.
@@ -53,6 +56,25 @@ JOB_ID = "seed_accessories_handtest"
 SINK = "SRTKS7061-BL"
 BASIN, BASIN_TAP, WASTE = "SRTWB7065", "SRTWT7202", "SRTW5000"
 DRAINER_SPEC = "390x300x140, Depth: 160mm"
+COLANDER_SPEC = "390x300x140, Depth: 160mm"
+
+
+def colander_png() -> bytes:
+    """A small drawn colander (grey bowl with holes), so a card has a real picture to show."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (240, 160), "white")
+    draw = ImageDraw.Draw(image)
+    draw.polygon([(30, 40), (210, 40), (185, 140), (55, 140)], fill=(214, 218, 224), outline=(75, 85, 99))
+    draw.rectangle([10, 30, 230, 44], fill=(156, 163, 175), outline=(75, 85, 99))
+    for x in range(70, 180, 22):
+        for y in (70, 98, 122):
+            draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill=(107, 114, 128))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 DEV_ENVIRONMENTS = {"development", "dev", "local", "test", "testing", "staging"}
 
 
@@ -135,6 +157,23 @@ def seed(db, company_id: str, taps: list[str], apply: bool, out: TextIO) -> int:
             items.append({"accessory_id": row.id})
         db.flush()
         accessories.set_combo_list(combo_id, items)
+
+    out.write(f'ensure accessory COLANDER: spec "{COLANDER_SPEC}" and a picture when it has none\n')
+    if apply:
+        colander = accessories.find_or_create("COLANDER", company_id)
+        if not colander.spec:
+            colander.spec = COLANDER_SPEC
+        db.flush()
+        db.commit()
+        if not colander.image_attachment_id:
+            try:
+                accessories.upload_image(
+                    colander.id, content=colander_png(), filename="colander.png",
+                    content_type="image/png", user_id=None,
+                )
+            except Exception as exc:  # noqa: BLE001 - storage on a copy may be unreachable
+                db.rollback()
+                out.write(f"COLANDER picture not stored ({exc}); upload one in the app instead\n")
     if not apply:
         out.write("dry run: nothing written (add --apply)\n")
     return 0

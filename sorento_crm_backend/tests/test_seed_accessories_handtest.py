@@ -148,3 +148,37 @@ def test_cleanup_removes_hand_test_combos_and_unused_crew_pass_accessories(db):
     assert db.query(Accessory).filter(Accessory.name == "crew-pass-used").count() == 1
     assert "keep accessory \"crew-pass-used\"" in out.getvalue()
     assert db.query(Accessory).filter(Accessory.name == "DRAINER").count() == 1, "library rows stay"
+
+
+def test_apply_gives_colander_its_spec_and_a_picture(db, monkeypatch):
+    from app.models.accessory import Accessory
+    from app.services import accessory_service, storage_router
+    from tests._fake_storage import FakeStorage
+
+    fake = FakeStorage()
+    for module in (storage_router, accessory_service):
+        monkeypatch.setattr(module, "default_provider", lambda: "s3")
+        monkeypatch.setattr(module, "get_backend", lambda provider: fake)
+        monkeypatch.setattr(module, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
+    _products(db)
+    code, _ = _run(db, apply=True)
+    assert code == 0
+    colander = db.query(Accessory).filter(Accessory.name == "COLANDER").one()
+    assert colander.spec == "390x300x140, Depth: 160mm"
+    assert colander.image_attachment_id is not None
+    assert len(fake.objects) == 1
+
+
+def test_a_picture_that_cannot_be_stored_is_reported_and_the_rest_stands(db, monkeypatch):
+    from app.models.product_combo import ProductCombo
+    from app.services import accessory_service
+
+    def broken(provider):
+        raise RuntimeError("no storage credentials")
+
+    monkeypatch.setattr(accessory_service, "get_backend", broken)
+    rows = _products(db)
+    code, text = _run(db, apply=True)
+    assert code == 0
+    assert "COLANDER picture not stored" in text
+    assert db.query(ProductCombo).filter(ProductCombo.host_product_id == rows["SRTWB7065"].id).count() == 1
