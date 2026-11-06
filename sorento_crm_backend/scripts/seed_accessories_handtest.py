@@ -23,6 +23,10 @@ USAGE
 -----
   python scripts/seed_accessories_handtest.py                 # dry run: says what it would do
   python scripts/seed_accessories_handtest.py --apply         # write (dev ENVIRONMENT only)
+  python scripts/seed_accessories_handtest.py --cleanup --apply
+      # after the hand test: deletes every combo named "... (hand test)" on SRTKS7061-BL and
+      # SRTWB7065, and every UNUSED library accessory named "crew-pass-..." (a used one is
+      # listed, never deleted). Library accessories the migration made are never touched.
   --taps SRTWT7202,SRTKT1632SS   the sink's two taps (default shown); --company SRT
 """
 from __future__ import annotations
@@ -136,9 +140,49 @@ def seed(db, company_id: str, taps: list[str], apply: bool, out: TextIO) -> int:
     return 0
 
 
+def cleanup(db, company_id: str, apply: bool, out: TextIO) -> int:
+    """Remove what the hand test leaves behind (crew pass 2, 6 Nov)."""
+    from app.models.accessory import Accessory
+
+    combos = ProductComboService(db)
+    accessories = AccessoryService(db)
+    hosts = [row for row in (_product(db, code, company_id) for code in (SINK, BASIN)) if row is not None]
+    rows = (
+        db.query(ProductCombo)
+        .filter(
+            ProductCombo.host_product_id.in_([host.id for host in hosts]),
+            ProductCombo.name.like("%(hand test)"),
+        )
+        .all()
+        if hosts
+        else []
+    )
+    for combo in rows:
+        out.write(f'delete combo "{combo.name}" on {combo.host_product.product_code}\n')
+        if apply:
+            combos.delete(combo.id)
+    leftovers = (
+        db.query(Accessory)
+        .filter(Accessory.company_id == company_id, func.lower(Accessory.name).like("crew-pass-%"))
+        .all()
+    )
+    for item in leftovers:
+        counts = accessories._counts([item.id]).get(item.id, (0, 0))
+        if counts != (0, 0):
+            out.write(f'keep accessory "{item.name}": still used on {counts[0]} products, {counts[1]} combos\n')
+            continue
+        out.write(f'delete accessory "{item.name}"\n')
+        if apply:
+            accessories.delete(item.id)
+    if not apply:
+        out.write("dry run: nothing deleted (add --apply)\n")
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
+    parser.add_argument("--cleanup", action="store_true", help="remove the hand-test combos and crew-pass accessories")
     parser.add_argument("--company", default="SRT", help="company code (default SRT)")
     parser.add_argument("--taps", default="SRTWT7202,SRTKT1632SS", help="the sink's taps, comma separated")
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -167,7 +211,10 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         stamp_actor(AuditActor(actor_type="system", job_id=JOB_ID), db=db)
         try:
             with company_scope(db, frozenset({company.id})):
-                code = seed(db, company.id, taps, args.apply, out)
+                if args.cleanup:
+                    code = cleanup(db, company.id, args.apply, out)
+                else:
+                    code = seed(db, company.id, taps, args.apply, out)
             if code == 0 and args.apply:
                 db.commit()
             else:

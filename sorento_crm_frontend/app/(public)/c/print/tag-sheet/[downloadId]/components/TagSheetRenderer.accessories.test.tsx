@@ -113,3 +113,15 @@ describe('TagSheetRenderer, accessories box', () => {
     expect(text).toContain('LP: RM 68');
   });
 });
+
+describe('TagSheetRenderer, header at 45 mm (crew pass 2)', () => {
+  it('prints the whole header at the layout font size, never an ellipsis', () => {
+    renderIt(docWith(80), resolved(THREE));
+    const header = screen.getByTestId('accessories-header');
+    expect(header.textContent).toBe('ACCESSORIES INCLUDED');
+    const box = accessoryBoxLayout(3, defaultAccessoriesProps(), 45, 80, 2);
+    expect(header.style.fontSize).toBe(`${box.header!.fontSize_pt}pt`);
+    expect(header.style.textOverflow).toBe('');
+    expect(header.style.overflow).toBe('');
+  });
+});

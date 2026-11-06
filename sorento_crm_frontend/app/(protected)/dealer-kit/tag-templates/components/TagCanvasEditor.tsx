@@ -237,7 +237,11 @@ import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
 import { useAccessoryDropToast, useFeatureIconDropToast } from './useFeatureIconDropToast';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
-import { accessoryBoxLayout, accessoryLineCount } from '@/lib/dealer-kit/accessory-box';
+import {
+  ACCESSORY_DEFAULT_BOX_MM,
+  accessoryBoxLayout,
+  accessoryLineCount,
+} from '@/lib/dealer-kit/accessory-box';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -1187,7 +1191,11 @@ export function TagCanvasEditor({
   // PRICETAG-ACCESSORIES: one data-driven box replaces the static accessories strip.
   const handleAddAccessories = useCallback(() => {
     addLayer({
-      ...makeBaseLayer('accessories', 45, 40),
+      ...makeBaseLayer(
+        'accessories',
+        ACCESSORY_DEFAULT_BOX_MM.width_mm,
+        ACCESSORY_DEFAULT_BOX_MM.height_mm,
+      ),
       props: defaultAccessoriesProps(),
     });
   }, [addLayer, makeBaseLayer]);

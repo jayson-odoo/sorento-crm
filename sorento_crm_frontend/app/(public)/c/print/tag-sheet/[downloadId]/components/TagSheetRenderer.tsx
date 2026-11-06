@@ -1390,12 +1390,12 @@ function renderAccessoriesLayer(
             lineHeight: `${box.header.height_mm}mm`,
             textAlign: 'center',
             fontWeight: 700,
-            fontSize: `${props.headerFontSize}pt`,
+            fontSize: `${box.header.fontSize_pt}pt`,
             color: props.headerColor,
+            // Shrunk to fit by the layout, never cut with an ellipsis (crew pass 2).
             whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
           }}
+          data-testid="accessories-header"
         >
           {props.headerText}
         </div>

@@ -118,3 +118,33 @@ def test_apply_is_refused_outside_a_dev_environment(monkeypatch):
     out = io.StringIO()
     assert script.main(["--apply"], db=object(), out=out) == 1
     assert "refused" in out.getvalue()
+
+
+def test_cleanup_removes_hand_test_combos_and_unused_crew_pass_accessories(db):
+    from app.models.accessory import Accessory, ProductAccessory
+    from app.models.product_combo import ProductCombo
+    from scripts.seed_accessories_handtest import cleanup
+
+    rows = _products(db)
+    _run(db, apply=True)
+    other = seed.combo(db, rows["SRTKS7061-BL"], "Kept real combo")
+    unused = Accessory(name="crew-pass-2211b-acc", company_id=seed.SORENTO)
+    used = Accessory(name="crew-pass-used", company_id=seed.SORENTO)
+    db.add_all([unused, used])
+    db.flush()
+    db.add(ProductAccessory(product_id=rows["SRTKS7846"].id if "SRTKS7846" in rows else rows["SRTWB7065"].id, accessory_id=used.id, sort_order=0))
+    db.flush()
+
+    out = io.StringIO()
+    assert cleanup(db, seed.SORENTO, apply=False, out=out) == 0
+    assert db.query(ProductCombo).filter(ProductCombo.name.like("%(hand test)")).count() == 3
+
+    out = io.StringIO()
+    assert cleanup(db, seed.SORENTO, apply=True, out=out) == 0
+    db.expire_all()
+    assert db.query(ProductCombo).filter(ProductCombo.name.like("%(hand test)")).count() == 0
+    assert db.query(ProductCombo).filter(ProductCombo.id == other.id).count() == 1
+    assert db.query(Accessory).filter(Accessory.name == "crew-pass-2211b-acc").count() == 0
+    assert db.query(Accessory).filter(Accessory.name == "crew-pass-used").count() == 1
+    assert "keep accessory \"crew-pass-used\"" in out.getvalue()
+    assert db.query(Accessory).filter(Accessory.name == "DRAINER").count() == 1, "library rows stay"

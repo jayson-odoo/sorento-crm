@@ -25,6 +25,25 @@ export const ACCESSORY_CARD_PAD_MM = 0.8;
 const PT_TO_MM = 0.3528;
 const LINE = 1.2;
 
+/** A horizontal card narrows to fit more cards in the box, but never below this (crew pass 2). */
+export const ACCESSORY_MIN_CARD_WIDTH_MM = 16;
+
+/**
+ * The size a new "Accessories" box is added at: fits the owner's examples on a 148 x 105 mm tag,
+ * 3 stacked cards (product entries included) or a row of 3 (crew pass 2, 6 Nov: 45 x 40 held 2).
+ */
+export const ACCESSORY_DEFAULT_BOX_MM = { width_mm: 60, height_mm: 60 };
+
+/** Average advance of a bold capital, in em: deliberately generous, so an estimate that errs
+ *  leaves room rather than overflowing. */
+const HEADER_EM_PER_CHAR = 0.72;
+const HEADER_MIN_PT = 3;
+
+/** The width (mm) the header text takes at `fontSize_pt`, as the layout estimates it. */
+export function estimateHeaderWidth(text: string, fontSize_pt: number): number {
+  return text.trim().length * HEADER_EM_PER_CHAR * fontSize_pt * PT_TO_MM;
+}
+
 // ---------------------------------------------------------------------------
 // Which list (A3)
 // ---------------------------------------------------------------------------
@@ -111,7 +130,7 @@ export interface AccessoryBoxLayout {
   boxWidth_mm: number;
   boxHeight_mm: number;
   /** The header band (inside the frame, above the cards); null with no header text. */
-  header: AccessoryRect | null;
+  header: (AccessoryRect & { fontSize_pt: number }) | null;
   /** The round "+" badge, null when switched off. */
   badge: AccessoryRect | null;
 }
@@ -230,17 +249,16 @@ export function accessoryBoxLayout(
   const cards: AccessoryRect[] = [];
   if (props.direction === 'horizontal') {
     if (top + h > boxHeight_mm - pad + EPS) return empty(total);
-    while (
-      cards.length < total &&
-      pad + (cards.length + 1) * w + cards.length * gap <=
-        boxWidth_mm - pad + EPS
-    ) {
-      cards.push({
-        x_mm: pad + cards.length * (w + gap),
-        y_mm: top,
-        width_mm: w,
-        height_mm: h,
-      });
+    // Every card the same width (card Q-M2 (a)): the set width when it fits, else narrowed so more
+    // whole cards fit, never below the minimum (or the set width, if that is smaller).
+    const inner = boxWidth_mm - 2 * pad;
+    const floor = Math.min(w, ACCESSORY_MIN_CARD_WIDTH_MM);
+    const widthFor = (n: number) => Math.min(w, (inner - (n - 1) * gap) / n);
+    let n = total;
+    while (n > 0 && widthFor(n) < floor - EPS) n -= 1;
+    const cardW = n > 0 ? widthFor(n) : 0;
+    for (let i = 0; i < n; i += 1) {
+      cards.push({ x_mm: pad + i * (cardW + gap), y_mm: top, width_mm: cardW, height_mm: h });
     }
   } else {
     while (
@@ -272,6 +290,13 @@ export function accessoryBoxLayout(
   // The header clears the badge (crew pass, 6 Nov: at 45 mm the "+" hid the first letter): the same
   // inset on both sides, so the text stays centred in the box.
   const headerInset = props.showBadge ? pad * 0.5 + badgeSize + 0.5 : pad;
+  const headerW = Math.max(0, outW - 2 * headerInset);
+  // Shrink to fit, never truncate (crew pass 2: "ACCESSORIES I..." at 45 mm).
+  const textW = estimateHeaderWidth(props.headerText ?? '', props.headerFontSize);
+  const headerPt =
+    textW > headerW && textW > 0
+      ? Math.max(HEADER_MIN_PT, (props.headerFontSize * headerW) / textW)
+      : props.headerFontSize;
   return {
     cards,
     shown,
@@ -283,8 +308,9 @@ export function accessoryBoxLayout(
         ? {
             x_mm: headerInset,
             y_mm: pad * 0.5,
-            width_mm: Math.max(0, outW - 2 * headerInset),
+            width_mm: headerW,
             height_mm: headerH,
+            fontSize_pt: headerPt,
           }
         : null,
     badge: props.showBadge

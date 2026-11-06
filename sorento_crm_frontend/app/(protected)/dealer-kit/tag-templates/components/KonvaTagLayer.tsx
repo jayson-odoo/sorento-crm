@@ -1209,10 +1209,9 @@ function AccessoriesContent({
           verticalAlign="middle"
           fontStyle="bold"
           fontFamily={fontFamily}
-          fontSize={px(ptToMm(props.headerFontSize))}
+          fontSize={px(ptToMm(box.header.fontSize_pt))}
           fill={props.headerColor}
           wrap="none"
-          ellipsis
         />
       )}
       {box.cards.map((card, i) => {

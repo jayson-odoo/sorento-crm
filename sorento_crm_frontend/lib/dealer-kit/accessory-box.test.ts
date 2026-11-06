@@ -8,10 +8,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ACCESSORY_BOX_PAD_MM,
+  ACCESSORY_MIN_CARD_WIDTH_MM,
   accessoriesOf,
   accessoryBoxLayout,
+  ACCESSORY_DEFAULT_BOX_MM,
   accessoryCardInner,
   accessoryCardLines,
+  estimateHeaderWidth,
   accessoryHeaderHeight,
   accessoryLineCount,
   sampleAccessories,
@@ -201,12 +204,14 @@ describe('accessoryBoxLayout', () => {
     expect(out.boxHeight_mm).toBe(40);
   });
 
-  it('too many: only whole cards, the rest counted as dropped (A6)', () => {
+  it('too many: only whole cards, never narrower than the minimum, the rest dropped (A6)', () => {
     const p = props({ direction: 'horizontal', cardWidth_mm: 25, gap_mm: 2 });
-    // 3 whole cards need 2*pad + 75 + 4; a box of 85 holds exactly 3 when pad <= 3.
-    const out = accessoryBoxLayout(5, p, 2 * ACCESSORY_BOX_PAD_MM + 25 * 3 + 2 * 2 + 1, 40);
+    // At the minimum card width, 3 cards need 2*pad + 3*min + 2*gap; one mm more still holds 3.
+    const width = 2 * ACCESSORY_BOX_PAD_MM + 3 * ACCESSORY_MIN_CARD_WIDTH_MM + 2 * 2 + 1;
+    const out = accessoryBoxLayout(5, p, width, 40);
     expect(out).toMatchObject({ shown: 3, dropped: 2 });
     expect(out.cards).toHaveLength(3);
+    for (const card of out.cards) expect(card.width_mm).toBeGreaterThanOrEqual(ACCESSORY_MIN_CARD_WIDTH_MM);
     for (const card of out.cards) {
       expect(card.x_mm + card.width_mm).toBeLessThanOrEqual(out.boxWidth_mm + 1e-9);
     }
@@ -341,5 +346,56 @@ describe('header beside the "+" badge (crew pass 6 Nov: "CCESSORIES INCLUDED" at
     const out = accessoryBoxLayout(1, props({ showBadge: false }), 45, 60);
     expect(out.header!.x_mm).toBeCloseTo(ACCESSORY_BOX_PAD_MM);
     expect(out.header!.width_mm).toBeCloseTo(45 - 2 * ACCESSORY_BOX_PAD_MM);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Crew pass 2 (6 Nov): defaults fit the owner's examples; the header never truncates
+// ---------------------------------------------------------------------------
+
+const ENTRY = (n: number): TagAccessory => ({ id: `e${n}`, name: `ITEM ${n}`, spec: 'Spec line', image: null });
+const PRODUCT_ENTRY: TagAccessory = {
+  kind: 'product', id: 'p', name: 'Popup Waste 80mm (w/o Overflow) Brass', spec: null, image: null, code: 'SRTW5000', list_price: 68,
+};
+
+describe('the default box', () => {
+  it('fits 3 vertical cards, also with a product entry (3-line cards)', () => {
+    const p = props({ direction: 'vertical' });
+    const { width_mm, height_mm } = ACCESSORY_DEFAULT_BOX_MM;
+    expect(accessoryBoxLayout(3, p, width_mm, height_mm, 2)).toMatchObject({ shown: 3, dropped: 0 });
+    const mixed = [ENTRY(1), ENTRY(2), PRODUCT_ENTRY];
+    expect(
+      accessoryBoxLayout(3, p, width_mm, height_mm, accessoryLineCount(mixed)),
+    ).toMatchObject({ shown: 3, dropped: 0 });
+  });
+
+  it('fits 3 horizontal cards (the 2-tap row and more), cards narrowing to fit', () => {
+    const p = props({ direction: 'horizontal' });
+    const { width_mm, height_mm } = ACCESSORY_DEFAULT_BOX_MM;
+    expect(accessoryBoxLayout(2, p, width_mm, height_mm, 2)).toMatchObject({ shown: 2, dropped: 0 });
+    const three = accessoryBoxLayout(3, p, width_mm, height_mm, 3);
+    expect(three).toMatchObject({ shown: 3, dropped: 0 });
+    expect(three.boxWidth_mm).toBeLessThanOrEqual(width_mm + 1e-9);
+  });
+
+  it('a narrow horizontal box keeps the set card width when it fits', () => {
+    const out = accessoryBoxLayout(2, props({ direction: 'horizontal', cardWidth_mm: 26 }), 200, 40);
+    expect(out.cards.map((c) => c.width_mm)).toEqual([26, 26]);
+  });
+});
+
+describe('the header shrinks, never truncates', () => {
+  it('keeps the set size when the text fits', () => {
+    const out = accessoryBoxLayout(1, props({ headerText: 'FREE', headerFontSize: 9 }), 60, 60);
+    expect(out.header!.fontSize_pt).toBe(9);
+  });
+
+  it('shrinks ACCESSORIES INCLUDED to fit a 45 mm box beside the badge', () => {
+    const p = props({ headerText: 'ACCESSORIES INCLUDED', headerFontSize: 9, showBadge: true });
+    const out = accessoryBoxLayout(1, p, 45, 60);
+    expect(out.header!.fontSize_pt).toBeLessThan(9);
+    expect(estimateHeaderWidth('ACCESSORIES INCLUDED', out.header!.fontSize_pt)).toBeLessThanOrEqual(
+      out.header!.width_mm + 1e-9,
+    );
   });
 });
