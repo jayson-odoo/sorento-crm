@@ -17,7 +17,7 @@ import { describe, expect, it } from 'vitest';
 import TagSheetRenderer, {
   type ResolvedLineData,
 } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
-import type { TagBindingData, TagLayer } from './tag-template-types';
+import type { TagBindingData } from './tag-template-types';
 import { layerDisplayName, layerRichBlocks, layerText } from './product-block';
 import type { RichRun } from './rich-text';
 import { richTextLayer, tagSheetDocWith } from './rich-text.e1.fixture';
@@ -154,5 +154,15 @@ describe('back-compatible: plain content and plain readers', () => {
     const name = layerDisplayName(richTextLayer('<p><strong>{{product.code}}</strong> big</p>'));
     expect(name).not.toContain('<');
     expect(name.startsWith('{{product.code}} big')).toBe(true);
+  });
+});
+
+describe('other plain readers of a formatted layer', () => {
+  it('copied layers put their words on the clipboard, not their markup', async () => {
+    const { copiedLayersText } = await import('./clipboard-paste');
+    expect(copiedLayersText([richTextLayer('<p><strong>{{product.code}}</strong></p><p>LP</p>')])).toBe(
+      '{{product.code}}\nLP',
+    );
+    expect(copiedLayersText([richTextLayer('plain\ntext')])).toBe('plain\ntext');
   });
 });

@@ -200,34 +200,53 @@ describe('right-click keeps a multi-selection (owner bug, 6 Nov)', () => {
   });
 
   it('an unselected text under the frame: the layer Konva hit is selected, not the frame', () => {
-    const onChange = vi.fn();
+    const onLayersChange = vi.fn();
     const { container } = render(
-      <TagCanvasEditor doc={doc(text('a', 5, 1), text('b', 40, 2), frame())} onChange={onChange} />,
+      <TagCanvasEditor
+        doc={doc(text('a', 5, 1), text('b', 40, 2), frame())}
+        onChange={vi.fn()}
+        onLayersChange={onLayersChange}
+      />,
     );
     konvaHit = 'a';
     rightClick(container, INSIDE_A);
     // The frame and the text share one menu, so read the selection off what Bring to Front moves.
     fireEvent.click(screen.getByRole('menuitem', { name: /Bring to Front/ }));
-    const last = onChange.mock.calls.at(-1)![0] as TagTemplateDoc;
-    const z = (id: string) => last.layers.find((l) => l.id === id)!.z_index;
+    const last = onLayersChange.mock.calls.at(-1)![0] as TagLayer[];
+    const z = (id: string) => last.find((l) => l.id === id)!.z_index;
     expect(z('a')).toBeGreaterThan(z('frame'));
   });
 
-  it('right-click on empty canvas keeps the selection (Cmd+G then groups both)', () => {
-    setPlatform('MacIntel');
-    const onChange = vi.fn();
+  it('right-click on empty canvas keeps the selection', () => {
     const { container } = render(
-      <TagCanvasEditor doc={doc(text('a', 5, 1), text('b', 40, 2))} onChange={onChange} />,
+      <TagCanvasEditor doc={doc(text('a', 5, 1), text('b', 40, 2))} onChange={vi.fn()} />,
     );
     fireEvent.click(screen.getByTestId('layer-a'));
     fireEvent.click(screen.getByTestId('layer-b'));
+
     rightClick(container, EMPTY);
-    fireEvent.keyDown(document.body, { key: 'Escape' });
+    rightClick(container, INSIDE_A);
+
+    expect(isDisabled(groupItem())).toBe(false);
+  });
+
+  it('Cmd+G groups a multi-selection on macOS', () => {
+    setPlatform('MacIntel');
+    const onLayersChange = vi.fn();
+    render(
+      <TagCanvasEditor
+        doc={doc(text('a', 5, 1), text('b', 40, 2))}
+        onChange={vi.fn()}
+        onLayersChange={onLayersChange}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('layer-a'));
+    fireEvent.click(screen.getByTestId('layer-b'));
 
     fireEvent.keyDown(window, { key: 'g', metaKey: true });
 
-    const last = onChange.mock.calls.at(-1)![0] as TagTemplateDoc;
-    const group = last.layers.find((l) => l.props.kind === 'group');
+    const last = onLayersChange.mock.calls.at(-1)![0] as TagLayer[];
+    const group = last.find((l) => l.props.kind === 'group');
     expect(group).toBeDefined();
     expect(group!.props.kind === 'group' && [...group!.props.children].sort()).toEqual(['a', 'b']);
   });

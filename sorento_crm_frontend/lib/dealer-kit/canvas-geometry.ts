@@ -646,16 +646,14 @@ export function hitLayerAt(
   y_mm: number,
   entered: Set<string>,
 ): string | null {
-  // A z tie goes to the LATER layer, the one the canvas draws on top (DESIGNER-RICH-TEXT).
-  const hit = layers
-    .map((layer, index) => ({ layer, index }))
+  const hit = [...layers]
     .filter(
-      ({ layer }) =>
+      (layer) =>
         selectable(layer) &&
         contains(layer, x_mm, y_mm) &&
         !(layer.props.kind === 'group' && entered.has(layer.id)),
     )
-    .sort((a, b) => b.layer.z_index - a.layer.z_index || b.index - a.index)[0]?.layer;
+    .sort((a, b) => b.z_index - a.z_index)[0];
   if (!hit) return null;
 
   const chain = [...ancestorsOf(layers, hit.id)].reverse();

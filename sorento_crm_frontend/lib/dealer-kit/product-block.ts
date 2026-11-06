@@ -749,8 +749,7 @@ function resolvedRun(
 /** A data run under a token's marks: every mark the data set itself wins, the token's marks are
  * the default for the rest (crew ruling (a), DESIGNER-RICH-TEXT 6 Nov). */
 function underTokenMarks(token: RichRun, own: RichRun): RichRun {
-  const { text: _ignored, ...marks } = token;
-  const out: RichRun = { ...marks, text: own.text };
+  const out: RichRun = { ...token, text: own.text };
   for (const key of ['bold', 'italic', 'underline', 'strike', 'code'] as const) {
     if (own[key]) out[key] = true;
   }

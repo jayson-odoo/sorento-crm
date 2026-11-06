@@ -646,6 +646,8 @@ function TextInspector({
       ? layer.text_override ?? resolvedText ?? props.text
       : props.text;
 
+  const contentLabelId = useId();
+
   const handleContent = (value: string) => {
     if (bound) onUpdate({ text_override: value });
     else onChange({ ...props, text: value });
@@ -659,7 +661,9 @@ function TextInspector({
       <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Content</Label>
+            <Label id={contentLabelId} className="text-xs text-muted-foreground">
+              Content
+            </Label>
             <div className="flex items-center gap-1">
               {overridden && (
                 <Button
@@ -689,6 +693,7 @@ function TextInspector({
           </div>
           {descriptionBound ? (
             <textarea
+              aria-labelledby={contentLabelId}
               className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
               value={shown}
               readOnly
@@ -706,6 +711,7 @@ function TextInspector({
               value={toEditorHtml(shown)}
               onChange={(html) => handleContent(contentFromEditorHtml(html))}
               onEditorReady={onContentEditorReady}
+              aria-labelledby={contentLabelId}
             />
           )}
           {overridden && !dynamic && (

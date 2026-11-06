@@ -50,8 +50,8 @@ export function selectionTarget(layers: TagLayer[], id: string, entered: Set<str
 }
 
 /**
- * Every selectable layer whose box holds the point, as the id a click would select, top first.
- * A z tie is broken the way the canvas draws it (stable sort: the later layer is on top).
+ * Every selectable layer whose box holds the point, as the id a click would select, top first
+ * (the same order `hitLayerAt` picks its one layer from).
  */
 export function layersAt(
   layers: TagLayer[],
@@ -59,18 +59,17 @@ export function layersAt(
   y_mm: number,
   entered: Set<string>,
 ): string[] {
-  const hits = layers
-    .map((layer, index) => ({ layer, index }))
+  const hits = [...layers]
     .filter(
-      ({ layer }) =>
+      (layer) =>
         layer.visible &&
         !layer.locked &&
         contains(layer, x_mm, y_mm) &&
         !(layer.props.kind === 'group' && entered.has(layer.id)),
     )
-    .sort((a, b) => b.layer.z_index - a.layer.z_index || b.index - a.index);
+    .sort((a, b) => b.z_index - a.z_index);
   const out: string[] = [];
-  for (const { layer } of hits) {
+  for (const layer of hits) {
     const id = selectionTarget(layers, layer.id, entered);
     if (!out.includes(id)) out.push(id);
   }

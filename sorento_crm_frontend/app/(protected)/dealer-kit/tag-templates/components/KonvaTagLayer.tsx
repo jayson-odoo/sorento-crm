@@ -40,6 +40,7 @@ import {
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 import { canvasTextHeight, runFace, textFace, textLayerLines } from '@/lib/dealer-kit/text-layout';
 import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-text';
+import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { featureIconRow } from '@/lib/dealer-kit/feature-icons';
@@ -141,9 +142,14 @@ export function KonvaTagLayer({
     // Only the left button selects. The middle one pans the view (D44) and the
     // right one is the context menu's, which resolves its own target.
     if ('button' in e.evt && e.evt.button !== 0) return;
+    const mac = isMacPlatform();
+    // macOS Ctrl+click is the system right-click: the context menu resolves its own target and
+    // must find the selection as it was (DESIGNER-RICH-TEXT owner bug).
+    if ('button' in e.evt && isMacContextClick(e.evt, mac)) return;
     e.cancelBubble = true;
-    const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
-    onSelect?.(reportId, shiftKey);
+    // Shift+click adds everywhere; Cmd+click on macOS, Ctrl+click elsewhere.
+    const additive = 'shiftKey' in e.evt ? isAdditiveClick(e.evt, mac) : false;
+    onSelect?.(reportId, additive);
   };
 
   const handleDoubleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {

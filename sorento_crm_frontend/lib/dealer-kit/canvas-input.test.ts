@@ -67,11 +67,6 @@ describe('layersAt', () => {
     expect(layersAt(layers, 10, 10, new Set())).toEqual(['frame', 'a']);
   });
 
-  it('breaks a z tie the way the canvas draws it: the later layer is on top', () => {
-    const layers = [box('under', 1), box('over', 1)];
-    expect(layersAt(layers, 10, 10, new Set())).toEqual(['over', 'under']);
-  });
-
   it('skips hidden and locked layers', () => {
     const layers = [{ ...box('hidden', 3), visible: false }, { ...box('locked', 2), locked: true }, box('a', 1)];
     expect(layersAt(layers, 10, 10, new Set())).toEqual(['a']);

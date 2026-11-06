@@ -22,7 +22,16 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { isRich, richPlainText } from '@/lib/dealer-kit/rich-text';
+import {
+  isMacContextClick,
+  isMacPlatform,
+  layersAt,
+  selectionForContextMenu,
+  shortcutLabel,
+} from '@/lib/dealer-kit/canvas-input';
+import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
 import {
   useCallback,
   useEffect,
@@ -88,7 +97,6 @@ import {
   cloneLayers,
   descendantsOf,
   fitView,
-  hitLayerAt,
   layerOverflowsArtboard,
   marqueeHits,
   moveLayers,
@@ -635,6 +643,10 @@ export function TagCanvasEditor({
   // renders, so it doubles as the required "getServerSnapshot"-free selector.
   const clipboard = useSyncExternalStore(subscribeTagClipboard, getTagClipboard);
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
+  /** macOS: menus write shortcuts with the command symbol. Read after mount (no navigator on the
+   * server). */
+  const [mac, setMac] = useState(false);
+  useEffect(() => setMac(isMacPlatform()), []);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
   /** Feature icons: the icon library dialog, opened from the layer's inspector. */
@@ -2786,6 +2798,9 @@ export function TagCanvasEditor({
         return;
       }
       if (e.evt.button !== 0) return;
+      // macOS Ctrl+click is the system right-click: the context menu resolves its own target and
+      // must find the selection as it was (DESIGNER-RICH-TEXT owner bug).
+      if (isMacContextClick(e.evt, isMacPlatform())) return;
       // Crop mode (S8, AC-S8-3): `e.target` is the Konva node actually hit,
       // same as `isBackground` below reads it. The window and its 8 handles
       // start their OWN Konva drag on this same mousedown, so this only
@@ -2874,6 +2889,32 @@ export function TagCanvasEditor({
     [isBackground],
   );
 
+  /** The layer Konva's own hit test finds under the pointer, if it can say. */
+  const konvaLayerIdAt = useCallback(
+    (e: React.MouseEvent): string | null => {
+      const stage = stageRef.current as
+        | (Konva.Stage & { getIntersection?: Konva.Stage['getIntersection'] })
+        | null;
+      const content = stage?.getContent();
+      if (!stage?.getIntersection || !content) return null;
+      const rect = content.getBoundingClientRect();
+      let node = stage.getIntersection({ x: e.clientX - rect.left, y: e.clientY - rect.top }) as
+        | Konva.Node
+        | null;
+      const ids = new Set(layers.map((layer) => layer.id));
+      while (node) {
+        const id = node.id().replace(/-ghost$/, '');
+        if (ids.has(id)) {
+          const layer = layers.find((l) => l.id === id);
+          return layer && layer.visible && !layer.locked ? id : null;
+        }
+        node = node.getParent() as Konva.Node | null;
+      }
+      return null;
+    },
+    [layers],
+  );
+
   /**
    * Bound on the OUTER container div Radix's trigger wraps (S10, observed
    * bug), not on the Konva `<Stage>` itself.
@@ -2907,11 +2948,21 @@ export function TagCanvasEditor({
             return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
           })()
         : null;
-      const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
-      setMenuOnEmpty(!hitId);
-      if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
+      // Every layer under the pointer, top first; the one Konva actually drew there leads, so a
+      // frame drawn over the text (transparent inside) does not win a hit on the text below it.
+      const hits = point ? layersAt(layers, point.x_mm, point.y_mm, entered) : [];
+      const konvaId = konvaLayerIdAt(e);
+      if (konvaId) {
+        const target = resolveTarget(konvaId);
+        hits.splice(0, hits.length, target, ...hits.filter((id) => id !== target));
+      }
+      // The menu shows the layer items whenever something under the pointer is (or becomes)
+      // selected; a right-click on a layer that is already part of the selection keeps all of it.
+      setMenuOnEmpty(hits.length === 0);
+      const next = selectionForContextMenu(selectedIds, hits);
+      if (next) setSelectedIds(next);
     },
-    [view, layers, entered, selectedIds],
+    [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
 
   // -- Undo / Redo -----------------------------------------------------------
@@ -3086,7 +3137,12 @@ export function TagCanvasEditor({
       // the inline editor specifically (N2): any OTHER input keeps the normal
       // `isInput` guard, so Cmd+B while typing a name in "Save as template"
       // types a B there instead of bolding the canvas underneath it.
-      const formatShortcutsAllowed = !isInput || Boolean(editingLayerId);
+      // The Inspector's Content box (a rich editor) owns its own Cmd+B / I / U: they format the
+      // selection there, never the whole layer (DESIGNER-RICH-TEXT).
+      const inRichEditor = Boolean(
+        (document.activeElement as HTMLElement | null)?.closest?.('.ProseMirror'),
+      );
+      const formatShortcutsAllowed = (!isInput || Boolean(editingLayerId)) && !inRichEditor;
       if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         applyTextFormat('bold');
@@ -3215,7 +3271,7 @@ export function TagCanvasEditor({
         e.preventDefault();
         duplicateSelectedLayers();
       }
-      if (e.key === 'g' && modifier) {
+      if ((e.key === 'g' || e.key === 'G') && modifier) {
         e.preventDefault();
         if (e.shiftKey) ungroupSelectedLayers();
         else groupSelectedLayers();
@@ -3617,6 +3673,13 @@ export function TagCanvasEditor({
     [layers, updateLayer, updateLayerProps],
   );
 
+  /** The Inspector's rich Content box, so Insert field lands at its caret. */
+  const contentEditorRef = useRef<Editor | null>(null);
+  const contentEditor = () => {
+    const editor = contentEditorRef.current;
+    return editor && !editor.isDestroyed ? editor : null;
+  };
+
   const writeSelectedContent = useCallback(
     (content: string) => {
       if (!selectedLayer) return;
@@ -3644,7 +3707,10 @@ export function TagCanvasEditor({
    *  page; here it opens read-only on its plain text and never writes to the layer. */
   const editingIsDescription =
     editingLayer?.slot_binding === 'combo_description' ||
-    editingLayer?.slot_binding === 'price_tag_description';
+    editingLayer?.slot_binding === 'price_tag_description' ||
+    // DESIGNER-RICH-TEXT: formatted content is edited in the Inspector's rich Content box; the
+    // plain inline editor shows its text read-only rather than writing plain text over the marks.
+    isRich(editingContent);
 
   /**
    * A sole-token layer opens the inline editor on its RESOLVED value instead
@@ -4550,7 +4616,7 @@ export function TagCanvasEditor({
                 >
                   <Scissors />
                   Cut
-                  <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('X', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem
                   onSelect={() => {
@@ -4560,17 +4626,17 @@ export function TagCanvasEditor({
                 >
                   <Copy />
                   Copy
-                  <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('C', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
                   <ClipboardPaste />
                   Paste
-                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={duplicateSelectedLayers}>
                   <Copy />
                   Duplicate
-                  <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('D', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 {canCropSelectedImage && (
                   <ContextMenuItem onSelect={enterCropMode}>
@@ -4612,7 +4678,7 @@ export function TagCanvasEditor({
                   >
                     <GroupIcon />
                     Group
-                    <ContextMenuShortcut>Ctrl+G</ContextMenuShortcut>
+                    <ContextMenuShortcut>{shortcutLabel('G', mac)}</ContextMenuShortcut>
                   </ContextMenuItem>
                 )}
                 {canEnterGroup && (
@@ -4653,23 +4719,23 @@ export function TagCanvasEditor({
                 <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
                   <ClipboardPaste />
                   Paste
-                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={selectAll}>
                   <SquareDashed />
                   Select All
-                  <ContextMenuShortcut>Ctrl+A</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('A', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem onSelect={handleFit}>
                   <Expand />
                   Fit to View
-                  <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('0', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={handleZoomReset}>
                   <Percent />
                   Zoom 100%
-                  <ContextMenuShortcut>Ctrl+1</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('1', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
               </>
             )}
@@ -4906,6 +4972,9 @@ export function TagCanvasEditor({
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
               onInsertField={() => setInsertFieldOpen(true)}
+              onContentEditorReady={(editor) => {
+                contentEditorRef.current = editor;
+              }}
               onChooseImage={handleChooseImage}
               onChooseBadge={handleChooseBadge}
               onRebind={handleRebind}
@@ -5022,7 +5091,9 @@ export function TagCanvasEditor({
 
       <InsertFieldDialog
         open={insertFieldOpen}
-        value={selectedContent}
+        // With the Content box open, the dialog hands back only the field and it goes in at that
+        // box's caret, inside whatever formatting is there (DESIGNER-RICH-TEXT).
+        value={insertFieldOpen && contentEditor() ? '' : selectedContent}
         data={selectedData ?? null}
         specKeys={library.specKeys}
         // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.
@@ -5030,7 +5101,9 @@ export function TagCanvasEditor({
         onCancel={() => setInsertFieldOpen(false)}
         onDone={(content) => {
           setInsertFieldOpen(false);
-          writeSelectedContent(content);
+          const editor = contentEditor();
+          if (editor) insertMergeFieldText(editor, content);
+          else writeSelectedContent(content);
         }}
       />
 
