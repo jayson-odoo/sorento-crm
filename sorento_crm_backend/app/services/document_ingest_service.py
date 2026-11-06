@@ -1804,7 +1804,8 @@ class DocumentIngestService(MasterRefResolver):
         names one (D22), and nothing was delivered on either side or moved against the old
         line (owner, 6 Nov). Only a pair unique on (Seq, product) on both sides counts;
         anything ambiguous stays a removal plus a create, as before. A removed line
-        (cancelled, not by CS or a Cancel SO document) is never revived. Renames the `by_ref` key in place; returns the number of pairs.
+        (cancelled, not by CS or a Cancel SO document) is never revived. Renames the `by_ref`
+        key in place; returns the number of pairs.
         """
 
         def _num(value: Any, places: str) -> Optional[Decimal]:
