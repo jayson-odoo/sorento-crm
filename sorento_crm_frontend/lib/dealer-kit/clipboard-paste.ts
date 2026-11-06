@@ -8,6 +8,7 @@
  * tell "the layers I copied here" from "a screenshot I copied elsewhere since".
  */
 
+import { richPlainText } from './rich-text';
 import type { TagLayer } from './tag-template-types';
 
 /** Marker the editor writes on its own copy/cut, read back on paste. */
@@ -48,7 +49,8 @@ export type PasteIntent =
  */
 export function copiedLayersText(layers: readonly TagLayer[]): string {
   return layers
-    .map((layer) => (layer.props.kind === 'text' ? layer.props.text : ''))
+    // A formatted layer gives its words, never its markup (DESIGNER-RICH-TEXT).
+    .map((layer) => (layer.props.kind === 'text' ? richPlainText(layer.props.text) : ''))
     .filter(Boolean)
     .join('\n');
 }
