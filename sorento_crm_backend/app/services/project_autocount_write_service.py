@@ -32,6 +32,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SOAmendment,
 )
+from app.models.product import Product, UnitOfMeasure
 from app.models.projects import (
     Project,
     ProjectParty,
@@ -163,7 +164,28 @@ class QuotationLinesPayload:
     exploded: List[dict] = field(default_factory=list)
 
 
-def build_quotation_lines(lines: Iterable[Any], *, location: str) -> QuotationLinesPayload:
+def _base_uom_codes(db: Session, product_ids: Iterable[Any]) -> Dict[str, str]:
+    """Product id -> its base UOM code (the AutoCount UOM), one query for a whole payload."""
+    wanted = {pid for pid in product_ids if pid}
+    if not wanted:
+        return {}
+    rows = (
+        db.query(Product.id, UnitOfMeasure.uom_code)
+        .join(UnitOfMeasure, UnitOfMeasure.id == Product.base_uom_id)
+        .filter(Product.id.in_(wanted))
+        .all()
+    )
+    return {pid: (code or "").strip() for pid, code in rows if (code or "").strip()}
+
+
+def _ac_uom(line_uom: Any, product_id: Any, base_uoms: Optional[Dict[str, str]]) -> Any:
+    """The product's AutoCount UOM (its base UOM code); the line's own uom only when it has none."""
+    return (base_uoms or {}).get(product_id) or line_uom
+
+
+def build_quotation_lines(
+    lines: Iterable[Any], *, location: str, base_uoms: Optional[Dict[str, str]] = None
+) -> QuotationLinesPayload:
     """The AutoCount lines for a quotation revision's priced lines (owner ruling R6).
 
     A rate-only line is not sent and is named; a product set goes as its components at part
@@ -183,7 +205,7 @@ def build_quotation_lines(lines: Iterable[Any], *, location: str) -> QuotationLi
             for part in line.set_parts_snapshot:
                 per_set = _dec(part.get("quantity") if part.get("quantity") is not None else 1)
                 part_qty = per_set * qty
-                uom = part.get("uom") or line.uom
+                uom = _ac_uom(part.get("uom") or line.uom, part.get("product_id"), base_uoms)
                 if part.get("is_driver"):
                     # One shared rule with the SO draft (R6a): rows of (qty, unit price).
                     for row_qty, row_price in split_set_driver_price(
@@ -217,7 +239,7 @@ def build_quotation_lines(lines: Iterable[Any], *, location: str) -> QuotationLi
             {
                 "itemCode": line.product_code_snapshot,
                 "description": line.description_snapshot,
-                "uom": line.uom,
+                "uom": _ac_uom(line.uom, line.product_id, base_uoms),
                 "qty": qty,
                 "unitPrice": _dec(line.unit_price),
                 "location": location,
@@ -489,6 +511,7 @@ class ProjectAutocountWriteService:
         debtor = self._debtor_code(customer)
         lines = self._order_lines(order)
         codes = self._draft._product_codes(line.product_id for line in lines)
+        base_uoms = _base_uom_codes(self.db, (line.product_id for line in lines))
         derived, _why = self._draft.derived_stock_location(order)
         wire = []
         for line in lines:
@@ -510,7 +533,7 @@ class ProjectAutocountWriteService:
                 {
                     "itemCode": code,
                     "description": line.description,
-                    "uom": line.uom,
+                    "uom": _ac_uom(line.uom, line.product_id, base_uoms),
                     "qty": _num(line.qty),
                     "unitPrice": _num(line.unit_price),
                     "location": location,
@@ -805,13 +828,23 @@ class ProjectAutocountWriteService:
             .all()
         )
         merged = QuotationLinesPayload()
-        for scope in scopes:
-            lines = (
+        scope_lines = [
+            (
                 self.db.query(ProjectQuotationLine)
                 .filter(ProjectQuotationLine.version_id == scope.version_id)
                 .all()
             )
-            part = build_quotation_lines(lines, location=location)
+            for scope in scopes
+        ]
+        product_ids = {
+            pid
+            for lines in scope_lines
+            for l in lines
+            for pid in [l.product_id, *[p.get("product_id") for p in (l.set_parts_snapshot or [])]]
+        }
+        base_uoms = _base_uom_codes(self.db, product_ids)
+        for lines in scope_lines:
+            part = build_quotation_lines(lines, location=location, base_uoms=base_uoms)
             merged.lines += part.lines
             merged.skipped += part.skipped
             merged.exploded += part.exploded
