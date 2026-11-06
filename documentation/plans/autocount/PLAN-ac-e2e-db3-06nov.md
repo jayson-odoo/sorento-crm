@@ -1,6 +1,6 @@
 # PLAN: AutoCount end to end on db3 (AC-E2E-DB3)
 
-Status: in progress (verification lane, size M, no product code unless a bug is found). Track: verification;
+Status: verification run complete 6 Nov 2026 (all UAC rows PASS or N/A, fixes landed on #2173 and SS #225); owner hand test pending (laneboard/scripts/2222.md). Verification lane, size M. Track: verification;
 any trivial fix lands on the owning PR's branch after telling crew, never here.
 
 Owner, 6 Nov 2026 ~16:00: "yes please for autocount end to end". Prove CRM + shared service (SS) + AutoCount

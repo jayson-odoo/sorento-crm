@@ -32,8 +32,14 @@ hapi. "SS" = local SS #224 + #225 merged (from the second link run on).
 | R3 | Unlink / move PO to another SO | PASS (greyed) | n/a | "Unlink from PO... Waiting for AutoCount", "Move PO to another sales order... Waiting for AutoCount" |
 | R4 | SPO link / unlink | PASS at SS (no SPO with rows in db3, no CRM screen offers it) | n/a | SS `VENDOR_UNSUPPORTED` (table below) |
 | E4 | Quotation "Create in AutoCount" (QT-2026-0001, project PPF2611001) | PASS after the #2173 UOM fix (run 1 refused by AutoCount for UOM "EA", F10) | QT-000006, DocKey 12147: debtor 300-S057, DisplayTerm "Net 90 days" (SS #224), rows 12148 SRTKT38SS 3 @ BRW-AM 285, 12149 SRTKT1631SS 2 @ BRW-AM 235, UOM UNIT | CRM stores QT-000006 on the document |
-| E5 | Quotation update (v2, qty 3 -> 5, re-issued + accepted) | FAIL (B6) | QT-000006 unchanged | "AutoCount refused: AutoCount returned an error." |
-| R5 | Delete in AutoCount | PASS (not offered) | n/a | quotation gear has no AutoCount delete |
+| E5 | Quotation update (v2, qty 3 -> 5, re-issued + accepted) | PASS on the 3rd run (run 1: B6 405, run 2: B7 `FIELD_NOT_EDITABLE: docDate`) | QT-000006 row 12148 3 -> 5, row 12149 2, same DocKey 12147, no duplicate rows | dialog "AutoCount answered: ignored: remark2, remark3, remark4." (F13) |
+| B4p | Split keeps price/date (SS #225 940a6345): FXT-1106-PO3 (blank agent) row 12151 10 @ HQ 2.5 -> SO3 rows 12153 (3 @ HQ) and 12154 (4 @ BRW-AM) | PASS | 12151 = 3 @ HQ; new 12156 3 @ HQ and 12158 4 @ BRW-AM, both UnitPrice 2.5, DeliveryDate 2026-11-27; Total 25.0 unchanged | 3 lines, links stored, no duplicates |
+| E6 | Project SO "Create in AutoCount" (PSO-000001, built from the customer PO + delivery schedule, published) | PASS (run 1 refused in CRM: customer PO had no issuing party, staging data) | SO1, DocKey 12159: debtor 300-S057, term "Net 90 days", rows 12160 SRTKT38SS 5 and 12161 SRTKT1631SS 2, UOM UNIT, BRW-AM, delivery 2026-11-30 | toast "SO1 created in AutoCount" |
+| E7 | SO amendment (schedule v2: SRTKT1631SS 2 -> 3) -> publish -> "Update in AutoCount" | PASS through the CRM API for publish + update (the page crashes after create, B8; publish needs an OCN approver nothing sets, B9; stale stamp, B10) | row 12161 2 -> 3, DtlKeys kept (12160, 12161), Total 2130 | "SO1 updated in AutoCount" |
+| P1/P2 | AutoCount -> SS -> CRM after E6/E7 | PASS | n/a | `public.sales_orders` `DB3:12159` = 1 row; lines `DB3:12159:12160` 5 and `:12161` 3, both open, `removed_unreferenced` false, no duplicates |
+| R1 | SO "Cancel in AutoCount" | PASS (greyed, no write) | SO1 unchanged | before create "Not in AutoCount yet"; after create "Waiting for AutoCount" (cancel_doc is VENDOR_UNSUPPORTED; the text should name that, minor) |
+| R5 | Delete in AutoCount | PASS (not offered) | n/a | no AutoCount delete on quotation or SO menus |
+| R6 | Debtor with no credit term | N/A live: none of the 4274 db3 debtors lacks a term; covered by SS #224 unit tests | | |
 
 ## Findings
 
@@ -52,6 +58,13 @@ hapi. "SS" = local SS #224 + #225 merged (from the second link run on).
 | B5 | CRM #2173 | Create/update/cancel idempotency keys are fixed per document or order (`project_autocount_write_service.py:570, :754, :881, :981, :1064`). SS replays a stored answer for the same body and answers `IDEMPOTENCY_CONFLICT` for another body (SS `write_back/operations.py:851-856`). After one AutoCount refusal a corrected retry is refused (seen live: 409, shown as "AutoCount refused: . Nothing was changed."); a project SO can never be created after one refusal | Add a short body hash to the key. Posted on #2173 |
 | B6 | CRM #2173 vs SS | QT update (:941) and SO update (:659) first call `read_document` = `GET /api/v1/autocount/documents/{kind}/{docKey}` (`foundryx_autocount_client.py:294-298`); SS has only POST/PATCH document routes (`write_v1.py:274-365`) -> 405 -> every update fails | Crew decision (a): SS adds the GET route on #225 |
 | F10 | CRM #2173 + SS preset | CRM sent the project line uom `EA`; AutoCount items are `UNIT` (prod: products.base_uom UNIT 11,491 of 12,031; project SO lines EA 21,931). Refused "The value of column ItemCode and UOM in table Quotation Detail does not exist in its master file." | FIXED on #2173 (crew rule: send the product's AutoCount base UOM): red ea752b64, fix 96b64bba, test af6d22ac, reviewer READY |
+| B7 | CRM #2173 | Edit (PATCH) bodies put `docDate` inside `header` (:670 SO, :1019 QT) -> SS `FIELD_NOT_EDITABLE: docDate`; and top-level docDate is the date SS looks the document up by, so it must be the document's own date, never today | FIXED on #2173: 8e147f9b red, 287c7098, 202ac170, 0feb4ba8 red, 118302b0; reviewer READY; head f44a9f51 |
+| B8 | CRM main | SO amendment page crashes right after "Create the amendment": GET `/project-sales/amendments/{id}` returns rows under `delta` but `AmendmentReviewClient.tsx:442-447` reads `detail.rows/unmatched/from/to` -> `AmendmentDeltaSummary.tsx:51` `undefined.forEach`. The created amendment id lives only in client state, so after a reload the proposed amendment cannot be reached, and a second one can be created | Own lane: read `detail.delta.*`; list existing proposed amendments on the revisions page |
+| B9 | CRM main | `publish_amendment` refuses without `order_change_notices.approver_id` (`project_so_delta_service.py:791`) and no code path sets it (grep `app/services`, `app/api`): no amendment to a published SO can ever be published | Own lane: an approve action for the change notice |
+| B10 | CRM #2173 | `autocount_last_modified` is refreshed only by the CRM's own write answers (:602, :689, :783); after any AutoCount-side change Update is refused DOC_STALE "open Compare first", and Compare (reconcile) does not refresh it | Refresh from the SS GET documents read before the PATCH, or in reconcile. Posted on #2173 |
+| F11 | CRM #2173 | SS `IDEMPOTENCY_CONFLICT` is shown as "AutoCount refused: . Nothing was changed." (blank reason) | Map the code to a sentence (moot once B5's key fix is in, round 6) |
+| F12 | CRM #2173 | `_since` (:129-135) reads AutoCount's zone-less `LastModified` as UTC; AutoCount stamps are Malaysia local (a 6 Nov 18:04 change reads "since 07/11/2026") | Treat zone-less stamps as +08:00 |
+| F13 | SS | QT edit answers `mismatch FIELD_IGNORED remark2, remark3, remark4` although the requested change landed; the CRM shows it as "AutoCount answered: ignored: ..." | SS: do not send/compare untouched remarks |
 | F7 | CRM #2173 | A quotation with no recipient party is refused `ac_missing_debtor` "No debtor code on the customer." before SS is called (correct refusal, misleading text) | Say "This quotation has no recipient customer" when `recipient_party_id` is empty |
 | F8 | CRM project sales (UNVERIFIED as a product bug) | In the register wizard the customer pick did not stick on this copy (4274 customers); setting the customer afterwards with Edit project created no developer party, so the proposal and quotation carry no recipient. Staging fix: a developer party for 300-S057 linked to the project and both documents | Worth a separate look; out of this lane's scope |
 | F9 | Staging data | The derived quotation location needs customer -> sales agent -> agent location group -> `BRW-<group>`. Customers were pushed before sales agents existed, so no agent link; staging fix: 300-S057 linked to its db3 agent, agent group `AM` | Push agents before customers (runbook order) |
@@ -76,5 +89,19 @@ afterwards (read-back):
 | FXT-1106-SO1 | 12129 | SS create (fixture), term filled by SS #224 from debtor ("Net 90 days") | 12130 4 @ HQ, 12131 5 @ BRW-AM |
 | FXT-1106-PO2 | 12132 | SS create (fixture) | 12133 3 @ HQ |
 | FXT-1106-SO2 | 12134 | SS create (fixture) | 12135 3 @ HQ |
+| FXT-1106-PO1 (edits) | 12127 | SS edit: purchase agent set; row 12128 20 -> 21 (to change B3's key); E1/E2 splits | 12128 12 @ HQ, 12139 4 @ HQ (FromSO 12130), 12141 5 @ BRW-AM (FromSO 12131) |
+| FXT-1106-PO2 (split) | 12132 | E1b split (blank agent) | 12133 1 @ HQ, 12146 2 @ HQ (FromSO 12135) |
+| FXT-1106-PO3 | 12150 | SS create (B4 fixture, blank agent) + 2 splits | 12151 3 @ HQ, 12156 3 @ HQ (FromSO 12153), 12158 4 @ BRW-AM (FromSO 12154) |
+| FXT-1106-SO3 | 12152 | SS create (fixture) | 12153 3 @ HQ, 12154 4 @ BRW-AM |
+| QT-000006 | 12147 | E4 create, E5 update (CRM QT-2026-0001) | 12148 SRTKT38SS 5, 12149 SRTKT1631SS 2 |
+| SO1 | 12159 | E6 create (CRM PSO-000001), ref edit (re-push), E7 update | 12160 SRTKT38SS 5, 12161 SRTKT1631SS 3 |
 
 Nothing was deleted or cancelled (AutoCount has no delete door; cancel is refused).
+
+## Staging setup gaps hit on the way (for the runbook, #2202)
+
+Fresh create_all DB (not a dev copy): no `system_settings` row, no `tenant_modules`, no fulfilment-planning
+warehouse, no migration-body seeds (replayed every migration's INSERTs), customers pushed before sales agents
+(no agent link -> no derived location), agent refs must be `agent:<code>` (the SS sink's key), a project needs
+a developer party (quotation recipient) and the customer PO an issuing party (SO debtor), and a project PO's
+lines/delivery schedule only come from an AI read of a PDF (seeded by SQL here).
