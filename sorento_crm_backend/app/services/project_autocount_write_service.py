@@ -667,7 +667,7 @@ class ProjectAutocountWriteService:
             expected = (held.get("document") or held).get("LastModified")
         body = {
             "companyCode": company,
-            "header": {"docDate": _today()},
+            "docDate": _today(),
             "expectedLastModified": expected,
             "lines": list(edits.values()),
         }
@@ -1016,7 +1016,8 @@ class ProjectAutocountWriteService:
         if need_patch:
             body = {
                 "companyCode": company,
-                "header": {"docDate": _today(), "remark1": remark},
+                "docDate": _today(),
+                "header": {"remark1": remark},
                 "expectedLastModified": stale_since,
             }
             if patched:
