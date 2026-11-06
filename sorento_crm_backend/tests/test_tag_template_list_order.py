@@ -107,11 +107,21 @@ def test_reorder_is_refused_for_a_viewer_and_for_a_missing_id(api):
 
 
 def test_every_column_sorts_on_the_server(api):
+    from datetime import datetime, timedelta
+
+    db, _as, _scope = api
     stem = unique_code("Srt")
     with TestClient(app) as client:
         big = _make(client, f"{stem} b", family="toilet", price_type="selling", w=100, h=70)
-        _make(client, f"{stem} a", family="basin", price_type="list", w=50, h=30)
-        _make(client, f"{stem} c", family="kitchen", price_type=None, w=70, h=40)
+        small = _make(client, f"{stem} a", family="basin", price_type="list", w=50, h=30)
+        mid = _make(client, f"{stem} c", family="kitchen", price_type=None, w=70, h=40)
+        # One test transaction gives every row the same now(); spread them out by hand.
+        base = datetime(2026, 1, 1)
+        for offset, template_id in enumerate([big, small, mid]):
+            db.query(TagTemplate).filter(TagTemplate.id == template_id).update(
+                {"created_at": base + timedelta(days=offset)}, synchronize_session=False
+            )
+        db.commit()
         assert client.post(f"{BASE}/{big}/publish", json={}).status_code == 200
 
         assert _names(client, stem, "sort=name&dir=asc") == [f"{stem} a", f"{stem} b", f"{stem} c"]

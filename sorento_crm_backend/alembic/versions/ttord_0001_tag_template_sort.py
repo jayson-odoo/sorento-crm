@@ -5,7 +5,7 @@ nullable: existing rows are numbered by created date within their company, and a
 number sorts last.
 
 Revision ID: ttord_0001_tag_template_sort
-Revises: ttdc_0001_tag_template_archived
+Revises: dkfi_0001_spec_value_icons
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ttord_0001_tag_template_sort"
-down_revision = "ttdc_0001_tag_template_archived"
+down_revision = "dkfi_0001_spec_value_icons"
 branch_labels = None
 depends_on = None
 
