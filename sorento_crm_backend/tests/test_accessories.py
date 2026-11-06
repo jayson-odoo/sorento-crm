@@ -419,3 +419,65 @@ def test_a9_a_row_pinned_before_this_lane_reads_no_list_and_keeps_its_text(db, s
     row = tag_data_service._row_from_pin(db, line, line.tags[0], pinned, "1a")
     assert row["accessories"] == []
     assert row["included_accessories"] == "Old pinned text"
+
+
+# --------------------------------------------------------------------------- data-change gate
+
+
+def test_a9_the_hash_ignores_re_signed_picture_links(db, signed):
+    from app.services.dealer_kit import tag_data_service
+
+    host = seed.product(db, "ZZACC")
+    cb = seed.combo(db, host, "ZZT 1 tap")
+    item = _accessory(db, _name("DRAINER"))
+    _link_combo(db, cb, [item])
+    request = seed.submit_one(db, host, cb, [])
+    db.flush()
+    row = tag_data_service.resolve_tags_live(db, request)[0]
+    moved = {
+        **row,
+        "accessories": [{**a, "image": {"attachment_id": "att", "url": "https://x/1"}} for a in row["accessories"]],
+        "combo": {
+            **row["combo"],
+            "accessories": [{**a, "image": {"attachment_id": "att", "url": "https://x/1"}} for a in row["accessories"]],
+        },
+    }
+    again = {
+        **moved,
+        "accessories": [{**a, "image": {"attachment_id": "att", "url": "https://x/2"}} for a in row["accessories"]],
+        "combo": {
+            **moved["combo"],
+            "accessories": [{**a, "image": {"attachment_id": "att", "url": "https://x/2"}} for a in row["accessories"]],
+        },
+    }
+    assert tag_data_service.data_hash(moved) == tag_data_service.data_hash(again)
+
+
+def test_a9_an_ala_carte_list_change_moves_the_hash_and_names_the_change(db, signed):
+    from app.services.dealer_kit import tag_data_service
+
+    host = seed.product(db, "ZZACC")
+    board = _accessory(db, _name("BOARD"))
+    _link_product(db, host, [board])
+    request = seed.submit_one(db, host, None, [])
+    db.flush()
+    pinned = tag_data_service.pin_payload(tag_data_service.resolve_tags_live(db, request)[0])
+
+    db.query(ProductAccessory).filter(ProductAccessory.product_id == host.id).delete()
+    db.flush()
+    live = tag_data_service.resolve_tags_live(db, request)[0]
+    assert tag_data_service.data_hash(live) != tag_data_service.data_hash(pinned)
+    line = request.lines[0]
+    changes = tag_data_service.diff_pin_against_live(db, line, pinned, live, None)
+    assert any(change["field"] == "accessories" for change in changes), changes
+
+
+def test_a9_a_row_with_no_list_hashes_as_before(db, signed):
+    from app.services.dealer_kit import tag_data_service
+
+    host = seed.product(db, "ZZACC")
+    request = seed.submit_one(db, host, None, [])
+    db.flush()
+    row = tag_data_service.resolve_tags_live(db, request)[0]
+    without_key = {k: v for k, v in row.items() if k != "accessories"}
+    assert tag_data_service.data_hash(row) == tag_data_service.data_hash(without_key)

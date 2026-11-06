@@ -156,6 +156,32 @@ def test_ac_8_1_apply_writes_and_a_report_is_always_produced(db, catalogue, phot
     assert len(rows) == 4
 
 
+def _free_names(db, combo) -> list[str]:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    with company_scope(db, None):
+        rows = (
+            db.query(Accessory.name)
+            .join(ProductComboAccessory, ProductComboAccessory.accessory_id == Accessory.id)
+            .filter(ProductComboAccessory.combo_id == combo.id)
+            .order_by(ProductComboAccessory.sort_order)
+            .all()
+        )
+    return [name for (name,) in rows]
+
+
+def _set_free_list(db, combo, names) -> None:
+    from app.models.accessory import Accessory, ProductComboAccessory
+
+    db.query(ProductComboAccessory).filter(ProductComboAccessory.combo_id == combo.id).delete()
+    for index, name in enumerate(names):
+        item = Accessory(name=name, company_id=combo.host_product.company_id)
+        db.add(item)
+        db.flush()
+        db.add(ProductComboAccessory(combo_id=combo.id, accessory_id=item.id, sort_order=index))
+    db.flush()
+
+
 # --------------------------------------------------------------------------- AC-8.2
 
 
@@ -167,8 +193,10 @@ def test_ac_8_2_apply_loads_the_combo_description_free_items_and_cover(
     assert combo is not None
     assert combo.description == "Cabinet, mirror and basin set"
 
-    items = combo.free_items.split(", ")
-    assert len(items) == 2, combo.free_items
+    # PRICETAG-ACCESSORIES: free items load as the combo's accessory list, not as text.
+    items = _free_names(db, combo)
+    assert len(items) == 2, items
+    assert combo.free_items is None
     assert "ZZTTAP1" in items[0] and "Tap" in items[0]
     assert items[0].index("ZZTTAP1") < items[0].index("Tap"), "the code prefixes the label"
     assert items[1] == "Waste", "no code, so the label alone"
@@ -278,7 +306,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     with company_scope(db, None):
         combo.description = "Marketing wrote this"
-        combo.free_items = "Marketing free items"
+        _set_free_list(db, combo, ["ZZT MARKETING ITEM"])
         combo.list_price = Decimal("2222.00")
         combo.sell_price = Decimal("1111.00")
         parts = _parts(db, combo)
@@ -290,7 +318,7 @@ def test_ac_8_6_what_marketing_filled_stays_and_missing_parts_are_added_back(
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Marketing wrote this"
-    assert combo.free_items == "Marketing free items"
+    assert _free_names(db, combo) == ["ZZT MARKETING ITEM"], "a list someone set is never overwritten"
     assert combo.list_price == Decimal("2222.00") and combo.sell_price == Decimal("1111.00")
     parts = _parts(db, combo)
     assert parts["ZZTBW"].sell_price == Decimal("222.00")
@@ -308,7 +336,7 @@ def test_ac_8_6_an_empty_description_free_items_or_cover_is_filled_but_set_ones_
     _run(db, tmp_path, photos, apply=True)
     combo = _combo(db, "ZZT 3 in 1", "ZZTH1")
     assert combo.description == "Already here", "a description already set stays"
-    assert combo.free_items, "the blank free items are filled"
+    assert _free_names(db, combo), "the empty free items list is filled"
     assert combo.image_attachment_id is not None, "the blank cover is filled"
     assert _count(db, ProductCombo) == 2
 
