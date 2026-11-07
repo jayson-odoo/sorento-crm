@@ -249,7 +249,7 @@ def report_ask(
     ),
     group_by: Optional[str] = Query(
         None,
-        description="customer | product | brand | category | sales_agent | location | channel | account_type | month | spec:<key>. "
+        description="customer | product | brand | category | sales_agent | sales_person (invoiced only) | location | channel | account_type | month | spec:<key>. "
         "Absent = one total.",
     ),
     top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
@@ -388,11 +388,13 @@ def report_ask(
     codes = _normalize_entities(warehouse_codes) or []
     account_values = [v.strip().upper() for v in (_normalize_entities(account_types) or []) if v and v.strip()]
     if basis_norm == "invoiced":
-        # Finance data: the reports' own slug on the act-as principal, not only orders.view
-        # (SALES-UNIFIED security review M1).
+        # Finance data (SALES-UNIFIED security review M1): the contact's Sales report tick on a
+        # contact's call, else the reports' own slug (CHATBOT-SALES-REPORT-TICK).
         from app.services.sales.invoiced_sales import require_invoiced_access
 
-        require_invoiced_access(db, current_user)
+        require_invoiced_access(
+            db, current_user, api_key=request.headers.get("X-API-Key"), contact_id=contact_id, space_id=space_id
+        )
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(

@@ -56,6 +56,29 @@ WARN_UNCLASSIFIED_DEMAND = "unclassified_demand"
 #: rather than back-created or guessed, the document lands with `supplier_id`
 #: NULL. Distinct from a plain "not found" name, which still back-creates.
 WARN_SUPPLIER_AMBIGUOUS = "supplier_ambiguous"
+#: INGEST-DROP-WARN-CRM (4 Nov): a document line whose product did not resolve
+#: is dropped (D9). This is the PREFIX of the warning that names it; the full
+#: entry is `line_product_unresolved:doc=<no>:line_ref=<ref>:line_no=<seq>:
+#: product_code=<code>` (blank values stay blank), one entry per dropped line.
+WARN_LINE_PRODUCT_UNRESOLVED = "line_product_unresolved"
+
+
+def line_product_unresolved_warning(
+    doc_no: Optional[str],
+    line_ref: Optional[str],
+    line_no: Optional[int],
+    product_code: Optional[str],
+) -> str:
+    """The one warning a dropped document line adds, naming document, line and
+    the missing product code (blank when the line sent none)."""
+
+    def _v(value: object) -> str:
+        return "" if value is None else str(value).strip()
+
+    return (
+        f"{WARN_LINE_PRODUCT_UNRESOLVED}:doc={_v(doc_no)}:line_ref={_v(line_ref)}"
+        f":line_no={_v(line_no)}:product_code={_v(product_code)}"
+    )
 
 
 def dedupe_warnings(warnings: list[str]) -> list[str]:

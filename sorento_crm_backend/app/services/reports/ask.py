@@ -56,7 +56,7 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
         "invoiced": {
             "definition": billing_document_lines.ASK_DEFINITION,
             "label": "invoiced sales",
-            "dimensions": DIMENSIONS,
+            "dimensions": (*DIMENSIONS, "sales_person"),
             "filters": FILTERS,
         },
         **{
@@ -117,6 +117,7 @@ GROUP_LABELS = {
     "brand": "Brand",
     "category": "Category",
     "sales_agent": "Sales agent",
+    "sales_person": "Sales person",
     "location": "Location",
     "channel": "Channel",
     "account_type": "Account type",
