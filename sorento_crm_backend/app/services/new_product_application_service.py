@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 from app.models.new_product_application import (
     NewProductApplication,
     NewProductApplicationLine,
-    NewProductApplicationLineSource,
+    NewProductApplicationSource,
 )
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, StockInquiry, Supplier
@@ -221,27 +221,27 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
             value = line.get(field)
             if value is not None and not _ref_exists(db, model, value):
                 raise _invalid(field, f"Product {index}: the chosen {FIELD_WORDS[field]} does not exist.")
-        _check_current_codes(db, index, line.get("current_product_ids"))
+    _check_current_codes(db, data.get("current_product_ids"))
 
 
-def _check_current_codes(db: Session, index: int, ids: Optional[List[Any]]) -> None:
+def _check_current_codes(db: Session, ids: Optional[List[Any]]) -> None:
     """Every current code is a product of the company (the query's company filter), picked once."""
     if not ids:
         return
     wanted = [str(i) for i in ids]
+    missing = _invalid("current_product_ids", "A chosen product code does not exist.")
     if not all(_is_uuid(i) for i in wanted):
-        raise _invalid("current_product_ids", f"Product {index}: a chosen current code does not exist.")
-    codes = dict(db.query(Product.id, Product.product_code).filter(Product.id.in_(set(wanted))).all())
-    codes = {str(k): v for k, v in codes.items()}
+        raise missing
+    codes = {
+        str(k): v
+        for k, v in db.query(Product.id, Product.product_code).filter(Product.id.in_(set(wanted))).all()
+    }
     seen = set()
     for pid in wanted:
         if pid not in codes:
-            raise _invalid("current_product_ids", f"Product {index}: a chosen current code does not exist.")
+            raise missing
         if pid in seen:
-            raise _invalid(
-                "current_product_ids",
-                f"Product {index}: {codes[pid]} is already a current code on this product.",
-            )
+            raise _invalid("current_product_ids", f"{codes[pid]} is already one of the product codes.")
         seen.add(pid)
 
 
@@ -253,6 +253,9 @@ def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> Non
     for key in HEADER_TEXT:
         if key in data:
             setattr(app, key, _clean(data[key]))
+    # Left out = kept, an empty list clears (NPA-FROM-SI, mock v3: PRODUCT CODES in the header).
+    if data.get("current_product_ids") is not None:
+        _set_sources(app, data["current_product_ids"])
     if "lines" in data:
         _apply_lines(db, app, data["lines"] or [])
 
@@ -281,26 +284,23 @@ def _apply_lines(db: Session, app: NewProductApplication, body: List[Dict[str, A
             setattr(row, key, line.get(key) or None)
         for key in LINE_NUMBERS:
             setattr(row, key, line.get(key))
-        # Left out = kept (an older client), an empty list clears (NPA-FROM-SI rule 4).
-        if line.get("current_product_ids") is not None:
-            _set_sources(row, line["current_product_ids"])
         if row.id is None or str(row.id) not in kept:
             app.lines.append(row)
     db.flush()
 
 
-def _set_sources(row: NewProductApplicationLine, product_ids: List[Any]) -> None:
-    """The line's current codes, in the order picked. Rows kept for codes still picked, so a
-    re-save does not churn the audit trail."""
+def _set_sources(app: NewProductApplication, product_ids: List[Any]) -> None:
+    """The application's current codes, in the order picked. Rows kept for codes still picked,
+    so a re-save does not churn the audit trail."""
     wanted = [str(i) for i in product_ids]
-    by_product = {str(s.product_id): s for s in row.sources}
-    for source in list(row.sources):
+    by_product = {str(src.product_id): src for src in app.sources}
+    for source in list(app.sources):
         if str(source.product_id) not in wanted:
-            row.sources.remove(source)
+            app.sources.remove(source)
     for position, pid in enumerate(wanted, start=1):
         source = by_product.get(pid)
         if source is None:
-            row.sources.append(NewProductApplicationLineSource(product_id=pid, position=position))
+            app.sources.append(NewProductApplicationSource(product_id=pid, position=position))
         elif source.position != position:
             source.position = position
 
@@ -474,8 +474,12 @@ def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     return "rejected"
 
 
+def _new_code_resolved(app: NewProductApplication) -> bool:
+    return app.new_product_id is not None or app.new_code_closed_reason is not None
+
+
 def _assert_nothing_resolved(app: NewProductApplication, verb: str) -> None:
-    if any(_resolved(line) for line in app.lines):
+    if _new_code_resolved(app) or any(_resolved(line) for line in app.lines):
         raise _conflict(
             f"A code has already been opened or closed on this application, so it cannot be {verb}.",
             "NEW_PRODUCT_APPLICATION_IN_PROGRESS",
@@ -548,7 +552,9 @@ def _open_line(app: NewProductApplication, line_id: str, actor: Actor) -> NewPro
 
 
 def _maybe_complete(app: NewProductApplication) -> Optional[str]:
-    if app.lines and all(_resolved(line) for line in app.lines):
+    # The ONE new product code decides (owner, mock v3); every line done stays the rule for an
+    # application worked line by line before it.
+    if _new_code_resolved(app) or (app.lines and all(_resolved(line) for line in app.lines)):
         app.status = COMPLETED
         app.completed_at = datetime.utcnow()
         return "completed"
@@ -602,6 +608,65 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
     line.resolved_by = None
     line.resolved_at = None
     if app.status == COMPLETED:
+        app.status = APPROVED
+        app.completed_at = None
+    db.flush()
+
+
+def _open_new_code(app: NewProductApplication, actor: Actor) -> None:
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can open codes for new product applications.")
+    _require(app, APPROVED, "worked by purchasing")
+    if _new_code_resolved(app):
+        raise _conflict("The new product code is already done. Undo it first.", "NEW_PRODUCT_APPLICATION_LINE_DONE")
+
+
+def link_new_code(
+    db: Session, app: NewProductApplication, *, actor: Actor, product_id: Optional[str]
+) -> Optional[str]:
+    """NPA-FROM-SI: purchasing links the ONE new product code AutoCount sent (picked by a person;
+    a suggestion only pre-fills the picker). Completes the application."""
+    _open_new_code(app, actor)
+    product = (
+        db.query(Product).filter(Product.id == product_id, Product.is_active.is_(True)).first()
+        if _is_uuid(product_id)
+        else None
+    )
+    if product is None:
+        raise _invalid("product_id", "Pick an active product from the product list.")
+    app.new_product_id = product.id
+    app.new_code_by = actor.user_id
+    app.new_code_at = datetime.utcnow()
+    event = _maybe_complete(app)
+    db.flush()
+    return event
+
+
+def close_new_code(
+    db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]
+) -> Optional[str]:
+    _open_new_code(app, actor)
+    reason = _clean(reason)
+    if not reason:
+        raise _invalid("reason", "Enter why this code is not being opened.")
+    app.new_code_closed_reason = reason
+    app.new_code_by = actor.user_id
+    app.new_code_at = datetime.utcnow()
+    event = _maybe_complete(app)
+    db.flush()
+    return event
+
+
+def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> None:
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can undo the new product code.")
+    if app.status not in (APPROVED, COMPLETED) or not _new_code_resolved(app):
+        raise _conflict("There is nothing to undo.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
+    app.new_product_id = None
+    app.new_code_closed_reason = None
+    app.new_code_by = None
+    app.new_code_at = None
+    if app.status == COMPLETED and not (app.lines and all(_resolved(line) for line in app.lines)):
         app.status = APPROVED
         app.completed_at = None
     db.flush()
@@ -730,13 +795,13 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
         "project_name": _clean(inquiry.project_name),
         "needed_by": _parse_date(inquiry.delivery_date),
         "remark": _clean(inquiry.remark),
+        "current_product_ids": current,
+        "current_products": _products_out(db, current),
         "lines": [
             {
                 "proposed_code": _clean(inquiry.product_code),
                 "description": _clean(inquiry.item_description),
                 "expected_qty": _parse_qty(inquiry.quantity),
-                "current_product_ids": current,
-                "current_products": _products_out(db, current),
             }
         ],
     }
@@ -820,53 +885,46 @@ def portal_lookup(db: Session, kind: str, q: str = "") -> List[Dict[str, Any]]:
 MAX_SUGGESTIONS = 3
 
 
-def _sources_by_line(db: Session, line_ids: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
-    """Line id -> its current codes in the order picked (one query)."""
-    wanted = {str(i) for i in line_ids if i}
+def _sources_by_app(db: Session, app_ids: List[Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Application id -> its current codes in the order picked (one query)."""
+    wanted = {str(i) for i in app_ids if i}
     if not wanted:
         return {}
+    src = NewProductApplicationSource
     rows = (
-        db.query(
-            NewProductApplicationLineSource.line_id,
-            Product.id,
-            Product.product_code,
-            Product.product_name,
-            Product.is_active,
-        )
-        .join(Product, Product.id == NewProductApplicationLineSource.product_id)
-        .filter(NewProductApplicationLineSource.line_id.in_(wanted))
-        .order_by(NewProductApplicationLineSource.line_id, NewProductApplicationLineSource.position)
+        db.query(src.application_id, Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .join(Product, Product.id == src.product_id)
+        .filter(src.application_id.in_(wanted))
+        .order_by(src.application_id, src.position)
         .all()
     )
     out: Dict[str, List[Dict[str, Any]]] = {}
-    for line_id, pid, code, name, active in rows:
-        out.setdefault(str(line_id), []).append(
+    for app_id, pid, code, name, active in rows:
+        out.setdefault(str(app_id), []).append(
             {"id": pid, "product_code": code, "product_name": name, "is_active": active}
         )
     return out
 
 
-def _created_lines(db: Session):
-    """Resolved lines with a new code, joined to their application and that new product. The
-    application query carries the company filter, so another company's lineage never shows."""
-    return (
-        db.query(
-            NewProductApplicationLine,
-            NewProductApplication,
-            Product.product_code,
-            Product.product_name,
-            Product.is_active,
-        )
-        .join(NewProductApplication, NewProductApplication.id == NewProductApplicationLine.application_id)
-        .join(Product, Product.id == NewProductApplicationLine.opened_product_id)
-    )
+def _why(app: NewProductApplication) -> Optional[str]:
+    """Why the code was asked for: the PRODUCT TYPE text of its products, in order."""
+    texts = [l.description for l in app.lines if l.description]
+    return "; ".join(texts) or None
+
+
+def _created_apps(db: Session):
+    """Applications with a linked new code, with that product. The application query carries the
+    company filter, so another company's lineage never shows."""
+    return db.query(
+        NewProductApplication, Product.product_code, Product.product_name, Product.is_active
+    ).join(Product, Product.id == NewProductApplication.new_product_id)
 
 
 def reuse_suggestions(
     db: Session,
     product_ids: Iterable[Any],
     *,
-    exclude_line_id: Optional[str] = None,
+    exclude_application_id: Optional[str] = None,
     portal: bool = False,
 ) -> List[Dict[str, Any]]:
     """Card rule 6, owner rule: the codes created before from EXACTLY this set of current codes
@@ -875,32 +933,32 @@ def reuse_suggestions(
     wanted = sorted({str(i) for i in product_ids if i})
     if not wanted or not all(_is_uuid(i) for i in wanted):
         return []
-    src = NewProductApplicationLineSource
+    src = NewProductApplicationSource
     exact = (
-        select(src.line_id)
-        .group_by(src.line_id)
+        select(src.application_id)
+        .group_by(src.application_id)
         .having(
             func.count(src.id) == len(wanted),
             func.count(src.id).filter(src.product_id.in_(wanted)) == len(wanted),
         )
     )
-    query = _created_lines(db).filter(NewProductApplicationLine.id.in_(exact))
-    if exclude_line_id:
-        query = query.filter(NewProductApplicationLine.id != str(exclude_line_id))
-    rows = query.order_by(NewProductApplicationLine.resolved_at.desc()).limit(MAX_SUGGESTIONS * 3).all()
+    query = _created_apps(db).filter(NewProductApplication.id.in_(exact))
+    if exclude_application_id:
+        query = query.filter(NewProductApplication.id != str(exclude_application_id))
+    rows = query.order_by(NewProductApplication.new_code_at.desc()).limit(MAX_SUGGESTIONS * 3).all()
     out: List[Dict[str, Any]] = []
     seen = set()
-    for line, app, code, name, active in rows:
-        if str(line.opened_product_id) in seen:
+    for app, code, name, active in rows:
+        if str(app.new_product_id) in seen:
             continue
-        seen.add(str(line.opened_product_id))
+        seen.add(str(app.new_product_id))
         item = {
-            "product_id": line.opened_product_id,
+            "product_id": app.new_product_id,
             "product_code": code,
             "product_name": name,
             "is_active": active,
-            "description": line.description,
-            "created_at": _iso(line.resolved_at),
+            "description": _why(app),
+            "created_at": _iso(app.new_code_at),
         }
         if not portal:
             item["application_id"] = app.id
@@ -916,38 +974,34 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     (made_from_this). The application is the why; customer and project only for NPA viewers."""
     if not _is_uuid(product_id):
         return {"created_from": [], "made_from_this": []}
-    created = (
-        _created_lines(db)
-        .filter(NewProductApplicationLine.opened_product_id == product_id)
-        .order_by(NewProductApplicationLine.resolved_at.desc())
-        .all()
-    )
+    order = NewProductApplication.new_code_at.desc()
+    created = _created_apps(db).filter(NewProductApplication.new_product_id == product_id).order_by(order).all()
     made = (
-        _created_lines(db)
+        _created_apps(db)
         .filter(
-            NewProductApplicationLine.id.in_(
-                select(NewProductApplicationLineSource.line_id).where(
-                    NewProductApplicationLineSource.product_id == product_id
+            NewProductApplication.id.in_(
+                select(NewProductApplicationSource.application_id).where(
+                    NewProductApplicationSource.product_id == product_id
                 )
             )
         )
-        .order_by(NewProductApplicationLine.resolved_at.desc())
+        .order_by(order)
         .all()
     )
-    sources = _sources_by_line(db, [r[0].id for r in (*created, *made)])
+    sources = _sources_by_app(db, [r[0].id for r in (*created, *made)])
 
-    def row(line, app, code, name, active) -> Dict[str, Any]:
+    def row(app, code, name, active) -> Dict[str, Any]:
+        qty = [l.expected_qty for l in app.lines if l.expected_qty is not None]
         item = {
-            "line_id": line.id,
             "application_no": app.application_no,
-            "product_id": line.opened_product_id,
+            "product_id": app.new_product_id,
             "product_code": code,
             "product_name": name,
             "is_active": active,
-            "current_products": sources.get(str(line.id), []),
-            "description": line.description,
-            "expected_qty": _num(line.expected_qty),
-            "created_at": _iso(line.resolved_at),
+            "current_products": sources.get(str(app.id), []),
+            "description": _why(app),
+            "expected_qty": _num(sum(qty)) if qty else None,
+            "created_at": _iso(app.new_code_at),
         }
         if can_view_applications:
             item.update(
@@ -1203,27 +1257,19 @@ def serialize_summary(
 
 
 def _created_codes(db: Session, app: NewProductApplication) -> List[Dict[str, Any]]:
-    """NPA-FROM-SI: each new code purchasing linked, with its current codes and when (the
-    stock inquiry's "code created" indicator reads this; nothing is stored for it)."""
-    opened = [l for l in app.lines if l.opened_product_id]
-    if not opened:
+    """NPA-FROM-SI: the new code purchasing linked, with its current codes and when (the stock
+    inquiry's "code created" indicator reads this; nothing is stored for it)."""
+    if not app.new_product_id:
         return []
-    codes = {
-        str(k): v
-        for k, v in db.query(Product.id, Product.product_code)
-        .filter(Product.id.in_([l.opened_product_id for l in opened]))
-        .all()
-    }
-    sources = _sources_by_line(db, [l.id for l in opened])
+    code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
+    sources = _sources_by_app(db, [app.id]).get(str(app.id), [])
     return [
         {
-            "product_code": codes.get(str(l.opened_product_id)),
-            "current_codes": [c["product_code"] for c in sources.get(str(l.id), [])],
-            "created_at": _iso(l.resolved_at),
+            "product_code": code,
+            "current_codes": [c["product_code"] for c in sources],
+            "created_at": _iso(app.new_code_at),
         }
-        for l in opened
     ]
-
 
 def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict[str, Any]]:
     """Read-only values from the product purchasing linked (AC-NPA-76, D3): item group, base
@@ -1274,8 +1320,17 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         db, Product, [l.opened_product_id for l in lines], Product.product_code, Product.product_name, Product.is_active
     )
     facts = _linked_product_facts(db, [l.opened_product_id for l in lines])
-    sources = _sources_by_line(db, [l.id for l in lines])
-    users = _user_names(db, [app.decided_by, app.applicant_id, app.feedback_by, *[l.resolved_by for l in lines]])
+    sources = _sources_by_app(db, [app.id]).get(str(app.id), [])
+    new_product = (
+        db.query(Product.product_code, Product.product_name, Product.is_active)
+        .filter(Product.id == app.new_product_id)
+        .first()
+        if app.new_product_id
+        else None
+    )
+    users = _user_names(
+        db, [app.decided_by, app.applicant_id, app.feedback_by, app.new_code_by, *[l.resolved_by for l in lines]]
+    )
     customer = (
         db.query(Customer.customer_code, Customer.customer_name).filter(Customer.id == app.customer_id).first()
         if app.customer_id
@@ -1320,10 +1375,6 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
             "opened_list_price": None,
             "opened_supplier_name": None,
             **facts.get(str(l.opened_product_id), {}),
-            "current_products": sources.get(str(l.id), []),
-            "suggestions": reuse_suggestions(
-                db, [c["id"] for c in sources.get(str(l.id), [])], exclude_line_id=l.id, portal=portal
-            ),
             "closed_reason": l.closed_reason,
             "resolved_by": l.resolved_by,
             "resolved_by_name": users.get(str(l.resolved_by)) if l.resolved_by else None,
@@ -1368,6 +1419,18 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "completed_at": _iso(app.completed_at),
         "updated_at": _iso(app.updated_at),
         "attachments": _attachments(db, str(app.id)),
+        # NPA-FROM-SI (mock v3): PRODUCT CODES under STOCK INQUIRY, ONE NEW PRODUCT CODE under REMARK.
+        "current_products": sources,
+        "suggestions": reuse_suggestions(
+            db, [c["id"] for c in sources], exclude_application_id=app.id, portal=portal
+        ),
+        "new_product_id": app.new_product_id,
+        "new_product_code": new_product[0] if new_product else None,
+        "new_product_name": new_product[1] if new_product else None,
+        "new_product_active": new_product[2] if new_product else None,
+        "new_code_closed_reason": app.new_code_closed_reason,
+        "new_code_by_name": users.get(str(app.new_code_by)) if app.new_code_by else None,
+        "new_code_at": _iso(app.new_code_at),
         "lines": [line_out(l) for l in lines],
     }
     if portal:

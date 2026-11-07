@@ -93,11 +93,26 @@ class NewProductApplication(Base, CompanyScopedMixin):
     lead_time = Column(Text, nullable=True)
     feedback_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     feedback_at = Column(DateTime(timezone=False), nullable=True)
+    #: NPA-FROM-SI (owner, mock v3): the ONE new product code purchasing links once AutoCount
+    #: sent it, or why it is not opened. Either completes the application.
+    new_product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
+    )
+    new_code_closed_reason = Column(Text, nullable=True)
+    new_code_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    new_code_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    #: NPA-FROM-SI: the CURRENT product codes the new code is built from (one or many, picked).
+    sources = relationship(
+        "NewProductApplicationSource",
+        back_populates="application",
+        cascade="all, delete-orphan",
+        order_by="NewProductApplicationSource.position",
+    )
     lines = relationship(
         "NewProductApplicationLine",
         back_populates="application",
@@ -116,6 +131,11 @@ class NewProductApplication(Base, CompanyScopedMixin):
         Index("ix_new_product_applications_applicant", "applicant_id"),
         Index("ix_new_product_applications_contact", "contact_id"),
         Index("ix_new_product_applications_inquiry", "stock_inquiry_id"),
+        Index("ix_new_product_applications_new_product", "new_product_id"),
+        CheckConstraint(
+            "new_product_id IS NULL OR new_code_closed_reason IS NULL",
+            name="ck_new_product_applications_one_new_code_outcome",
+        ),
     )
 
 
@@ -173,13 +193,6 @@ class NewProductApplicationLine(Base):
     resolved_at = Column(DateTime(timezone=False), nullable=True)
 
     application = relationship("NewProductApplication", back_populates="lines")
-    #: NPA-FROM-SI: the CURRENT product codes this new code is based on (one or many, picked).
-    sources = relationship(
-        "NewProductApplicationLineSource",
-        back_populates="line",
-        cascade="all, delete-orphan",
-        order_by="NewProductApplicationLineSource.position",
-    )
 
     __table_args__ = (
         CheckConstraint(
@@ -201,24 +214,24 @@ class NewProductApplicationLine(Base):
     )
 
 
-class NewProductApplicationLineSource(Base):
-    """NPA-FROM-SI lineage: one current product a line's new code is built from.
+class NewProductApplicationSource(Base):
+    """NPA-FROM-SI lineage: one current product the application's new code is built from.
 
-    The line's `opened_product_id` is the new code; together they are "current codes -> new code",
-    and the application is the why. Scoped through its line (no company_id of its own).
+    With `NewProductApplication.new_product_id` this is "current codes -> new code", and the
+    application is the why. Scoped through its application (no company_id of its own).
     Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md.
     """
 
-    __tablename__ = "new_product_application_line_sources"
-    __audit_entity_type__ = "new_product_application_line_source"
+    __tablename__ = "new_product_application_sources"
+    __audit_entity_type__ = "new_product_application_source"
     __audit_track__ = True
-    #: Company chain and history through the line (-> application), never through the product.
-    __audit_parent__ = "line_id"
+    #: Company chain and history through the application, never through the product.
+    __audit_parent__ = "application_id"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    line_id = Column(
+    application_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("new_product_application_lines.id", ondelete="CASCADE"),
+        ForeignKey("new_product_applications.id", ondelete="CASCADE"),
         nullable=False,
     )
     product_id = Column(
@@ -226,11 +239,11 @@ class NewProductApplicationLineSource(Base):
     )
     position = Column(Integer, nullable=False, default=1, server_default="1")
 
-    line = relationship("NewProductApplicationLine", back_populates="sources")
+    application = relationship("NewProductApplication", back_populates="sources")
 
     __table_args__ = (
-        UniqueConstraint("line_id", "product_id", name="uq_npa_line_sources_line_product"),
-        Index("ix_npa_line_sources_product", "product_id"),
+        UniqueConstraint("application_id", "product_id", name="uq_npa_sources_application_product"),
+        Index("ix_npa_sources_product", "product_id"),
     )
 
 

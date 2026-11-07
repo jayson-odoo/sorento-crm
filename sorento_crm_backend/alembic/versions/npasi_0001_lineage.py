@@ -5,8 +5,10 @@ Additive only and idempotent (`IF NOT EXISTS`) so the shared dev DB, which conve
 
 - `stock_inquiries.npa_requested` (+ who / when): purchasing asks the salesperson to create a
   New Product Application on its reply. Non-blocking.
-- `new_product_application_line_sources`: the CURRENT product codes a line's new code is based
-  on (lineage current codes -> new code; the line's `opened_product_id` is the new code).
+- `new_product_applications.new_product_id` (+ not-opening reason, who / when): the ONE new code
+  purchasing links (owner, mock v3).
+- `new_product_application_sources`: the CURRENT product codes that new code is built from
+  (lineage current codes -> new code).
 
 Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md.
 
@@ -27,17 +29,34 @@ UPGRADE = (
     "ALTER TABLE stock_inquiries ADD COLUMN IF NOT EXISTS npa_requested_by VARCHAR(100) "
     "REFERENCES users(id) ON DELETE SET NULL",
     "ALTER TABLE stock_inquiries ADD COLUMN IF NOT EXISTS npa_requested_at TIMESTAMP",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_product_id UUID "
+    "REFERENCES products(id) ON DELETE RESTRICT",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_closed_reason TEXT",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_by VARCHAR(100) "
+    "REFERENCES users(id) ON DELETE SET NULL",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_at TIMESTAMP",
+    "CREATE INDEX IF NOT EXISTS ix_new_product_applications_new_product "
+    "ON new_product_applications (new_product_id)",
     """
-    CREATE TABLE IF NOT EXISTS new_product_application_line_sources (
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'ck_new_product_applications_one_new_code_outcome'
+        ) THEN
+            ALTER TABLE new_product_applications ADD CONSTRAINT ck_new_product_applications_one_new_code_outcome
+            CHECK (new_product_id IS NULL OR new_code_closed_reason IS NULL);
+        END IF;
+    END $$
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS new_product_application_sources (
         id UUID PRIMARY KEY,
-        line_id UUID NOT NULL REFERENCES new_product_application_lines(id) ON DELETE CASCADE,
+        application_id UUID NOT NULL REFERENCES new_product_applications(id) ON DELETE CASCADE,
         product_id UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
         position INTEGER NOT NULL DEFAULT 1,
-        CONSTRAINT uq_npa_line_sources_line_product UNIQUE (line_id, product_id)
+        CONSTRAINT uq_npa_sources_application_product UNIQUE (application_id, product_id)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS ix_npa_line_sources_product "
-    "ON new_product_application_line_sources (product_id)",
+    "CREATE INDEX IF NOT EXISTS ix_npa_sources_product ON new_product_application_sources (product_id)",
 )
 
 
@@ -50,7 +69,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     for statement in (
-        "DROP TABLE IF EXISTS new_product_application_line_sources",
+        "DROP TABLE IF EXISTS new_product_application_sources",
+        "ALTER TABLE new_product_applications DROP CONSTRAINT IF EXISTS "
+        "ck_new_product_applications_one_new_code_outcome",
+        "DROP INDEX IF EXISTS ix_new_product_applications_new_product",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_at",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_by",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_closed_reason",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_product_id",
         "ALTER TABLE stock_inquiries DROP COLUMN IF EXISTS npa_requested_at",
         "ALTER TABLE stock_inquiries DROP COLUMN IF EXISTS npa_requested_by",
         "ALTER TABLE stock_inquiries DROP COLUMN IF EXISTS npa_requested",

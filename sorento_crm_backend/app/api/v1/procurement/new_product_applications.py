@@ -317,6 +317,32 @@ def undo_line(
     return _line_move(db, user, application_id, line_id, svc.undo_line)
 
 
+@router.post("/{application_id}/new-code/link")
+def link_new_code(
+    application_id: str,
+    payload: LinkIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """NPA-FROM-SI: the ONE new product code (owner, mock v3)."""
+    return _move(db, user, application_id, svc.link_new_code, product_id=payload.product_id)
+
+
+@router.post("/{application_id}/new-code/close")
+def close_new_code(
+    application_id: str,
+    payload: ReasonIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _move(db, user, application_id, svc.close_new_code, reason=payload.reason)
+
+
+@router.post("/{application_id}/new-code/undo")
+def undo_new_code(application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _move(db, user, application_id, svc.undo_new_code)
+
+
 @router.put("/{application_id}/feedback")
 def save_feedback(
     application_id: str,

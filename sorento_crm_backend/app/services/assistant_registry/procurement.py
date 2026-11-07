@@ -3,10 +3,11 @@
 So the assistant answers "why does this code exist", "which codes was it made from" and "was a code already made
 from these codes" from the same rows the screens read (card `CARD-npa-from-si-07nov.md` rule 8):
 
-- `new_product_application_line`: one product asked for; `opened_product` is the NEW code purchasing linked.
-- `new_product_application_line_source`: one CURRENT code a line is based on (one or many per line).
+- `new_product_application`: `new_product` is the ONE new code purchasing linked (owner, mock v3).
+- `new_product_application_source`: one CURRENT code the application is built from (one or many).
+- `new_product_application_line`: one product row of the request (product type, dimension, qty).
 
-`StockInquiry` is not company scoped, and neither is its list screen. The line and line-source tables carry no
+`StockInquiry` is not company scoped, and neither is its list screen. The line and source tables carry no
 `company_id`: their `scope` states the company predicate through the application explicitly, because the session's
 automatic criterion is not attached to a subquery the tool builds (`query._company_clause`).
 """
@@ -17,7 +18,7 @@ from sqlalchemy import or_, select
 from app.models.new_product_application import (
     NewProductApplication,
     NewProductApplicationLine,
-    NewProductApplicationLineSource,
+    NewProductApplicationSource,
 )
 from app.models.procurement import StockInquiry
 from app.services.assistant_registry import register
@@ -60,18 +61,12 @@ def _line_own(me):
     return NewProductApplicationLine.application_id.in_(select(NewProductApplication.id).where(_npa_mine(me)))
 
 
-def _visible_line_ids(db):
-    return select(NewProductApplicationLine.id).where(*_line_scope(db))
-
-
 def _source_scope(db) -> list:
-    return [NewProductApplicationLineSource.line_id.in_(_visible_line_ids(db))]
+    return [NewProductApplicationSource.application_id.in_(_visible_application_ids(db))]
 
 
 def _source_own(me):
-    return NewProductApplicationLineSource.line_id.in_(
-        select(NewProductApplicationLine.id).where(_line_own(me))
-    )
+    return NewProductApplicationSource.application_id.in_(select(NewProductApplication.id).where(_npa_mine(me)))
 
 
 register(
@@ -124,8 +119,13 @@ register(
             "submitted_at": FieldDef("Submitted at"),
             "completed_at": FieldDef("Completed at"),
             "created_at": FieldDef("Created at"),
+            "new_code_closed_reason": FieldDef("New code not opened reason"),
+            "new_code_at": FieldDef("New code linked at", note="When purchasing linked the new code (or closed it)."),
         },
-        relations={"stock_inquiry": ("stock_inquiry", "stock_inquiry_id")},
+        relations={
+            "stock_inquiry": ("stock_inquiry", "stock_inquiry_id"),
+            "new_product": ("product", "new_product_id"),
+        },
         name_by=("application_no",),
         screen_path="/procurement-management/new-product-applications/{id}",
         pages=("/procurement-management/new-product-applications",),
@@ -141,33 +141,28 @@ register(
         own_clause=_line_own,
         fields={
             "line_no": FieldDef("Product number"),
-            "description": FieldDef("Product type", note="Why the new code was asked for (the request text)."),
+            "description": FieldDef("Product type", note="What was asked for (the request text, the why of the new code)."),
             "dimension": FieldDef("Dimension"),
             "material": FieldDef("Material"),
             "thickness": FieldDef("Thickness"),
             "packing": FieldDef("Packing"),
             "expected_qty": FieldDef("Qty"),
-            "closed_reason": FieldDef("Not opening reason"),
-            "resolved_at": FieldDef("New code linked at", note="When purchasing linked the new code (or closed it)."),
         },
-        relations={
-            "application": ("new_product_application", "application_id"),
-            "opened_product": ("product", "opened_product_id"),
-        },
+        relations={"application": ("new_product_application", "application_id")},
         name_by=("line_no",),
         scope=_line_scope,
     ),
     EntityDef(
-        key="new_product_application_line_source",
+        key="new_product_application_source",
         label="New product application current codes",
         module="procurement",
-        model=NewProductApplicationLineSource,
+        model=NewProductApplicationSource,
         view_permission=NPA_VIEW,
         own_permission=NPA_VIEW_OWN,
         own_clause=_source_own,
         fields={"position": FieldDef("Order picked")},
         relations={
-            "line": ("new_product_application_line", "line_id"),
+            "application": ("new_product_application", "application_id"),
             "product": ("product", "product_id"),
         },
         name_by=("position",),

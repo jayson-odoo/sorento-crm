@@ -1,4 +1,4 @@
-"""NPA-FROM-SI staff surface, red-first: current codes -> new code (lineage), the exact-set reuse
+"""NPA-FROM-SI staff surface, red-first: PRODUCT CODES -> the ONE new product code (lineage, mock v3), the exact-set reuse
 suggestion, the lineage read and the prefill of current codes.
 
 Card: documentation/plans/procurement/CARD-npa-from-si-07nov.md (rules 3-6). The world fixture
@@ -24,10 +24,10 @@ def _make(w, sources, *, user=None, inquiry=None, **line_over):
     body = {
         "stock_inquiry_id": (inquiry or w.inquiry).id,
         "customer_name": f"{MARKER} EXAMPLE DEVELOPER SDN BHD",
-        "lines": [_line(w, current_product_ids=sources, **line_over)],
+        "current_product_ids": sources,
+        "lines": [_line(w, **line_over)],
     }
-    res = w.api.as_(user or w.sales).post(NPA, json=body)
-    return res
+    return w.api.as_(user or w.sales).post(NPA, json=body)
 
 
 def _draft(w, sources, **kw):
@@ -36,13 +36,21 @@ def _draft(w, sources, **kw):
     return res.json()
 
 
-def _completed(w, sources, new_product, **kw):
-    """An application whose one line purchasing linked to ``new_product``."""
+def _approved_with(w, sources, **kw):
     d = _draft(w, sources, **kw)
     assert _act(w, d["id"], "submit", w.sales).status_code == 200
     assert _act(w, d["id"], "approve", w.manager).status_code == 200
-    line = d["lines"][0]["id"]
-    res = w.api.as_(w.buyer).post(f"{NPA}/{d['id']}/lines/{line}/link", json={"product_id": new_product.id})
+    return d
+
+
+def _new_code(w, aid, action, **json):
+    return w.api.as_(w.buyer).post(f"{NPA}/{aid}/new-code/{action}", json=json or None)
+
+
+def _completed(w, sources, new_product, **kw):
+    """An application whose ONE new product code purchasing linked to ``new_product``."""
+    d = _approved_with(w, sources, **kw)
+    res = _new_code(w, d["id"], "link", product_id=new_product.id)
     assert res.status_code == 200, res.text
     return res.json()
 
@@ -53,62 +61,111 @@ def _suggest(w, ids, user=None):
     return res.json()
 
 
-# ------------------------------------------------------------------ current codes (rule 4)
+# ------------------------------------------------------------------ PRODUCT CODES (rule 4, mock v3)
 
 
-def test_current_codes_round_trip_in_the_order_picked(world):
+def test_product_codes_round_trip_in_the_order_picked(world):
     d = _draft(world, [world.product2.id, world.product.id])
-    line = d["lines"][0]
-    assert [c["id"] for c in line["current_products"]] == [world.product2.id, world.product.id]
-    assert [c["product_code"] for c in line["current_products"]] == ["ZZT-KS2406", "ZZT-KS2433"]
-    assert set(line["current_products"][0]) >= {"id", "product_code", "product_name", "is_active"}
+    assert [c["id"] for c in d["current_products"]] == [world.product2.id, world.product.id]
+    assert [c["product_code"] for c in d["current_products"]] == ["ZZT-KS2406", "ZZT-KS2433"]
+    assert set(d["current_products"][0]) >= {"id", "product_code", "product_name", "is_active"}
 
 
-def test_a_line_without_current_codes_is_allowed_and_lists_none(world):
-    d = _draft(world, [])
-    assert d["lines"][0]["current_products"] == []
+def test_the_product_table_is_unchanged_and_takes_no_codes(world):
+    res = world.api.as_(world.sales).post(
+        NPA, json={"lines": [_line(world, current_product_ids=[world.product.id])]}
+    )
+    assert res.status_code == 422  # the line keeps today's fields only (extra="forbid")
 
 
-def test_the_same_current_code_twice_on_one_line_is_422(world):
+def test_an_application_without_product_codes_is_allowed(world):
+    assert _draft(world, [])["current_products"] == []
+
+
+def test_the_same_product_code_twice_is_422(world):
     res = _make(world, [world.product.id, world.product.id])
     assert res.status_code == 422
-    assert "ZZT-KS2433 is already a current code" in res.text
+    assert "ZZT-KS2433 is already one of the product codes" in res.text
 
 
-def test_a_current_code_of_another_company_is_422(world):
+def test_a_product_code_of_another_company_is_422(world):
     other = second_company(world.db)
     with company_scope(world.db, frozenset({other})):
         foreign = make_product(world.db)
-    res = _make(world, [foreign.id])
-    assert res.status_code == 422
+    assert _make(world, [foreign.id]).status_code == 422
 
 
-def test_an_edit_that_leaves_current_codes_out_keeps_them_and_an_empty_list_clears(world):
+def test_an_edit_that_leaves_product_codes_out_keeps_them_and_an_empty_list_clears(world):
     d = _draft(world, [world.product.id])
-    line = d["lines"][0]
-    kept = {k: line[k] for k in ("id", "proposed_code", "description", "expected_qty")}
-    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"lines": [kept]})
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"remark": "x"})
     assert res.status_code == 200, res.text
-    assert [c["id"] for c in res.json()["lines"][0]["current_products"]] == [world.product.id]
-    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"lines": [{**kept, "current_product_ids": []}]})
-    assert res.json()["lines"][0]["current_products"] == []
+    assert [c["id"] for c in res.json()["current_products"]] == [world.product.id]
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"current_product_ids": []})
+    assert res.json()["current_products"] == []
 
 
-def test_current_codes_are_locked_while_submitted(world):
+def test_product_codes_are_locked_while_submitted(world):
     d = _draft(world, [world.product.id])
     assert _act(world, d["id"], "submit", world.sales).status_code == 200
-    line = d["lines"][0]
-    res = world.api.as_(world.sales).put(
-        f"{NPA}/{d['id']}", json={"lines": [{"id": line["id"], "current_product_ids": []}]}
-    )
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"current_product_ids": []})
     assert res.status_code == 422
-    assert res.json().get("code") == "new_product_application_locked" or "locked" in res.text
+    assert "locked" in res.text
 
 
-def test_the_applicant_can_search_products_to_pick_current_codes(world):
+def test_the_applicant_can_search_products_to_pick_codes(world):
     res = world.api.as_(world.sales).get(f"{NPA}/products", params={"q": "zzt ks2433"})
     assert res.status_code == 200, res.text
     assert [p["product_code"] for p in res.json()] == ["ZZT-KS2433"]
+
+
+# ------------------------------------------------------------------ the ONE new product code (Q1')
+
+
+def test_purchasing_links_the_one_new_code_and_the_application_completes(world):
+    newp = make_product(world.db, code="ZZT-KS2496")
+    d = _approved_with(world, [world.product.id])
+    res = _new_code(world, d["id"], "link", product_id=newp.id)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "completed"
+    assert body["new_product_code"] == "ZZT-KS2496"
+    assert body["new_code_by_name"] == f"{MARKER} purchasing"
+    assert body["new_code_at"]
+
+
+def test_only_purchasing_links_and_only_on_an_approved_application(world):
+    newp = make_product(world.db)
+    d = _draft(world, [world.product.id])
+    assert _new_code(world, d["id"], "link", product_id=newp.id).status_code == 409
+    a = _approved_with(world, [world.product.id])
+    res = world.api.as_(world.sales).post(f"{NPA}/{a['id']}/new-code/link", json={"product_id": newp.id})
+    assert res.status_code == 403
+
+
+def test_not_opening_needs_a_reason_and_completes(world):
+    d = _approved_with(world, [world.product.id])
+    assert _new_code(world, d["id"], "close", reason="").status_code == 422
+    res = _new_code(world, d["id"], "close", reason="supplier dropped it")
+    assert res.status_code == 200
+    assert res.json()["status"] == "completed"
+    assert res.json()["new_code_closed_reason"] == "supplier dropped it"
+
+
+def test_undo_returns_to_approved_and_a_second_link_needs_undo_first(world):
+    newp, other = make_product(world.db), make_product(world.db)
+    done = _completed(world, [world.product.id], newp)
+    assert _new_code(world, done["id"], "link", product_id=other.id).status_code == 409
+    res = _new_code(world, done["id"], "undo")
+    assert res.status_code == 200
+    assert res.json()["status"] == "approved"
+    assert res.json()["new_product_id"] is None
+
+
+def test_a_completed_application_cannot_be_revised_or_cancelled(world):
+    newp = make_product(world.db)
+    done = _completed(world, [world.product.id], newp)
+    assert _act(world, done["id"], "revise", world.sales, reason="change").status_code == 409
+    assert _act(world, done["id"], "cancel", world.sales).status_code == 409
 
 
 # ------------------------------------------------------------------ reuse before create (rule 6)
@@ -117,18 +174,16 @@ def test_the_applicant_can_search_products_to_pick_current_codes(world):
 def test_an_exact_set_suggests_the_code_created_before(world):
     newp = make_product(world.db, code="ZZT-KS2499", name=f"{MARKER} sink no tap hole")
     done = _completed(world, [world.product.id], newp, description="use the existing model but no tap hole")
-    got = _suggest(world, [world.product.id])
-    assert len(got) == 1
-    s = got[0]
+    [s] = _suggest(world, [world.product.id])
     assert s["product_id"] == newp.id
     assert s["product_code"] == "ZZT-KS2499"
     assert s["application_id"] == done["id"]
     assert s["application_no"] == done["application_no"]
     assert s["description"] == "use the existing model but no tap hole"
-    assert s["created_at"]  # when the code was linked
+    assert s["created_at"]
 
 
-def test_order_of_the_current_codes_does_not_matter(world):
+def test_order_of_the_product_codes_does_not_matter(world):
     newp = make_product(world.db)
     _completed(world, [world.product.id, world.product2.id], newp)
     assert [s["product_id"] for s in _suggest(world, [world.product2.id, world.product.id])] == [newp.id]
@@ -148,22 +203,17 @@ def test_no_codes_suggest_nothing(world):
     assert _suggest(world, []) == []
 
 
-def test_an_unresolved_or_closed_line_is_not_suggested(world):
-    d = _draft(world, [world.product.id])
-    assert _act(world, d["id"], "submit", world.sales).status_code == 200
-    assert _act(world, d["id"], "approve", world.manager).status_code == 200
+def test_an_open_or_not_opened_application_is_not_suggested(world):
+    d = _approved_with(world, [world.product.id])
     assert _suggest(world, [world.product.id]) == []
-    line = d["lines"][0]["id"]
-    res = world.api.as_(world.buyer).post(f"{NPA}/{d['id']}/lines/{line}/close", json={"reason": "supplier dropped"})
-    assert res.status_code == 200, res.text
+    assert _new_code(world, d["id"], "close", reason="supplier dropped").status_code == 200
     assert _suggest(world, [world.product.id]) == []
 
 
 def test_undoing_the_link_stops_the_suggestion(world):
     newp = make_product(world.db)
     done = _completed(world, [world.product.id], newp)
-    line = done["lines"][0]["id"]
-    assert world.api.as_(world.buyer).post(f"{NPA}/{done['id']}/lines/{line}/undo").status_code == 200
+    assert _new_code(world, done["id"], "undo").status_code == 200
     assert _suggest(world, [world.product.id]) == []
 
 
@@ -173,23 +223,22 @@ def test_newest_first_and_at_most_three(world):
         newp = make_product(world.db)
         _completed(world, [world.product.id], newp)
         made.append(newp.id)
-    got = [s["product_id"] for s in _suggest(world, [world.product.id])]
-    assert got == list(reversed(made))[:3]
+    assert [s["product_id"] for s in _suggest(world, [world.product.id])] == list(reversed(made))[:3]
 
 
-def test_the_detail_line_carries_its_suggestions_and_never_applies_them(world):
+def test_the_detail_carries_its_suggestions_and_never_applies_them(world):
     newp = make_product(world.db)
     _completed(world, [world.product.id], newp)
     d = _draft(world, [world.product.id], user=world.sales_b)
-    line = _get(world, d["id"])["lines"][0]
-    assert [s["product_code"] for s in line["suggestions"]] == [newp.product_code]
-    assert line["opened_product_id"] is None  # shown, never applied
+    detail = _get(world, d["id"])
+    assert [s["product_code"] for s in detail["suggestions"]] == [newp.product_code]
+    assert detail["new_product_id"] is None  # shown, never applied
 
 
-def test_a_line_is_not_suggested_to_itself(world):
+def test_an_application_is_not_suggested_to_itself(world):
     newp = make_product(world.db)
     done = _completed(world, [world.product.id], newp)
-    assert _get(world, done["id"])["lines"][0]["suggestions"] == []
+    assert _get(world, done["id"])["suggestions"] == []
 
 
 # ------------------------------------------------------------------ lineage (rule 5)
@@ -205,6 +254,7 @@ def test_lineage_of_the_new_code_and_of_its_source(world):
     [row] = body["created_from"]
     assert [c["product_code"] for c in row["current_products"]] == ["ZZT-KS2433", "ZZT-KS2406"]
     assert row["application_no"] == done["application_no"]
+    assert row["application_id"] == done["id"]
     assert row["description"] == "basin + cabinet set"
     assert row["product_code"] == "ZZT-KS2498"
     src = world.api.as_(world.viewer).get(f"{NPA}/lineage", params={"product_id": world.product.id}).json()
@@ -222,16 +272,18 @@ def test_lineage_hides_the_application_from_a_product_viewer_without_npa_access(
 # ------------------------------------------------------------------ prefill (rule 3, Q3 (a))
 
 
-def test_prefill_picks_the_current_code_only_on_an_exact_single_code(world):
+def test_prefill_picks_the_product_code_only_on_an_exact_single_code(world):
     exact = _inquiry(world.db, product_code="  zzt-ks2433 ")
     body = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": exact.id}).json()
-    assert body["lines"][0]["current_product_ids"] == [world.product.id]
+    assert body["current_product_ids"] == [world.product.id]
+    assert [p["product_code"] for p in body["current_products"]] == ["ZZT-KS2433"]
+    assert body["lines"][0]["proposed_code"] == "zzt-ks2433"  # today's line field, unchanged
     several = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": world.inquiry.id}).json()
-    assert several["lines"][0]["current_product_ids"] == []
+    assert several["current_product_ids"] == []
     near = _inquiry(world.db, product_code="ZZT-KS243")
     assert world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": near.id}).json()[
-        "lines"
-    ][0]["current_product_ids"] == []
+        "current_product_ids"
+    ] == []
 
 
 def test_prefill_copies_the_inquiry_remark(world):
@@ -303,13 +355,6 @@ def test_the_summary_lists_each_created_code_with_its_current_codes(world):
     assert code["product_code"] == "ZZT-KS2497"
     assert code["current_codes"] == ["ZZT-KS2433"]
     assert code["created_at"]
-
-
-def test_prefill_carries_the_picked_codes_labels(world):
-    exact = _inquiry(world.db, product_code="ZZT-KS2433")
-    body = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": exact.id}).json()
-    [p] = body["lines"][0]["current_products"]
-    assert (p["id"], p["product_code"]) == (world.product.id, "ZZT-KS2433")
 
 
 def test_the_detail_carries_its_stock_inquiry_for_the_tab(world):

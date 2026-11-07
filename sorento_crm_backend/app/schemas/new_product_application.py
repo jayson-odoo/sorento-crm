@@ -27,9 +27,6 @@ class NewProductApplicationLineIn(BaseModel):
     packing: Optional[str] = Field(None, max_length=2000)
     brand_id: Optional[str] = None
     expected_qty: Optional[Decimal] = Field(None, gt=0, max_digits=12, decimal_places=3)
-    #: NPA-FROM-SI: the CURRENT product codes this new code is based on, in the order picked.
-    #: Left out keeps the saved ones; [] clears.
-    current_product_ids: Optional[List[str]] = Field(None, max_length=20)
 
 
 class NewProductApplicationWrite(BaseModel):
@@ -41,6 +38,9 @@ class NewProductApplicationWrite(BaseModel):
     project_name: Optional[str] = Field(None, max_length=255)
     needed_by: Optional[Date] = None
     remark: Optional[str] = Field(None, max_length=2000)
+    #: NPA-FROM-SI (mock v3): PRODUCT CODES, the CURRENT catalogue codes the new code is built from,
+    #: in the order picked. Left out keeps the saved ones; [] clears.
+    current_product_ids: Optional[List[str]] = Field(None, max_length=20)
     lines: Optional[List[NewProductApplicationLineIn]] = Field(None, max_length=100)
 
 

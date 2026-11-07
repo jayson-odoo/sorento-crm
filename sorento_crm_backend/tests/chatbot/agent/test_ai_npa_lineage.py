@@ -12,7 +12,7 @@ import app.main  # noqa: F401  register every model and the app's listeners
 from app.models.new_product_application import (
     NewProductApplication,
     NewProductApplicationLine,
-    NewProductApplicationLineSource,
+    NewProductApplicationSource,
 )
 from app.models.procurement import StockInquiry
 from tests.chatbot.agent.test_ai_query_core import (  # noqa: F401  (fixtures by import)
@@ -35,7 +35,7 @@ SI_VIEW = "procurement.stock_inquiries.view"
 
 
 def mk_lineage(db, t, *, company_id=SORENTO, applicant=None, contact=None, why="mirror 600 x 900"):
-    """A completed application: line 1 built from two current codes, opened as a new code."""
+    """A completed application: built from two current codes, its ONE new code linked."""
     chain = mk_product_chain(db, company_id)
     cur_a = mk_product(db, f"{t}-A", chain)
     cur_b = mk_product(db, f"{t}-B", chain)
@@ -45,16 +45,13 @@ def mk_lineage(db, t, *, company_id=SORENTO, applicant=None, contact=None, why="
     app_row = NewProductApplication(
         id=str(uuid.uuid4()), company_id=company_id, application_no=f"NPA-{t}", status="completed",
         applicant_id=applicant, contact_id=str(contact.id) if contact else None,
-        customer_name=f"ZZT {t} customer",
+        customer_name=f"ZZT {t} customer", new_product_id=new.id, new_code_at=datetime.utcnow(),
     )
-    line = NewProductApplicationLine(
-        id=str(uuid.uuid4()), line_no=1, description=why, opened_product_id=new.id, resolved_at=datetime.utcnow()
-    )
-    line.sources = [
-        NewProductApplicationLineSource(id=str(uuid.uuid4()), product_id=cur_a.id, position=1),
-        NewProductApplicationLineSource(id=str(uuid.uuid4()), product_id=cur_b.id, position=2),
+    app_row.lines.append(NewProductApplicationLine(id=str(uuid.uuid4()), line_no=1, description=why))
+    app_row.sources = [
+        NewProductApplicationSource(id=str(uuid.uuid4()), product_id=cur_a.id, position=1),
+        NewProductApplicationSource(id=str(uuid.uuid4()), product_id=cur_b.id, position=2),
     ]
-    app_row.lines.append(line)
     db.add(app_row)
     db.flush()
     return app_row, cur_a, cur_b, new
@@ -67,7 +64,7 @@ def test_why_does_a_code_exist(db):
     out = core(db, user, {
         "entity": "new_product_application_line",
         "fields": ["description", "application.application_no"],
-        "filters": [{"field": "opened_product.product_code", "op": "eq", "value": new.product_code}],
+        "filters": [{"field": "application.new_product.product_code", "op": "eq", "value": new.product_code}],
     })
     [r] = out["rows"]
     assert r["description"] == "mirror 600 x 900"
@@ -79,18 +76,18 @@ def test_which_codes_a_new_code_was_made_from_and_what_was_made_from_a_code(db):
     _row, a, b, new = mk_lineage(db, t)
     user = mk_user(db, NPA_VIEW)
     sources = core(db, user, {
-        "entity": "new_product_application_line_source",
+        "entity": "new_product_application_source",
         "fields": ["product.product_code"],
-        "filters": [{"field": "line.opened_product.product_code", "op": "eq", "value": new.product_code}],
+        "filters": [{"field": "application.new_product.product_code", "op": "eq", "value": new.product_code}],
         "sort": [{"field": "position", "dir": "asc"}],
     })
     assert [r["product.product_code"] for r in sources["rows"]] == [a.product_code, b.product_code]
     made = core(db, user, {
-        "entity": "new_product_application_line_source",
-        "fields": ["line.opened_product.product_code"],
+        "entity": "new_product_application_source",
+        "fields": ["application.new_product.product_code"],
         "filters": [{"field": "product.product_code", "op": "eq", "value": a.product_code}],
     })
-    assert [r["line.opened_product.product_code"] for r in made["rows"]] == [new.product_code]
+    assert [r["application.new_product.product_code"] for r in made["rows"]] == [new.product_code]
 
 
 def test_another_companys_lineage_never_shows(db):
@@ -105,8 +102,8 @@ def test_another_companys_lineage_never_shows(db):
     })
     assert lines["rows"] == []
     sources = core(db, user, {
-        "entity": "new_product_application_line_source", "fields": ["position"],
-        "filters": [{"field": "line.application.application_no", "op": "eq", "value": f"NPA-{t}"}],
+        "entity": "new_product_application_source", "fields": ["position"],
+        "filters": [{"field": "application.application_no", "op": "eq", "value": f"NPA-{t}"}],
     })
     assert sources["rows"] == []
 
