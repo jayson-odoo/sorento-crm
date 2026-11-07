@@ -631,6 +631,10 @@ for h in <A_PUBLIC_IP> <B_PUBLIC_IP>; do scp /tmp/compose-ha-urls.py /tmp/ha-env
   ssh root@$h 'cd /root && chmod 600 compose-ha-urls.py ha-env-for-replica.py compose-env-hash.py compose-find-keys.py replica-recreate-gen.py && mv replica-recreate-gen.py replica-gen.py && ls -l /root/*.py'; done
 ```
 
+**Pre-check (read-only, A and B):** `cd /opt/sorento-crm2 && docker compose --profile "*" config --services | grep -c "^backend_"`
+must print `2` or more on BOTH nodes. An older Compose that ignores `"*"` prints `0`: STOP and post
+`docker compose version` (S5.3 would otherwise miss services).
+
 **S5.1b Node A: make the two URLs overridable (THIS CHANGES PROD FILES; nothing restarts):**
 
 ```bash
@@ -647,9 +651,12 @@ DU=<DEPLOY_USER>; DG=<DEPLOY_GROUP>    # DEPLOY_USER = the GitHub secret SSH_USE
 for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] || continue
   if [ "$(stat -c %U "$f")" = "$DU" ]; then chmod 600 "$f"; else chgrp "$DG" "$f" && chmod 640 "$f"; fi; done
 for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] && stat -c "%U:%G %a %n" "$f"; done
+sudo -u "$DU" docker compose config -q && echo DEPLOY-READ-OK
 ```
 
-Expected: a line count above 0, `changed lines: 2` or more, `A-UNCHANGED`, `0`. `--all` hashes
+Expected: a line count above 0, `changed lines: 2` or more, `A-UNCHANGED`, `0`, and `DEPLOY-READ-OK`
+(no `DEPLOY-READ-OK`: the next release on A would fail; run `chgrp <DEPLOY_GROUP>` + `chmod 640` on the
+file it names, or post the error). `--all` hashes
 every env key of every service (the URLs included), each whole service definition and every
 top-level section, so ANY change in what A resolves shows as a diff. No `A-UNCHANGED`: roll back
 (`cp -p docker-compose.yml.bak-08nov docker-compose.yml`) and post the diff (hashes only).
@@ -761,7 +768,9 @@ every `REDIS_URL` `redis://redis:6379/0`; `ENABLE_SCHEDULER true` only on `worke
 `compose-find-keys.py` prints `HITS: 0` for `@pgbouncer`, `@db:`, `@db/` and A's address
 (`ANALYTICS_RO_DATABASE_URL`, `app/config.py:225`, is rewritten and swapped like the other two
 URLs when the compose sets it); any hit names the key: STOP and post the key path. A hit for `<CRM_HOST>` is fine only on keys that are meant to be the
-public URL (e.g. `NEXTAUTH_URL`, `FRONTEND_BASE_URL`): post the list, crew confirms. The `.env` grep
+public URL (e.g. `NEXTAUTH_URL`, `FRONTEND_BASE_URL`, and `CRM_BASE_URL`: the MCP server calls the
+CRM through the public hostname on purpose, so it follows the LB to whichever node is primary;
+expected, do NOT stop on it): post the list, crew confirms. The `.env` grep
 prints only the commented `#DATABASE_URL` / `#DIRECT_URL` / `#REDIS_URL` (or nothing).
 Never set `HA_*` on A. Rollback: `cp -p .env.bak-08nov .env && cp -p docker-compose.yml.bak-08nov docker-compose.yml`.
 
