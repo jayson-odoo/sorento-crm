@@ -27,6 +27,16 @@ lag at the moment A dies (measured 0 bytes behind, under 2 ms).
 
 Tunnel addresses used below (private, safe to keep): A = `10.77.0.1`, B = `10.77.0.2`.
 
+## Progress log (owner runs, crew relays; newest last)
+
+| When (7 Nov, MYT) | Step | Result |
+|---|---|---|
+| ~22:00 | S2.2 (A pg_hba row for 10.77.0.2) | done |
+| ~22:30 | S2.3 first try (alter system) | stopped: `primary_conninfo` comes from the replica's command line |
+| ~23:00 | S2.3 recreate | failed (`no pg_hba.conf entry ... 172.18.0.1`), rolled back; replica streaming again over the public path. Suspected cause: B's wg0 address (S2.1 check) |
+| ~23:30 | S0 on A | DONE: owner key installed on both nodes (`ssh-copy-id`), drop-in applied, `CONFIG-OK`, key login OK, password login denied |
+| next | S0 on B, then the S2.1 B tunnel address check | pending |
+
 ## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
 
 A and B share ONE Hostinger firewall rule set. It acts before the host, so Docker cannot bypass
