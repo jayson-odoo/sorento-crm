@@ -3550,6 +3550,10 @@ def gate_user_ids(current_user: Mapping[str, Any]) -> list[str]:
     nothing the key lacks."""
     uid = str(current_user.get("id") or "")
     key_user_id = current_user.get("key_user_id")
+    if current_user.get("staff_proven"):
+        # The backend's own panel agent, with its proof (`staff_proof`, AI-TOOLS-WAVE2): the asking staff member
+        # alone, as on their own screens.
+        return [uid]
     return [uid, str(key_user_id)] if key_user_id else [uid]
 
 

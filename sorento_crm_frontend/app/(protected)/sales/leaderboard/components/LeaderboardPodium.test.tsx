@@ -5,7 +5,7 @@ import type { LeaderboardRow } from '@/services/salesLeaderboardService';
 import { LeaderboardPodium } from './LeaderboardPodium';
 
 const row = (rank: number, person: string, amount: number, change: number | null = 10): LeaderboardRow => ({
-  rank, person, codes: [person], amount, prev_amount: 1, change_pct: change, customers: 1, is_me: false,
+  rank, name: person, keys: [], person, codes: [person], amount, qty: 0, prev_amount: 1, change_pct: change, customers: 1, products: 0, is_me: false,
 });
 
 const ROWS = [row(1, 'LCL', 1856856.61, 63.6), row(2, 'SEAN', 1276644.96, -10.4), row(3, 'JUSTIN', 1156644.97, null)];
@@ -43,7 +43,7 @@ describe('LeaderboardPodium', () => {
 
   it('leaves the codes line out when the single code is the name', () => {
     render(<LeaderboardPodium rows={[{ ...row(1, 'LCL', 100), codes: ['LCL'] }]} versus="Sep" />);
-    expect(screen.getByTestId('leaderboard-podium-1').querySelectorAll('p[title]').length).toBe(1); // the name only
+    expect(screen.getByTestId('leaderboard-podium-1').querySelectorAll('span[title]').length).toBe(1); // the name only
   });
 
   it('shows the codes line for several codes', () => {

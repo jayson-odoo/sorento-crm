@@ -69,6 +69,7 @@ register(
         screen_path="/complaint-management/complaints/{id}",
         pages=("/complaint-management",),
         routes=("GET /api/v1/complaints-management/complaints/",),
+        hint="complaints with root cause and resolution",
         scope=_brand_scope,
     ),
 )

@@ -20,10 +20,18 @@ function podiumOrder(rows: LeaderboardRow[]): LeaderboardRow[] {
 export function LeaderboardPodium({
   rows,
   versus,
+  showChange = true,
+  canOpen,
+  onOpen,
 }: {
   rows: LeaderboardRow[];
   /** `Sep`, `previous period` */
   versus: string;
+  /** False on Undelivered, which has no earlier window. */
+  showChange?: boolean;
+  /** A card opens its row exactly when the row would open (same handler as the grid). */
+  canOpen?: (row: LeaderboardRow) => boolean;
+  onOpen?: (row: LeaderboardRow) => void;
 }) {
   const cards = podiumOrder(rows);
   if (cards.length === 0) return null;
@@ -33,11 +41,19 @@ export function LeaderboardPodium({
       className="grid items-end gap-1.5 md:gap-3"
       style={{ gridTemplateColumns: cards.length === 3 ? '1fr 1.15fr 1fr' : `repeat(${cards.length}, 1fr)` }}
     >
-      {cards.map((row) => (
-        <div
+      {cards.map((row) => {
+        const person = row.person ?? row.name;
+        const codes = row.codes ?? [];
+        const open = onOpen && canOpen?.(row);
+        const Card = open ? 'button' : 'div';
+        return (
+        <Card
           key={row.rank}
           data-testid={`leaderboard-podium-${row.rank}`}
+          data-drill={open ? 'true' : undefined}
+          {...(open ? { type: 'button' as const, onClick: () => onOpen(row) } : {})}
           className={cn(
+            open && 'cursor-pointer hover:bg-muted/40',
             'min-w-0 rounded-lg border border-border p-2 text-center md:p-4',
             row.rank === 1 && 'border-amber-500 ring-1 ring-amber-500 md:pt-6',
             row.is_me && 'bg-primary/5',
@@ -51,26 +67,29 @@ export function LeaderboardPodium({
           >
             {row.rank}
           </span>
-          <p className="truncate text-xs font-semibold md:text-sm" title={row.person}>
-            {row.person}
-          </p>
-          {codesText(row.person, row.codes) ? (
-            <p
+          <span className="block truncate text-xs font-semibold md:text-sm" title={person}>
+            {person}
+          </span>
+          {codesText(person, codes) ? (
+            <span
               className="hidden truncate text-xs text-muted-foreground md:block"
-              title={codesText(row.person, row.codes)}
+              title={codesText(person, codes)}
             >
-              {codesText(row.person, row.codes)}
-            </p>
+              {codesText(person, codes)}
+            </span>
           ) : null}
-          <p className="mt-1 text-sm font-bold tabular-nums md:text-xl">
+          <span className="block mt-1 text-sm font-bold tabular-nums md:text-xl">
             <span className="md:hidden">{formatCompactRm(row.amount)}</span>
             <span className="hidden md:inline">{formatRm(row.amount)}</span>
-          </p>
-          <p className={cn('hidden text-xs md:block', changeTone(row.change_pct))}>
-            {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
-          </p>
-        </div>
-      ))}
+          </span>
+          {showChange ? (
+            <span className={cn('hidden text-xs md:block', changeTone(row.change_pct))}>
+              {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
+            </span>
+          ) : null}
+        </Card>
+        );
+      })}
     </div>
   );
 }

@@ -57,9 +57,14 @@ ASK = "/api/v1/order-management/report-ask"
 OCT = ("2026-10-01", "2026-10-31")
 SEP = ("2026-09-01", "2026-09-30")
 NO_AGENT = "(no agent)"
-ROW_KEYS = {"rank", "person", "codes", "amount", "prev_amount", "change_pct", "customers", "is_me"}
+# SALES-INSIGHTS-P2 (owner ruling 7 Nov) supersedes the #2227 shape: the plan's new Contract.
+ROW_KEYS = {
+    "rank", "name", "keys", "person", "codes", "amount", "qty", "prev_amount", "change_pct", "customers",
+    "products", "is_me", "target",
+}
 TOP_KEYS = {
-    "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount", "rows", "me",
+    "basis", "by", "date_from", "date_to", "previous_from", "previous_to", "as_of", "total", "no_agent_amount",
+    "rows", "me", "can_drill_others", "blank",
 }
 
 
@@ -456,7 +461,7 @@ def test_every_contract_field_is_in_the_response(db):
         narrow = None
     assert set(body) == TOP_KEYS
     assert (body["date_from"], body["date_to"]) == OCT
-    assert set(body["total"]) == {"amount", "prev_amount", "change_pct"}
+    assert set(body["total"]) == {"amount", "qty", "prev_amount", "change_pct", "customers", "products"}
     assert all(set(r) == ROW_KEYS for r in body["rows"])
     assert isinstance(body["rows"][0]["codes"], list) and isinstance(body["rows"][0]["customers"], int)
     assert body["as_of"].startswith("2026-11-05T09:00:00")  # max last_synced_at over both granted companies
@@ -510,12 +515,14 @@ def test_the_permission_registry_holds_sales_leaderboard_view():
 # ================================================================================ L7 assistant
 
 
-def test_l7_1_sales_person_is_an_invoiced_dimension_only():
+def test_l7_1_sales_person_is_a_dimension_on_invoiced_delivered_ordered_outstanding_only():
+    """SALES-INSIGHTS-P2 (owner 7 Nov): the word is open on the four sales bases, still unknown on the other two."""
     from app.services.reports import ask
 
-    assert "sales_person" in ask.CATALOGUE["sales"]["invoiced"]["dimensions"]
-    for basis in ("delivered", "ordered", "outstanding"):
-        assert "sales_person" not in ask.CATALOGUE["sales"][basis]["dimensions"]
+    for basis in ("invoiced", "delivered", "ordered", "outstanding"):
+        assert "sales_person" in ask.CATALOGUE["sales"][basis]["dimensions"], basis
+    for basis in ("pending_delivery", "unpaid"):
+        assert "sales_person" not in ask.CATALOGUE["sales"][basis]["dimensions"], basis
 
 
 def test_l7_1_run_ask_by_sales_person_returns_the_boards_rows_and_amounts(db):
@@ -557,13 +564,17 @@ def test_l7_1_crm_report_ask_accepts_sales_person_on_invoiced_and_matches_the_bo
     assert board[world.gamma] == D("1600.75")
 
 
-def test_l7_1_sales_person_stays_unknown_group_by_on_the_ordered_basis(db):
+def test_l7_1_sales_person_is_a_group_by_on_the_ordered_basis_and_stays_unknown_on_pending_delivery(db):
     _world(db)
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
     db.commit()
     allow = (LB, "sales.reports.view", "order_management.orders.view")
     with make_client(db, allow=allow, grants=(DEFAULT_COMPANY_ID,)) as client:
-        resp = _assistant_ask(client, contact, basis="ordered", group_by="sales_person", measure="amount")
-    assert resp.status_code == 422
-    assert resp.json().get("code") == "unknown_group_by"
+        ordered = _assistant_ask(client, contact, basis="ordered", group_by="sales_person", measure="amount", top_n=5)
+        pending = _assistant_ask(client, contact, basis="pending_delivery", group_by="sales_person", measure="amount",
+                                 top_n=5)
+    assert ordered.status_code == 200, ordered.text
+    assert ordered.json()["group_by"] == "sales_person"
+    assert pending.status_code == 422
+    assert pending.json().get("code") == "unknown_group_by"

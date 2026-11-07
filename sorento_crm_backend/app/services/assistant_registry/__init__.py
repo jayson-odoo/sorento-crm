@@ -11,7 +11,7 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 
 ENTITIES: dict[str, EntityDef] = {}
 
-_NOT_MODULES = {"types", "query"}
+_NOT_MODULES = {"types", "query", "computed"}
 
 
 def register(*entities: EntityDef) -> None:

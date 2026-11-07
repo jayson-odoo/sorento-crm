@@ -165,6 +165,9 @@ class Dataset:
     #: The engine checks the value against the caller's grant (403 outside it), defaults
     #: it to the caller's current company, and names the company in the title block.
     company_param: Optional[str] = None
+    #: The company param takes several values, and none means every company the caller holds (the sales reports a
+    #: board links into). Off: exactly one company, defaulting to the caller's current one.
+    company_multi: bool = False
     #: The line's product id column, when the rows are product lines. A brand-scoped session
     #: (CONTACT-BRAND-SCOPE) keeps only lines of in-scope products: the datasets outer-join
     #: Product, where the ORM criterion would blank the product but still count the line.

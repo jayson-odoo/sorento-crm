@@ -102,6 +102,7 @@ import {
   templateAfterFlip,
   lineToDraft,
   EMPTY_LINE,
+  droppedPromotionNote,
   lineProblemsOf,
   pruneGuardError,
   MISSING_TAG_TEMPLATE,
@@ -1273,6 +1274,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       if (!effectiveId) setCreatedRequestId(saved.id);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved');
+      const dropped = droppedPromotionNote(payload.lines, saved.lines);
+      if (dropped) toast.info(dropped);
       router.push(homePath);
     } catch (e) {
       // S4 (code review): the same `line:<index>` -> row mapping Submit uses
@@ -1310,6 +1313,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     if (numbersInvalid()) return;
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
+      const revisedLines = payloadLines();
       await revise({
         reason: reviseReason.trim(),
         expectedRevisionNo: request?.revision_no ?? 0,
@@ -1324,7 +1328,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           // silently dropped who prints it.
           print_by: printBy,
         },
-        products: payloadLines(),
+        products: revisedLines,
       });
       // Review round 3: a file added while composing the revision sat in
       // `pendingFiles` with nowhere to flush to (the request already exists,
@@ -1336,6 +1340,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       if (fresh) {
         setRequest(fresh);
         applyRequestFieldsFrom(fresh);
+        const dropped = droppedPromotionNote(revisedLines, fresh.lines);
+        if (dropped) toast.info(dropped);
       }
       // Review round 3: the lineage and the policy the header/gear read both
       // changed under this revision - reload the one GET that changed
@@ -1422,8 +1428,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
     const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l, priceMode) ? [index] : []));
-    // Approve also reads the facts that stop a tag being drawn (no combo price, a discontinued
-    // part, no template, a short pick). They are found HERE, on the click, and shown on the line;
+    // Approve also reads the facts that stop a tag being drawn (no combo price, no template, a
+    // short pick). They are found HERE, on the click, and shown on the line;
     // Escalate is the way out of them, so it does not ask (owner, 5 Nov; same mechanism as #2138).
     const perLine = lines.map((l, index) => {
       const found: string[] = [];
@@ -1497,6 +1503,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
+      const dropped = droppedPromotionNote(payload.lines, created.lines);
+      if (dropped) toast.info(dropped);
       if (action.kind === 'escalate') {
         await service().submitAndEscalate(created.id, action.note);
         toast.success('Sent to marketing');
