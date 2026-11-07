@@ -1323,6 +1323,20 @@ class TagAccessoryImage(BaseModel):
     url: str
 
 
+class TagAccessoryPicture(BaseModel):
+    """One of an accessory's pictures with its optional colour."""
+
+    attachment_id: str
+    url: str
+    colour_name: Optional[str] = None
+    colour_hex: Optional[str] = None
+
+
+class TagAccessoryColour(BaseModel):
+    name: Optional[str] = None
+    hex: str
+
+
 class TagAccessory(BaseModel):
     """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
     Declared on every tag shape below or `response_model` drops it without a word."""
@@ -1333,7 +1347,11 @@ class TagAccessory(BaseModel):
     id: str
     name: str
     spec: Optional[str] = None
+    remark: Optional[str] = None
     image: Optional[TagAccessoryImage] = None
+    #: Every picture in order; `colours` = the distinct colours of those pictures.
+    images: list[TagAccessoryPicture] = []
+    colours: list[TagAccessoryColour] = []
     code: Optional[str] = None
     list_price: Optional[float] = None
 
