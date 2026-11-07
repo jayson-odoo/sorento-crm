@@ -2571,3 +2571,24 @@ def test_the_supplier_kind_groups_records_of_one_name():
     from app.services.chatbot.turn import policy_rows
 
     assert policy_rows.SUPPLIER_KIND_ROW["family_grouping"] == "ledger_family"
+
+
+def test_a_customer_group_never_merges_two_suppliers_of_different_names():
+    """Reviewer follow-up (#2120): the supplier family is the supplier's own trading name. A customer group that
+    happens to list both names (customer rows of the same names) never makes two different suppliers one choice."""
+    from app.services import ledger_family as lf
+    from app.services.chatbot.turn import narrow
+    from app.services.chatbot.turn.state import Focus, Profile
+
+    rows = [
+        {"uuid": str(uuid.uuid4()), "name": name, "canonical_code": name, "raw": name, "entity_type": "supplier"}
+        for name in ("ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD")
+    ]
+    focus = Focus(extra={"supplier": [{"raw": "zzt", "hint": "supplier", "current_message": True}]})
+    with lf.customer_groups({"ZZT ALPHA SDN BHD": "ZZT GROUP", "ZZT BETA SDN BHD": "ZZT GROUP"}):
+        outcome = narrow.decide(
+            kind="supplier", policy_value="optional_filter", focus=focus, profile=Profile(),
+            resolved_candidates=rows, family_grouping="ledger_family",
+        )
+    assert outcome.ask_kind == "supplier_pick", outcome
+    assert sorted(o["label"] for o in outcome.ask_options) == ["ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD"], outcome
