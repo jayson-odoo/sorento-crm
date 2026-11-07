@@ -12,14 +12,14 @@ Data only, no schema change. A value an admin already set is kept (only a NULL m
 `policy_rows.SUPPLIER_KIND_ROW` carries the same value for a blank schema.
 
 Revision ID: sfam_0001_supplier_ledger_family
-Revises: sales_0007_tier_additional
+Revises: sbt_0001_billing_subtotal_lines
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "sfam_0001_supplier_ledger_family"
-down_revision = "sales_0007_tier_additional"
+down_revision = "sbt_0001_billing_subtotal_lines"
 branch_labels = None
 depends_on = None
 
