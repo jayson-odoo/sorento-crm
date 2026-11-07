@@ -136,3 +136,12 @@ def test_a_session_user_naming_a_ticked_contact_still_needs_the_slug(db):
         resp = client.get(ROUTE, params=_me(contact))
     assert resp.status_code == 403, resp.text
     assert resp.json().get("code") != "sales_target_not_enabled"
+
+
+def test_an_identity_read_without_the_staff_target_slug_is_refused(db):
+    """The slug alone is not enough on an identity read: the staff member's `sales.targets.view` stands in
+    for the contact's tick (reviewer kill test T7)."""
+    with _client(db, allow=(SLUG,), key_user_id="zzt-act-as") as client:
+        resp = client.get(ROUTE)
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["code"] == "sales_target_not_enabled"
