@@ -487,3 +487,23 @@ def test_source_omitted_when_audit_row_predates_last_report(db):
 
     _lp_run(db)
     assert "by" not in _line_for(db, "OLD")
+
+
+def test_source_through_the_real_audit_listener(db):
+    """End to end: a real ORM price edit by a staff actor writes the audit row the source
+    reads, so a rename of the audit entity type cannot silently turn every "by" off."""
+    from app.audit_context import AuditActor, actor_scope
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+    staff = _user(db, email="real.staff@x.com", scope=False)
+    p = _product(db, code="REAL", price="100.00", notified="100.00")
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    with actor_scope(AuditActor(actor_type="user", user_id=staff.id, real_user_id=staff.id), db=db):
+        p.list_price = Decimal("125.00")
+        db.commit()
+
+    _lp_run(db)
+    assert _line_for(db, "REAL") == "- REAL Name REAL: RM 100.00 -> RM 125.00 (+25.0%), by real.staff"

@@ -1,6 +1,6 @@
 # PLAN: product field change notify (shared watched-field notifier + List Price)
 
-Status: Review (fix round 1, re-review running). Track: full (migration `pfcn_0001_list_price_notify`).
+Status: Review (reviewer READY after fix round 1; awaiting owner hand test). Track: full (migration `pfcn_0001_list_price_notify`).
 
 crew-lane: PRODUCT-FIELD-CHANGE-NOTIFY. PR #2228.
 
