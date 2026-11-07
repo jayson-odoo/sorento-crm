@@ -33,6 +33,7 @@ from app.services.assistant_registry.query import (
     _sort_dir,
     _sort_items,
 )
+from app.services.assistant_registry.query import expand_window
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 #: Date names a model reaches for that mean the window on any computed entity, field or not (crew pass on ddd978ef).
@@ -71,7 +72,9 @@ def _date(value: Any, path: str) -> dt.date:
     try:
         return dt.date.fromisoformat(str(iso))
     except ValueError:
-        raise QueryRefused("invalid", f"`{path}` needs a date (dd/mm/yyyy or YYYY-MM-DD).") from None
+        raise QueryRefused(
+            "invalid", f"`{path}` needs a date (dd/mm/yyyy or YYYY-MM-DD) or a window name (last_month, 2026-10).",
+        ) from None
 
 
 def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str | None]:
@@ -81,6 +84,7 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
     Everything else is a row filter."""
     key = entity.window_field
     label = entity.fields[key].label if key else ""
+    today = _today()
     low = high = None
     rest = []
     for item in asked:
@@ -94,6 +98,8 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
         if not is_window:
             rest.append(item)
             continue
+        # "last_month", "2026-10", "Q3 2026" as the value: that window (crew pass on ffdd7f87, a refused first call).
+        item = expand_window(item, today)
         op, value = item.get("op"), item.get("value")
         if op == "between":
             if not isinstance(value, list) or len(value) != 2:
@@ -106,13 +112,19 @@ def _window(entity: EntityDef, asked: list) -> tuple[dt.date, dt.date, list, str
         elif op in ("lte", "lt"):
             high = _date(value, key) - dt.timedelta(days=1 if op == "lt" else 0)
         else:
-            raise QueryRefused("invalid", f"`{key}` takes eq, between, gte, gt, lte or lt (a date window).")
+            raise QueryRefused(
+                "invalid", f"`{key}` takes eq, between, gte, gt, lte or lt (a date window, or a name: last_month).",
+            )
     if low is None and high is None:
-        today = _today()
         return today, today, rest, None
-    if low is None or high is None:
-        # "Since July" alone would read one day's periods; the window is always both ends (code review round 2).
-        raise QueryRefused("invalid", f"Give `{key}` both ends: between [from, to] (or gte and lte together).")
+    if high is None:
+        # "Since July": from then to today (a window starting later is that one day's periods).
+        high = max(low, today)
+    if low is None:
+        raise QueryRefused(
+            "invalid",
+            f"Give `{key}` a start too: eq last_month / this_quarter / 2026-10 / Q3 2026, or between [from, to].",
+        )
     if low > high:
         raise QueryRefused("invalid", f"The `{key}` window ends before it starts.")
     if (high - low).days >= MAX_WINDOW_DAYS:
@@ -319,6 +331,9 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
     # BEFORE computing (a count first).
     computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+    tests, named_agents = _exact_agents(entity, rest, tests, computed)
+    if named_agents:
+        notes.insert(0, named_agents)
     rows = [r for r in computed if all(t(r) for t in tests)]
 
     if key_rows or agg_rows:
@@ -330,6 +345,34 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     if not rows and computed:
         out.update(_no_match(entity, rest, computed))
     return out
+
+
+def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[dict]) -> tuple[list, str | None]:
+    """An agent named exactly is that agent only (crew pass on ffdd7f87: "Agent B" also took "Agent B IV" and
+    "Agent B III", other owner records). On a field that prints an agent ("CODE - Name", `FieldDef.agent_id`), an
+    `eq`, `contains` or `starts_with` whose value is some row's code, name or label keeps only those rows; a value
+    that names none exactly matches as the op says."""
+    from app.services.assistant_registry.query import agent_exact
+
+    tests = list(tests)
+    taken: list[str] = []
+    for index, item in enumerate(filters):
+        name = item.get("field") if isinstance(item, dict) else None
+        field = entity.fields.get(name) if isinstance(name, str) else None
+        value = item.get("value") if isinstance(item, dict) else None
+        if field is None or not field.agent_id or item.get("op") not in ("eq", "contains", "starts_with"):
+            continue
+        if not isinstance(value, str) or not value.strip():
+            continue
+        exact = sorted({str(r.get(name)) for r in computed if agent_exact(r.get(name), value)})
+        if not exact:
+            continue
+        tests[index] = lambda row, path=name, want=value: agent_exact(row.get(path), want)
+        taken.extend(exact)
+    if not taken:
+        return tests, None
+    shown = list(dict.fromkeys(taken))
+    return tests, f"Agent{'s' if len(shown) > 1 else ''}: {', '.join(shown[:5])}."
 
 
 #: The most values listed when a text filter matched nothing.

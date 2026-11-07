@@ -61,6 +61,156 @@ class QueryRefused(Exception):
         self.message = message
 
 
+# ------------------------------------------------------------------ named date windows (crew pass on ffdd7f87)
+
+#: Window names a date filter may carry instead of a date: the model passed "last_month" or "2026-10" as the
+#: value and the call was refused ("needs a date"), a wasted round on every payout question.
+WINDOW_NAMES = (
+    "today", "yesterday", "this_week", "last_week", "this_month", "last_month",
+    "this_quarter", "last_quarter", "this_year", "last_year",
+)
+_YEAR_MONTH = re.compile(r"^(\d{4})-(\d{1,2})$")
+_MONTH_YEAR = re.compile(r"^(\d{1,2})/(\d{4})$")
+_YEAR = re.compile(r"^(\d{4})$")
+_QUARTER = re.compile(r"^(?:q([1-4])[\s_/-]*(\d{4})|(\d{4})[\s_/-]*q([1-4]))$")
+
+
+def local_today() -> dt.date:
+    """Today in Malaysia (the target service's own `_today`, so `USE_REMOTE_TIME` applies alike)."""
+    from app.services.sales.team_service import _today
+
+    return _today()
+
+
+def _month_end(year: int, month: int) -> dt.date:
+    first_next = dt.date(year + month // 12, month % 12 + 1, 1)
+    return first_next - dt.timedelta(days=1)
+
+
+def _quarter(year: int, quarter: int) -> tuple[dt.date, dt.date]:
+    first = 3 * (quarter - 1) + 1
+    return dt.date(year, first, 1), _month_end(year, first + 2)
+
+
+def named_window(value: Any, today: dt.date | None = None) -> tuple[dt.date, dt.date] | None:
+    """(first day, last day) of a window named by `value`: one of WINDOW_NAMES, a month ("2026-10", "10/2026"),
+    a quarter ("Q3 2026", "2026-Q3") or a year ("2026"); None for anything else (a plain date included)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 1900 <= value <= 2200:
+        return dt.date(value, 1, 1), dt.date(value, 12, 31)
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    words = re.sub(r"[\s-]+", "_", text)
+    today = today or local_today()
+    if words in WINDOW_NAMES:
+        if words == "today":
+            return today, today
+        if words == "yesterday":
+            day = today - dt.timedelta(days=1)
+            return day, day
+        if words in ("this_week", "last_week"):
+            monday = today - dt.timedelta(days=today.weekday() + (7 if words == "last_week" else 0))
+            return monday, monday + dt.timedelta(days=6)
+        if words in ("this_month", "last_month"):
+            first = today.replace(day=1)
+            if words == "last_month":
+                first = (first - dt.timedelta(days=1)).replace(day=1)
+            return first, _month_end(first.year, first.month)
+        if words in ("this_quarter", "last_quarter"):
+            year, quarter = today.year, (today.month - 1) // 3 + 1
+            if words == "last_quarter":
+                year, quarter = (year - 1, 4) if quarter == 1 else (year, quarter - 1)
+            return _quarter(year, quarter)
+        year = today.year - (1 if words == "last_year" else 0)
+        return dt.date(year, 1, 1), dt.date(year, 12, 31)
+    found = _YEAR_MONTH.match(text) or _MONTH_YEAR.match(text)
+    if found:
+        year, month = (int(found.group(1)), int(found.group(2))) if found.re is _YEAR_MONTH else (
+            int(found.group(2)), int(found.group(1))
+        )
+        if 1 <= month <= 12:
+            return dt.date(year, month, 1), _month_end(year, month)
+        return None
+    found = _QUARTER.match(text)
+    if found:
+        quarter, year = (found.group(1), found.group(2)) if found.group(1) else (found.group(4), found.group(3))
+        return _quarter(int(year), int(quarter))
+    if _YEAR.match(text):
+        return dt.date(int(text), 1, 1), dt.date(int(text), 12, 31)
+    return None
+
+
+def expand_window(item: Any, today: dt.date | None = None) -> Any:
+    """A date filter whose value names a window, rewritten as dates: `eq last_month` is `between [first, last]`,
+    `gte 2026-07` is from the first of July, `lte Q3 2026` to its last day. Anything else comes back as it was."""
+    if not isinstance(item, dict):
+        return item
+    op, value = item.get("op"), item.get("value")
+    if op == "between" and isinstance(value, list) and len(value) == 2:
+        low, high = named_window(value[0], today), named_window(value[1], today)
+        if low is None and high is None:
+            return item
+        return {**item, "value": [
+            low[0].isoformat() if low else value[0], high[1].isoformat() if high else value[1],
+        ]}
+    window = named_window(value, today) if op in ("eq", "gte", "gt", "lte", "lt") else None
+    if window is None:
+        return item
+    first, last = window
+    if op == "eq":
+        return {**item, "op": "between", "value": [first.isoformat(), last.isoformat()]}
+    if op in ("gte", "lt"):
+        return {**item, "value": first.isoformat()}
+    return {**item, "op": "lte" if op == "lte" else "gt", "value": last.isoformat()}
+
+
+# ------------------------------------------------------------------ an agent named in a filter (crew pass on ffdd7f87)
+
+#: The most agents a name may match before the answer says which were taken.
+MAX_AGENT_MATCHES = 20
+
+
+def _plain_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).lower()
+
+
+def agent_exact(label: Any, needle: Any) -> bool:
+    """Does `needle` name the agent printed as `label` ("CODE - Name") exactly: the code, the name or the label?
+    "Agent B" names "AB - Agent B" and not "AB4 - Agent B IV", which `contains` also matched."""
+    text, want = _plain_text(label), _plain_text(needle)
+    if not text or not want:
+        return False
+    code, _sep, name = text.partition(" - ")
+    return want in (text, code.strip(), name.strip())
+
+
+def match_agents(db, value: str, op: str) -> list:
+    """The sales agents a filter value names: exactly (code, name or "CODE - Name") when any agent is named
+    exactly, else every agent whose code or name contains it (starts with it, for `starts_with`). Agents of the
+    session's companies and the shared masters only, as `team_service._visible_agents` reads them."""
+    from sqlalchemy import or_ as any_of
+
+    from app.models.base import get_company_scope
+    from app.models.sales_agent import SalesAgent
+    from app.services.sales.team_service import agent_label
+
+    q = db.query(SalesAgent)
+    scope = get_company_scope(db)
+    if scope is not None:
+        companies = list(scope) if isinstance(scope, frozenset) else []
+        q = q.filter(any_of(SalesAgent.company_id.is_(None), SalesAgent.company_id.in_(companies)))
+    needle = _plain_text(value)
+    pattern = f"%{_like(value, 'agent')}%" if op != "starts_with" else f"{_like(value, 'agent')}%"
+    candidates = q.filter(
+        any_of(SalesAgent.sales_agent.ilike(pattern, escape="\\"), SalesAgent.description.ilike(pattern, escape="\\"),
+               (SalesAgent.sales_agent + " - " + func.coalesce(SalesAgent.description, "")).ilike(pattern, escape="\\"))
+    ).order_by(SalesAgent.sales_agent).limit(MAX_AGENT_MATCHES * 5).all()
+    exact = [a for a in candidates if agent_exact(agent_label(a), needle)]
+    return exact if exact or op == "eq" else candidates
+
+
 # ------------------------------------------------------------------ access
 
 
@@ -185,6 +335,8 @@ class _Paths:
         self.brand_scoped = bool(get_brand_scope(db))
         self._aliases: dict[str, Any] = {}
         self.joins: list[tuple[Any, Any]] = []
+        #: Said with the result: which agents a filter named (`match_agents`).
+        self.notes: list[str] = []
 
     def _target(self, path: Any) -> tuple[EntityDef, Any, str]:
         if not isinstance(path, str) or not path.strip():
@@ -299,7 +451,7 @@ def _filter(paths: _Paths, item: Any):
     if not isinstance(item, dict) or set(item) - {"field", "op", "value"}:
         raise QueryRefused("invalid", "Each filter is {field, op, value}.")
     path, op = item.get("field"), item.get("op")
-    column, _field, kind = paths.resolve(path)
+    column, field, kind = paths.resolve(path)
     if op not in OPS:
         raise QueryRefused("invalid", f"Unknown op {op!r}. Ops: {', '.join(OPS)}.")
     value = item.get("value")
@@ -307,6 +459,18 @@ def _filter(paths: _Paths, item: Any):
         return column.is_(None)
     if op == "is_not_null":
         return column.is_not(None)
+    if callable(field.agent_id) and op in ("eq", "contains", "starts_with") and isinstance(value, str) and value.strip():
+        # The agent the value names, by the record's own agent link (the agent's Customers tab is
+        # `Customer.sales_agent_id ==`): exactly when one is named exactly, so "Agent B" is not also "Agent B IV".
+        agents = match_agents(paths.db, value, op)
+        if agents:
+            from app.services.sales.team_service import agent_label
+
+            labels = [agent_label(a) for a in agents]
+            shown = ", ".join(labels[:5]) + (f" and {len(labels) - 5} more" if len(labels) > 5 else "")
+            paths.notes.append(f"Agent{'s' if len(labels) > 1 else ''}: {shown}.")
+            return field.agent_id().in_([a.id for a in agents])
+        # No agent master matches (a code as AutoCount sent it): the text itself, as before.
     if op in ("contains", "starts_with"):
         if kind != "text":
             raise QueryRefused("invalid", f"`{op}` works on text fields; `{path}` is {kind}.")
@@ -486,7 +650,8 @@ def run_query(db, user_id: str, spec: Any) -> dict:
 
         return run_computed(db, user_id, entity, own_only, slugs, spec)
     paths = _Paths(db, user_id, entity, slugs)
-    asked = _list(spec, "filters", MAX_FILTERS)
+    today = local_today()
+    asked = [_named_dates(paths, f, today) for f in _list(spec, "filters", MAX_FILTERS)]
     filters = [_filter(paths, f) for f in asked]
     named = {f.get("field") for f in asked if isinstance(f, dict)}
     notes = []
@@ -511,6 +676,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
     # result leaves out. `loop.final_reply` puts the scope note in the reply when the model does not.
     if (group_by or aggregates) and entity.aggregate_note:
         notes.insert(0, entity.aggregate_note)
+    notes = [*paths.notes, *notes]
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
     return out
@@ -521,6 +687,17 @@ def _display_date(value: Any, kind: str) -> str:
     if isinstance(iso, str) and _DATE_ONLY.match(iso):
         return dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
     return str(value)
+
+
+def _named_dates(paths: _Paths, item: Any, today: dt.date) -> Any:
+    """A filter on a date field whose value names a window (`named_window`) as dates; anything else as it was."""
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        return item
+    expanded = expand_window(item, today)
+    if expanded is item:
+        return item
+    _column, _field, kind = paths.resolve(item["field"])
+    return expanded if kind in ("date", "datetime") else item
 
 
 def _period_display(paths: _Paths, asked: list) -> str | None:

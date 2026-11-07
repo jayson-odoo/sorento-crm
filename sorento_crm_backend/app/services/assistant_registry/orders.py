@@ -56,8 +56,8 @@ register(
             "region": FieldDef("Region"),
             "debtor_type": FieldDef("Debtor type", column="autocount_debtor_type"),
             "agent": FieldDef(
-                "Agent", expr=_customer_agent,
-                note="'CODE - Name'; filter with contains on the code or the name.",
+                "Agent", expr=_customer_agent, agent_id=lambda: Customer.sales_agent_id,
+                note="'CODE - Name'; filter with eq on the code or the name (one agent, as its Customers tab).",
             ),
             "created_at": FieldDef("Created at"),
         },
@@ -66,7 +66,7 @@ register(
         # `status=active` is `is_active`), applied unless the query names `is_active` (crew pass, 5 Nov).
         default_filters=(("is_active", "eq", True, "Inactive customers excluded."),),
         list_fields=("agent", "region"),
-        hint="customers (active only unless is_active is filtered); an agent's customers: agent contains <code or name>",
+        hint="customers (active only unless is_active is filtered); an agent's customers: agent eq <code or name>",
         screen_path="/order-management/customers/{id}",
         pages=("/order-management/customers",),
         routes=("GET /api/v1/order-management/customers/",),

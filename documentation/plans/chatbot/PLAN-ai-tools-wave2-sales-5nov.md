@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 7: crew pass on ddd978ef; sales, payout total, Agent B figure and active customers passed there). Track: full (RBAC, one
+Status: Review (round 8: crew pass on ffdd7f87; payout per agent and below target passed there, sales basis, one-agent payout window and one agent's customers fixed here). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -211,6 +211,29 @@ with the cap: one full call and three narrowed ones, about 38k.
 - Index hints no longer repeat the field list.
 - Tokens, one query then the answer: payout per agent 27,260; commission for Agent B last month 27,328; below
   target this quarter 27,315; active customers of Agent B 27,187 (2 calls each).
+
+## Crew pass on ffdd7f87 (round 8, 7 Nov)
+
+Root causes, all decided in code (no prompt tuning beyond one line):
+
+- (a) "sales last month per agent" on three bases. `tools.SALES_BASIS_MESSAGE` (the refusal of a `crm_report_ask`
+  with no basis) told the model to "call once per basis (invoiced, delivered, ordered) and label each". It now says
+  invoiced, and delivered or ordered only when the user names one. The one-basis-per-turn guard
+  (`query_tools.money_basis`) now covers `crm_report_ask`'s `basis` too, so a delivered or ordered report after an
+  invoiced `crm_query` (or the reverse) is refused before it runs. Test S4 runs that turn through the real loop.
+  The invoiced total gap (13,296,261.03 vs 13,151,657.03) came from a later call on another basis or from dev data
+  moving; both paths read `invoiced_sales` (`posted()` with the CHECK-constrained four types), not re-checked here.
+- (c) a refused first call on `period`. The model sent `period eq last_month` / `2026-10`. Any date filter may now
+  name its window (`query.named_window`, `expand_window`): this_month, last_month, this_quarter, last_quarter,
+  this_year, last_year, this_week, last_week, today, yesterday, YYYY-MM, MM/YYYY, Q3 2026, 2026-Q3, YYYY. Both
+  paths (SQL `doc_date`, computed `period`). A computed window given only a start runs to today ("since July").
+- (e) "active customers of Agent B" listed Agent B III and IV: `agent contains "Agent B"` matched every owner record
+  whose name contains it. An agent named exactly (code, name or "CODE - Name") is now that agent only
+  (`query.match_agents`, `agent_exact`); a value that names none exactly still matches as `contains`. On customers
+  and billing documents the match is by the record's own agent link (`Customer.sales_agent_id`, the agent's
+  Customers tab; `invoiced_sales.agent_id`), and the answer says which agent was taken ("Agent: CODE - Name.").
+  Computed entities (`agent_target_summary.owner`, `target_list.subject`, `sales_target.agent`) match exact first
+  the same way. Agent A's 83 vs 79 is the same cause (a code or name contained in another agent's).
 
 ## Token measurement (task item 5)
 

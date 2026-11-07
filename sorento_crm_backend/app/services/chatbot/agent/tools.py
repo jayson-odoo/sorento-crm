@@ -1120,8 +1120,8 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
 
 DENIED_TAIL = "Do not get this information another way."
 SALES_BASIS_MESSAGE = (
-    "Say which sales basis: ask the user (invoiced is the usual one) or call once per basis "
-    "(invoiced, delivered, ordered) and label each."
+    "Say which sales basis. No basis named by the user: sales are invoiced (owner rule), so call again with "
+    "basis=invoiced; delivered or ordered only when the user names it. One basis per answer."
 )
 #: Bases that are not sales figures: they need no sales basis, and are their own data domain.
 OUTSTANDING_BASES = frozenset({"outstanding", "pending_delivery", "unpaid"})

@@ -1501,7 +1501,7 @@ def _run(
                     ).to_json(call_id)
                     run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
                     continue
-                basis = money_basis(args) if name == "crm_query" else None
+                basis = money_basis(args, name)
                 if basis and turn_basis and basis != turn_basis[0]:
                     replies[idx] = mixed_basis_refusal(turn_basis[0], basis).to_json(call_id)
                     run.tool_calls.append({"name": name, "status": "denied", "ms": 0})

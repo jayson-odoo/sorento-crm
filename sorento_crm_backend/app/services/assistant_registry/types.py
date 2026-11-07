@@ -30,6 +30,10 @@ class FieldDef:
     expr: Callable[[], Any] | None = None
     #: The field's type on a computed entity (no column to read it from): text, number, date, boolean.
     kind: str | None = None
+    #: () -> SQL expression of the record's sales agent id, on a field that prints the agent: an `eq`, `contains`
+    #: or `starts_with` on it names agents (`query.match_agents`, exact first) and matches by that link, as the
+    #: agent's own Customers tab does. On a computed entity, True: the "CODE - Name" value is matched exact first.
+    agent_id: Callable[[], Any] | bool | None = None
 
 
 @dataclass(frozen=True)

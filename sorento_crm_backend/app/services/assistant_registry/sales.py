@@ -273,7 +273,8 @@ register(
             "name": FieldDef("Target name", kind="text"),
             "subject_kind": FieldDef("Target for", kind="text", note="agent, team or dealer."),
             "agent": FieldDef(
-                "Agent", kind="text", note="'CODE - Name', agent targets only; filter with contains on the code or name.",
+                "Agent", kind="text", agent_id=True,
+                note="'CODE - Name', agent targets only; filter with eq on the code or name.",
             ),
             "agent_code": FieldDef("Agent code", kind="text"),
             "team": FieldDef("Team", kind="text", note="The agent's team today, or the team of a team target."),
@@ -338,9 +339,9 @@ register(
         own_clause=_own,
         fields={
             "owner": FieldDef(
-                "Agent", kind="text",
+                "Agent", kind="text", agent_id=True,
                 note="'CODE - Name' (agent targets and the dealers whose accounts the agent owns), 'Team X', or "
-                     "'Unassigned'; filter with contains on a code or name.",
+                     "'Unassigned'; filter with eq on a code or name.",
             ),
             "owner_kind": FieldDef("Owner kind", kind="text", note="agent, team or none."),
             "period": FieldDef(
@@ -359,7 +360,7 @@ register(
         },
         name_by=("owner",),
         hint="PAYOUT / COMMISSION / TARGET vs ACHIEVED per agent or for one agent: one row per agent over the window, "
-             "totals row. One agent: owner contains <code or name>",
+             "totals row. One agent: owner eq <code or name>",
         list_fields=("targets", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
@@ -376,7 +377,7 @@ register(
         own_clause=_own,
         fields={
             "target_no": FieldDef("Target", kind="text"),
-            "subject": FieldDef("Agent, team or dealer", kind="text", note="As the Targets screen names it."),
+            "subject": FieldDef("Agent, team or dealer", kind="text", agent_id=True, note="As the Targets screen names it."),
             "subject_kind": FieldDef("Target for", kind="text", note="agent, team or dealer."),
             "period": FieldDef(
                 "Period", kind="date",

@@ -34,7 +34,7 @@ register(
             "debtor_code": FieldDef("Debtor code"),
             "customer_name": FieldDef("Customer"),
             "agent": FieldDef(
-                "Agent", expr=invoiced_sales.agent_label,
+                "Agent", expr=invoiced_sales.agent_label, agent_id=invoiced_sales.agent_id,
                 note="The agent the sale belongs to, as the sales reports count it; group by this for per agent sales.",
             ),
             "sales_amount": FieldDef(

@@ -183,31 +183,43 @@ MONEY_FIELDS = {
     "billing_document": {"sales_amount", "net_total", "total"},
     "order": {"subtotal_amount", "total_amount"},
 }
-BASIS_LABELS = {"billing_document": "invoiced (billing documents)", "order": "delivery-order"}
+#: The sales basis each source counts: `crm_query` entities and `crm_report_ask`'s own `basis` values.
+ENTITY_BASIS = {"billing_document": "invoiced", "order": "delivered"}
+REPORT_BASES = frozenset({"invoiced", "delivered", "ordered"})
+BASIS_LABELS = {
+    "invoiced": "invoiced (billing documents)", "delivered": "delivered (delivery orders)", "ordered": "ordered (sales orders)",
+}
 
 
-def money_basis(args: Any) -> str | None:
-    """The entity whose money a `crm_query` totals (a sum / avg / min / max of one of its money fields), else None."""
-    if not isinstance(args, dict) or args.get("entity") not in MONEY_FIELDS:
+def money_basis(args: Any, name: str = QUERY) -> str | None:
+    """The sales basis a call's money figures are on: a `crm_query` sum / avg / min / max of a money field
+    (invoiced on billing documents, delivered on delivery orders), or a `crm_report_ask` on a sales basis.
+    None for anything else (counts, targets, outstanding)."""
+    if not isinstance(args, dict):
+        return None
+    if name == "crm_report_ask":
+        basis = str(args.get("basis") or "").strip().lower()
+        return basis if basis in REPORT_BASES and args.get("dataset") != "chat" else None
+    if name != QUERY or args.get("entity") not in MONEY_FIELDS:
         return None
     money = MONEY_FIELDS[args["entity"]]
     for item in args.get("aggregates") or []:
         if isinstance(item, dict) and item.get("fn") in ("sum", "avg", "min", "max") and item.get("field") in money:
-            return args["entity"]
+            return ENTITY_BASIS[args["entity"]]
     return None
 
 
 def mixed_basis_refusal(first: str, now: str) -> ToolResult:
-    """One answer, one sales basis: the turn already totals sales on `first`."""
+    """One answer, one sales basis: the turn already has sales on `first` (crew pass on ffdd7f87: "sales last
+    month per agent" came back on invoiced, delivered and ordered at once)."""
     return ToolResult(
         "denied",
         message=(
-            f"This answer's sales figures are already on the {BASIS_LABELS[first]} basis; a {BASIS_LABELS[now]} "
-            "total would mix two bases in one answer. Answer from the first result, or ask the user which basis "
-            "they want."
+            f"This answer's sales figures are already on the {BASIS_LABELS[first]} basis; {BASIS_LABELS[now]} "
+            "figures would mix two bases in one answer. Answer from the first result only, and offer the other "
+            "basis in one line if the user may want it."
         ),
     )
-
 
 
 def entity_index() -> str:
@@ -246,7 +258,9 @@ QUERY_SCHEMA = {
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
             f"sorts by its key or an aggregate alias such as sum_total_amount). At most {MAX_ROWS} rows or "
-            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy.\n"
+            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy; a "
+            "date filter may name its window: {field: doc_date, op: eq, value: last_month} (this_month, "
+            "this_quarter, last_year, 2026-10, Q3 2026). An agent named: agent eq <code or name>.\n"
             "Entities:\n" + entity_index()
         ),
         "parameters": {

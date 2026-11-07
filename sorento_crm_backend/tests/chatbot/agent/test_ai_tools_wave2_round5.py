@@ -47,8 +47,8 @@ def test_SB1_the_sales_total_says_its_basis(api, grant):
 def test_SB2_money_basis_names_only_money_totals():
     from app.services.chatbot.agent.query_tools import money_basis
 
-    assert money_basis({"entity": "billing_document", "aggregates": [{"fn": "sum", "field": "sales_amount"}]}) == "billing_document"
-    assert money_basis({"entity": "order", "aggregates": [{"fn": "sum", "field": "total_amount"}]}) == "order"
+    assert money_basis({"entity": "billing_document", "aggregates": [{"fn": "sum", "field": "sales_amount"}]}) == "invoiced"
+    assert money_basis({"entity": "order", "aggregates": [{"fn": "sum", "field": "total_amount"}]}) == "delivered"
     assert money_basis({"entity": "order", "aggregates": [{"fn": "count"}]}) is None
     assert money_basis({"entity": "sales_target", "aggregates": [{"fn": "sum", "field": "payout"}]}) is None
 

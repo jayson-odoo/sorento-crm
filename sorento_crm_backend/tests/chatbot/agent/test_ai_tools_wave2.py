@@ -581,7 +581,9 @@ def test_E3_window_ops_name_the_exact_days(world, monkeypatch):
     assert window(period("gte", "15/09/2026"), period("lte", "20/09/2026")) == (date(2026, 9, 15), date(2026, 9, 20))
     from app.services.assistant_registry.query import QueryRefused
 
-    for alone in (period("gte", "01/07/2026"), period("lt", "01/07/2026")):
-        with pytest.raises(QueryRefused) as info:
-            window(alone)
-        assert info.value.code == "invalid" and "both ends" in info.value.message
+    # Round 8 (crew pass on ffdd7f87): "since July" runs to today; an end alone still needs a start.
+    monkeypatch.setattr(computed, "_today", lambda: date(2026, 10, 20))
+    assert window(period("gte", "01/07/2026")) == (date(2026, 7, 1), date(2026, 10, 20))
+    with pytest.raises(QueryRefused) as info:
+        window(period("lt", "01/07/2026"))
+    assert info.value.code == "invalid" and "a start too" in info.value.message
