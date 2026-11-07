@@ -691,3 +691,69 @@ def test_07_a_cell_cannot_carry_a_markdown_link_or_a_pipe(db):
     steps, skipped = propose_rows(db, w, [row_("[click](http://evil.example) | x", name="A|B")])
     block = batch.preview_block(steps, skipped)
     assert "](" not in block and "A/B" in block
+
+
+# ------------------------------------------------------------------ 8. review round 1
+
+
+def test_08_a_company_the_user_is_not_granted_is_refused(db):
+    w = make_world(db, slugs=(EDIT,), superadmin=False)
+    db.query(UserCompany).filter(UserCompany.user_id == w.user_id, UserCompany.company_id == w.mch).delete()
+    db.commit()
+    person = dealer(db, w)
+
+    steps, skipped = propose_rows(db, w, [row_(person.phone_number, companies=["MCH"])])
+
+    assert steps == []
+    assert "not one of your companies" in reason_of(skipped, 1)
+
+
+def test_08_a_customer_renamed_between_preview_and_confirm_fails_the_row(db):
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    person = dealer(db, w)
+    said = w.cust_a.customer_name
+    steps, _ = propose_rows(db, w, [row_(person.phone_number, names=[said])])
+    action = store(db, w, steps)
+    with company_scope(db, None):
+        db.execute(text("UPDATE customers SET customer_name = customer_name || ' OLD' WHERE id = :i"), {"i": w.cust_a.id})
+        db.execute(text("UPDATE customers SET customer_name = :n WHERE id = :i"), {"n": said, "i": w.twin1.id})
+    db.commit()
+
+    outcome = actions.confirm(db, w.respond_id, str(action.id), via="console")
+
+    assert outcome.status == "rejected"
+    assert state(db, person.phone_number)["links"] == []
+
+
+def test_08_a_new_contact_gets_the_agents_flagged_for_new_contacts(db):
+    from app.models.access import ContactAgentAccess
+
+    w = make_world(db)
+    with company_scope(db, None):
+        flagged = AccessAgent(code=unique_code("zzt_new").lower(), name="ZZT default", assign_to_new_internal_contacts=True)
+        db.add(flagged)
+    db.commit()
+    phone = fake_phone()
+
+    outcome, _ = propose_and_confirm(db, w, [row_(phone, name="ZZT Defaults", codes=[w.cust_a.customer_code])])
+
+    assert outcome.status == "executed", outcome.steps
+    with company_scope(db, None):
+        held = {str(a.agent_id) for a in db.query(ContactAgentAccess).filter(
+            ContactAgentAccess.respond_contact_id == state(db, phone)["id"])}
+    assert str(flagged.id) in held
+
+
+def test_08_a_single_change_after_a_batch_and_a_batch_after_a_single_change_are_refused(db):
+    w = make_world(db)
+    a, b = dealer(db, w), dealer(db, w)
+    batch_call = tc(BATCH, {"write": GRANT, "rows": [row_(a.phone_number, codes=[w.cust_a.customer_code])]}, "b1")
+    single = tc(GRANT, row_(b.phone_number, codes=[w.cust_a.customer_code]), "s1")
+
+    result, _ = run_turn(db, w, [round_of(batch_call), round_of(single), answer_("ok")], text_="grant access")
+    assert len(result.pending_action["lines"]) == 1 and a.phone_number in result.pending_action["lines"][0]
+
+    result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_="grant access")
+    assert len(result.pending_action["lines"]) == 1 and b.phone_number in result.pending_action["lines"][0]

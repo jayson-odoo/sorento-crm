@@ -311,6 +311,7 @@ def confirm(
         problem = _recheck(db, ctx, step)
         if problem and batch:
             step["status"], step["error"] = "failed", problem
+            db.rollback()  # a refused re-read must not leave the session aborted for the next row
             continue
         if problem:
             step["status"], step["error"] = "failed", problem

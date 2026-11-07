@@ -11,10 +11,13 @@ tool shows that message as the row's skip reason.
 """
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any
 
 from app.services.chatbot.agent import writes
+
+logger = logging.getLogger(__name__)
 
 GRANT = "crm_contact_grant"
 EDIT = writes.CONTACT_EDIT
@@ -197,7 +200,11 @@ def plan(db, user: dict, args: dict) -> dict:
         "phone": phone, "name": name or (contact.name if contact is not None else "") or "", "contact": contact,
         "contact_id": cid, "desired": desired, "todo": todo, "changed": changed, "add_links": add_links,
         "lines": lines, "snap": snap, "held": held,
-        "before": {"contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies), "links": held},
+        # `targets`: the customers the row resolved to, so a rename between preview and confirm fails the row.
+        "before": {
+            "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies), "links": held,
+            "targets": sorted(str(c.id) for c in customers),
+        },
     }
 
 
@@ -292,6 +299,16 @@ def _execute(db, user: dict, args: dict) -> dict:
             description=f"Agent access grant for {p['phone']} from a pasted table",
         )
     db.commit()
+    if created:
+        # The screen's create also gives the agents flagged for new contacts (`ContactService.create_contact`).
+        try:
+            from app.services.contact_service import ContactService
+
+            ContactService(db).assign_default_agents_to_contact(db.get(RespondContact, cid))
+            db.commit()
+        except Exception:  # noqa: BLE001 - the grant is committed; the defaults are best effort, as on the screen
+            logger.warning("agent: default agents for a new contact failed", exc_info=True)
+            db.rollback()
     return {"id": cid, "after": {"created": created, "changes": shown}}
 
 
