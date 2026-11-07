@@ -63,6 +63,13 @@ describe.each([
         permission: 'sales.teams.view',
         moduleKey: 'sales',
       },
+      // SALES-LEADERBOARD: MENU_SIDEBAR only, like Customer asks.
+      {
+        title: 'Leaderboard',
+        path: '/sales/leaderboard',
+        permission: 'sales.leaderboard.view',
+        moduleKey: 'sales',
+      },
       {
         title: 'Sales Agents',
         path: SALES_AGENTS_PATH,
@@ -70,7 +77,9 @@ describe.each([
         moduleKey: 'product',
       },
     ];
-    const entries = withAsks ? expected : expected.filter((e) => e.title !== 'Customer asks');
+    const entries = withAsks
+      ? expected
+      : expected.filter((e) => e.title !== 'Customer asks' && e.title !== 'Leaderboard');
     expect(group!.children!.slice(0, entries.length)).toEqual(entries);
   });
 
@@ -95,13 +104,14 @@ describe('filterMenuByModule - Sales group', () => {
     expect(kept.children!.map((c) => c.title)).toEqual(['Sales Agents']);
   });
 
-  it('shows Targets, Opportunities, Customer asks and Sales Teams once the sales module is installed', () => {
+  it('shows Targets, Opportunities, Customer asks, Sales Teams and Leaderboard once the sales module is installed', () => {
     const [kept] = filterMenuByModule([group], new Set(['base', 'product', 'sales']));
     expect(kept.children!.map((c) => c.title)).toEqual([
       'Targets',
       'Opportunities',
       'Customer asks',
       'Sales Teams',
+      'Leaderboard',
       'Sales Agents',
       'Yearly comparison',
       'Sales by debtor type',
