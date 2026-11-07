@@ -857,16 +857,34 @@ def _from_to(c) -> Tuple[dict, dict]:
     return from_, to_
 
 
-def _carry_location(from_json: Optional[dict], to_json: Optional[dict], c) -> Optional[dict]:
-    """SPLIT-SHEET-LOCATION: a replacement row reads "from" off the row it replaces, so the
-    location it was planned at (an earlier pending move's `from.location`) stays the "from".
-    Its "to" is where the line is now: the change's own after location, or `None` when the
-    line is back where it was planned."""
-    was = (from_json or {}).get("location")
-    if not was or to_json is None or c.after is None:
-        return to_json
+def _carry_location(
+    older_from: Optional[dict], own_from: Optional[dict], to_json: Optional[dict], c
+) -> Tuple[Optional[dict], Optional[dict]]:
+    """SPLIT-SHEET-LOCATION: a replacement row reads "from" off the row it replaces
+    (`older_from`). The location the line was planned at is that row's `from.location` when
+    it was itself a move, else this change's own before location (`own_from`, the older row
+    never moved it). "To" is where the line is now. A line back where it was planned carries
+    no location on either side. Returns `(from_json, to_json)`."""
+    planned = (older_from or {}).get("location") or (own_from or {}).get("location")
+    if not planned or to_json is None or c.after is None:
+        return older_from, to_json
     now = c.after.location
-    return {**to_json, "location": now if now != was else None}
+    moved = now != planned
+    return (
+        {**(older_from or {}), "location": planned if moved else None},
+        {**to_json, "location": now if moved else None},
+    )
+
+
+def _nets_to_nothing(row: PlanningChangeRow) -> bool:
+    """A `location_changed` replacement whose line is back where it was planned, with nothing
+    else moved: there is no change left for CS to decide (review S2)."""
+    if row.kind != "location_changed":
+        return False
+    before, after = row.from_json or {}, row.to_json or {}
+    if after.get("location"):
+        return False
+    return all(before.get(k) == after.get(k) for k in ("qty", "required_date", "status"))
 
 
 def _entry_differs_from_older_row(c, older: PlanningChangeRow) -> bool:
@@ -1221,10 +1239,14 @@ def build_batch(
                     # already carries that forward correctly, whether `older` itself is
                     # the original held state or an earlier replacement that already
                     # chained it through.
-                    row.from_json = older.from_json
-                    row.to_json = _carry_location(
-                        older.from_json, row.to_json, e["change"]
+                    row.from_json, row.to_json = _carry_location(
+                        older.from_json, row.from_json, row.to_json, e["change"]
                     )
+                    if _nets_to_nothing(row):
+                        # Moved back where it was planned, nothing else changed: the
+                        # older row retires and no replacement is raised.
+                        older.applied_reason = "Line moved back to its planned location"
+                        continue
                 row.batch_id = open_batch_id
                 kept_rows_by_existing_batch[open_batch_id].append(row)
                 orders_appended.add(pso_id)

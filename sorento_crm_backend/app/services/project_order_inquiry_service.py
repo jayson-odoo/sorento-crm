@@ -5189,6 +5189,8 @@ class ProjectOrderInquiryService:
                     "stock_location": f.line.stock_location or f.location,
                     "verb_keys": ["QTY_CHANGE"],
                     "line": {**sample["line"], "item_code": f.item_code},
+                    # `sample` is another line's item: its move is not this line's.
+                    "moved_from": None,
                 }
             ]
         if not told:
@@ -5293,6 +5295,13 @@ class ProjectOrderInquiryService:
             self.decorate_handover_line(entry, item.get("core_line_id"))
             entry["continued"] = index > 0
             item["verb_keys"] = self._plan_row_keys(row, template)
+            moved_from = template.get("moved_from")
+            if moved_from and index == 0:
+                # SPLIT-SHEET-LOCATION (review S3): the move AutoCount made, said once, on
+                # the line's first plan row (the saved line it replaces said it).
+                phrase = _new_location_remark(moved_from)
+                entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+                item["verb_keys"] = [*item["verb_keys"], "CHANGE_LOCATION"]
 
     @staticmethod
     def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
@@ -5739,6 +5748,9 @@ class ProjectOrderInquiryService:
                 "item_code": now.get("item_code"),
                 "verb_keys": keys or ["QTY_CHANGE"],
                 "line": line_entry,
+                # SPLIT-SHEET-LOCATION: read by `_queue_plan_rows` when the line's splits
+                # tell it in place of this line.
+                "moved_from": moved_from,
                 "actor": self._handover_actor(actor_user_id),
                 "tx_chain": tx_chain,
                 "tx": tx_chain[-1] if tx_chain else None,

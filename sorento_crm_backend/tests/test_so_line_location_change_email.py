@@ -146,3 +146,27 @@ def test_review_split_falls_back_to_the_planned_location_when_autocount_names_no
     facts = LineSplitService(world.db).line_facts(order)
 
     assert facts[str(line_a.id)].location == world.pool_wh.warehouse_code
+
+
+def test_a_moved_line_that_also_grew_orders_the_rise_and_says_the_move(api, emails):
+    """Review N1: the moved line skips the rows' own line, so the rise is read off the
+    snapshots: ORDER 2 beside the move, at the new location."""
+    _client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    emails.clear()
+
+    new_wh = _sibling(world)
+    core = _core_line_of(world, line_a)
+    core.qty_ordered = 12
+    line_a.qty = 12
+    world.db.commit()
+    _move(world, line_a, new_wh)
+    _post(api, order, [_line_payload(line_a.id, buy_qty="12")])
+
+    assert len(emails) == 1, emails
+    (line,) = _lines(emails[0])
+    assert line[2] == new_wh.warehouse_code, line
+    assert "ORDER 2" in line[3], line
+    assert line[3].endswith(f"NEW LOCATION (was {old})"), line
