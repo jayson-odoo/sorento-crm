@@ -253,49 +253,107 @@ def test_wr13_lock_a_typed_kind_beats_the_settled_name_rule_on_a_held_report(rbo
     assert _args(calls).get("account_types") == ["SORENTO"], f"WR-13: {_args(calls)}"
 
 
-def test_wr14_lock_a_topic_reset_carries_nothing_from_the_held_report(rbot, world) -> None:
-    """topic_reset true: neither the held category nor the held company comes back (the carry the word rule shares)."""
+def _cob_question_turn(rbot, sorento: str, message: str = "sorento"):
+    """The ON-13 / ON-16 shape: object company Sorento + company_or_brand [SORENTO], no widen, kind unsaid."""
+    ra = _ra3(["SORENTO"], basis="delivered", company=sorento, **SEP)
+    ent = _ent("sorento", "brand", None, None)
+    ent["said_as"] = None
+    v = _v("sales_report", ra, ent, basis="delivered", domain_in_message=True, sales_company=sorento, continuation=True,
+           entity_op="modify", **SEPF)
+    return rbot.say(v, message)
+
+
+@pytest.mark.usefixtures("said_as_on")
+def test_wr14_lock_a_topic_reset_carries_nothing_so_the_unsaid_word_is_asked(rbot, world) -> None:
+    """The held report holds company AND brand Sorento; topic_reset true; a bare unsaid "sorento": the one question is asked.
+    Catches `held_ask=held_ask` passed always (report_ask.py ~:3639)."""
     sorento, _m = world
+    _sorento_type(rbot)  # SORENTO is a brand, an account type and a company: only the held report can settle it
     _t1(rbot, sorento)
     ra = _ra2(None, basis="delivered", company=None, brands=["SORENTO"], **SEP)
-    text, calls = _bare_sorento_turn(rbot, ra, "sorento total sale September 2026", topic_reset=True, entity_op="replace_combine")
-    if _ran(calls):
-        args = _args(calls)
-        assert not args.get("category_ids") and not args.get("company"), f"WR-14: {args}"
+    text, calls = _bare_sorento_turn(rbot, ra, "sorento total sale September 2026", code="SORENTO", topic_reset=True,
+                                     entity_op="replace_combine")
+    assert _kind_slot(rbot).get("asking") == "kind" and not _ran(calls), f"WR-14: {text!r} {_ran(calls)}"
 
 
 @pytest.mark.usefixtures("said_as_on")
 def test_wr14_lock_a_held_report_of_another_kind_is_not_carried_into_a_sales_ask(rbot, world) -> None:
+    """A held OUTSTANDING report with company AND brand Sorento, then a bare unsaid sales ask: the one question.
+    Catches `held_ask=held_ask` passed always."""
     sorento, _m = world
-    ra_o = _ra2(None, kind="outstanding", basis="outstanding", company=None, brands=["SORENTO"])
-    ent = _ent("sorento", "brand", "SORENTO", "brand")
-    ent["said_as"] = "brand"
-    text, calls = rbot.say(_v("outstanding", ra_o, ent, basis="outstanding", domain_in_message=True), "outstanding orders sorento brand")
+    _sorento_type(rbot)  # SORENTO is a brand, an account type and a company: only the held report can settle it
+    ra_o = _ra2(None, kind="outstanding", basis="outstanding", company=sorento, brands=["SORENTO"])
+    ent = _ent("sorento", "brand", "SORENTO", "company and brand")
+    ent["said_as"] = "both"
+    text, calls = rbot.say(_v("outstanding", ra_o, ent, basis="outstanding", domain_in_message=True, sales_company=sorento),
+                           "outstanding orders sorento company and brand")
     assert _ran(calls), f"setup: the outstanding report did not run: {text!r}"
     ra = _ra2(None, basis="delivered", company=None, brands=["SORENTO"], **SEP)
-    text, calls = _bare_sorento_turn(rbot, ra, "sorento total sale September 2026")
-    assert _kind_slot(rbot).get("asking") == "kind" and not _ran(calls), f"WR-14: {text!r}"
+    text, calls = _bare_sorento_turn(rbot, ra, "sorento total sale September 2026", code="SORENTO")
+    assert _kind_slot(rbot).get("asking") == "kind" and not _ran(calls), f"WR-14: {text!r} {_ran(calls)}"
+
+
+@pytest.mark.usefixtures("said_as_on")
+def test_wr15_lock_no_widen_company_or_brand_word_on_a_held_company_and_brand_is_asked(rbot, world) -> None:
+    """No widen, company Sorento + company_or_brand [SORENTO], held company + brand Sorento: the question (ON-13 / ON-16).
+    Catches `widens and` removed (~:3444) and `| either` removed (~:3456)."""
+    sorento, _m = world
+    _t1(rbot, sorento)
+    text, calls = _cob_question_turn(rbot, sorento)
+    assert _kind_slot(rbot).get("asking") == "kind" and not _ran(calls), f"WR-15: {text!r} {_ran(calls)}"
 
 
 @pytest.mark.usefixtures("said_as_on")
 def test_m6_lock_the_open_question_owes_the_word_so_the_settled_rule_stays_out(rbot, world) -> None:
-    """The company-or-brand question is open on Sorento while Brand SORENTO is held; the reply names Sorento again. The
-    open question's answer path decides (company), not the settled-name rule. Catches `key not in owed` removed."""
-    _t1_brand_only(rbot)
-    ra = _ra2(None, basis="delivered", company=None, brands=["SORENTO"], **SEP)
-    text, calls = _bare_sorento_turn(rbot, ra, "sorento company only", continuation=True, entity_op="modify")
-    slot = _kind_slot(rbot)
-    assert slot.get("asking") == "kind", f"setup: no open question: {text!r}"
-    from tests.chatbot.test_report_totals_filters import _option_position  # noqa: PLC0415 - late: only this test needs it
+    """Held company + brand Sorento; the company-or-brand question is open on Sorento; the reply names it again in the
+    asked-word slot with no pick: asked again. Catches `key not in owed` removed (~:3456)."""
+    sorento, _m = world
+    _sorento_type(rbot)  # SORENTO is a brand, an account type and a company: only the held report can settle it
+    _t1(rbot, sorento)
+    text, calls = _cob_question_turn(rbot, sorento)
+    assert _kind_slot(rbot).get("asking") == "kind", f"setup: no open question: {text!r}"
+    ra = _ra2(None, basis="delivered", company=sorento, **SEP)
+    ra["brand_or_account_type"] = ["SORENTO"]
+    ent = _ent("sorento", "brand", None, None)
+    ent["said_as"] = None
+    v = _v("sales_report", ra, ent, basis="delivered", continuation=True, entity_op="reuse", sales_company=sorento, **SEPF)
+    text, calls = rbot.say(v, "sorento")
+    assert _kind_slot(rbot).get("asking") == "kind" and not _ran(calls), f"M6: {text!r} {_ran(calls)}"
 
-    pos = _option_position(slot, "company")
-    from tests.chatbot.test_report_semantic_carry import _pick_of  # noqa: PLC0415
 
-    follow = _v("sales_ranking", _ra2(None, basis="delivered", brands=["SORENTO"], **SEP), basis="delivered", continuation=True,
-                entity_op="reuse", domain_in_message=False, open_question_answer=_pick_of(pos), reference_positions=[pos], **SEPF)
-    text, calls = rbot.say(follow, "company")
+@pytest.mark.parametrize("axis", ["date", "customer"], ids=["axis_date", "axis_customer"])
+def test_wr12b_entity_op_clear_widens_on_any_axis(rbot, world, axis) -> None:
+    """entity_op clear with broaden_to all on a non-product axis, lists emptied, company null: no held brand, category or
+    company comes back."""
+    sorento, _m = world
+    _t5(rbot, sorento)
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", measure="amount", company=None, **SEP)
+    v = _follow("sales_analysis", ra, group_by="channel", measure="amount", sales_company=None, **SEPF,
+                entity_op="clear", broaden_axis=axis, broaden_to="all")
+    text, calls = rbot.say(v, "clear everything")
     args = _args(calls)
-    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"M6: {args}"
+    assert not args.get("brand_ids") and not args.get("category_ids") and not args.get("company"), f"WR-12b: {args}"
+
+
+def test_wr16_lock_broaden_all_on_the_account_type_axis_widens_the_lists(rbot, world) -> None:
+    """Catches "account_type" removed from `_LIST_WIDEN_AXES`."""
+    sorento, _m = world
+    _t5(rbot, sorento)
+    text, calls = _widen_turn(rbot, sorento, "all account types", broaden_axis="account_type", broaden_to="all")
+    _widened(_args(calls))
+
+
+def test_wr17_lock_one_kinds_widen_keeps_the_held_company(rbot, world) -> None:
+    """broaden_to all on the brand axis, object company null, held company Sorento: the company is kept, only a clear drops
+    it. Catches `cleared = widens` (~:3731)."""
+    sorento, _m = world
+    _t5(rbot, sorento)
+    ra = _ra2("breakdown", basis="delivered", group_by="channel", measure="amount", company=None, **SEP)
+    v = _follow("sales_analysis", ra, group_by="channel", measure="amount", sales_company=None, **SEPF,
+                broaden_axis="brand", broaden_to="all")
+    text, calls = rbot.say(v, "all brands")
+    args = _args(calls)
+    assert args.get("company") == DEFAULT_COMPANY_ID and not args.get("brand_ids"), f"WR-17: {args}"
 
 
 @pytest.mark.parametrize("raw", ["srt", "  SORENTO ", "Sorento"], ids=["abbrev", "case_spacing", "case"])
