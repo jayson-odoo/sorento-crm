@@ -510,12 +510,14 @@ def test_the_permission_registry_holds_sales_leaderboard_view():
 # ================================================================================ L7 assistant
 
 
-def test_l7_1_sales_person_is_an_invoiced_dimension_only():
+def test_l7_1_sales_person_is_a_dimension_on_invoiced_delivered_ordered_outstanding_only():
+    """SALES-INSIGHTS-P2 (owner 7 Nov): the word is open on the four sales bases, still unknown on the other two."""
     from app.services.reports import ask
 
-    assert "sales_person" in ask.CATALOGUE["sales"]["invoiced"]["dimensions"]
-    for basis in ("delivered", "ordered", "outstanding"):
-        assert "sales_person" not in ask.CATALOGUE["sales"][basis]["dimensions"]
+    for basis in ("invoiced", "delivered", "ordered", "outstanding"):
+        assert "sales_person" in ask.CATALOGUE["sales"][basis]["dimensions"], basis
+    for basis in ("pending_delivery", "unpaid"):
+        assert "sales_person" not in ask.CATALOGUE["sales"][basis]["dimensions"], basis
 
 
 def test_l7_1_run_ask_by_sales_person_returns_the_boards_rows_and_amounts(db):
@@ -557,13 +559,17 @@ def test_l7_1_crm_report_ask_accepts_sales_person_on_invoiced_and_matches_the_bo
     assert board[world.gamma] == D("1600.75")
 
 
-def test_l7_1_sales_person_stays_unknown_group_by_on_the_ordered_basis(db):
+def test_l7_1_sales_person_is_a_group_by_on_the_ordered_basis_and_stays_unknown_on_pending_delivery(db):
     _world(db)
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
     db.commit()
     allow = (LB, "sales.reports.view", "order_management.orders.view")
     with make_client(db, allow=allow, grants=(DEFAULT_COMPANY_ID,)) as client:
-        resp = _assistant_ask(client, contact, basis="ordered", group_by="sales_person", measure="amount")
-    assert resp.status_code == 422
-    assert resp.json().get("code") == "unknown_group_by"
+        ordered = _assistant_ask(client, contact, basis="ordered", group_by="sales_person", measure="amount", top_n=5)
+        pending = _assistant_ask(client, contact, basis="pending_delivery", group_by="sales_person", measure="amount",
+                                 top_n=5)
+    assert ordered.status_code == 200, ordered.text
+    assert ordered.json()["group_by"] == "sales_person"
+    assert pending.status_code == 422
+    assert pending.json().get("code") == "unknown_group_by"
