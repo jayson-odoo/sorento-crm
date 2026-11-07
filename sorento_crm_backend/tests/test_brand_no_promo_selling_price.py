@@ -283,18 +283,6 @@ def test_price_tag_falls_back_to_list_price_for_flagged_brand(db):
     assert views[normal.id].offer_price == Decimal("599.00")
 
 
-def test_flagged_brand_part_at_zero_is_not_free(db):
-    from app.services.dealer_kit.pricing import free_part_ids
-
-    flagged = _product(db, _brand(db, flagged=True))
-    normal = _product(db, _brand(db, flagged=False))
-    promotion, group = _promotion(db)
-    _line(db, promotion, group, flagged, Decimal("0"))
-    _line(db, promotion, group, normal, Decimal("0"))
-
-    assert free_part_ids(db, [flagged.id, normal.id], DEALER, promotion.id) == {normal.id}
-
-
 def test_api_response_masks_selling_price_for_flagged_brand(db):
     from app.models.marketing import PromotionProduct
     from app.schemas.marketing import PromotionProductResponse

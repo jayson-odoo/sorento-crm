@@ -6,7 +6,8 @@
  * Contract: with `dealer_kit.tag_templates.manage` the modal shows "Price tag templates" (a
  * multi select of the price tag templates) and, once two or more are chosen, a "Default template"
  * select among the chosen ones; Add combo creates the combo, then saves the links through
- * `useSetComboTagTemplates().mutateAsync({ combo_id, template_ids, default_template_id })`. With no
+ * `useSetComboTagTemplates().mutateAsync({ combo_id, template_ids, default_list_template_id,
+ * default_selling_template_id })` (one default per price type, AC-32). With no
  * templates chosen nothing is saved. Without the permission the field is not drawn.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -26,8 +27,8 @@ const saveLinks = vi.fn();
 vi.mock('@/app/(protected)/dealer-kit/hooks/useProductTagTemplates', () => ({
   usePriceTagTemplateOptions: () => ({
     data: [
-      { id: 't1', name: 'Combo A', family: 'ala_carte', print_size: { width_mm: 80, height_mm: 50 }, published_version_id: 'v1' },
-      { id: 't2', name: 'Combo B', family: 'ala_carte', print_size: { width_mm: 80, height_mm: 50 }, published_version_id: 'v2' },
+      { id: 't1', name: 'Combo A', family: 'ala_carte', print_size: { width_mm: 80, height_mm: 50 }, published_version_id: 'v1', price_type: null },
+      { id: 't2', name: 'Combo B', family: 'ala_carte', print_size: { width_mm: 80, height_mm: 50 }, published_version_id: 'v2', price_type: null },
     ],
     error: null,
     refetch: vi.fn(),
@@ -112,18 +113,22 @@ describe('AddComboModal templates (AC-24)', () => {
   it('offers a default only once two templates are chosen', () => {
     granted.add('dealer_kit.tag_templates.manage');
     open();
-    expect(screen.queryByLabelText('Default template')).toBeNull();
+    const anyDefault = /^Default (LP |SP )?template$/;
+    expect(screen.queryByLabelText(anyDefault)).toBeNull();
     fireEvent.click(screen.getByText('choose one'));
-    expect(screen.queryByLabelText('Default template')).toBeNull();
+    expect(screen.queryByLabelText(anyDefault)).toBeNull();
     fireEvent.click(screen.getByText('choose two'));
-    expect(screen.getByLabelText('Default template')).toBeInTheDocument();
+    // A default per price type (AC-32).
+    expect(screen.getByLabelText('Default LP template')).toBeInTheDocument();
+    expect(screen.getByLabelText('Default SP template')).toBeInTheDocument();
   });
 
   it('creates the combo, then links the chosen templates with the default', async () => {
     granted.add('dealer_kit.tag_templates.manage');
     const onCreated = open();
     fireEvent.click(screen.getByText('choose two'));
-    fireEvent.change(screen.getByLabelText('Default template'), { target: { value: 't2' } });
+    fireEvent.change(screen.getByLabelText('Default LP template'), { target: { value: 't2' } });
+    fireEvent.change(screen.getByLabelText('Default SP template'), { target: { value: 't1' } });
     await addCombo();
 
     await waitFor(() => expect(saveLinks).toHaveBeenCalledTimes(1));
@@ -131,7 +136,8 @@ describe('AddComboModal templates (AC-24)', () => {
     expect(saveLinks).toHaveBeenCalledWith({
       combo_id: 'new-combo',
       template_ids: ['t1', 't2'],
-      default_template_id: 't2',
+      default_list_template_id: 't2',
+      default_selling_template_id: 't1',
     });
     expect(onCreated).toHaveBeenCalledWith('new-combo');
   });
@@ -145,7 +151,9 @@ describe('AddComboModal templates (AC-24)', () => {
     const sent = saveLinks.mock.calls[0][0];
     expect(sent.combo_id).toBe('new-combo');
     expect(sent.template_ids).toEqual(['t1']);
-    expect(sent.default_template_id == null || sent.default_template_id === 't1').toBe(true);
+    for (const key of ['default_list_template_id', 'default_selling_template_id']) {
+      expect(sent[key] == null || sent[key] === 't1', key).toBe(true);
+    }
   });
 
   it('saves no links when no template was chosen', async () => {

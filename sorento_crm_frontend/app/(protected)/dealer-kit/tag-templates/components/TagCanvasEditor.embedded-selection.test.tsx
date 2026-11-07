@@ -324,4 +324,30 @@ describe('TagCanvasEditor embedded selection', () => {
     view.unmount();
     expect(onLayersChange).not.toHaveBeenCalled();
   });
+
+  it('DESIGNER-RICH-TEXT review R2-B1: a formatted layer opens read-only on its words, never its markup', async () => {
+    const onLayersChange = vi.fn();
+    const formatted = {
+      ...textLayer('fmt'),
+      props: { ...defaultTextProps(), text: '<p><strong>Hello</strong> world</p>' },
+    };
+    const view = render(
+      <TagCanvasEditor
+        doc={{ ...doc, layers: [...doc.layers, formatted] }}
+        onChange={vi.fn()}
+        onLayersChange={onLayersChange}
+        embedded={{ ...embedded(null, vi.fn()), onEditField: () => false }}
+      />,
+    );
+    await act(async () => {
+      fireEvent.doubleClick(screen.getByTestId('layer-fmt'));
+    });
+    const box = (await screen.findByTestId('inline-text-editor')) as HTMLTextAreaElement;
+    expect(box.readOnly).toBe(true);
+    expect(box.value).toBe('Hello world');
+    fireEvent.change(box, { target: { value: 'typed over it' } });
+    onLayersChange.mockClear();
+    view.unmount();
+    expect(onLayersChange).not.toHaveBeenCalled();
+  });
 });

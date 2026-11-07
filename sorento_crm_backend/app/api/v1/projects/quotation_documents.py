@@ -479,8 +479,9 @@ def make_quotation_from_proposal(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """PS-PROPOSAL-QUOTATION: a won project's salesperson turns one issued proposal revision into
-    the project's quotation. 409 ``project_not_won`` / ``project_has_quotation``, 422
+    """PS-PROPOSAL-QUOTATION: the project's salesperson turns one issued proposal revision into
+    the project's quotation (any project not Lost or Dormant). 409 ``project_lost`` /
+    ``project_dormant`` / ``project_has_quotation``, 422
     ``quotation_source_not_proposal``, 404 ``quotation_issue_not_found``."""
     try:
         validate_uuid_path(document_id, resource="Quotation")

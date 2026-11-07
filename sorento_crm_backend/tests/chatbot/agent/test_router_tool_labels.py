@@ -60,6 +60,9 @@ EXPECTED_LABELS = [
     "finding a complaint by its number",
     "finding a project by its code",
     "your ideas",
+    # AI-QUERY-CORE: the general read over the assistant registry, on both channels.
+    "reading CRM records, totals and groupings",
+    "listing the CRM records you can read",
     "the complaints list",
     "complaint counts and trends",
     "conversation response-time summary",

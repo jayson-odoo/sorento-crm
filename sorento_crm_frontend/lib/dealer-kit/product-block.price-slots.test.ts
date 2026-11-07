@@ -117,3 +117,26 @@ describe('resolveSlotText price slots (AC-18)', () => {
     expect(resolveSlotText({ slot_binding: 'sell_price' } as never, data)).toBe('1,500');
   });
 });
+
+describe('resolveSlotText showCurrency on a text price (PRICETAG-COMBO-RENDER AC-A3)', () => {
+  const withRm = (slot: string) =>
+    ({ slot_binding: slot, props: { kind: 'text', showCurrency: true } }) as never;
+
+  it('absent flag keeps the bare figure, so every saved template prints as before', () => {
+    expect(resolveSlotText({ slot_binding: 'list_price' } as never, line({ list_price: 849 }))).toBe('849');
+  });
+
+  it('showCurrency prints RM with the figure on list_price, sell_price and price', () => {
+    const data = line({ list_price: 849, sell_price: 599, show_promo_price: true });
+    expect(resolveSlotText(withRm('list_price'), data)).toBe('RM 849');
+    expect(resolveSlotText(withRm('sell_price'), data)).toBe('RM 599');
+    expect(resolveSlotText(withRm('price'), data)).toBe('RM 599');
+  });
+
+  it('showCurrency with no amount prints nothing at all', () => {
+    const data = line({ list_price: null, sell_price: null });
+    expect(resolveSlotText(withRm('list_price'), data)).toBe('');
+    expect(resolveSlotText(withRm('sell_price'), data)).toBe('');
+    expect(resolveSlotText(withRm('price'), data)).toBe('');
+  });
+});

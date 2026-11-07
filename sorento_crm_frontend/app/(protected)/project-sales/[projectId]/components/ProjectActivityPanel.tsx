@@ -25,6 +25,7 @@ import { InfoHint } from './InfoHint';
  */
 const MEANINGFUL: Record<string, string> = {
   stage_changed: 'Stage changed',
+  outcome_changed: 'Outcome changed',
   quotation_created: 'Quotation created',
   quotation_revised: 'Quotation revised',
   sample_submitted: 'Sample submitted',

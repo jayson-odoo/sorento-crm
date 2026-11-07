@@ -132,6 +132,11 @@ QUEUES = (
     # must never be. Drains next to `media` rather than at the end for that
     # reason; the relative order of every other queue is unchanged.
     ('chat', 'fast'),
+    # `scm_recalc` (PACKING-LIST-RECALC): one packing list's stored line figures and
+    # status recomputed after an input changed (an SPO container link, a GRN, a
+    # quantity). Seconds of SQL, and the packing list reads stale until it runs, so
+    # it must not wait behind an import: fast.
+    ('scm_recalc', 'fast'),
     ('project_docs', 'batch'),
     ('flyer_read', 'batch'),
     # AGENTIC-KNOWLEDGE: reading an uploaded document for the AI (up to 300 pages, OCR). Minutes of work nobody
@@ -249,6 +254,11 @@ def register_worker_listeners():
     # Bulk imports keep suppressing per-row rows via `skip_audit_entity_types`.
     from app.services.audit_service import register_audit_listeners
     register_audit_listeners()
+
+    # PACKING-LIST-RECALC: an import or ingest job changing a packing list's inputs
+    # queues that packing list's recompute, the same as an API write.
+    from app.services.scm.packing_list_recalc import register_packing_list_recalc_listeners
+    register_packing_list_recalc_listeners()
 
 
 if __name__ == '__main__':

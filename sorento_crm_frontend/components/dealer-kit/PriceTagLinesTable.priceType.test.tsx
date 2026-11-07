@@ -203,14 +203,14 @@ describe('PriceTagLinesTable preview eye (AC-20)', () => {
     expect(screen.getByRole('button', { name: 'Preview tag for line 1' })).toBeEnabled();
   });
 
-  it('is disabled, and the row says so, when the product has no template', () => {
+  it('is disabled when the product has no template; the row says so only once Approve was clicked', () => {
     const onPreviewLine = vi.fn();
     renderTable([mk('l1', { tag_templates: [], tag_template_id: null })], { onPreviewLine });
     const eye = screen.getByRole('button', { name: 'Preview tag for line 1' });
     expect(eye).toBeDisabled();
     fireEvent.click(eye);
     expect(onPreviewLine).not.toHaveBeenCalled();
-    expect(screen.getByText('No tag template yet')).toBeInTheDocument();
+    expect(screen.queryByText(/No tag template yet/)).toBeNull();
   });
 
   it('is disabled on a row with no item yet', () => {

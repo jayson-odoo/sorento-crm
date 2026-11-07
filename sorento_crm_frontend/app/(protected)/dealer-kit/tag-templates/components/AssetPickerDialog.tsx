@@ -12,7 +12,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Search, Upload } from 'lucide-react';
+import { Check, Loader2, Search, Upload } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,7 +39,9 @@ import {
   type KitAsset,
 } from '../../services/assetService';
 
-const LIBRARY_TAGS: { value: string; label: string }[] = [
+// Narrowed by KIND, the same field the spec icon picker reads (`libraryKind`), so "Icons" here
+// and the icons a spec value can carry are one list (SPEC-ICON-PICKER-UX).
+const LIBRARY_KINDS: { value: string; label: string }[] = [
   { value: '__all__', label: 'All artwork' },
   { value: 'badge', label: 'Badges' },
   { value: 'icon', label: 'Icons' },
@@ -54,20 +57,42 @@ interface AssetPickerDialogProps {
   allowProductPhotos?: boolean;
   /** What an upload from this dialog is filed as. */
   uploadKind?: AssetKind;
+  /**
+   * Manage ONE kind (the icon library, from a Feature icons layer or a spec value): the library lists only that
+   * kind, an upload is filed as it, and the new asset stays in the list instead of being picked,
+   * so the next one can be added straight away.
+   */
+  libraryKind?: AssetKind;
   title?: string;
+  /** The footer button's words: "Cancel" when picking one, "Done" when adding several. */
+  closeLabel?: string;
+  /**
+   * Select mode (with `onDone`): a tile click toggles a selected state and applies nothing; Done
+   * hands back the selection in the order it was made, starting from these ids. Cancel, the X and
+   * a click away discard it. An upload joins the grid already selected. Library tiles only:
+   * product photos still go through `onPick`, so pair this with `allowProductPhotos={false}`.
+   */
+  selectedIds?: string[];
+  onDone?: (assetIds: string[]) => void;
   onCancel: () => void;
-  onPick: (source: ImageSource) => void;
+  onPick?: (source: ImageSource) => void;
 }
 
 export function AssetPickerDialog({
   open,
   productImages,
   allowProductPhotos = true,
-  uploadKind = 'decorative',
+  uploadKind: uploadKindProp = 'decorative',
+  libraryKind,
   title = 'Choose an image',
+  closeLabel = 'Cancel',
+  selectedIds,
+  onDone,
   onCancel,
   onPick,
 }: AssetPickerDialogProps) {
+  const selecting = onDone !== undefined;
+  const uploadKind = libraryKind ?? uploadKindProp;
   const [tab, setTab] = useState(allowProductPhotos ? 'product' : 'library');
   const [assets, setAssets] = useState<KitAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,13 +100,19 @@ export function AssetPickerDialog({
   const [tagFilter, setTagFilter] = useState('__all__');
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [selection, setSelection] = useState<string[]>([]);
+
+  const toggle = (id: string) =>
+    setSelection((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await listAssets({
         query,
-        tag: tagFilter === '__all__' ? undefined : tagFilter,
+        ...(libraryKind
+          ? { kind: libraryKind }
+          : { kind: tagFilter === '__all__' ? undefined : tagFilter }),
         limit: 100,
       });
       setAssets(rows);
@@ -92,12 +123,15 @@ export function AssetPickerDialog({
     } finally {
       setLoading(false);
     }
-  }, [query, tagFilter]);
+  }, [query, tagFilter, libraryKind]);
 
   useEffect(() => {
     if (!open) return;
     setTab(allowProductPhotos ? 'product' : 'library');
     setFiles([]);
+    setSelection(selectedIds ?? []);
+    // Seeded on open only: the host's list changes on Done, never while the dialog is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, allowProductPhotos]);
 
   useEffect(() => {
@@ -116,13 +150,23 @@ export function AssetPickerDialog({
       });
       setFiles([]);
       toast.success(`${asset.name} added to the library`);
-      onPick({ type: 'asset', assetId: asset.id });
+      if (libraryKind || selecting) {
+        setAssets((rows) => [
+          ...rows.filter((row) => row.id !== asset.id),
+          asset,
+        ]);
+        if (selecting) {
+          setSelection((ids) => (ids.includes(asset.id) ? ids : [...ids, asset.id]));
+        }
+      } else {
+        onPick?.({ type: 'asset', assetId: asset.id });
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Upload failed');
     } finally {
       setUploading(false);
     }
-  }, [files, uploadKind, onPick]);
+  }, [files, uploadKind, libraryKind, selecting, onPick]);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -155,7 +199,7 @@ export function AssetPickerDialog({
                         type="button"
                         className="group relative aspect-square overflow-hidden rounded border hover:ring-2 hover:ring-primary"
                         onClick={() =>
-                          onPick({
+                          onPick?.({
                             type: 'product_attachment',
                             attachmentId: image.attachment_id,
                           })
@@ -189,14 +233,16 @@ export function AssetPickerDialog({
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </div>
-                <div className="w-40">
-                  <SearchableSelect
-                    value={tagFilter}
-                    onChange={setTagFilter}
-                    options={LIBRARY_TAGS}
-                    size="sm"
-                  />
-                </div>
+                {!libraryKind && (
+                  <div className="w-40">
+                    <SearchableSelect
+                      value={tagFilter}
+                      onChange={setTagFilter}
+                      options={LIBRARY_KINDS}
+                      size="sm"
+                    />
+                  </div>
+                )}
               </div>
 
               {loading ? (
@@ -212,33 +258,56 @@ export function AssetPickerDialog({
                   {assets.map((asset) => {
                     // A rendition for the grid, never 200 originals.
                     const preview = asset.thumb_url ?? asset.url;
+                    const picked = selecting && selection.includes(asset.id);
                     return (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        className="flex flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary"
-                        onClick={() =>
-                          onPick({ type: 'asset', assetId: asset.id })
-                        }
-                        title={asset.name}
-                      >
-                        <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
-                          {preview ? (
-                            <img
-                              src={preview}
-                              alt=""
-                              className="size-full object-contain"
-                            />
-                          ) : (
-                            <span className="text-2xs text-muted-foreground">
-                              No preview
+                      <div key={asset.id} className="relative">
+                        <button
+                          type="button"
+                          // The selectable-tile pattern of the catalogue picker
+                          // (`dealer-kit/components/TileGrid.tsx`): ring + check.
+                          className={cn(
+                            'relative flex w-full flex-col items-center gap-1 rounded border p-1 hover:ring-2 hover:ring-primary',
+                            picked && 'border-primary ring-2 ring-primary',
+                          )}
+                          onClick={() =>
+                            selecting
+                              ? toggle(asset.id)
+                              : onPick?.({ type: 'asset', assetId: asset.id })
+                          }
+                          aria-pressed={selecting ? picked : undefined}
+                          title={asset.name}
+                        >
+                          {selecting && (
+                            <span
+                              className={cn(
+                                'absolute end-1 top-1 z-10 flex size-5 items-center justify-center rounded-full border',
+                                picked
+                                  ? 'border-primary bg-primary text-primary-foreground'
+                                  : 'border-border bg-background/90 text-transparent',
+                              )}
+                              aria-hidden
+                            >
+                              <Check className="size-3" />
                             </span>
                           )}
-                        </span>
-                        <span className="w-full truncate text-2xs">
-                          {asset.name}
-                        </span>
-                      </button>
+                          <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
+                            {preview ? (
+                              <img
+                                src={preview}
+                                alt=""
+                                className="size-full object-contain"
+                              />
+                            ) : (
+                              <span className="text-2xs text-muted-foreground">
+                                No preview
+                              </span>
+                            )}
+                          </span>
+                          <span className="w-full truncate text-2xs">
+                            {asset.name}
+                          </span>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -264,7 +333,7 @@ export function AssetPickerDialog({
                     ) : (
                       <Upload className="mr-1 size-3.5" />
                     )}
-                    Upload and use
+                    {libraryKind || selecting ? 'Upload' : 'Upload and use'}
                   </Button>
                 </div>
               </div>
@@ -273,8 +342,11 @@ export function AssetPickerDialog({
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
-            Cancel
+            {selecting ? 'Cancel' : closeLabel}
           </Button>
+          {selecting && (
+            <Button onClick={() => onDone(selection)}>Done</Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

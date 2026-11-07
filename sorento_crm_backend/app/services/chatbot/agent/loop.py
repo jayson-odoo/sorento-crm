@@ -13,6 +13,7 @@ import dataclasses
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -22,6 +23,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
@@ -72,6 +74,9 @@ FINAL_GRACE = 10.0
 #: Below this many seconds left, compaction and the repair round are skipped.
 SIDE_CALL_MIN = 10.0
 CATALOG_TTL_SECONDS = 300
+#: After a failed refresh, the last catalogue is served this long before the next try.
+CATALOG_RETRY_SECONDS = 30
+_CATALOG_LOCK = threading.Lock()
 
 
 @dataclass
@@ -579,6 +584,10 @@ def final_reply(
     left = open_parts(args, plan or [], on_limit)
     if left:
         text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
+    # Records by their label, the result's scope note, dates as dd/mm/yyyy: decided in code (`query_tools`).
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    text = shape_reply(text, ledger)
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
@@ -839,13 +848,29 @@ _CATALOG_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def catalog_cached(fetch: Callable[[], dict], *, now: Callable[[], float] = time.monotonic, key: str = "mcp") -> dict:
-    """The MCP tool catalogue, fetched at most once per CATALOG_TTL_SECONDS per process."""
+    """The MCP tool catalogue, fetched at most once per CATALOG_TTL_SECONDS per process.
+
+    One fetch at a time (parallel turns on an expired entry wait for it instead of each calling the single
+    MCP process at once), and a failed refresh serves the last catalogue this process fetched: it lists the
+    same tools, and a stale list beats a turn that fails with "the CRM tools are not reachable"
+    (crew pass, 5 Nov: 4 parallel sessions). With nothing fetched yet, the failure stands."""
     hit = _CATALOG_CACHE.get(key)
     if hit is not None and hit[0] > now():
         return hit[1]
-    value = fetch()
-    _CATALOG_CACHE[key] = (now() + CATALOG_TTL_SECONDS, value)
-    return value
+    with _CATALOG_LOCK:
+        hit = _CATALOG_CACHE.get(key)
+        if hit is not None and hit[0] > now():
+            return hit[1]
+        try:
+            value = fetch()
+        except Exception:
+            if hit is None:
+                raise
+            logger.warning("agent: tool catalogue refresh failed; serving the last one", exc_info=True)
+            _CATALOG_CACHE[key] = (now() + CATALOG_RETRY_SECONDS, hit[1])
+            return hit[1]
+        _CATALOG_CACHE[key] = (now() + CATALOG_TTL_SECONDS, value)
+        return value
 
 
 def _fetch_catalog() -> dict:
@@ -932,7 +957,7 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     if left_out:
         text = (
             f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
-            "are outside this user's or this contact's access; never say the CRM lacks them."
+            "are outside this user's or this contact's access; never say the CRM lacks them, and never list them in no_tool."
         )
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
@@ -1088,6 +1113,48 @@ def run_agent_turn(
             operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
             context_after=context_after,
         )
+
+
+_NO_TOOL_MAX = 5
+_NO_TOOL_CHARS = 300
+
+
+# The sentence the prompt tells the model to use for an ask outside the user's access (`_system_prompt`), and
+# the model's own variants of it ("outside your current access permissions").
+_ACCESS_REFUSAL = re.compile(r"outside (?:of )?(?:this user's|your|the user's)\b[^.\n]{0,60}\baccess", re.IGNORECASE)
+
+
+def no_tool_items(args: dict | None) -> list[dict]:
+    """The answer's `no_tool` list, cleaned: strings only, trimmed, at most five, nothing empty.
+
+    Only a missing TOOL counts. An item the model marks `no_access`, or with no reason, is dropped, and so is
+    the whole list when the reply refuses for lack of access: a permission refusal is not a gap in the tools.
+    """
+    raw = (args or {}).get("no_tool")
+    if not isinstance(raw, list):
+        return []
+    if _ACCESS_REFUSAL.search(str((args or {}).get("text") or "")):
+        return []
+    items: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict) or entry.get("reason") != "no_tool":
+            continue
+        ask = entry.get("ask")
+        if not isinstance(ask, str) or not ask.strip():
+            continue
+        area = entry.get("area")
+        area = area.strip()[:80] if isinstance(area, str) and area.strip() else None
+        items.append({"ask": ask.strip()[:_NO_TOOL_CHARS], "area": area})
+        if len(items) >= _NO_TOOL_MAX:
+            break
+    return items
+
+
+def _channel(is_test: bool) -> str:
+    """Where the turn came from: the staff side panel, live WhatsApp, or the console's test run."""
+    if staff_principal.current() is not None:
+        return "panel"
+    return "console" if is_test else "whatsapp"
 
 
 def _run(
@@ -1295,6 +1362,7 @@ def _run(
         used_call_ids: set[str] = set()
         repaired = False
         final_args: dict | None = None
+        forced_args: dict | None = None
         nudge = (
             "Finish by calling the answer tool now: put your reply in text, list every number in "
             "figures with the call_id that shows it, and anything you could not find in not_found."
@@ -1317,7 +1385,8 @@ def _run(
                 }
             )
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
-            args = answer_of(res)
+            nonlocal forced_args
+            args = forced_args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
             return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
@@ -1445,6 +1514,7 @@ def _run(
                 ledger[call_id] = {
                     "name": name, "status": out.status,
                     "args": args if isinstance(args, dict) else {}, "data": out.data,
+                    "display": getattr(out, "display", None),
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
@@ -1512,6 +1582,13 @@ def _run(
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
             reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
+        gaps = no_tool_items(final_args if final_args is not None else forced_args)
+        if gaps:
+            # GAP-SIGNAL: what the model said no tool could do, listed on the Wishlist screen.
+            trace.add(
+                NO_TOOL_EVENT,
+                {"items": gaps, "user_id": str(ctx.user_id or "") or None, "channel": _channel(is_test)},
+            )
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

@@ -161,6 +161,7 @@ def test_scheduler_registers_the_nightly_relink_sweep_job():
     assert "nightly_relink_all_containers" in source, (
         "the registered tick must call the shared relink-all function"
     )
-    assert 'IntervalTrigger(hours=24)' in source.split('id="spo_container_relink_sweep"')[0].rsplit(
+    # PACKING-LIST-RECALC: hourly, the safety net behind the per-change recompute.
+    assert 'IntervalTrigger(hours=1)' in source.split('id="spo_container_relink_sweep"')[0].rsplit(
         "scheduler.add_job", 1
-    )[-1], "the relink sweep must run daily, next to the other daily jobs"
+    )[-1], "the relink + open-container sweep must run hourly"

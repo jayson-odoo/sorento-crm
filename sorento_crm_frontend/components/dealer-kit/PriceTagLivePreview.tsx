@@ -21,7 +21,7 @@ import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { toast } from '@/lib/toast';
 import { buildRequestSheet, buildSingleTagSheet, type TagRequestTag } from '@/lib/dealer-kit/request-tags';
 import { designPayloadFromResponse, type TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import type { DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import { linePriceType, partsPayload, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import type {
   PriceMode,
@@ -48,6 +48,12 @@ interface Props {
   lineKey?: string;
   /** One-line mode: the lightbox was closed. */
   onClose?: () => void;
+  /**
+   * Popup mode (the request form's Preview button): no inline card. The lookup and `onReadyChange`
+   * still run so Approve knows whether every tag can be drawn; the sheet itself shows in the
+   * lightbox only while `open`.
+   */
+  popup?: { open: boolean; onClose: () => void };
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -60,11 +66,7 @@ export function previewLines(lines: DraftLine[], priceMode?: PriceMode): TagPrev
       product_id: l.line_type === 'product' ? l.product_id : null,
       product_set_id: l.line_type === 'product_set' ? l.product_set_id : null,
       combo_id: l.combo_id,
-      parts: l.parts.map((part) => ({
-        product_id: part.product_id,
-        role: part.role,
-        candidates: part.product_id ? [] : part.candidates.map((c) => c.product_id),
-      })),
+      parts: partsPayload(l.parts),
       promotion_id: l.promotion_id,
       // A typed price only applies to an SP line (the server refuses it otherwise).
       manual_sell_price: (l.price_type ?? priceMode) === 'list' ? null : l.manual_sell_price,
@@ -125,6 +127,7 @@ export function previewPayload(
     assets: response.assets,
     images: response.images,
     fonts: response.fonts,
+    feature_icons: response.feature_icons,
   });
 }
 
@@ -136,6 +139,7 @@ export function PriceTagLivePreview({
   onReadyChange,
   lineKey,
   onClose,
+  popup,
 }: Props) {
   const sent = useMemo(
     () =>
@@ -151,8 +155,6 @@ export function PriceTagLivePreview({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
-  // One-line mode: what the resolved tag prints (SP only when it has a selling figure to show).
-  const [printsSp, setPrintsSp] = useState(false);
   const codeByKey = useMemo(
     () => Object.fromEntries(lines.map((line) => [line.key, line.code])),
     [lines],
@@ -181,8 +183,6 @@ export function PriceTagLivePreview({
         .then((response) => {
           if (ask !== askSeq.current) return; // a newer edit is on its way
           setPayload(previewPayload(lines, response, lineKeyRef.current !== undefined));
-          const row = response.lines.find((r) => r.line_id === lineKeyRef.current);
-          setPrintsSp(!!row && !!row.show_promo_price && row.sell_price != null);
           setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
           setFailed(false);
         })
@@ -231,7 +231,21 @@ export function PriceTagLivePreview({
         onOpenChange={(next) => {
           if (!next) onClose?.();
         }}
-        title={`${oneLine.code || docNumber || 'Preview'} - ${printsSp ? 'SP' : 'LP'}`}
+        title={`${oneLine.code || docNumber || 'Preview'} - ${linePriceType(oneLine, priceMode) === 'selling' ? 'SP' : 'LP'}`}
+        payload={payload}
+      />
+    );
+  }
+
+  if (popup) {
+    if (!popup.open || failed || payload === null) return null;
+    return (
+      <DesignLightbox
+        open
+        onOpenChange={(next) => {
+          if (!next) popup.onClose();
+        }}
+        title={docNumber || 'Preview'}
         payload={payload}
       />
     );

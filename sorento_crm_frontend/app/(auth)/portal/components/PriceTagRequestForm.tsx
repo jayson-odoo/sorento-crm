@@ -99,7 +99,11 @@ import {
 import {
   draftLinesPayload,
   lineNeedsTemplate,
+  templateAfterFlip,
   lineToDraft,
+  EMPTY_LINE,
+  lineProblemsOf,
+  pruneGuardError,
   MISSING_TAG_TEMPLATE,
   linePriceType,
   partsFromCombo,
@@ -143,7 +147,6 @@ type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
-const EMPTY_LINE = 'Pick a set or a product for this line.';
 
 /** Statuses the real design (D11) is visible at, once one exists to show.
  *  `ready` is retired (r9 D8); the two collection statuses take its place. */
@@ -333,6 +336,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [priceMode, setPriceMode] = useState<PriceMode>('list');
   // PRICETAG-LPSP: the line whose tag the eye icon opened.
   const [previewLineKey, setPreviewLineKey] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -525,23 +529,24 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setSectionOpen((prev) => ({ ...prev, [key]: next }));
   }, []);
 
-  // Picking a customer opens Sales Order & Lines (AC-P3).
+  // Each rule opens the NEXT section in the page order Customer, Price, Sales
+  // Order & Lines, Additional Information (O3). Picking a customer opens Price
+  // (AC-P3).
   useEffect(() => {
-    if (debtorCode) openSectionOnce('sales_order');
+    if (debtorCode) openSectionOnce('price');
   }, [debtorCode, openSectionOnce]);
 
-  // The first line (AI or Add line) opens Price (AC-P7).
+  // The first line (AI or Add line) opens Additional Information (AC-P7).
   useEffect(() => {
-    if (lines.length > 0) openSectionOnce('price');
+    if (lines.length > 0) openSectionOnce('need_by');
   }, [lines.length, openSectionOnce]);
 
-  // A chosen price mode opens Additional Information (AC-P8); Selling only
-  // counts once it and a promotion are both there is not required - Selling
-  // alone is enough (D-P2, submit works with no promotion).
+  // A chosen price mode opens Sales Order & Lines (AC-P8); Selling alone is
+  // enough (D-P2, submit works with no promotion).
   useEffect(() => {
     if (!priceModeChosen) return;
     if (priceMode === 'list' || priceMode === 'selling') {
-      openSectionOnce('need_by');
+      openSectionOnce('sales_order');
     }
   }, [priceMode, priceModeChosen, openSectionOnce]);
 
@@ -1382,39 +1387,86 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, homePath, client]);
 
+  // A: a message from the last click leaves its line as soon as its problem no longer holds. It
+  // only removes; nothing new is shown before the next click.
+  useEffect(() => {
+    setLines((prev) => {
+      let changed = false;
+      const next = prev.map((l) => {
+        if (!l.guard_error) return l;
+        const holding = [
+          ...(l.product_id || l.product_set_id ? [] : [EMPTY_LINE]),
+          ...(lineNeedsTemplate(l, priceMode) ? [MISSING_TAG_TEMPLATE] : []),
+          ...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode),
+          ...(l.code && previewState.missing.includes(l.code) ? ['No tag template yet.'] : []),
+          // Prices still loading say nothing either way: keep what the click found.
+          ...(lineEditor.linePricing[l.key] ? [] : l.guard_error.split('\n').filter((m) => m.startsWith('No combo '))),
+        ];
+        const guard = pruneGuardError(l.guard_error, holding);
+        if (guard === l.guard_error) return l;
+        changed = true;
+        return { ...l, guard_error: guard };
+      });
+      return changed ? next : prev;
+    });
+  }, [lines, lineEditor.linePricing, priceMode, previewState]);
+
+  const hasDrawableLine = lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id));
+
   // ---- Submit (D48b: the button is live, the click explains itself) ----
   /** Everything Approve / Escalate checks before anything is sent, marked on
    *  the form (field, row, section, scroll). True when nothing is missing.
    *  Escalate runs it BEFORE its dialog opens (owner hand test 5 Nov, #2138). */
-  const readyToFinish = useCallback((): boolean => {
+  const readyToFinish = useCallback((kind: 'approve' | 'escalate' = 'approve'): boolean => {
     const { next, emptyRows } = collectProblems();
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
-    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l) ? [index] : []));
-    if (Object.keys(next).length > 0 || emptyRows.length > 0 || templateRows.length > 0) {
+    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l, priceMode) ? [index] : []));
+    // Approve also reads the facts that stop a tag being drawn (no combo price, a discontinued
+    // part, no template, a short pick). They are found HERE, on the click, and shown on the line;
+    // Escalate is the way out of them, so it does not ask (owner, 5 Nov; same mechanism as #2138).
+    const perLine = lines.map((l, index) => {
+      const found: string[] = [];
+      if (emptyRows.includes(index)) found.push(EMPTY_LINE);
+      else if (templateRows.includes(index)) found.push(MISSING_TAG_TEMPLATE);
+      if (kind === 'approve' && !emptyRows.includes(index)) {
+        found.push(...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode));
+        if (l.code && previewState.missing.includes(l.code)) found.push('No tag template yet.');
+      }
+      return found;
+    });
+    const rowsWithProblems = perLine.filter((found) => found.length > 0).length;
+    if (Object.keys(next).length > 0 || rowsWithProblems > 0) {
       setServerMessage(null);
       setFieldErrors(next);
       setLines((prev) =>
         prev.map((l, index) => ({
           ...l,
-          guard_error: emptyRows.includes(index)
-            ? EMPTY_LINE
-            : templateRows.includes(index)
-              ? MISSING_TAG_TEMPLATE
-              : null,
+          guard_error: perLine[index].length > 0 ? perLine[index].join('\n') : null,
         })),
       );
-      openSectionForProblems(next, emptyRows.length > 0 || templateRows.length > 0);
+      openSectionForProblems(next, rowsWithProblems > 0);
       scrollToFirstProblem();
       return false;
     }
+    if (kind === 'approve') {
+      // Request-level: nothing on a line to point at, so a message and no more.
+      if (previewState.failed) {
+        toast.error('The tag preview could not be drawn.');
+        return false;
+      }
+      if (hasDrawableLine && !previewState.drawn) {
+        toast.info('Drawing the tag preview...');
+        return false;
+      }
+    }
     return !numbersInvalid();
-  }, [collectProblems, lines, openSectionForProblems, numbersInvalid]);
+  }, [collectProblems, lines, openSectionForProblems, numbersInvalid, lineEditor.linePricing, priceMode, previewState, hasDrawableLine]);
 
   const handleFinish = useCallback(async (
     action: { kind: 'approve' } | { kind: 'escalate'; note: string; neededBy: string | null },
   ) => {
-    if (!readyToFinish()) return;
+    if (!readyToFinish(action.kind)) return;
 
     // The escalation dialog owns Need by now; the form keeps the value it sent.
     const neededBy = action.kind === 'escalate' ? action.neededBy : neededByDate || null;
@@ -1455,10 +1507,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         const preview = await service().lookupTagPreviewForRequest(created.id);
         const missing = linesWithoutTemplate(created.lines, preview);
         if (missing.length > 0) {
-          throw new Error(`No tag template yet for ${missing.join(', ')}. Escalate it to marketing.`);
+          throw new Error(`No tag template yet for ${missing.join(', ')}.`);
         }
         const built = buildSelfProof(created.lines, preview);
-        if (!built) throw new Error('The tag could not be drawn. Escalate it to marketing.');
+        if (!built) throw new Error('The tag could not be drawn.');
         await service().submitAndApprove(created.id, built.doc);
         toast.success('Tag approved');
       }
@@ -1490,18 +1542,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readyToFinish, applyFieldErrors, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
-
-  /** Why Approve is off on the draft form, or null when the tag can be approved. */
-  const approveBlockedReason: string | null =
-    previewState.missing.length > 0
-      ? `No tag template yet for ${previewState.missing.join(', ')}. Escalate it to marketing.`
-      : previewState.failed
-        ? 'The tag preview could not be drawn. Escalate it to marketing.'
-        : !previewState.drawn
-          ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
-            ? 'Drawing the tag preview...'
-            : ''
-          : null;
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
@@ -1825,6 +1865,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </FormSection>
 
         <FormSection
+          title="Price"
+          summary={sectionSummaries.price}
+          open={sectionOpen.price}
+          onOpenChange={(next) => toggleSection('price', next)}
+        >
+          <div className="space-y-1.5">
+            <Label>Price</Label>
+            <p className="text-sm font-medium py-2">
+              {(request.price_mode ?? 'list') === 'selling'
+                ? 'Selling price'
+                : 'List price'}
+            </p>
+          </div>
+          {/* D1: a promotion is per LINE now (see the Lines table above) -
+              there is no single request-level promotion to name here any
+              more. */}
+        </FormSection>
+
+        <FormSection
           title="Sales Order & Lines"
           summary={sectionSummaries.sales_order}
           open={sectionOpen.sales_order}
@@ -1864,25 +1923,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               />
             )}
           </div>
-        </FormSection>
-
-        <FormSection
-          title="Price"
-          summary={sectionSummaries.price}
-          open={sectionOpen.price}
-          onOpenChange={(next) => toggleSection('price', next)}
-        >
-          <div className="space-y-1.5">
-            <Label>Price</Label>
-            <p className="text-sm font-medium py-2">
-              {(request.price_mode ?? 'list') === 'selling'
-                ? 'Selling price'
-                : 'List price'}
-            </p>
-          </div>
-          {/* D1: a promotion is per LINE now (see the Lines table above) -
-              there is no single request-level promotion to name here any
-              more. */}
         </FormSection>
 
         <FormSection
@@ -2157,8 +2197,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </>
       )}
 
-      {/* Customer - open by default; picking one opens Sales Order & Lines
-          (AC-P3). */}
+      {/* Customer - open by default; picking one opens Price (AC-P3). */}
       <FormSection
         title="Customer"
         summary={sectionSummaries.customer}
@@ -2193,9 +2232,48 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       </FormSection>
 
+      {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
+          never disabled; its Promotion picker moved onto each line in the
+          table above (AC-S1-3), one line can no longer share a single
+          request-level promotion with another. Choosing either mode opens
+          Sales Order & Lines (AC-P8). */}
+      <FormSection
+        title="Price"
+        titleId="price-section-title"
+        summary={sectionSummaries.price}
+        open={sectionOpen.price}
+        onOpenChange={(next) => toggleSection('price', next)}
+      >
+        <div className="space-y-1.5">
+          {/* No repeated "Price" label here - the section title already
+              says it (review round 1). */}
+          <span id="price-default-label" className="block text-sm text-muted-foreground">
+            Preferred Default
+          </span>
+          <PriceModeToggle
+            value={priceMode}
+            labelledBy="price-default-label"
+            onChange={(mode) => {
+              setPriceModeChosen(true);
+              setPriceMode(mode);
+              // R7: a line that follows the header moves to the new type's template.
+              setLines((prev) =>
+                prev.map((l) => (l.price_type ? l : { ...l, ...templateAfterFlip(l, mode) })),
+              );
+              // Direct call (review round 2): `setPriceMode('list')` is a
+              // no-op on a fresh form (priceMode is already 'list'), so
+              // React bails out of re-rendering and the auto-open effect
+              // keyed on `priceMode` never reruns - Sales Order & Lines
+              // must still open on this click either way (AC-P8).
+              openSectionOnce('sales_order');
+            }}
+          />
+        </div>
+      </FormSection>
+
       {/* Sales Order & Lines - the AI extract / dropzone and the lines table
           share one section (D-P1): the first line lands here from either one,
-          and opens Price (AC-P7). */}
+          and opens Additional Information (AC-P7). */}
       <FormSection
         title="Sales Order & Lines"
         summary={sectionSummaries.sales_order}
@@ -2228,7 +2306,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
 
         <div className="space-y-1.5">
-          <Label>Lines</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label>Lines</Label>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!hasDrawableLine}
+              onClick={() => setPreviewOpen(true)}
+            >
+              Preview
+            </Button>
+          </div>
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
               No lines yet.
@@ -2256,14 +2344,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </Button>
         </div>
 
-        {/* PRICETAG-TEMPLATE-PER-PRODUCT R5: the tags as they will look, from
-            the first item on, redrawn as the lines change. */}
+        {/* The whole request's tags open from the Preview button above. The lookup keeps
+            running so Approve knows whether every tag can be drawn (O2). */}
         <PriceTagLivePreview
           lines={lines}
           priceMode={priceMode}
           lookupTagPreview={previewLookup}
           docNumber={request?.doc_number}
           onReadyChange={setPreviewState}
+          popup={{ open: previewOpen, onClose: () => setPreviewOpen(false) }}
         />
         {/* PRICETAG-LPSP: one line's tag, from the row's eye icon, in the viewer's lightbox. */}
         {previewLineKey !== null ? (
@@ -2276,41 +2365,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             onClose={() => setPreviewLineKey(null)}
           />
         ) : null}
-      </FormSection>
-
-      {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
-          never disabled; its Promotion picker moved onto each line in the
-          table above (AC-S1-3), one line can no longer share a single
-          request-level promotion with another. Choosing either mode opens
-          Additional Information (AC-P8). */}
-      <FormSection
-        title="Price"
-        titleId="price-section-title"
-        summary={sectionSummaries.price}
-        open={sectionOpen.price}
-        onOpenChange={(next) => toggleSection('price', next)}
-      >
-        <div className="space-y-1.5">
-          {/* No repeated "Price" label here - the section title already
-              says it (review round 1). */}
-          <span id="price-default-label" className="block text-sm text-muted-foreground">
-            Preferred Default
-          </span>
-          <PriceModeToggle
-            value={priceMode}
-            labelledBy="price-default-label"
-            onChange={(mode) => {
-              setPriceModeChosen(true);
-              setPriceMode(mode);
-              // Direct call (review round 2): `setPriceMode('list')` is a
-              // no-op on a fresh form (priceMode is already 'list'), so
-              // React bails out of re-rendering and the auto-open effect
-              // keyed on `priceMode` never reruns - Additional Information
-              // must still open on this click either way (AC-P8).
-              openSectionOnce('need_by');
-            }}
-          />
-        </div>
       </FormSection>
 
       {/* Additional Information - Notes (optional, D-P2b). Need by moved to
@@ -2394,10 +2448,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           data-testid="submit-problem-summary"
         >
           {problemCount > 0 && (
-            <p>
+            <button type="button" className="text-left underline" onClick={scrollToFirstProblem}>
               {problemCount} thing{problemCount === 1 ? '' : 's'} need
               {problemCount === 1 ? 's' : ''} attention.
-            </p>
+            </button>
           )}
           {serverMessage && <p className="mt-0.5">{serverMessage}</p>}
         </div>
@@ -2444,39 +2498,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <Button
             variant="outline"
             onClick={() => {
-              if (readyToFinish()) setDraftEscalateOpen(true);
+              if (readyToFinish('escalate')) setDraftEscalateOpen(true);
             }}
             disabled={submitting || saving}
           >
             <Send className="size-4 mr-1" />
             Escalate to marketing
           </Button>
-          {/* A disabled button fires no hover, so the reason sits on its wrapper
-              AND beside it (owner ruling 3 Nov: next to the button, not 1,600 px
-              down under the preview). */}
-          {/* Full width in the stacked phone layout like its siblings; its own
-              width from sm up (crew pass: narrower than the others at 375). */}
-          <span
-            title={approveBlockedReason ?? undefined}
-            className="flex w-full sm:inline-flex sm:w-auto"
+          {/* Live like Escalate: the click checks and says what is wrong, on the line (owner,
+              5 Nov; same mechanism as #2138). Full width in the stacked phone layout like
+              its siblings; its own width from sm up (crew pass: narrower at 375). */}
+          <Button
+            className="w-full sm:w-auto"
+            onClick={() => void handleFinish({ kind: 'approve' })}
+            disabled={submitting || saving}
           >
-            <Button
-              className="w-full sm:w-auto"
-              onClick={() => void handleFinish({ kind: 'approve' })}
-              disabled={submitting || saving || approveBlockedReason !== null}
-            >
-              {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-              <Check className="size-4 mr-1" />
-              Approve
-            </Button>
-          </span>
-        </div>
-      )}
-      {!reviseMode && approveBlockedReason && (
-        <div className="space-y-2 sm:text-right">
-          <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
-            {approveBlockedReason}
-          </p>
+            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+            <Check className="size-4 mr-1" />
+            Approve
+          </Button>
         </div>
       )}
       {!reviseMode && (

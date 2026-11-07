@@ -39,9 +39,9 @@ async function login(page: Page) {
 }
 
 async function startViewAsFromSidebar(page: Page) {
-  // A view-as left open on the server (an earlier failed run) comes back on sign-in.
+  // Close a view-as an earlier failed run left open on the server; this tab holds none.
   await asAnotherTab(page, '/api/v1/user-management/impersonation/stop');
-  await page.evaluate(() => localStorage.removeItem('impersonation-session-v1'));
+  await page.evaluate(() => sessionStorage.removeItem('impersonation-session-v1'));
   await page.reload();
   // Exact names: each sidebar entry also has a "Pin ... to quick access" button, and the
   // header mega menu carries hidden copies of the same entries.
@@ -96,7 +96,7 @@ test('session revoked mid view-as: the next click lands on sign-in once, view-as
   // A fixed wait on purpose: it asserts a SECOND navigation does not follow.
   await page.waitForTimeout(1500);
   expect(seen.signinDocuments).toBe(1);
-  expect(await page.evaluate(() => localStorage.getItem('impersonation-session-v1'))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem('impersonation-session-v1'))).toBeNull();
 });
 
 test('cookie no longer usable: a reload lands on sign-in, no request storm', async ({ page }) => {

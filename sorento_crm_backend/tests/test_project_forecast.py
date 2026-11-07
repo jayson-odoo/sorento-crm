@@ -200,45 +200,58 @@ def test_a_quoted_project_uses_the_quotation_not_the_estimate(seeded):
     assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("10000.00")
 
 
-def test_a_lost_quotation_leaves_the_pipeline(seeded):
+def test_a_lost_project_leaves_the_pipeline(seeded):
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
-    quotation, _v = _quote(db, project, owner, unit_price="1000.00", quantity=10)
-    quotes.set_outcome(db, quotation=quotation, outcome="lost", loss_reason="price")
+    _quote(db, project, owner, unit_price="1000.00", quantity=10)
+    project.outcome = "lost"
+    project.loss_reason = "price"
+    db.flush()
 
     assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("0.00")
 
 
-def test_a_won_quotation_leaves_the_pipeline_too(seeded):
+def test_a_won_project_leaves_the_pipeline_too(seeded):
     """Won work is COMMITTED, not pipeline. Counting it in both is the double-count that
     makes a forecast add up to more than the business."""
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
-    quotation, _v = _quote(db, project, owner, unit_price="1000.00", quantity=10)
-    quotes.set_outcome(db, quotation=quotation, outcome="won", loss_reason=None)
+    _quote(db, project, owner, unit_price="1000.00", quantity=10)
+    project.outcome = "won"
+    db.flush()
 
     assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("0.00")
 
 
-def test_a_partly_decided_project_keeps_only_its_open_scope_in_pipeline(seeded):
-    """AC-I5's sibling: house units won and common area still open is ONE open scope of
-    pipeline, not a whole project either way."""
+def test_an_open_project_counts_every_area_in_pipeline(seeded):
+    """BE6: one outcome per project. No area is ever 'decided', so an open project's
+    pipeline is every area's latest version."""
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
-    won, _v1 = _quote(db, project, owner, unit_price="1000.00", quantity=10, scope="House Units")
-    _open_q, _v2 = _quote(db, project, owner, unit_price="500.00", quantity=4, scope="Common Area")
-    quotes.set_outcome(db, quotation=won, outcome="won", loss_reason=None)
+    _quote(db, project, owner, unit_price="1000.00", quantity=10, scope="House Units")
+    _quote(db, project, owner, unit_price="500.00", quantity=4, scope="Common Area")
 
-    assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("2000.00")
+    assert project.outcome == "open"
+    assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("12000.00")
+
+
+def test_an_area_row_marked_lost_in_the_old_column_no_longer_leaves_pipeline(seeded):
+    """BE6: no ProjectQuotation.outcome filter. The legacy column is unused."""
+    from app.services import project_forecast_service as fc
+
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    quotation, _v = _quote(db, project, owner, unit_price="1000.00", quantity=10)
+    quotation.outcome = "lost"
+    db.flush()
+
+    assert fc.forecast(db, company_id=company_id)["pipeline"] == Decimal("10000.00")
 
 
 # ------------------------------------------------------------------- weighted
@@ -316,17 +329,17 @@ def test_committed_and_pipeline_are_never_the_same_money(seeded):
     """The whole point of AC-I1. A project with a won scope AND an open one contributes to
     both numbers, but never the same amount to both."""
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
     won, won_v = _quote(db, project, owner, unit_price="1000.00", quantity=10, scope="House Units")
     _quote(db, project, owner, unit_price="500.00", quantity=4, scope="Common Area")
-    quotes.set_outcome(db, quotation=won, outcome="won", loss_reason=None)
+    project.outcome = "won"
+    db.flush()
     _po(db, project, owner, amount="9500.00", version_id=won_v.id)
 
     numbers = fc.forecast(db, company_id=company_id)
-    assert numbers["pipeline"] == Decimal("2000.00")
+    assert numbers["pipeline"] == Decimal("0.00")
     assert numbers["committed"] == Decimal("9500.00")
 
 
@@ -451,33 +464,25 @@ def test_projects_with_no_delivery_year_are_reported_separately_not_dropped(seed
 # ----------------------------------------------------------------- conversion
 
 
-def test_conversion_reads_quotation_outcomes_rolled_to_projects(seeded):
-    """AC-I5. A partial win is not a full win: the project is decided only when every scope
-    is, and counting house-units-won as a win while common-area is live would report a
-    conversion that has not happened yet."""
+def test_conversion_reads_the_project_outcome(seeded):
+    """AC-I5. Conversion reads Project.outcome directly: one outcome per project."""
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
     won = _project(db, company_id, owner, title=f"{MARKER} Bukit Jalil")
     lost = _project(db, company_id, owner, title=f"{MARKER} Kota Damansara")
-    partial = _project(db, company_id, owner, title=f"{MARKER} Setia Alam")
+    _project(db, company_id, owner, title=f"{MARKER} Setia Alam")
 
-    q_won, _ = _quote(db, won, owner, unit_price="100.00")
-    quotes.set_outcome(db, quotation=q_won, outcome="won", loss_reason=None)
-    q_lost, _ = _quote(db, lost, owner, unit_price="100.00")
-    quotes.set_outcome(db, quotation=q_lost, outcome="lost", loss_reason="price")
-    q_part, _ = _quote(db, partial, owner, unit_price="100.00", scope="House Units")
-    _quote(db, partial, owner, unit_price="100.00", scope="Common Area")
-    quotes.set_outcome(db, quotation=q_part, outcome="won", loss_reason=None)
+    won.outcome = "won"
+    lost.outcome = "lost"
+    lost.loss_reason = "price"
+    db.flush()
 
     metrics = fc.conversion(db, company_id=company_id)
-    # The partly-decided project counts as WON (any scope won -> the project is won, per
-    # AC-E10) but the project that is still fully open is not in the denominator at all.
-    assert metrics["won"] == 2
+    assert metrics["won"] == 1
     assert metrics["lost"] == 1
-    assert metrics["decided"] == 3
-    assert metrics["rate"] == Decimal("66.67")
+    assert metrics["decided"] == 2
+    assert metrics["rate"] == Decimal("50.00")
 
 
 def test_conversion_is_none_rather_than_zero_with_nothing_decided(seeded):
@@ -493,20 +498,25 @@ def test_conversion_is_none_rather_than_zero_with_nothing_decided(seeded):
 
 
 def test_loss_reasons_are_counted_for_the_report(seeded):
-    """AC-I4. Counted from the QUOTATION, which is where the reason is recorded, so a
-    project that lost two scopes for two different reasons reports both."""
+    """BE7. Counted from LOST projects by Project.loss_reason."""
     from app.services import project_forecast_service as fc
-    from app.services import project_quotation_service as quotes
 
     db, company_id, owner = seeded
-    project = _project(db, company_id, owner)
-    first, _ = _quote(db, project, owner, unit_price="100.00", scope="House Units")
-    second, _ = _quote(db, project, owner, unit_price="100.00", scope="Common Area")
-    quotes.set_outcome(db, quotation=first, outcome="lost", loss_reason="price")
-    quotes.set_outcome(db, quotation=second, outcome="lost", loss_reason="lead_time")
+    first = _project(db, company_id, owner, title=f"{MARKER} One {_uid()[:8]}")
+    second = _project(db, company_id, owner, title=f"{MARKER} Two {_uid()[:8]}")
+    third = _project(db, company_id, owner, title=f"{MARKER} Three {_uid()[:8]}")
+    for project, reason in ((first, "price"), (second, "lead_time"), (third, "price")):
+        project.outcome = "lost"
+        project.loss_reason = reason
+    # An open project and an area-level reason must not be counted.
+    still_open = _project(db, company_id, owner, title=f"{MARKER} Four {_uid()[:8]}")
+    still_open.loss_reason = "price"
+    area, _ = _quote(db, still_open, owner, unit_price="100.00")
+    area.loss_reason = "price"
+    db.flush()
 
     reasons = {row["reason"]: row for row in fc.loss_reason_counts(db, company_id=company_id)}
-    assert reasons["price"]["count"] == 1
+    assert reasons["price"]["count"] == 2
     assert reasons["lead_time"]["count"] == 1
     assert reasons["price"]["label"] == "Price"
 
@@ -527,3 +537,50 @@ def test_salesperson_performance_reports_per_owner(seeded):
     assert rows[owner]["pipeline"] == Decimal("10000.00")
     assert rows[other]["pipeline"] == Decimal("1000.00")
     assert rows[owner]["owner_name"] == f"{MARKER} Ali"
+
+
+def test_an_unpriced_won_project_with_an_estimate_counts_no_pipeline_or_weighted(seeded):
+    """A won or lost project never falls back to its registration estimate."""
+    from app.services import project_forecast_service as fc
+
+    db, company_id, owner = seeded
+    _set_probability(db, "quoted", 40)
+    project = _project(
+        db,
+        company_id,
+        owner,
+        status_key="quoted",
+        details={"estimated_sales_value": Decimal("250000.00")},
+    )
+    project.outcome = "won"
+    db.flush()
+
+    numbers = fc.forecast(db, company_id=company_id)
+    assert numbers["pipeline"] == Decimal("0.00")
+    assert numbers["weighted"] == Decimal("0.00")
+    rows = {r["owner_user_id"]: r for r in fc.by_salesperson(db, company_id=company_id)}
+    assert rows[owner]["pipeline"] == Decimal("0.00")
+    assert rows[owner]["weighted"] == Decimal("0.00")
+
+
+def test_an_unpriced_lost_project_with_a_po_has_no_pipeline_but_still_commits(seeded):
+    from app.services import project_forecast_service as fc
+
+    db, company_id, owner = seeded
+    _set_probability(db, "quoted", 40)
+    project = _project(
+        db,
+        company_id,
+        owner,
+        status_key="quoted",
+        details={"estimated_sales_value": Decimal("250000.00")},
+    )
+    _po(db, project, owner, amount="7000.00")
+    project.outcome = "lost"
+    project.loss_reason = "price"
+    db.flush()
+
+    numbers = fc.forecast(db, company_id=company_id)
+    assert numbers["pipeline"] == Decimal("0.00")
+    assert numbers["weighted"] == Decimal("0.00")
+    assert numbers["committed"] == Decimal("7000.00")

@@ -93,3 +93,24 @@ describe('designPayloadFromResponse keys resolvedData by the TAG (owner live fin
     expect(payload.resolvedData['line-1']).toBe(row);
   });
 });
+
+describe('designPayloadFromResponse images (PRICETAG-COMBO-RENDER AC-A3)', () => {
+  it('maps the signed photos of every combo position, not only the line', () => {
+    const photo = (id: string) => ({ attachment_id: id, url: `https://cdn.test/${id}.jpg`, is_primary: true });
+    const part = (id: string) => ({ code: id, name: id, dimensions: '', images: [photo(id)] });
+    const payload = designPayloadFromResponse({
+      lines: [
+        line({
+          images: [photo('own')],
+          slots: {
+            main: part('main'),
+            fixed: [part('fixed')],
+            groups: [{ role: 'Tap', size: 1, picks: [part('pick')] }],
+            upgrades: [part('up')],
+          },
+        } as Partial<LineTagData>),
+      ],
+    } as unknown as TagSheetDesignResponse);
+    expect(Object.keys(payload.images).sort()).toEqual(['fixed', 'main', 'own', 'pick', 'up']);
+  });
+});

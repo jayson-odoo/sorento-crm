@@ -303,6 +303,17 @@ class WishlistClusterItem(BaseModel):
     created_at: datetime
 
 
+class NoToolAskItem(BaseModel):
+    """GAP-SIGNAL: one ask the agent could not do for lack of a tool."""
+
+    turn_id: str
+    ask: str
+    area: Optional[str] = None
+    who: Optional[str] = None
+    channel: Optional[str] = None
+    asked_at: datetime
+
+
 _MAX_PRICE = 999999.999999
 
 

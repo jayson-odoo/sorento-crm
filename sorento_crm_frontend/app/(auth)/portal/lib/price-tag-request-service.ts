@@ -87,10 +87,12 @@
 
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import type { TagFont } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type {
   ChangeRequestPayload,
   ReviewComment,
@@ -118,6 +120,8 @@ export interface LinePartCandidate {
   name: string;
   /** Set on an upgrade candidate: its top-up. */
   topup_amount?: number | null;
+  /** The product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /**
@@ -206,8 +210,15 @@ export interface ProductTagTemplateOption {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
-  /** PRICETAG-LPSP: the link preselected on a line. */
+  /** PRICETAG-LPSP: the link preselected on a line (a default of either kind). */
   is_default?: boolean;
+  /** PRICETAG-COMBO-FORMAT: the template's hand-picked type (null = not set, fits both) and the
+   *  link's default per type. */
+  price_type?: 'list' | 'selling' | 'both' | null;
+  default_list?: boolean;
+  default_selling?: boolean;
+  /** What the template reads from a combo (from its published layers). */
+  needs?: TemplateNeeds;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -232,6 +243,8 @@ export interface TagPreviewResponse {
   assets: Record<string, string>;
   images: Record<string, string>;
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers. */
+  feature_icons?: FeatureIcon[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -361,6 +374,8 @@ export interface ComboPartOption {
   is_upgrade?: boolean;
   /** An upgrade's top-up, when set. */
   topup_amount?: number | null;
+  /** The part product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */

@@ -1107,18 +1107,33 @@ def test_two_equally_good_scopes_leave_the_po_unbound(seeded):
     assert po.quotation_version_id is None
 
 
-def test_the_won_scope_is_preferred_over_an_open_one(seeded):
-    """A PO follows from a scope somebody won, so that scope is the obvious candidate
-    even when another is still being negotiated."""
+def test_a_single_scope_binds_the_po(seeded):
+    """BE8. One candidate binds, whatever the project's outcome."""
     db, project, owner = seeded
-    from app.services import project_quotation_service as quotes
-
     service = ProjectPOExtractionService(db)
-    won, won_version = _quotation(
+    _scope, scope_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC86", "392.85")]
+    )
+    po = _po(db, project, owner, "HQ/26/01/121")
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert po.quotation_version_id == scope_version.id
+
+
+def test_there_is_no_outcome_ranking_between_scopes(seeded):
+    """BE8. A scope carrying the legacy 'won' column is no better a candidate than another:
+    two scopes stay unbound, the person's call."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    won, _won_version = _quotation(
         db, project, owner, "House Units", [("SRTWC86", "392.85")]
     )
     _quotation(db, project, owner, "Common Area", [("SRTWC86", "500.00")])
-    quotes.set_outcome(db, quotation=won, outcome=quotes.OUTCOME_WON_Q)
+    won.outcome = "won"
+    db.flush()
 
     po = _po(db, project, owner, "HQ/26/01/121")
     version = _version(db, po)
@@ -1126,8 +1141,14 @@ def test_the_won_scope_is_preferred_over_an_open_one(seeded):
 
     service.confirm_version(version=version, actor_user_id=owner)
 
-    assert po.quotation_version_id == won_version.id
-    assert _flags(db, po)["SRTWC86"] == (False, False)
+    assert po.quotation_version_id is None
+
+
+def test_the_outcome_rank_table_is_gone():
+    from app.services import project_po_confirm, project_po_reading
+
+    assert not hasattr(project_po_reading, "_OUTCOME_RANK")
+    assert not hasattr(project_po_confirm, "_OUTCOME_RANK")
 
 
 # ------------------------------------------------------------ upload and versioning

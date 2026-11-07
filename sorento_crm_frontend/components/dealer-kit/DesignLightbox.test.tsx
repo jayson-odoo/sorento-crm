@@ -50,6 +50,7 @@ function payload(sheets = 1): TagSheetDesignPayload {
     page_id: 'page-1',
     version: 1,
     source: 'version',
+    featureIcons: [],
     doc: {
       kind: 'tag_sheet',
       imposition: { page_width_mm: 210, page_height_mm: 297 },

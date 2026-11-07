@@ -958,7 +958,10 @@ def start_scheduler():
     # docstring already promised this sweep; this is where it runs.
     scheduler.add_job(
         _spo_container_relink_sweep_tick,
-        trigger=IntervalTrigger(hours=24),
+        # Hourly since PACKING-LIST-RECALC: the safety net behind the per-change
+        # recompute (`app/services/scm/packing_list_recalc.py`), so a write that went
+        # around the ORM is stale for an hour at most, never until someone opens the page.
+        trigger=IntervalTrigger(hours=1),
         id="spo_container_relink_sweep",
         name="SPO container relink sweep",
         replace_existing=True,

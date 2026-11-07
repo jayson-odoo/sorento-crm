@@ -703,6 +703,12 @@ def _delete_brand(db: Session, payload: dict):
     return BrandService(db).delete_brand(_entity_id(payload))
 
 
+def _delete_accessory(db: Session, payload: dict):
+    from app.services.accessory_service import AccessoryService
+
+    return AccessoryService(db).delete(_entity_id(payload))
+
+
 def _delete_product_category(db: Session, payload: dict):
     from app.services.product_service import ProductCategoryService
 
@@ -763,6 +769,18 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.brands.delete",
         label="Delete brand",
+    )
+)
+
+# PRICETAG-ACCESSORIES: the library is maintained by whoever may edit products (owner Q2 (a)).
+register(
+    FormAction(
+        key="accessory.delete",
+        entity_types=("accessory",),
+        execute=_delete_accessory,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete accessory",
     )
 )
 

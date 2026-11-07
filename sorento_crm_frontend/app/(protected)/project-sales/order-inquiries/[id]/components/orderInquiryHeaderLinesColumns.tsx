@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import {
   Check,
   ChevronDown,
@@ -15,23 +16,17 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import {
-  Popover,
-  PopoverAnchor,
-  PopoverContent,
-  PopoverPortal,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { OrderInquiryVerbPill } from '../../../_shared/components/OrderInquiryVerbPill';
+import { OrderInquiryLineStatusPill } from '../../../_shared/components/OrderInquiryLineStatusPill';
 import {
-  OrderInquiryLineStatePill,
-  OrderInquiryVerbPill,
-  ReservePill,
-} from '../../../_shared/components/OrderInquiryVerbPill';
+  LineDocumentsCell,
+  lineDocumentsOf,
+} from '../../components/OrderInquiryLineDocuments';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import {
   formatInquiryQty,
-  isInquiryBuyRow,
+  orderInquirySoLineHref,
   raisedKindLabel,
 } from '../../../_shared/lib/orderInquiryWorklist';
 import {
@@ -42,10 +37,6 @@ import {
 } from '../../../_shared/lib/orderInquiryLineFold';
 import {
   DeliveryDateCell,
-  documentChipsOf,
-  ReserveText,
-  reserveTextOfRows,
-  type DocumentEntry,
   ItemCodeCell,
   LocationCell,
   orderInquiryReserveQtyColumns,
@@ -53,18 +44,10 @@ import {
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
-import { statusPillClass } from '@/lib/status-pill';
-import { ackOverrideHint, ackStateOf, ackStatusText } from '../../../_shared/lib/orderInquiryAck';
-import { DocumentStatePills, WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
-import {
-  OrderInquiryDocumentDialog,
-  OrderInquiryDocumentLink,
-  ViaSpoPoNumber,
-} from '../../components/OrderInquiryDocumentDialog';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
 import {
   LineSplitInfo,
@@ -112,158 +95,6 @@ export interface StagedReserveEntry {
   locationLabel?: string | null;
   warehouseId?: string | null;
   reason?: string | null;
-}
-
-/** Every chip of `kind` across the line's live rows (LINKAGE-UNIFY U3, owner round 2):
- * one per document LINE, built by the worklist's OWN derivation (`documentChipsOf`) over
- * every row of the sales order line at once, so one SPO line two rows sit on (one via its
- * PO, one directly) is one chip whose receipts add up, and a withdrawn line is one more
- * chip behind "+N" - never lost to a de-dup by document number. */
-/** The status pill keeps the text's own case ("To order \u00b7 220 left"), so no capitalize. */
-const ACK_PILL_BASE =
-  'inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold';
-
-function ackPalette(row: Parameters<typeof ackStateOf>[0]): string {
-  const state = ackStateOf(row);
-  return state === 'acknowledged' ? 'approved' : state === 'rejected' ? 'voided' : 'pending';
-}
-
-function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEntry[] {
-  return documentChipsOf(
-    line.liveRows.flatMap((row) => (row.links ?? []).map((link) => ({ row, link }))),
-    kind,
-  );
-}
-
-/** The PO cell: the line's purchase documents and, beside them, a reserve ("Reserved @ BRW 3"). */
-function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
-  const reserve =
-    kind === 'po' ? reserveTextOfRows(line.liveRows) : null;
-  if (!reserve) return <LinePurchaseDocumentsCell line={line} kind={kind} />;
-  if (lineDocumentsOf(line, kind).length === 0) return <ReserveText text={reserve} />;
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <LinePurchaseDocumentsCell line={line} kind={kind} />
-      <ReserveText text={reserve} />
-    </div>
-  );
-}
-
-function LinePurchaseDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
-  // Round 5: the popover opens from "+N" or from the narrow-cell receipt chip, so it is
-  // positioned against the whole cell rather than one trigger.
-  const [open, setOpen] = React.useState(false);
-  const chips = lineDocumentsOf(line, kind);
-  if (chips.length === 0) return <span className="text-muted-foreground">-</span>;
-  const [first, ...rest] = chips;
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <span className="flex w-full min-w-0 items-center gap-1">
-          <DocumentCell
-            chip={first}
-            kind={kind}
-          />
-          {rest.length > 0 ? (
-            <PopoverTrigger asChild>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
-                aria-label={`${rest.length} more ${kind.toUpperCase()}`}
-              >
-                +{rest.length}
-              </Button>
-            </PopoverTrigger>
-          ) : null}
-        </span>
-      </PopoverAnchor>
-      {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
-          table and the next row's own "+N" chip showed through it. At the document
-          root it sits above every row, and `collisionPadding` keeps it inside the
-          viewport the way the shared `PillOverflow` popover does. */}
-      <PopoverPortal>
-        <PopoverContent align="start" collisionPadding={8} className="w-auto max-w-xs space-y-1 p-2">
-          {chips.map((chip) => (
-            <div key={chip.key}>
-              <DocumentCell chip={chip} kind={kind} showLine />
-            </div>
-          ))}
-        </PopoverContent>
-      </PopoverPortal>
-    </Popover>
-  );
-}
-
-function DocumentCell({
-  chip,
-  kind,
-  showLine = false,
-}: {
-  chip: DocumentEntry;
-  kind: 'po' | 'spo';
-  /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
-   * document sit side by side. */
-  showLine?: boolean;
-}) {
-  // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
-  // as the worklist's own receipt pill opens its lightbox.
-  const [documentOpen, setDocumentOpen] = React.useState(false);
-  // The REAL link behind this chip, for the PO/SPO popover's own id and (#1215 point 2,
-  // R15) the line it sits on.
-  const link = chip.link;
-  // R17 (owner rulings, 25 Sep 2026, "I also need here to be clickable"): a PO entry
-  // read off an SPO link's own `source_po_number` (`chip.via === 'spo'`) has no real
-  // po-kind link behind it - `chip.poId` is the resolved identity instead.
-  const derived = kind === 'po' && chip.via === 'spo';
-  const row = chip.row;
-  return (
-    <span className="flex min-w-0 items-center gap-1">
-      {derived ? (
-        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole />
-      ) : (
-        <OrderInquiryDocumentLink
-          kind={kind}
-          document={chip.document}
-          poId={link?.po_id}
-          poLineId={link?.po_line_id}
-          spoLineId={link?.spo_allocation_id}
-          whole
-        />
-      )}
-      {showLine && chip.lineLabel ? (
-        <span className="shrink-0 text-2xs text-muted-foreground">{chip.lineLabel}</span>
-      ) : null}
-      {chip.via ? (
-        <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
-          via {chip.via === 'po' ? 'PO' : 'SPO'}
-        </WorklistPill>
-      ) : null}
-      {/* LINKAGE-UNIFY U3 (AC-D4): the worklist's own document pills, the same piece. */}
-      <DocumentStatePills
-        receipts={chip.receipts}
-        deadReason={chip.deadReason}
-        testIdPrefix="lines"
-        testIdSuffix={`${kind}-${row.id}`}
-        onOpen={(event) => {
-          event.stopPropagation();
-          setDocumentOpen(true);
-        }}
-      />
-      {documentOpen ? (
-        <OrderInquiryDocumentDialog
-          kind={kind}
-          document={chip.document}
-          poId={link?.po_id}
-          poLineId={link?.po_line_id}
-          spoLineId={link?.spo_allocation_id}
-          open
-          onOpenChange={setDocumentOpen}
-        />
-      ) : null}
-    </span>
-  );
 }
 
 /** Where a split sits, in words: a numbered line, an unnumbered one, or a new line. */
@@ -571,12 +402,14 @@ function quantityColumn({
   };
 }
 
-/** The line's reserve figure: summed over its live buy rows, the same fold Taken and
- * Requested use (`orderInquiryLineFold.ts`), so the columns beside them agree. */
+/** The line's reserve figure: summed over its live rows of ANY verb (OI-RESERVE-ANY-ROW, owner
+ * 5 Nov 2026: a DELAY or ADVANCE row is reservable too), the rows Taken counts reserve on
+ * (`orderInquiryLineFold.ts`), so the columns beside it agree. */
 function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | 'reserved_qty') {
-  const total = lineOf(row)
-    .liveRows.filter((live) => isInquiryBuyRow(live.verb))
-    .reduce((sum, live) => sum + (Number(live[field] ?? '0') || 0), 0);
+  const total = lineOf(row).liveRows.reduce(
+    (sum, live) => sum + (Number(live[field] ?? '0') || 0),
+    0,
+  );
   return String(total);
 }
 
@@ -699,9 +532,21 @@ export function useOrderInquiryHeaderLinesColumns({
         size: 72,
         meta: { headerTitle: 'No.', skeleton: <Skeleton className="h-4 w-6" /> },
         cell: ({ row }) => {
-          const lineNo = lineOf(row.original).lineNo;
-          return lineNo == null ? (
-            <span className="text-muted-foreground">-</span>
+          const line = lineOf(row.original);
+          const lineNo = line.lineNo;
+          if (lineNo == null) return <span className="text-muted-foreground">-</span>;
+          // Owner hand test (5 Nov 2026): the No. opens the sales order's Lines tab at this
+          // line, highlighted (`orderInquirySoLineHref`, the worklist's own SO line link).
+          const linked = line.rows.find((r) => r.core_sales_order_id && r.core_line_id);
+          const href = linked ? orderInquirySoLineHref(linked) : null;
+          return href ? (
+            <Link
+              href={href}
+              onClick={(event) => event.stopPropagation()}
+              className="tabular-nums font-medium text-primary hover:underline"
+            >
+              {lineNo}
+            </Link>
           ) : (
             <span className="tabular-nums">{lineNo}</span>
           );
@@ -749,7 +594,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // line's own sums (`orderInquiryLineFold.ts`), no Was / now annotation (G1).
       // OI-RESERVE-PILL-QTY round 2: Reserve requested and Reserved sit right after
       // Requested, the shared columns the Lines list uses, summed over the line's live
-      // buy rows.
+      // rows (any verb, OI-RESERVE-ANY-ROW).
       ...QUANTITY_COLUMNS.slice(0, 2).map(quantityColumn),
       ...orderInquiryReserveQtyColumns<OrderInquiryLineRow>({
         requestedOf: (row) => lineReserveQty(row, 'asked_reserve_qty'),
@@ -852,27 +697,18 @@ export function useOrderInquiryHeaderLinesColumns({
         cell: ({ row }) => {
           const line = lineOf(row.original);
           const primary = line.primary;
-          const reserveState = line.liveRows.length > 0 ? primary.reserve_state : null;
-          const pill =
-            reserveState === 'requested' ||
-            reserveState === 'reserved' ||
-            reserveState === 'declined' ? (
-              <ReservePill
-                reserveState={reserveState}
-                reservedQty={primary.reserved_qty}
-                requestedQty={primary.requested_qty}
-              />
-            ) : ['raised', 'partly_linked', 'placed', 'to_confirm'].includes(line.state) ? (
-              // OI-AUTO-CONFIRM (approved mock): a live line reads its status, not the supply pill.
-              <span
-                className={`${ACK_PILL_BASE} ${statusPillClass(ackPalette(primary))}`}
-                title={[ackStatusText(primary), ackOverrideHint(primary)].filter(Boolean).join('. ')}
-              >
-                {ackStatusText(primary)}
-              </span>
-            ) : (
-              <OrderInquiryLineStatePill state={line.state} />
-            );
+          // SO-LINE-OI-STATUS-UNIFY: the ONE line status, shared with the Sales Order's
+          // Lines tab (`OrderInquiryLineStatusPill`).
+          // Review S1: a rejected line's reason truncates inside the cell, so the
+          // History, paperclip and reserve icons beside it stay in reach.
+          const pillWrap =
+            primary.ack_state === 'rejected' ? 'flex min-w-0 shrink' : 'shrink-0';
+          const pill = (
+            <OrderInquiryLineStatusPill
+              line={line}
+              rejectedTestId={`lines-rejected-${primary.id}`}
+            />
+          );
           // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
           // decisions and reserve history behind one dialog - never gated on a core line
           // or on `canReserve`.
@@ -903,7 +739,7 @@ export function useOrderInquiryHeaderLinesColumns({
           if (!canReserve || line.liveRows.length === 0) {
             return (
               <div className="flex min-w-0 items-center gap-1">
-                <span className="shrink-0">{pill}</span>
+                <span className={pillWrap}>{pill}</span>
                 {history}
                 {coreLineId ? (
                   <SoLineAttachmentsButton
@@ -918,7 +754,7 @@ export function useOrderInquiryHeaderLinesColumns({
           }
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <span className="shrink-0">{pill}</span>
+              <span className={pillWrap}>{pill}</span>
               {history}
               {coreLineId ? (
                 <SoLineAttachmentsButton

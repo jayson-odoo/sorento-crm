@@ -506,7 +506,7 @@ function intersects(layer: TagLayer, band: RectMm): boolean {
   );
 }
 
-function contains(layer: TagLayer, x_mm: number, y_mm: number): boolean {
+export function contains(layer: TagLayer, x_mm: number, y_mm: number): boolean {
   return (
     x_mm >= layer.x_mm &&
     x_mm <= layer.x_mm + layer.width_mm &&
@@ -515,7 +515,7 @@ function contains(layer: TagLayer, x_mm: number, y_mm: number): boolean {
   );
 }
 
-function selectable(layer: TagLayer): boolean {
+export function selectable(layer: TagLayer): boolean {
   return layer.visible && !layer.locked;
 }
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
+  PaginationState,
   SortingState,
   getCoreRowModel,
   getFilteredRowModel,
@@ -55,13 +56,11 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { DEMAND_CLASS_OPTIONS } from '@/app/(protected)/master-data-management/sales-agents/lib/demandClass';
 // The SAME pill the order-inquiry worklist reads, not a second one worded differently:
 // "Placed" has to mean the same thing on both screens or the two disagree in a glance.
-import { OrderInquiryStatePill } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryVerbPill';
 import {
   LineSplitInfo,
   splitCount,
   OrderSplitsDialog,
 } from '@/app/(protected)/project-sales/_shared/components/LineSplitInfo';
-import { OrderInquiryRejectedBadge } from '@/app/(protected)/project-sales/_shared/components/OrderInquiryRejectedBadge';
 import {
   formatMyrExact,
   multiplyMoney,
@@ -85,6 +84,7 @@ import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
+import { SoLineOrderInquiryCell, soLineInquiryEntries } from './SoLineOrderInquiryCell';
 import {
   DeliveriesLoadError,
   DeliveriesTable,
@@ -670,6 +670,23 @@ export function SalesOrderDetail({
     debouncedValue: lineSearch,
     reset: resetLineSearch,
   } = useDebouncedSearch();
+  // SO-LINE-OI-STATUS-UNIFY owner hand test (5 Nov 2026): the Lines page is held here with
+  // TanStack's auto reset off, so a `?line=` landing on a long order (96+ lines) stays on
+  // the page holding the line instead of snapping back to page 1 on the next re-read. The
+  // reader's own search and sort still start again from page 1 (`resetLinePage`).
+  const [linePagination, setLinePagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  });
+  // Reset by the reader's own search and sort only, never by an effect: an effect runs on
+  // mount, and under dev's StrictMode runs twice, so with the order already cached (the
+  // landing happens in the mount effects) it fired again after a `?line=` landing and
+  // dropped it to page 1 (crew pass on PR #2187).
+  const resetLinePage = useCallback(() => {
+    setLinePagination((current) =>
+      current.pageIndex === 0 ? current : { ...current, pageIndex: 0 },
+    );
+  }, []);
   // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
@@ -1355,7 +1372,8 @@ export function SalesOrderDetail({
       },
       {
         id: 'order_inquiry',
-        accessorFn: (row) => row.order_inquiry?.inquiry_no ?? '',
+        // Sorts on the OI number the cell shows (the newest OI with a live row).
+        accessorFn: (row) => soLineInquiryEntries(row.order_inquiry_rows)[0]?.inquiryNo ?? '',
         header: ({ column }) => (
           <DataGridColumnHeader title="Order inquiry" column={column} />
         ),
@@ -1363,47 +1381,18 @@ export function SalesOrderDetail({
         // A dash is the honest answer for a line nobody has raised an inquiry on: the
         // planning record only mirrors an order somebody adopted, and most of the book is
         // not adopted.
-        cell: ({ row }) => {
-          const inquiry = row.original.order_inquiry;
-          if (!inquiry) return <span className="text-muted-foreground">-</span>;
-          const reference = inquiry.inquiry_no ?? '-';
-          // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-2): lands on this exact row of
-          // the inquiry. Plain text when the payload carries neither id - a row raised
-          // before inquiries were numbered - rather than a link that lands nowhere.
-          const href =
-            inquiry.inquiry_id && inquiry.row_id
-              ? `/project-sales/order-inquiries/${inquiry.inquiry_id}?row=${inquiry.row_id}`
-              : null;
-          return (
-            <div className="flex min-w-0 items-center gap-1.5">
-              {href ? (
-                <Link
-                  href={href}
-                  className="min-w-0 truncate tabular-nums font-medium text-primary hover:underline"
-                  title={reference}
-                >
-                  {reference}
-                </Link>
-              ) : (
-                <span className="min-w-0 truncate tabular-nums" title={reference}>
-                  {reference}
-                </span>
-              )}
-              {/* PR 1622 (owner, mock v3): an open purchasing refusal IS this inquiry's
-                  status on the line, with who/when/why behind the info icon. */}
-              {inquiry.ack_state === 'rejected' ? (
-                <OrderInquiryRejectedBadge
-                  refusal={inquiry}
-                  testId={`so-line-oi-rejected-${row.original.id}`}
-                />
-              ) : (
-                <OrderInquiryStatePill state={inquiry.state} />
-              )}
-            </div>
-          );
-        },
-        // Wide enough for a full OI number beside the Rejected badge and its info icon.
-        size: 240,
+        // SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): the SAME status, chips, reserve
+        // text and Rejected lightbox as the OI Lines tab, folded from the line's own OI
+        // rows (`SoLineOrderInquiryCell`). A dash is the honest answer for a line nobody
+        // has raised an inquiry on.
+        cell: ({ row }) => (
+          <SoLineOrderInquiryCell
+            rows={row.original.order_inquiry_rows}
+            lineId={row.original.id}
+          />
+        ),
+        // One row: OI number, status pill, first PO / SPO chip; the rest behind "+N".
+        size: 360,
         meta: { headerTitle: 'Order inquiry' },
       },
       {
@@ -1554,8 +1543,13 @@ export function SalesOrderDetail({
     columns,
     data: lines,
     getRowId: (row) => row.id,
-    state: { sorting, globalFilter: lineSearch },
-    onSortingChange: setSorting,
+    state: { sorting, globalFilter: lineSearch, pagination: linePagination },
+    onSortingChange: (updater) => {
+      setSorting(updater);
+      resetLinePage();
+    },
+    onPaginationChange: setLinePagination,
+    autoResetPageIndex: false,
     // The whole ROW answers the search, so every column is allowed to carry it and the
     // matcher below decides. Left to the default, only string columns qualify, which made
     // the filter depend on which columns happen to hold strings.
@@ -1571,6 +1565,16 @@ export function SalesOrderDetail({
     enableColumnResizing: true,
   });
   const visibleLineCount = table.getFilteredRowModel().rows.length;
+  // A page that no longer exists (lines removed) falls back to the last one.
+  const linePageCount = table.getPageCount();
+  useEffect(() => {
+    if (linePagination.pageIndex > 0 && linePagination.pageIndex >= linePageCount) {
+      setLinePagination((current) => ({
+        ...current,
+        pageIndex: Math.max(linePageCount - 1, 0),
+      }));
+    }
+  }, [linePageCount, linePagination.pageIndex]);
 
   // S6 (`PLAN-board-oi-mechanical-22sep.md`, AC-B6-3/10/11/12): a link from the OI Lines
   // tab / worklist's own "SO line" cell lands on this exact row (`?line=<id>`) - `row.id`
@@ -2285,7 +2289,10 @@ export function SalesOrderDetail({
                       order" on a 200-line contract. */}
                   <ListSearchInput
                     value={lineSearchInput}
-                    onChange={setLineSearchInput}
+                    onChange={(next: string) => {
+                      setLineSearchInput(next);
+                      resetLinePage();
+                    }}
                     aria-label="Search lines"
                     placeholder="Search product..."
                     className="w-56"

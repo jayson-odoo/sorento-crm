@@ -18,7 +18,10 @@
  */
 
 import type {
+  TagAccessory,
   TagCombo,
+  FeatureIconsLayerProps,
+  TagSpecValue,
   GroupBinding,
   LineTagData,
   ProductSetMemberTagData,
@@ -31,6 +34,8 @@ import type {
   TagLayerProps,
   TagLayerType,
   TagPartData,
+  TagSlots,
+  SubjectSlot,
   TextLayerProps,
 } from './tag-template-types';
 import {
@@ -40,9 +45,12 @@ import {
   imageSourceOf,
 } from './tag-template-types';
 import type { PriceBadgeInput } from './price-badge';
+import { featureIconsFor, type FeatureIcon } from './feature-icons';
+import { accessoriesOf } from './accessory-box';
 import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
-import { hasMergeField, renderMergeFields } from './merge-fields';
+import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
+import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
 import { sameDisplayText } from '@/lib/product-display';
 
 // ---------------------------------------------------------------------------
@@ -77,6 +85,8 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
     case 'product_slot':
     case 'price_badge':
     case 'barcode':
+    case 'feature_icons':
+    case 'accessories':
     // Browser finding: the designer's own photo slots are `image` layers
     // (bound via `slot_binding: 'product_image'`), not `product_slot` -
     // they read product data exactly the same way and need the same
@@ -85,6 +95,49 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
       return props.subjectPart;
     default:
       return undefined;
+  }
+}
+
+/** The position a layer points at (K1), for the same subject-aware kinds. */
+function subjectSlotOf(props: TagLayerProps): SubjectSlot | undefined {
+  switch (props.kind) {
+    case 'text':
+    case 'product_slot':
+    case 'price_badge':
+    case 'barcode':
+    case 'image':
+    case 'feature_icons':
+    case 'accessories':
+      return props.subjectSlot;
+    default:
+      return undefined;
+  }
+}
+
+/** The product at a position, `EMPTY_PART_PRODUCT` for one the line has not filled (AC-A3). */
+function productAtSlot(slot: SubjectSlot, slots: TagSlots): ProductTagData {
+  const part =
+    slot.kind === 'fixed'
+      ? slots.fixed[slot.index]
+      : slot.kind === 'pick'
+        ? slots.groups[slot.group]?.picks[slot.index]
+        : slot.kind === 'upgrade'
+          ? slots.upgrades[slot.index]
+          : undefined;
+  return part ? productFromPart(part) : EMPTY_PART_PRODUCT;
+}
+
+/** "Main product", "Fixed part 2", "<group>, pick 2" / "Choice group 1, pick 2", "Upgrade 1". */
+export function slotLabel(slot: SubjectSlot, slots: TagSlots | null | undefined): string {
+  switch (slot.kind) {
+    case 'main':
+      return 'Main product';
+    case 'fixed':
+      return `Fixed part ${slot.index + 1}`;
+    case 'upgrade':
+      return `Upgrade ${slot.index + 1}`;
+    case 'pick':
+      return `${slots?.groups[slot.group]?.role ?? `Choice group ${slot.group + 1}`}, pick ${slot.index + 1}`;
   }
 }
 
@@ -212,6 +265,21 @@ export function subjectOf(
   data: TagBindingData | null | undefined,
   layer: { props?: TagLayerProps } | undefined,
 ): TagBindingData | null | undefined {
+  // K3: a position wins over `subjectPart`. A binding whose payload predates `slots` (undefined)
+  // ignores it; `slots: null` means the line has no parts or combo, so every position but the
+  // main product is empty (AC-A3) and never the line itself.
+  const slot = layer?.props ? subjectSlotOf(layer.props) : undefined;
+  if (slot && (data?.kind === 'line' || data?.kind === 'product')) {
+    const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
+    if (slots !== undefined) {
+      if (slot.kind === 'main') {
+        // The main product's OWN picture and list price, not the combo's (AC-A2).
+        if (slots?.main) return { kind: 'product', product: productFromPart(slots.main) };
+        return data.kind === 'line' ? { kind: 'product', product: productFromLineParent(data.line) } : data;
+      }
+      return { kind: 'product', product: slots ? productAtSlot(slot, slots) : EMPTY_PART_PRODUCT };
+    }
+  }
   if (!data || data.kind !== 'line') return data;
   const subjectPart = layer?.props ? subjectPartOf(layer.props) : undefined;
   if (subjectPart === undefined) return data;
@@ -338,6 +406,17 @@ function comboSlotText(
 }
 
 /**
+ * A price on a text layer: the bare figure, or `RM 849` when the layer sets `showCurrency` (the
+ * price badge's flag). With the flag on, no amount prints nothing at all rather than the layer's
+ * own text, so an empty price leaves no stray label (AC-A3).
+ */
+function priceText(layer: { props?: TagLayerProps }, amount: number | null): string | null {
+  const showCurrency = layer.props?.kind === 'text' && layer.props.showCurrency === true;
+  if (amount == null) return showCurrency ? '' : null;
+  return formatTagPrice(amount, showCurrency);
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -369,7 +448,7 @@ export function resolveSlotText(
     // AC-A1/A2: a TEXT layer prints the bare figure. The BADGE (`price_badge`
     // props, drawn through `priceBadgeInput`/`formatTagPrice`'s default arg)
     // still prints `RM` - this branch only ever serves a text-slot binding.
-    return amount == null ? null : formatTagPrice(amount, false);
+    return priceText(layer, amount);
   }
 
   // PRICETAG-LPSP: one slot for the figure a line shows and one for its label, so a single
@@ -379,8 +458,7 @@ export function resolveSlotText(
     if (layer.slot_binding === 'price_label') {
       return offerPrice != null ? 'SP' : listPrice != null ? 'LP' : null;
     }
-    const amount = offerPrice ?? listPrice;
-    return amount == null ? null : formatTagPrice(amount, false);
+    return priceText(layer, offerPrice ?? listPrice);
   }
 
   if (subject.kind === 'line') {
@@ -399,8 +477,12 @@ export function resolveSlotText(
         return subject.line.included_accessories;
       case 'barcode':
         return subject.line.barcode;
-      case 'price_tag_description':
-        return subject.line.price_tag_description ?? null;
+      case 'price_tag_description': {
+        // R19: on a combo line the line itself is the subject, and the combo's own description
+        // wins; without one the host's stands in. A part / position subject is a 'product'.
+        const own = subject.line.combo?.description;
+        return own && own.trim() ? own : (subject.line.price_tag_description ?? null);
+      }
       default:
         return null;
     }
@@ -432,8 +514,14 @@ export function resolveSlotText(
       return product.spec_lines.join('\n');
     case 'barcode':
       return product.barcode;
-    case 'price_tag_description':
+    case 'price_tag_description': {
+      // R19 on the designer canvas: "Preview combo" binds the combo as `product.combo`; its own
+      // description wins, as on a request line. A part / position subject carries no combo.
+      const comboDescription = (product as { combo?: { description?: string | null } | null }).combo
+        ?.description;
+      if (comboDescription && comboDescription.trim()) return comboDescription;
       return product.price_tag_description ?? null;
+    }
     default:
       return null;
   }
@@ -565,7 +653,175 @@ export function layerText(
     layer.text_override ??
     resolveSlotText(layer, data) ??
     (layer.props.kind === 'text' ? layer.props.text : '');
+  // Formatted content (DESIGNER-RICH-TEXT) reads as its resolved text, one line per paragraph:
+  // substituting into the markup would hand every plain reader HTML.
+  if (layer.props.kind === 'text' && isRich(raw)) {
+    return blocksPlainText(richBlocksWithFields(raw, data, mode, layer) ?? []);
+  }
   return renderMergeFields(raw, data, mode, layer);
+}
+
+/**
+ * A rich description's blocks (PRICETAG-COMBO-FORMAT), or null when this layer shows plain text.
+ *
+ * The rich value reaches here as the layer's final slot string, or as the only thing in a
+ * `{{product.price_tag_description}}` / `{{combo.description}}` layer. Merge fields are NOT
+ * substituted into that string: it is parsed first and the fields resolve on each text run, so a
+ * spec value holding `<b>x</b>` prints as those characters and never becomes markup. A block that
+ * held a field and came out empty is dropped, like an empty line of a plain description.
+ */
+export function layerRichBlocks(
+  layer: TagLayer,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode = 'editor',
+): RichBlock[] | null {
+  if (layer.props.kind !== 'text') return null;
+  let source =
+    layer.text_override ?? resolveSlotText(layer, data) ?? layer.props.text;
+  const sole = soleMergeField(source);
+  if (sole) {
+    const path = sole.slice(2, -2).trim();
+    const value =
+      path === 'product.price_tag_description'
+        ? resolveSlotText({ slot_binding: 'price_tag_description', props: layer.props }, data)
+        : path === 'combo.description'
+          ? (comboOf(data)?.description ?? null)
+          : null;
+    if (isRich(value)) source = value as string;
+  } else if (!isRich(source)) {
+    const inline = richTokenInText(source, data, layer.props);
+    if (inline) {
+      const blocks = richBlocksWithFields(inline.value, data, mode, layer);
+      if (blocks && blocks.length > 0) {
+        const before = renderMergeFields(inline.before, data, mode, layer);
+        const after = renderMergeFields(inline.after, data, mode, layer);
+        const first = blocks[0];
+        const last = blocks[blocks.length - 1];
+        if (before) first.runs = [{ text: before }, ...first.runs];
+        if (after) last.runs = [...last.runs, { text: after }];
+        return blocks;
+      }
+    }
+  }
+  return richBlocksWithFields(source, data, mode, layer);
+}
+
+const RICH_TOKEN = /\{\{\s*(product\.price_tag_description|combo\.description)\s*\}\}/g;
+
+/** The stored value behind a rich description token, rich or not. */
+function richTokenValue(
+  path: string,
+  data: TagBindingData | null | undefined,
+  props: TagLayerProps | undefined,
+): string | null {
+  return path === 'product.price_tag_description'
+    ? resolveSlotText({ slot_binding: 'price_tag_description', props }, data)
+    : (comboOf(data)?.description ?? null);
+}
+
+/** A rich description token inside other text: the text around it and the description itself.
+ *  Only a single such token with a rich value; anything else keeps the plain path. */
+function richTokenInText(
+  source: string,
+  data: TagBindingData | null | undefined,
+  props: TagLayerProps,
+): { before: string; after: string; value: string } | null {
+  const found = [...source.matchAll(RICH_TOKEN)];
+  if (found.length !== 1) return null;
+  const [match] = found;
+  const value = richTokenValue(match[1], data, props);
+  if (!isRich(value)) return null;
+  const at = match.index ?? 0;
+  return {
+    before: source.slice(0, at),
+    after: source.slice(at + match[0].length),
+    value: value as string,
+  };
+}
+
+/** `run` with `text`, its merge fields resolved. */
+function resolvedRun(
+  run: RichRun,
+  text: string,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+): RichRun {
+  return { ...run, text: hasMergeField(text) ? renderMergeFields(text, data, mode, layer) : text };
+}
+
+/** A data run under a token's marks: every mark the data set itself wins, the token's marks are
+ * the default for the rest (crew ruling (a), DESIGNER-RICH-TEXT 6 Nov). */
+function underTokenMarks(token: RichRun, own: RichRun): RichRun {
+  const out: RichRun = { ...token, text: own.text };
+  for (const key of ['bold', 'italic', 'underline', 'strike', 'code'] as const) {
+    if (own[key]) out[key] = true;
+  }
+  if (own.color) out.color = own.color;
+  if (own.highlight) out.highlight = own.highlight;
+  return out;
+}
+
+/**
+ * One block of formatted layer text, with any rich description token in its runs spliced in as
+ * the description's own blocks (DESIGNER-RICH-TEXT): the text before the token joins the
+ * description's first paragraph and the text after it its last.
+ */
+function spliceRichTokens(
+  entry: RichBlock,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer: Pick<TagLayer, 'props'>,
+): RichBlock[] | null {
+  const out: RichBlock[] = [{ ...entry, runs: [] }];
+  let spliced = false;
+  for (const run of entry.runs) {
+    let at = 0;
+    for (const match of run.text.matchAll(RICH_TOKEN)) {
+      const value = richTokenValue(match[1], data, layer.props);
+      const blocks = isRich(value) ? richBlocksWithFields(value, data, mode, layer, false) : null;
+      if (!blocks) continue;
+      spliced = true;
+      const start = match.index ?? 0;
+      if (start > at) out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at, start), data, mode, layer));
+      blocks.forEach((block, index) => {
+        const runs = block.runs.map((own) => underTokenMarks(run, own));
+        if (index === 0) out[out.length - 1].runs.push(...runs);
+        else out.push({ ...block, runs });
+      });
+      at = start + match[0].length;
+    }
+    if (at < run.text.length) {
+      out[out.length - 1].runs.push(resolvedRun(run, run.text.slice(at), data, mode, layer));
+    }
+  }
+  return spliced ? out : null;
+}
+
+/** `value` as blocks with its merge fields resolved on the text runs; null when not rich.
+ *  `spliceData`: a rich description token is drawn as the description's own blocks; off for the
+ *  description itself, so one cannot pull itself in again. */
+export function richBlocksWithFields(
+  value: string | null | undefined,
+  data: TagBindingData | null | undefined,
+  mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
+  spliceData = true,
+): RichBlock[] | null {
+  if (!isRich(value)) return null;
+  const out: RichBlock[] = [];
+  for (const entry of parseRichText(value)) {
+    const spliced = spliceData && layer ? spliceRichTokens(entry, data, mode, layer) : null;
+    if (spliced) {
+      out.push(...spliced);
+      continue;
+    }
+    const hadField = entry.runs.some((run) => hasMergeField(run.text));
+    const runs = entry.runs.map((run) => resolvedRun(run, run.text, data, mode, layer));
+    if (hadField && runs.every((run) => run.text.trim() === '')) continue;
+    out.push({ ...entry, runs });
+  }
+  return out;
 }
 
 /**
@@ -1021,70 +1277,6 @@ export function buildAlternativesRow(
   return layers;
 }
 
-export interface AccessoryItem {
-  /** Shown under the picture. */
-  caption: string;
-  /** The picture, when there is one. */
-  source: { type: 'asset'; assetId: string } | { type: 'product_attachment'; attachmentId: string } | null;
-}
-
-const ACCESSORY_WIDTH_MM = 24;
-const ACCESSORY_TITLE_HEIGHT_MM = 6;
-
-/** The titled strip of small pictures with captions ("Accessories Included"). */
-export function buildAccessoriesStrip(
-  items: AccessoryItem[],
-  opts: BuildOptions & { title?: string },
-): TagLayer[] {
-  const layers = materialise(
-    [
-      {
-        type: 'text',
-        x: 0,
-        y: 0,
-        w: Math.max(ACCESSORY_WIDTH_MM, items.length * ACCESSORY_WIDTH_MM),
-        h: ACCESSORY_TITLE_HEIGHT_MM,
-        props: text(opts.title ?? 'Accessories Included', {
-          fontSize: 9,
-          fontWeight: 700,
-        }),
-      },
-    ],
-    opts,
-  );
-
-  let z = opts.z_index + 1;
-  items.forEach((item, index) => {
-    const x = index * ACCESSORY_WIDTH_MM;
-    layers.push(
-      ...materialise(
-        [
-          {
-            type: 'image',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 1,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 18,
-            props: { ...defaultImageProps(), source: item.source },
-          },
-          {
-            type: 'text',
-            x,
-            y: ACCESSORY_TITLE_HEIGHT_MM + 20,
-            w: ACCESSORY_WIDTH_MM - 2,
-            h: 6,
-            props: text(item.caption, { fontSize: 7, align: 'center' }),
-          },
-        ],
-        { newId: opts.newId, x_mm: opts.x_mm, y_mm: opts.y_mm, z_index: z },
-      ),
-    );
-    z += 2;
-  });
-
-  return layers;
-}
-
 // ---------------------------------------------------------------------------
 // What a layer shows right now
 // ---------------------------------------------------------------------------
@@ -1099,6 +1291,8 @@ export function buildAccessoriesStrip(
  */
 export interface TagLayerDisplay {
   text?: string;
+  /** A rich description, merge fields already resolved on its runs (`layerRichBlocks`). */
+  blocks?: RichBlock[];
   imageUrl?: string | null;
   price?: PriceBadgeInput;
   /**
@@ -1107,6 +1301,10 @@ export interface TagLayerDisplay {
    * layer carries the barcode VALUE itself, not the product code.
    */
   code?: string | null;
+  /** Feature icons: the matched library icons with a signed URL, in display order. */
+  icons?: { id: string; url: string }[];
+  /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
+  accessories?: TagAccessory[];
 }
 
 /**
@@ -1123,7 +1321,7 @@ export function layerDisplayName(layer: TagLayer): string {
   }
   switch (layer.props.kind) {
     case 'text':
-      return layer.props.text.slice(0, 24) || 'Text';
+      return richPlainText(layer.props.text).slice(0, 24) || 'Text';
     case 'shape':
       return layer.props.shape.replace(/_/g, ' ');
     case 'image':
@@ -1136,6 +1334,10 @@ export function layerDisplayName(layer: TagLayer): string {
       return 'Badge';
     case 'barcode':
       return 'Barcode';
+    case 'feature_icons':
+      return 'Feature icons';
+    case 'accessories':
+      return 'Accessories';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -1158,7 +1360,10 @@ export function layerDisplayName(layer: TagLayer): string {
 export function layerSubjectSuffix(
   layer: Pick<TagLayer, 'props'>,
   parts: TagPartData[] | undefined,
+  slots?: TagSlots | null,
 ): string {
+  const slot = subjectSlotOf(layer.props);
+  if (slot) return ` - ${slotLabel(slot, slots)}`;
   const subjectPart = subjectPartOf(layer.props);
   if (subjectPart === undefined || subjectPart < 0) return '';
   const part = parts?.[subjectPart];
@@ -1176,10 +1381,13 @@ export function layerDisplay(
   layer: TagLayer,
   data: TagBindingData | null | undefined,
   assetUrls: Record<string, string>,
+  featureIcons?: readonly FeatureIcon[],
 ): TagLayerDisplay | undefined {
   switch (layer.props.kind) {
-    case 'text':
-      return { text: layerText(layer, data) };
+    case 'text': {
+      const blocks = layerRichBlocks(layer, data);
+      return blocks ? { text: '', blocks } : { text: layerText(layer, data) };
+    }
 
     case 'price_badge':
       return { price: priceBadgeInput(data, layer) };
@@ -1215,9 +1423,43 @@ export function layerDisplay(
       return text == null ? undefined : { text };
     }
 
+    case 'feature_icons':
+      return { icons: featureIconsDisplay(layer.props, data, assetUrls, featureIcons) };
+
+    case 'accessories':
+      // No data bound (the template editor with nothing previewed): absent, so samples draw.
+      return data ? { accessories: accessoriesOf(data, layer) } : {};
+
     default:
       return undefined;
   }
+}
+
+/** The specs of a layer's own subject (main product, a part or a combo position). */
+export function subjectSpecs(
+  data: TagBindingData | null | undefined,
+  layer: { props?: TagLayerProps },
+): TagSpecValue[] {
+  const subject = subjectOf(data, layer);
+  if (subject?.kind === 'product') return subject.product.specs ?? [];
+  if (subject?.kind === 'line') return subject.line.specs ?? [];
+  return [];
+}
+
+/** Feature icons for the canvas: matched icons with a signed URL; one without is skipped. */
+function featureIconsDisplay(
+  props: FeatureIconsLayerProps,
+  data: TagBindingData | null | undefined,
+  assetUrls: Record<string, string>,
+  featureIcons: readonly FeatureIcon[] | undefined,
+): { id: string; url: string }[] {
+  const matched = featureIconsFor(subjectSpecs(data, { props }), featureIcons ?? []);
+  const out: { id: string; url: string }[] = [];
+  for (const icon of matched) {
+    const url = assetUrls[icon.id];
+    if (url) out.push({ id: icon.id, url });
+  }
+  return out;
 }
 
 /** PS-SPEC-SHEET: the technical drawing of whatever is bound, or null. */

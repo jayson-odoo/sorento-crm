@@ -65,6 +65,8 @@ from app.models.product import Product  # noqa: E402
 from app.models.product_spec import ProductSpecifications  # noqa: E402
 from app.services.audit_service import register_audit_listeners  # noqa: E402
 from app.services.product_alternative_service import normalize_code  # noqa: E402
+from app.services.tag_description import MAX_DESCRIPTION_CHARS  # noqa: E402
+from app.utils.tag_rich_text import sanitise_tag_html  # noqa: E402
 
 JOB_ID = "import_price_tag_descriptions"
 
@@ -316,6 +318,12 @@ def make_plan(db, rows, company_id):
             skips.append({"sheet_code": key, "rows": g["rows"], "product_code": prod["code"],
                           "reason": reason, "texts": g["texts"]})
             return
+        stored = sanitise_tag_html(new_text)
+        if stored is not None and len(stored) > MAX_DESCRIPTION_CHARS:
+            # R14: the same cap as the product write path; never written, said in the report.
+            skips.append({"sheet_code": key, "rows": g["rows"], "product_code": prod["code"],
+                          "reason": "description too long after formatting", "texts": g["texts"]})
+            return
         changes.append({
             "product": prod, "sheet_code": key, "rows": g["rows"],
             "rule": rule + ("+trap" if cut else ""), "new": new_text,
@@ -376,7 +384,7 @@ def apply_updates(db, the_plan, company_id) -> int:
     with company_scope(db, frozenset({company_id})):
         for i in range(0, len(ids), 500):
             for product in db.query(Product).filter(Product.id.in_(ids[i:i + 500])):
-                product.price_tag_description = new_by_id[product.id]
+                product.price_tag_description = sanitise_tag_html(new_by_id[product.id])
         db.flush()
     return len(ids)
 
