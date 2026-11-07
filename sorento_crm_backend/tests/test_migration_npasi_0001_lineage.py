@@ -51,7 +51,12 @@ def test_the_models_carry_what_the_ddl_adds():
     si = {c.name for c in StockInquiry.__table__.columns}
     assert {"npa_requested", "npa_requested_by", "npa_requested_at"} <= si
     npa = {c.name for c in NewProductApplication.__table__.columns}
-    assert {"new_product_id", "new_code_closed_reason", "new_code_by", "new_code_at"} <= npa
+    assert {
+        "new_product_id", "new_code_closed_reason", "new_code_by", "new_code_at", "new_code_text", "cost_price"
+    } <= npa
+    source = (ROOT / "alembic" / "versions" / f"{NAME}.py").read_text()
+    for needle in ("new_code_text VARCHAR(100)", "cost_price NUMERIC(12, 2)", "ck_new_product_applications_cost"):
+        assert needle in source, needle
     src = {c.name for c in NewProductApplicationSource.__table__.columns}
     assert src == {"id", "application_id", "product_id", "position"}
 

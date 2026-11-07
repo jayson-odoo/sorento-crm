@@ -137,3 +137,16 @@ def test_stock_inquiry_carries_purchasings_npa_ask(db):
         "filters": [{"field": "inquiry_number", "op": "eq", "value": f"SI-{t}"}],
     })
     assert [r["npa_requested"] for r in out["rows"]] == [True]
+
+
+def test_a_typed_new_code_is_answerable(db):
+    t = tag()
+    row, *_ = mk_lineage(db, t)
+    row.new_product_id, row.new_code_text = None, f"{t}-TYPED"
+    db.flush()
+    user = mk_user(db, NPA_VIEW)
+    out = core(db, user, {
+        "entity": "new_product_application", "fields": ["new_code_text"],
+        "filters": [{"field": "new_code_text", "op": "eq", "value": f"{t}-TYPED"}],
+    })
+    assert [r["new_code_text"] for r in out["rows"]] == [f"{t}-TYPED"]

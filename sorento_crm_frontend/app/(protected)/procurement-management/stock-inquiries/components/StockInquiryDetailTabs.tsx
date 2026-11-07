@@ -35,10 +35,13 @@ export default function StockInquiryDetailTabs({
         {
           value: 'applications',
           // A failed read says so: never "(0)" and the empty state, which would read as "none".
-          label: isError
-            ? 'New product applications'
-            : `New product applications (${(applications ?? []).length})`,
-          content: isError ? (
+          label:
+            isError || applications === undefined
+              ? 'New product applications'
+              : `New product applications (${applications.length})`,
+          content: applications === undefined && !isError ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">Loading...</p>
+          ) : isError ? (
             <p role="alert" className="py-6 text-center text-sm text-destructive">
               Could not load the new product applications.
             </p>

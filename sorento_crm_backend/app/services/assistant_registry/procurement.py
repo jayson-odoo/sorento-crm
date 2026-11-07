@@ -119,6 +119,11 @@ register(
             "submitted_at": FieldDef("Submitted at"),
             "completed_at": FieldDef("Completed at"),
             "created_at": FieldDef("Created at"),
+            "new_code_text": FieldDef(
+                "New product code (typed)",
+                note="The code purchasing typed for a new item it opens in AutoCount; new_product stays empty "
+                "for it, so match products by this exact code.",
+            ),
             "new_code_closed_reason": FieldDef("New code not opened reason"),
             "new_code_at": FieldDef("New code linked at", note="When purchasing linked the new code (or closed it)."),
         },

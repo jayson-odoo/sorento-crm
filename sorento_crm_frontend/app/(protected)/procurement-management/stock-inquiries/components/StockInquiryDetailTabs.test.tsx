@@ -120,4 +120,12 @@ describe('StockInquiryDetailTabs', () => {
     expect(panel).toHaveTextContent('Could not load the new product applications.');
     expect(panel).not.toHaveTextContent('No new product applications');
   });
+
+  it('while the list loads, shows no count and no empty state', () => {
+    permissionMap = { [VIEW]: true };
+    applications.data = undefined;
+    renderTabs();
+    expect(screen.getByRole('tab', { name: 'New product applications' })).toBeInTheDocument();
+    expect(screen.getByTestId('panel-applications')).not.toHaveTextContent('No new product applications');
+  });
 });
