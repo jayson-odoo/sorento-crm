@@ -221,9 +221,11 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 ### S2.4 Later (after a day of streaming over the tunnel; not tonight)
 
 In A's `sorento-edge.sh` remove `! -s "$B/32"` from the 5432 line (5432 closed on the public
-interface to everyone). The script only adds, so delete the old rule by hand first:
+interface to everyone). First `sudo systemctl restart sorento-edge` (it inserts the broad DROP on
+top), THEN delete the old narrower rule by hand (the script only adds; this order never leaves
+5432 open):
 `sudo iptables -D DOCKER-USER -i <A_PUBLIC_IF> -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL ! -s <B_PUBLIC_IP>/32 -j DROP`,
-then `sudo systemctl restart sorento-edge`, then delete the pg_hba row for B's
+then delete the pg_hba row for B's
 PUBLIC address and reload. Check: replication still `streaming` from `10.77.0.2`.
 
 ---
@@ -256,6 +258,7 @@ add6 INPUT -i "$IF" -p tcp --dport 6432 -j DROP
 add  DOCKER-USER -p tcp -m conntrack --ctorigdstport 5434 --ctdir ORIGINAL ! -i wg0 -j DROP  # CRM replica, tunnel only
 add6 INPUT -i "$IF" -p tcp --dport 5434 -j DROP
 add  INPUT -i "$IF" -p udp --dport 51820 ! -s "$A/32" -j DROP  # WireGuard from A only
+add6 INPUT -i "$IF" -p udp --dport 51820 -j DROP
 SH
 sudo chmod 700 /usr/local/sbin/sorento-edge.sh
 # The same unit as S1:
@@ -478,7 +481,8 @@ sudo docker run -d --name sorento_crm_replica --restart unless-stopped \
   -v <VOLUME_OR_PATH>:<DEST> <PGDATA_ENV: -e PGDATA=... only if printed> \
   -p 127.0.0.1:5433:5432 -p 0.0.0.0:5434:5432 \
   "$IMG" <CMD...> &&
-docker update --restart no sorento_crm_replica_old
+docker update --restart no sorento_crm_replica_old &&
+sudo shred -u /root/replica.env     # docker keeps the env; the file is not needed any more
 ```
 
 (`$IMG` is the exact image the replica runs now, so its version cannot change. `/root/replica.env`
@@ -688,10 +692,12 @@ echo "$VOL"                       # e.g. /var/lib/docker/volumes/<project>_postg
 [ -n "$VOL" ] && sudo test -d "$VOL" || { echo "VOL empty: STOP"; false; } &&
 TS=$(date -u +%Y%m%dT%H%M%SZ) &&
 sudo mv "$VOL" "$VOL.old-$TS" && sudo install -d -o 999 -g 999 -m 700 "$VOL"   # same filesystem: instant
-# The password goes into the connection string ON PURPOSE: -R writes it into A's primary_conninfo
-# (as B's own conninfo holds it today), so A can log in again after every restart.
-docker compose run --rm --no-deps -T -u postgres --entrypoint sh db -c \
-  'pg_basebackup -d "host=10.77.0.2 port=5434 user=replicator password=<REPL_PASSWORD> application_name=crm_a" -D "$PGDATA" -X stream -c fast -S crm_a -R'
+# Type the replicator password at the prompt (not echoed, not in history or `ps`). -R writes it
+# into A's primary_conninfo (as B's own conninfo holds it today), so A can log in after restarts.
+read -rs -p "replicator password: " PGPASSWORD; echo; export PGPASSWORD
+docker compose run --rm --no-deps -T -u postgres -e PGPASSWORD --entrypoint sh db -c \
+  'pg_basebackup -d "host=10.77.0.2 port=5434 user=replicator application_name=crm_a" -D "$PGDATA" -X stream -c fast -S crm_a -R'
+unset PGPASSWORD
 docker compose up -d --no-deps db
 docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
   "select pg_is_in_recovery(), (select status from pg_stat_wal_receiver)"     # t|streaming
@@ -699,7 +705,8 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 
 If the copy fails: `sudo rm -rf "$VOL" && sudo mv "$VOL.old-$TS" "$VOL"` puts A's old data back
 (still fenced: it has `standby.signal`). The replication password now sits in A's
-`postgresql.auto.conf` inside its data directory (mode 600, as on B today), nowhere else. On B, `select application_name, state from pg_stat_replication` shows `crm_a|streaming`.
+`postgresql.auto.conf` inside its data directory (mode 600, as on B today). Note: WAL-G base
+backups copy that file to R2 too (as they would B's), so the R2 bucket token must stay private. On B, `select application_name, state from pg_stat_replication` shows `crm_a|streaming`.
 
 The copy brings B's `postgresql.auto.conf`, so A loses its S4 settings. Re-apply them on A and
 restart A's db (A has no users now, so no downtime): S4.1's two `alter system` lines and S4.3's four,
