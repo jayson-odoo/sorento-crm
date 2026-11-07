@@ -39,11 +39,12 @@ const link = vi.hoisted(() => ({
   push: vi.fn(async () => ({})),
   fetch: vi.fn(),
   patches: vi.fn(),
+  refresh: vi.fn(),
 }));
 vi.mock('../../accessory-templates/hooks/useAccessoryTemplates', () => ({
   useUpdateAccessoryTemplate: () => ({ mutateAsync: link.push }),
   useFetchAccessoryTemplate: () => link.fetch,
-  useRefreshAccessoryTemplates: () => vi.fn(),
+  useRefreshAccessoryTemplates: () => link.refresh,
 }));
 
 type Layer = { id: string; type: string; props: Record<string, unknown> };
@@ -52,10 +53,12 @@ vi.mock('../components/TagCanvasEditor', () => ({
     doc,
     onLayersChange,
     layerPatchesRef,
+    onAccessoryTemplateInserted,
   }: {
     doc: { layers: Layer[] };
     onLayersChange?: (layers: Layer[]) => void;
     layerPatchesRef?: { current: unknown };
+    onAccessoryTemplateInserted?: (id: string, design: Record<string, unknown>, updatedAt: string) => void;
   }) => {
     if (layerPatchesRef) layerPatchesRef.current = link.patches;
     return (
@@ -68,6 +71,17 @@ vi.mock('../components/TagCanvasEditor', () => ({
           }
         >
           Edit the box
+        </button>
+        <button
+          onClick={() => {
+            onAccessoryTemplateInserted?.('p1', { direction: 'vertical', headerText: 'SERVER' }, 'U2');
+            onLayersChange?.([
+              ...doc.layers,
+              { id: 'box9', type: 'accessories', props: { kind: 'accessories', direction: 'vertical', headerText: 'SERVER', presetId: 'p1' } },
+            ]);
+          }}
+        >
+          Insert a template
         </button>
         <button
           onClick={() =>
@@ -122,6 +136,17 @@ beforeEach(() => {
 });
 
 describe('live link on autosave', () => {
+  it('refreshes the template list (usage counts) after an insert is saved', async () => {
+    vi.mocked(getTemplate).mockResolvedValue(fixture([]));
+    vi.mocked(updateTemplate).mockResolvedValue(fixture([]));
+    link.fetch.mockResolvedValue(serverRecord('SERVER', 'U2'));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    await editThenAutosave('Insert a template');
+    expect(link.push).not.toHaveBeenCalled();
+    expect(link.refresh).toHaveBeenCalled();
+  });
+
   it('does nothing until the baselines exist, then pushes the edit', async () => {
     vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
     vi.mocked(updateTemplate).mockResolvedValue(fixture([box('EDITED')]));

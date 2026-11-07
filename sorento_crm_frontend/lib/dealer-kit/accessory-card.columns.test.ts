@@ -167,3 +167,20 @@ describe('cardBoxLayout columns', () => {
     expect(cardBoxLayout(5, props({ columns: undefined }), 80, 90)).toEqual(cardBoxLayout(5, props(), 80, 90));
   });
 });
+
+describe('cardBoxLayout effective columns', () => {
+  it('reports the columns drawn', () => {
+    expect(cardBoxLayout(7, props({ columns: 4 }), 150, 200).columns).toBe(4);
+    expect(cardBoxLayout(2, props({ columns: 4 }), 150, 200).columns).toBe(2);
+    expect(cardBoxLayout(3, props(), 60, 70).columns).toBe(1);
+    expect(cardBoxLayout(0, props({ columns: 4 }), 150, 200).columns).toBe(0);
+  });
+
+  it('reports fewer than asked when the card is too wide for them', () => {
+    // card 30 wide at the 70% floor is 21: 3 columns need 63 > innerW 47, 2 need 42
+    const out = cardBoxLayout(8, props({ columns: 4 }), 50, 300);
+    expect(out.columns).toBeLessThan(4);
+    expect(out.columns).toBeGreaterThanOrEqual(1);
+    for (const c of out.cards) expect(c.x_mm + c.width_mm).toBeLessThanOrEqual(50 - PAD + 1e-6);
+  });
+});

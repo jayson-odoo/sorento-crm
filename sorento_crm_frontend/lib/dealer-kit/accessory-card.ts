@@ -50,6 +50,8 @@ export interface CardBoxLayout extends AccessoryBoxLayout {
   scale: number;
   /** The footer area, null when hidden. Not scaled. */
   footer: AccessoryRect | null;
+  /** Columns actually drawn (a grid may draw fewer than asked when the card is too wide). 0 = nothing drawn. */
+  columns: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +85,7 @@ export function cardBoxLayout(
     badge: null,
     scale: 1,
     footer: null,
+    columns: 0,
   });
   if (total === 0) return empty(0);
   const card = props.card;
@@ -143,6 +146,7 @@ export function cardBoxLayout(
       boxHeight_mm: gridOutH,
       ...accessoryChrome(props, boxWidth_mm, gridOutH),
       scale,
+      columns: cols,
       footer:
         footerH > 0
           ? { x_mm: pad, y_mm: gridBottom, width_mm: Math.max(0, boxWidth_mm - 2 * pad), height_mm: footerH }
@@ -186,6 +190,7 @@ export function cardBoxLayout(
     boxHeight_mm: outH,
     ...accessoryChrome(props, outW, outH),
     scale,
+    columns: vertical ? 1 : shown,
     footer:
       footerH > 0
         ? { x_mm: pad, y_mm: cardsBottom, width_mm: Math.max(0, outW - 2 * pad), height_mm: footerH }

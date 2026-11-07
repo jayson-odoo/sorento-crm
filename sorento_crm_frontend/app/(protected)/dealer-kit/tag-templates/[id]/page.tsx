@@ -193,6 +193,9 @@ function TagTemplateEditor() {
   // design moved since it was loaded is written to its saved template, which rewrites the other
   // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
   const linkBaselineRef = useRef<Map<string, LinkBaseline>>(new Map());
+  // Set by an insert from the menu (its baseline is taken at once, so the sync alone would not notice that
+  // this tag template now uses one more template): the next sync refreshes the usage counts.
+  const usageDirtyRef = useRef(false);
   const pushTemplate = useUpdateAccessoryTemplate();
   const fetchTemplate = useFetchAccessoryTemplate();
   const refreshTemplates = useRefreshAccessoryTemplates();
@@ -250,7 +253,8 @@ function TagTemplateEditor() {
         setEditorGeneration((n) => n + 1);
       }
     }
-    if (result.usageChanged) void refreshTemplates();
+    if (result.usageChanged || usageDirtyRef.current) void refreshTemplates();
+    usageDirtyRef.current = false;
   };
 
   useEffect(() => {
@@ -694,7 +698,10 @@ function TagTemplateEditor() {
             layerPatchesRef={layerPatchesRef}
             onAccessoryTemplateInserted={(id, design, updatedAt) =>
               // The editor already made every older box of this template follow `design`.
-              linkBaselineRef.current.set(id, { key: designKey(design), updatedAt })
+              {
+                linkBaselineRef.current.set(id, { key: designKey(design), updatedAt });
+                usageDirtyRef.current = true;
+              }
             }
             hideSaveBar
             docId={template.id}

@@ -68,16 +68,28 @@ export function AccessoryEditOverlay({
   return (
     <Group x={layer.x_mm * scale} y={layer.y_mm * scale} rotation={layer.rotation_deg || 0}>
       <Group x={origin.x_mm * scale} y={origin.y_mm * scale}>
+        {/* Empty space inside the card: a click here clears the element selection (Delete then removes
+            nothing). It sits under the elements, so a click on one still reaches it. */}
         <Rect
+          name="accessory-card-frame"
           width={origin.width_mm * scale}
           height={origin.height_mm * scale}
+          fill="transparent"
           stroke="#2563eb"
           strokeWidth={1}
-          listening={false}
+          onMouseDown={(e) => {
+            e.cancelBubble = true;
+          }}
+          onClick={(e) => {
+            e.cancelBubble = true;
+            onSelectElement(null);
+          }}
+          onTap={() => onSelectElement(null)}
         />
         {elements.map((element) => (
           <Rect
             key={element.id}
+            name={`accessory-card-element-${element.id}`}
             ref={(node) => {
               if (node) nodes.current.set(element.id, node);
               else nodes.current.delete(element.id);

@@ -21,7 +21,7 @@ import {
   itemLayoutOf,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
+import { cardBoxLayout, cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -2033,6 +2033,15 @@ function AccessoriesInspector({
       ? cardDropped(fit.count, props, boxWidth_mm, boxHeight_mm)
       : accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
     : 0;
+  // A grid never overflows: when the chosen columns cannot fit at this card width it draws fewer.
+  const askedColumns =
+    typeof props.columns === 'number' && props.card ? Math.min(props.columns, fit?.count ?? props.columns) : 0;
+  const drawnColumns =
+    askedColumns > 0 ? cardBoxLayout(fit?.count ?? askedColumns, props, boxWidth_mm, boxHeight_mm).columns : 0;
+  const columnsHint =
+    drawnColumns > 0 && drawnColumns < askedColumns
+      ? `Only ${drawnColumns} ${drawnColumns === 1 ? 'column fits' : 'columns fit'} at this card width`
+      : null;
   const showHeader = props.showHeader !== false;
   const showFrame = props.showFrame !== false;
   const itemLayout = itemLayoutOf(props);
@@ -2170,6 +2179,7 @@ function AccessoriesInspector({
             );
           }}
         />
+        {columnsHint && <p className="text-xs text-muted-foreground">{columnsHint}</p>}
       </div>
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Item layout</Label>
