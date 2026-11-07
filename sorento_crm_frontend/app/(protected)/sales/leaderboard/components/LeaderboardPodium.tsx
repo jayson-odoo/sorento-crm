@@ -67,25 +67,25 @@ export function LeaderboardPodium({
           >
             {row.rank}
           </span>
-          <p className="truncate text-xs font-semibold md:text-sm" title={person}>
+          <span className="block truncate text-xs font-semibold md:text-sm" title={person}>
             {person}
-          </p>
+          </span>
           {codesText(person, codes) ? (
-            <p
+            <span
               className="hidden truncate text-xs text-muted-foreground md:block"
               title={codesText(person, codes)}
             >
               {codesText(person, codes)}
-            </p>
+            </span>
           ) : null}
-          <p className="mt-1 text-sm font-bold tabular-nums md:text-xl">
+          <span className="block mt-1 text-sm font-bold tabular-nums md:text-xl">
             <span className="md:hidden">{formatCompactRm(row.amount)}</span>
             <span className="hidden md:inline">{formatRm(row.amount)}</span>
-          </p>
+          </span>
           {showChange ? (
-            <p className={cn('hidden text-xs md:block', changeTone(row.change_pct))}>
+            <span className={cn('hidden text-xs md:block', changeTone(row.change_pct))}>
               {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
-            </p>
+            </span>
           ) : null}
         </Card>
         );

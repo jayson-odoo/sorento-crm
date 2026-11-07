@@ -136,7 +136,8 @@ export default function LeaderboardView() {
     const parsed = local ?? parseSetup(new URLSearchParams(effectiveQuery));
     // A view the caller may not open (a shared link) shows the board instead of a refusal.
     if (options && parsed.by !== 'person' && !can[parsed.basis] && parsed.person.length === 0) {
-      return { ...parsed, by: 'person' };
+      // The person view refuses the other views' sort keys: start it on its own order.
+      return { ...parsed, by: 'person', sort: 'rank', dir: 'asc' };
     }
     return parsed;
   }, [local, effectiveQuery, options, can]);

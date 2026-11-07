@@ -43,7 +43,7 @@ describe('LeaderboardPodium', () => {
 
   it('leaves the codes line out when the single code is the name', () => {
     render(<LeaderboardPodium rows={[{ ...row(1, 'LCL', 100), codes: ['LCL'] }]} versus="Sep" />);
-    expect(screen.getByTestId('leaderboard-podium-1').querySelectorAll('p[title]').length).toBe(1); // the name only
+    expect(screen.getByTestId('leaderboard-podium-1').querySelectorAll('span[title]').length).toBe(1); // the name only
   });
 
   it('shows the codes line for several codes', () => {
