@@ -174,7 +174,7 @@ Project team). What the switch shows:
 - Undelivered opens on all open lines (the report's own default, `datasets/sales_order_lines_ask.py:223`
   `all_dates_period`), and that view is dominated by long-running project orders (ERIC NG RM 13.9m, JUSTIN RM 11.0m,
   TERA RM 10.9m). Kept as the default so the board equals the Undelivered orders tab; the period chips narrow it.
-- A customer row can span companies: the engine groups by name, and 13 of the 21 mockup codes exist in both SRT and
+- A customer row can span companies: the engine groups by name, and 11 of the 21 mockup codes exist in both SRT and
   MCH, so the Company cell lists every company of the row's ids (e.g. "SRT, MCH").
 
 **Permissions per basis** (the existing gates, nothing widened): Invoiced needs `sales.reports.view`
