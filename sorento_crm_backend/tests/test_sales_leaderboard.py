@@ -208,7 +208,7 @@ def test_l2_1_board_total_equals_run_ask_invoiced_total(db):
     world = _world(db)
     expected = ask.run_ask(
         db, basis="invoiced", measure="amount", group_by=None, date_from=date(2026, 10, 1),
-        date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None,
+        date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None, capped_by_policy=False,
         company_grants=frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}),
     )
     assert _money(expected["total"]["amount"]) == D("4779.27")
@@ -217,7 +217,7 @@ def test_l2_1_board_total_equals_run_ask_invoiced_total(db):
         assert _money(body["total"]["amount"]) == _money(expected["total"]["amount"])
         one = ask.run_ask(
             db, basis="invoiced", measure="amount", group_by=None, date_from=date(2026, 10, 1),
-            date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None,
+            date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None, capped_by_policy=False,
             company_grants=frozenset({DEFAULT_COMPANY_ID}),
         )
         narrowed = _board(client, company=DEFAULT_COMPANY_ID)
@@ -435,10 +435,14 @@ def test_options_companies_are_the_callers_grants_only_and_brands_categories_are
     sorento = db.get(Company, DEFAULT_COMPANY_ID)
     mocha = db.get(Company, MOCHA_ID)
     with make_client(db, grants=(DEFAULT_COMPANY_ID,)) as client:
-        body = client.get(OPTIONS).json()
+        resp = client.get(OPTIONS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
         assert body["companies"] == [{"value": DEFAULT_COMPANY_ID, "label": sorento.code}]
     with make_client(db) as client:
-        body = client.get(OPTIONS).json()
+        resp = client.get(OPTIONS)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
     assert {(c["value"], c["label"]) for c in body["companies"]} == {
         (DEFAULT_COMPANY_ID, sorento.code), (MOCHA_ID, mocha.code),
     }
@@ -474,7 +478,7 @@ def test_l7_1_run_ask_by_sales_person_returns_the_boards_rows_and_amounts(db):
     world = _world(db)
     ranked = ask.run_ask(
         db, basis="invoiced", measure="amount", group_by="sales_person", date_from=date(2026, 10, 1),
-        date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None, top_n=1000,
+        date_to=date(2026, 10, 31), filters={}, warehouse_codes=[], policy=None, capped_by_policy=False, top_n=1000,
         company_grants=frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}),
     )
     asked = {r["name"]: _money(r["amount"]) for r in ranked["rows"]}
@@ -495,7 +499,8 @@ def test_l7_1_crm_report_ask_accepts_sales_person_on_invoiced_and_matches_the_bo
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
     db.commit()
-    with make_client(db, allow=(LB, "sales.reports.view"), grants=(DEFAULT_COMPANY_ID,)) as client:
+    allow = (LB, "sales.reports.view", "order_management.orders.view")
+    with make_client(db, allow=allow, grants=(DEFAULT_COMPANY_ID,)) as client:
         resp = _assistant_ask(client, contact, basis="invoiced", group_by="sales_person", measure="amount",
                               top_n=50)
         assert resp.status_code == 200, resp.text
@@ -511,7 +516,8 @@ def test_l7_1_sales_person_stays_unknown_group_by_on_the_ordered_basis(db):
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
     db.commit()
-    with make_client(db, allow=(LB, "sales.reports.view"), grants=(DEFAULT_COMPANY_ID,)) as client:
+    allow = (LB, "sales.reports.view", "order_management.orders.view")
+    with make_client(db, allow=allow, grants=(DEFAULT_COMPANY_ID,)) as client:
         resp = _assistant_ask(client, contact, basis="ordered", group_by="sales_person", measure="amount")
     assert resp.status_code == 422
     assert resp.json().get("code") == "unknown_group_by"

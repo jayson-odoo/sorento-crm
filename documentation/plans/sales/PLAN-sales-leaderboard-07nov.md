@@ -25,7 +25,10 @@ Fixed inputs:
 `GET /api/v1/sales/leaderboard` (sales module guard; `sales.leaderboard.view`, else 403 `PERMISSION_DENIED` as
 `require_permission`). Query: `date_from` (YYYY-MM-DD, required), `date_to` (required, >= date_from, else 422
 `REPORT_INVALID_PARAMS`), `company` (company id, optional, must be in the user's grants else 403), `brand` (ids,
-repeatable, optional), `category` (ids, repeatable, optional).
+repeatable, optional), `category` (ids, repeatable, optional), `previous_from` + `previous_to` (optional, both or
+neither, else 422 `REPORT_INVALID_PARAMS`; previous_to >= previous_from, else 422). The period chips send them (this
+month: same days of last month; last month: the month before; this quarter: same days of the previous quarter; YTD:
+same dates last year); absent, the window is `ask.compare_window("previous_period", ...)` (Custom).
 
 ```json
 {
@@ -41,15 +44,17 @@ repeatable, optional), `category` (ids, repeatable, optional).
   "me": {"person": "JENNIFER", "rank": 20}
 }
 ```
-- `previous_*`: `ask.compare_window("previous_period", date_from, date_to)` (same number of days just before).
+- `previous_*`: as sent, else `ask.compare_window("previous_period", date_from, date_to)` (same number of days just
+  before: Oct 1-31 gives Aug 31-Sep 30, which is why the chips send their own window).
 - `total`: the whole period incl. no-agent sales (= the Sales & outstanding Invoiced total); `change_pct` null when
   `prev_amount` <= 0. Same rule on every row.
-- `rows`: persons with a non-zero amount in the period, ranked by amount desc, ties by person name; `rank` dense
+- `rows`: persons with a non-zero amount in the period (a negative person stays listed), ranked by amount desc, ties by person name; `rank` dense
   1..n; no "(no agent)" row (its amount is `no_agent_amount`, 0.0 when none). `codes`: the agent codes, sorted,
   that sold in the period for that person. `customers`: distinct customers invoiced across the person's codes.
 - `me`: when the caller's user is linked to agents (`own_scope.me().agent_ids`) whose person is on the board, its
-  person + rank; else null. `is_me` true on that row.
-- `as_of`: `max(billing_documents.last_synced_at)` over the granted companies (null when none).
+  person + rank (the best-ranked when the user's agents are several persons); else null. `is_me` true on that row.
+- `as_of`: `max(billing_documents.last_synced_at)` over all the caller's granted companies, ignoring the `company`
+  filter (null when none); naive UTC.
 - Money as JSON numbers with 2 decimals; `change_pct` 1 decimal.
 
 `GET /api/v1/sales/leaderboard/options` (same permission): `{"companies": [{"value": id, "label": code}],
