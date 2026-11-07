@@ -186,3 +186,37 @@ def test_updated_at_keeps_full_precision(api):
         again = client.get(f"{BASE}/{preset['id']}").json()
         assert again["updated_at"] == preset["updated_at"]
         assert "." in preset["updated_at"] or preset["updated_at"].count(":") == 2
+
+
+def test_a_rename_keeps_updated_at_so_an_unpushed_design_edit_still_lands(api):
+    with TestClient(app) as client:
+        preset = _create(client)
+        renamed = client.put(f"{BASE}/{preset['id']}", json={"name": unique_code("Renamed")})
+        assert renamed.status_code == 200
+        assert renamed.json()["updated_at"] == preset["updated_at"]
+        pushed = client.put(
+            f"{BASE}/{preset['id']}",
+            json={"design": {**DESIGN, "headerText": "EDIT"}, "base_updated_at": preset["updated_at"]},
+        )
+        assert pushed.status_code == 200, pushed.text
+
+
+def test_two_saves_with_the_same_base_cannot_both_win_and_the_row_is_locked(api, monkeypatch):
+    from sqlalchemy.orm import Query
+
+    with TestClient(app) as client:
+        preset = _create(client)
+        locked = []
+        real = Query.with_for_update
+
+        def spy(self, *args, **kwargs):
+            locked.append(1)
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Query, "with_for_update", spy)
+        body = {"design": {**DESIGN, "headerText": "ONE"}, "base_updated_at": preset["updated_at"]}
+        assert client.put(f"{BASE}/{preset['id']}", json=body).status_code == 200
+        second = client.put(f"{BASE}/{preset['id']}", json={**body, "design": {**DESIGN, "headerText": "TWO"}})
+        assert second.status_code == 409
+        assert locked, "the row must be read FOR UPDATE before the base check"
+        assert client.get(f"{BASE}/{preset['id']}").json()["design"]["headerText"] == "ONE"

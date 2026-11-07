@@ -205,8 +205,9 @@ def list_presets(db: Session) -> List[AccessoryBoxPreset]:
     return _scoped(db, AccessoryBoxPreset).order_by(func.lower(AccessoryBoxPreset.name), AccessoryBoxPreset.id).all()
 
 
-def get_preset(db: Session, preset_id: str) -> AccessoryBoxPreset:
-    row = _scoped(db, AccessoryBoxPreset).filter(AccessoryBoxPreset.id == str(preset_id)).first()
+def get_preset(db: Session, preset_id: str, *, lock: bool = False) -> AccessoryBoxPreset:
+    query = _scoped(db, AccessoryBoxPreset).filter(AccessoryBoxPreset.id == str(preset_id))
+    row = (query.with_for_update() if lock else query).first()
     if row is None:
         raise _not_found()
     return row
@@ -259,7 +260,8 @@ def update_preset(
 
     `base_updated_at` is the version the caller's design was based on: when given and it is not the row's
     current `updated_at`, someone saved in between and nothing is written (409 STALE_TEMPLATE)."""
-    row = get_preset(db, preset_id)
+    # Locked FOR UPDATE before the base check: two saves with the same base cannot both pass it.
+    row = get_preset(db, preset_id, lock=True)
     if base_updated_at is not None and _naive(base_updated_at) != row.updated_at:
         raise AppException(
             status_code=409,
@@ -278,7 +280,12 @@ def update_preset(
         row.updated_by = user_id
         # Stamped here (microseconds, wall clock), not by the database's transaction clock: it is the
         # version marker `base_updated_at` is compared with, so every write must move it.
-        row.updated_at = datetime.utcnow()
+        if design is not None:
+            row.updated_at = datetime.utcnow()
+        else:
+            # A rename is not a new version of the design: keep `updated_at` (the column's onupdate would
+            # move it), so an unpushed design edit based on the current version still lands.
+            flag_modified(row, "updated_at")
         db.flush()
         db.commit()
     except IntegrityError as exc:
