@@ -2,8 +2,8 @@
 -- October 2026 vs September 2026, invoiced net (IV + CS + DN - CN, posted only, by doc_date), the rules of
 -- app/services/sales/invoiced_sales.py (signed_line_amount, agent_id, person_label).
 -- Customers are selected by CODE only (no names, phones, emails). Paste the output on PR #2231.
--- The SALES-SUBTOTAL-LINES (#2230) fix is approximated by dropping a line with no item code, no product and no
--- quantity (the blank running-subtotal line found on #2227); say so if #2230 uses a different rule.
+-- Round 2: counted lines only, #2230's flags (NOT is_subtotal AND NOT is_duplicate, applied on the dev copy), so the
+-- figures match post-#2230 prod. Round 1 (5fd06b86) approximated them; output on PR #2231 comment 6705369461.
 BEGIN READ ONLY;
 
 -- p2_lines (inlined as a CTE in each query below: a READ ONLY transaction refuses CREATE, even TEMP):
@@ -28,7 +28,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT person, round(sum(rm), 2) AS oct_rm FROM p2_lines WHERE doc_date >= '2026-10-01'
 GROUP BY ROLLUP (person) ORDER BY 2 DESC LIMIT 4;
@@ -53,7 +53,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT cu.customer_code, co.code AS company,
        round(sum(rm) FILTER (WHERE doc_date >= '2026-10-01'), 2) AS oct_rm,
@@ -81,7 +81,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT count(DISTINCT customer_id) AS lcl_oct_customers, count(DISTINCT item_code) AS lcl_oct_items
 FROM p2_lines WHERE person = 'LCL' AND doc_date >= '2026-10-01';
@@ -106,7 +106,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT item_code, brand_name, category_name,
        round(sum(qty) FILTER (WHERE doc_date >= '2026-10-01'), 0) AS oct_qty,
@@ -135,7 +135,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT cu.customer_code, co.code AS company,
        round(sum(rm) FILTER (WHERE doc_date >= '2026-10-01'), 2) AS oct_rm,
@@ -163,7 +163,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT count(DISTINCT customer_id) AS oct_customers FROM p2_lines WHERE doc_date >= '2026-10-01';
 
@@ -187,7 +187,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT item_code, brand_name, category_name,
        round(sum(qty) FILTER (WHERE doc_date >= '2026-10-01'), 0) AS oct_qty,
@@ -214,7 +214,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT coalesce(brand_name, '(no brand)') AS brand,
        round(sum(rm) FILTER (WHERE doc_date >= '2026-10-01'), 2) AS oct_rm,
@@ -239,7 +239,7 @@ LEFT JOIN product_categories pc ON pc.id = p.category_id
 WHERE d.status = 'posted'
   AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
   AND d.doc_date >= '2026-09-01' AND d.doc_date < '2026-11-01'
-  AND NOT (nullif(btrim(l.item_code), '') IS NULL AND l.product_id IS NULL AND coalesce(l.quantity, 0) = 0)
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
 )
 SELECT coalesce(category_name, '(no category)') AS category,
        round(sum(rm) FILTER (WHERE doc_date >= '2026-10-01'), 2) AS oct_rm,
@@ -264,5 +264,38 @@ SELECT subject_kind, basis, metric, count(*) FROM sales.targets GROUP BY 1, 2, 3
 SELECT report_key, count(*) AS views, count(*) FILTER (WHERE is_shared) AS shared, count(*) FILTER (WHERE is_default) AS defaults
 FROM report_views GROUP BY 1 ORDER BY 2 DESC;
 SELECT path, count(*) AS users FROM user_quick_access WHERE path LIKE '/sales/%' GROUP BY 1 ORDER BY 2 DESC;
+
+-- Q7. Dealer targets (164 ordered, the only targets with values; the 3 agent targets are RM 0.00): how many customers
+-- each covers, and how many of October's top 50 customers sit in a dealer target whose period holds 31 Oct.
+WITH oct_period AS (
+  SELECT t.id, t.company_id, t.target_no, tp.period_start, tp.period_end, tp.target_value
+  FROM sales.targets t JOIN sales.target_periods tp ON tp.target_id = t.id
+  WHERE t.subject_kind = 'dealer' AND t.replaced_by_target_id IS NULL
+    AND tp.period_start <= '2026-10-31' AND tp.period_end >= '2026-10-31'
+)
+SELECT (SELECT count(*) FROM oct_period) AS dealer_periods_holding_oct,
+       (SELECT count(*) FROM oct_period o WHERE (SELECT count(*) FROM sales.target_accounts a WHERE a.target_id = o.id) = 1) AS one_account,
+       (SELECT count(*) FROM oct_period o WHERE (SELECT count(*) FROM sales.target_accounts a WHERE a.target_id = o.id) > 1) AS several_accounts,
+       (SELECT max((SELECT count(*) FROM sales.target_accounts a WHERE a.target_id = o.id)) FROM oct_period o) AS max_accounts,
+       (SELECT count(DISTINCT a.customer_id) FROM oct_period o JOIN sales.target_accounts a ON a.target_id = o.id) AS customers_covered,
+       (SELECT count(DISTINCT a.customer_id) FROM oct_period o JOIN sales.target_accounts a ON a.target_id = o.id
+         WHERE a.customer_id IN (
+           SELECT d.customer_id FROM finance.billing_documents d
+           WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
+             AND d.doc_date >= '2026-10-01' AND d.doc_date < '2026-11-01' AND d.customer_id IS NOT NULL
+           GROUP BY d.customer_id
+           ORDER BY sum(CASE WHEN d.document_type = 'credit_note' THEN -d.local_net_total ELSE d.local_net_total END) DESC
+           LIMIT 50)) AS top50_customers_with_target;
+
+-- Q8. What the ACCOUNT category items are (no brand; RM 1.1m in October): code, description, unit, Oct lines.
+SELECT p.product_code, left(p.description, 60) AS description, count(*) AS oct_lines
+FROM finance.billing_document_lines l
+JOIN finance.billing_documents d ON d.id = l.document_id
+JOIN products p ON p.id = l.product_id
+JOIN product_categories pc ON pc.id = p.category_id
+WHERE pc.category_name = 'ACCOUNT' AND d.status = 'posted'
+  AND d.doc_date >= '2026-10-01' AND d.doc_date < '2026-11-01'
+  AND NOT l.is_subtotal AND NOT l.is_duplicate
+GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10;
 
 ROLLBACK;
