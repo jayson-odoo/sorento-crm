@@ -467,6 +467,56 @@ def test_a_retry_after_a_partial_sends_only_the_remaining_step_with_the_same_key
     assert world.document.autocount_issue_id == issue2.id
 
 
+def test_a_stale_add_lines_step_alone_keeps_the_read_stamp_for_the_next_press(api, fake_ss):
+    """B10, add-lines step: the header went on an earlier press, so the read before this press
+    is the newest stamp the CRM holds; a DOC_STALE keeps it and the next press sends it."""
+    client, db, world = api
+    issue2, _p = _second_issue_with_new_item(db, world)
+    world.document.autocount_edit_issue_id = issue2.id
+    db.commit()
+    _answer_update(fake_ss, world, post=(409, refused_body("DOC_STALE", "changed")))
+    held = _read_back(world)
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (
+        200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held, last_modified="2026-11-06T18:04:00")
+    )
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert fake_ss.to("PATCH", QT_DOC_PATH) == []
+    db.refresh(world.document)
+    assert world.document.autocount_last_modified == "2026-11-06T18:04:00"
+
+    fake_ss.answers[("POST", f"{QT_DOC_PATH}/lines")] = (
+        200, done_body(doc_key=QT_KEY, details=held, last_modified="2026-11-07T09:00:00")
+    )
+    second = client.post(_url(world)).json()
+
+    assert second["outcome"] == "done", second
+    posts = fake_ss.to("POST", f"{QT_DOC_PATH}/lines")
+    assert fake_ss.body(posts[0])["expectedLastModified"] == "2026-10-21T08:00:00"
+    assert fake_ss.body(posts[-1])["expectedLastModified"] == "2026-11-06T18:04:00"
+
+
+def test_a_stale_add_lines_step_after_a_done_patch_keeps_the_patch_stamp(api, fake_ss):
+    """The PATCH answered this press with a newer stamp than the read before it: that stamp
+    stays, the older read never replaces it."""
+    client, db, world = api
+    _issue2, _p = _second_issue_with_new_item(db, world)
+    _answer_update(fake_ss, world, post=(409, refused_body("DOC_STALE", "changed")))
+    held = _read_back(world)
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (
+        200, done_body(doc_no="QT000777", doc_key=QT_KEY, details=held, last_modified="2026-11-06T08:00:00")
+    )
+
+    body = client.post(_url(world)).json()
+
+    assert body["outcome"] == "refused"
+    assert len(fake_ss.to("PATCH", QT_DOC_PATH)) == 1
+    db.refresh(world.document)
+    assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
+
+
 def test_a_press_after_a_complete_update_is_409_already_with_no_call(api, fake_ss):
     client, db, world = api
     _second_issue_with_new_item(db, world)

@@ -98,7 +98,8 @@ Edit (`PATCH`): header ref, description, remark1-4, displayTerm, salesAgent, you
 description, deliveryDate. Anything else answers 422 FIELD_NOT_EDITABLE. Always sends `docDate` (DOC_DATE_REQUIRED) and
 `expectedLastModified` from the last read-back; a change in AutoCount answers DOC_STALE -> "Changed in AutoCount since dd/mm/yyyy.
 Nothing was changed; check it in AutoCount, then press Update again." (B10: the refusal stores AutoCount's own LastModified from
-a GET read-back, so the next press is not refused for good. A zone-less LastModified is Malaysia time, ruling V1, F12.) Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
+a GET read-back, so the next press is not refused for good. A zone-less LastModified is Malaysia time, ruling V1, F12.) Known limit: with Redis
+down every press reuses attempt 0 (`autocount_idempotency.py`), so SS replays the stored DOC_STALE until Redis is back. Qty below what is already delivered or PO-linked -> QTY_BELOW_TRANSFERRED, shown as AutoCount's refusal.
 Amendment verbs (the delta service's own, `project_so_delta_service.py:65-70`; fix round 1):
 
 | Verb | AutoCount |
