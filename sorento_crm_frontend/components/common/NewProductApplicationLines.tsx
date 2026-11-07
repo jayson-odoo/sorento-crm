@@ -5,8 +5,9 @@
  * product, like the purchase request and sample request lines. Staff and portal use this one
  * component so the two cannot drift. `readOnly` shows plain text in place of the inputs (same
  * columns, same order); `showCost` adds purchasing's Cost (MYR) (`costEditable` makes it an input
- * for purchasing); `renderOpenedAs` adds the "Opened as" column (only for older applications worked row by row). The table scrolls
- * sideways inside its own box (phone width); the page never does.
+ * for purchasing); `renderOpenedAs` adds the "Opened as" column (only for older applications
+ * worked row by row). The table scrolls sideways inside its own box (phone width); the page
+ * never does.
  */
 
 import type { ReactNode } from 'react';

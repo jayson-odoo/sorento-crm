@@ -281,7 +281,10 @@ def _apply_lines(db: Session, app: NewProductApplication, body: List[Dict[str, A
         for key in LINE_TEXT:
             setattr(row, key, _clean(line.get(key)))
         for key in LINE_REFS:
-            setattr(row, key, line.get(key) or None)
+            # Only when sent: the screens no longer send brand (owner, mock v3), and a saved
+            # older line must keep its brand (the Excel BRAND row reads it).
+            if key in line:
+                setattr(row, key, line.get(key) or None)
         for key in LINE_NUMBERS:
             setattr(row, key, line.get(key))
         if row.id is None or str(row.id) not in kept:

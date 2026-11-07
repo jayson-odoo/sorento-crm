@@ -447,3 +447,16 @@ def test_an_undone_reply_restores_who_and_when_with_the_ask(world):
     prior = action.capture(world.db, {"inquiry_id": si.id, "inquiry_data": {"npa_requested": True}})
     assert {"npa_requested", "npa_requested_by", "npa_requested_at"} <= set(prior)
     assert "npa_requested_by" not in action.capture(world.db, {"inquiry_id": si.id, "inquiry_data": {}})
+
+
+def test_saving_an_older_line_without_brand_keeps_its_brand(world):
+    res = world.api.as_(world.sales).post(NPA, json={"lines": [_line(world)]})  # _line sends brand_id
+    d = res.json()
+    line = d["lines"][0]
+    assert line["brand_id"] == world.refs.brand
+    kept = {k: line[k] for k in ("id", "proposed_code", "description", "expected_qty")}
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"lines": [kept]})
+    assert res.status_code == 200, res.text
+    assert res.json()["lines"][0]["brand_id"] == world.refs.brand
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"lines": [{**kept, "brand_id": None}]})
+    assert res.json()["lines"][0]["brand_id"] is None  # an explicit null still clears
