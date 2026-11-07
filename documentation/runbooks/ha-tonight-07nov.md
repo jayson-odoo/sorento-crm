@@ -97,9 +97,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now sorento-edge.service
 ```
 
 **Check:**
-1. `sudo iptables -S DOCKER-USER | grep 5432` prints one `-A DOCKER-USER -i <A_PUBLIC_IF> ... ! -s <B_PUBLIC_IP>/32 ... -j DROP` line.
+1. `sudo iptables -S DOCKER-USER | grep 5432` prints one line holding `! -s <B_PUBLIC_IP>/32`, `-i <A_PUBLIC_IF>`, `--ctorigdstport 5432` and `-j DROP` (iptables prints them in its own order).
 2. Standard health check: `streaming|async|0` and `health 200`.
-3. From a phone hotspot (on no allowlist): `nc -4 -z -w 5 <A_PUBLIC_IP> 5432 && echo OPEN || echo closed` prints `closed`.
+3. From a phone hotspot (on no allowlist): `nc -4 -z -w 5 <A_PUBLIC_IP> 5432 && echo OPEN || echo closed` prints `closed`; if A has a public IPv6, `nc -6 -z -w 5 <A_PUBLIC_IPV6> 5432` the same.
 
 **Rollback:**
 
@@ -130,7 +130,7 @@ public IP.
 # THIS CHANGES PROD (A; on B swap the marked values).
 sudo apt-get install -y wireguard
 sudo sh -c 'umask 077; [ -s /etc/wireguard/private.key ] || wg genkey > /etc/wireguard/private.key; wg pubkey < /etc/wireguard/private.key > /etc/wireguard/public.key'
-cat /etc/wireguard/public.key          # copy this to the OTHER node by hand (a public key, safe)
+sudo cat /etc/wireguard/public.key     # copy this to the OTHER node by hand (a public key, safe)
 ```
 
 Then on each node write the config with the other node's public key:
@@ -154,6 +154,7 @@ EOF
 sudo systemctl enable --now wg-quick@wg0
 # 51820/udp from the peer only, kept with the other edge rules:
 echo "add INPUT -i \"\$IF\" -p udp --dport 51820 ! -s $PEER_IP/32 -j DROP" | sudo tee -a /usr/local/sbin/sorento-edge.sh
+[ -f /etc/systemd/system/sorento-edge.service ] && sudo systemctl restart sorento-edge.service   # A: applies it now
 ```
 
 (B gets `sorento-edge.sh` in S3. If you run S2 on B first, the `tee -a` creates a file without the
@@ -188,6 +189,9 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 
 ### S2.3 B: point the replica at the tunnel (reload)
 
+First (read-only): `docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select name, source from pg_settings where name in ('primary_conninfo','primary_slot_name')"`.
+**Stop if** any row says `command line`: `alter system` would be silently overridden; post it.
+
 ```bash
 # THIS CHANGES PROD (node B). `show` prints the password: read it on YOUR screen, never paste it.
 docker exec -it sorento_crm_replica psql -U postgres -d postgres -Atc "show primary_conninfo"
@@ -217,7 +221,9 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 ### S2.4 Later (after a day of streaming over the tunnel; not tonight)
 
 In A's `sorento-edge.sh` remove `! -s "$B/32"` from the 5432 line (5432 closed on the public
-interface to everyone), `systemctl restart sorento-edge`, then delete the pg_hba row for B's
+interface to everyone). The script only adds, so delete the old rule by hand first:
+`sudo iptables -D DOCKER-USER -i <A_PUBLIC_IF> -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL ! -s <B_PUBLIC_IP>/32 -j DROP`,
+then `sudo systemctl restart sorento-edge`, then delete the pg_hba row for B's
 PUBLIC address and reload. Check: replication still `streaming` from `10.77.0.2`.
 
 ---
@@ -274,7 +280,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now sorento-edge.service
 2. Run one test workflow in the n8n UI: it succeeds.
 3. `docker logs --since 10m n8n-main 2>&1 | grep -ciE 'ECONNREFUSED|ETIMEDOUT'` prints `0`.
 4. `sudo wg show wg0 latest-handshakes` still fresh; on A, replication still `streaming` from `10.77.0.2`.
-5. Phone hotspot: `for p in 5432 6379 27017 6432 5434; do nc -4 -z -w 5 <B_PUBLIC_IP> $p && echo "$p OPEN" || echo "$p closed"; done` prints five `closed`.
+5. Phone hotspot: `for p in 5432 6379 27017 6432 5434; do nc -4 -z -w 5 <B_PUBLIC_IP> $p && echo "$p OPEN" || echo "$p closed"; done` prints five `closed`; repeat with `nc -6` and `<B_PUBLIC_IPV6>` if B has one.
 
 **Rollback:** `sudo systemctl disable --now sorento-edge.service`, then each `add`/`add6` line
 above run by hand as `sudo iptables -D ...` / `sudo ip6tables -D ...` with the same arguments.
@@ -326,8 +332,10 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 
 ```bash
 # THIS CHANGES PROD (node A files only; nothing restarts).
-sudo install -d -m 700 /etc/sorento-ha
-sudo sh -c 'umask 077; cat > /etc/sorento-ha/walg.env' <<'EOF'
+# Compose reads env_file on EVERY command, so the deploy user must be able to read it
+# (otherwise every later release on A fails). <DEPLOY_GROUP> = the group of the user that runs releases.
+sudo install -d -m 750 -g <DEPLOY_GROUP> /etc/sorento-ha
+sudo sh -c 'umask 027; cat > /etc/sorento-ha/walg.env' <<'EOF'
 WALG_S3_PREFIX=s3://<R2_BUCKET>/sorento-crm-pg17
 AWS_ENDPOINT=https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com
 AWS_REGION=auto
@@ -341,8 +349,13 @@ EOF
 sudo install -d /opt/sorento-crm2/infra/templates/postgres
 # (scp the Dockerfile from your Mac into that directory, then:)
 cd /opt/sorento-crm2 && docker build -t sorento-pg17-walg:07nov infra/templates/postgres
+sudo chgrp <DEPLOY_GROUP> /etc/sorento-ha/walg.env && sudo chmod 640 /etc/sorento-ha/walg.env
 docker run --rm --env-file /etc/sorento-ha/walg.env --entrypoint wal-g sorento-pg17-walg:07nov st ls
+docker run --rm --entrypoint postgres sorento-pg17-walg:07nov --version    # note the 17.x
 ```
+
+**Version rule:** a standby should never be OLDER than its primary. B runs 17.11. If the last
+line prints a minor newer than 17.11, stop and post it (B's replica image is updated first).
 
 Use a R2 API token scoped to that one bucket, Object Read & Write. The last line lists the
 bucket's top level (empty is fine). **Stop if** it prints an auth or endpoint error.
@@ -360,6 +373,9 @@ Then edit A's `docker-compose.yml` `db:` service (keep a copy: `cp docker-compos
 
 ### S4.3 The restart (DOWNTIME STARTS)
 
+First (read-only): `docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc "select name, source from pg_settings where name in ('archive_mode','archive_command','wal_log_hints','archive_timeout')"`.
+**Stop if** any row says `command line` (the compose `command:` sets it, so `alter system` would be overridden): post it.
+
 ```bash
 # THIS CHANGES PROD (node A). App downtime about 1-2 minutes.
 cd /opt/sorento-crm2
@@ -369,6 +385,7 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres \
   -c "alter system set archive_command = 'wal-g wal-push %p'" \
   -c "alter system set archive_timeout = 60" \
   -c "checkpoint"
+docker compose stop -t 120 db                # clean shutdown (the default 10 s can kill it mid-checkpoint)
 docker compose up -d --no-deps db            # recreates db on the new image, same volume
 until docker compose exec -T -u postgres db pg_isready -q; do sleep 2; done; echo "db up"
 ```
@@ -390,7 +407,7 @@ Then the standard health check (B `streaming` again, `health 200`). Then the fir
 (runs in the background on A, no downtime, about 20-40 minutes, some disk and CPU load):
 
 ```bash
-docker compose exec -d -T -u postgres db sh -c 'wal-g backup-push "$PGDATA" > /tmp/backup-push.log 2>&1'
+docker compose exec -d -T -u postgres db sh -c 'wal-g backup-push "$PGDATA" > "$PGDATA/../backup-push.log" 2>&1'
 # later: docker compose exec -T -u postgres db wal-g backup-list   -> one row
 ```
 
@@ -446,16 +463,26 @@ docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' sorento_crm_replic
 **Stop if** `cmd` holds anything but `["postgres"]` plus `-c` options, or there is more than one
 data mount: post the output (addresses removed). Otherwise:
 
+The compose network must exist first: run **S5.5 before this block** (it starts B's Redis,
+which creates `<B_COMPOSE_NET>`).
+
 ```bash
 # THIS CHANGES PROD (node B). Fill <VOLUME_OR_PATH>, <DEST>, <CMD...>, <PGDATA_ENV> from the output above.
-docker stop -t 30 sorento_crm_replica && docker rename sorento_crm_replica sorento_crm_replica_old
-docker run -d --name sorento_crm_replica --restart unless-stopped \
-  --network <B_COMPOSE_NET> \
+docker network inspect <B_COMPOSE_NET> >/dev/null || { echo "network missing: run S5.5 first. STOP"; false; } &&
+# The release script runs psql as $POSTGRES_USER inside this container: carry those env lines over.
+sudo sh -c 'umask 077; docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" sorento_crm_replica | grep -E "^POSTGRES_(USER|PASSWORD|DB)=" > /root/replica.env' &&
+IMG=$(docker inspect -f '{{.Image}}' sorento_crm_replica) &&
+docker stop -t 30 sorento_crm_replica && docker rename sorento_crm_replica sorento_crm_replica_old &&
+sudo docker run -d --name sorento_crm_replica --restart unless-stopped \
+  --network <B_COMPOSE_NET> --env-file /root/replica.env \
   -v <VOLUME_OR_PATH>:<DEST> <PGDATA_ENV: -e PGDATA=... only if printed> \
-  -p 127.0.0.1:5433:5432 -p 5434:5432 \
-  pgvector/pgvector:pg17 <CMD...>
+  -p 127.0.0.1:5433:5432 -p 0.0.0.0:5434:5432 \
+  "$IMG" <CMD...> &&
 docker update --restart no sorento_crm_replica_old
 ```
+
+(`$IMG` is the exact image the replica runs now, so its version cannot change. `/root/replica.env`
+must hold a `POSTGRES_USER=` line; if it is empty, stop before the `docker stop` and post.)
 
 (5434 is closed to everything but `wg0` by S3. Binding to `0.0.0.0` instead of `10.77.0.2` keeps
 the container starting after a reboot even if the tunnel is not up yet.)
@@ -473,7 +500,8 @@ After a day: `docker rm sorento_crm_replica_old` (data is in the volume, not the
 **S5.4 B's `.deploy.env`:**
 
 ```bash
-cd /opt/sorento-crm2 && sudo sh -c 'umask 077; printf "DB_CONTAINER=sorento_crm_replica\nDEPLOY_DB_NAME=<APP_DB>\n" >> .deploy.env'
+cd /opt/sorento-crm2 && (umask 077; printf 'DB_CONTAINER=sorento_crm_replica\nDEPLOY_DB_NAME=<APP_DB>\n' >> .deploy.env)
+ls -l .deploy.env      # owned by the deploy user, -rw-------
 ```
 
 **S5.5 Start only B's Redis, remove the stale workers:**
@@ -488,6 +516,9 @@ docker compose rm -f worker worker_fast
 certificate/key for `<CRM_HOST>` (not the upstreams file: the release writes it), the deploy
 user's passwordless `sudo` lines for `install` / `nginx -t` / `nginx -s reload`, and
 `docker login` to the image registry. `sudo nginx -t` prints `syntax is ok`.
+
+Also on B (reload, no restart), so the slot A will use after a failover cannot fill B's disk:
+`docker exec sorento_crm_replica psql -U postgres -d postgres -c "alter system set max_slot_wal_keep_size = '20GB'" -c "select pg_reload_conf()"`.
 
 **S5.7 Dry run (read-only):**
 
@@ -561,7 +592,9 @@ Write down the two `time` values on PR #2166 (copy and promote durations).
 
 Fail over only if A cannot serve and will not be back soon: A's `/api/v1/health` not 200 from
 outside for 5 minutes AND hPanel shows A stopped / unreachable or you cannot SSH to it. A slow or
-sick app on a running A is NOT a reason (restart the app on A instead).
+sick app on a running A is NOT a reason (restart the app on A instead). The exception is A's
+database or disk broken while the box still answers SSH (Postgres will not start, disk full or
+read-only, data corruption): then fail over with the "A reachable" branch of step 1.
 
 ### S6.2 The steps, in this order (downtime: from A's death until step 4, target under 10 minutes)
 
@@ -577,7 +610,7 @@ sick app on a running A is NOT a reason (restart the app on A instead).
   docker compose ps db --format '{{.State}}'      # exited
   ```
 
-- A unreachable: hPanel **Stop** A (power off). Do NOT start it again until S6.4. If hPanel offers
+- A unreachable: hPanel **Stop** A (power off) and confirm hPanel shows it stopped before step 2. Do NOT start it again until S6.4. If hPanel offers
   a recovery/rescue boot, use it later to `touch` `standby.signal` inside the data volume before a
   normal boot (UNVERIFIED that Hostinger offers it on this plan).
 
@@ -607,9 +640,14 @@ any import or export a user started in the last minutes.
 - With S7 done: Cloudflare marks B healthy within about 2 minutes by itself (B now answers 200 on
   `/api/v1/health/role`). Then at once: **disable pool `node-a`** in the load balancer, so A can
   never get users back when it boots.
+  Also set the load balancer's **fallback pool to `node-b`** (it is `node-a` in normal times).
 - Without S7: Cloudflare DNS, record `<CRM_HOST>`: change the address from `<A_PUBLIC_IP>` to
   `<B_PUBLIC_IP>` (keep the proxy setting as it is).
 - Check from outside: `curl -s https://<CRM_HOST>/api/v1/health/role` gives `"role":"primary"`; sign in, open an order, save a small edit.
+
+**5. n8n.** n8n reaches the CRM database through A's pgbouncer (6432). Until crew gives you the
+re-point for B, deactivate the n8n workflows that use the CRM database credential (they fail
+against a dead A anyway; this keeps them from writing to A if it comes back before S6.4).
 
 **Never:** promote B while A is still writable (step 1 first), or re-enable `node-a` before A is a standby.
 
@@ -635,8 +673,9 @@ docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_cre
 
 On A. Boot A normally only AFTER `node-a` is disabled in Cloudflare (or the DNS record points at
 B). If A was powered off while writable, its `db`, app and workers come back up writable on boot
-(restart policy): run the first block below within the first minute of A being reachable, so
-its workers do not send stale WhatsApp messages. Anything A wrote after B's promotion is
+(restart policy). The VERY FIRST command at the first SSH login on A, before anything else:
+`cd /opt/sorento-crm2 && docker compose stop worker worker_fast`, so its workers do not send stale
+WhatsApp messages or emails. Then the block below. Anything A wrote after B's promotion is
 discarded by this rejoin (its old data directory is kept aside for 7 days for inspection).
 
 ```bash
@@ -645,21 +684,32 @@ cd /opt/sorento-crm2
 docker compose stop
 VOL=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' \
       "$(docker compose ps -a -q db)")
-echo "$VOL"                       # e.g. /var/lib/docker/volumes/<project>_postgres_data/_data; stop if empty
-TS=$(date -u +%Y%m%dT%H%M%SZ)
+echo "$VOL"                       # e.g. /var/lib/docker/volumes/<project>_postgres_data/_data
+[ -n "$VOL" ] && sudo test -d "$VOL" || { echo "VOL empty: STOP"; false; } &&
+TS=$(date -u +%Y%m%dT%H%M%SZ) &&
 sudo mv "$VOL" "$VOL.old-$TS" && sudo install -d -o 999 -g 999 -m 700 "$VOL"   # same filesystem: instant
-docker compose run --rm --no-deps -T -u postgres --entrypoint sh db -c '
-  umask 077; echo "10.77.0.2:5434:*:replicator:<REPL_PASSWORD>" > /tmp/.pgpass
-  PGPASSFILE=/tmp/.pgpass pg_basebackup -h 10.77.0.2 -p 5434 -U replicator -D "$PGDATA" -X stream -c fast -S crm_a -R
-  rc=$?; rm -f /tmp/.pgpass; exit $rc'
+# The password goes into the connection string ON PURPOSE: -R writes it into A's primary_conninfo
+# (as B's own conninfo holds it today), so A can log in again after every restart.
+docker compose run --rm --no-deps -T -u postgres --entrypoint sh db -c \
+  'pg_basebackup -d "host=10.77.0.2 port=5434 user=replicator password=<REPL_PASSWORD> application_name=crm_a" -D "$PGDATA" -X stream -c fast -S crm_a -R'
 docker compose up -d --no-deps db
 docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
   "select pg_is_in_recovery(), (select status from pg_stat_wal_receiver)"     # t|streaming
 ```
 
 If the copy fails: `sudo rm -rf "$VOL" && sudo mv "$VOL.old-$TS" "$VOL"` puts A's old data back
-(still fenced: it has `standby.signal`). The password line exists only inside the throwaway
-container. On B, `select application_name, state from pg_stat_replication` shows A `streaming`.
+(still fenced: it has `standby.signal`). The replication password now sits in A's
+`postgresql.auto.conf` inside its data directory (mode 600, as on B today), nowhere else. On B, `select application_name, state from pg_stat_replication` shows `crm_a|streaming`.
+
+The copy brings B's `postgresql.auto.conf`, so A loses its S4 settings. Re-apply them on A and
+restart A's db (A has no users now, so no downtime): S4.1's two `alter system` lines and S4.3's four,
+then `docker compose stop -t 120 db && docker compose up -d --no-deps db`, and re-check `t|streaming`.
+(On a standby `archive_mode=on` archives nothing; it starts archiving if A is promoted again.)
+If A is abandoned instead: on B `select pg_drop_replication_slot('crm_a')`.
+
+Check B's own setting with `docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "show wal_log_hints"`.
+If it prints `off`, switching back from B to A later is also a full re-seed until B's Postgres is
+restarted with `wal_log_hints = on` (a few seconds of downtime on B, in a window).
 Do NOT start A's app or workers: A is a standby now (`.active_color` services stay stopped until
 the two-node release runs it as a standby).
 
@@ -688,7 +738,9 @@ first: Traffic > Load Balancing is available for the zone.
    health probe only).
 4. **Load balancer** (Create Load Balancer): hostname `<CRM_HOST>`, proxied (orange) if the DNS
    record is proxied today, session affinity off, steering off (failover order), default pools in
-   order `node-a`, `node-b`, fallback pool `node-b`. Save. Cloudflare serves the load balancer
+   order `node-a`, `node-b`, **fallback pool `node-a`** (when Cloudflare sees no healthy pool, users
+   go to the only node that can be writable, as today; a fallback of `node-b` would send everyone
+   to the read-only standby on a single missed health check of A). Save. Cloudflare serves the load balancer
    in front of the existing DNS record of the same name; leave the DNS record in place (it is the
    rollback).
 5. **Check:** `curl -s https://<CRM_HOST>/api/v1/health/role` gives `"role":"primary"` (from A);
