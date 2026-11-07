@@ -5,7 +5,7 @@
 * Permission `projects.autocount.write`, granted to the admin roles.
 
 Revision ID: acqs_0001_project_ac_write
-Revises: slb_0001_leaderboard_perm
+Revises: sales_0007_tier_additional
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "acqs_0001_project_ac_write"
-down_revision = "slb_0001_leaderboard_perm"
+down_revision = "sales_0007_tier_additional"
 branch_labels = None
 depends_on = None
 
