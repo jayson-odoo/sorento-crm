@@ -115,7 +115,7 @@ need look into delivered, ordered, outstanding just like our sales report also".
 the figures for both come from evidence round 3 (`evidence/sales-insights-p2-round3-dev.sql`: the engine's own
 statements compiled from the code, so they are what the screens show).
 
-**Customer name.** Every customer row shows the NAME, the code underneath. The engine already groups customers by
+**Customer name.** Every customer row shows the NAME, the code underneath. Evidence and mockup carry debtor CODES only (crew real-data rule: real names never go on the branch or the PR); the mockup's names are fake placeholders, the app reads the real ones from the database. The engine already groups customers by
 name (`datasets/billing_document_lines.py:163` invoiced, `datasets/sales_order_lines_ask.py:150` order bases) and
 carries the ids behind each row (`ask._row_keys`); the code is a lookup by those ids. Two customers with one name in
 two companies stay one row with both codes (the engine's grouping, as Sales & outstanding).
@@ -129,6 +129,19 @@ two companies stay one row with both codes (the engine's grouping, as Sales & ou
   column, :121 filter): Dealer / Project team / Other.
 - The same `channel` is "Sales type" on Sales by debtor type (`definitions/sales_by_debtor_type.py:98`). Debtor /
   account type (`customers.autocount_debtor_type`) is a different field and stays a Sales & outstanding filter.
+- **October, invoiced, by channel** (crew, evidence round 3, dev copy): Dealer RM 9,665,663.40 (59.0%), Project team
+  RM 5,532,136.98 (33.8%), No sales order RM 1,136,680.81 (6.9%), Sales order type not set RM 35,322.07 (0.2%); they
+  add up to the October total to the cent. Other, Set apart and Mixed had none.
+- **How an invoice without a sales order gets a channel: it does not; it is its own bucket.** `sales_type()` traces
+  the invoice to sales orders through its lines, the SO number, and the DO lines / number / header
+  (`invoiced_sales.py:190` `_traced_sales_order_ids`); a credit or debit note with no trace inherits its invoice's
+  (`:250` `_traced_ids`). No trace = "No sales order"; traced orders with no class = "Sales order type not set"
+  (`:267`). The Channel filter lists all seven sales types, these two included, so ticking every channel gives the
+  total and nothing is hidden. Recommendation: keep both as buckets; no fallback rule (e.g. the customer's usual
+  channel), because that would change the one shared sales type every report and the assistant read (its own lane,
+  trigger: owner asks). Fixing it at source = give the sales order a Dealer / Project type. Delivered / Ordered /
+  Undelivered read the order's own class, so those two buckets do not exist there (an order with no class shows as
+  "(none)").
 - Both a **filter** (Channel, multi-select, clearable) and a **View by** tab. `run_ask` already has `channel` as
   dimension and filter (`ask.py:36-37`). One fix: `_params` maps filter values through `_CHANNEL_CLASS`
   (`ask.py:290`, `sales_report_delivered.py:54`: dealer / project only), so Other / Set apart / No sales order would

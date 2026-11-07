@@ -4,7 +4,7 @@
 -- Sales & outstanding would show. Grants = every company. Invoiced: #2230 counted lines (NOT is_subtotal AND NOT
 -- is_duplicate) added by hand, as #2230 is not on this branch yet.
 -- What it gives: (1) Channel (sales type) per basis, Oct and Sep; (2) top sales persons per basis, Oct; (3) top
--- customers BY NAME per basis, Oct (owner: "Customer need to show name"). Outstanding is shown twice: lines due in
+-- customers per basis, Oct, as debtor CODES (crew real-data rule: names stay in the DB). Outstanding is shown twice: lines due in
 -- October, and every open line whatever its date (the report's no-period reading).
 -- __m0 = RM, __m1 = qty, as the engine names them.
 BEGIN READ ONLY;
@@ -216,8 +216,8 @@ WHERE companies_2.id = finance.billing_documents.company_id) = 'customer') THEN 
 CROSS JOIN LATERAL (SELECT coalesce((SELECT max(nullif(btrim(a.person_label), '')) FROM sales_agents a WHERE a.sales_agent = x.__row), x.__row) AS person) p
 GROUP BY p.person ORDER BY 4 DESC NULLS LAST LIMIT 10;
 
--- invoiced top customers by name, oct
-SELECT 'invoiced' AS basis, 'oct' AS window, x.__row AS customer, round(x.__m0::numeric, 2) AS rm
+-- invoiced top customers, oct (grouped by name as the engine does; printed as debtor CODES only)
+SELECT 'invoiced' AS basis, 'oct' AS window, (SELECT string_agg(DISTINCT c.customer_code, ', ') FROM customers c WHERE c.customer_name = x.__row) AS customer_codes, round(x.__m0::numeric, 2) AS rm
 FROM (
 SELECT coalesce(customers.customer_name, finance.billing_documents.customer_name) AS __row, CAST('all' AS TEXT) AS __col, sum(CASE WHEN (finance.billing_documents.document_type = 'credit_note') THEN -(finance.billing_document_lines.net_amount * finance.billing_documents.currency_rate) ELSE finance.billing_document_lines.net_amount * finance.billing_documents.currency_rate END) AS __m0, sum(CASE WHEN (finance.billing_documents.document_type = 'credit_note') THEN -finance.billing_document_lines.quantity ELSE finance.billing_document_lines.quantity END) AS __m1 
 FROM finance.billing_document_lines JOIN finance.billing_documents ON finance.billing_documents.id = finance.billing_document_lines.document_id LEFT OUTER JOIN customers ON customers.id = finance.billing_documents.customer_id LEFT OUTER JOIN products ON products.id = finance.billing_document_lines.product_id LEFT OUTER JOIN brands ON brands.id = products.brand_id LEFT OUTER JOIN product_categories ON product_categories.id = products.category_id LEFT OUTER JOIN LATERAL (SELECT CASE WHEN (EXISTS (SELECT set_apart_customers_1.id 
@@ -305,8 +305,8 @@ WHERE sales_orders.status != 'cancelled' AND sales_order_lines.line_status != 'c
 CROSS JOIN LATERAL (SELECT coalesce((SELECT max(nullif(btrim(a.person_label), '')) FROM sales_agents a WHERE a.sales_agent = x.__row), x.__row) AS person) p
 GROUP BY p.person ORDER BY 4 DESC NULLS LAST LIMIT 10;
 
--- delivered top customers by name, oct
-SELECT 'delivered' AS basis, 'oct' AS window, x.__row AS customer, round(x.__m0::numeric, 2) AS rm
+-- delivered top customers, oct (grouped by name as the engine does; printed as debtor CODES only)
+SELECT 'delivered' AS basis, 'oct' AS window, (SELECT string_agg(DISTINCT c.customer_code, ', ') FROM customers c WHERE c.customer_name = x.__row) AS customer_codes, round(x.__m0::numeric, 2) AS rm
 FROM (
 SELECT customers.customer_name AS __row, CAST('all' AS TEXT) AS __col, sum(coalesce(round((coalesce(sales_order_lines.line_total, 0) * least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered)) / CAST(nullif(sales_order_lines.qty_ordered, 0) AS NUMERIC), 2), 0)) AS __m0, sum(least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered)) AS __m1 
 FROM sales_order_lines JOIN sales_orders ON sales_orders.id = sales_order_lines.sales_order_id LEFT OUTER JOIN customers ON customers.id = sales_orders.customer_id LEFT OUTER JOIN sales_agents ON sales_agents.id = sales_orders.sales_agent_id LEFT OUTER JOIN products ON products.id = sales_order_lines.product_id LEFT OUTER JOIN brands ON brands.id = products.brand_id LEFT OUTER JOIN product_categories ON product_categories.id = products.category_id LEFT OUTER JOIN warehouses ON warehouses.id = sales_order_lines.warehouse_id 
@@ -339,8 +339,8 @@ WHERE sales_orders.status != 'cancelled' AND sales_order_lines.line_status != 'c
 CROSS JOIN LATERAL (SELECT coalesce((SELECT max(nullif(btrim(a.person_label), '')) FROM sales_agents a WHERE a.sales_agent = x.__row), x.__row) AS person) p
 GROUP BY p.person ORDER BY 4 DESC NULLS LAST LIMIT 10;
 
--- ordered top customers by name, oct
-SELECT 'ordered' AS basis, 'oct' AS window, x.__row AS customer, round(x.__m0::numeric, 2) AS rm
+-- ordered top customers, oct (grouped by name as the engine does; printed as debtor CODES only)
+SELECT 'ordered' AS basis, 'oct' AS window, (SELECT string_agg(DISTINCT c.customer_code, ', ') FROM customers c WHERE c.customer_name = x.__row) AS customer_codes, round(x.__m0::numeric, 2) AS rm
 FROM (
 SELECT customers.customer_name AS __row, CAST('all' AS TEXT) AS __col, sum(coalesce(sales_order_lines.line_total, 0)) AS __m0, sum(sales_order_lines.qty_ordered) AS __m1 
 FROM sales_order_lines JOIN sales_orders ON sales_orders.id = sales_order_lines.sales_order_id LEFT OUTER JOIN customers ON customers.id = sales_orders.customer_id LEFT OUTER JOIN sales_agents ON sales_agents.id = sales_orders.sales_agent_id LEFT OUTER JOIN products ON products.id = sales_order_lines.product_id LEFT OUTER JOIN brands ON brands.id = products.brand_id LEFT OUTER JOIN product_categories ON product_categories.id = products.category_id LEFT OUTER JOIN warehouses ON warehouses.id = sales_order_lines.warehouse_id 
@@ -381,8 +381,8 @@ WHERE sales_orders.status != 'cancelled' AND sales_order_lines.line_status != 'c
 CROSS JOIN LATERAL (SELECT coalesce((SELECT max(nullif(btrim(a.person_label), '')) FROM sales_agents a WHERE a.sales_agent = x.__row), x.__row) AS person) p
 GROUP BY p.person ORDER BY 4 DESC NULLS LAST LIMIT 10;
 
--- outstanding top customers by name, oct
-SELECT 'outstanding' AS basis, 'oct' AS window, x.__row AS customer, round(x.__m0::numeric, 2) AS rm
+-- outstanding top customers, oct (grouped by name as the engine does; printed as debtor CODES only)
+SELECT 'outstanding' AS basis, 'oct' AS window, (SELECT string_agg(DISTINCT c.customer_code, ', ') FROM customers c WHERE c.customer_name = x.__row) AS customer_codes, round(x.__m0::numeric, 2) AS rm
 FROM (
 SELECT customers.customer_name AS __row, CAST('all' AS TEXT) AS __col, sum(CASE WHEN (sales_orders.status = 'open' AND sales_order_lines.line_status = 'open') THEN coalesce(sales_order_lines.line_total, 0) - coalesce(round((coalesce(sales_order_lines.line_total, 0) * least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered)) / CAST(nullif(sales_order_lines.qty_ordered, 0) AS NUMERIC), 2), 0) ELSE 0 END) AS __m0, sum(CASE WHEN (sales_orders.status = 'open' AND sales_order_lines.line_status = 'open') THEN sales_order_lines.qty_ordered - least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered) ELSE 0 END) AS __m1 
 FROM sales_order_lines JOIN sales_orders ON sales_orders.id = sales_order_lines.sales_order_id LEFT OUTER JOIN customers ON customers.id = sales_orders.customer_id LEFT OUTER JOIN sales_agents ON sales_agents.id = sales_orders.sales_agent_id LEFT OUTER JOIN products ON products.id = sales_order_lines.product_id LEFT OUTER JOIN brands ON brands.id = products.brand_id LEFT OUTER JOIN product_categories ON product_categories.id = products.category_id LEFT OUTER JOIN warehouses ON warehouses.id = sales_order_lines.warehouse_id 
@@ -399,19 +399,12 @@ WHERE sales_orders.status != 'cancelled' AND sales_order_lines.line_status != 'c
 CROSS JOIN LATERAL (SELECT coalesce((SELECT max(nullif(btrim(a.person_label), '')) FROM sales_agents a WHERE a.sales_agent = x.__row), x.__row) AS person) p
 GROUP BY p.person ORDER BY 4 DESC NULLS LAST LIMIT 10;
 
--- outstanding top customers by name, all_open
-SELECT 'outstanding' AS basis, 'all_open' AS window, x.__row AS customer, round(x.__m0::numeric, 2) AS rm
+-- outstanding top customers, all_open (grouped by name as the engine does; printed as debtor CODES only)
+SELECT 'outstanding' AS basis, 'all_open' AS window, (SELECT string_agg(DISTINCT c.customer_code, ', ') FROM customers c WHERE c.customer_name = x.__row) AS customer_codes, round(x.__m0::numeric, 2) AS rm
 FROM (
 SELECT customers.customer_name AS __row, CAST('all' AS TEXT) AS __col, sum(CASE WHEN (sales_orders.status = 'open' AND sales_order_lines.line_status = 'open') THEN coalesce(sales_order_lines.line_total, 0) - coalesce(round((coalesce(sales_order_lines.line_total, 0) * least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered)) / CAST(nullif(sales_order_lines.qty_ordered, 0) AS NUMERIC), 2), 0) ELSE 0 END) AS __m0, sum(CASE WHEN (sales_orders.status = 'open' AND sales_order_lines.line_status = 'open') THEN sales_order_lines.qty_ordered - least(sales_order_lines.qty_delivered, sales_order_lines.qty_ordered) ELSE 0 END) AS __m1 
 FROM sales_order_lines JOIN sales_orders ON sales_orders.id = sales_order_lines.sales_order_id LEFT OUTER JOIN customers ON customers.id = sales_orders.customer_id LEFT OUTER JOIN sales_agents ON sales_agents.id = sales_orders.sales_agent_id LEFT OUTER JOIN products ON products.id = sales_order_lines.product_id LEFT OUTER JOIN brands ON brands.id = products.brand_id LEFT OUTER JOIN product_categories ON product_categories.id = products.category_id LEFT OUTER JOIN warehouses ON warehouses.id = sales_order_lines.warehouse_id 
 WHERE sales_orders.status != 'cancelled' AND sales_order_lines.line_status != 'cancelled' AND coalesce(sales_order_lines.required_date, sales_orders.order_date) IS NOT NULL AND coalesce(sales_order_lines.required_date, sales_orders.order_date) >= '2000-01-01' AND coalesce(sales_order_lines.required_date, sales_orders.order_date) < '2100-01-01' AND sales_orders.company_id IN (SELECT id FROM companies) GROUP BY customers.customer_name, CAST('all' AS TEXT)
 ) x ORDER BY x.__m0 DESC NULLS LAST LIMIT 12;
 
--- Names for the customer codes already in the mockup (rounds 1-2), so frames B / C / E show names.
-SELECT c.customer_code, co.code AS company, c.customer_name
-FROM customers c JOIN companies co ON co.id = c.company_id
-WHERE c.customer_code IN ('304-R015','300-S289','304-R016','300-P121','303-P001','301-K001','300-P122','303-M004',
-  '302-S002','303-K001','305-M002','302-S001','300-K154','300-E095','300-E082','300-A115','300-F004','300-O024',
-  '300-D016','300-d018','300-S321')
-ORDER BY 1, 2;
 ROLLBACK;
