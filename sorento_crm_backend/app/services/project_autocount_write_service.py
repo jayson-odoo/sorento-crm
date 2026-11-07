@@ -14,6 +14,7 @@ from the request.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -59,6 +60,8 @@ from app.services.project_so_draft_service import ProjectSODraftService
 logger = logging.getLogger(__name__)
 
 _MYT = ZoneInfo("Asia/Kuala_Lumpur")
+# B11: the Remark fields AutoCount fills from Remark1 by itself.
+_MIRRORED_REMARK = re.compile(r"remark[2-4]", re.IGNORECASE)
 _ZERO = Decimal("0")
 
 WAITING = "Waiting for AutoCount"
@@ -466,19 +469,18 @@ class ProjectAutocountWriteService:
         return str(stamp)[:64] if stamp else None
 
     @staticmethod
-    def _done_if_only_untouched_ignored(answer: Dict[str, Any], asked: Iterable[str]) -> Dict[str, Any]:
-        """B11: SS answers `mismatch` FIELD_IGNORED when AutoCount kept its own value for a field.
-        If every ignored field is one this call never asked to change (AutoCount mirrors Remark1
-        into Remark2-4), what was asked landed: treat it as done. Names come from SS's message
-        "ignored: A, B"; no names, or any asked field among them, stays a mismatch."""
+    def _done_if_only_mirrored_remarks_ignored(answer: Dict[str, Any]) -> Dict[str, Any]:
+        """B11: AutoCount copies Remark1 into Remark2-4 itself, so SS answers `mismatch`
+        FIELD_IGNORED "ignored: Remark2, Remark3, Remark4" on an update that landed. Only that
+        measured case counts as done: the message must start with "ignored:" and every name must
+        be Remark2-4. Any other name (a line field, DocDate, a path form) stays a mismatch."""
         if answer.get("outcome") != "mismatch" or answer.get("errorCode") != "FIELD_IGNORED":
             return answer
-        message = str(answer.get("message") or "")
-        _before, sep, tail = message.partition("ignored:")
-        if not sep:
+        message = str(answer.get("message") or "").strip()
+        if not message.lower().startswith("ignored:"):
             return answer
-        ignored = {n.strip().rstrip(".").strip().lower() for n in tail.split(",")} - {""}
-        if not ignored or ignored & {name.lower() for name in asked}:
+        names = [n.strip().rstrip(".").strip() for n in message[len("ignored:"):].split(",")]
+        if not names or not all(_MIRRORED_REMARK.fullmatch(n) for n in names):
             return answer
         return {**answer, "outcome": "done", "errorCode": None}
 
@@ -1090,8 +1092,7 @@ class ProjectAutocountWriteService:
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
             )
-            asked = set(body["header"]) | {f for line in patched for f in line if f != "dtlKey"}
-            answer = self._done_if_only_untouched_ignored(answer, asked)
+            answer = self._done_if_only_mirrored_remarks_ignored(answer)
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
                 refused["waiting"] = waiting

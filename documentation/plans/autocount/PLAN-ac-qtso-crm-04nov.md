@@ -9,6 +9,10 @@ Track: full pipeline (writes to an external system, new admin switch, security r
 - CRM decides intent; the Shared Service (SS) owns the AutoCount steps. Writes only reach the db3 test book until sign-off (SS guard).
 - Never delete an AutoCount document; cancel instead. Anything needing the SS delete door is greyed "Waiting for AutoCount".
 - Ships inert: an admin switch, default OFF, hides every write action and the API refuses.
+- B11 (AC-E2E-DB3, 7 Nov): AutoCount copies Remark1 into Remark2-4 itself, so a QT update PATCH answers `mismatch`
+  FIELD_IGNORED "ignored: Remark2, Remark3, Remark4" although it landed. Only that exact case counts as done (every name
+  Remark2-4). Any other ignored name stays a mismatch. The add-lines step and SO update send no header and do not get the
+  rule; revisit only if FIELD_IGNORED is seen on them. SS root fix asked as F13 on SS #225.
 - UOM (owner, 7 Nov): the project line's UOM is only a label. Every QT/SO line sends the item's AutoCount base UOM
   (`products.base_uom_id` -> `units_of_measure.uom_code`) with the quantity as is; no refusal path, no conversion. A product
   with no base UOM keeps the line's UOM. Pinned by `tests/test_project_autocount_uom.py`.

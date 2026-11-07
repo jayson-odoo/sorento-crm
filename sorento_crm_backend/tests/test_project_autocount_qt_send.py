@@ -583,6 +583,15 @@ def test_a_field_we_sent_being_ignored_is_not_updated(api, fake_ss):
         ("ignored:", "FIELD_IGNORED"),                       # no names: cannot tell, not done
         ("Qty differs after write", "FIELD_IGNORED"),        # no "ignored:" list
         ("ignored: Remark2", "VALUE_MISMATCH"),               # another mismatch code
+        # B11 review: only the measured Remark2-4 mirror counts; any other name stays a mismatch.
+        ("ignored: Remark2, Details[0].Qty", "FIELD_IGNORED"),
+        ("ignored: Remark2, lines[0].qty", "FIELD_IGNORED"),
+        ("ignored: Remark2, Unit Price", "FIELD_IGNORED"),
+        ("ignored: Remark2 and Qty", "FIELD_IGNORED"),
+        ("ignored: Remark2, DocDate", "FIELD_IGNORED"),
+        ("ignored: Remark1 (QT-2026-0001 (R2)), Remark2", "FIELD_IGNORED"),
+        ("Remark1, Remark2 ignored: Remark3", "FIELD_IGNORED"),
+        ("ignored: Remark2, Remark3, Remark4, Remark5", "FIELD_IGNORED"),
     ],
 )
 def test_any_other_mismatch_is_not_updated(api, fake_ss, message, code):
