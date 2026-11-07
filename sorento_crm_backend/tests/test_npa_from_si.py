@@ -460,3 +460,150 @@ def test_saving_an_older_line_without_brand_keeps_its_brand(world):
     assert res.json()["lines"][0]["brand_id"] == world.refs.brand
     res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json={"lines": [{**kept, "brand_id": None}]})
     assert res.json()["lines"][0]["brand_id"] is None  # an explicit null still clears
+
+
+# ------------------------------------------------------------------ owner hand test 8 Nov: no product table from an SI,
+# purchasing answers in ONE dialog (PUT /{id}/purchasing-response)
+
+
+def _si_draft(w, sources=(), **over):
+    body = {"stock_inquiry_id": w.inquiry.id, "current_product_ids": list(sources), "remark": "mirror 600 x 900", **over}
+    res = w.api.as_(w.sales).post(NPA, json=body)
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def _si_approved(w, sources=(), **over):
+    d = _si_draft(w, sources, **over)
+    res = _act(w, d["id"], "submit", w.sales)
+    assert res.status_code == 200, res.text
+    assert _act(w, d["id"], "approve", w.manager).status_code == 200
+    return d
+
+
+def _respond(w, aid, user=None, **body):
+    return w.api.as_(user or w.buyer).put(f"{NPA}/{aid}/purchasing-response", json=body)
+
+
+def test_an_application_from_a_stock_inquiry_submits_without_product_rows(world):
+    d = _si_draft(world, [world.product.id])
+    assert d["lines"] == []
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+
+
+def test_a_standalone_application_still_needs_a_product_row(world):
+    d = world.api.as_(world.sales).post(NPA, json={"current_product_ids": [world.product.id]}).json()
+    res = _act(world, d["id"], "submit", world.sales)
+    assert res.status_code == 422
+    assert "Add at least one product" in res.text
+
+
+def test_purchasing_links_an_existing_code_with_lead_time_and_cost_in_one_save(world):
+    newp = make_product(world.db, code="ZZT-KS2495")
+    d = _si_approved(world, [world.product.id])
+    res = _respond(world, d["id"], outcome="link", product_id=newp.id, lead_time="8 weeks", cost_price="210.50")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "completed"
+    assert body["new_product_id"] == newp.id
+    assert body["new_product_code"] == "ZZT-KS2495"
+    assert body["new_code_text"] is None
+    assert body["lead_time"] == "8 weeks"
+    assert body["cost_price"] == "210.50"
+    assert body["feedback_by_name"] == f"{MARKER} purchasing"
+    assert body["new_code_by_name"] == f"{MARKER} purchasing"
+
+
+def test_a_new_code_purchasing_types_completes_and_resolves_once_autocount_sends_it(world):
+    d = _si_approved(world, [world.product.id])
+    res = _respond(world, d["id"], outcome="new", new_code="zzt-mir-6090")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["status"] == "completed"
+    assert body["new_product_id"] is None
+    assert body["new_code_text"] == "zzt-mir-6090"
+    assert body["new_product_code"] == "zzt-mir-6090"
+    assert _suggest(world, [world.product.id])[0]["product_code"] == "zzt-mir-6090"
+    # AutoCount sends it: the typed code now names that product (exact code, case folded).
+    later = make_product(world.db, code="ZZT-MIR-6090")
+    detail = _get(world, d["id"])
+    assert detail["new_product_id"] == later.id
+    assert detail["new_product_code"] == "ZZT-MIR-6090"
+    lineage = world.api.as_(world.viewer).get(f"{NPA}/lineage", params={"product_id": later.id}).json()
+    assert [r["application_no"] for r in lineage["created_from"]] == [d["application_no"]]
+    assert lineage["created_from"][0]["description"] == "mirror 600 x 900"  # why: the remark (no rows)
+
+
+def test_a_typed_code_that_already_exists_links_that_product(world):
+    d = _si_approved(world, [world.product.id])
+    res = _respond(world, d["id"], outcome="new", new_code=" zzt-ks2406 ")
+    assert res.json()["new_product_id"] == world.product2.id
+
+
+def test_a_new_code_needs_the_code_and_not_opening_needs_a_reason(world):
+    d = _si_approved(world)
+    assert _respond(world, d["id"], outcome="new", new_code="  ").status_code == 422
+    assert _respond(world, d["id"], outcome="not_opening").status_code == 422
+    res = _respond(world, d["id"], outcome="not_opening", reason="supplier cannot make it")
+    assert res.status_code == 200
+    assert res.json()["status"] == "completed"
+    assert res.json()["new_code_closed_reason"] == "supplier cannot make it"
+
+
+def test_clearing_the_outcome_returns_to_approved_and_keeps_lead_time(world):
+    newp = make_product(world.db)
+    d = _si_approved(world)
+    assert _respond(world, d["id"], outcome="link", product_id=newp.id, lead_time="2 weeks").status_code == 200
+    res = _respond(world, d["id"], outcome=None)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "approved"
+    assert (body["new_product_id"], body["new_code_text"], body["new_code_closed_reason"]) == (None, None, None)
+    assert body["lead_time"] == "2 weeks"
+
+
+def test_lead_time_and_cost_alone_do_not_complete(world):
+    d = _si_approved(world)
+    res = _respond(world, d["id"], lead_time="3 weeks", cost_price="99")
+    assert res.status_code == 200
+    assert res.json()["status"] == "approved"
+    assert res.json()["cost_price"] == "99.00"
+
+
+def test_only_purchasing_and_only_on_approved_or_completed(world):
+    d = _si_draft(world)
+    assert _respond(world, d["id"], outcome="not_opening", reason="x").status_code == 409
+    a = _si_approved(world)
+    assert _respond(world, a["id"], user=world.sales, outcome="not_opening", reason="x").status_code == 403
+
+
+def test_a_standalone_application_takes_one_cost_per_row_in_the_same_save(world):
+    body = {"lines": [_line(world), _line(world, proposed_code="B")]}
+    d = world.api.as_(world.sales).post(NPA, json=body).json()
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    assert _act(world, d["id"], "approve", world.manager).status_code == 200
+    ids = [l["id"] for l in d["lines"]]
+    res = _respond(world, d["id"], lines=[{"id": ids[0], "cost_price": "12.5"}, {"id": ids[1], "cost_price": None}])
+    assert res.status_code == 200, res.text
+    assert [l["cost_price"] for l in res.json()["lines"]] == ["12.50", None]
+
+
+def test_the_excel_of_an_application_from_an_si_reads_the_inquiry(world):
+    from io import BytesIO
+
+    import openpyxl
+
+    from app.models.new_product_application import NewProductApplication
+    from app.services.npa_xlsx import to_xlsx
+
+    d = _si_approved(world, [world.product.id])
+    assert _respond(world, d["id"], lead_time="8 weeks", cost_price="210").status_code == 200
+    app_row = world.db.get(NewProductApplication, d["id"])
+    data, _name = to_xlsx(world.db, app_row)
+    ws = openpyxl.load_workbook(BytesIO(data)).worksheets[0]
+    rows = {ws.cell(row=r, column=1).value: ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)}
+    assert rows["PRODUCT CODE:"] == world.inquiry.product_code
+    assert rows["PRODUCT TYPE:"] == world.inquiry.item_description
+    assert rows["QTY:"] == 55
+    assert rows["COST:"] == 210
+    assert rows["LEADTIME:"] == "8 weeks"

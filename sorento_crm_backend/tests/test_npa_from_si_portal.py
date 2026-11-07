@@ -158,3 +158,26 @@ def test_portal_inquiry_without_the_npa_form_lists_nothing_and_says_so(portal, m
     body = body.get("data", body)
     assert body["npa_form_visible"] is False
     assert body["new_product_applications"] == []
+
+
+def test_portal_cannot_save_a_purchasing_response(portal):
+    p = portal
+    d = _create(p)
+    res = _as(p, p.granted).put(f"{BASE}/{d['id']}/purchasing-response", json={"outcome": "not_opening", "reason": "x"})
+    assert res.status_code in (404, 405)
+
+
+def test_portal_from_an_si_saves_without_product_rows_and_sees_the_typed_new_code(portal):
+    from app.models.new_product_application import NewProductApplication
+
+    p = portal
+    d = _create(p, lines=[])
+    assert d["lines"] == []
+    assert _as(p, p.granted).post(f"{BASE}/{d['id']}/submit").status_code == 200
+    with company_scope(p.db, frozenset({p.company_id})):
+        row = p.db.get(NewProductApplication, d["id"])
+        row.status, row.new_code_text, row.cost_price = "completed", "ZZT-NEW-1", 12
+        p.db.flush()
+    detail = _as(p, p.granted).get(f"{BASE}/{d['id']}").json()
+    assert detail["new_product_code"] == "ZZT-NEW-1"
+    assert detail["cost_price"] == "12.00"
