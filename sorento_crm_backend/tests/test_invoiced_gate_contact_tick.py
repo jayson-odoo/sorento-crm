@@ -98,7 +98,7 @@ def test_a_session_user_naming_a_ticked_contact_still_needs_the_slug(db):
     contact = _staff_contact(db, ticked=True)
     session_user = {**_user(db, DEFAULT_COMPANY_ID), "auth_method": "jwt"}
     with _client(db, session_user, allow=ORDERS_ONLY):
-        assert may_read_invoiced(db, session_user, **_as_contact(contact)) is False
+        assert may_read_invoiced(db, session_user, api_key=SHARED, **_as_contact(contact)) is False
         assert may_read_invoiced(db, session_user) is False
     with _client(db, session_user, allow=WITH_REPORTS):
         assert may_read_invoiced(db, session_user) is True
