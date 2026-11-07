@@ -1,7 +1,6 @@
 # PLAN: SALES-LEADERBOARD (sales leaderboard screen)
 
-Status: Review (owner 7 Nov ~16:15 "2227 ok": Q1-Q5 all (a)). Phase 1 FE + Phase 2 done: 30 pytest green, 32 vitest green; reviewer + security-reviewer next, then crew browser pass and owner hand test. Track: full (size L, new screen; new permission slug = migration).
-code until the owner answers. Track: full (size L, new screen; new permission slug = migration).
+Status: Review, fix round 1 (owner 7 Nov ~16:15 "2227 ok": Q1-Q5 all (a)). Reviewer READY with 3 should-fixes, security CLEAN (2 test gaps); then crew browser pass and owner hand test. Track: full (size L, new screen; new permission slug = migration).
 Card: `CARD-sales-leaderboard-07nov.md`. UAC: `sales-leaderboard-07nov-acceptance-criteria.md`.
 Mockup: `mockups/sales-leaderboard-07nov.html` (real October figures, dev copy `sorento_prod_1104`).
 Evidence SQL: `evidence/sales-leaderboard-oct-dev.sql` (run), `evidence/sales-leaderboard-line-vs-doc-dev.sql` (run).
@@ -67,7 +66,7 @@ on other bases, unchanged).
 
 Permission `sales.leaderboard.view` ("View the sales leaderboard", "Open Sales > Leaderboard: invoiced sales ranked
 by sales person. Shows no commission."): registry entry + insert-only guarded migration granting it to admin and
-superadmin (precedent `alembic/versions/sales_s1_reports_module.py`; this supersedes "granted to no role" in Design).
+superadmin (precedent `alembic/versions/sales_s1_reports_module.py`).
 
 ## Design (on the recommended options; paths under `sorento_crm_backend/app/` unless marked)
 
@@ -86,7 +85,7 @@ superadmin (precedent `alembic/versions/sales_s1_reports_module.py`; this supers
   Adds `me` = the person label of the user's agent (`services/own_scope.me()`, `own_scope.py:104-114`) when linked.
   Adds `as_of` = `max(billing_documents.last_synced_at)` in the granted companies.
 - **Permission** `sales.leaderboard.view`: `app/rbac/permission_registry` entry + insert-only guarded migration
-  (precedent `alembic/versions/pp2_0001_view_own_perms.py`), granted to no role by the migration; the owner grants it.
+  (precedent `alembic/versions/sales_s1_reports_module.py`), granted to admin and superadmin; the owner grants it to other roles.
   Revision id <= 32 chars, re-parented with `scripts/alembic-reparent.sh`.
 - **Assistant**: `crm_report_ask` route allow-list gains `group_by=sales_person` on invoiced
   (`api/v1/order_management/report_ask.py` group-by tuple); MCP catalog description line

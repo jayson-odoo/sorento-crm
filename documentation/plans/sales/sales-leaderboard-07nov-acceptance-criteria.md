@@ -1,7 +1,7 @@
-# UAC: SALES-LEADERBOARD (draft on the card's recommended options)
+# UAC: SALES-LEADERBOARD
 
-Status: Draft, 7 Nov. Written on the card's recommendations (Q1-Q5 all (a)) while the owner's answers are pending;
-each line names the question it depends on. Rewritten if an answer differs.
+Status: Agreed, 7 Nov: owner "2227 ok" (~16:15) accepted the card's recommendations, Q1-Q5 all (a). Each line names
+the question it rests on.
 Card: `CARD-sales-leaderboard-07nov.md`. Plan: `PLAN-sales-leaderboard-07nov.md`.
 
 Reference case: dev copy `sorento_prod_1104`, October 2026 vs September 2026 (crew run, PR #2227 comment
