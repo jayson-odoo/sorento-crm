@@ -12,6 +12,7 @@ admin who edits the graph changes them; the permission rules are by status KEY.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 
 import uuid
@@ -635,7 +636,7 @@ def _apply_date_answer(
 def _answer_label(req: SampleRequest) -> str:
     if req.date_feasible:
         return "the sample team can meet the requested date"
-    return f"the sample team proposes {req.proposed_delivery_date:%d %b %Y}"
+    return f"the sample team proposes {fmt_date(req.proposed_delivery_date)}"
 
 
 def answer_date(

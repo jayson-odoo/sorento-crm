@@ -136,3 +136,4 @@ export async function renameAsset(id: string, name: string): Promise<KitAsset> {
 export function fontAssetUrl(assetId: string): string {
   return `/api/v1/public/dealer-kit/fonts/${assetId}`;
 }
+

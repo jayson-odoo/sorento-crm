@@ -178,6 +178,20 @@ export async function getWishlist(limit = 20): Promise<WishlistCluster[]> {
   return unwrap(res, 'Failed to load wishlist.');
 }
 
+export interface NoToolAsk {
+  turn_id: string;
+  ask: string;
+  area: string | null;
+  who: string | null;
+  channel: string | null;
+  asked_at: string;
+}
+
+export async function getNoToolAsks(): Promise<NoToolAsk[]> {
+  const res = await apiFetch('/api/v1/system/ai-assistant/wishlist/no-tool');
+  return unwrap(res, 'Failed to load the asks with no tool.');
+}
+
 // ---- M2 trace ----------------------------------------------------------
 
 export type SpanKind =

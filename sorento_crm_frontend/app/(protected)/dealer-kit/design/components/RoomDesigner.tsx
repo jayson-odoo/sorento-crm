@@ -91,6 +91,7 @@ import { CollapsiblePanel, FocusShell, FocusToggle } from '../../components/Focu
 import { RoomPlan } from './RoomPlan';
 import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
 import { sameDisplayText } from '@/lib/product-display';
+import { localStore } from '@/lib/storage';
 
 /**
  * The room designer: pick products, shape the room, place them, confirm.
@@ -198,7 +199,7 @@ export function RoomDesigner() {
   const hydrated = useRef(false);
 
   useEffect(() => {
-    setSelectionId(window.localStorage.getItem(LAST_SELECTION_KEY));
+    setSelectionId(localStore.getItem(LAST_SELECTION_KEY));
   }, []);
 
   /**
@@ -232,7 +233,7 @@ export function RoomDesigner() {
    */
   useEffect(() => {
     if (!selectionMissing || !selectionId) return;
-    window.localStorage.removeItem(LAST_SELECTION_KEY);
+    localStore.removeItem(LAST_SELECTION_KEY);
     setSelectionId(null);
     hydrated.current = false;
     setPlaced([]);
@@ -301,7 +302,7 @@ export function RoomDesigner() {
   const ensureSelection = useCallback(async (): Promise<string> => {
     if (selectionId) return selectionId;
     const created = await createSelection();
-    window.localStorage.setItem(LAST_SELECTION_KEY, created.id);
+    localStore.setItem(LAST_SELECTION_KEY, created.id);
     setSelectionId(created.id);
     queryClient.setQueryData(['dealer-kit', 'selection', created.id], created);
     return created.id;
@@ -668,7 +669,7 @@ export function RoomDesigner() {
    * work, and forgetting it here is not the same as throwing it away.
    */
   const startFresh = useCallback(() => {
-    window.localStorage.removeItem(LAST_SELECTION_KEY);
+    localStore.removeItem(LAST_SELECTION_KEY);
     hydrated.current = false;
     setSelectionId(null);
     setPlaced([]);

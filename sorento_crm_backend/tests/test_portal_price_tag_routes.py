@@ -2273,3 +2273,69 @@ class TestAcS92PortalExportRoute:
         response = c.post(f"{_BASE}/{theirs.id}/export")
 
         assert response.status_code == 404, response.text
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-LPSP fix round 2 (bug 17): the Item picker option reads
+# "CODE  RM <list price>", so the lookup carries the list price on the wire
+# (response_model drops an undeclared field silently).
+# ---------------------------------------------------------------------------
+
+
+class TestItemLookupCarriesTheListPrice:
+    def test_a_priced_product_answers_its_list_price(self, client):
+        from app.models.product import Product
+
+        c, db, _contact_id = client
+        product = db.get(Product, _seed_product(db))
+        product.list_price = 1050
+        db.flush()
+
+        res = c.get(
+            "/api/v1/public/portal/lookups/price-tag-items",
+            params={"q": product.product_code},
+        )
+
+        assert res.status_code == 200, res.text
+        (row,) = [r for r in res.json() if r["id"] == product.id]
+        assert row["list_price"] == 1050
+
+    def test_a_zero_list_price_answers_none(self, client):
+        from app.models.product import Product
+
+        c, db, _contact_id = client
+        product = db.get(Product, _seed_product(db))
+        product.list_price = 0
+        db.flush()
+
+        res = c.get(
+            "/api/v1/public/portal/lookups/price-tag-items",
+            params={"q": product.product_code},
+        )
+
+        assert res.status_code == 200, res.text
+        (row,) = [r for r in res.json() if r["id"] == product.id]
+        assert "list_price" in row
+        assert row["list_price"] is None
+
+    def test_a_set_answers_its_override_list_price(self, client):
+        from app.models.product_set import ProductSet
+
+        c, db, _contact_id = client
+        code = unique_code("ZZTSET")
+        row = ProductSet(
+            id=str(uuid.uuid4()),
+            set_code=code,
+            name="ZZT set",
+            list_price_override=2400,
+            is_active=True,
+        )
+        db.add(row)
+        db.flush()
+
+        res = c.get("/api/v1/public/portal/lookups/price-tag-items", params={"q": code})
+
+        assert res.status_code == 200, res.text
+        (hit,) = [r for r in res.json() if r["id"] == row.id]
+        assert hit["kind"] == "product_set"
+        assert hit["list_price"] == 2400

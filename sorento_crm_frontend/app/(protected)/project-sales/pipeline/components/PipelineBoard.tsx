@@ -11,6 +11,7 @@ import type { Status } from '@/app/(protected)/system-management/status-graphs/t
 import type { Project } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { isAwaitingDecision } from '../../_shared/components/ApprovalStatePill';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * Portal registrations waiting for a decision (PROJECT-REG-PORTAL R6). They have no stage by
@@ -261,7 +262,9 @@ function ProjectCard({
       onDragStart={draggable ? onDragStart : undefined}
       onDragEnd={draggable ? onDragEnd : undefined}
       className={cn(
-        'rounded-md border border-border bg-background p-2.5 shadow-xs transition-opacity',
+        // Hover tints the card the way the grid tints a row (`hover:bg-muted/40`,
+        // components/ui/data-grid-table.tsx); the text never underlines, same as the grid.
+        'rounded-md border border-border bg-background p-2.5 shadow-xs transition-[opacity,background-color] hover:bg-muted/40',
         draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
         isMoving && 'opacity-50',
       )}
@@ -276,7 +279,7 @@ function ProjectCard({
         <div className="min-w-0 flex-1 space-y-1.5">
           <Link
             href={`/project-sales/${project.id}`}
-            className="block space-y-0.5 hover:underline"
+            className="block space-y-0.5"
           >
             <span className="text-xs text-muted-foreground">
               {projectCodeLabel(project)}
@@ -369,7 +372,7 @@ function describeNextAction(project: Project): { label: string; title: string } 
 function formatNextActionDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }
 
 /** Heading and hint only: the page's one CTA lives in its header (PR #1336). */

@@ -27,7 +27,6 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import type { RecordAction } from '@/components/common/recordActions';
 import {
   SearchableMultiSelect,
   type SearchableMultiSelectOption,
@@ -56,6 +55,7 @@ import {
   formatPct,
   periodRange,
   scopeSummary,
+  dateRange,
   shortDate,
   splitSummary,
   unitOf,
@@ -483,11 +483,12 @@ export interface TargetRecordPreset {
  *
  * The standard record: a header card (the TGT number, the name, and in the meta strip who it
  * is for, its team target, the agent count, Created and Updated; prev/next and the gear on the
- * right), then line tabs in the order **Details** (Target, What counts, Dates, Figure),
- * **Periods**, **Agents** (a team target only) and **Commission**. Edit is an item in the gear
- * with Duplicate and Delete; the edit view is the same tabs with each value swapped for its
- * input in place, and Cancel and Save in the header card. A new target opens in that edit view,
- * empty, with the defaults Amount, Ordered, All products, today to month end, split off.
+ * right, then Edit as the one primary button), then line tabs in the order **Details**
+ * (Target, What counts, Dates, Figure), **Periods**, **Agents** (a team target only) and
+ * **Commission**. Edit is the primary button (owner, 5 Nov; it was a gear item after the 27 Sep
+ * hand test); Duplicate and Delete stay in the gear. The edit view is the same tabs with each
+ * value swapped for its input in place, and Cancel and Save in the header card. A new target
+ * opens in that edit view, empty, with the defaults Amount, Ordered, All products, today to month end, split off.
  *
  * Every single pick is `SearchableSelect`, every multi pick `SearchableMultiSelect`, and a
  * picked category, product or brand always shows its "CODE - Name" (F5): the record's own scope
@@ -520,7 +521,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
   const create = useCreateSalesTarget();
   const patchHeader = usePatchSalesTarget();
   const { actions: targetActions, pending } = useSalesTargetActions(target, {
-    onDeleted: () => router.push('/sales/targets'),
+    // Back to the list tab the deleted target sat on (owner, 5 Nov).
+    onDeleted: () => router.push(target ? `/sales/targets?tab=${target.subject_kind}` : '/sales/targets'),
   });
   const { data: siblings } = useSalesTargets(
     { all: true, subject: target?.subject_kind ?? 'agent' },
@@ -740,10 +742,13 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
     { value: 'commission', label: 'Commission', icon: CircleDollarSign },
   ];
 
-  const actions: RecordAction[] =
-    target && canEdit
-      ? [{ key: 'sales_target.edit', label: 'Edit', icon: SquarePen, run: () => { setShowErrors(false); setDraft(draftOf(target)); } }, ...targetActions]
-      : targetActions;
+  // Edit is the record's one primary button (owner, 5 Nov: "edit should be the CTA here"), the
+  // DetailActions primary slot as on the opportunity record; Duplicate and Delete stay in the gear.
+  const beginEdit = () => {
+    if (!target) return;
+    setShowErrors(false);
+    setDraft(draftOf(target));
+  };
   const index = target ? ids.indexOf(target.id) : -1;
 
   // A team period in Edit mode: the live sum of what is typed for its agents (T3, F1).
@@ -798,7 +803,15 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     ariaLabel="target"
                   />
                 }
-                actions={actions}
+                actions={targetActions}
+                primary={
+                  target && canEdit ? (
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={beginEdit}>
+                      <SquarePen className="size-4" />
+                      Edit
+                    </Button>
+                  ) : undefined
+                }
                 pendingAction={pending}
                 gearLabel="Target options"
               />
@@ -1006,15 +1019,15 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                 ) : periods.length ? (
                   <p className="text-xs text-muted-foreground">
                     {periods.length === 1
-                      ? `1 period, ${shortDate(periods[0].start)} to ${shortDate(periods[0].end)}`
-                      : `${periods.length} periods, the last ${shortDate(periods[periods.length - 1].start)} to ${shortDate(periods[periods.length - 1].end)}`}
+                      ? `1 period, ${dateRange(periods[0].start, periods[0].end)}`
+                      : `${periods.length} periods, the last ${dateRange(periods[periods.length - 1].start, periods[periods.length - 1].end)}`}
                   </p>
                 ) : null}
               </div>
             ) : target ? (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="sm:col-span-2">
-                  <Field label="Start and end date">{`${shortDate(target.start_date)} to ${shortDate(target.end_date)}`}</Field>
+                  <Field label="Start and end date">{dateRange(target.start_date, target.end_date)}</Field>
                 </div>
                 <Field label="Split">{splitSummary(target.split_every, target.split_unit)}</Field>
               </div>
@@ -1058,7 +1071,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                   <PeriodsTable unit={unit}>
                     {periods.map((p) => (
                       <tr key={p.start}>
-                        <td className="whitespace-nowrap px-3 py-2">{`${shortDate(p.start)} to ${shortDate(p.end)}`}</td>
+                        <td className="whitespace-nowrap px-3 py-2">{dateRange(p.start, p.end)}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                           {formatFigure(isTeam ? teamSum : toNumber(draft?.figure ?? ''))}
                         </td>
@@ -1801,7 +1814,7 @@ function ParentTarget({ parentId, today }: { parentId: string; today: string }) 
                   : `${SCOPE_LABEL[parent.product_scope]}: ${scopeSummary(parent.product_scope, parent.scope.length)}`}
               </Field>
               <div className="sm:col-span-2">
-                <Field label="Start and end date">{`${shortDate(parent.start_date)} to ${shortDate(parent.end_date)}`}</Field>
+                <Field label="Start and end date">{dateRange(parent.start_date, parent.end_date)}</Field>
               </div>
               <Field label="Split">{splitSummary(parent.split_every, parent.split_unit)}</Field>
             </div>
@@ -1810,7 +1823,7 @@ function ParentTarget({ parentId, today }: { parentId: string; today: string }) 
                 const future = p.period_start > today;
                 return (
                   <tr key={p.id} className={p.is_current ? 'bg-primary/5' : undefined}>
-                    <td className="whitespace-nowrap px-3 py-2">{`${shortDate(p.period_start)} to ${shortDate(p.period_end)}`}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{dateRange(p.period_start, p.period_end)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">{formatFigure(p.target_value)}</td>
                     <td className="whitespace-nowrap px-3 py-2 text-end tabular-nums">
                       {future ? '-' : formatFigure(p.achieved_value)}
@@ -2030,7 +2043,7 @@ function CommissionTiers({
   const dealer = (draft?.kind ?? target?.subject_kind) === 'dealer';
   const periodLabel = (start: string) => {
     const p = periodStarts.find((x) => x.start === start);
-    return p ? `${shortDate(p.start)} to ${shortDate(p.end)}` : start ? shortDate(start) : '-';
+    return p ? dateRange(p.start, p.end) : start ? shortDate(start) : '-';
   };
   const empty = (action: ReactNode) => (
     <div className="flex w-full flex-col items-center gap-3 rounded-lg border border-dashed py-8 text-center">

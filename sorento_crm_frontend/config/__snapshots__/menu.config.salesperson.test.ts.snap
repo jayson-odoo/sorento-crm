@@ -44,6 +44,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Sales Teams",
       },
       {
+        "path": "/sales/leaderboard",
+        "title": "Leaderboard",
+      },
+      {
         "path": "/master-data-management/sales-agents",
         "title": "Sales Agents",
       },
@@ -380,6 +384,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Spec Verification",
           },
           {
+            "path": "/master-data-management/accessories",
+            "title": "Accessories",
+          },
+          {
             "path": "/master-data-management/flyer-spec-proposals",
             "title": "Flyer Spec Proposals",
           },
@@ -696,6 +704,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/system-management/api-call-logs",
             "title": "API Call Log",
+          },
+          {
+            "path": "/system-management/client-errors",
+            "title": "Client Errors",
           },
         ],
         "title": "Operations",

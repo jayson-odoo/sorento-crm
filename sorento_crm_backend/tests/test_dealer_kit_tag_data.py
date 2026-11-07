@@ -842,6 +842,8 @@ class TestProductSpecs:
                 "label": "Diameter",
                 "value": "407",
                 "unit": "mm",
+                # PRICETAG-DESIGNER-GAPS B4: the stored value too, for icon rules.
+                "raw": "407",
             },
             {
                 "key": f"{stem}_material",
@@ -851,6 +853,7 @@ class TestProductSpecs:
                 # `_spec_display_value` applies everywhere else.
                 "value": "Ceramic",
                 "unit": None,
+                "raw": "ceramic",
             },
         ]
         assert all(row["key"] != "zzt_not_a_registry_key" for row in specs)
@@ -901,6 +904,7 @@ class TestLineSpecs:
             # AC-S3-1 (r10): title-cased, like every other stored slug.
             "value": "Granite",
             "unit": None,
+            "raw": "granite",
         } in row["specs"]
 
     def test_a_set_line_carries_no_specs_of_its_own(self, db):

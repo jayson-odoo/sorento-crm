@@ -106,8 +106,8 @@ def test_b1_a_bare_outstanding_asks_the_kind_and_never_the_company(bot) -> None:
     runs over the contact's own companies."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
-    assert calls == [] and "Undelivered orders" in text, (text, calls)
-    text, calls = bot.say(_pick(2), "the second")  # Pending delivery
+    assert calls == [] and "Sales order" in text, (text, calls)
+    text, calls = bot.say(_pick(2), "the second")  # Delivery order
     args = _only_report_ask(calls)
     assert f"{sorento} or {mocha}?" not in text, text
     assert "company" not in args and args["basis"] == "pending_delivery", args

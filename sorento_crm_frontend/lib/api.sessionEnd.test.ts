@@ -122,7 +122,7 @@ describe('token route says the session is gone (401)', () => {
   });
 
   it('ends view-as cleanly: the persisted impersonation is cleared', async () => {
-    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    window.sessionStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
     fetchMock.mockImplementation(async (input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return json({ error: 'No valid session' }, 401);
       return json({}, 200);
@@ -134,7 +134,7 @@ describe('token route says the session is gone (401)', () => {
     await settle();
 
     expect(impersonationStore.getState()).toBeNull();
-    expect(window.localStorage.getItem(IMP_KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(IMP_KEY)).toBeNull();
   });
 
   it('outside the signed-in shell (a public page) it neither redirects nor blocks the call', async () => {
@@ -171,7 +171,7 @@ describe('token route says the session is gone (401)', () => {
 
 describe('FastAPI says the session is dead (401 with a session_* code)', () => {
   it('session_expired with an unchanged token: one redirect, view-as cleared', async () => {
-    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    window.sessionStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
     fetchMock.mockImplementation(async (input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return json({ token: 'tok-old' });
       return dead('session_expired');
@@ -434,7 +434,7 @@ describe('stale view-as: the backend ignored X-Impersonate-User-Id', () => {
     });
 
   it('ends view-as locally, says so once, refetches, and does not sign out', async () => {
-    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    window.sessionStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
     fetchMock.mockImplementation(async (input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
       return ended();
@@ -448,7 +448,7 @@ describe('stale view-as: the backend ignored X-Impersonate-User-Id', () => {
     const sent = v1Calls().map((c) => new Headers(c[1]?.headers as HeadersInit).get('X-Impersonate-User-Id'));
     expect(sent).toEqual(['u-kx', 'u-kx']);
     expect(impersonationStore.getState()).toBeNull();
-    expect(window.localStorage.getItem(IMP_KEY)).toBeNull();
+    expect(window.sessionStorage.getItem(IMP_KEY)).toBeNull();
     expect(toastInfo).toHaveBeenCalledTimes(1);
     expect(toastInfo).toHaveBeenCalledWith('View-as ended - you are seeing your own data', {
       id: 'view-as-ended',
@@ -459,7 +459,7 @@ describe('stale view-as: the backend ignored X-Impersonate-User-Id', () => {
   });
 
   it('a late answer for an older view-as leaves the current one alone', async () => {
-    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    window.sessionStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
     let release: (r: Response) => void = () => undefined;
     fetchMock.mockImplementation((input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return Promise.resolve(json({ token: 'tok' }));
@@ -481,7 +481,7 @@ describe('stale view-as: the backend ignored X-Impersonate-User-Id', () => {
   });
 
   it('no signal, no change', async () => {
-    window.localStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
+    window.sessionStorage.setItem(IMP_KEY, JSON.stringify(VIEW_AS));
     fetchMock.mockImplementation(async (input: RequestInfo) => {
       if (String(input).includes('/api/auth/token')) return json({ token: 'tok' });
       return json({ ok: true });

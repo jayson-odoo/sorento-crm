@@ -675,8 +675,6 @@ export interface LeadListParams {
  * a quotation are both SERVER-DERIVED for rendering. Never write them, and never
  * re-derive "frozen" in the browser from anything else.
  */
-export type QuotationOutcome = 'open' | 'won' | 'lost';
-
 export type UnitType = 'house_unit' | 'bathroom' | 'facility' | 'common_area';
 
 export type FloorMode = 'percent' | 'absolute';
@@ -694,11 +692,6 @@ export interface ProjectQuotation {
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;
-
-  outcome: QuotationOutcome;
-  loss_reason?: string | null;
-  loss_reason_label?: string | null;
-  decided_at?: string | null;
 
   version_count: number;
   current_version_id?: string | null;
@@ -986,11 +979,6 @@ export interface QuotationFeedback {
   open_count: number;
   /** Newest first; rows in line order. */
   requests: QuotationFeedbackRequest[];
-}
-
-export interface QuotationOutcomeBody {
-  outcome: QuotationOutcome;
-  loss_reason?: string | null;
 }
 
 export interface ProjectSeries {

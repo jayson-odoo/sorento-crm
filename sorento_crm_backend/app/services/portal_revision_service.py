@@ -343,6 +343,7 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
             # changing - the two facts this whole slice moved onto the line.
             "promotion_id": ln.promotion_id,
             "manual_sell_price": _jsonable(ln.manual_sell_price),
+            "price_type": ln.price_type,
         }
         for ln in lines
     ]
@@ -428,6 +429,8 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     # price basis above - absent means carry the old line's pick.
     if "tag_template_id" in raw:
         converted["tag_template_id"] = clean.get("tag_template_id")
+    if "price_type" in raw:
+        converted["price_type"] = clean.get("price_type")
     return converted
 
 
@@ -533,6 +536,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 old.promotion_id,
                 old.manual_sell_price,
                 old.tag_template_id,
+                old.price_type,
             )
             for old in row.lines
         }
@@ -546,6 +550,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                     promotion_id,
                     manual_sell_price,
                     tag_template_id,
+                    price_type,
                 ) = old_by_key[key]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
@@ -568,6 +573,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 line.setdefault("promotion_id", promotion_id)
                 line.setdefault("manual_sell_price", manual_sell_price)
                 line.setdefault("tag_template_id", tag_template_id)
+                line.setdefault("price_type", price_type)
         # Security review (this round): a revision is a PORTAL CONTACT
         # writing, exactly like create/update - `replace_lines` with no
         # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),

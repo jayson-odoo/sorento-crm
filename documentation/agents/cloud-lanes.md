@@ -130,6 +130,143 @@ It posts `crew-tests: <candidate sha> backend N passed/F failed, vitest N/F` on 
 or issue it fixes from. A red sweep is fixed (a test-only fix PR, as #2157) and swept again on
 the new candidate.
 
+### Nightly sweep + release delta (owner ruling, 4 Nov 2026)
+
+The full suite runs **nightly** on main; a release needs only the last green nightly plus a
+delta on the diff since that nightly's sha. Both are one command in a cloud sandbox, and each
+prints ONE line to post as is:
+
+```
+bash scripts/nightly-sweep.sh [<sha>]                    # default origin/main, ~2.5 h on 4 cores
+# crew-tests: <sha> backend N passed/F failed, vitest N/F
+
+bash scripts/release-delta.sh <nightly sha> [<head>]     # default head origin/main
+# crew-tests: <head> delta since nightly <nightly sha> backend N passed/F failed (selected S of M test files: <why>), vitest N/F (<mode>)
+```
+
+The nightly runs the split above on a detached worktree of the sha with a FRESH database
+bootstrapped from that sha's code: 10 xdist groups (pytest-split) of `tests/` minus `tests/scm`,
+the migration tests, `serial_ddl` and `tests/ci_excluded.txt`; then `tests/test_migration_*.py`
+and `-m serial_ddl` serially; then `tests/scm/` (xdist, then its `serial_ddl`); then
+`npx vitest run`. The delta runs alembic heads == 1, `bootstrap_env` + `alembic upgrade head` on
+a fresh database, and then **only the affected tests** (owner ruling 5 Nov 2026: "run only the
+tests that are affected, dependent, or depended by"; RELEASE-DELTA-AFFECTED). Logs, junit files,
+`selected.txt`, `selected_why.txt` (each file with the rule that picked it) and `failed.txt` stay
+in the output directory the script names.
+
+**Backend selection** (`sorento_crm_backend/scripts/release_delta_select.py`; its docstring is the
+full rule, `tests/test_release_delta_select.py` pins it). The import graph covers every `.py`
+under `app/`, `scripts/`, `tests/` (static AST imports incl. relative ones; in tests also dotted
+`mock.patch` / `monkeypatch.setattr` strings; `from app.models import User` resolves through the
+package's re-export to `app/models/user.py`). Edges are module-level (run at import) or lazy
+(inside a function). It is cached as JSON per backend tree sha in
+`~/.cache/sorento-release-delta/` (`RELEASE_DELTA_GRAPH_CACHE`); building it takes ~26 s, a
+cached selection under 2 s.
+
+| Rule | Selects |
+| --- | --- |
+| changed test file | itself |
+| dependents | test files that import a changed module directly, or import directly a module that imports one: two hops, never through a hub (`app/main.py`, `app/api/**/__init__.py`, a `conftest.py`); plus test files named after a changed module (`test_<stem>*.py`). Crew, 5 Nov: the transitive rule reached `app/main.py` and selected 3,274 of 3,274 files on `30bbcc6a..311a6b52` and 2,519 on `311a6b52..9ebae8e9`; the two-hop rule selects 1,428 and 815 there |
+| depended-by | for a changed module M and each module D it imports directly: `test_<D>.py` / `test_<D>_*.py` that import D |
+| changed non-module file | test files that name it (alembic revision, workflow, shell script, frontend path); a template or data file under `app/` also through the module that names it |
+| deleted module | test files that name its dotted path |
+| migration tests | `tests/test_migration_*.py` only when `alembic/`, `alembic.ini` or `app/models/` changed |
+| regression guards | `tests/test_lessons_learnt_regressions.py` on any backend change |
+
+A `conftest.py` is a hub (a module it loads does not reach every test under it; a change to a
+conftest itself runs the full suite), and a changed package `__init__.py` counts as a change to every module of the package
+(Python runs it before any of them). `tests/scm/` runs only when these rules reach it.
+`tests/ci_excluded.txt` entries never run.
+The selection runs in the PR gate's split: main tree and `tests/scm/` each under xdist and then
+`-m serial_ddl`, the migration tests serially.
+
+**Full backend suite** instead, the reason printed in the `crew-tests:` line: a `conftest.py`,
+`tests/__init__.py`, `tests/_xdist_crash_guard.py`, `tests/ci_excluded.txt`, `pytest.ini`,
+`pyproject.toml`, `setup.cfg` or `requirements*.txt` changed; env bootstrap changed
+(`sorento_crm_backend/scripts/bootstrap_env.py`, `scripts/cloud-env-setup.sh`); the graph
+cannot be built (a file does not parse); or the selector itself failed (its stderr is in
+`selector.log`). A full run uses the same three sessions as a selection (main tree, `tests/scm/`,
+migrations), not the nightly's 10 pytest-split groups: one `-n auto` session over the main tree
+is what the PR gate's changed-files runner did.
+
+Why lazy imports stop after one hop (measured 5 Nov on `42d1a56c..019770c1`): following every
+import transitively selects ~95% of the test files from almost any change, because function-local
+imports tie the services into one component. On that diff, following them on through module-level
+importers selected 1,499 files, 1,319 of them only because `app/main.py` mounts the ingest router
+and `document_ingest_service` imports the changed `po_link_history` inside a function.
+
+**Frontend**: no frontend change runs no vitest. Otherwise `npx vitest related --run
+<changed frontend files that exist at head>` plus the source-scanning guards
+(`sorento_crm_frontend/scripts/source-guard-tests.sh`, tests that read files instead of importing
+them); the FULL `vitest run` when `package.json`, `package-lock.json`, `vitest.config.*`,
+`vitest.setup.*`, `tsconfig*.json`, `test-mocks/` or a `__mocks__/` directory changed.
+
+What is not caught here is caught by the next nightly, which still runs everything.
+
+Measured on 5 Nov 2026 (selection only; estimated CPU seconds from the committed
+`sorento_crm_backend/.test_durations`, which holds 26,410 of the ~56k tests):
+
+| Range | Old selection | New selection |
+| --- | --- | --- |
+| `42d1a56c..019770c1` (18 commits, `po_link_history` + one alembic revision) | 526 files, 396 of them `tests/scm/`; est 4,894 CPU-s | 262 files, 21 `tests/scm/`; est 2,384 CPU-s |
+| `019770c1..30bbcc6a` (108 commits, incl. `app/models/user.py` and `procurement.py`) | 1,798 files, 397 `tests/scm/`; est 25,583 CPU-s | all 3,257 files; est 36,751 CPU-s |
+
+Run for real in one 4-core cloud sandbox, `42d1a56c..019770c1`: the old script took 4,063 s
+(migrations 803 passed, all of `tests/scm/` 5,429 passed / 2 failed in 18 min, 103 selected,
+FULL vitest 22,379); the new one took 850 s (3,704 passed / 0 failed, selected 262 of 3,250 test
+files, no vitest because no frontend file changed). The 2 old reds were EXPLAIN-plan assertions in
+`tests/scm/test_container_request_product_index.py` (the planner picked another plan), a file that
+range does not reach.
+
+On the second range the frontend half ran for real: `vitest related` on its 55 changed files
+ran 316 test files (4,063 tests) in 763 s, and the source guards 62 files in 51 s, against
+2,290 files in 2,563 s for the full `vitest run` in the same sandbox.
+
+The second range is not a defect of the rule: a changed User model is imported, directly or
+through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
+old one-level regex missed 1,459 of those dependents.
+
+### The same on GitHub Actions, sharded (CI-PARALLEL-ACTIONS, owner 5 Nov 2026)
+
+`.github/workflows/tests-sharded.yml` runs the nightly full sweep and the release delta on
+GitHub-hosted runners in parallel instead of serially in one sandbox (4 cores, 2 h command cap):
+
+```
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
+  -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main -f comment_on=2176
+```
+
+`select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
+test file (the nightly), mode=delta is the selector above. The backend runs one runner per
+(pool, shard): the main tree on 24 runners, `tests/scm/` on 3, and one `serial` runner (alembic
+heads == 1, `alembic upgrade head`, the migration tests, both pools' `serial_ddl`); the planner packs whole
+files onto each pool's runners by estimated seconds (`.test_durations` plus untimed functions). A delta pool gets its share of the full
+pool's recorded seconds in runners (a 10% delta gets 3 of 24). vitest: `--shard=i/8` on a full
+run, one runner with `vitest related` + the source guards on a related delta. `summary` posts one
+`crew-tests:` comment (per-shard results, failing ids, wall clock, billable minutes) on
+`comment_on` (the nightly passes 2176). Dispatch only, no schedule or push trigger (crew, 5 Nov
+2026): every run spends Actions budget, see the costs below, and crew decides each one.
+
+**Nightly-only tests.** `sorento_crm_backend/tests/nightly_only.txt` (the reorder-planning tests,
+owner 5 Nov: "reorder planning are not really in use") is the one list: the release delta
+selector and `scripts/crew-tests.sh` never run its entries; the full sweep does.
+
+`scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
+#2171), each of which shows up as reds that CI does not have:
+
+| Gap | Symptom without it | What the script does |
+| --- | --- | --- |
+| Ubuntu's pgvector is 0.6.0 | 3 `hnsw.iterative_scan` tests fail (`test_lookup_embed_central_*`) | builds pgvector v0.8.0 when the packaged one is older |
+| no DNS for `automate-sorento.foundryx.my` | 12 `tests/chatbot` retry tests 422 in `outbound_url_guard` | adds an `/etc/hosts` line (public IP; nothing connects to it) |
+| `tests/scm/conftest.py` `_pg_url` ignores `SORENTO_ENV_FILE` | 25 `tests/scm` errors, ~2,100 skips | exports `DATABASE_URL` (CI sets it too) |
+
+A database bootstrapped by `bootstrap_env` never holds the `MIGRATION_ONLY_TABLES`
+(`alembic/env.py`), so a migration that reads one of them (`oiod_0002` reads
+`projects.oi_delivery_date_backfill`) fails `alembic upgrade head` from an older bootstrapped
+database while prod, which ran the creating migration, is fine. The delta therefore upgrades a
+fresh database bootstrapped at the head, as CI does.
+
 ### Release runbook: the `release-sweep` status (machine-checked, owner 4 Nov 2026)
 
 A release with `skip_tests=true` (the default) ships only a sha that carries a `success`

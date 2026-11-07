@@ -202,7 +202,7 @@ export function PeriodPicker({
   );
 }
 
-const MONTH_NAMES = [
+const MONTH_NAMES = [ // date-format-ok: month picker cell labels, not a calendar date
   'Jan',
   'Feb',
   'Mar',

@@ -12,22 +12,23 @@
  */
 
 import { myRequestStaffPath } from '@/lib/my-requests-staff-pages';
+import { localStore } from '@/lib/storage';
 
 const SLUG_KEY = 'sorento.portalSlug';
 
 export function readPortalSlug(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.localStorage.getItem(SLUG_KEY);
+  return localStore.getItem(SLUG_KEY);
 }
 
 export function writePortalSlug(slug: string): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(SLUG_KEY, slug);
+  localStore.setItem(SLUG_KEY, slug);
 }
 
 export function clearPortalSlug(): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(SLUG_KEY);
+  localStore.removeItem(SLUG_KEY);
 }
 
 /** The CRM tree a salesperson uses the portal forms in (PORTAL-P3-ROLE-MENU). */

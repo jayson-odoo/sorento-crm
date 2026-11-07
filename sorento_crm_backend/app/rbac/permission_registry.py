@@ -693,6 +693,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.stock_debt.link_po",
+        "name": "Link PO lines from Stock Debt",
+        "description": (
+            "Link, unlink or move a purchase order line to a sales order line from a Stock "
+            "Debt snapshot. Writes to AutoCount."
+        ),
+    },
+    {
         "slug": "projects.types.view",
         "name": "View Project Types and Templates",
         "description": "View configurable project types, templates and stakeholder roles.",
@@ -1008,6 +1016,16 @@ PERMISSION_REGISTRY.extend([
         "slug": "sales.reports.view",
         "name": "View sales reports",
         "description": "Open the sales reports (Yearly comparison, Sales report), export them and ask for them on WhatsApp.",
+    },
+])
+
+
+# SALES-LEADERBOARD: Sales > Leaderboard; granted to admin and superadmin by `slb_0001_leaderboard_perm`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.leaderboard.view",
+        "name": "View the sales leaderboard",
+        "description": "Open Sales > Leaderboard: invoiced sales ranked by sales person. Shows no commission.",
     },
 ])
 

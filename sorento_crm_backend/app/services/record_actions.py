@@ -703,6 +703,12 @@ def _delete_brand(db: Session, payload: dict):
     return BrandService(db).delete_brand(_entity_id(payload))
 
 
+def _delete_accessory(db: Session, payload: dict):
+    from app.services.accessory_service import AccessoryService
+
+    return AccessoryService(db).delete(_entity_id(payload))
+
+
 def _delete_product_category(db: Session, payload: dict):
     from app.services.product_service import ProductCategoryService
 
@@ -763,6 +769,18 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.brands.delete",
         label="Delete brand",
+    )
+)
+
+# PRICETAG-ACCESSORIES: the library is maintained by whoever may edit products (owner Q2 (a)).
+register(
+    FormAction(
+        key="accessory.delete",
+        entity_types=("accessory",),
+        execute=_delete_accessory,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete accessory",
     )
 )
 
@@ -1754,6 +1772,27 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="dealer_kit.tag_templates.manage",
         label="Unlink tag templates from product",
+    )
+)
+
+
+def _unlink_combo_tag_templates(db: Session, payload: dict):
+    """PRICETAG-LPSP: unticking templates on an existing combo."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_combo_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="combo.unlink_tag_templates",
+        entity_types=("combo",),
+        execute=_unlink_combo_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from combo",
     )
 )
 

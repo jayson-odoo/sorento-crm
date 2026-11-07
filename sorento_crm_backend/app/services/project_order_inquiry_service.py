@@ -39,6 +39,7 @@ updates the one record rather than a copy pasted into a description.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date, fmt_datetime
 import logging
 import re
 import uuid
@@ -49,7 +50,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import event, func, or_, tuple_
+from sqlalchemy import String, cast, event, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope, get_company_scope
@@ -3518,7 +3519,7 @@ class ProjectOrderInquiryService:
         for link in received_links:
             document = link.document or "the document"
             arrived = received[str(link.id)]
-            when = arrived.strftime("%d %b %Y") if arrived else "in full"
+            when = fmt_date(arrived) if arrived else "in full"
             fragments.append(f"{document} received {when}")
         location = f", goods are {row.stock_location} stock" if row.stock_location else ""
         fragment = (
@@ -3568,7 +3569,7 @@ class ProjectOrderInquiryService:
         location = f" into {row.stock_location}" if row.stock_location else ""
         fragments = [
             f"{link.document or 'the document'} received "
-            f"{arrived.strftime('%d %b %Y') if arrived else 'in full'}"
+            f"{fmt_date(arrived) if arrived else 'in full'}"
             for link, arrived in cached
         ]
         return f"{'; '.join(fragments)}{location}"
@@ -8738,7 +8739,11 @@ class ProjectOrderInquiryService:
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
                 PurchaseOrderLine.expected_date,
-                PurchaseOrderLine.source_ref,
+                # The PO line's own number first (`line_no`); `source_ref` only when the book
+                # numbered nothing (`_line_label` drops it unless it is a plain number).
+                func.coalesce(
+                    cast(PurchaseOrderLine.line_no, String), PurchaseOrderLine.source_ref
+                ),
                 Warehouse.warehouse_code,
                 SPOAllocation.spo_number,
                 SPOAllocation.spo_line_number,
@@ -8822,7 +8827,7 @@ class ProjectOrderInquiryService:
             po_number,
             po_issue_date,
             po_expected_date,
-            po_source_ref,
+            po_line_ref,
             warehouse_code,
             spo_number,
             spo_line_number,
@@ -8873,7 +8878,7 @@ class ProjectOrderInquiryService:
                     # when the line it named has since been deleted out from under it.
                     "document": link.document or spo_number or po_number,
                     "line_label": self._line_label(
-                        spo_line_number if is_spo else po_source_ref
+                        spo_line_number if is_spo else po_line_ref
                     ),
                     "qty": _qty_str(_dec(link.qty)),
                     "location": location,
@@ -9910,9 +9915,7 @@ class ProjectOrderInquiryService:
                             "customer": facts.get("customer"),
                             "project": facts.get("project"),
                             "reason": reason,
-                            "rejected_at": rejected_at.replace(tzinfo=timezone.utc)
-                            .astimezone(_MY_TZ)
-                            .strftime("%d/%m/%Y %H:%M"),
+                            "rejected_at": fmt_datetime(rejected_at),
                             "lines": lines,
                             "line_count": len(lines),
                             "link": build_order_inquiry_link(inquiry_id),
@@ -11330,7 +11333,9 @@ class ProjectOrderInquiryService:
                     kind="po",
                     target_id=target_id,
                     document=po.po_number,
-                    line_label=self._line_label(line.source_ref),
+                    line_label=self._line_label(
+                        line.line_no if line.line_no is not None else line.source_ref
+                    ),
                     location=location,
                     issue_date=po.issue_date,
                     expected_date=line.expected_date,
@@ -11520,7 +11525,9 @@ class ProjectOrderInquiryService:
                     kind="po",
                     target_id=target_id,
                     document=po.po_number,
-                    line_label=self._line_label(line.source_ref),
+                    line_label=self._line_label(
+                        line.line_no if line.line_no is not None else line.source_ref
+                    ),
                     location=warehouse.warehouse_code if warehouse else None,
                     issue_date=po.issue_date,
                     expected_date=line.expected_date,
@@ -11806,9 +11813,13 @@ class ProjectOrderInquiryService:
         if raw is None:
             return None
         text_value = str(raw).strip()
-        if not text_value:
+        # SO-LINE-OI-STATUS-UNIFY (owner, 5 Nov 2026): a line NUMBER only. A purchase
+        # line's `source_ref` is AutoCount's `"{database}:{DocKey}:{DtlKey}"` key, which
+        # printed as "LAED_SORENTO:45836908:45884936" beside the PO; a raw key is never
+        # shown, so anything that is not a plain number reads as no label.
+        if not text_value.isdecimal():
             return None
-        return f"L{text_value}"
+        return f"L{int(text_value)}"
 
     def _candidate(
         self,

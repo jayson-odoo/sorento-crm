@@ -181,7 +181,7 @@ function debtText(option: BoardLadderOption): string {
   return party ? `${head} · ${party}` : head;
 }
 
-const MONTH_NAMES = [
+const MONTH_NAMES = [ // date-format-ok: month bucket label (Nov 2026), not a calendar date
   'Jan',
   'Feb',
   'Mar',

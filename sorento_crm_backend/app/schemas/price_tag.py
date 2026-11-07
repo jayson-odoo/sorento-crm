@@ -10,6 +10,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StringConstraints,
     field_validator,
     model_serializer,
     model_validator,
@@ -40,7 +41,9 @@ class LinePartIn(BaseModel):
 
     product_id: Optional[str] = None
     role: Optional[str] = None
-    candidates: list[str] = Field(default_factory=list)
+    # A choice group's options are a handful; the ceiling stops one part from forcing a full
+    # product resolution per id in a single preview (security review, PRICETAG-COMBO-FORMAT).
+    candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
 class PriceTagRequestLineCreate(BaseModel):
@@ -48,6 +51,8 @@ class PriceTagRequestLineCreate(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
+    # PRICETAG-LPSP: this line's own LP/SP choice. None = the request's price_mode.
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int = Field(default=1, ge=1)
     # The catalogue package this line is asked for as, and the parts under it, in
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
@@ -104,6 +109,7 @@ class PriceTagReviseLineIn(BaseModel):
     promotion_id: Optional[str] = None
     tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -192,6 +198,7 @@ class PriceTagRequestLineResponse(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool
+    price_type: Optional[Literal["list", "selling"]] = None
     quantity: int
     combo_id: Optional[str] = None
     # What the package guard found at submit, for marketing to read (D2). NULL =
@@ -559,6 +566,9 @@ SLOT_BINDINGS = (
     "included_accessories",
     "list_price",
     "sell_price",
+    # PRICETAG-LPSP: the figure the line shows (SP else LP) and its label.
+    "price",
+    "price_label",
     "badges",
     "alternatives",
     "accessories",
@@ -603,12 +613,40 @@ class CropRect(_StrictProps):
     height: float
 
 
+class SlotMain(_StrictProps):
+    kind: Literal["main"]
+
+
+class SlotFixed(_StrictProps):
+    kind: Literal["fixed"]
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotPick(_StrictProps):
+    kind: Literal["pick"]
+    group: int = Field(ge=0, lt=32)
+    index: int = Field(ge=0, lt=64)
+
+
+class SlotUpgrade(_StrictProps):
+    kind: Literal["upgrade"]
+    index: int = Field(ge=0, lt=64)
+
+
+#: PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line (same bounds as `template_needs`).
+SubjectSlotDoc = Union[SlotMain, SlotFixed, SlotPick, SlotUpgrade]
+
+
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
     fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
+    #: PRICETAG-DESIGNER-GAPS item 1: mirror about the layer box. Absent = not flipped.
+    flipX: Optional[bool] = None
+    flipY: Optional[bool] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class LayerPaddingDoc(_StrictProps):
@@ -632,6 +670,8 @@ class TextLayerPropsDoc(_StrictProps):
     lineHeight: float
     letterSpacing: float
     padding: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+    showCurrency: Optional[bool] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -657,6 +697,7 @@ class ShapeLayerPropsDoc(_StrictProps):
 class ProductSlotLayerPropsDoc(_StrictProps):
     kind: Literal["product_slot"]
     fieldKey: str
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class PriceBadgeLayerPropsDoc(_StrictProps):
@@ -694,11 +735,33 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     # used to do both jobs at once - `priceBadgeInsets` in the frontend's
     # `price-badge.ts` is the one place that resolves the legacy rule.
     margin: Optional[LayerPaddingDoc] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
     kind: Literal["badge"]
     assetId: str
+
+
+class FeatureIconsLayerPropsDoc(_StrictProps):
+    """PRICETAG-DESIGNER-GAPS item 3: one packed row of the icons the subject's spec values
+    carry, in the spec registry's one icon sequence (no per-template order)."""
+
+    kind: Literal["feature_icons"]
+    iconSize_mm: float = Field(gt=0, le=200)
+    gap_mm: float = Field(ge=0, le=100)
+    align: Literal["left", "center", "right"] = "left"
+    subjectPart: Optional[int] = None
+    subjectSlot: Optional[SubjectSlotDoc] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_order(cls, data):
+        """A draft saved while the layer still had its own ``order`` (owner 21:0x retired it)
+        opens and saves without it, rather than being refused as an unknown field."""
+        if isinstance(data, dict) and "order" in data:
+            data = {k: v for k, v in data.items() if k != "order"}
+        return data
 
 
 class GroupBindingDoc(_StrictProps):
@@ -721,6 +784,7 @@ TagLayerPropsDoc = Annotated[
         PriceBadgeLayerPropsDoc,
         BadgeLayerPropsDoc,
         GroupLayerPropsDoc,
+        FeatureIconsLayerPropsDoc,
     ],
     Field(discriminator="kind"),
 ]
@@ -732,7 +796,7 @@ class TagLayerDoc(BaseModel):
     id: str
     type: Literal[
         "image", "text", "shape", "product_slot", "price_badge",
-        "badge", "group",
+        "badge", "group", "feature_icons",
     ]
     x_mm: float
     y_mm: float
@@ -799,13 +863,39 @@ class TagTemplateCreate(BaseModel):
     family: str = Field(..., min_length=1, max_length=50)
     doc: dict = Field(default_factory=dict)
     print_size: dict = Field(default_factory=dict)
+    #: Hand-picked LP / SP / LP & SP; None = unset (offered on both kinds of line).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+
+
+#: A template setting that is trimmed and must not be blank (item 4).
+_SettingText255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+_SettingText50 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
 
 
 class TagTemplateUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=255)
-    family: Optional[str] = Field(default=None, max_length=50)
+    #: PRICETAG-DESIGNER-GAPS item 4: editable after create, never blank.
+    name: Optional[_SettingText255] = None
+    family: Optional[_SettingText50] = None
     doc: Optional[dict] = None
     print_size: Optional[dict] = None
+    #: Omitted = left alone; an explicit null clears it (`exclude_unset`).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+
+
+class TemplateNeeds(BaseModel):
+    """PRICETAG-COMBO-RENDER K4: what a template reads from a combo, from its PUBLISHED document."""
+
+    fixed: int = 0
+    groups: list[int] = []
+    upgrades: int = 0
+
+
+class TagTemplateUsage(BaseModel):
+    """What the tag template delete confirm names (TAG-TEMPLATE-DELETE-CONFIRM)."""
+
+    products: int
+    combos: int
+    requests: int
 
 
 class TagTemplateResponse(BaseModel):
@@ -816,6 +906,7 @@ class TagTemplateResponse(BaseModel):
     family: str
     doc: dict
     print_size: dict
+    price_type: Optional[Literal["list", "selling", "both"]] = None
     company_id: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
@@ -827,6 +918,7 @@ class TagTemplateResponse(BaseModel):
     # route substitutes a VERSION's doc/print_size for the draft above.
     published_version_id: Optional[str] = None
     published_version_no: Optional[int] = None
+    needs: Optional[TemplateNeeds] = None
 
 
 # ---------------------------------------------------------------------------
@@ -942,6 +1034,21 @@ class TagFont(BaseModel):
     url: str
 
 
+class FeatureIconOut(BaseModel):
+    """One library icon and its "show when" rule (feature icons, contract B5)."""
+
+    id: str
+    name: str
+    spec_key: str
+    values: list[str]
+
+
+class FeatureIconItem(FeatureIconOut):
+    """`GET /dealer-kit/feature-icons`: one icon of one spec value, with its signed URL."""
+
+    url: Optional[str] = None
+
+
 class DesignMediaMixin(BaseModel):
     """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
 
@@ -957,6 +1064,8 @@ class DesignMediaMixin(BaseModel):
     images: dict[str, str] = {}
     #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
     fonts: list[TagFont] = []
+    #: Feature icons: every rule-carrying icon, when the document has a feature_icons layer.
+    feature_icons: list[FeatureIconOut] = []
 
 
 class TagSheetDocResponse(BaseModel):
@@ -1074,6 +1183,9 @@ class TagItemLookupItem(BaseModel):
     id: str
     code: str
     name: str
+    # The option reads "CODE  RM <list price>" (owner, 4 Nov). None when the row
+    # has no price or a zero one; a set answers its override only.
+    list_price: Optional[float] = None
 
 
 def _uuid_or_none(value: Optional[str]) -> Optional[str]:
@@ -1142,7 +1254,8 @@ class LinePricingRequest(BaseModel):
 class LinePricingPromotionOption(BaseModel):
     id: str
     description: str
-    sell_price: float
+    #: None on a combo line whose combo stores no selling price (never a part sum).
+    sell_price: Optional[float] = None
     # PRICE-TAG-A3-EXPIRED: the end date of an ended A3 flyer still pricing
     # tags inside its type's bound; null for a live promotion. The dropdown
     # labels the option "(expired <date>)" from it.
@@ -1168,7 +1281,7 @@ class LinePricingRow(BaseModel):
     """
 
     key: str
-    list_price: float
+    list_price: Optional[float] = None
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
     sell_price: Optional[float] = None
@@ -1192,6 +1305,9 @@ class SpecValue(BaseModel):
     label: str
     value: str
     unit: Optional[str] = None
+    #: The stored value as a string (`mixer`, `true`), beside the display `value`. Feature
+    #: icons match on this, so renaming a label never silently drops an icon.
+    raw: Optional[str] = None
 
 
 class SpecKeyItem(BaseModel):
@@ -1200,6 +1316,26 @@ class SpecKeyItem(BaseModel):
     key: str
     label: str
     unit: Optional[str] = None
+
+
+class TagAccessoryImage(BaseModel):
+    attachment_id: str
+    url: str
+
+
+class TagAccessory(BaseModel):
+    """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
+    Declared on every tag shape below or `response_model` drops it without a word."""
+
+    #: `accessory` (library item) or `product` (a catalogue product listed as a free item, whose
+    #: `code`, description as `name`, photo and `list_price` are read live).
+    kind: str = "accessory"
+    id: str
+    name: str
+    spec: Optional[str] = None
+    image: Optional[TagAccessoryImage] = None
+    code: Optional[str] = None
+    list_price: Optional[float] = None
 
 
 class TagComboOption(BaseModel):
@@ -1232,6 +1368,8 @@ class TagCombo(BaseModel):
     name: str
     description: Optional[str] = None
     free_items: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
+    accessories: list[TagAccessory] = []
     choices: list[TagComboChoice] = []
     upgrades: list[TagComboUpgrade] = []
 
@@ -1265,6 +1403,9 @@ class ProductTagData(BaseModel):
     currency: str = "MYR"
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
+    #: PRICETAG-ACCESSORIES: the product's own list (an Ala Carte tag prints it).
+    accessories: list[TagAccessory] = []
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1391,11 +1532,30 @@ class TagPartData(BaseModel):
     #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
     #: subjectPart layer reads THIS, never the host's.
     price_tag_description: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
+    accessories: list[TagAccessory] = []
     #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
     #: subject picker groups candidates under it. Absent on a fixed part.
     role: Optional[str] = None
     #: r10 S6: true on the candidate THIS tag's own choices name.
     chosen: Optional[bool] = None
+
+
+class TagSlotGroup(BaseModel):
+    role: str
+    size: int
+    picks: list[TagPartData] = []
+
+
+class TagSlots(BaseModel):
+    """PRICETAG-COMBO-RENDER K2: where each product of a tag sits (fixed parts,
+    choice groups with their picks in pick order, upgrades with `chosen`)."""
+
+    #: The main product's own data (its picture and list price, never the combo's).
+    main: Optional[TagPartData] = None
+    fixed: list[TagPartData] = []
+    groups: list[TagSlotGroup] = []
+    upgrades: list[TagPartData] = []
 
 
 class ResolvedLineData(BaseModel):
@@ -1435,8 +1595,11 @@ class ResolvedLineData(BaseModel):
     sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
+    #: PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's.
+    accessories: list[TagAccessory] = []
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
+    slots: Optional[TagSlots] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
@@ -1633,10 +1796,23 @@ class ProductTagTemplateItem(BaseModel):
     published: bool
     width_mm: Optional[float] = None
     height_mm: Optional[float] = None
+    #: Compat: a default of either kind (``default_list or default_selling``).
+    is_default: bool = False
+    #: PRICETAG-COMBO-FORMAT: the template's price type (None = unset) and the link's defaults
+    #: per type (a lone fitting link counts).
+    price_type: Optional[Literal["list", "selling", "both"]] = None
+    default_list: bool = False
+    default_selling: bool = False
+    needs: Optional[TemplateNeeds] = None
 
 
 class ProductTagTemplatesUpdate(BaseModel):
     template_ids: list[str] = Field(default_factory=list, max_length=100)
+    #: Each must be one of ``template_ids`` (422 otherwise) and fit its type; None = none.
+    default_list_template_id: Optional[str] = None
+    default_selling_template_id: Optional[str] = None
+    #: Legacy: with neither new key sent, sets BOTH defaults.
+    default_template_id: Optional[str] = None
 
 
 class TemplateAssignFilter(BaseModel):
@@ -1673,6 +1849,7 @@ class TagPreviewLineIn(BaseModel):
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
     tag_template_id: Optional[str] = None
+    price_type: Optional[Literal["list", "selling"]] = None
 
 
 class TagPreviewIn(BaseModel):

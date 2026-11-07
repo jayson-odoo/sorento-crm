@@ -1622,9 +1622,9 @@ def test_sf3_hints_show_malaysia_time():
         sheet = _make(db, c, source="draft")
         sheet.items_taken_at = datetime(2026, 11, 2, 17, 0)
         db.flush()
-        assert spec.sources(db, c["document"])[-1]["hint"] == "issued 03 Nov 2026"
+        assert spec.sources(db, c["document"])[-1]["hint"] == "issued 03/11/2026"
         label, hint = spec.source_text(db, c["document"], sheet)
-        assert hint == "lines taken 03 Nov 2026 01:00"
+        assert hint == "lines taken 03/11/2026, 1:00 am"
 
 
 def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_for_many_issues():
@@ -1794,7 +1794,8 @@ def test_r5_a_template_a_spec_sheet_uses_cannot_be_deleted_until_the_sheet_is_go
                 db.delete(sheet)
             db.commit()
             tag_template_service.delete_template(db, t["page"].id)
-            assert db.get(TagTemplate, t["page"].id) is None
+            # Archived, not removed (TAG-TEMPLATE-DELETE-CONFIRM).
+            assert db.get(TagTemplate, t["page"].id).archived_at is not None
 
 
 def test_r5_the_delete_is_refused_at_park_too():

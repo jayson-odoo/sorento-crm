@@ -1079,8 +1079,8 @@ def _group_schemes(
                     if (scheme.start, scheme.end) != (dealer[0].start, dealer[0].end):
                         # The replacement needs the dealer's period to cover the account's.
                         raise CellError(
-                            f"{_KIND_NAME[kind]}: an account's window ({scheme.start:%b %Y} to {scheme.end:%b %Y}) "
-                            f"differs from its dealer's ({dealer[0].start:%b %Y} to {dealer[0].end:%b %Y})"
+                            f"{_KIND_NAME[kind]}: an account's window ({scheme.start:%b %Y} to {scheme.end:%b %Y}) "  # date-format-ok: month-level target window, no day to show
+                            f"differs from its dealer's ({dealer[0].start:%b %Y} to {dealer[0].end:%b %Y})"  # date-format-ok: month-level target window, no day to show
                         )
                     scheme.replaced_by = dealer[0].key
                     account = results[r].account_in_file
@@ -1214,7 +1214,7 @@ def _group_schemes(
     span = (
         str(start.year)
         if (start.month, start.day, end.month, end.day) == (1, 1, 12, 31) and start.year == end.year
-        else f"{start:%b %Y} to {end:%b %Y}"
+        else f"{start:%b %Y} to {end:%b %Y}"  # date-format-ok: month-level target window, no day to show
     )
     unit = "points" if points else "amount"
     unit_word = " points" if points else ""

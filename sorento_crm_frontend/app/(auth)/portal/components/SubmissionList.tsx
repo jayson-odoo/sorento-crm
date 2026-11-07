@@ -41,7 +41,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
-import { formatCurrency, formatDateInMalaysia } from '@/lib/helpers';
+import { formatCurrency, formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   complaintStatusLabel,
   complaintStatusPillClass,
@@ -91,6 +91,7 @@ import {
   type LandingFilters,
   type LandingSort,
 } from '../lib/landing-fields';
+import { localStore } from '@/lib/storage';
 
 /**
  * One kind's rows in the landing's summary shape, through `client`. Each kind answers its own
@@ -171,7 +172,7 @@ export function usePortalListView(): [
   const [view, setViewState] = useState<ListBoardViewMode>('board');
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const stored = window.localStorage.getItem(PORTAL_VIEW_KEY);
+    const stored = localStore.getItem(PORTAL_VIEW_KEY);
     if (stored === 'list' || stored === 'board') {
       setViewState(stored);
     }
@@ -179,7 +180,7 @@ export function usePortalListView(): [
   const setView = useCallback((mode: ListBoardViewMode) => {
     setViewState(mode);
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(PORTAL_VIEW_KEY, mode);
+      localStore.setItem(PORTAL_VIEW_KEY, mode);
     }
   }, []);
   return [view, setView];
@@ -709,7 +710,7 @@ function submissionTableColumns(
 
   const dateCell = (value: string | null | undefined) =>
     value ? (
-      new Date(value).toLocaleDateString()
+      formatDateInMalaysia(value)
     ) : (
       <span className="text-muted-foreground">-</span>
     );
@@ -953,11 +954,7 @@ function SubmissionCard({
         {row.expected_close_date && (
           <p className="text-sm text-foreground/80">
             <span className="text-muted-foreground">Expected close: </span>
-            {new Date(
-              `${row.expected_close_date.slice(0, 10)}T00:00:00`,
-            ).toLocaleDateString('en-GB', {
-              dateStyle: 'medium',
-            })}
+            {formatDateInMalaysia(row.expected_close_date.slice(0, 10))}
           </p>
         )}
         {row.delivery_date && (
@@ -969,24 +966,18 @@ function SubmissionCard({
         {row.needed_by_date && (
           <p className="text-sm text-foreground/80">
             <span className="text-muted-foreground">Need by: </span>
-            {new Date(row.needed_by_date).toLocaleDateString(undefined, {
-              dateStyle: 'medium',
-            })}
+            {formatDateInMalaysia(row.needed_by_date)}
           </p>
         )}
         {row.last_revised_at ? (
           <p className="text-xs text-muted-foreground">
             Revised{' '}
-            {new Date(row.last_revised_at).toLocaleDateString(undefined, {
-              dateStyle: 'medium',
-            })}
+            {formatDateInMalaysia(row.last_revised_at)}
           </p>
         ) : (
           row.created_at && (
             <p className="text-xs text-muted-foreground">
-              {new Date(row.created_at).toLocaleDateString(undefined, {
-                dateStyle: 'medium',
-              })}
+              {formatDateInMalaysia(row.created_at)}
             </p>
           )
         )}
@@ -1044,10 +1035,7 @@ function SubmissionPreviewDialog({
     if (row.created_at) {
       entries.push({
         label: 'Created',
-        value: new Date(row.created_at).toLocaleString(undefined, {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        }),
+        value: formatDateTimeInMalaysia(row.created_at),
       });
     }
     if (row.rejection_reason)

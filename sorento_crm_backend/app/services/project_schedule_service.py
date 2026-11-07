@@ -39,6 +39,7 @@ document, which is the fallback working rather than a degradation.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_datetime
 import copy
 import hashlib
 import logging
@@ -689,7 +690,7 @@ class ProjectScheduleService:
             status_code=409,
             message=(
                 f"This file is already version {existing.version_no} of this schedule "
-                f"(uploaded {uploaded_malaysia.strftime('%d/%m/%Y %H:%M')}). Open that "
+                f"(uploaded {fmt_datetime(uploaded_malaysia)}). Open that "
                 "version to read it again, or upload a changed file."
             ),
             code="schedule_version_duplicate",

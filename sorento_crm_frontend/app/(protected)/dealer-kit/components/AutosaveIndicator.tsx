@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import type { AutosaveStatus } from '@/hooks/useAutosave';
 
 function formatSavedAt(savedAt: Date): string {
-  return savedAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return savedAt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); // date-format-ok: autosave time-of-day indicator, time only
 }
 
 export function AutosaveIndicator({

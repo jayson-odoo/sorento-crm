@@ -2386,7 +2386,8 @@ that comment. How each point was applied:
   `/sales/targets/{id}`. Header card, then tabs Details (Target, What counts, Dates, Figure),
   Periods, Agents (team only), Commission. New opens empty in edit with the defaults Amount,
   Ordered, All products, today to month end, split off; `?kind=` and `&subject=` preset it from
-  Set target on a list, a team or an agent's line. Edit, Duplicate and Delete sit in the gear.
+  Set target on a list, a team or an agent's line. Duplicate and Delete sit in the gear; Edit
+  is the primary button since 5 Nov (`PLAN-target-edit-cta-05nov.md`).
   The Set target modal and `SalesTargetDetail`/`SalesTargetPage` are removed.
 - **F5, UUID leak** ("UUID leak"): the Products picker in edit had no `selectedOptions`, so the
   shared multi-select fell back to the raw id. Every scope item now carries `kind` and a

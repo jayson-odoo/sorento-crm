@@ -126,9 +126,13 @@ class S3Service:
         file_path: str,
         content_type: Optional[str] = None,
         signed_url_expires_in: int = 3600,
+        cache_control: Optional[str] = None,
     ) -> tuple[str, str]:
         """
         Upload file to S3 and return a CloudFront signed URL.
+
+        ``cache_control`` is for objects whose bytes never change under their key (image
+        renditions, IMAGE-UNIFY); originals are uploaded without it.
 
         The returned URL is suitable for external use (e.g. respond.io / WhatsApp).
 
@@ -153,6 +157,8 @@ class S3Service:
             extra_args = {}
             if content_type:
                 extra_args['ContentType'] = content_type
+            if cache_control:
+                extra_args['CacheControl'] = cache_control
 
             self.s3_client.put_object(
                 Bucket=self.bucket_name,

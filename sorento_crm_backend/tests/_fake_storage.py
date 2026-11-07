@@ -30,7 +30,17 @@ class FakeStorage:
         self.deleting_fails = False
         self.downloading_fails = False
 
-    def upload_file(self, *, file_content: bytes, file_path: str, content_type=None):
+    def upload_file(
+        self,
+        *,
+        file_content: bytes,
+        file_path: str,
+        content_type=None,
+        signed_url_expires_in: int = 3600,
+        cache_control=None,
+    ):
+        # Same surface as the real backends (storage_router.StorageBackend); renditions pass
+        # cache_control (IMAGE-UNIFY).
         self.objects[file_path] = (file_content, content_type)
         return file_path, f"https://cdn.test/{file_path}"
 

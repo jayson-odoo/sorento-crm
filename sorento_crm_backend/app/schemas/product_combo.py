@@ -10,6 +10,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.accessory import AccessoryOut
+
 
 class ProductComboPartOut(BaseModel):
     id: str
@@ -31,6 +33,8 @@ class ProductComboPartOut(BaseModel):
 class ProductComboImageOut(BaseModel):
     attachment_id: str
     url: str
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class ProductComboOut(BaseModel):
@@ -39,10 +43,11 @@ class ProductComboOut(BaseModel):
     name: str
     sort_order: int
     description: Optional[str] = None
-    free_items: Optional[str] = None
     list_price: Optional[Decimal] = None
     sell_price: Optional[Decimal] = None
     parts: List[ProductComboPartOut] = []
+    #: PRICETAG-ACCESSORIES: the combo's own "Free items" list, in order (replaces the free text).
+    accessories: List[AccessoryOut] = []
     #: The combo's own cover picture (S5), null with none uploaded yet.
     image: Optional[ProductComboImageOut] = None
     created_at: datetime
@@ -65,16 +70,22 @@ class ProductSoldWithListOut(BaseModel):
     data: List[ProductSoldWithOut] = []
 
 
+#: Raw input cap before sanitising (the 5000 limit applies to the stored value, in the service).
+RAW_DESCRIPTION_LIMIT = 20000
+
+
 class ProductComboCreate(BaseModel):
     name: str
+    #: Sanitised and length-checked in the service (the limit applies to the stored value).
+    description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
 
 
 class ProductComboUpdate(BaseModel):
     name: Optional[str] = None
     sort_order: Optional[int] = None
     #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
-    description: Optional[str] = Field(default=None, max_length=5000)
-    free_items: Optional[str] = Field(default=None, max_length=2000)
+    #: Sanitised and length-checked in the service (the limit applies to the stored value).
+    description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
     list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 

@@ -26,7 +26,9 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from app.database import SessionLocal
+from sqlalchemy.orm import Session
+
+from app.database import SessionLocal, engine
 from app.models.embeddings import EmbeddingChunk, EmbeddingDocument, EmbeddingQueue
 from app.models.procurement import SPOAllocation
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -46,13 +48,23 @@ def _now() -> datetime:
 
 @pytest.fixture()
 def db():
-    session = SessionLocal()
-    session.begin_nested()
+    # One outer transaction on a dedicated connection, rolled back at the end, with the
+    # session joined in `create_savepoint` mode: the worker under test calls
+    # `db.commit()` on this same session (SessionLocal is monkeypatched to return it), and
+    # a plain `SessionLocal()` + `begin_nested()` let that commit reach the shared
+    # database. The leaked `ZZT-` category rows then broke
+    # tests/test_master_ingest.py::TestCategoriesAndUnitsOfMeasure, which counts
+    # `category_code LIKE 'ZZT-%'` (release sweep RELEASE-SWEEP-4NOV-PM).
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = SessionLocal(bind=connection, join_transaction_mode="create_savepoint")
     try:
         yield session
     finally:
-        session.rollback()
-        session.close()
+        # Unbound call: two tests neutralise the instance's `.close` for the worker.
+        Session.close(session)
+        transaction.rollback()
+        connection.close()
 
 
 def _product(db) -> Product:

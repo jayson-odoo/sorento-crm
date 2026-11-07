@@ -586,7 +586,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
@@ -2056,6 +2056,7 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+            NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
           tags: |
             ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
             ${{ env.IMAGE_REPO }}:frontend-tree-${{ steps.decide.outputs.frontend_tree }}

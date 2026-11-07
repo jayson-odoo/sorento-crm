@@ -11,6 +11,7 @@ refusing to print. AC-H.2 says to return 409 with a reason.
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from typing import Optional
 
@@ -104,7 +105,7 @@ def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
                 status_code=409,
                 message=(
                     f"Line {index}'s promotion '{promo.description or promo.id}' "
-                    f"expired on {promo.end_date.isoformat()}. Extend the "
+                    f"expired on {fmt_date(promo.end_date)}. Extend the "
                     "promotion or remove it from the line before exporting."
                 ),
                 code="PROMOTION_EXPIRED",
@@ -513,17 +514,36 @@ def design_media(
         for part in row.get("parts") or []:
             for image in part.get("images") or []:
                 images[image["attachment_id"]] = image["url"]
+        # PRICETAG-ACCESSORIES: the accessories box draws each accessory's own picture.
+        for item in row.get("accessories") or []:
+            image = item.get("image")
+            if image and image.get("attachment_id") and image.get("url"):
+                images[image["attachment_id"]] = image["url"]
+
+    # Feature icons (contract B5): a feature_icons layer draws whichever library icons the
+    # subject's specs match, so every rule-carrying icon travels with the media, signed.
+    # S2: a staff session may span companies; a request's render shows its OWN company's icons.
+    feature_icons = (
+        asset_service.feature_icon_rules(
+            db, company_id=request.company_id if request is not None else None
+        )
+        if asset_service.doc_has_feature_icons(doc or {})
+        else []
+    )
+    asset_ids = asset_service.tag_sheet_asset_ids(doc or {}) | {
+        icon["id"] for icon in feature_icons
+    }
 
     return rows, {
         # assetId -> signed URL, for every library asset the document names.
-        "assets": asset_service.urls_for(
-            db, asset_service.tag_sheet_asset_ids(doc or {})
-        ),
+        "assets": asset_service.urls_for(db, asset_ids),
         # attachmentId -> signed URL, for every product photo a bound layer may
         # be showing. Gated by `product_images` before it ever gets here.
         "images": images,
         # Brand fonts, loaded through @font-face before anything draws with them.
         "fonts": asset_service.font_assets(db),
+        # Rule-carrying icons, `[]` unless the document has a feature_icons layer.
+        "feature_icons": feature_icons,
     }
 
 

@@ -11,6 +11,7 @@ import { useMyTasks } from '../../_shared/hooks/useProjects';
 import { bucketTasksByUrgency } from '../../_shared/lib/taskUrgency';
 import type { ProjectTask } from '../../_shared/types/project.types';
 import { PageHeader } from '@/components/common/PageHeader';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /**
  * One person's open project work, across every project they are on (AC-N9).
@@ -158,5 +159,5 @@ function MyTaskRow({ task }: { task: ProjectTask }) {
 function formatDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateInMalaysia(date);
 }

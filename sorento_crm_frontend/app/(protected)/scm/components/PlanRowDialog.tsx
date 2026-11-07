@@ -1,5 +1,6 @@
 'use client';
 
+import { randomId } from '@/lib/id';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   type ColumnDef,
@@ -283,7 +284,7 @@ export function DrillTable<TRow extends object>({
   );
 }
 
-const MONTHS = [
+const MONTHS = [ // date-format-ok: month bucket labels (Apr 26), not a calendar date
   'Jan',
   'Feb',
   'Mar',
@@ -1282,7 +1283,7 @@ function PickerFilterConditions({
   onClear: () => void;
 }) {
   const addCondition = () =>
-    onChange([...conditions, { id: crypto.randomUUID(), field: fields[0]?.id ?? '', value: [] }]);
+    onChange([...conditions, { id: randomId(), field: fields[0]?.id ?? '', value: [] }]);
   const updateCondition = (id: string, patch: Partial<PickerFilterCondition>) =>
     onChange(conditions.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   const removeCondition = (id: string) => onChange(conditions.filter((c) => c.id !== id));

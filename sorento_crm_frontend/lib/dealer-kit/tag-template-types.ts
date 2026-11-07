@@ -7,6 +7,8 @@
  * pixels via a zoom-dependent scale factor.
  */
 
+import type { TemplateNeeds } from './combo-slots';
+
 // ---------------------------------------------------------------------------
 // Layer types
 // ---------------------------------------------------------------------------
@@ -19,7 +21,9 @@ export type TagLayerType =
   | 'price_badge'
   | 'badge'
   | 'barcode'
-  | 'group';
+  | 'group'
+  | 'feature_icons'
+  | 'accessories';
 
 /** Named slots that bind a layer to a product data field at render time. */
 export type SlotBinding =
@@ -31,6 +35,9 @@ export type SlotBinding =
   | 'included_accessories'
   | 'list_price'
   | 'sell_price'
+  // PRICETAG-LPSP: the figure the line shows (SP when it shows SP, else LP) and its label.
+  | 'price'
+  | 'price_label'
   | 'badges'
   | 'alternatives'
   | 'accessories'
@@ -98,6 +105,9 @@ export interface ImageLayerProps {
   fit: ImageFit;
   cropRect?: { x: number; y: number; width: number; height: number };
   maskShape?: ImageMaskShape;
+  /** Mirror left-right / top-bottom about the layer box (`image-flip.ts`). Absent = not flipped. */
+  flipX?: boolean;
+  flipY?: boolean;
   /**
    * Where the picture came from before S3b gave image layers a source
    * discriminator. Read by `imageSourceOf`, never written: a template saved by
@@ -110,6 +120,8 @@ export interface ImageLayerProps {
    *  slots are `image` layers, not `product_slot`), so it needs the same
    *  per-layer subject. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 /**
@@ -137,6 +149,22 @@ export interface LayerPadding {
   left: number;
 }
 
+/** PRICETAG-COMBO-RENDER K1: where a layer reads on a combo line. 0-based. */
+export type SubjectSlot =
+  | { kind: 'main' }
+  | { kind: 'fixed'; index: number }
+  | { kind: 'pick'; group: number; index: number }
+  | { kind: 'upgrade'; index: number };
+
+/** K2: where each product of a tag sits. */
+export interface TagSlots {
+  /** The main product's own data; absent on a payload that predates it. */
+  main?: TagPartData | null;
+  fixed: TagPartData[];
+  groups: { role: string; size: number; picks: TagPartData[] }[];
+  upgrades: TagPartData[];
+}
+
 export interface TextLayerProps {
   kind: 'text';
   text: string;
@@ -162,6 +190,11 @@ export interface TextLayerProps {
    *  the parent, matching every document saved before this field existed
    *  (AC-S4-4). See `subjectOf` in `product-block.ts`. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
+  /** Same meaning as `PriceBadgeLayerProps.showCurrency`, for a text layer bound to a price slot.
+   *  Absent = the bare figure; true = `RM 849`, and nothing at all when there is no amount. */
+  showCurrency?: boolean;
 }
 
 export interface ShapeLayerProps {
@@ -184,6 +217,8 @@ export interface ProductSlotLayerProps {
   fieldKey: string;
   /** D7 - see `TextLayerProps.subjectPart`. */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 export interface BadgeLayerProps {
@@ -273,6 +308,8 @@ export interface PriceBadgeLayerProps {
    * `product-block.ts`.
    */
   subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
 }
 
 /**
@@ -287,6 +324,92 @@ export interface BarcodeLayerProps {
   kind: 'barcode';
   show_code: boolean;
   /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
+}
+
+/**
+ * PRICETAG-DESIGNER-GAPS item 3: one packed row of the icons the subject's spec values carry
+ * (`featureIconsFor`), in the spec registry's one sequence (spec Icon order, then the value's own
+ * list). The layer has no order of its own (owner, 5 Nov 21:0x).
+ */
+export interface FeatureIconsLayerProps {
+  kind: 'feature_icons';
+  iconSize_mm: number;
+  gap_mm: number;
+  align: 'left' | 'center' | 'right';
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
+  /** PRICETAG-COMBO-RENDER K1: a position in the combo; wins over `subjectPart`. */
+  subjectSlot?: SubjectSlot;
+}
+
+/**
+ * PRICETAG-ACCESSORIES: one styled box that repeats a mini-card (picture, name, spec) per
+ * accessory on the bound list, in order (card rules A4-A8). Laid out by `accessoryBoxLayout`
+ * (`lib/dealer-kit/accessory-box.ts`), the one function the canvas, the preview and print share.
+ * Header text and the "+" badge are the box's own (owner, 6 Nov: "FREE" on one tag,
+ * "ACCESSORIES INCLUDED" on another).
+ */
+/**
+ * One text role of an Accessories box (header, name, spec), set with the same TypographyControls
+ * every text layer uses. Size lives in the box's own `*FontSize` prop; everything here is optional
+ * and falls back to the box's defaults, so a box saved before these existed draws unchanged.
+ */
+export interface AccessoryTextStyle {
+  fontFamily?: string | null;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  letterSpacing?: number;
+  color?: string;
+}
+
+export interface AccessoriesLayerProps {
+  kind: 'accessories';
+  direction: 'vertical' | 'horizontal';
+  /**
+   * Owner hand test (6 Nov ~15:00): each card is a picture ABOVE its text (stacked, centred, the
+   * printed Dealer Kit box) or LEFT of it. Absent on a box saved before: vertical drew side,
+   * horizontal drew stacked (`itemLayoutOf`).
+   */
+  itemLayout?: 'stacked' | 'side';
+  /** Absent = shown (a box saved before hid its header only by clearing the text). */
+  showHeader?: boolean;
+  /** Absent = shown. */
+  showFrame?: boolean;
+  /** The header sits ON the top border (legend style), the border broken behind it. Absent = no. */
+  headerOnBorder?: boolean;
+  /** What shows behind a header on the border (the tag's own background). */
+  headerBackground?: string;
+  headerStyle?: AccessoryTextStyle;
+  nameStyle?: AccessoryTextStyle;
+  specStyle?: AccessoryTextStyle;
+  headerText: string;
+  headerFontSize: number;
+  headerColor: string;
+  /** The round "+" badge on the box's top-left corner. */
+  showBadge: boolean;
+  badgeColor: string;
+  fill: string;
+  stroke: string;
+  strokeWidth_mm: number;
+  cornerRadius_mm: number;
+  cardFill: string;
+  textColor: string;
+  imageSize_mm: number;
+  nameFontSize: number;
+  specFontSize: number;
+  gap_mm: number;
+  /** Horizontal boxes: every card is this wide (card Q-M2 (a)). */
+  cardWidth_mm: number;
+  fontFamily?: string;
+  /** PRICETAG-COMBO-RENDER K1: a combo position whose OWN list to read; absent = the tag's list. */
+  subjectSlot?: SubjectSlot;
+  /** D7: a request line's part (index into `parts`; -1 the main product) whose OWN list to read. */
   subjectPart?: number;
 }
 
@@ -310,7 +433,9 @@ export type TagLayerProps =
   | PriceBadgeLayerProps
   | BadgeLayerProps
   | BarcodeLayerProps
-  | GroupLayerProps;
+  | GroupLayerProps
+  | FeatureIconsLayerProps
+  | AccessoriesLayerProps;
 
 // ---------------------------------------------------------------------------
 // Layer
@@ -443,6 +568,10 @@ export interface TagTemplate {
   /** The live pointer (PLAN D7). Absent = never published. */
   published_version_id?: string | null;
   published_version_no?: number | null;
+  /** What the published layers read from a combo (PRICETAG-COMBO-RENDER K4). */
+  needs?: TemplateNeeds | null;
+  /** Hand-picked LP / SP / both; null or absent = not set (offered on both kinds of line). */
+  price_type?: 'list' | 'selling' | 'both' | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +698,8 @@ export interface TagSpecValue {
   label: string;
   value: string;
   unit: string | null;
+  /** The stored value as text (`mixer`, `true`). Feature icons match on this, never on `value`. */
+  raw?: string;
 }
 
 /**
@@ -604,9 +735,13 @@ export interface ProductTagData {
   currency?: string;
   /** The combo being previewed in the template editor (PRICETAG-COMBO AC-5.3). */
   combo?: TagCombo | null;
+  /** Positions of the previewed combo (PRICETAG-COMBO-RENDER K2). */
+  slots?: TagSlots | null;
   /** PS-SPEC-SHEET: brand name and technical drawing, when the source carries them. */
   brand?: string;
   drawing?: TagImage | null;
+  /** PRICETAG-ACCESSORIES: the product's own list. Absent on an older payload. */
+  accessories?: TagAccessory[];
 }
 
 export interface ProductSetMemberTagData {
@@ -672,12 +807,29 @@ export interface TagComboUpgrade {
   picked: boolean;
 }
 
+/**
+ * PRICETAG-ACCESSORIES: one entry of an accessory list as a tag carries it. A library accessory
+ * (`kind` 'accessory' or absent): name + spec. A catalogue product listed as a free item (`kind`
+ * 'product', owner 6 Nov ~10:45): `code`, its description as `name`, `list_price`, read live.
+ */
+export interface TagAccessory {
+  kind?: 'accessory' | 'product';
+  id: string;
+  name: string;
+  spec: string | null;
+  image: { attachment_id: string; url: string } | null;
+  code?: string | null;
+  list_price?: number | null;
+}
+
 /** The combo a tag's line names. Null on a line with no combo and on an older pin. */
 export interface TagCombo {
   id: string;
   name: string;
   description: string | null;
   free_items: string | null;
+  /** PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined. */
+  accessories?: TagAccessory[];
   choices: { role: string; options: TagComboOption[] }[];
   upgrades: TagComboUpgrade[];
 }
@@ -722,6 +874,8 @@ export interface TagPartData {
   /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
   brand?: string;
   drawing?: TagImage | null;
+  /** PRICETAG-ACCESSORIES: this position's own product's list. */
+  accessories?: TagAccessory[];
 }
 
 /** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
@@ -782,6 +936,9 @@ export interface LineTagData {
   sell_price: number | null;
   show_promo_price: boolean;
   included_accessories: string;
+  /** PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's. Absent on a
+   *  row pinned before the list existed. */
+  accessories?: TagAccessory[];
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;
@@ -792,6 +949,8 @@ export interface LineTagData {
   price_tag_description?: string | null;
   /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
   combo?: TagCombo | null;
+  /** Where each product of this tag sits (PRICETAG-COMBO-RENDER K2). */
+  slots?: TagSlots | null;
   /** PS-SPEC-SHEET: present only on a spec sheet page's row. */
   brand?: string;
   drawing?: TagImage | null;
@@ -911,6 +1070,42 @@ export function defaultBadgeProps(): BadgeLayerProps {
   return {
     kind: 'badge',
     assetId: '',
+  };
+}
+
+export function defaultFeatureIconsProps(): FeatureIconsLayerProps {
+  return { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left' };
+}
+
+export function defaultAccessoriesProps(): AccessoriesLayerProps {
+  return {
+    kind: 'accessories',
+    direction: 'vertical',
+    // Owner hand test (6 Nov ~15:00): the printed Dealer Kit box. A frame with the header on its
+    // top border, each item a picture above a centred bold name and spec; no "+" badge.
+    itemLayout: 'stacked',
+    showHeader: true,
+    showFrame: true,
+    headerOnBorder: true,
+    headerBackground: '#ffffff',
+    nameStyle: { fontWeight: 700 },
+    specStyle: { fontWeight: 400 },
+    headerText: 'ACCESSORIES INCLUDED',
+    headerFontSize: 9,
+    headerColor: '#1f4d36',
+    showBadge: false,
+    badgeColor: '#c2410c',
+    fill: '#f3f7f4',
+    stroke: '#1f4d36',
+    strokeWidth_mm: 0.4,
+    cornerRadius_mm: 3,
+    cardFill: '#ffffff',
+    textColor: '#111827',
+    imageSize_mm: 10,
+    nameFontSize: 8,
+    specFontSize: 6.5,
+    gap_mm: 1.5,
+    cardWidth_mm: 26,
   };
 }
 

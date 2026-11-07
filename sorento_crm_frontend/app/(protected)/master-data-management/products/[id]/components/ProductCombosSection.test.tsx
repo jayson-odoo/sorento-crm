@@ -25,6 +25,35 @@ vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
 }));
 
+// PRICETAG-COMBO-FORMAT AC-21: the description is the shared RichTextEditor (its own suite covers
+// tiptap) and the live tag preview has its own suite; both are stood in for here so these tests
+// keep pinning what they always did.
+vi.mock('@/components/ui/rich-text-editor', () => {
+  const Stand = (props: {
+    value?: string;
+    onChange: (v: string) => void;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      aria-labelledby={props['aria-labelledby']}
+      value={props.value ?? ''}
+      onChange={(e) => props.onChange(e.target.value)}
+    />
+  );
+  return { RichTextEditor: Stand, default: Stand };
+});
+vi.mock('./ComboTagPreview', () => ({ ComboTagPreview: () => null }));
+
+vi.mock('./ComboTemplatesField', () => ({ ComboTemplatesField: () => null }));
+// The accessory list has its own suite; here it stands in as a labelled marker.
+vi.mock('./AccessoryListField', () => ({
+  AccessoryListField: (props: { label?: string; ownerId: string; canEdit: boolean }) => (
+    <div data-testid="accessory-list" data-owner={props.ownerId} data-can-edit={String(props.canEdit)}>
+      {props.label}
+    </div>
+  ),
+}));
+
 vi.mock('./AddComboModal', () => ({
   AddComboModal: ({ open }: { open: boolean }) =>
     open ? <div data-testid="add-combo-modal" /> : null,
@@ -335,10 +364,9 @@ describe('ProductCombosSection', () => {
     const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]');
     expect(combo3).not.toBeNull();
     const scoped = within(combo3 as HTMLElement);
-    expect(scoped.getByRole('img', { name: /3 in 1/i })).toHaveAttribute(
-      'src',
-      'https://cdn.example.test/combo.jpg',
-    );
+    // The thumbnail is a button named for the combo (AC-40); its picture is decorative.
+    expect(scoped.getByRole('button', { name: 'Preview photo of 3 in 1' })).toBeInTheDocument();
+    expect(combo3!.querySelector('img')).toHaveAttribute('src', 'https://cdn.example.test/combo.jpg');
     expect(scoped.getByRole('button', { name: /replace/i })).toBeInTheDocument();
     expect(scoped.getByRole('button', { name: /clear/i })).toBeInTheDocument();
   });
@@ -395,7 +423,7 @@ describe('ProductCombosSection', () => {
     render(<ProductCombosSection productId={PRODUCT_ID} />);
 
     const combo3 = screen.getByText('3 in 1').closest('[data-testid="combo-block"]') as HTMLElement;
-    const img = within(combo3).getByRole('img', { name: /3 in 1/i });
+    const img = combo3.querySelector('img') as HTMLElement;
     let row: HTMLElement | null = img.parentElement;
     while (row && !row.className.split(' ').includes('flex-wrap')) {
       row = row.parentElement;

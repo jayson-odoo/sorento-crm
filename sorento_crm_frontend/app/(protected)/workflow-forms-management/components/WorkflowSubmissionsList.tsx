@@ -39,6 +39,7 @@ import {
   useWorkflowSubmissionsGridQuery,
 } from '../hooks/useWorkflowForms';
 import type { WorkflowSubmission } from '../types/workflowForms.types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 export default function WorkflowSubmissionsList({
   fixedDefinitionId,
@@ -166,7 +167,7 @@ export default function WorkflowSubmissionsList({
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
         cell: ({ row }) =>
-          row.original.updated_at ? new Date(row.original.updated_at).toLocaleString() : '-',
+          row.original.updated_at ? formatDateTimeInMalaysia(row.original.updated_at) : '-',
         size: 180,
         meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-28" /> },
       },

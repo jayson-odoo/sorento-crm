@@ -51,9 +51,9 @@ describe('dayLabel', () => {
 
 describe('computedAtLabel', () => {
   it('renders the wall-clock as written, adding no timezone offset', () => {
-    expect(computedAtLabel('2026-08-03T09:12:00')).toBe('03/08/2026, 09:12');
+    expect(computedAtLabel('2026-08-03T09:12:00')).toBe('03/08/2026, 9:12 am');
     // 09:12 must not become 17:12.
-    expect(computedAtLabel('2026-08-03T09:12:00')).not.toContain('17:12');
+    expect(computedAtLabel('2026-08-03T09:12:00')).not.toContain('5:12 pm');
   });
 
   it('falls back to the date alone when there is no time part', () => {

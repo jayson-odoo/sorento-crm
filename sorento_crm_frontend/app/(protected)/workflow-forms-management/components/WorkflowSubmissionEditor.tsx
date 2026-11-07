@@ -50,6 +50,7 @@ import {
   workflowNewPrefilledUrl,
   workflowSubmissionUrl,
 } from '../utils/workflowShareLinks';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 type LineRow = { line_group_id: string; sort_order: number; row_data: Record<string, unknown> };
 
@@ -518,7 +519,7 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
               {[...sub.transition_logs].reverse().map((log) => (
                 <li key={log.id} className="border-b pb-2">
                   <span className="text-muted-foreground">
-                    {log.created_at ? new Date(log.created_at).toLocaleString() : ''}
+                    {log.created_at ? formatDateTimeInMalaysia(log.created_at) : ''}
                   </span>{' '}
                   {log.from_state_code ?? '?'} → {log.to_state_code}
                   {log.remark ? ` - ${log.remark}` : ''}

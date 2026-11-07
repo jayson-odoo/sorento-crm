@@ -29,6 +29,7 @@ export function FocusToggle({
   label = 'canvas',
   className,
   iconClassName = 'size-4',
+  iconOnly = false,
 }: {
   active: boolean;
   onToggle: (next: boolean) => void;
@@ -43,6 +44,11 @@ export function FocusToggle({
   className?: string;
   /** Same idea, for the icon - default matches the other three hosts. */
   iconClassName?: string;
+  /**
+   * Icon only, the words moved to the tooltip: for a host whose toolbar must stay one row
+   * (the spec sheet editor). The accessible name is the same either way.
+   */
+  iconOnly?: boolean;
 }) {
   return (
     <Button
@@ -50,6 +56,7 @@ export function FocusToggle({
       size="sm"
       aria-pressed={active}
       aria-label={active ? `Exit full screen ${label}` : `Full screen ${label}`}
+      title={iconOnly ? (active ? 'Exit full screen' : 'Full screen') : undefined}
       onClick={() => onToggle(!active)}
       className={className}
     >
@@ -58,7 +65,7 @@ export function FocusToggle({
       ) : (
         <Maximize2 className={iconClassName} />
       )}
-      {active ? 'Exit full screen' : 'Full screen'}
+      {iconOnly ? null : active ? 'Exit full screen' : 'Full screen'}
     </Button>
   );
 }
@@ -120,7 +127,8 @@ export function FocusShell({
         covers Save is worse than no hint.
       */}
       {active ? (
-        <div className="pointer-events-none absolute bottom-3 end-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm">
+        // Not on a touch screen: there is no Esc key to press there.
+        <div className="pointer-events-none absolute bottom-3 end-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm pointer-coarse:hidden">
           Press Esc to exit full screen
         </div>
       ) : null}

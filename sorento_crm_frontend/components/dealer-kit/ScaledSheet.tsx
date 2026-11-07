@@ -52,7 +52,7 @@ export default function ScaledSheet({
   scale,
   review,
 }: ScaledSheetProps) {
-  const { doc, assets, images, fonts, resolvedData } = payload;
+  const { doc, assets, images, fonts, resolvedData, featureIcons } = payload;
 
   // Brand faces for the tags. Text layers break their lines by measuring
   // (`textLayerLines`, the same lines the canvas draws) and re-break when a
@@ -111,6 +111,7 @@ export default function ScaledSheet({
           resolvedData={resolvedData}
           assets={assets}
           images={images}
+          featureIcons={featureIcons}
         />
       </div>
       {review && (

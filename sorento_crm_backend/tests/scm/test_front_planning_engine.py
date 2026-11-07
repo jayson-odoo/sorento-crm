@@ -311,7 +311,7 @@ def test_an_spo_arriving_exactly_on_the_required_date_counts_as_timely_coverage(
     assert len(line) == 1
     assert line[0].kind == "timely_spo"
     assert line[0].qty == Decimal("15")
-    assert line[0].reason == "SPO 202703-S0099 arrives on 1 Mar 2027, by the required date"
+    assert line[0].reason == "SPO 202703-S0099 arrives on 01/03/2027, by the required date"
 
 
 def test_an_spo_arriving_the_day_after_the_required_date_contributes_zero_coverage():
@@ -501,7 +501,7 @@ def test_a_line_required_after_the_coverage_date_is_bought_in_full_and_no_stock_
     assert len(proposed) == 1
     assert proposed[0].kind == "buy"
     assert proposed[0].qty == Decimal("358")
-    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert proposed[0].reason == "Beyond purchasing's coverage (31/10/2026) - buy now"
     assert proposed[0].rung == "buy"
 
 
@@ -608,7 +608,7 @@ def test_a_line_beyond_purchasings_coverage_date_is_bought_whole_the_same_way():
 
     assert [c.kind for c in proposed] == ["buy"]
     assert proposed[0].qty == Decimal("358")
-    assert proposed[0].reason == "Beyond purchasing's coverage (31 Oct 2026) - buy now"
+    assert proposed[0].reason == "Beyond purchasing's coverage (31/10/2026) - buy now"
 
 
 def test_a_line_inside_its_window_is_untouched_by_the_rule():

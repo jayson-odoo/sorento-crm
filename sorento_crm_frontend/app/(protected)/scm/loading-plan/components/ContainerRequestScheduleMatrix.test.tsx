@@ -128,7 +128,7 @@ describe('ContainerRequestScheduleMatrix - cell click opens the SO-lines lightbo
 
     fireEvent.click(screen.getByRole('button'));
 
-    expect(screen.getByRole('dialog')).toHaveTextContent(/ITEM-1 · 17 Aug 2026/);
+    expect(screen.getByRole('dialog')).toHaveTextContent(/ITEM-1 · 17\/08\/2026/);
   });
 
   it('an empty request (no lines at all) renders no rows and no clickable cells', () => {

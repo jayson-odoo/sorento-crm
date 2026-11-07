@@ -23,7 +23,6 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Textarea } from '@/components/ui/textarea';
-import { format } from 'date-fns';
 import {
   ProductInquiryFormLayout,
   InquiryFormTableRow,
@@ -47,6 +46,7 @@ import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 interface StockInquiryFormProps {
   inquiryId?: string;
@@ -226,8 +226,8 @@ function StaffStockInquiryForm({
 
   const inquiryDateStr =
     isEditMode && inquiry?.created_at
-      ? format(new Date(inquiry.created_at), 'dd/MM/yy')
-      : format(new Date(), 'dd/MM/yy');
+      ? formatDateInMalaysia(inquiry.created_at)
+      : formatDateInMalaysia(new Date());
 
   return (
     <Form {...form}>

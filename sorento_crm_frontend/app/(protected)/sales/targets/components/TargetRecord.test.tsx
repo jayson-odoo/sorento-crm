@@ -161,6 +161,7 @@ const hooks = vi.hoisted(() => ({
 vi.mock('../hooks/useSalesTargets', () => hooks);
 
 const duplicate = vi.hoisted(() => vi.fn());
+const actionsOverride = vi.hoisted(() => ({ pending: null as React.ReactNode }));
 vi.mock('../actions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../actions')>()),
   useSalesTargetActions: () => ({
@@ -169,7 +170,7 @@ vi.mock('../actions', async (importOriginal) => ({
       { key: 'sales_target.delete', label: 'Delete target', kind: 'destructive', run: vi.fn() },
     ],
     dialogs: null,
-    pending: null,
+    pending: actionsOverride.pending,
   }),
 }));
 
@@ -227,6 +228,7 @@ function tabNames() {
 }
 
 beforeEach(() => {
+  actionsOverride.pending = null;
   router.push.mockReset();
   perms.granted = new Set(['sales.targets.view', 'sales.targets.add', 'sales.targets.edit', 'sales.targets.delete']);
   for (const m of [create, patchHeader, patchPeriod, addChild]) {
@@ -343,17 +345,36 @@ describe('TargetRecord: create (F4)', () => {
 });
 
 describe('TargetRecord: view and edit (F4, F5)', () => {
-  it('heads the record, then tabs Details, Periods, Commission; Edit and Duplicate in the gear', () => {
+  it('heads the record, then tabs Details, Periods, Commission; Edit the primary, Duplicate in the gear', () => {
     render(<TargetRecord id="t1" />);
     const header = screen.getByTestId('record-header');
     expect(within(header).getByText('TGT-000001')).toBeTruthy();
     expect(within(header).getByRole('heading', { name: 'Ali Q4 basins' })).toBeTruthy();
     expect(tabNames()).toEqual(['Details', 'Periods', 'Commission']);
     const gear = screen.getByTestId('gear');
-    expect(within(gear).getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(within(gear).getByRole('button', { name: 'Duplicate' })).toBeTruthy();
+    expect(within(gear).queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  // TARGET-EDIT-CTA (owner, 5 Nov: "edit should be the CTA here").
+  it('shows Edit as the primary button in the action group, outside the gear, and it opens edit mode', () => {
+    render(<TargetRecord id="t1" />);
+    const group = screen.getByTestId('detail-actions');
+    const edit = within(group).getByRole('button', { name: 'Edit' });
+    expect(screen.getByTestId('gear').contains(edit)).toBe(false);
+    fireEvent.click(edit);
+    expect(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Save' })).toBeTruthy();
+    expect(within(screen.getByTestId('record-header')).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(screen.getByLabelText('Name')).toBeTruthy();
+  });
+
+  it('gives the primary slot back to the delete countdown: no Edit while a delete is pending', () => {
+    actionsOverride.pending = <span data-testid="countdown">Deleting</span>;
+    render(<TargetRecord id="t1" />);
+    expect(screen.getByTestId('countdown')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
   it('shows the picked products by code and name in read mode, never an id (F5)', () => {
@@ -365,14 +386,14 @@ describe('TargetRecord: view and edit (F4, F5)', () => {
 
   it('keeps the picked products named in edit mode, never an id (F5)', () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByTestId('chip').textContent).toBe('BSN-001 - Countertop basin');
     expect(document.body.textContent).not.toMatch(UUID);
   });
 
   it('edits in place in the same tabs and saves only what changed', async () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(tabNames()).toEqual(['Details', 'Periods', 'Commission']);
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ali Q4 all basins' } });
     fireEvent.change(screen.getByLabelText('Applies to'), { target: { value: 'brands' } });
@@ -391,7 +412,7 @@ describe('TargetRecord: view and edit (F4, F5)', () => {
 
   it('refuses to save an edit whose range lost an end, in plain words (F6)', () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     fireEvent.change(screen.getByLabelText('End date'), { target: { value: '' } });
     expect(screen.getByText('Pick both a start date and an end date.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -450,7 +471,7 @@ function teamTarget(over: Record<string, unknown> = {}) {
 }
 
 function openEdit() {
-  fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
 }
 
 describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
@@ -538,8 +559,8 @@ describe('TargetRecord round 3, F1: figures are edited in Edit mode', () => {
     const agents = screen.getByRole('region', { name: 'Agents' });
     // Three agents (one with no figure yet) by three months.
     expect(within(agents).getAllByRole('spinbutton')).toHaveLength(9);
-    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 1 Nov 2026'), { target: { value: '900' } });
-    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 1 Dec 2026'), { target: { value: '50' } });
+    fireEvent.change(within(agents).getByLabelText('ALI - Ali Hassan, 01/11/2026'), { target: { value: '900' } });
+    fireEvent.change(within(agents).getByLabelText('MEI - Tan Mei Ling, 01/12/2026'), { target: { value: '50' } });
     const totals = within(agents).getByTestId('team-totals');
     // Oct 1,000; Nov 900 + 400; Dec 1,000 + 50.
     expect(within(totals).getByText('1,000')).toBeTruthy();
@@ -694,7 +715,7 @@ describe('TargetRecord round 3, F3: the agent target record', () => {
     expect(within(team).getByText('Amount (RM)')).toBeTruthy();
     expect(within(team).getByText('Ordered')).toBeTruthy();
     expect(within(team).getByText('All products')).toBeTruthy();
-    expect(within(team).getByText('1 Oct 2026 to 31 Dec 2026')).toBeTruthy();
+    expect(within(team).getByText('01/10/2026 - 31/12/2026')).toBeTruthy();
     expect(within(team).getByText('Every month')).toBeTruthy();
     expect(within(team).getAllByText('1,000')).toHaveLength(3);
     expect(within(team).getByRole('link', { name: 'Open team target' }).getAttribute('href')).toBe('/sales/targets/team1');
@@ -869,7 +890,7 @@ describe('TargetRecord: dealer targets (lane SALES-TARGET-DEALER)', () => {
 describe('TargetRecord: the one engine on an agent target', () => {
   it('an agent target offers Threshold in, Round to and own tiers per period, and sends them', async () => {
     render(<TargetRecord id="t1" />);
-    fireEvent.click(within(screen.getByTestId('gear')).getByRole('button', { name: 'Edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     openTab('Commission');
     fireEvent.click(screen.getByRole('button', { name: /Add tier/ }));
     fireEvent.change(screen.getByLabelText('Threshold in'), { target: { value: 'amount' } });
@@ -923,7 +944,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     render(<TargetRecord id="t1" />);
     const summary = screen.getByRole('region', { name: 'Commission summary' });
     expect(within(summary).getByText('6,918.12')).toBeTruthy();
-    expect(within(summary).getByText('01/10/2026 to 31/12/2026, 2.1% of target, not final')).toBeTruthy();
+    expect(within(summary).getByText('01/10/2026 - 31/12/2026, 2.1% of target, not final')).toBeTruthy();
     expect(within(summary).getByText('300-A077 - A CRAFT IDEA SDN BHD (A/C I)')).toBeTruthy();
     expect(within(summary).getByText('Payment is not tracked in the CRM')).toBeTruthy();
   });
@@ -932,14 +953,14 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     hooks.useSalesTarget.mockReturnValue({ data: tgt8(), isLoading: false, isError: false });
     render(<TargetRecord id="t1" />);
     openTab('Periods');
-    const q1 = screen.getByText('01/01/2026 to 31/03/2026').closest('tr') as HTMLElement;
+    const q1 = screen.getByText('01/01/2026 - 31/03/2026').closest('tr') as HTMLElement;
     expect(within(q1).getByText('Tier 1')).toBeTruthy();
     expect(within(q1).getByText('6.00%')).toBeTruthy();
     expect(within(q1).getByText('3,681.10')).toBeTruthy();
     // The cell names the code and account; the full name is its title and in the summary.
     expect(within(q1).getByText('300-A077 (A/C I)').getAttribute('title')).toBe('300-A077 - A CRAFT IDEA SDN BHD (A/C I)');
     expect(within(q1).getByText('61,351.64')).toBeTruthy();
-    const q3 = screen.getByText('01/07/2026 to 30/09/2026').closest('tr') as HTMLElement;
+    const q3 = screen.getByText('01/07/2026 - 30/09/2026').closest('tr') as HTMLElement;
     expect(within(q3).getByText('None')).toBeTruthy();
     expect(within(q3).getAllByText('-').length).toBeGreaterThan(0);
     const total = screen.getByText('Total').closest('tr') as HTMLElement;
@@ -953,7 +974,7 @@ describe('TargetRecord: commission view (lane TARGET-COMMISSION-VIEW)', () => {
     openTab('Accounts');
     const table = screen.getByRole('table', { name: 'Counted accounts' });
     expect(within(table).getByText('Sales (RM, sales orders, incl. tax)')).toBeTruthy();
-    for (const label of ['01/01/2026 to 31/03/2026', '01/04/2026 to 30/06/2026', '01/07/2026 to 30/09/2026', '01/10/2026 to 31/12/2026']) {
+    for (const label of ['01/01/2026 - 31/03/2026', '01/04/2026 - 30/06/2026', '01/07/2026 - 30/09/2026', '01/10/2026 - 31/12/2026']) {
       expect(within(table).getByText(label)).toBeTruthy();
     }
     expect(within(table).getAllByText('3,681.10')).toHaveLength(1);

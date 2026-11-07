@@ -33,6 +33,8 @@ HEADER_NOUN = {
     "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
     "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
     "sales_channel": "Sales channel", "customer": "Customer", "supplier": "Supplier",
+    # CHATBOT-TOTALS-FILTERS HT1-1: the contact's own companies, parser input only (never a filter of its own).
+    "company": "Company",
 }
 FLOOR_SPELLING = 0.5
 #: ENTITY-EXTRACT-MATCH S2 V2: on the span path a row the message spells at least this well is offered even when no
@@ -55,11 +57,11 @@ MAX_NUMBER_ASKS = 3
 MAX_LABEL_CHARS = 120
 TOP_K = {
     "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
-    "sales_channel": 2, "customer": 5, "supplier": 5,
+    "sales_channel": 2, "customer": 5, "supplier": 5, "company": 2,
 }
 DEFAULT_ORDER = (
-    "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel", "customer",
-    "supplier",
+    "category", "spec", "file_type", "brand", "company", "promotion_kind", "salesperson", "location", "sales_channel",
+    "customer", "supplier",
 )
 
 EMBED_MODEL = "text-embedding-3-small"
@@ -652,11 +654,12 @@ def _supplier_rows(db: "Session") -> list[LookupRow]:
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
-    group_categories: bool = False, include_suppliers: bool = False,
+    group_categories: bool = False, include_suppliers: bool = False, companies: list[str] | None = None,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
-    vocabulary to set each category row's `group`; off, it is never read."""
+    vocabulary to set each category row's `group`; off, it is never read. `companies` (CHATBOT-TOTALS-FILTERS HT1-1):
+    the display names of the contact's own companies, one company row each (none or empty: no company row)."""
     from app.models.product import ProductCategory
     from app.services import chatbot_prompt_vars as pv
     from app.services.chatbot import turn_runtime
@@ -713,6 +716,8 @@ def load_rows(
     for ch in SALES_CHANNELS:
         texts, homes = _tagged(("label", [ch]), ("alias_set", channel_words.get(ch, ())))
         out.append(LookupRow("sales_channel", ch, ch, texts, homes=homes))
+    for name in companies or ():
+        out.append(LookupRow("company", name, name, (name,), homes=("label",)))
     return out
 
 

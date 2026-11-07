@@ -97,7 +97,11 @@ describe('ProductTagTemplatesSection', () => {
     linked.mockReturnValue({ data: [row('a'), row('b')], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
     fireEvent.click(screen.getByText('add c'));
-    expect(save).toHaveBeenCalledWith(['a', 'b', 'c']);
+    expect(save).toHaveBeenCalledWith({
+      template_ids: ['a', 'b', 'c'],
+      default_list_template_id: null,
+      default_selling_template_id: null,
+    });
     expect(start).not.toHaveBeenCalled();
   });
 

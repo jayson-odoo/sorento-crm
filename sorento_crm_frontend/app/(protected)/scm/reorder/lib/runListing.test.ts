@@ -77,7 +77,7 @@ describe('runStartedLabel', () => {
     expect(runStartedLabel(undefined)).toBe('-');
   });
 
-  it('formats a naive-UTC timestamp as dd/mm/yyyy HH:mm', () => {
-    expect(runStartedLabel('2026-08-27T01:50:00')).toMatch(/^27\/08\/2026 \d{2}:\d{2}$/);
+  it('formats a naive-UTC timestamp as dd/mm/yyyy, h:mm am/pm in Malaysia', () => {
+    expect(runStartedLabel('2026-08-27T01:50:00')).toBe('27/08/2026, 9:50 am');
   });
 });

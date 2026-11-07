@@ -5,10 +5,12 @@ import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-rea
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
-import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
+import { RichTextView } from '@/components/dealer-kit/RichTextView';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import { numberFieldError } from '@/lib/number-field';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
@@ -33,6 +35,9 @@ import type {
   ProductComboUpdate,
 } from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
+import { ComboTagPreview } from './ComboTagPreview';
+import { ComboTemplatesField } from './ComboTemplatesField';
+import { AccessoryListField } from './AccessoryListField';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
 /** Server-searched and PAGED, never one cached page: the catalogue is 22,000 rows. */
@@ -122,36 +127,41 @@ function MoneyField({
   );
 }
 
-/** A text box that saves on blur, and only when the text changed. Empty saves null. */
-function TextField({
-  id,
-  label,
-  value,
+/**
+ * The combo description in the shared rich text editor, with the tag it prints on drawn beside it.
+ * Saves on blur (when focus leaves the editor, toolbar included) and only when the text changed; a
+ * refused save puts the saved text back. Empty saves null. The preview follows the draft.
+ */
+function DescriptionField({
+  combo,
   onSave,
-  multiline,
-  maxLength,
 }: {
-  id: string;
-  label: string;
-  value: string | null | undefined;
+  combo: ProductComboRow;
   onSave: (next: string | null, revert: () => void) => void;
-  multiline?: boolean;
-  /** The server refuses longer text, so the box stops it instead of reverting a long paste. */
-  maxLength?: number;
 }) {
-  const saved = value ?? '';
+  const saved = combo.description ?? '';
   const [draft, setDraft] = useState(saved);
-  const commit = () => {
+  const labelId = `${combo.id}-description-label`;
+  const commit = (event: React.FocusEvent<HTMLElement>) => {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
     if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
   };
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {multiline ? (
-        <Textarea id={id} rows={3} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      ) : (
-        <Input id={id} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      )}
+    <div className="grid gap-3 lg:grid-cols-2">
+      <div className="min-w-0 space-y-1.5">
+        <Label id={labelId}>Description</Label>
+        <div onBlur={commit}>
+          <RichTextEditor
+            aria-labelledby={labelId}
+            value={toEditorHtml(draft)}
+            onChange={setDraft}
+            minHeight={140}
+          />
+        </div>
+      </div>
+      <div className="min-w-0">
+        <ComboTagPreview combo={combo} description={draft.trim() === '' ? null : draft} />
+      </div>
     </div>
   );
 }
@@ -317,6 +327,7 @@ function ComboImageControl({
   const busy = isUploading || isDeleting;
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleFile = useCallback(
     async (file: File | undefined) => {
@@ -362,10 +373,28 @@ function ComboImageControl({
         <>
           {/* A signed CDN URL, not a local/static asset next/image can
               optimise. */}
-          <img
-            src={combo.image.url}
-            alt={combo.name}
-            className="size-14 shrink-0 rounded-md border object-cover"
+          <button
+            type="button"
+            aria-label={`Preview photo of ${combo.name}`}
+            className="shrink-0 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => setPreviewOpen(true)}
+          >
+            <img
+              src={combo.image.url}
+              alt=""
+              className="size-14 rounded-md border object-cover"
+            />
+          </button>
+          <AttachmentPreviewModal
+            open={previewOpen}
+            onOpenChange={setPreviewOpen}
+            items={[
+              {
+                id: combo.image.attachment_id,
+                name: combo.image.file_name ?? combo.name,
+                url: combo.image.url,
+              },
+            ]}
           />
           {canEdit ? (
             <div className="flex gap-2">
@@ -513,6 +542,8 @@ function ComboBlock({
         ) : null}
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
+      {/* PRICETAG-LPSP: the combo's own price tag templates (manage permission only). */}
+      <ComboTemplatesField comboId={combo.id} parts={combo.parts} />
       {/* The combo's own text and prices, printed on the tag (PRICETAG-COMBO).
           Same fields read-only and editing; edits save on blur. */}
       {canEdit ? (
@@ -532,34 +563,25 @@ function ComboBlock({
             className="space-y-1.5"
           />
           <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-description`}
-              label="Description"
-              value={combo.description}
+            <DescriptionField
+              combo={combo}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
-              multiline
-              maxLength={5000}
             />
           </div>
           <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-free-items`}
-              label="Free items"
-              value={combo.free_items}
-              onSave={(next, revert) => onComboWrite({ free_items: next }, revert)}
-              maxLength={2000}
-            />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit />
           </div>
         </div>
       ) : (
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
           <ReadOnlyField label="List price (RM)" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
           <ReadOnlyField label="Sell price (RM)" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
-          <div className="sm:col-span-2">
-            <ReadOnlyField label="Description" value={combo.description} />
+          <div className="min-w-0 space-y-0.5 sm:col-span-2">
+            <p className="text-xs text-muted-foreground">Description</p>
+            <RichTextView value={combo.description} />
           </div>
           <div className="sm:col-span-2">
-            <ReadOnlyField label="Free items" value={combo.free_items} />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit={false} />
           </div>
         </div>
       )}

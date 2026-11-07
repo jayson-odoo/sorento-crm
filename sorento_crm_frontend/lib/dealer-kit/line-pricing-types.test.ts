@@ -23,7 +23,7 @@ describe('promotionOptionName (PRICE-TAG-A3-EXPIRED)', () => {
         description: 'Sorento A3 Dealer',
         expired_on: '2026-09-30',
       }),
-    ).toBe('Sorento A3 Dealer (expired 30 Sep 2026)');
+    ).toBe('Sorento A3 Dealer (expired 30/09/2026)');
   });
 
   it('labels a saved line from its name and end date alone', () => {
@@ -32,7 +32,7 @@ describe('promotionOptionName (PRICE-TAG-A3-EXPIRED)', () => {
         description: 'Sorento A3 Office',
         expired_on: '2026-09-30',
       }),
-    ).toBe('Sorento A3 Office (expired 30 Sep 2026)');
+    ).toBe('Sorento A3 Office (expired 30/09/2026)');
   });
 
   it('does not shift the day in a timezone west of UTC', () => {
@@ -41,6 +41,6 @@ describe('promotionOptionName (PRICE-TAG-A3-EXPIRED)', () => {
         description: 'X',
         expired_on: '2026-01-01',
       }),
-    ).toBe('X (expired 1 Jan 2026)');
+    ).toBe('X (expired 01/01/2026)');
   });
 });
