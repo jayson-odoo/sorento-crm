@@ -607,7 +607,8 @@ def undo_line(db: Session, app: NewProductApplication, line_id: str, *, actor: A
     line.closed_reason = None
     line.resolved_by = None
     line.resolved_at = None
-    if app.status == COMPLETED:
+    # The header new code still completes it (NPA-FROM-SI): only a line-worked application reopens.
+    if app.status == COMPLETED and not _new_code_resolved(app):
         app.status = APPROVED
         app.completed_at = None
     db.flush()
@@ -1000,12 +1001,14 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
             "is_active": active,
             "current_products": sources.get(str(app.id), []),
             "description": _why(app),
-            "expected_qty": _num(sum(qty)) if qty else None,
             "created_at": _iso(app.new_code_at),
         }
         if can_view_applications:
             item.update(
-                application_id=app.id, customer_name=app.customer_name, project_name=app.project_name
+                application_id=app.id,
+                customer_name=app.customer_name,
+                project_name=app.project_name,
+                expected_qty=_num(sum(qty)) if qty else None,
             )
         return item
 
@@ -1055,6 +1058,7 @@ def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict
             .order_by(NewProductApplication.created_at.desc())
             .all()
         )
+        created = _created_codes_for(db, rows)
         return [
             {
                 "id": a.id,
@@ -1062,7 +1066,7 @@ def portal_inquiry_applications(db: Session, inquiry: StockInquiry) -> List[Dict
                 "status": a.status,
                 "status_label": STATUS_LABELS.get(a.status, a.status),
                 "created_at": _iso(a.created_at),
-                "created_codes": _created_codes(db, a),
+                "created_codes": created.get(str(a.id), []),
             }
             for a in rows
         ]
@@ -1169,8 +1173,9 @@ def list_for(
         .all()
     )
     opened = _opened_codes(db, [str(r.id) for r in rows])
+    created = _created_codes_for(db, rows)
     return {
-        "items": [serialize_summary(db, r, opened) for r in rows],
+        "items": [serialize_summary(db, r, opened, created) for r in rows],
         "total": total,
         "page": page,
         "limit": limit,
@@ -1221,7 +1226,10 @@ def _opened_codes(db: Session, app_ids: List[str]) -> Dict[str, List[str]]:
 
 
 def serialize_summary(
-    db: Session, app: NewProductApplication, opened: Optional[Dict[str, List[str]]] = None
+    db: Session,
+    app: NewProductApplication,
+    opened: Optional[Dict[str, List[str]]] = None,
+    created: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     lines = list(app.lines)
     first = lines[0] if lines else None
@@ -1249,27 +1257,37 @@ def serialize_summary(
         "opened_codes": (opened if opened is not None else _opened_codes(db, [str(app.id)])).get(
             str(app.id), []
         ),
-        "created_codes": _created_codes(db, app),
+        "created_codes": (created if created is not None else _created_codes_for(db, [app])).get(str(app.id), []),
         "needed_by": _iso(app.needed_by),
         "submitted_at": _iso(app.submitted_at),
         "created_at": _iso(app.created_at),
     }
 
 
-def _created_codes(db: Session, app: NewProductApplication) -> List[Dict[str, Any]]:
-    """NPA-FROM-SI: the new code purchasing linked, with its current codes and when (the stock
-    inquiry's "code created" indicator reads this; nothing is stored for it)."""
-    if not app.new_product_id:
-        return []
-    code = db.query(Product.product_code).filter(Product.id == app.new_product_id).scalar()
-    sources = _sources_by_app(db, [app.id]).get(str(app.id), [])
-    return [
-        {
-            "product_code": code,
-            "current_codes": [c["product_code"] for c in sources],
-            "created_at": _iso(app.new_code_at),
-        }
-    ]
+def _created_codes_for(db: Session, apps: List[NewProductApplication]) -> Dict[str, List[Dict[str, Any]]]:
+    """NPA-FROM-SI: application id -> the new code purchasing linked, with its current codes and
+    when (the stock inquiry's "code created" indicator reads this; nothing is stored for it).
+    Two queries for any number of applications."""
+    done = [a for a in apps if a.new_product_id]
+    if not done:
+        return {}
+    codes = {
+        str(k): v
+        for k, v in db.query(Product.id, Product.product_code)
+        .filter(Product.id.in_([a.new_product_id for a in done]))
+        .all()
+    }
+    sources = _sources_by_app(db, [a.id for a in done])
+    return {
+        str(a.id): [
+            {
+                "product_code": codes.get(str(a.new_product_id)),
+                "current_codes": [c["product_code"] for c in sources.get(str(a.id), [])],
+                "created_at": _iso(a.new_code_at),
+            }
+        ]
+        for a in done
+    }
 
 def _linked_product_facts(db: Session, product_ids: List[Any]) -> Dict[str, Dict[str, Any]]:
     """Read-only values from the product purchasing linked (AC-NPA-76, D3): item group, base

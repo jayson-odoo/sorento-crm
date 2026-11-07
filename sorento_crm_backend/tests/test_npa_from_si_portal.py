@@ -146,3 +146,15 @@ def test_portal_new_code_facts_show_the_supplier_only(portal):
     row, _newp = _seed_created(p, [p.product.id], contact=p.granted, inquiry=p.mine)
     detail = _as(p, p.granted).get(f"{BASE}/{row.id}").json()
     assert set(detail["new_product_facts"]) == {"opened_supplier_name"}
+
+
+def test_portal_inquiry_without_the_npa_form_lists_nothing_and_says_so(portal, monkeypatch):
+    from app.services import portal_form_visibility_service as vis
+
+    p = portal
+    _create(p)
+    monkeypatch.setattr(vis, "resolve_visible_form_types", lambda db, cid: {"stock_inquiry"})
+    body = _as(p, p.granted).get(f"{PORTAL}/submissions/stock_inquiry/{p.mine.id}").json()
+    body = body.get("data", body)
+    assert body["npa_form_visible"] is False
+    assert body["new_product_applications"] == []

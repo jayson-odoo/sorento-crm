@@ -44,7 +44,10 @@ Staff, base `/api/v1/procurement/new-product-applications`:
 - Suggestion (staff) = `{product_id, product_code, product_name, is_active, description, created_at, application_id,
   application_no}`; portal drops `application_id`, `application_no`. `description` = the product types joined "; ".
 - Lineage Row = `{application_no, product_id, product_code, product_name, is_active, current_products[],
-  description, expected_qty, created_at}` + `application_id, customer_name, project_name` for NPA view-all only.
+  description, created_at}` + `application_id, customer_name, project_name, expected_qty` for NPA view-all only.
+- Detail gains `new_product_facts` (item group, base UOM, list price, supplier of the new code; portal: supplier only).
+- Portal `GET /submissions/stock_inquiry/{id}` also answers `npa_form_visible` (the contact holds the NPA form);
+  `new_product_applications` is `[]` without it.
 - The per-row link / close / undo routes stay for an application worked line by line before v3; the screens use
   the header new code only (removal is a follow-up once the owner confirms Q1').
 - Stock inquiry: `PUT /stock-inquiries/{id}` and `POST /{id}/update-and-reply` accept `npa_requested: bool` (a

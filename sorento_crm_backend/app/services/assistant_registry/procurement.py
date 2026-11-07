@@ -122,10 +122,9 @@ register(
             "new_code_closed_reason": FieldDef("New code not opened reason"),
             "new_code_at": FieldDef("New code linked at", note="When purchasing linked the new code (or closed it)."),
         },
-        relations={
-            "stock_inquiry": ("stock_inquiry", "stock_inquiry_id"),
-            "new_product": ("product", "new_product_id"),
-        },
+        # No relation to stock_inquiry: the query engine joins a relation without the target's
+        # view slug, and an inquiry's customer / salesperson need procurement.stock_inquiries.view.
+        relations={"new_product": ("product", "new_product_id")},
         name_by=("application_no",),
         screen_path="/procurement-management/new-product-applications/{id}",
         pages=("/procurement-management/new-product-applications",),

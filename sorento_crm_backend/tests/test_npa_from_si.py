@@ -6,6 +6,8 @@ and helpers are the NEW-PRODUCT-APP suite's (same harness, same seeds). Postgres
 """
 from __future__ import annotations
 
+import pytest
+
 from app.models.base import company_scope
 
 from ._sample_request_seed import MARKER, make_product, second_company
@@ -375,3 +377,69 @@ def test_the_new_code_carries_the_values_autocount_set(world):
     assert set(facts) == {"opened_category_name", "opened_base_uom_name", "opened_list_price", "opened_supplier_name"}
     assert facts["opened_list_price"] == "100.00"
     assert _get(world, _draft(world, [])["id"])["new_product_facts"] is None
+
+
+def test_lineage_hides_application_detail_from_a_product_viewer(world, monkeypatch):
+    from app.api.v1.procurement import new_product_applications as route
+
+    newp = make_product(world.db)
+    _completed(world, [world.product.id], newp)
+    monkeypatch.setattr(route, "permission_slugs", lambda db, uid: {route.PRODUCTS_VIEW})
+    world_perms_viewer = world.viewer  # holds VIEW in the route gate; the actor reads products view only
+    [row] = world.api.as_(world_perms_viewer).get(f"{NPA}/lineage", params={"product_id": newp.id}).json()["created_from"]
+    assert not ({"application_id", "customer_name", "project_name", "expected_qty"} & set(row))
+    assert row["application_no"]
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("get", "/products?q=x"),
+        ("get", "/reuse-suggestions?product_ids="),
+        ("get", "/lineage?product_id=00000000-0000-0000-0000-000000000000"),
+    ],
+)
+def test_own_only_staff_are_refused_the_new_staff_reads(world, method, path):
+    from app.api.v1 import _request_own_scope as guard
+    from app.services.user_service import UserPermissionService
+
+    # Swapped and put back by hand: a monkeypatch undo would run after the world fixture's own
+    # restore and leave this file's fakes on the class for the next test in the worker.
+    own = "procurement.new_product_applications.view_own"
+    names = ("get_user_permission_slugs", "check_user_has_permission", "check_user_has_any_permission")
+    saved = {n: getattr(UserPermissionService, n) for n in names}
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: {own}
+    UserPermissionService.check_user_has_permission = lambda self, uid, s: s == own
+    UserPermissionService.check_user_has_any_permission = lambda self, uid, ss: own in ss
+    try:
+        res = getattr(world.api.as_(world.stranger), method)(f"{NPA}{path}")
+    finally:
+        for n, f in saved.items():
+            setattr(UserPermissionService, n, f)
+    assert res.status_code in (403, 404), res.text
+
+
+def test_undoing_an_old_per_row_link_keeps_a_new_code_application_completed(world):
+    newp, rowp = make_product(world.db), make_product(world.db)
+    body = {"current_product_ids": [world.product.id], "lines": [_line(world), _line(world, proposed_code="B")]}
+    d = world.api.as_(world.sales).post(NPA, json=body).json()
+    assert _act(world, d["id"], "submit", world.sales).status_code == 200
+    assert _act(world, d["id"], "approve", world.manager).status_code == 200
+    line = d["lines"][0]["id"]
+    assert world.api.as_(world.buyer).post(f"{NPA}/{d['id']}/lines/{line}/link", json={"product_id": rowp.id}).status_code == 200
+    assert _new_code(world, d["id"], "link", product_id=newp.id).json()["status"] == "completed"
+    res = world.api.as_(world.buyer).post(f"{NPA}/{d['id']}/lines/{line}/undo")
+    assert res.status_code == 200
+    assert res.json()["status"] == "completed"
+    assert res.json()["new_product_id"] == newp.id
+
+
+def test_an_undone_reply_restores_who_and_when_with_the_ask(world):
+    import app.services.form_actions  # noqa: F401  (declares the actions)
+    from app.services.form_action_registry import get_action
+
+    si = _inquiry(world.db)
+    action = get_action("si.purchasing_respond")
+    prior = action.capture(world.db, {"inquiry_id": si.id, "inquiry_data": {"npa_requested": True}})
+    assert {"npa_requested", "npa_requested_by", "npa_requested_at"} <= set(prior)
+    assert "npa_requested_by" not in action.capture(world.db, {"inquiry_id": si.id, "inquiry_data": {}})
