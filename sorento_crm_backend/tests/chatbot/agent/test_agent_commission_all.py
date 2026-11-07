@@ -298,3 +298,122 @@ def test_R3_a_note_naming_more_rows_than_it_lists_says_how_many_more():
 
     rows = [{"owner": f"A{i}", "_zero": [], "_has_commission": False, "_replaced": []} for i in range(7)]
     assert "A0, A1, A2, A3, A4 and 2 more" in _summary_note(rows)
+
+
+# ------------------------------------------------------------------ crew live x3 on fe1c8af4 (8 Nov)
+
+
+@pytest.fixture
+def dealers(targets):
+    """Three more dealers, each one account, Q3 sales 61,000 / 80,000 / 100,000 on a 60,000 tier at 5%."""
+    from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, _sale
+
+    db, client, t = targets
+    company_id = _dealer_account(db, t).company_id
+    pid = _product_id(db, company_id)
+    for name, sold in (("ZZT AAA LOW", 61000), ("ZZT MMM MID", 80000), ("ZZT ZZZ TOP", 100000)):
+        c = _customer(db, company_id, name, level=1)
+        _sale(db, company_id, c, str(sold), date(2026, 8, 3), product_id=pid)
+        res = client.post(BASE, json=_dealer_body([c], payout_customer_id=c.id, tiers=[
+            {"period_start": "2026-07-01", "threshold": 60000, "rate": 5},
+        ]))
+        assert res.status_code == 201, res.text
+    return db, client, t
+
+
+DEALERS_YEAR = {"filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}], "period": "2026"}
+
+
+def test_L1_payout_per_dealer_ranks_by_payout_with_totals_over_all_dealers(dealers):
+    """Live Q2: 'Showing 20 of 50' sorted by name, the top dealer missing, no totals row."""
+    from app.services.chatbot.agent.query_tools import render_card
+
+    db, _c, _t = dealers
+    out = run(db, {"entity": ENTITY, **DEALERS_YEAR, "fields": ["payout"]})
+    assert [r["label"] for r in out["rows"]] == ["ZZT ZZZ TOP", "ZZT MMM MID", "ZZT DEALER W2", "ZZT AAA LOW"]
+    assert [r["payout"] for r in out["rows"]] == [5000.0, 4000.0, 3500.0, 3050.0]
+    assert out["totals"]["payout"] == 15550.0
+    capped = run(db, {"entity": ENTITY, **DEALERS_YEAR, "fields": ["payout"], "limit": 2})
+    assert [r["payout"] for r in capped["rows"]] == [5000.0, 4000.0]
+    assert capped["totals"]["payout"] == 15550.0  # every dealer, not the page shown
+    card = render_card(capped, title="x", panel=True)
+    assert "Top 2 of 4 by commission payout." in card and "Showing" not in card
+
+
+def test_L1b_grouped_per_dealer_ranks_by_the_sum_and_totals_every_group(dealers):
+    db, _c, _t = dealers
+    out = run(db, {"entity": ENTITY, **DEALERS_YEAR, "group_by": ["owner"],
+                   "aggregates": [{"fn": "sum", "field": "payout"}], "limit": 2})
+    assert [g["sum_payout"] for g in out["groups"]] == [5000.0, 4000.0]
+    assert out["totals"]["sum_payout"] == 15550.0 and out["truncated"] is True
+
+
+def test_L1c_a_long_payout_list_is_not_cut_at_20_by_default(targets):
+    from app.services.assistant_registry import ENTITIES
+    from app.services.assistant_registry.computed import _rows
+
+    entity = ENTITIES[ENTITY]
+    rows = [{"id": str(i), "owner": f"D{i}", "owner_kind": "dealer", "payout": float(i), "_has_commission": True}
+            for i in range(45)]
+    out = _rows(entity, {"sales.targets.view"}, rows, [], {"fields": ["payout"]})
+    assert len(out["rows"]) == 45 and out["truncated"] is False
+
+
+def test_L2_no_commission_set_is_written_in_the_rows_and_never_totalled_as_0(targets):
+    """Live Q5 run 2: 'Total Commission: RM 0, Total Bonus: RM 0' next to 'Payout: Empty'."""
+    from app.services.chatbot.agent.query_tools import render_card
+    from tests.test_sales_targets_s1 import _agent
+
+    db, client, _t = targets
+    c = _agent(db, "C", "Agent C")
+    _plain_agent_target(client, c, value=5000)
+    out = run(db, {"entity": ENTITY, "agent": "Agent C", "period": "2026-10",
+                   "fields": ["commission", "bonus", "payout"]})
+    [row] = out["rows"]
+    assert row["commission"] == row["bonus"] == row["payout"] == "no commission set"
+    assert not {"commission", "bonus", "payout"} & set(out.get("totals") or {})
+    card = render_card({**out, "rows": out["rows"] * 11}, title="x", panel=True)
+    assert "RM 0" not in card and "| 0 |" not in card
+
+
+def test_L2b_a_row_of_only_targets_of_0_prints_no_target_or_achieved_figure(targets):
+    """Live Q4 run 2: target RM 0.00 / achieved RM 9.92M printed against its own 'left out' note."""
+    from tests.test_sales_targets_s1 import _agent
+
+    db, client, _t = targets
+    z = _agent(db, "Z", "Agent Z")
+    _plain_agent_target(client, z, value=0)
+    out = run(db, {"entity": ENTITY, "agent": "Agent Z", "period": "2026-10",
+                   "fields": ["target_value", "achieved_value", "achieved_pct"]})
+    [row] = out["rows"]
+    assert row["target_value"] == row["achieved_value"] == row["achieved_pct"] == "left out (target of 0)"
+
+
+def test_L3_no_period_named_is_this_year_and_says_so(targets):
+    """Live Q6: 'payout to fullshun' with no period answered only for the period containing today."""
+    db, _c, _t = targets
+    out = run(db, {"entity": ENTITY, "agent": "ZZT DEALER W2", "fields": ["payout"]})
+    assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
+    assert out["rows"][0]["payout"] == 3500.0  # Q3 counts, not only the Q4 period containing today
+    assert "No period named: this year." in out["scope_note"]
+
+
+def test_L4_an_empty_crm_query_backs_a_not_found_claim_for_its_term():
+    """Live O1: the reply opened with 'I could not confirm that nothing exists for:' after a crm_query that matched
+    nothing for the very term."""
+    from app.services.chatbot.agent import loop
+
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": {"entity": ENTITY, "agent": "fullshun"},
+                     "data": {"entity": ENTITY, "rows": [], "total": 0, "instruction": "Nothing matched."}}}
+    assert loop._not_found_backed("commission payout for Fullshun", "q1", ledger, set()) is True
+    assert loop._not_found_backed("Hanlim", "q1", ledger, set()) is False
+    other = {"q1": {**ledger["q1"], "data": {"entity": ENTITY, "rows": [{"id": "1"}], "total": 1}}}
+    assert loop._not_found_backed("fullshun", "q1", other, set()) is False
+
+
+def test_L4b_an_unbacked_not_found_claim_is_worded_plainly():
+    from app.services.chatbot.agent import loop
+
+    text, _ = loop.final_reply({"text": "No payout for X."}, [], ["X"], ledger={})
+    assert "could not confirm that nothing exists" not in text
+    assert text.startswith("I did not search for X, so I cannot say it does not exist.")
