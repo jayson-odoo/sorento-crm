@@ -705,7 +705,10 @@ def shorthands(entity: EntityDef, spec: dict) -> dict:
             raise QueryRefused("invalid", f"`agent` does not apply to {entity.label.lower()}; use filters.")
         if not isinstance(agent, str) or not agent.strip():
             raise QueryRefused("invalid", "`agent` is the agent's code or name as text.")
-        filters.append({"field": field, "op": "contains", "value": agent.strip()})
+        # A computed field holds teams and dealers too (`target_list.subject`): exactly that agent, or nothing and
+        # the values that do exist (`computed._no_match`), never a team whose name contains it (review round 9).
+        op = "contains" if callable(entity.fields[field].agent_id) else "eq"
+        filters.append({"field": field, "op": op, "value": agent.strip()})
     period = spec.pop("period", None)
     if period is not None:
         field = entity.window_field or entity.date_field

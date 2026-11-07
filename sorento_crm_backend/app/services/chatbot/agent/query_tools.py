@@ -354,7 +354,7 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     if per_entity:
         cards = list(per_entity.values())
         card = "\n\n".join(cards)
-        if card not in text:
+        if not all(c in text for c in cards):
             line = next((part.strip() for part in text.splitlines() if part.strip()), "")
             text = f"{line[:MAX_LINE_CHARS]}\n\n{card}".strip() if line else card
         return _ISO_DATE.sub(_dmy, text)

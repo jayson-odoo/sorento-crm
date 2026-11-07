@@ -58,11 +58,13 @@ def test_P2_since_july_is_a_period_from_a_month_to_today(targets, october):
     assert out["period_display"] == "Period 01/07/2026 to 20/10/2026"
 
 
-def test_P3_below_target_this_quarter_by_argument_keeps_its_definition(targets, october):
+def test_P3_below_target_by_period_argument_reads_that_window_and_keeps_its_definition(targets, october):
     db, _c, _t = targets
-    out = run(db, {"entity": "target_list", "period": "this_quarter",
+    out = run(db, {"entity": "target_list", "period": "last_quarter",
                    "filters": [{"field": "reached", "op": "eq", "value": False}]})
+    assert out["period_display"] == "Period 01/07/2026 to 30/09/2026"
     assert out["total"] == 3
+    assert run(db, {"entity": "target_list", "period": "2027"})["rows"] == []
     assert out["scope_note"].startswith("Not reached = achieved under 100% of target, as the Targets screen shows it.")
 
 
@@ -177,3 +179,30 @@ def test_T2_a_corrected_query_on_the_same_entity_shows_the_last_table_only():
     ledger = dict([_card("target_list", "first table", "c1"), _card("target_list", "second table", "c2")])
     reply = shape_reply("Here.", ledger)
     assert "second table" in reply and "first table" not in reply
+
+
+def test_T3_two_tables_the_model_wrote_out_keep_its_sentence_between_them():
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    ledger = dict([_card("target_list", "TABLE ONE", "c1"), _card("agent_target_summary", "TABLE TWO", "c2"),
+                   ("c3", {"name": "crm_query", "status": "ok", "args": {"entity": "customer"},
+                           "data": {"entity": "customer", "rows": [], "scope_note": None}})])
+    text = "Below target:\n\nTABLE ONE\n\nAnd the payout per agent:\n\nTABLE TWO"
+    assert shape_reply(text, ledger) == text
+
+
+def test_P8_agent_on_a_computed_entity_is_exact_never_a_team_containing_it(targets, october):
+    db, _c, t = targets
+    out = run(db, {"entity": "target_list", "agent": "Agent"})
+    assert out["rows"] == [] and "do not show or total other records" in out["instruction"]
+    out = run(db, {"entity": "target_list", "agent": "Agent A"})
+    assert [r["label"] for r in out["rows"]] == [f"{t['ta']['target_no']}: {t['a'].sales_agent} - Agent A"]
+
+
+def test_N4_a_plan_in_several_parts_keeps_every_schema_after_an_agent_resolve():
+    from app.services.chatbot.agent.loop import narrow_after_query
+
+    done = [{"name": "crm_resolve", "status": "ok", "agents_only": True}]
+    assert narrow_after_query(ALL, [{"name": "plan"}, {"name": "crm_resolve"}], done, plan_parts=2) == ALL
+    kept = narrow_after_query(ALL, [{"name": "plan"}, {"name": "crm_resolve"}], done, plan_parts=1)
+    assert [s["function"]["name"] for s in kept] == ["crm_query", "crm_describe", "answer", "plan", "crm_report_ask"]

@@ -95,7 +95,7 @@ REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
 AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
 
 
-def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict]) -> list[dict]:
+def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict], *, plan_parts: int = 0) -> list[dict]:
     """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
     the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
     other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
@@ -107,8 +107,13 @@ def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict])
     names = {str(c.get("name") or "") for c in calls}
     if not names:
         return schemas
-    answered = done[-len(calls):] if calls else []
+    # `plan` and `answer` are not in `done` (run.tool_calls): line up with this round's other calls only.
+    ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
+    answered = done[-ran:] if ran else []
     if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
+        if plan_parts > 1:
+            # A question in several parts may need another tool after the agent's figure (review round 9).
+            return schemas
         resolved = [c for c in answered if c.get("name") == "crm_resolve"]
         if resolved and all(c.get("status") == "ok" and c.get("agents_only") for c in resolved):
             return [s for s in schemas if s.get("function", {}).get("name") in AFTER_AGENT_RESOLVE]
@@ -1598,7 +1603,7 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, "agents_only": bool(agents)})
+                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, **({"agents_only": True} if agents else {})})
                 if basis and out.status == "ok" and not turn_basis:
                     turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
@@ -1648,7 +1653,7 @@ def _run(
                 )
             if accepted:
                 break
-            schemas = narrow_after_query(schemas, calls, run.tool_calls)
+            schemas = narrow_after_query(schemas, calls, run.tool_calls, plan_parts=len(plan_parts))
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"
