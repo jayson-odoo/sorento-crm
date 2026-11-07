@@ -35,7 +35,9 @@ Tunnel addresses used below (private, safe to keep): A = `10.77.0.1`, B = `10.77
 | ~22:30 | S2.3 first try (alter system) | stopped: `primary_conninfo` comes from the replica's command line |
 | ~23:00 | S2.3 recreate | failed (`no pg_hba.conf entry ... 172.18.0.1`), rolled back; replica streaming again over the public path. Suspected cause: B's wg0 address (S2.1 check) |
 | ~23:30 | S0 on A | DONE: owner key installed on both nodes (`ssh-copy-id`), drop-in applied, `CONFIG-OK`, key login OK, password login denied |
-| next | S0 on B, then the S2.1 B tunnel address check | pending |
+| ~00:30 | S2.1 fix | B's `wg0.conf` had A's values (Address 10.77.0.1, AllowedIPs 10.77.0.2): B pinged itself. Fixed to 10.77.0.2 / 10.77.0.1; keys and handshake verified; ping about 0.8 ms both ways |
+| 8 Nov ~01:50 | S2.3 recreate | DONE: new replica container streams from 10.77.0.1 over wg0; `sorento_crm_replica_old` kept stopped. On the way: the replica authenticates with `passfile=/var/lib/postgresql/data/.pgpass`, whose line names A's PUBLIC address, so the new conninfo got `fe_sendauth: no password supplied`; fixed by a second `.pgpass` line for 10.77.0.1 (password never printed) |
+| next | A check (`client_addr = 10.77.0.2`), S0 on B, outside-in firewall check, S5, S6.0 drill | pending |
 
 ## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
 
@@ -259,7 +261,10 @@ header: run S3's block afterwards, which rewrites it whole and includes the 5182
 
 **Check (each node):**
 1. `sudo wg show wg0 latest-handshakes` shows a timestamp under 2 minutes old.
-2. On A: `ping -c 20 -q 10.77.0.2` gives `0% packet loss` and an avg under 2 ms. On B: `ping -c 20 -q 10.77.0.1` the same.
+2. On A: `ping -c 20 -q 10.77.0.2` gives `0% packet loss` and an avg **between 0.2 and 2 ms**. On B: `ping -c 20 -q 10.77.0.1` the same.
+   An avg under about 0.1 ms means the node is pinging ITSELF (it was given the other node's address): stop.
+3. On each node `ip route get <peer tunnel address>` prints `<peer> dev wg0 src <own tunnel address>`, never `local <peer> dev lo`.
+4. `sudo wg show wg0` lists exactly one peer, whose public key is the OTHER node's `public.key`.
 
 **Rollback:** `sudo systemctl disable --now wg-quick@wg0` on both (nothing uses the tunnel yet).
 
@@ -349,12 +354,31 @@ the standard health check.
 sorento_crm_replica` shows `FATAL` (`no pg_hba.conf entry for host "10.77.0.2"` = S2.2's row is
 missing on A): roll back, then post.
 
+**Password source (7 Nov lesson):** the replica may authenticate with `passfile=` (a `.pgpass` in its
+data directory) instead of `password=` in the conninfo. `.pgpass` lines are host-specific, so a new
+`host=` needs its own line, or the new container logs `fe_sendauth: no password supplied`. Fix
+without printing the password (B):
+
+```bash
+docker exec -u postgres sorento_crm_replica sh -c 'f=/var/lib/postgresql/data/.pgpass; grep -q "^10.77.0.1:" "$f" ||
+  { grep -m1 "^[^#]*:5432:[^:]*:replicator:" "$f" | sed "s/^[^:]*:/10.77.0.1:/" >> "$f"; }; chmod 600 "$f"; cut -d: -f1-4 "$f"'
+```
+
+Expected: the printed lines (no passwords) include `10.77.0.1:5432:<db>:replicator`.
+
 Afterwards: keep `sorento_crm_replica_old` until the next day, then `docker rm` it (data is in the
 volume); `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh` (they hold the
 password). S5.2 later recreates the container once more from the NEW container's settings (same
 script pattern), adding the compose network and the 5434 port.
 
 ### S2.4 Later (after a day of streaming over the tunnel; not tonight)
+
+**When:** 24 hours of `client_addr = 10.77.0.2` with no reconnects to the public address (8 Nov
+~02:00 started the clock, so earliest 9 Nov ~02:00), AND `sorento_crm_replica_old` removed (its
+rollback path uses the public address). Then, in this order: (1) remove the TCP 5432 rule in the
+Hostinger firewall; (2) the host rule change below; (3) delete A's pg_hba row for B's PUBLIC
+address and reload; (4) on B remove the `.pgpass` line for A's public address. Check after each:
+replication still `streaming` from `10.77.0.2`.
 
 In A's `sorento-edge.sh` remove `! -s "$B/32"` from the 5432 line (5432 closed on the public
 interface to everyone). First `sudo systemctl restart sorento-edge` (it inserts the broad DROP on
@@ -585,52 +609,40 @@ for k in FIELD_ENCRYPTION_KEY JWT_SECRET NEXTAUTH_SECRET; do printf '%s ' $k; gr
 A's file to B (`scp`), never edit secrets by hand.
 
 **S5.2 Recreate the replica container on B's compose network, with a tunnel-only port for A
-(replica restarts for a few seconds; it resumes from its slot):**
+(replica restarts for a few seconds; it resumes from its slot).** Run **S5.5 first** (it starts
+B's Redis, which creates `<B_COMPOSE_NET>`). Same generator as S2.3, with the host unchanged:
 
 ```bash
-# THIS CHANGES PROD (node B). Read the current settings first and keep them.
-sudo sh -c 'umask 077; docker inspect sorento_crm_replica > /root/replica-inspect-07nov.json'
-docker inspect -f 'image={{.Config.Image}}
-mounts={{range .Mounts}}{{.Type}}:{{if .Name}}{{.Name}}{{else}}{{.Source}}{{end}}->{{.Destination}} {{end}}
-cmd={{json .Config.Cmd}}
-ports={{json .HostConfig.PortBindings}}
-restart={{.HostConfig.RestartPolicy.Name}}
-' sorento_crm_replica
-docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' sorento_crm_replica | grep '^PGDATA=' || echo "PGDATA default"
+# Generate (changes nothing running). Needs the current infra/scripts/replica-recreate-gen.py at /root/replica-gen.py.
+docker network inspect <B_COMPOSE_NET> >/dev/null && echo NET-OK
+sudo sh -c 'umask 077; docker inspect sorento_crm_replica | python3 -I /root/replica-gen.py 10.77.0.1 --network <B_COMPOSE_NET> --publish 0.0.0.0:5434:5432'
 ```
 
-**Stop if** `cmd` holds anything but `["postgres"]` plus `-c` options, or there is more than one
-data mount: post the output (addresses removed). Otherwise:
-
-The compose network must exist first: run **S5.5 before this block** (it starts B's Redis,
-which creates `<B_COMPOSE_NET>`).
+Expected: `NET-OK`; `WARNINGS: 0`; the old and new `primary_conninfo` lines are identical; the NEW
+RUN line now has `--network <B_COMPOSE_NET>`, `-p 127.0.0.1:5433:5432/tcp`, `-p 0.0.0.0:5434:5432`,
+the same volume, a `POSTGRES_USER=` env line (the release script needs it), a `sha256:` image.
 
 ```bash
-# THIS CHANGES PROD (node B). Fill <VOLUME_OR_PATH>, <DEST>, <CMD...>, <PGDATA_ENV> from the output above.
-docker network inspect <B_COMPOSE_NET> >/dev/null || { echo "network missing: run S5.5 first. STOP"; false; } &&
-# The release script runs psql as $POSTGRES_USER inside this container: carry those env lines over.
-sudo sh -c 'umask 077; docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" sorento_crm_replica | grep -E "^POSTGRES_(USER|PASSWORD|DB)=" > /root/replica.env' &&
-IMG=$(docker inspect -f '{{.Image}}' sorento_crm_replica) &&
-docker stop -t 30 sorento_crm_replica && docker rename sorento_crm_replica sorento_crm_replica_old &&
-sudo docker run -d --name sorento_crm_replica --restart unless-stopped \
-  --network <B_COMPOSE_NET> --env-file /root/replica.env \
-  -v <VOLUME_OR_PATH>:<DEST> <PGDATA_ENV: -e PGDATA=... only if printed> \
-  -p 127.0.0.1:5433:5432 -p 0.0.0.0:5434:5432 \
-  "$IMG" <CMD...> &&
+# THIS CHANGES PROD (node B). Replica down about 10-30 s.
+docker rm sorento_crm_replica_old 2>/dev/null; true     # the S2.3 leftover, only once S2.3 has run a day
+docker stop -t 60 sorento_crm_replica &&
+docker rename sorento_crm_replica sorento_crm_replica_old &&
 docker update --restart no sorento_crm_replica_old &&
-sudo shred -u /root/replica.env     # docker keeps the env; the file is not needed any more
+sudo sh /root/replica-run-new.sh && sleep 15 &&
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc \
+  "select pg_is_in_recovery(), status, sender_host from pg_stat_wal_receiver"
 ```
 
-(`$IMG` is the exact image the replica runs now, so its version cannot change. `/root/replica.env`
-must hold a `POSTGRES_USER=` line; if it is empty, stop before the `docker stop` and post.)
+(If S2.3 is less than a day old, skip the `docker rm` line and rename the S2.3 leftover first:
+`docker rename sorento_crm_replica_old sorento_crm_replica_s23`.)
 
-(5434 is closed to everything but `wg0` by S3. Binding to `0.0.0.0` instead of `10.77.0.2` keeps
-the container starting after a reboot even if the tunnel is not up yet.)
+(5434 is closed to everything but `wg0` by S3 and is not in the Hostinger accept list. Binding
+`0.0.0.0` instead of `10.77.0.2` keeps the container starting after a reboot even if the tunnel
+is not up yet.)
 
-**Check:** on A, replication `streaming` from `10.77.0.2` within 30 s. On B:
-`docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select pg_is_in_recovery()"` prints `t`.
+**Check:** B prints `t|streaming|10.77.0.1`; on A, `client_addr = 10.77.0.2`, `streaming`.
 **Rollback:** `docker rm -f sorento_crm_replica && docker rename sorento_crm_replica_old sorento_crm_replica && docker update --restart unless-stopped sorento_crm_replica && docker start sorento_crm_replica`.
-After a day: `docker rm sorento_crm_replica_old` (data is in the volume, not the container).
+Afterwards `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh`.
 
 **S5.3 B's `.env` (backup first: `cp .env .env.bak-07nov`):**
 - `DATABASE_URL` and `DIRECT_URL`: same user, password and database as A, host `sorento_crm_replica`, port `5432`.

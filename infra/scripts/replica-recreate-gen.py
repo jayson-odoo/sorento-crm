@@ -2,7 +2,10 @@
 """Generate run scripts that recreate node B's standalone replica container `sorento_crm_replica`
 with ONE change: the host= in its command-line primary_conninfo (HA-TONIGHT runbook S2.3).
 
-Usage (node B, root): docker inspect sorento_crm_replica | python3 -I replica-recreate-gen.py <new host>
+Usage (node B, root):
+  docker inspect sorento_crm_replica | python3 -I replica-recreate-gen.py <new host> [--network NAME] [--publish SPEC]...
+--network replaces the container's network (S5.2: B's compose network); --publish adds a port
+mapping (S5.2: 0.0.0.0:5434:5432). Pass the current host to change nothing in primary_conninfo.
 Writes /root/replica-run-old.sh and /root/replica-run-new.sh (they hold the password: umask 077,
 shred them once done) and prints only a MASKED view. Exits non-zero with STOP: when the container
 does not have exactly one primary_conninfo argument with one host=. Prints a WARNING for every
@@ -11,14 +14,31 @@ container setting it does not copy. Stdlib only.
 import json, re, shlex, sys
 c = json.load(sys.stdin)[0]
 cfg, hc = c["Config"], c["HostConfig"]
-NEW = sys.argv[1]
+args = sys.argv[1:]
+if not args or args[0].startswith("--"):
+    sys.exit("usage: replica-recreate-gen.py <new host> [--network NAME] [--publish SPEC]... [--out DIR]")
+NEW = args.pop(0)
+NET, PUBLISH, OUT = None, [], "/root"
+while args:
+    flag = args.pop(0)
+    if not args:
+        sys.exit("STOP: %s needs a value" % flag)
+    val = args.pop(0)
+    if flag == "--network" and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", val):
+        NET = val
+    elif flag == "--publish" and re.fullmatch(r"(\d{1,3}(\.\d{1,3}){3}:)?\d{1,5}:\d{1,5}(/tcp)?", val):
+        PUBLISH.append(val)
+    elif flag == "--out":
+        OUT = val
+    else:
+        sys.exit("STOP: bad option %s %s" % (flag, val))
 warn = []
 def run(cmd_args):
     a = ["docker", "run", "-d", "--name", "sorento_crm_replica"]
     rp = hc.get("RestartPolicy") or {}
     if rp.get("Name") and rp["Name"] != "no":
         a += ["--restart", rp["Name"] + (":%d" % rp["MaximumRetryCount"] if rp["Name"] == "on-failure" and rp.get("MaximumRetryCount") else "")]
-    nm = hc.get("NetworkMode") or "default"
+    nm = NET or hc.get("NetworkMode") or "default"
     if nm not in ("default", "bridge"):
         a += ["--network", nm]
     if len((c.get("NetworkSettings") or {}).get("Networks") or {}) > 1:
@@ -27,6 +47,8 @@ def run(cmd_args):
         for b in binds or []:
             hp = (b.get("HostIp") + ":" if b.get("HostIp") else "") + b["HostPort"]
             a += ["-p", hp + ":" + cport]
+    for spec in PUBLISH:
+        a += ["-p", spec]
     for m in c.get("Mounts") or []:
         src = m["Name"] if m["Type"] == "volume" else m["Source"]
         a += ["-v", src + ":" + m["Destination"] + ("" if m.get("RW", True) else ":ro")]
@@ -66,7 +88,7 @@ if n != 1:
     sys.exit("STOP: expected exactly one host= in primary_conninfo, found %d" % n)
 new_cmd = old_cmd[:]; new_cmd[i] = new_val
 for name, args in (("old", run(old_cmd)), ("new", run(new_cmd))):
-    with open("/root/replica-run-%s.sh" % name if len(sys.argv) < 3 else sys.argv[2] + "/replica-run-%s.sh" % name, "w") as f:
+    with open("%s/replica-run-%s.sh" % (OUT, name), "w") as f:
         f.write("#!/bin/sh\nset -e\n" + " ".join(shlex.quote(x) for x in args) + "\n")
 def m1(x):
     x = re.sub(r"password=('(?:[^'\\]|\\.)*'|\S+)", "password=***", x)
