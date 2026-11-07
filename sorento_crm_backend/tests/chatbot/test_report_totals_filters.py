@@ -1,6 +1,6 @@
 """Phase 2 RED tests: totals vs top-N, one name one filter, clear one filter, combined turn (lane CHATBOT-TOTALS-FILTERS).
 
-`documentation/plans/chatbot/chatbot-totals-filters-acceptance-criteria.md` (AF, ON, CL, CT, HF, RB rows; the PENDING-Q2 and
+`documentation/plans/_archive/chatbot/chatbot-totals-filters-acceptance-criteria.md` (AF, ON, CL, CT, HF, RB rows; the PENDING-Q2 and
 PENDING-Q4 rows and the prompt-level BA rows are not here), plan `PLAN-chatbot-totals-filters-4nov.md` (M1 to M5).
 
 Contract pinned here (nothing else is assumed), on the NEW report-ask path (`parser.REPORT_ASK_LINE`):
