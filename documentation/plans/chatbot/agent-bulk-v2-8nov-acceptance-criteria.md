@@ -1,9 +1,10 @@
 # UAC: Agent bulk actions v2 (AGENT-BULK-V2)
 
 Plan: `PLAN-agent-bulk-v2-8nov.md`. Crew answers on the card (8 Nov): Q1 (a) list candidates, the owner picks, "all"
-is one choice, never auto-link; Q3 (a) Confirm the ready rows now, waiting rows listed and left out; Q4 group
-candidate only if the data shows such groups (pending); Q5 next wave = contact tags. Q2 (how the owner picks: chat
-reply vs buttons) is with the owner; V12+ are written after that answer.
+is one choice, never auto-link; Q3 (a) Confirm the ready rows now, waiting rows listed and left out; Q4 (b)
+accounts only, no customer-group candidate (the dev DB groups are name-seeded by `cust_group_0001`, not office-made, and
+miss accounts, so a group candidate would be name matching by the back door); Q5 next wave = contact tags. Q2 (how the owner picks: chat
+reply vs buttons) is with the owner; the pick rows are added after that answer.
 
 Tests: `sorento_crm_backend/tests/chatbot/agent/test_agent_bulk_v2.py` (test number in brackets).
 #2226's UAC (`agent-bulk-actions-7nov-acceptance-criteria.md`, B1-B17) still holds except where a row below replaces it.
@@ -16,6 +17,7 @@ Tests: `sorento_crm_backend/tests/chatbot/agent/test_agent_bulk_v2.py` (test num
 | V4 | More than 10 accounts contain the cell | 10 candidates listed, plus "more than 10 accounts match; give a longer name or the code" (03) |
 | V5 | Containing accounts that are inactive, of another company the row does not name, or outside the user's companies | never listed as candidates (03) |
 | V6 | No account of the row's company contains the cell, but an account of the other company does | skipped: "\"X\" is a Mocha customer, but the row's company is Sorento" (names the company, lists no account) (04) |
+| V6b | The same written name exists in BOTH companies (a dealer with accounts in Sorento and Mocha) | only the row's company's accounts are candidates; the other company's are never listed or linked (03) |
 | V7 | No account anywhere in the user's companies contains the cell | skipped: "No customer named \"X\" in your companies" (04) |
 | V8 | A row with several problems (bad phone AND unknown customer AND unknown access word) | skipped once, with EVERY reason, in the order phone, access, company, customer (05) |
 | V9 | A row with a hard problem (bad phone, unknown access) AND an ambiguous customer | skipped (not waiting), reasons include "\"X\" fits N accounts" (05) |
