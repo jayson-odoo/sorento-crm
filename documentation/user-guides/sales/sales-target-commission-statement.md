@@ -8,20 +8,35 @@ send stakeholders a statement they can cross-check.
 1. Open **Sales**, **Targets**, then a target.
 2. The card above the tabs shows:
    - **Commission earned to date (RM)**: the commission of the periods that have ended.
-   - **Current period so far (RM)**: the period running today, with its % of target. It can
-     still change, so it is not part of the earned figure.
+   - **Current period commission (RM)**: the period running today, with its dates. It can still
+     change, so it is not part of the earned figure.
    - **Pays to** (dealer targets): the account the commission is paid to. The CRM does not record
      whether it has been paid.
 3. The **Periods** tab lists each period's **Target**, **Achieved**, **%**, **Tier reached**,
    **Rate**, **Commission (RM)** and, on a dealer target, **Pays to**, then a **Total** row.
+   **Rate** shows the reached tier's rate and its Additional, e.g. **A/C I 6.00% + 1.00%**. Click
+   **Tier reached** or **Rate** to see that period's tiers with the reached one highlighted.
+   **Columns** hides or shows columns.
 4. The **Accounts** tab (dealer targets) lists each counted account's sales in every period that
    has started, then the **Period total** with the period's commission and the account it pays
-   to. The running period reads **Period total (so far)**.
+   to. The running period reads **Period total (so far)**. Click a period to see its tiers.
 5. To export, open the gear menu and choose **Export commission statement**. For several targets
    at once, tick them in the **Targets** list and choose **Commission statement (N)** (at most
    50 targets per file).
 6. The statement is prepared in the background: open **My Downloads** (the download icon at the
    top of the page) and download the file once it reads ready.
+
+## Tiers and the Additional
+
+On the **Commission** tab each tier has a threshold, a rate and an **Additional**: a % on top of
+the rate, or a fixed RM (pick **%** or **RM** beside it in Edit). **Period** narrows the list to
+the periods you pick.
+
+Additional pays only on its own tier; set it on each tier where it should apply.
+
+Example: tiers 60,000 at 5% + 1%, 75,000 at 6% + 1%, 85,000 at 7% + 1%. Sales of 76,793.92 reach
+75,000, so the period pays 6% (4,607.64) plus its own 1% (767.94) = 5,375.58. The 60,000 tier's
+Additional does not also pay.
 
 ## How you'll be notified
 

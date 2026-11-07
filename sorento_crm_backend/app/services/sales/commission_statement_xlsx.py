@@ -51,6 +51,20 @@ def _rates(entries: Iterable[dict], metric: str) -> str:
     return ", ".join(parts)
 
 
+def _reached_rate(p: dict, metric: str) -> str:
+    """The reached tier's rate(s) and its Additional, as the Periods tab reads it:
+    "A/C I 6.00% + 1.00%" or "6.00% + RM 500.00" (lane TARGET-TIER-ADDITIONAL)."""
+    text = _rates(p.get("tier_rates") or [], metric)
+    add = p.get("tier_additional")
+    if not text or not add or not add.get("value"):
+        return text
+    if add["kind"] == "amount":
+        return f"{text} + RM {add['value']:,.2f}"
+    if metric == "quantity":
+        return f"{text} + RM {add['value']:.2f}/unit"
+    return f"{text} + {add['value']:.2f}%"
+
+
 def _period_label(p: dict) -> str:
     return fmt_date_range(p["period_start"], p["period_end"])
 
@@ -123,7 +137,7 @@ def _target_sheet(ws, t: dict, generated: datetime, on: date) -> None:
             [
                 _period_label(p), p["target_value"], p["achieved_value"], p["achieved_pct"],
                 f"Tier {p['tier_reached']}" if p["tier_reached"] else "None",
-                _rates(p["tier_rates"], metric), p["commission_earned"], p["bonus_earned"],
+                _reached_rate(p, metric), p["commission_earned"], p["bonus_earned"],
                 pays_to if paid else "", status,
             ],
             money=[2, 3, 7, 8], pct=[4],
