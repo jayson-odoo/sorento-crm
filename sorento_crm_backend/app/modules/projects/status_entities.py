@@ -54,11 +54,11 @@ def _migrate_projects(db: Session, from_status_id: str, to_status_id: str) -> in
     if moved_ids:
         # Outcome follows a Lost / Dormant stage (PROJECT-CLASH-LOST), so a bulk move onto
         # or off such a rung re-derives it, exactly as a single move does.
-        from app.services.project_quotation_service import sync_project_outcome
+        from app.services.project_service import outcome_follows_stage
 
         for project in db.query(Project).filter(Project.id.in_(moved_ids)).all():
             db.refresh(project)
-            sync_project_outcome(db, project)
+            outcome_follows_stage(db, project)
     return count
 
 

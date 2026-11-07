@@ -1,8 +1,8 @@
 """The quotation DOCUMENT: one letterhead carrying several priced scopes.
 
 Sits above ``project_quotation_service``, which keeps owning a scope and its version chain. The
-split matters: outcome is per scope and is not a property of a revision, so this module never
-touches outcome, and the project's derived outcome keeps working untouched.
+split matters: a scope carries no outcome (the project has the one Won/Lost outcome), and the
+only outcome this module writes is a customer acceptance winning an open project.
 
 Three rules are enforced here rather than left to callers, because each has already been got
 wrong once somewhere in this codebase:
@@ -33,8 +33,6 @@ from sqlalchemy.orm import Session
 from app.models.base import company_scope, set_company_scope
 from app.models.numbering import DocumentNumberingRule
 from app.models.projects import (
-    QUOTATION_OUTCOME_LOST,
-    QUOTATION_OUTCOME_WON,
     Project,
     ProjectParty,
     ProjectQuotation,
@@ -894,7 +892,8 @@ def make_quotation(
     issue_id: str,
     actor_user_id: str,
 ) -> ProjectQuotationDocument:
-    """A won project's salesperson turns ONE issued proposal revision into the QUOTATION.
+    """The project's salesperson turns ONE issued proposal revision into the QUOTATION (any
+    project not Lost or Dormant; #2197 dropped the won-only gate).
 
     A copy, not a re-pointing: the proposal and its issues stay exactly what the customer was
     sent, and the quotation gets its own number, its own scopes and versions (so a PO, a sample
@@ -916,23 +915,26 @@ def make_quotation(
             status_code=404, message="Revision not found.", code="quotation_issue_not_found"
         )
     project = db.query(Project).filter(Project.id == proposal.project_id).first()
-    stage_outcome = scope_service.terminal_status_outcome(db, project) if project else None
-    if stage_outcome is not None:
-        # A won scope on a project since moved to Lost / Dormant: the stage decides the
-        # outcome (PROJECT-CLASH-LOST), so say which stage stops it, not "mark it Won".
+    if project is None:
+        raise AppException(
+            status_code=404, message="Project not found.", code="project_not_found"
+        )
+    if project.outcome == "dormant":
+        # A Dormant stage makes the outcome dormant (PROJECT-CLASH-LOST): say which stage
+        # stops it, as the admin may have renamed it.
         raise AppException(
             status_code=409,
             message=(
-                f"This project is on the {_stage_label(db, project) or stage_outcome.capitalize()}"
+                f"This project is on the {_stage_label(db, project) or 'Dormant'}"
                 " stage, so it cannot get a quotation."
             ),
-            code="project_not_won",
+            code="project_dormant",
         )
-    if project is None or scope_service.derive_project_outcome(db, project) != "won":
+    if project.outcome == "lost":
         raise AppException(
             status_code=409,
-            message="Mark the project Won before making its quotation.",
-            code="project_not_won",
+            message="This project is lost. Re-open it before making its quotation.",
+            code="project_lost",
         )
     if project_quotation(db, project.id) is not None:
         raise AppException(
@@ -977,10 +979,7 @@ def make_quotation(
         .order_by(ProjectQuotationIssueScope.sort_order)
         .all()
     )
-    now = datetime.utcnow()
     for pair, scope in pairs:
-        if scope.outcome == QUOTATION_OUTCOME_LOST:
-            continue
         copy = ProjectQuotation(
             company_id=quotation.company_id,
             project_id=quotation.project_id,
@@ -989,10 +988,6 @@ def make_quotation(
             scope_label=scope.scope_label,
             series_id=scope.series_id,
             notes=scope.notes,
-            # The project is won, and so is what it won: created won, so the open pipeline
-            # never counts the same money twice (forecast sums OPEN scopes only).
-            outcome=QUOTATION_OUTCOME_WON,
-            decided_at=now,
             created_by=actor_user_id,
         )
         db.add(copy)
@@ -1083,7 +1078,6 @@ def _scope_summary(db: Session, scope: ProjectQuotation) -> Dict[str, Any]:
         "id": str(scope.id),
         "scope_label": scope.scope_label,
         "sort_order": int(scope.sort_order or 0),
-        "outcome": scope.outcome,
         "current_version_id": str(version.id) if version is not None else None,
         "current_version_no": version.version_no if version is not None else None,
         "line_count": int(line_count),
@@ -1700,36 +1694,27 @@ def accept_issue(
     record.accepted_at = datetime.utcnow()
     db.flush()
 
-    _win_the_scopes_on(db, record)
+    _win_the_project_on(db, record)
     return record
 
 
-def _win_the_scopes_on(db: Session, record: ProjectQuotationIssue) -> List[ProjectQuotation]:
-    """Mark every scope this issue carried as won, skipping any already lost.
-
-    Goes through `scope_service.set_outcome` rather than setting the column, so the project's
-    derived outcome is recomputed by the one function that owns that rule.
-    """
-    scopes = (
-        db.query(ProjectQuotation)
-        .join(
-            ProjectQuotationIssueScope,
-            ProjectQuotationIssueScope.quotation_id == ProjectQuotation.id,
-        )
-        .filter(ProjectQuotationIssueScope.issue_id == record.id)
-        .all()
+def _win_the_project_on(db: Session, record: ProjectQuotationIssue) -> None:
+    """An accepted proposal wins an OPEN project. Won is left as it is, and Lost too: a person
+    decided that, and a signature does not overrule them."""
+    document = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == record.document_id)
+        .first()
     )
-    won: List[ProjectQuotation] = []
-    for scope in scopes:
-        if scope.outcome == QUOTATION_OUTCOME_LOST:
-            continue
-        if scope.outcome == QUOTATION_OUTCOME_WON:
-            won.append(scope)
-            continue
-        scope_service.set_outcome(db, quotation=scope, outcome=QUOTATION_OUTCOME_WON)
-        won.append(scope)
-    db.flush()
-    return won
+    project = (
+        db.query(Project).filter(Project.id == document.project_id).first()
+        if document is not None
+        else None
+    )
+    if project is not None and project.outcome == "open":
+        project.outcome = "won"
+        project.loss_reason = None
+        db.flush()
 
 
 # --------------------------------------------------------- the other answer

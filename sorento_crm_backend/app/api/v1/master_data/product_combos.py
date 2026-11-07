@@ -60,7 +60,7 @@ def create_product_combo(
 ):
     validate_uuid_path(product_id, resource="Product")
     return ProductComboService(db).create(
-        product_id, payload.name, created_by=current_user.get("id")
+        product_id, payload.name, created_by=current_user.get("id"), description=payload.description
     )
 
 

@@ -1564,6 +1564,37 @@ def _assert_requirements_uploaded(db: Session, project: Project, to_status_id: s
         )
 
 
+# A project on one of these rungs has been decided by a person, and that decision is its
+# outcome (PROJECT-CLASH-LOST): the list, board, forecast and clash check never read "Won" for
+# a project on the Lost stage. Keyed on the rung's stable key (project_seed_service.DEFAULT_FUNNEL).
+_OUTCOME_BY_STAGE_KEY = {"lost": "lost", "dormant": "dormant", "po_received": "won"}
+
+
+def outcome_follows_stage(db: Session, project: Project) -> None:
+    """Make the stored outcome agree with a decided stage, after any status write.
+
+    On Lost, Dormant or PO Received the outcome is lost / dormant / won (a Lost move through
+    `change_status` has already stored its reason; a bulk move has none to give). A project
+    that left Lost or Dormant (only possible on an admin graph with such an edge) is Open
+    again. Any other stage leaves the outcome alone: Mark won does not need a stage.
+    """
+    key = None
+    if project.status_id:
+        key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+    decided = _OUTCOME_BY_STAGE_KEY.get(key)
+    if decided is not None:
+        target = decided
+    elif project.outcome in ("lost", "dormant"):
+        target = "open"
+    else:
+        return
+    if project.outcome != target:
+        project.outcome = target
+    if target != "lost":
+        project.loss_reason = None
+    db.flush()
+
+
 def change_status(
     db: Session,
     project: Project,
@@ -1571,8 +1602,12 @@ def change_status(
     to_status_id: str,
     actor_user_id: str,
     permissions: Set[str],
+    loss_reason: Optional[str] = None,
 ) -> Project:
     """Move a project along the funnel, through the engine's legality check.
+
+    Landing on Lost needs a configured loss reason and sets outcome Lost; landing on PO
+    Received sets outcome Won. Any other rung leaves outcome alone.
 
     Server-side (AC-B4): an illegal drag on the board is rejected here regardless of
     what the client sends.
@@ -1606,15 +1641,24 @@ def change_status(
         )
         _assert_requirements_uploaded(db, project, to_status_id)
 
+    # Checked before anything is written, so a refused Lost move leaves the project as it was.
+    target_key = db.query(Status.key).filter(Status.id == to_status_id).scalar()
+    if target_key == "lost":
+        from app.services.project_quotation_service import _assert_loss_reason
+
+        reason = _assert_loss_reason(db, loss_reason)
+        project.outcome = "lost"
+        project.loss_reason = reason
+    elif target_key == "po_received":
+        project.outcome = "won"
+        project.loss_reason = None
+
+    from_status_id = project.status_id
     project.status_id = to_status_id
     db.flush()
 
-    # Outcome follows the stage (PROJECT-CLASH-LOST): moving onto Lost or Dormant makes the
-    # outcome lost / dormant everywhere it is read (list, board, forecast, clash check), and
-    # moving off it again re-derives the outcome from the quotations.
-    from app.services.project_quotation_service import sync_project_outcome
-
-    sync_project_outcome(db, project)
+    # Outcome follows a decided stage (PROJECT-CLASH-LOST), also off an admin's own edge.
+    outcome_follows_stage(db, project)
 
     # A funnel move is real work (AC-H2), so it advances the staleness clock and writes the
     # feed row. Done here rather than in the route because the board, the detail page and
@@ -1625,7 +1669,134 @@ def change_status(
         db,
         project=project,
         template="stage_changed",
-        payload={"to_status_id": str(to_status_id)},
+        payload={
+            "to_status_id": str(to_status_id),
+            # Where it came from, so a re-open from Lost has an exact answer even when the
+            # earlier history is missing (a project placed on a rung without a recorded move).
+            "from_status_id": str(from_status_id) if from_status_id else None,
+        },
+        actor_id=actor_user_id,
+    )
+    db.flush()
+    return project
+
+
+def _rung_before_lost(db: Session, project: Project, scope_id) -> str:
+    """The rung a Lost project held before it was lost, from its own stage-changed history.
+
+    Newest first: the first row that landed on the current Lost status marks the loss, and
+    the row right after it (older) is where the project came from. No such row means the
+    graph's initial status.
+    """
+    from app.models.activities import ActivityEvent
+    from app.services import status_service
+
+    events = (
+        db.query(ActivityEvent)
+        .filter(
+            ActivityEvent.entity_type == "project",
+            ActivityEvent.entity_id == str(project.id),
+            ActivityEvent.system_template == "stage_changed",
+        )
+        .order_by(ActivityEvent.created_at.desc(), ActivityEvent.id.desc())
+        .all()
+    )
+    targets = [str((e.system_payload or {}).get("to_status_id") or "") for e in events]
+    current = str(project.status_id)
+    candidate = None
+    if current in targets:
+        index = targets.index(current)
+        candidate = (events[index].system_payload or {}).get("from_status_id")
+        if not candidate:
+            later = targets[index + 1 :]
+            candidate = later[0] if later and later[0] else None
+    if candidate:
+        # A rung an admin has since retired is not somewhere to put the project back.
+        usable = (
+            db.query(Status.id)
+            .filter(
+                Status.id == candidate,
+                Status.is_active.is_(True),
+                Status.is_archived.is_(False),
+            )
+            .first()
+        )
+        if usable:
+            return str(candidate)
+    return status_service.initial_status(db, "project", scope_id).id
+
+
+def set_project_outcome(
+    db: Session,
+    project: Project,
+    *,
+    outcome: str,
+    actor_user_id: str,
+    permissions: Set[str],
+) -> Project:
+    """Mark won, or re-open. Lost goes through the stage move, which asks for the reason."""
+    assert_can_write_project(db, project, actor_user_id, permissions)
+
+    if outcome not in ("won", "open"):
+        raise AppException(
+            status_code=422,
+            message="Outcome must be won or open. Mark a project lost by moving it to Lost.",
+            code="project_outcome_invalid",
+        )
+    if project.outcome == outcome:
+        return project
+    if project.outcome == "dormant":
+        # Dormant follows the Dormant stage (PROJECT-CLASH-LOST), a final rung: winning or
+        # re-opening here would leave the outcome disagreeing with the stage.
+        raise AppException(
+            status_code=409,
+            message="This project is dormant, so its outcome cannot change here.",
+            code="project_dormant",
+        )
+    if outcome == "won" and project.outcome == "lost":
+        raise AppException(
+            status_code=409,
+            message="Re-open the project first.",
+            code="project_lost",
+        )
+
+    from app.services import project_activity_service as activity
+
+    if outcome == "open" and project.status_id is not None:
+        if db.query(Status.key).filter(Status.id == project.status_id).scalar() == "po_received":
+            raise AppException(
+                status_code=409,
+                message="This project has its PO. It cannot be re-opened.",
+                code="project_po_received",
+            )
+
+    project.outcome = outcome
+    project.loss_reason = None
+
+    if outcome == "open" and project.status_id is not None:
+        current_key = db.query(Status.key).filter(Status.id == project.status_id).scalar()
+        if current_key == "lost":
+            entity = get_status_entity("project")
+            scope_id = entity.scope_for(project) if entity is not None else None
+            target = _rung_before_lost(db, project, scope_id)
+            lost_id = project.status_id
+            project.status_id = target
+            db.flush()
+            # Terminal rungs have no outgoing edge, so this is a direct write, still recorded.
+            activity.record_project_event(
+                db,
+                project=project,
+                template="stage_changed",
+                payload={"to_status_id": str(target), "from_status_id": str(lost_id)},
+                actor_id=actor_user_id,
+            )
+
+    db.flush()
+    activity.record_project_event(
+        db,
+        project=project,
+        template="outcome_changed",
+        payload={"outcome": outcome},
         actor_id=actor_user_id,
     )
     db.flush()

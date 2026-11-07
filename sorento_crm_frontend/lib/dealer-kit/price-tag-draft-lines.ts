@@ -17,6 +17,7 @@ import type {
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { defaultOptionFor, fittingOptions, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 
 /**
  * One part row under a draft line (D2).
@@ -89,6 +90,9 @@ export interface DraftLine {
   tag_templates_combo?: string | null;
   /** PRICETAG-LPSP: this line's own LP or SP. Absent = the header's mode. */
   price_type?: PriceMode | null;
+  /** R13: the template and LP/SP a LOADED line was saved with. While both are unchanged the
+   *  template is kept (AC-37): no "No SP template linked" pill, eye enabled, no Submit reason. */
+  kept_template?: { id: string; price_type: PriceMode } | null;
 }
 
 /** The combo the line is asked for as, once the combos lookup has answered. */
@@ -416,6 +420,10 @@ export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): Dra
     pricing: null,
     // The templates lookup answers the options once the line is on screen.
     tag_template_id: line.tag_template_id ?? null,
+    kept_template:
+      line.tag_template_id && (line.price_type ?? requestMode)
+        ? { id: line.tag_template_id, price_type: (line.price_type ?? requestMode) as PriceMode }
+        : null,
     tag_templates: [],
     tag_templates_for: null,
     // The server stores an explicit type on every line, so a line whose type equals the
@@ -435,14 +443,16 @@ export type LineTemplateState =
   | { kind: 'none' }
   | { kind: 'loading' }
   | { kind: 'single'; template: ProductTagTemplateOption }
-  | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null };
+  | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null }
+  /** The item has links, but none fits this line's LP / SP: "No SP template linked". */
+  | { kind: 'mismatch'; priceType: 'list' | 'selling' };
 
 function comboShapeOf(line: DraftLine) {
   const combo = comboOfLine(line);
   return combo ? comboShape(combo.parts) : null;
 }
 
-export function lineTemplateState(line: DraftLine): LineTemplateState {
+export function lineTemplateState(line: DraftLine, priceMode?: PriceMode | null): LineTemplateState {
   if (line.line_type !== 'product' || !line.product_id) return { kind: 'none' };
   if (
     line.tag_templates_for !== line.product_id ||
@@ -456,12 +466,51 @@ export function lineTemplateState(line: DraftLine): LineTemplateState {
     (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
   );
   if (options.length === 0) return { kind: 'none' };
-  if (options.length === 1) return { kind: 'single', template: options[0] };
+  // PRICETAG-COMBO-FORMAT: only the templates that fit the line's LP / SP are offered.
+  const lineType = line.price_type ?? priceMode ?? null;
+  let fitting = fittingOptions(options, lineType);
+  // R6 (AC-37): a loaded line keeps the template it was saved with even when it stopped fitting;
+  // it shows by name and is re-sent. Only a user change (pick or LP/SP flip) re-filters.
+  const saved = options.find((o) => o.id === line.tag_template_id);
+  if (saved && !fitting.includes(saved)) fitting = [...fitting, saved];
+  if (fitting.length === 0) return { kind: 'mismatch', priceType: lineType as 'list' | 'selling' };
+  if (fitting.length === 1) return { kind: 'single', template: fitting[0] };
   return {
     kind: 'many',
-    options,
-    picked: options.find((o) => o.id === line.tag_template_id) ?? null,
+    options: fitting,
+    picked: fitting.find((o) => o.id === line.tag_template_id) ?? null,
   };
+}
+
+/**
+ * The line's type when the item has linked templates but none fits it ("No SP template linked").
+ * Unlike `lineTemplateState` this ignores a kept saved pick (R6): the saved template still shows
+ * and prints, but the gap is still worth saying.
+ */
+export function unfittedPriceType(line: DraftLine, priceMode?: PriceMode | null): 'list' | 'selling' | null {
+  if (line.line_type !== 'product' || !line.product_id) return null;
+  if (
+    line.tag_templates_for !== line.product_id ||
+    (line.tag_templates_combo ?? null) !== (line.combo_id ?? null)
+  ) {
+    return null;
+  }
+  const shape = comboShapeOf(line);
+  const options = (line.tag_templates ?? []).filter(
+    (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
+  );
+  const lineType = line.price_type ?? priceMode ?? null;
+  if (options.length === 0 || !lineType) return null;
+  // R13: a loaded line still holding its saved template and type raises nothing.
+  const kept = line.kept_template;
+  if (kept && kept.id === line.tag_template_id && kept.price_type === lineType) return null;
+  return fittingOptions(options, lineType).length === 0 ? lineType : null;
+}
+
+/** "SRTBF11416: No SP template linked" (a combo line is named by the combo). */
+export function noTemplateForTypeMessage(line: DraftLine, priceType: 'list' | 'selling'): string {
+  const label = comboOfLine(line)?.name || line.code || line.name;
+  return `${label}: No ${lineTypeLabel(priceType)} template linked`;
 }
 
 /** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
@@ -469,8 +518,8 @@ export const EMPTY_LINE = 'Pick a set or a product for this line.';
 
 export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 
-export function lineNeedsTemplate(line: DraftLine): boolean {
-  const state = lineTemplateState(line);
+export function lineNeedsTemplate(line: DraftLine, priceMode?: PriceMode | null): boolean {
+  const state = lineTemplateState(line, priceMode);
   return state.kind === 'many' && state.picked === null;
 }
 
@@ -532,15 +581,15 @@ export function draftLinesPayload(
 }
 
 /** The template the line prints with: its pick, or the lone link. Null when not decided. */
-function chosenTemplate(line: DraftLine): ProductTagTemplateOption | null {
-  const state = lineTemplateState(line);
+function chosenTemplate(line: DraftLine, priceMode?: PriceMode | null): ProductTagTemplateOption | null {
+  const state = lineTemplateState(line, priceMode);
   if (state.kind === 'single') return state.template;
   return state.kind === 'many' ? state.picked : null;
 }
 
 /** How many picks the chosen template reads from this part's group (0 when it reads none). */
-export function picksNeeded(line: DraftLine, role: string | null): number {
-  const needs = chosenTemplate(line)?.needs;
+export function picksNeeded(line: DraftLine, role: string | null, priceMode?: PriceMode | null): number {
+  const needs = chosenTemplate(line, priceMode)?.needs;
   const combo = comboOfLine(line);
   if (!needs || !combo || !role) return 0;
   const index = groupIndexOf(role, comboShape(combo.parts));
@@ -581,7 +630,10 @@ export function lineProblemsOf(
 ): string[] {
   const out: string[] = [];
   const combo = comboOfLine(line);
-  const needs = chosenTemplate(line)?.needs;
+  const templateState = lineTemplateState(line, priceMode);
+  const unfitted = unfittedPriceType(line, priceMode);
+  if (unfitted) out.push(noTemplateForTypeMessage(line, unfitted));
+  const needs = chosenTemplate(line, priceMode)?.needs;
   const heldPicks = (role: string) =>
     line.parts
       .filter((part) => part.role === role)
@@ -604,7 +656,7 @@ export function lineProblemsOf(
   }
   for (const part of line.parts) {
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
-    const k = picksNeeded(line, part.role);
+    const k = picksNeeded(line, part.role, priceMode);
     if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
     for (const id of picked) {
       const option = combo?.parts.find((p) => p.product_id === id);
@@ -640,7 +692,8 @@ function isCheckMessage(message: string): boolean {
     message.startsWith('Template needs ') ||
     /^No combo (list|selling) price\.$/.test(message) ||
     / is discontinued\.$/.test(message) ||
-    /: pick \d+ more\.$/.test(message)
+    /: pick \d+ more\.$/.test(message) ||
+    / template linked$/.test(message)
   );
 }
 
@@ -652,4 +705,16 @@ export function pruneGuardError(guardError: string | null, holding: string[]): s
   if (!guardError) return null;
   const kept = guardError.split('\n').filter((message) => !isCheckMessage(message) || holding.includes(message));
   return kept.length > 0 ? kept.join('\n') : null;
+}
+
+/**
+ * What flipping a line to `mode` does to its template: a pick that still fits is kept (nothing
+ * changes); otherwise it moves to that type's default, or is cleared when the item has none.
+ */
+export function templateAfterFlip(line: DraftLine, mode: PriceMode): { tag_template_id?: string | null } {
+  const options = line.tag_templates ?? [];
+  if (options.length === 0) return {};
+  const current = options.find((option) => option.id === line.tag_template_id);
+  if (current && templateFitsLine(current.price_type, mode)) return {};
+  return { tag_template_id: defaultOptionFor(options, mode)?.id ?? null };
 }

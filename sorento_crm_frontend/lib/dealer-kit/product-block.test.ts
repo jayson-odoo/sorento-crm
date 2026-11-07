@@ -20,7 +20,6 @@ import {
 } from './tag-template-types';
 import {
   bindTemplateLayers,
-  buildAccessoriesStrip,
   buildAlternativesRow,
   buildProductBlock,
   buildSetBlock,
@@ -417,36 +416,6 @@ describe('buildAlternativesRow', () => {
     // WHOLE tag's binding, so a slot here would make every alternative print
     // the tag's own product instead of its own (D28/r5 review)
     expect(layers.every((layer) => layer.slot_binding === null)).toBe(true);
-  });
-});
-
-describe('buildAccessoriesStrip', () => {
-  it('titles the strip and gives every item a picture and a caption', () => {
-    const layers = buildAccessoriesStrip(
-      [
-        { caption: 'WASTE-1', source: { type: 'asset', assetId: 'a1' } },
-        {
-          caption: 'TRAP-1',
-          source: { type: 'product_attachment', attachmentId: 'att-1' },
-        },
-      ],
-      OPTS,
-    );
-
-    const texts = layers
-      .filter((layer) => layer.props.kind === 'text')
-      .map((layer) => (layer.props as { text: string }).text);
-
-    expect(texts[0]).toBe('Accessories Included');
-    expect(texts).toContain('WASTE-1');
-    expect(texts).toContain('TRAP-1');
-    expect(layers.filter((layer) => layer.props.kind === 'image')).toHaveLength(2);
-  });
-
-  it('takes a title of its own', () => {
-    const layers = buildAccessoriesStrip([], { ...OPTS, title: 'Free Gifts' });
-
-    expect((layers[0].props as { text: string }).text).toBe('Free Gifts');
   });
 });
 

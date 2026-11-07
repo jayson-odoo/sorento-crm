@@ -12,6 +12,7 @@
  * safe one.
  */
 
+import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import { useState } from 'react';
 import { Check, RotateCcw } from 'lucide-react';
 
@@ -148,7 +149,7 @@ export function ProductDataChangeRows({
 }
 
 function ChangeValue({
-  value,
+  value: rawValue,
   imageUrl,
   isImage,
   muted,
@@ -166,6 +167,8 @@ function ChangeValue({
   isImage?: boolean;
   muted?: boolean;
 }) {
+  // R8: a formatted description is shown as plain text, never as markup.
+  const value = isImage ? rawValue : rawValue === null ? null : richPlainText(rawValue);
   if (isImage) {
     return imageUrl ? (
       <img

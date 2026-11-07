@@ -177,7 +177,7 @@ def nightly_refresh_open_containers(db: Session) -> int:
     refreshed = 0
     for shipment_id in service.open_shipment_ids():
         try:
-            service.refresh_shipment_line_statuses(shipment_id)
+            service.refresh_shipment_line_statuses(shipment_id, trigger="sweep")
             refreshed += 1
         except Exception:  # noqa: BLE001 - one bad shipment must not stop the sweep
             db.rollback()
