@@ -76,6 +76,8 @@ CONSOLE_LABELS = [
     "take back a purchase request action",
     "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "change one of your ideas",
+    # AGENT-BULK-ACTIONS: a row write on both channels.
+    "grant a dealer contact access",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
