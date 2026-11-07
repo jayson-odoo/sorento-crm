@@ -5,7 +5,7 @@ Two halves:
 * A golden lock on the discontinued message (title, body, WhatsApp text, context vars),
   written against the pre-refactor service so the shared runner cannot drift its copy.
 * List price as the second watched field: level-triggered on
-  ``list_price IS DISTINCT FROM list_price_notified``, own per-user toggles, the same
+  ``list_price <> list_price_notified`` (a NULL baseline is adopted first), own per-user toggles, the same
   company/brand scope rows, one digest per company per run listing each product as
   ``code name: RM old -> RM new (+x.x%)``.
 """
@@ -161,7 +161,9 @@ def test_list_price_change_notifies_digest(db):
     assert n.source_entity_type == "product_list_price_batch"
     assert n.source_entity_id == batch
     assert n.title == "List price changed for 2 products"
-    assert "P1 Name P1: RM 100.00 -> RM 110.00 (+10.0%), by editor" in n.body
+    assert "P1 Name P1: RM 100.00 -> RM 110.00 (+10.0%)" in n.body
+    # No "by <editor>": updated_by is stale after an AutoCount push (owner ask on #2228).
+    assert "by editor" not in n.body
     assert "P2 Name P2: RM 100.00 -> RM 80.00 (-20.0%)" in n.body
     assert "SAME" not in n.body
     link = f"https://crm.example/master-data-management/products?list_price_batch_id={batch}"
@@ -171,6 +173,13 @@ def test_list_price_change_notifies_digest(db):
     ctx = n.data["whatsapp_context_vars"]
     assert ctx["list_price_count"] == "2"
     assert ctx["list_price_link"] == link
+    assert ctx["contact_name"] == "sub"
+    assert n.data["link"] == link
+    # WhatsApp: count + date + link only, no product lines.
+    assert n.data["whatsapp_text"] == (
+        f"List price changed for 2 products ({ctx['today_date']}). View the list: {link}"
+    )
+    assert ctx["message"] == n.data["whatsapp_text"]
     # dd/mm/yyyy
     import re
 
@@ -287,3 +296,91 @@ def test_list_price_whatsapp_use_case_registered():
 
     src = open(respond_template.__file__).read()
     assert '"product_list_price_changed"' in src
+
+
+# --------------------------------------------------------------------------- multi-company
+
+MOCHA_ID = "00000000-0000-0000-0000-000000000002"
+
+
+def _mocha(db):
+    from app.models.company import Company
+    from tests._pg_fixture import unique_code
+
+    db.add(Company(id=MOCHA_ID, name="Mocha", code=unique_code("MCH")[:20]))
+    db.flush()
+    return MOCHA_ID
+
+
+def test_list_price_stamps_reported_price_not_a_later_edit(db, monkeypatch):
+    """Reviewer blocker: a two-company run where company 2's price moves while company 1
+    is being notified. The stored watermark must be the price the message reported, so
+    the later move is reported by the NEXT run instead of being swallowed."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.notification_service import NotificationService
+    from sqlalchemy import text
+
+    set_company_scope(db, None)  # as the scheduler runs it: all companies
+    mocha = _mocha(db)
+    a = _product(db, code="A-SRT", price="110.00", notified="100.00")
+    a.company_id = DEFAULT_COMPANY_ID
+    b = _product(db, code="B-MCH", price="110.00", notified="100.00")
+    b.company_id = mocha
+    _user(db, email="sub@x.com", lp_email=True)
+    db.commit()
+
+    orig = NotificationService.create_with_channel_preferences
+    fired = {"done": False}
+
+    def send_then_concurrent_edit(self, *args, **kwargs):
+        if not fired["done"]:
+            fired["done"] = True
+            db.execute(text("UPDATE products SET list_price = 130 WHERE product_code = 'B-MCH'"))
+        return orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", send_then_concurrent_edit)
+
+    first = _lp_run(db)
+    assert first["pending"] == 2
+    assert len(first["companies"]) == 2
+    mocha_note = (
+        db.query(Notification)
+        .filter(Notification.title.like("Mocha:%"))
+        .one()
+    )
+    assert "B-MCH Name B-MCH: RM 100.00 -> RM 110.00 (+10.0%)" in mocha_note.body
+    db.expire_all()
+    assert (
+        db.query(Product).filter(Product.product_code == "B-MCH").one().list_price_notified
+        == Decimal("110.00")
+    )
+
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", orig)
+    second = _lp_run(db)
+    assert second["pending"] == 1
+    latest = db.query(Notification).filter(Notification.source_entity_id == second["batch_id"]).one()
+    assert "B-MCH Name B-MCH: RM 110.00 -> RM 130.00 (+18.2%)" in latest.body
+
+
+def test_list_price_baseline_respects_task_company_scope(db):
+    """The new-product baseline step must not write outside the task's company scope."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    set_company_scope(db, None)
+    mocha = _mocha(db)
+    s1 = _product(db, code="NEW-SRT", price="10.00", notified=None)
+    s1.company_id = DEFAULT_COMPANY_ID
+    m1 = _product(db, code="NEW-MCH", price="10.00", notified=None)
+    m1.company_id = mocha
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    _lp_run(db)
+
+    set_company_scope(db, None)
+    db.expire_all()
+    rows = {p.product_code: p.list_price_notified for p in db.query(Product).all()}
+    assert rows["NEW-SRT"] == Decimal("10.00")
+    assert rows["NEW-MCH"] is None

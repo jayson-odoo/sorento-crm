@@ -104,7 +104,6 @@ class Message:
 
 @dataclass(frozen=True)
 class WatchedField:
-    key: str
     notify_type: str  # notification type AND WhatsApp use case
     source_entity_type: str
     event_type: str
@@ -113,7 +112,10 @@ class WatchedField:
     link_param: str
     pending: Callable[[Session], list]
     snapshot: Callable[[Session, list], list]  # ORM rows -> plain values with ``brand_id``
-    stamp: Callable[[Any, datetime, str], None]
+    # (row, its snapshot, now, batch_id). Stamp from the SNAPSHOT, never from a live column:
+    # after the first company's commit every row is expired, and a re-read would pick up a
+    # change made since the message was composed and mark it reported unseen.
+    stamp: Callable[[Any, Any, datetime, str], None]
     build_message: Callable[[MessageContext], Message]
     prepare: Optional[Callable[[Session], None]] = None
 
@@ -257,9 +259,10 @@ def _run_for_company(
     now = datetime.utcnow()
     batch_id = str(uuid.uuid4())
     count = len(pending)
-    # Stamp FIRST and commit before any send.
-    for p in pending:
-        spec.stamp(p, now, batch_id)
+    # Stamp FIRST and commit before any send. ``pending_snapshot`` is parallel to
+    # ``pending`` (built from it, in order).
+    for p, snap in zip(pending, pending_snapshot):
+        spec.stamp(p, snap, now, batch_id)
     db.commit()
 
     prefix = f"{company_name}: " if (label_with_company and company_name) else ""
@@ -364,7 +367,7 @@ def _discontinued_snapshot(db: Session, rows: list) -> list:
     ]
 
 
-def _discontinued_stamp(p: Any, now: datetime, batch_id: str) -> None:
+def _discontinued_stamp(p: Any, snap: Any, now: datetime, batch_id: str) -> None:
     p.discontinued_notified_at = now
     p.discontinued_notify_batch_id = batch_id
 
@@ -401,7 +404,6 @@ def _discontinued_message(ctx: MessageContext) -> Message:
 
 
 DISCONTINUED = WatchedField(
-    key="discontinued",
     notify_type="product_discontinued",
     source_entity_type="product_discontinued_batch",
     event_type="discontinued",
@@ -428,16 +430,20 @@ class ListPriceChange(NamedTuple):
     old: Decimal
     new: Decimal
     currency: str
-    changed_by: Optional[str]  # name of products.updated_by, best-effort "source"
 
 
 def _list_price_prepare(db: Session) -> None:
     """A product with no baseline yet (a new insert) adopts its current price silently:
-    a new product is not a price change."""
-    db.query(Product).filter(Product.list_price_notified.is_(None)).update(
-        {Product.list_price_notified: Product.list_price}, synchronize_session=False
-    )
-    db.commit()
+    a new product is not a price change.
+
+    Loaded through an ORM SELECT rather than a bulk UPDATE on purpose: the company scope
+    the scheduler applies to the session filters SELECTs only, so a bulk UPDATE would
+    write to every company's products whatever the task's ``company_ids`` say."""
+    rows = db.query(Product).filter(Product.list_price_notified.is_(None)).all()
+    for p in rows:
+        p.list_price_notified = p.list_price
+    if rows:
+        db.commit()
 
 
 def _list_price_pending(db: Session) -> list:
@@ -454,15 +460,6 @@ def _list_price_pending(db: Session) -> list:
 
 
 def _list_price_snapshot(db: Session, rows: list) -> list:
-    editor_ids = {str(p.updated_by) for p in rows if getattr(p, "updated_by", None)}
-    editors = {}
-    if editor_ids:
-        editors = {
-            str(uid): (name or email)
-            for uid, name, email in db.query(User.id, User.name, User.email)
-            .filter(User.id.in_(editor_ids))
-            .all()
-        }
     return [
         ListPriceChange(
             brand_id=str(p.brand_id) if getattr(p, "brand_id", None) is not None else None,
@@ -471,14 +468,14 @@ def _list_price_snapshot(db: Session, rows: list) -> list:
             old=Decimal(p.list_price_notified),
             new=Decimal(p.list_price),
             currency=p.currency or "MYR",
-            changed_by=editors.get(str(p.updated_by)) if getattr(p, "updated_by", None) else None,
         )
         for p in rows
     ]
 
 
-def _list_price_stamp(p: Any, now: datetime, batch_id: str) -> None:
-    p.list_price_notified = p.list_price
+def _list_price_stamp(p: Any, snap: ListPriceChange, now: datetime, batch_id: str) -> None:
+    # The price the message reports, not ``p.list_price``: see ``WatchedField.stamp``.
+    p.list_price_notified = snap.new
     p.list_price_notified_at = now
     p.list_price_notify_batch_id = batch_id
 
@@ -496,13 +493,12 @@ def _pct(old: Decimal, new: Decimal) -> str:
 
 
 def list_price_line(c: ListPriceChange) -> str:
-    line = (
+    # No "by <editor>": products.updated_by is not touched by the ordinary AutoCount
+    # push (master_ingest_service), so it would name the wrong person (owner ask on #2228).
+    return (
         f"{c.code} {c.name}: {_money(c.currency, c.old)} -> {_money(c.currency, c.new)} "
         f"({_pct(c.old, c.new)})"
     )
-    if c.changed_by:
-        line += f", by {c.changed_by}"
-    return line
 
 
 def _list_price_message(ctx: MessageContext) -> Message:
@@ -535,12 +531,13 @@ def _list_price_message(ctx: MessageContext) -> Message:
             "list_price_count": n,
             "list_price_batch_id": ctx.batch_id,
             "list_price_link": ctx.link,
+            # The generic email template renders data["link"] as its button.
+            "link": ctx.link,
         },
     )
 
 
 LIST_PRICE = WatchedField(
-    key="list_price",
     notify_type="product_list_price_changed",
     source_entity_type="product_list_price_batch",
     event_type="list_price_changed",
