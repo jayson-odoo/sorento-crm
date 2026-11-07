@@ -30,6 +30,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.services.error_handler import AppException
+from app.services.sales.commission_service import FoldRow, fold_additionals
 from app.services.sales.period_service import add_months
 
 # --------------------------------------------------------------------------------------
@@ -242,6 +243,9 @@ class SchemeTier:
     #: A fixed amount paid once per period when the tier is reached ("A/C I- 15,000" in an
     #: incentive column, round 10).
     bonus: Optional[Decimal] = None
+    #: The tier's % Additional: a "+ Additional x%" cell on the tier's threshold, folded onto it
+    #: (lane TARGET-TIER-ADDITIONAL, owner 5 Nov).
+    additional_rate: Optional[Decimal] = None
 
 
 @dataclass
@@ -1180,6 +1184,32 @@ def _group_schemes(
         else:
             merged_tiers.append(t)
     tiers = merged_tiers
+    # Owner 5 Nov: "+ Additional 1%" is its tier's Additional, not a line of its own; only the
+    # reached tier's pays. One the tier cannot take stays a "+ Additional" line, said on the rows.
+    fold = fold_additionals([
+        FoldRow(t.period_start, t.threshold, t.is_additional, t.rate, t.account_rates, t.additional_rate, t.bonus)
+        for t in tiers
+    ])
+    for m, rate in fold.rates.items():
+        tiers[m].additional_rate = rate
+    notes = [
+        f"{_KIND_NAME[kind]}: the additional "
+        f"{(tiers[i].rate or max((tiers[i].account_rates or {0: Decimal(0)}).values())).normalize():f}% "
+        f"from {tiers[i].threshold:,.0f} stays a line of its own ({why})"
+        for i, why in sorted(fold.skipped.items())
+    ] + [
+        f"{_KIND_NAME[kind]}: the additional on the threshold {tiers[m].threshold:,.0f} now adds on every account the tier pays"
+        for m in sorted(fold.broadened)
+    ] + [
+        f"{_KIND_NAME[kind]}: the additional on the threshold {tiers[m].threshold:,.0f} adds only on the accounts the tier names"
+        for m in sorted(fold.narrowed)
+        if len(codes) > 1
+    ]
+    for note in notes:
+        for r in ctx.rows:
+            if note not in results[r].warnings:
+                results[r].warnings.append(note)
+    tiers = [t for i, t in enumerate(tiers) if i not in fold.moves]
     seen = set()
     labels = {res.key: res.account_in_file or "" for res in results.values()}
 
@@ -2089,6 +2119,7 @@ def run(
                         else None
                     ),
                     "bonus_amount": float(t.bonus) if t.bonus is not None else None,
+                    "additional_rate": float(t.additional_rate) if t.additional_rate is not None else None,
                 }
                 for t, rates in zip(scheme.tiers, tier_rates)
             ]

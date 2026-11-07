@@ -99,6 +99,15 @@ def signed_line_amount() -> Any:
     return _sign(BillingDocumentLine.net_amount * BillingDocument.currency_rate)
 
 
+def counted_line() -> Any:
+    """A line that is a sale: every line but an AutoCount subtotal line (its amount restates the
+    lines above it) or a blank-item duplicate copy of a real line (SALES-SUBTOTAL-LINES). Every
+    line-based sales sum applies it; the lines stay on the document."""
+    return sa.and_(
+        BillingDocumentLine.is_subtotal.is_(False), BillingDocumentLine.is_duplicate.is_(False)
+    )
+
+
 def signed_line_quantity() -> Any:
     """A line's quantity, negative on a credit note."""
     return _sign(BillingDocumentLine.quantity)
@@ -141,6 +150,14 @@ def agent_label() -> Any:
         else_=sa.func.nullif(sa.func.btrim(BillingDocument.agent_code), ""),
     )
     return sa.func.coalesce(code, as_sent)
+
+
+def person_label() -> Any:
+    """The person behind the sale's agent (`sales_agents.person_label`), else the agent's own label (code);
+    NULL when there is no agent (SALES-LEADERBOARD)."""
+    agent = aliased(SalesAgent)
+    person = sa.select(agent.person_label).where(agent.id == agent_id()).correlate(BillingDocument).scalar_subquery()
+    return sa.func.coalesce(sa.func.nullif(sa.func.btrim(person), ""), agent_label())
 
 
 def uuid_values(values: List[str], name: str) -> List[str]:
@@ -361,13 +378,84 @@ def sales_type_filter(values: List[str]) -> Optional[Any]:
 INVOICED_SLUG = "sales.reports.view"
 
 
-def require_invoiced_access(db: Any, current_user: dict) -> None:
-    """403 unless the caller (a user, or an API key's act-as user) holds `sales.reports.view`. On an
-    identity read both the staff member and act-as must hold it (AGENTIC-UNIFY AC-7)."""
+#: The Respond contact's "Sales report" tick (Contacts > Access > Field reveals): what a chatbot
+#: call that names a contact needs for invoiced figures instead of the act-as user's slug.
+INVOICED_CONTACT_GRANT = "sales_orders.sales_report"
+_KEY_AUTH_METHODS = frozenset({"api_key", "integration_api_key"})
+
+
+def chatbot_contact_call(
+    current_user: dict, api_key: Optional[str], contact_id: Optional[str], space_id: Optional[str]
+) -> bool:
+    """A chatbot call: the chatbot's own shared key (the one key whose calls are scoped by the contact,
+    `company_scope_resolver._resolve_api_key_scope`), not an identity read (`key_user_id`), naming a
+    contact. Any other integration key keeps the slug (security review S1)."""
+    from app.services.company_scope_resolver import _api_key_valid
+
+    return bool(
+        contact_id
+        and space_id
+        and current_user.get("auth_method") in _KEY_AUTH_METHODS
+        and not current_user.get("key_user_id")
+        and _api_key_valid(api_key)
+    )
+
+
+def contact_tick_or_slug(
+    db: Any,
+    current_user: dict,
+    *,
+    grant: str,
+    slug: str,
+    api_key: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
+) -> bool:
+    """THE chatbot sales gate (CHATBOT-SALES-REPORT-TICK, owner 7 Nov, "strict"). A chatbot call
+    naming a contact (`chatbot_contact_call`) follows that contact's `grant` tick ONLY, whoever the
+    key acts as: unticked is refused even when the act-as user holds `slug`. The contact's scope still
+    narrows the figures in the route. Everyone else (a session user, an identity read, another key, a
+    key with no contact) needs `slug`, and on an identity read both users must hold it (AGENTIC-UNIFY
+    AC-7). A contact the CRM cannot resolve holds nothing (fail closed)."""
+    if chatbot_contact_call(current_user, api_key, contact_id, space_id):
+        from app.services.contact_field_reveal_service import granted_keys
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        # The ids exactly as the route resolves them, so the gate and the route read one contact.
+        resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+        return bool(resolved) and grant in granted_keys(db, resolved)
     from app.services.user_service import holds_permission
 
     # The route dependencies' own check (superadmin and admin pass), so the rule is one rule.
-    if not holds_permission(db, current_user, INVOICED_SLUG):
+    return holds_permission(db, current_user, slug)
+
+
+def may_read_invoiced(
+    db: Any,
+    current_user: dict,
+    *,
+    api_key: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
+) -> bool:
+    """The invoiced gate: the contact's Sales report tick on a chatbot call, else `sales.reports.view`."""
+    return contact_tick_or_slug(
+        db, current_user, grant=INVOICED_CONTACT_GRANT, slug=INVOICED_SLUG,
+        api_key=api_key, contact_id=contact_id, space_id=space_id,
+    )
+
+
+def require_invoiced_access(
+    db: Any,
+    current_user: dict,
+    *,
+    api_key: Optional[str] = None,
+    contact_id: Optional[str] = None,
+    space_id: Optional[str] = None,
+) -> None:
+    """403 `invoiced_needs_sales_reports` unless `may_read_invoiced`. Every route that answers
+    invoiced figures calls this, with the request's `X-API-Key` and contact pair when it has them."""
+    if not may_read_invoiced(db, current_user, api_key=api_key, contact_id=contact_id, space_id=space_id):
         raise AppException(
             status_code=403,
             message="Invoiced sales need the sales reports permission; ask delivered or ordered sales",

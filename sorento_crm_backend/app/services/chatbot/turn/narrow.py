@@ -15,7 +15,7 @@ from app.services.chatbot.turn.state import (
 # Core owns the ledger-family rule (`app/services/ledger_family.py`): the stock-ask record
 # names a customer-less ask by it too, and core may not import this package. `compose.py`
 # and `session_state.py` keep reading the two names from here.
-from app.services.ledger_family import customer_group_of, ledger_family_key, ledger_family_label
+from app.services.ledger_family import customer_group_of, customer_groups, ledger_family_key, ledger_family_label
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -252,7 +252,16 @@ class NarrowOutcome:
     note: str | None = None
 
 
-def decide(
+def decide(*, kind: str, **kwargs: Any) -> NarrowOutcome:
+    """`_decide`, with the turn's CUSTOMER groups in play only for the customer kind (#2120 review): a supplier's
+    family is its own trading name, never a customer group that lists the same name."""
+    if kind == "customer":
+        return _decide(kind=kind, **kwargs)
+    with customer_groups({}):
+        return _decide(kind=kind, **kwargs)
+
+
+def _decide(
     *,
     kind: str,
     policy_value: str,

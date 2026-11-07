@@ -254,6 +254,8 @@ class QueryContext:
     def company_id(self) -> Optional[str]:
         key = self.dataset.company_param
         chosen = self.values.get(key) if key else None
+        if self.dataset.company_multi:
+            return chosen[0] if chosen and len(chosen) == 1 else None
         return chosen[0] if chosen else None
 
 
@@ -290,6 +292,12 @@ def _bind_company(db: Session, definition: reg.ReportDefinition, values: Dict[st
     if key is None:
         return
     chosen = [c for c in _as_list(given.get(key)) if c]
+    if definition.dataset.company_multi:
+        # Several companies, each inside the grant (403 outside it); none = every company the grant holds.
+        if grants is not None and any(not isinstance(grants, frozenset) or c not in grants for c in chosen):
+            raise _forbidden_company()
+        values[key] = chosen
+        return
     if len(chosen) > 1:
         raise _invalid(f"'{key}' takes one company")
     if chosen:
@@ -391,7 +399,7 @@ def _predicates(ctx: QueryContext) -> List[ColumnElement]:
             preds.append(dataset.company_column.in_(sorted(grants)))
         else:
             preds.append(false())
-        if dataset.company_param is not None and not ctx.company_id:
+        if dataset.company_param is not None and not dataset.company_multi and not ctx.company_id:
             preds.append(false())
     if dataset.product_id_column is not None:
         from app.services.contact_brand_scope import product_in_scope_clauses

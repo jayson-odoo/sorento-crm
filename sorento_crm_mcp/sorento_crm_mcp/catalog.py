@@ -932,6 +932,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
             "channel | account_type (the customer's AutoCount account type) | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "sales_person (invoiced, delivered, ordered and outstanding: one row per sales person, agent codes sharing a person merged; \"who's top this month\" = basis=invoiced group_by=sales_person) | "
             "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
             "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
             "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
@@ -958,6 +959,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "case-insensitive, at least 3 characters; no match is 404), `product_ids` (ANDed "
             "with `product_code` when both are given), `brand_ids`, "
             "`category_ids`, `sales_agent_ids`, `customer_ids` (repeated or csv UUIDs), "
+            "`sales_person` (repeatable person label, as group_by=sales_person prints it; invoiced, delivered, ordered, outstanding), "
             "`customer_agent_ids` (customers whose assigned agent on the customer card is one "
             "of these; `none` in either agent list = no agent), "
             "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
@@ -1000,7 +1002,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
-            "group_offset", "account_types",
+            "group_offset", "account_types", "sales_person",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

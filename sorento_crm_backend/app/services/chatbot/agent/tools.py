@@ -255,6 +255,8 @@ TOOL_LABELS: dict[str, str] = {
     "crm_opportunity_update": "change an opportunity",
     "crm_contacts_find": "finding dealer contacts",
     "crm_contact_access_update": "change a dealer contact",
+    "crm_contact_grant": "grant a dealer contact access",
+    "crm_batch_propose": "change many records from a pasted table",
     "crm_purchase_requests_list": "purchase requests and sponsorship forms",
     "crm_purchase_request_decide": "approve or reject a purchase request",
     "crm_purchase_request_action_undo": "take back a purchase request action",

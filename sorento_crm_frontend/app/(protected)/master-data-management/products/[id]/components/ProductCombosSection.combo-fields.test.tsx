@@ -11,7 +11,7 @@
  * as text, no input".
  *
  * Assumptions the coder may tighten with the captain: field labels are the UAC words
- * (List price, Sell price, Description, Free items; per part Sell price, Top-up,
+ * (List price, Sell price, Description, Accessories included; per part Sell price, Top-up,
  * Upgrade), saved through `useUpdateProductCombo().mutate({ comboId, write })` beside the
  * existing `useUpdateProductComboPart().mutate({ partId, write })`, on blur.
  */
@@ -171,16 +171,17 @@ beforeEach(() => {
 });
 
 describe('Combos card, combo fields (AC-6.1)', () => {
-  it('shows List price, Sell price, Description and Free items for each combo, editable', () => {
+  it('shows List price, Sell price, Description and Accessories included for each combo, editable', () => {
     const block = renderCard();
     const scope = within(block);
 
     expect(scope.getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
     expect(scope.getByLabelText(/^Sell price \(RM\)/i)).toHaveValue(1999);
     expect(scope.getByLabelText(/^Description/i)).toHaveValue('<p>Cabinet, mirror and basin</p>');
-    // Free items is the accessory list now, not a text box.
+    // Accessories included is the accessory list now, not a text box (renamed from Free items, 7 Nov).
     expect(scope.queryByLabelText(/^Free items/i)).toBeNull();
-    expect(scope.getByTestId('accessory-list')).toHaveTextContent('Free items');
+    expect(scope.queryByText(/Free items/i)).toBeNull();
+    expect(scope.getByTestId('accessory-list')).toHaveTextContent('Accessories included');
     expect(scope.getByTestId('accessory-list')).toHaveAttribute('data-owner', 'combo-3');
   });
 

@@ -112,8 +112,12 @@ class R2Service:
         file_path: str,
         content_type: Optional[str] = None,
         signed_url_expires_in: int = 3600,
+        cache_control: Optional[str] = None,
     ) -> tuple[str, str]:
-        """Upload to R2 and return (key, signed CDN URL)."""
+        """Upload to R2 and return (key, signed CDN URL).
+
+        ``cache_control`` is for objects whose bytes never change under their key (image
+        renditions, IMAGE-UNIFY); originals are uploaded without it."""
         key = (file_path or "").lstrip("/")
         if not key:
             raise ValueError("file_path is required")
@@ -121,6 +125,8 @@ class R2Service:
             extra: dict = {}
             if content_type:
                 extra["ContentType"] = content_type
+            if cache_control:
+                extra["CacheControl"] = cache_control
             self.client.put_object(
                 Bucket=self.bucket_name,
                 Key=key,

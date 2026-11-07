@@ -18,6 +18,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.services.assistant_registry import ENTITIES
 from app.services.assistant_registry.types import EntityDef, FieldDef
+from app.utils.date_format import fmt_datetime_24h
 
 MAX_ROWS = 50
 MAX_GROUPS = 200
@@ -44,7 +45,6 @@ SPEC_KEYS = ("entity", "agent", "period", "fields", "filters", "group_by", "aggr
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
 _DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
-_MYT = dt.timezone(dt.timedelta(hours=8))
 #: Postgres `query_canceled`: the statement timeout fired.
 _QUERY_CANCELED = "57014"
 #: Postgres class 22, data exception: a value that does not fit its field ("abc" for a number).
@@ -536,9 +536,7 @@ def _plain(value: Any) -> Any:
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dt.datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=dt.timezone.utc)
-        return value.astimezone(_MYT).strftime("%d/%m/%Y %H:%M")
+        return fmt_datetime_24h(value)
     if isinstance(value, dt.date):
         return value.strftime("%d/%m/%Y")
     return value
