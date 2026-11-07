@@ -108,6 +108,16 @@ def sales_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return _agent_in(SalesOrder.sales_agent_id, values)
 
 
+def _person():
+    """The person behind a sales order's agent (`person_label`), else the agent's own code, else `NO_AGENT`; the
+    invoiced basis's `inv.person_label()` on this grain (SALES-INSIGHTS-P2)."""
+    return sa.func.coalesce(sa.func.nullif(sa.func.btrim(SalesAgent.person_label), ""), SalesAgent.sales_agent, NO_AGENT)
+
+
+def sales_person_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return _person().in_(values)
+
+
 def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     """The customer CARD link (REPORT-DRILLDOWN, owner 8 Oct 2026): lines of customers whose
     assigned agent (`customers.sales_agent_id`) is one of the values, whoever sold the order."""
@@ -159,6 +169,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
             lambda c: sa.func.coalesce(SalesAgent.sales_agent, NO_AGENT),
             size=140,
         ),
+        reg.Column("sales_person", "Sales person", "text", "dimension", lambda c: _person(), size=140),
         reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
         reg.Column("location", "Location", "text", "dimension", lambda c: Warehouse.warehouse_code, size=120),
         reg.Column(
@@ -228,6 +239,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
             reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
             reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
             reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
+            reg.SelectParam("sales_person", "Sales person", True, (), ap.person_options, sales_person_condition),
             reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
             reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
             reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),

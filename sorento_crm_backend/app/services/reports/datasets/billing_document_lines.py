@@ -100,6 +100,10 @@ def agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return inv.agent_condition(values)
 
 
+def sales_person_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return inv.person_label().in_(values)
+
+
 def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     """Lines of customers whose assigned agent is one of the values (the report ask's customer
     card link), whoever is on the document."""
@@ -201,7 +205,7 @@ ASK_COLUMNS = tuple(
     reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
     # The sales leaderboard's grouping (SALES-LEADERBOARD): codes sharing a person_label are one person.
     reg.Column("sales_person", "Sales person", "text", "dimension",
-               lambda c: sa.func.coalesce(inv.person_label(), inv.NO_AGENT), size=140, hidden=True),
+               lambda c: sa.func.coalesce(inv.person_label(), inv.NO_AGENT), size=140),
 )
 
 DATASET = reg.Dataset(
@@ -244,6 +248,7 @@ ASK_DEFINITION = reg.ReportDefinition(
         reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
         reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
         reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, agent_condition),
+        reg.SelectParam("sales_person", "Sales person", True, (), ap.person_options, sales_person_condition),
         reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
         reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
         reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
