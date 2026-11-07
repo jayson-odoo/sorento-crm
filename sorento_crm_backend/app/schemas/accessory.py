@@ -83,6 +83,8 @@ class AccessoryUpdate(BaseModel):
 
 class AccessoryListOut(BaseModel):
     data: List[AccessoryOut] = []
+    #: The owner's own box style (a saved accessories template), null = the tag template's own box.
+    box_style_id: Optional[str] = None
 
 
 class AccessoryListItemIn(BaseModel):
@@ -100,3 +102,5 @@ class AccessoryListItemIn(BaseModel):
 class AccessoryItemsIn(BaseModel):
     #: The whole ordered list; replaces what was there.
     items: List[AccessoryListItemIn] = Field(default_factory=list, max_length=100)
+    #: Omitted = unchanged, null = cleared, an id = that saved accessories template (404 if not visible).
+    box_style_id: Optional[str] = None

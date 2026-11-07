@@ -262,6 +262,7 @@ import {
   accessoryDesign,
   accessoryDesignChanged,
   accessoryEditItems,
+  effectiveBoxProps,
   designKey,
   linkCorrectionPatches,
   type AccessoryDesign,
@@ -1886,7 +1887,27 @@ export function TagCanvasEditor({
   const displayFor = (layer: TagLayer) => {
     const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
     if (accessoryEdit?.layerId !== layer.id) return display;
-    return { ...display, accessories: accessoryEditItems(display.accessories), accessoryEditing: true };
+    // Under edit the box's OWN design is what is edited, never a previewed owner's override.
+    return {
+      ...display,
+      accessories: accessoryEditItems(display?.accessories),
+      accessoryEditing: true,
+      accessoryBoxStyle: null,
+    };
+  };
+  /** "Box style from <combo or product>: <name>" while the previewed owner overrides this box. */
+  const boxStyleNoteOf = (layer: TagLayer | null | undefined): string | null => {
+    if (!layer || layer.props.kind !== 'accessories') return null;
+    const data = dataOf(layer);
+    const style = layerDisplay(layer, data, assetUrls, library.featureIcons)?.accessoryBoxStyle;
+    if (!style || !data) return null;
+    const source =
+      data.kind === 'line'
+        ? (data.line.combo?.name ?? data.line.code)
+        : data.kind === 'product'
+          ? (data.product.combo?.name ?? data.product.code)
+          : '';
+    return `Box style from ${source}: ${style.name}`;
   };
   const drawnLayer = (layer: TagLayer): TagLayer => {
     if (accessoryEdit?.layerId !== layer.id || accessoryEdit.target !== 'footer') return layer;
@@ -3979,13 +4000,16 @@ export function TagCanvasEditor({
     let dropped = 0;
     for (const layer of layers) {
       if (layer.props.kind !== 'accessories' || layer.visible === false) continue;
-      const items = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.accessories;
+      const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
+      const items = display?.accessories;
       if (!items) continue;
       const fit = { count: items.length, lines: accessoryLineCount(items) };
       fits.set(layer.id, fit);
-      dropped += layer.props.card
-        ? cardDropped(fit.count, layer.props, layer.width_mm, layer.height_mm)
-        : accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines).dropped;
+      // The previewed owner's box style, when it names one, is what prints (and what can overflow).
+      const props = effectiveBoxProps(layer.props, display?.accessoryBoxStyle);
+      dropped += props.card
+        ? cardDropped(fit.count, props, layer.width_mm, layer.height_mm)
+        : accessoryBoxLayout(fit.count, props, layer.width_mm, layer.height_mm, fit.lines).dropped;
     }
     return { fits, dropped };
   }, [layers, dataOf, assetUrls, library.featureIcons]);
@@ -4559,7 +4583,7 @@ export function TagCanvasEditor({
                             layer={editedLayer}
                             target={accessoryEdit.target}
                             elementId={accessoryEdit.elementId}
-                            count={displayFor(editedLayer).accessories?.length}
+                            count={displayFor(editedLayer)?.accessories?.length}
                             scale={scale}
                             onSelectElement={(elementId) =>
                               setAccessoryEdit((prev) => (prev ? { ...prev, elementId } : prev))
@@ -5515,6 +5539,7 @@ export function TagCanvasEditor({
               accessoryTemplate={accessoryTemplateOf(selectedLayer)}
               accessoryEdit={accessoryEdit}
               onUpdateAccessoryElement={updateAccessoryElement}
+              accessoryBoxStyleNote={boxStyleNoteOf(selectedLayer)}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

@@ -1337,6 +1337,15 @@ class TagAccessoryColour(BaseModel):
     hex: str
 
 
+class TagAccessoryBoxStyle(BaseModel):
+    """PRICETAG-ACCESSORY-DESIGNER S6: the saved accessories template a product or combo names as its
+    own box style; the renderers draw it instead of the tag template's box."""
+
+    id: str
+    name: str
+    design: dict = {}
+
+
 class TagAccessory(BaseModel):
     """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
     Declared on every tag shape below or `response_model` drops it without a word."""
@@ -1388,6 +1397,7 @@ class TagCombo(BaseModel):
     free_items: Optional[str] = None
     #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
     accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     choices: list[TagComboChoice] = []
     upgrades: list[TagComboUpgrade] = []
 
@@ -1424,6 +1434,7 @@ class ProductTagData(BaseModel):
     slots: Optional[TagSlots] = None
     #: PRICETAG-ACCESSORIES: the product's own list (an Ala Carte tag prints it).
     accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1552,6 +1563,7 @@ class TagPartData(BaseModel):
     price_tag_description: Optional[str] = None
     #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
     accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
     #: subject picker groups candidates under it. Absent on a fixed part.
     role: Optional[str] = None
@@ -1615,6 +1627,7 @@ class ResolvedLineData(BaseModel):
     included_accessories: str = ""
     #: PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's.
     accessories: list[TagAccessory] = []
+    accessory_box_style: Optional[TagAccessoryBoxStyle] = None
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
     slots: Optional[TagSlots] = None

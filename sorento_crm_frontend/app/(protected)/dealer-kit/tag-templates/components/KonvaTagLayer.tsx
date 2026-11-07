@@ -21,6 +21,7 @@ import type {
   FeatureIconsLayerProps,
   LayerPadding,
   TagAccessory,
+  TagAccessoryBoxStyle,
   TagLayer,
   TagLayerProps,
   TextLayerProps,
@@ -66,6 +67,7 @@ import {
 } from '@/lib/dealer-kit/accessory-box';
 import {
   boxColours,
+  effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardElementsForDesign,
@@ -432,6 +434,7 @@ function LayerContent({
           props={props}
           accessories={display?.accessories}
           editing={display?.accessoryEditing}
+          boxStyle={display?.accessoryBoxStyle}
         />
       );
 
@@ -1172,9 +1175,10 @@ function AccessoriesContent({
   widthMm,
   heightMm,
   scale,
-  props,
+  props: ownProps,
   accessories,
   editing,
+  boxStyle,
 }: {
   w: number;
   h: number;
@@ -1184,7 +1188,10 @@ function AccessoriesContent({
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
   editing?: boolean;
+  boxStyle?: TagAccessoryBoxStyle | null;
 }) {
+  // The previewed product / combo may name its own box style: it replaces the design, not the place.
+  const props = effectiveBoxProps(ownProps, boxStyle);
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
   if (props.card) {
     return (

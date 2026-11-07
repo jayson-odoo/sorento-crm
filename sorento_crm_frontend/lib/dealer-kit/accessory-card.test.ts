@@ -550,3 +550,22 @@ describe('cardElementsForDesign (card 1 while editing)', () => {
     expect((cardElementsForDesign(COLANDER, c) as unknown as El[]).map((e) => e.id)).not.toContain('spec');
   });
 });
+
+describe('cardElementsFor close-up under a kept element', () => {
+  it('dots dropped over the picture\'s lower part: the name stays below the picture', () => {
+    const c = {
+      width_mm: 40,
+      height_mm: 30,
+      elements: [
+        { id: 'pic', kind: 'picture', field: 'picture', x_mm: 0, y_mm: 0, width_mm: 20, height_mm: 15 },
+        { id: 'dots', kind: 'colour_dots', field: 'colours', x_mm: 2, y_mm: 10, width_mm: 10, height_mm: 4 },
+        { id: 'name', kind: 'text', field: 'name', x_mm: 0, y_mm: 16, width_mm: 40, height_mm: 5 },
+      ],
+    } as unknown as NonNullable<AccessoriesLayerProps['card']>;
+    const out = cardElementsFor(CHOPPING_BOARD, c) as unknown as El[];
+    expect(out.map((e) => e.id)).toEqual(['pic', 'name']);
+    // freed space starts at the picture's bottom (15), not the dots' top (10): 16 - (16 - 15)... name moves up by 1 at most
+    expect(byId(out, 'name')!.y_mm as number).toBeGreaterThanOrEqual(15 - 1e-6);
+    expect(byId(out, 'name')!.y_mm).toBeCloseTo(15);
+  });
+});

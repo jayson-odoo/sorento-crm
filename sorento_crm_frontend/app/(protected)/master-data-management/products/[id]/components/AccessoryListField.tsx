@@ -34,7 +34,10 @@ import { getProducts } from '../../services/productService';
 import { searchAccessories } from '../../../accessories/services/accessoryService';
 import {
   useCreateAccessory,
+  fetchBoxStyleOptions,
+  useBoxStyleOptions,
   useOwnerAccessories,
+  useOwnerBoxStyle,
   useReplaceOwnerAccessories,
 } from '../../../accessories/hooks/useAccessories';
 import {
@@ -166,6 +169,8 @@ export function AccessoryListField({
 }) {
   const { data } = useOwnerAccessories(kind, ownerId);
   const save = useReplaceOwnerAccessories(kind, ownerId);
+  const { data: boxStyleId } = useOwnerBoxStyle(kind, ownerId);
+  const { data: styleOptions = [] } = useBoxStyleOptions(canEdit);
   const create = useCreateAccessory();
   const items = data ?? [];
   const known = useRef(new Map<string, AccessoryEntry>());
@@ -296,6 +301,20 @@ export function AccessoryListField({
           setEditing(null);
         }}
       />
+      {canEdit ? (
+        <div className="space-y-1.5">
+          <Label>Box style</Label>
+          <SearchableSelect
+            value={boxStyleId ?? ''}
+            fetchOptions={fetchBoxStyleOptions}
+            selectedOption={styleOptions.find((option) => option.value === boxStyleId)}
+            onChange={(value: string) => save.mutate({ next: items, boxStyleId: value || null })}
+            placeholder="Tag template's own box"
+            aria-label="Box style"
+            clearable
+          />
+        </div>
+      ) : null}
       {canEdit ? (
         <SearchableSelect
           value=""

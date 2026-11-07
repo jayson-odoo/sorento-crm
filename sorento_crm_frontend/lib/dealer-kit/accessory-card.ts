@@ -15,6 +15,7 @@ import {
   accessoryCardInner,
   accessoryChrome,
   accessoryHeaderHeight,
+  partAtSlot,
   accessoryLineStyle,
   cardSize,
   type AccessoryBoxLayout,
@@ -31,6 +32,9 @@ import type {
   CardLayout,
   FooterLayout,
   TagAccessory,
+  TagAccessoryBoxStyle,
+  TagBindingData,
+  TagLayerProps,
   TextLayerProps,
 } from './tag-template-types';
 
@@ -38,7 +42,8 @@ const EPS = 1e-9;
 /** The smallest the cards shrink to before whole cards are dropped (owner ruling Q2). */
 export const CARD_SHRINK_MIN = 0.7;
 
-export type CardBoxProps = LayoutProps & Pick<AccessoriesLayerProps, 'card' | 'footer' | 'shrinkMin'>;
+export type CardBoxProps = LayoutProps &
+  Pick<AccessoriesLayerProps, 'card' | 'footer' | 'shrinkMin' | 'columns'>;
 
 export interface CardBoxLayout extends AccessoryBoxLayout {
   /** The factor every card is drawn at (1 = its design size). */
@@ -91,8 +96,61 @@ export function cardBoxLayout(
   const footerH = props.footer?.show && props.footer.height_mm > 0 ? props.footer.height_mm : 0;
   const min = Math.min(1, Math.max(0.1, props.shrinkMin ?? CARD_SHRINK_MIN));
 
-  const vertical = props.direction !== 'horizontal';
   const innerW = boxWidth_mm - 2 * pad;
+  if (props.columns !== undefined && props.columns !== null) {
+    // S6 grid: cards fill left to right, wrap to the next row, every card the same size.
+    const availH = boxHeight_mm - top - pad - footerH;
+    const wanted =
+      props.columns === 'auto'
+        ? Math.floor((innerW + gap + EPS) / (card.width_mm + gap))
+        : Math.floor(props.columns);
+    let cols = Math.max(1, Math.min(total, wanted));
+    const rowsFor = (n: number) => Math.ceil(total / n);
+    const fitFor = (n: number) =>
+      Math.min(
+        1,
+        (innerW - (n - 1) * gap) / (n * card.width_mm),
+        (availH - (rowsFor(n) - 1) * gap) / (rowsFor(n) * card.height_mm),
+      );
+    let scale = Math.max(fitFor(cols), min);
+    // Narrower than the grid at the smallest scale: fewer columns, never a card past the box.
+    while (cols > 1 && cols * card.width_mm * scale + (cols - 1) * gap > innerW + EPS) {
+      cols -= 1;
+      scale = Math.max(fitFor(cols), min);
+    }
+    const cw = card.width_mm * scale;
+    const ch = card.height_mm * scale;
+    if (cw > innerW + EPS || !(ch > 0)) return empty(total);
+    const maxRows = Math.floor((availH + gap + EPS) / (ch + gap));
+    const gridShown = Math.min(total, Math.max(0, maxRows) * cols);
+    if (gridShown === 0) return empty(total);
+    const gridCards: AccessoryRect[] = [];
+    for (let i = 0; i < gridShown; i += 1) {
+      gridCards.push({
+        x_mm: pad + (i % cols) * (cw + gap),
+        y_mm: top + Math.floor(i / cols) * (ch + gap),
+        width_mm: cw,
+        height_mm: ch,
+      });
+    }
+    const gridBottom = gridCards[gridShown - 1].y_mm + ch;
+    const gridOutH = gridBottom + footerH + pad;
+    return {
+      cards: gridCards,
+      shown: gridShown,
+      dropped: total - gridShown,
+      boxWidth_mm: boxWidth_mm,
+      boxHeight_mm: gridOutH,
+      ...accessoryChrome(props, boxWidth_mm, gridOutH),
+      scale,
+      footer:
+        footerH > 0
+          ? { x_mm: pad, y_mm: gridBottom, width_mm: Math.max(0, boxWidth_mm - 2 * pad), height_mm: footerH }
+          : null,
+    };
+  }
+
+  const vertical = props.direction !== 'horizontal';
   const availMain = vertical ? boxHeight_mm - top - pad - footerH : innerW;
   const availCross = vertical ? innerW : boxHeight_mm - top - pad - footerH;
   const cardMain = vertical ? card.height_mm : card.width_mm;
@@ -229,7 +287,14 @@ function resolveElements(elements: readonly CardElement[], resolve: Resolver): R
           overlapsX(visible[dropped], visible[index]),
       );
     if (below.length === 0) continue;
-    const shift = Math.min(...below.map((index) => tops[index])) - tops[dropped];
+    // The freed space starts below every KEPT element that overlaps the dropped one's column and reaches
+    // into it from above (dots over the picture's lower part): the name never jumps into the picture.
+    const freeFrom = visible.reduce((from, other, index) => {
+      if (index === dropped || gone[index] || tops[index] >= bottom - EPS) return from;
+      if (!overlapsX(visible[dropped], other)) return from;
+      return Math.max(from, tops[index] + other.height_mm);
+    }, tops[dropped]);
+    const shift = Math.min(...below.map((index) => tops[index])) - freeFrom;
     if (!(shift > 0)) continue;
     for (const index of below) tops[index] -= shift;
   }
@@ -833,4 +898,46 @@ export function applyLinkActions<T extends LinkLayer>(layers: readonly T[], acti
 /** Whether `changes` alter the box's DESIGN (not its per-box "Reads from" or its link). */
 export function accessoryDesignChanged(props: AccessoriesLayerProps, changes: Partial<AccessoriesLayerProps>): boolean {
   return designKey(accessoryDesign({ ...props, ...changes })) !== designKey(accessoryDesign(props));
+}
+
+/**
+ * The box style the previewed owner names, branching exactly like `accessoriesOf`: a position picked
+ * reads that part's; a request line's part (-1 = the main product's row) that part's; a request line its
+ * own (already resolved); a product preview with a combo the combo's (never the product's), else the
+ * product's. Null when there is none, on an older payload, or with no data.
+ */
+export function accessoryBoxStyleOf(
+  data: TagBindingData | null | undefined,
+  layer: { props?: TagLayerProps } | undefined,
+): TagAccessoryBoxStyle | null {
+  if (!data) return null;
+  const props = layer?.props?.kind === 'accessories' ? layer.props : undefined;
+  const slot = props?.subjectSlot;
+  if (slot && (data.kind === 'line' || data.kind === 'product')) {
+    const slots = data.kind === 'line' ? data.line.slots : data.product.slots;
+    return partAtSlot(slots, slot)?.accessory_box_style ?? null;
+  }
+  const part = props?.subjectPart;
+  if (part !== undefined && data.kind === 'line') {
+    if (part === -1) return data.line.slots?.main?.accessory_box_style ?? null;
+    return data.line.parts[part]?.accessory_box_style ?? null;
+  }
+  if (data.kind === 'line') return data.line.accessory_box_style ?? null;
+  if (data.kind === 'product') {
+    const combo = data.product.combo;
+    if (combo) return combo.accessory_box_style ?? null;
+    return data.product.accessory_box_style ?? null;
+  }
+  return null;
+}
+
+/** The props a box draws: its own, or with the previewed owner's box style applied (position, size,
+ *  "Reads from" and its own `presetId` kept). */
+export function effectiveBoxProps(
+  props: AccessoriesLayerProps,
+  style: TagAccessoryBoxStyle | null | undefined,
+): AccessoriesLayerProps {
+  return style
+    ? applyAccessoryDesign(props, style.design as unknown as AccessoryDesign, props.presetId ?? null)
+    : props;
 }

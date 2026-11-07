@@ -21,7 +21,7 @@ import {
   itemLayoutOf,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardDropped, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
+import { cardDropped, cardFromLegacy, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -284,6 +284,8 @@ interface InspectorPanelProps {
   /** The box being edited and the element selected in it; the element inspector replaces the box one. */
   accessoryEdit?: { layerId: string; target: 'card' | 'footer'; elementId: string | null } | null;
   onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
+  /** S6: "Box style from <product or combo>: <name>" while previewing an owner that overrides the box. */
+  accessoryBoxStyleNote?: string | null;
 }
 
 export function InspectorPanel({
@@ -322,6 +324,7 @@ export function InspectorPanel({
   accessoryTemplate,
   accessoryEdit,
   onUpdateAccessoryElement,
+  accessoryBoxStyleNote,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -648,6 +651,8 @@ export function InspectorPanel({
                 onSaveAccessoryTemplate ? () => onSaveAccessoryTemplate(layer.id) : undefined
               }
               template={accessoryTemplate ?? null}
+              boxStyleNote={accessoryBoxStyleNote ?? null}
+              onPatch={(changes) => onUpdateProps(layer.id, changes)}
             />
           )}
           {layer.props.kind === 'barcode' && (
@@ -2003,12 +2008,17 @@ function AccessoriesInspector({
   onEditFooter,
   onSaveTemplate,
   template,
+  boxStyleNote,
+  onPatch,
 }: {
   props: AccessoriesLayerProps;
   onEditCard?: () => void;
   onEditFooter?: () => void;
   onSaveTemplate?: () => void;
   template: { name: string; usedIn: number } | null;
+  boxStyleNote: string | null;
+  /** Only these props change (not the whole props sent back). */
+  onPatch: (changes: Partial<AccessoriesLayerProps>) => void;
   fit?: { count: number; lines: number };
   boxWidth_mm: number;
   boxHeight_mm: number;
@@ -2139,6 +2149,27 @@ function AccessoriesInspector({
             Horizontal
           </ToggleGroupItem>
         </ToggleGroup>
+      </div>
+      {boxStyleNote && <p className="text-xs text-muted-foreground">{boxStyleNote}</p>}
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Columns</Label>
+        <SearchableSelect
+          aria-label="Columns"
+          value={props.columns === undefined || props.columns === null ? '' : String(props.columns)}
+          options={COLUMN_OPTIONS}
+          clearable
+          placeholder="One column or row"
+          onChange={(value: string) => {
+            const columns = (value === 'auto' ? 'auto' : value ? Number(value) : undefined) as
+              | AccessoriesLayerProps['columns'];
+            // The grid is the card path's: a box with no card gets the one built from its legacy settings.
+            onPatch(
+              columns !== undefined && !props.card
+                ? { columns, card: cardFromLegacy(props, fit?.lines ?? 2, boxWidth_mm) }
+                : { columns },
+            );
+          }}
+        />
       </div>
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Item layout</Label>
@@ -2417,6 +2448,14 @@ const TEXT_FIELD_OPTIONS = [
   { value: 'spec', label: 'Spec lines' },
   { value: 'remark', label: 'Remark' },
   { value: 'price', label: 'Price' },
+];
+
+const COLUMN_OPTIONS = [
+  { value: 'auto', label: 'Auto' },
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '4', label: '4' },
 ];
 
 const CARD_SHAPE_OPTIONS = SHAPE_TYPE_OPTIONS.filter((option) => option.value !== 'polygon');

@@ -40,6 +40,7 @@ from app.services.storage_router import (
     resolve_signed_url,
 )
 
+_UNSET = object()
 IMAGE_TYPE_CODE = "accessory_image"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 12
@@ -177,6 +178,24 @@ def _first_non_blank(*values: Optional[str]) -> Optional[str]:
         if value is not None and str(value).strip():
             return value
     return None
+
+
+def box_style_for(
+    db: Session, *, product_id: Optional[str] = None, combo_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """The saved accessories template a product or a combo names as its own box style, as
+    `{id, name, design}`, else None (the tag template's own box). A combo never inherits its host's."""
+    from app.models.dealer_kit import AccessoryBoxPreset
+
+    owner = None
+    if combo_id:
+        owner = db.query(ProductCombo.accessory_box_preset_id).filter(ProductCombo.id == combo_id).first()
+    elif product_id:
+        owner = db.query(Product.accessory_box_preset_id).filter(Product.id == product_id).first()
+    if owner is None or not owner[0]:
+        return None
+    preset = db.query(AccessoryBoxPreset).filter(AccessoryBoxPreset.id == owner[0]).first()
+    return {"id": preset.id, "name": preset.name, "design": preset.design} if preset else None
 
 
 def tag_accessory(
@@ -623,8 +642,11 @@ class AccessoryService:
         self._product_or_404(product_id)
         return self._serialize_links(_product_links(self.db, product_id))
 
-    def set_product_list(self, product_id: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def set_product_list(
+        self, product_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
+    ) -> List[Dict[str, Any]]:
         product = self._product_or_404(product_id)
+        style_id = self._resolve_box_style(box_style)
         resolved = self._resolve_items(items, product.company_id, refused={product.id: "A product cannot list itself"})
         self.db.query(ProductAccessory).filter(ProductAccessory.product_id == product_id).delete(
             synchronize_session=False
@@ -640,6 +662,8 @@ class AccessoryService:
                     **overrides,
                 )
             )
+        if style_id is not _UNSET:
+            product.accessory_box_preset_id = style_id
         self.db.commit()
         return self.product_list(product_id)
 
@@ -651,8 +675,11 @@ class AccessoryService:
         """The combo's list with no scope check: for a caller that already resolved the combo."""
         return self._serialize_links(_combo_links(self.db, combo_id))
 
-    def set_combo_list(self, combo_id: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def set_combo_list(
+        self, combo_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
+    ) -> List[Dict[str, Any]]:
         combo = self._combo_or_404(combo_id)
+        style_id = self._resolve_box_style(box_style)
         host = self._product_or_404(combo.host_product_id)
         # One list of free products, never two: a product already IN the combo (a part) is not
         # also its free item, and the host is the combo itself.
@@ -674,6 +701,8 @@ class AccessoryService:
                     **overrides,
                 )
             )
+        if style_id is not _UNSET:
+            combo.accessory_box_preset_id = style_id
         self.db.commit()
         return self.combo_list(combo_id)
 
@@ -692,6 +721,24 @@ class AccessoryService:
         return row
 
     # ------------------------------------------------------------------ helpers
+
+    def _resolve_box_style(self, box_style: Any) -> Any:
+        """`_UNSET` (leave alone), None (clear) or the id of a saved template visible to the caller."""
+        from app.models.dealer_kit import AccessoryBoxPreset
+
+        if box_style is _UNSET or box_style is None:
+            return box_style
+        row = self.db.query(AccessoryBoxPreset.id).filter(AccessoryBoxPreset.id == str(box_style)).first()
+        if row is None:
+            raise handle_not_found("Accessories template", str(box_style))
+        return row[0]
+
+    def box_style_id_of(self, *, product_id: Optional[str] = None, combo_id: Optional[str] = None) -> Optional[str]:
+        if combo_id:
+            row = self.db.query(ProductCombo.accessory_box_preset_id).filter(ProductCombo.id == combo_id).first()
+        else:
+            row = self.db.query(Product.accessory_box_preset_id).filter(Product.id == product_id).first()
+        return row[0] if row else None
 
     def _serialize_links(self, links) -> List[Dict[str, Any]]:
         accessories = [link.accessory for link in links if not link.item_product_id and link.accessory]

@@ -19,6 +19,7 @@ import type {
   SlotBinding,
   SpecSheetDocFields,
   TagAccessory,
+  TagAccessoryBoxStyle,
   TagBindingData,
   TagCombo,
   TagImage,
@@ -73,7 +74,9 @@ import {
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
 import {
+  accessoryBoxStyleOf,
   boxColours,
+  effectiveBoxProps,
   cardBoxLayout,
   cardElementsFor,
   cardTextProps,
@@ -110,6 +113,8 @@ export interface ResolvedLineData {
   included_accessories: string;
   /** PRICETAG-ACCESSORIES: the list the "Accessories" box draws. Absent on an older pin. */
   accessories?: TagAccessory[];
+  /** S6: the box style this tag's owner names (null = the template's own box). */
+  accessory_box_style?: TagAccessoryBoxStyle | null;
   quantity: number;
   /** One line per member, already formatted, for a set line. */
   set_members?: string;
@@ -1352,11 +1357,13 @@ function renderAccessoriesLayer(
   media: TagSheetMedia,
   binding: TagBindingData | null,
 ) {
-  const props = layer.props;
-  if (props.kind !== 'accessories') return null;
+  const own = layer.props;
+  if (own.kind !== 'accessories') return null;
+  // The product / combo on this tag may name its own box style (S6): it replaces the design, not the place.
+  const props = effectiveBoxProps(own, accessoryBoxStyleOf(binding, layer));
   const items = accessoriesOf(binding, layer);
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
-  if (props.card) return renderDesignedAccessories(layer, media, items);
+  if (props.card) return renderDesignedAccessories({ ...layer, props }, media, items);
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
     items.length,

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { listAccessoryTemplates } from '@/app/(protected)/dealer-kit/services/accessoryTemplateService';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
@@ -9,6 +10,7 @@ import {
   createAccessory,
   deleteAccessoryImage,
   getAccessory,
+  getOwnerBoxStyle,
   getAccessories,
   listOwnerAccessories,
   orderAccessoryPictures,
@@ -139,21 +141,23 @@ export function useOwnerAccessories(kind: AccessoryOwnerKind, id: string | undef
 export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string) {
   const queryClient = useQueryClient();
   const key = ownerAccessoriesKey(kind, id);
+  const styleKey = ownerBoxStyleKey(kind, id);
   return useMutation({
-    mutationFn: ({ next }: { next: AccessoryEntry[] }) =>
-      replaceOwnerAccessories(
-        kind,
-        id,
-        next.map(entryRef),
-      ),
-    onMutate: async ({ next }) => {
+    mutationFn: ({ next, boxStyleId }: { next: AccessoryEntry[]; boxStyleId?: string | null }) =>
+      boxStyleId === undefined
+        ? replaceOwnerAccessories(kind, id, next.map(entryRef))
+        : replaceOwnerAccessories(kind, id, next.map(entryRef), boxStyleId),
+    onMutate: async ({ next, boxStyleId }) => {
       await queryClient.cancelQueries({ queryKey: key });
       const previous = queryClient.getQueryData<AccessoryEntry[]>(key);
+      const previousStyle = queryClient.getQueryData<string | null>(styleKey);
       queryClient.setQueryData<AccessoryEntry[]>(key, next);
-      return { previous };
+      if (boxStyleId !== undefined) queryClient.setQueryData<string | null>(styleKey, boxStyleId);
+      return { previous, previousStyle };
     },
-    onError: (error: Error, _vars, context) => {
+    onError: (error: Error, vars, context) => {
       queryClient.setQueryData(key, context?.previous);
+      if (vars.boxStyleId !== undefined) queryClient.setQueryData(styleKey, context?.previousStyle ?? null);
       toast.error(error.message || 'Failed to save the accessories');
     },
     onSuccess: (saved) => {
@@ -161,6 +165,41 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
       queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
       queryClient.invalidateQueries({ queryKey: ['product-combos'] });
     },
+  });
+}
+
+export const ownerBoxStyleKey = (kind: AccessoryOwnerKind, id: string | undefined) => [
+  'owner-accessories-box-style',
+  kind,
+  id,
+];
+
+/** The saved accessories template the owner names as its box style (null = the tag template's own). */
+export function useOwnerBoxStyle(kind: AccessoryOwnerKind, id: string | undefined) {
+  return useQuery({
+    queryKey: ownerBoxStyleKey(kind, id),
+    queryFn: () => getOwnerBoxStyle(kind, id as string),
+    enabled: !!id,
+  });
+}
+
+/** Saved accessories templates as picker options, read now and narrowed by what was typed. */
+export async function fetchBoxStyleOptions(query: string) {
+  const needle = query.trim().toLowerCase();
+  // A picker that cannot load its choices offers none; it must not throw into the form.
+  const templates = await listAccessoryTemplates().catch(() => []);
+  return templates
+    .filter((template) => !needle || template.name.toLowerCase().includes(needle))
+    .map((template) => ({ value: template.id, label: template.name }));
+}
+
+/** Saved accessories templates as picker options. */
+export function useBoxStyleOptions(enabled: boolean) {
+  return useQuery({
+    queryKey: ['dealer-kit-accessory-templates', 'options'],
+    queryFn: async () =>
+      (await listAccessoryTemplates()).map((template) => ({ value: template.id, label: template.name })),
+    enabled,
   });
 }
 

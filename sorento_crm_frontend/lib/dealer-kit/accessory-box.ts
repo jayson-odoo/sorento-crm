@@ -70,7 +70,7 @@ export function estimateHeaderWidth(text: string, fontSize_pt: number): number {
 // Which list (A3)
 // ---------------------------------------------------------------------------
 
-function partAtSlot(
+export function partAtSlot(
   slots: TagSlots | null | undefined,
   slot: SubjectSlot,
 ): TagPartData | null {

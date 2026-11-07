@@ -44,6 +44,17 @@ def _items(payload: AccessoryItemsIn) -> list[dict]:
         out.append(item.model_dump())
     return out
 
+def _style(payload: AccessoryItemsIn):
+    """`box_style_id`: absent from the body = unchanged (the service's `_UNSET`), null = cleared."""
+    from app.services.accessory_service import _UNSET
+
+    if "box_style_id" not in payload.model_fields_set:
+        return _UNSET
+    if payload.box_style_id:
+        validate_uuid_path(payload.box_style_id, resource="Accessories template")
+    return payload.box_style_id or None
+
+
 VIEW = "master_data.products.view"
 EDIT = "master_data.products.edit"
 
@@ -199,7 +210,8 @@ def list_product_accessories(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(product_id, resource="Product")
-    return {"data": AccessoryService(db).product_list(product_id)}
+    service = AccessoryService(db)
+    return {"data": service.product_list(product_id), "box_style_id": service.box_style_id_of(product_id=product_id)}
 
 
 @router.put("/products/{product_id}/accessories", response_model=AccessoryListOut)
@@ -210,7 +222,9 @@ def set_product_accessories(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(product_id, resource="Product")
-    return {"data": AccessoryService(db).set_product_list(product_id, _items(payload))}
+    service = AccessoryService(db)
+    data = service.set_product_list(product_id, _items(payload), _style(payload))
+    return {"data": data, "box_style_id": service.box_style_id_of(product_id=product_id)}
 
 
 @router.get("/product-combos/{combo_id}/accessories", response_model=AccessoryListOut)
@@ -220,7 +234,8 @@ def list_combo_accessories(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(combo_id, resource="Combo")
-    return {"data": AccessoryService(db).combo_list(combo_id)}
+    service = AccessoryService(db)
+    return {"data": service.combo_list(combo_id), "box_style_id": service.box_style_id_of(combo_id=combo_id)}
 
 
 @router.put("/product-combos/{combo_id}/accessories", response_model=AccessoryListOut)
@@ -231,4 +246,6 @@ def set_combo_accessories(
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(combo_id, resource="Combo")
-    return {"data": AccessoryService(db).set_combo_list(combo_id, _items(payload))}
+    service = AccessoryService(db)
+    data = service.set_combo_list(combo_id, _items(payload), _style(payload))
+    return {"data": data, "box_style_id": service.box_style_id_of(combo_id=combo_id)}

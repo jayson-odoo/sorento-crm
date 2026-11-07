@@ -158,15 +158,28 @@ export async function listOwnerAccessories(
   return body.data ?? [];
 }
 
+/** The saved accessories template this owner names as its own box style, or null (the tag template's own). */
+export async function getOwnerBoxStyle(kind: AccessoryOwnerKind, id: string): Promise<string | null> {
+  const res = await apiFetch(ownerPath(kind, id));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the box style'));
+  const body = (await res.json()) as { box_style_id?: string | null };
+  return body.box_style_id ?? null;
+}
+
+/**
+ * Replace the whole ordered list. `boxStyleId` is sent only when given: a template id sets the owner's
+ * box style, null clears it, left out leaves it as it is.
+ */
 export async function replaceOwnerAccessories(
   kind: AccessoryOwnerKind,
   id: string,
   items: AccessoryItemRef[],
+  boxStyleId?: string | null,
 ): Promise<AccessoryEntry[]> {
   const res = await apiFetch(ownerPath(kind, id), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items }),
+    body: JSON.stringify(boxStyleId === undefined ? { items } : { items, box_style_id: boxStyleId }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the accessories'));
   const body = (await res.json()) as { data?: AccessoryEntry[] };
