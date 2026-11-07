@@ -413,6 +413,12 @@ def test_r4_the_migration_backfill_agrees_with_the_ingest_rule(db):
         for x in specs:
             x.pop("copy", None)
         header = doc(db, "invoice", str(net_total), JAN15)
+        if rng.random() < 0.3:
+            # Explicit (v2.13): each item line names a random blank line as its package parent.
+            parents = [x for x in specs if not x["item_code"]]
+            for x in specs:
+                if x["item_code"] and parents and rng.random() < 0.7:
+                    x["parent_line_ref"] = rng.choice(parents)["source_ref"]
         mark_uncounted_lines(specs, net_total)
         for values in specs:
             row = BillingDocumentLine(
@@ -480,3 +486,57 @@ def test_r6_the_reconciliation_lists_no_document_once_the_rules_apply(db):
     mine = [r for r in rows if r["month"] == "2026-01"]
     assert sum(r["package_copies"] for r in mine) >= 1 and sum(r["subtotal_lines"] for r in mine) >= 1
     assert all(r["diff_after"] == 0 for r in mine)
+
+
+# ----------------------------------------------------------- R7 explicit package parents
+# Contract v2.13 (SS-PACKAGE-LINES, ss PR #226): a child line names its parent's source_ref.
+
+_PARENT = "AED_V2_MOCHA:IV:20448970:20448971"
+
+
+def _named_child(code, qty, price, net, n, ref, parent=_PARENT):
+    return _child(code, qty, price, net, n, ref, parent_line_ref=parent)
+
+
+def test_r7_m2601_0858_a_named_parent_whose_children_repeat_its_money_is_not_summed():
+    lines = [_package_parent("17", "329", "5593.00", 16, _PARENT),
+             _named_child("IBKS8050-BL", "17", "329", "5593.00", 16, "AED_V2_MOCHA:IV:20448970:20448973"),
+             _named_child("IBKT7823SS-BL", "17", "0", "0.00", 32, "AED_V2_MOCHA:IV:20448970:20448975")]
+    assert _marks(lines, "5593.00") == ("D--", D("5593.00"))
+
+
+def test_r7_srt_a_named_parent_whose_children_carry_no_money_keeps_it():
+    # RUNBOOK (AED_SORENTO): "package children carry no money". The parent is the sale.
+    lines = [_package_parent("2", "500", "1000.00", 16, _PARENT),
+             _named_child("A1", "2", "0", "0.00", 16, "c1"), _named_child("A2", "2", "0", "0.00", 32, "c2")]
+    assert _marks(lines, "1000.00") == ("---", D("1000.00"))
+    # Off by header-only money: the header guard is off, the children-sum check still keeps it.
+    assert _marks(lines, "1020.00") == ("---", D("1000.00"))
+
+
+def test_r7_a_document_with_named_parents_is_never_decided_by_the_inference():
+    # The unnamed package-shaped line would be an inferred copy; on an explicit doc it is not.
+    lines = [_package_parent("17", "329", "5593.00", 16, _PARENT),
+             _named_child("IBKS8050-BL", "17", "329", "5593.00", 16, "c1"),
+             _package_parent("1", "10", "10.00", 48, "x"), _child("Z", "1", "10", "10.00", 48, "y")]
+    assert _marks(lines, "5603.00")[0] == "D---"
+
+
+def test_r7_the_ingest_accepts_and_echoes_the_v2_13_keys(env):  # noqa: F811
+    contract = env.client.get("/api/v1/external/contract").json()
+    assert contract["version"] == "2.13"
+    assert {"lines.parent_line_ref", "lines.line_type"} <= set(contract["fields_added"]["billing_documents"])
+
+    ref = f"MCH_DB:IV:{uuid.uuid4().int % 10**9}"
+    record = _minimal(ref, doc_no=f"ZZPKG-{ref[-6:]}")
+    child = dict(record["lines"][0], source_ref=f"{ref}:2", line_number=1, parent_line_ref=f"{ref}:1")
+    parent = dict(record["lines"][0], source_ref=f"{ref}:1", line_number=1)
+    parent.pop("product_code")
+    record["lines"] = [parent, child]
+    assert _outcomes(env.push([record])) == {ref: "created"}
+    lines = env.lines(env.doc(ref).id)
+    assert [(x.source_ref, x.parent_line_ref, x.is_duplicate) for x in lines] == [
+        (f"{ref}:1", None, True), (f"{ref}:2", f"{ref}:1", False)]
+    read = env.read([ref]).json()
+    echoed = {x["source_ref"]: x["parent_line_ref"] for x in read["records"][0]["lines"]}
+    assert echoed == {f"{ref}:1": None, f"{ref}:2": f"{ref}:1"}

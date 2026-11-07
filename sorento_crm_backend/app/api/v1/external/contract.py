@@ -6,7 +6,8 @@ autocount-brands-ingest; v2.4 adds products code-wins plus the deletions
 entity that upserts `stock.quantity_on_hand`, ingest-stock-balances-2-5; v2.6 adds
 `billing_documents`, AutoCount invoices, cash sales, credit and debit notes into
 `finance.billing_documents`, finance S0 #1309; v2.11 adds `item_classes`, AutoCount ItemClass
-as a master entity, ITEM-CLASS-MASTER).
+as a master entity, ITEM-CLASS-MASTER; v2.13 adds `billing_documents` `lines.parent_line_ref` and
+`lines.line_type`, AutoCount item-package parent/child, SS-PACKAGE-LINES ss PR #226).
 
 The ESB gates every new key it sends behind `sorento_contract_version = 2` on
 its consumer connection, so it needs one endpoint to ask Sorento what version

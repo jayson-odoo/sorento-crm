@@ -86,3 +86,25 @@ Round 1 removed RM 1,494,224.00 (25 documents, 0 false exclusions). Still off: 4
 - **Trigger for the next step:** once SS-PACKAGE-LINES ships `ParentDtlKey` on canonical lines, the
   CRM reads it (a line some other line names as its parent is the copy) and keeps this rule only
   for rows ingested before it, unless MCH 2026 is re-pulled.
+
+### Review round 2 and contract v2.13
+
+- **Copies need an exact balance (review round 2 blocker).** A document with a subtotal line or
+  header-only money never balances, so the header guard was off and a charge equal to an item line
+  could be taken as a package copy, which then hid the subtotal. Copies are now taken only when
+  the document's lines less the copies equal `net_total` exactly; otherwise none is. A document
+  carrying both a package and a subtotal stays counted whole: a visible miss in reconcile Query
+  2, never a guess.
+- **Explicit parents (contract v2.13, SS-PACKAGE-LINES ss PR #226).** Billing lines accept
+  `parent_line_ref` and `line_type` (stored, echoed on read; `CONTRACT_VERSION` 2.11 -> 2.13, 2.12
+  left to the lane that holds it). A parent named by at least one child is not summed when its
+  children's net adds up to its own exactly; the SS relay's "drop any parent with a child" would
+  lose SRT package sales, whose children carry no money (RUNBOOK, AED_SORENTO). A document carrying
+  `parent_line_ref` is decided by it alone. Rows ingested before 2.13 keep the exact inferred
+  rule and its backfill, so no re-push is needed for the figures.
+- `SQL-sales-subtotal-reconcile.sql` is written by `sorento_crm_backend/scripts/gen_subtotal_reconcile_sql.py`.
+  Target for Query 2: no rows other than `rounding` (a foreign-currency document can differ by a
+  cent between `net_amount x rate` and `local_net_total`).
+- A dev copy that already ran the round 1 SQL takes the round 2 crew-migration SQL as is
+  (`ADD COLUMN IF NOT EXISTS`); one stamped at `sbt_0001_billing_subtotal_lines` by alembic needs
+  `alembic downgrade -1 && alembic upgrade head` (additive, safe). Prod has never run it.

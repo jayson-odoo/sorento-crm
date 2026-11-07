@@ -493,6 +493,8 @@ class BillingDocumentIngestService(MasterRefResolver):
             "from_doc_type": line.from_doc_type,
             "from_doc_no": line.from_doc_no,
             "from_line_ref": line.from_line_ref,
+            "parent_line_ref": line.parent_line_ref,
+            "line_type": line.line_type,
         }
 
     def _by_ref(self, model: type, ref: Optional[str]) -> Optional[str]:
@@ -835,6 +837,8 @@ class BillingDocumentReadService:
             "from_doc_type": line.from_doc_type,
             "from_doc_no": line.from_doc_no,
             "from_line_ref": line.from_line_ref,
+            "parent_line_ref": line.parent_line_ref,
+            "line_type": line.line_type,
         }
 
     def _ref_of(self, entity_type: str, entity_id: Optional[str]) -> Optional[str]:

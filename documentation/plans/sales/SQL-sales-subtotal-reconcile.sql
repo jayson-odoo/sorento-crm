@@ -22,6 +22,22 @@ balanced AS (
     GROUP BY s.document_id, d.net_total
     HAVING SUM(COALESCE(s.net_amount, 0)) = d.net_total
 ),
+explicit_docs AS (
+    -- Contract v2.13: a document whose lines name their package parent is decided by that alone.
+    SELECT DISTINCT s.document_id FROM scoped s
+    WHERE NULLIF(BTRIM(s.parent_line_ref), '') IS NOT NULL
+),
+explicit_parents AS (
+    -- A named parent whose children's net adds up to its own exactly (MCH), else kept (SRT).
+    SELECT p.id
+    FROM scoped p
+    JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
+          FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+          GROUP BY document_id, parent_line_ref) k
+      ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
+    WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount
+      AND p.document_id NOT IN (SELECT document_id FROM balanced)
+),
 real AS (
     SELECT s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount, COUNT(*) AS n
     FROM scoped s
@@ -41,6 +57,7 @@ copies AS (
       AND NULLIF(BTRIM(s.uom), '') IS NULL
       AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
       AND s.document_id NOT IN (SELECT document_id FROM balanced)
+      AND s.document_id NOT IN (SELECT document_id FROM explicit_docs)
 ),
 pairs AS (
     -- One real line excuses one copy (same document, quantity, price, discount and money).
@@ -63,6 +80,8 @@ exact AS (
 ),
 dup AS (
     SELECT id FROM pairs WHERE document_id IN (SELECT document_id FROM exact)
+    UNION
+    SELECT id FROM explicit_parents
 ),
 ordered AS (
     SELECT s.id, s.document_id, s.net_amount,
@@ -156,6 +175,22 @@ balanced AS (
     GROUP BY s.document_id, d.net_total
     HAVING SUM(COALESCE(s.net_amount, 0)) = d.net_total
 ),
+explicit_docs AS (
+    -- Contract v2.13: a document whose lines name their package parent is decided by that alone.
+    SELECT DISTINCT s.document_id FROM scoped s
+    WHERE NULLIF(BTRIM(s.parent_line_ref), '') IS NOT NULL
+),
+explicit_parents AS (
+    -- A named parent whose children's net adds up to its own exactly (MCH), else kept (SRT).
+    SELECT p.id
+    FROM scoped p
+    JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
+          FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+          GROUP BY document_id, parent_line_ref) k
+      ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
+    WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount
+      AND p.document_id NOT IN (SELECT document_id FROM balanced)
+),
 real AS (
     SELECT s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount, COUNT(*) AS n
     FROM scoped s
@@ -175,6 +210,7 @@ copies AS (
       AND NULLIF(BTRIM(s.uom), '') IS NULL
       AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
       AND s.document_id NOT IN (SELECT document_id FROM balanced)
+      AND s.document_id NOT IN (SELECT document_id FROM explicit_docs)
 ),
 pairs AS (
     -- One real line excuses one copy (same document, quantity, price, discount and money).
@@ -197,6 +233,8 @@ exact AS (
 ),
 dup AS (
     SELECT id FROM pairs WHERE document_id IN (SELECT document_id FROM exact)
+    UNION
+    SELECT id FROM explicit_parents
 ),
 ordered AS (
     SELECT s.id, s.document_id, s.net_amount,

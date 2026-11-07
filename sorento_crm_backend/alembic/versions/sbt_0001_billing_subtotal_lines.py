@@ -5,7 +5,8 @@ AutoCount invoices carry a blank-item line whose amount is the running subtotal 
 it, others (MCH) an item-package parent row repeating its first child's quantity, price and
 money; the line sum counted both as sales (line sum > header `local_net_total`).
 
-1. `finance.billing_document_lines.is_subtotal` and `.is_duplicate`, boolean NOT NULL DEFAULT false.
+1. `finance.billing_document_lines.is_subtotal` and `.is_duplicate`, boolean NOT NULL DEFAULT false;
+   `.parent_line_ref` and `.line_type` (contract v2.13, SS-PACKAGE-LINES), nullable, as sent.
 2. Backfill: the exact rules (header guard included) of
    `app/services/finance/billing_subtotal_lines.py` in SQL, over each document that has a line
    naming no item (copied here so the migration stays frozen;
@@ -29,14 +30,17 @@ depends_on = None
 ADD_COLUMNS = (
     "ALTER TABLE finance.billing_document_lines "
     "ADD COLUMN IF NOT EXISTS is_subtotal boolean NOT NULL DEFAULT false, "
-    "ADD COLUMN IF NOT EXISTS is_duplicate boolean NOT NULL DEFAULT false"
+    "ADD COLUMN IF NOT EXISTS is_duplicate boolean NOT NULL DEFAULT false, "
+    "ADD COLUMN IF NOT EXISTS parent_line_ref varchar(255), "
+    "ADD COLUMN IF NOT EXISTS line_type varchar(20)"
 )
 
 #: Only documents holding a line that names no item are decided (the rest stay false).
 CANDIDATE_SCOPE = """l.document_id IN (
         SELECT c.document_id FROM finance.billing_document_lines c
-        WHERE c.net_amount IS NOT NULL
-          AND NULLIF(BTRIM(c.item_code), '') IS NULL AND c.product_id IS NULL
+        WHERE (c.net_amount IS NOT NULL
+               AND NULLIF(BTRIM(c.item_code), '') IS NULL AND c.product_id IS NULL)
+           OR NULLIF(BTRIM(c.parent_line_ref), '') IS NOT NULL
     )"""
 
 #: One row per line in `{scope}` (a WHERE fragment over `finance.billing_document_lines l`):
@@ -52,6 +56,22 @@ balanced AS (
     JOIN finance.billing_documents d ON d.id = s.document_id
     GROUP BY s.document_id, d.net_total
     HAVING SUM(COALESCE(s.net_amount, 0)) = d.net_total
+),
+explicit_docs AS (
+    -- Contract v2.13: a document whose lines name their package parent is decided by that alone.
+    SELECT DISTINCT s.document_id FROM scoped s
+    WHERE NULLIF(BTRIM(s.parent_line_ref), '') IS NOT NULL
+),
+explicit_parents AS (
+    -- A named parent whose children's net adds up to its own exactly (MCH), else kept (SRT).
+    SELECT p.id
+    FROM scoped p
+    JOIN (SELECT document_id, parent_line_ref, SUM(COALESCE(net_amount, 0)) AS kids
+          FROM scoped WHERE NULLIF(BTRIM(parent_line_ref), '') IS NOT NULL
+          GROUP BY document_id, parent_line_ref) k
+      ON k.document_id = p.document_id AND k.parent_line_ref = p.source_ref
+    WHERE p.net_amount IS NOT NULL AND p.net_amount <> 0 AND k.kids = p.net_amount
+      AND p.document_id NOT IN (SELECT document_id FROM balanced)
 ),
 real AS (
     SELECT s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount, COUNT(*) AS n
@@ -72,6 +92,7 @@ copies AS (
       AND NULLIF(BTRIM(s.uom), '') IS NULL
       AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
       AND s.document_id NOT IN (SELECT document_id FROM balanced)
+      AND s.document_id NOT IN (SELECT document_id FROM explicit_docs)
 ),
 pairs AS (
     -- One real line excuses one copy (same document, quantity, price, discount and money).
@@ -94,6 +115,8 @@ exact AS (
 ),
 dup AS (
     SELECT id FROM pairs WHERE document_id IN (SELECT document_id FROM exact)
+    UNION
+    SELECT id FROM explicit_parents
 ),
 ordered AS (
     SELECT s.id, s.document_id, s.net_amount,
@@ -154,5 +177,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         "ALTER TABLE finance.billing_document_lines "
+        "DROP COLUMN IF EXISTS line_type, DROP COLUMN IF EXISTS parent_line_ref, "
         "DROP COLUMN IF EXISTS is_duplicate, DROP COLUMN IF EXISTS is_subtotal"
     )

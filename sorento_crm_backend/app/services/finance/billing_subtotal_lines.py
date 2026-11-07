@@ -16,6 +16,12 @@ well, so both rows count it. The copies are taken only when the document's lines
 equal its header `net_total` exactly; otherwise none is. The parent's `line_no` need not be the child's (M2601-1517: 48 and 16),
 so it is not compared. One real line excuses one copy (copies paired in `source_ref` byte order).
 
+**Package parent, explicit** (`is_duplicate`; contract v2.13): once the shared service sends
+`parent_line_ref` on a document's child lines, the parent is any line a child names, and it is
+not summed when its children's net adds up to its own net exactly (MCH: the first child repeats
+the money). Where children carry no money (SRT: "package children carry no money") the parent
+keeps it. A document carrying `parent_line_ref` is decided by it alone, never by the inference.
+
 **Subtotal** (`is_subtotal`): a line naming no item and nothing sold (no item code, product, UOM,
 quantity or unit price; a from-doc reference is allowed, crew round 2, SRT Jan 2026), after at
 least one counted line, whose net amount equals to the cent the counted lines above it, either
@@ -106,6 +112,21 @@ def _mark_duplicates(lines: list, net_total: Optional[Decimal]) -> None:
         line["is_duplicate"] = id(line) in chosen
 
 
+def _mark_explicit_parents(lines: list) -> None:
+    children: dict[str, Decimal] = {}
+    for line in lines:
+        ref = line.get("parent_line_ref")
+        if not _is_empty(ref):
+            net = line.get("net_amount")
+            children[ref] = children.get(ref, Decimal("0")) + (Decimal(net) if net is not None else Decimal("0"))
+    for line in lines:
+        net = line.get("net_amount")
+        ref = line.get("source_ref")
+        line["is_duplicate"] = (
+            ref in children and net is not None and Decimal(net) != 0 and children[ref] == Decimal(net)
+        )
+
+
 def mark_uncounted_lines(
     lines: Iterable[MutableMapping[str, Any]], net_total: Optional[Decimal]
 ) -> None:
@@ -122,7 +143,10 @@ def mark_uncounted_lines(
             line["is_subtotal"] = False
         return
 
-    _mark_duplicates(lines, net_total)
+    if any(not _is_empty(line.get("parent_line_ref")) for line in lines):
+        _mark_explicit_parents(lines)
+    else:
+        _mark_duplicates(lines, net_total)
     since_start = Decimal("0")
     since_previous = Decimal("0")
     counted = 0
