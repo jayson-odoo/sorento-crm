@@ -22,7 +22,8 @@ export type TagLayerType =
   | 'badge'
   | 'barcode'
   | 'group'
-  | 'feature_icons';
+  | 'feature_icons'
+  | 'accessories';
 
 /** Named slots that bind a layer to a product data field at render time. */
 export type SlotBinding =
@@ -344,6 +345,74 @@ export interface FeatureIconsLayerProps {
   subjectSlot?: SubjectSlot;
 }
 
+/**
+ * PRICETAG-ACCESSORIES: one styled box that repeats a mini-card (picture, name, spec) per
+ * accessory on the bound list, in order (card rules A4-A8). Laid out by `accessoryBoxLayout`
+ * (`lib/dealer-kit/accessory-box.ts`), the one function the canvas, the preview and print share.
+ * Header text and the "+" badge are the box's own (owner, 6 Nov: "FREE" on one tag,
+ * "ACCESSORIES INCLUDED" on another).
+ */
+/**
+ * One text role of an Accessories box (header, name, spec), set with the same TypographyControls
+ * every text layer uses. Size lives in the box's own `*FontSize` prop; everything here is optional
+ * and falls back to the box's defaults, so a box saved before these existed draws unchanged.
+ */
+export interface AccessoryTextStyle {
+  fontFamily?: string | null;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  letterSpacing?: number;
+  color?: string;
+}
+
+export interface AccessoriesLayerProps {
+  kind: 'accessories';
+  direction: 'vertical' | 'horizontal';
+  /**
+   * Owner hand test (6 Nov ~15:00): each card is a picture ABOVE its text (stacked, centred, the
+   * printed Dealer Kit box) or LEFT of it. Absent on a box saved before: vertical drew side,
+   * horizontal drew stacked (`itemLayoutOf`).
+   */
+  itemLayout?: 'stacked' | 'side';
+  /** Absent = shown (a box saved before hid its header only by clearing the text). */
+  showHeader?: boolean;
+  /** Absent = shown. */
+  showFrame?: boolean;
+  /** The header sits ON the top border (legend style), the border broken behind it. Absent = no. */
+  headerOnBorder?: boolean;
+  /** What shows behind a header on the border (the tag's own background). */
+  headerBackground?: string;
+  headerStyle?: AccessoryTextStyle;
+  nameStyle?: AccessoryTextStyle;
+  specStyle?: AccessoryTextStyle;
+  headerText: string;
+  headerFontSize: number;
+  headerColor: string;
+  /** The round "+" badge on the box's top-left corner. */
+  showBadge: boolean;
+  badgeColor: string;
+  fill: string;
+  stroke: string;
+  strokeWidth_mm: number;
+  cornerRadius_mm: number;
+  cardFill: string;
+  textColor: string;
+  imageSize_mm: number;
+  nameFontSize: number;
+  specFontSize: number;
+  gap_mm: number;
+  /** Horizontal boxes: every card is this wide (card Q-M2 (a)). */
+  cardWidth_mm: number;
+  fontFamily?: string;
+  /** PRICETAG-COMBO-RENDER K1: a combo position whose OWN list to read; absent = the tag's list. */
+  subjectSlot?: SubjectSlot;
+  /** D7: a request line's part (index into `parts`; -1 the main product) whose OWN list to read. */
+  subjectPart?: number;
+}
+
 export interface GroupLayerProps {
   kind: 'group';
   children: string[];
@@ -365,7 +434,8 @@ export type TagLayerProps =
   | BadgeLayerProps
   | BarcodeLayerProps
   | GroupLayerProps
-  | FeatureIconsLayerProps;
+  | FeatureIconsLayerProps
+  | AccessoriesLayerProps;
 
 // ---------------------------------------------------------------------------
 // Layer
@@ -670,6 +740,8 @@ export interface ProductTagData {
   /** PS-SPEC-SHEET: brand name and technical drawing, when the source carries them. */
   brand?: string;
   drawing?: TagImage | null;
+  /** PRICETAG-ACCESSORIES: the product's own list. Absent on an older payload. */
+  accessories?: TagAccessory[];
 }
 
 export interface ProductSetMemberTagData {
@@ -735,12 +807,29 @@ export interface TagComboUpgrade {
   picked: boolean;
 }
 
+/**
+ * PRICETAG-ACCESSORIES: one entry of an accessory list as a tag carries it. A library accessory
+ * (`kind` 'accessory' or absent): name + spec. A catalogue product listed as a free item (`kind`
+ * 'product', owner 6 Nov ~10:45): `code`, its description as `name`, `list_price`, read live.
+ */
+export interface TagAccessory {
+  kind?: 'accessory' | 'product';
+  id: string;
+  name: string;
+  spec: string | null;
+  image: { attachment_id: string; url: string } | null;
+  code?: string | null;
+  list_price?: number | null;
+}
+
 /** The combo a tag's line names. Null on a line with no combo and on an older pin. */
 export interface TagCombo {
   id: string;
   name: string;
   description: string | null;
   free_items: string | null;
+  /** PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined. */
+  accessories?: TagAccessory[];
   choices: { role: string; options: TagComboOption[] }[];
   upgrades: TagComboUpgrade[];
 }
@@ -785,6 +874,8 @@ export interface TagPartData {
   /** PS-SPEC-SHEET: the part's brand name and technical drawing. */
   brand?: string;
   drawing?: TagImage | null;
+  /** PRICETAG-ACCESSORIES: this position's own product's list. */
+  accessories?: TagAccessory[];
 }
 
 /** PS-SPEC-SHEET: the quotation and project facts every spec sheet page can print. */
@@ -845,6 +936,9 @@ export interface LineTagData {
   sell_price: number | null;
   show_promo_price: boolean;
   included_accessories: string;
+  /** PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's. Absent on a
+   *  row pinned before the list existed. */
+  accessories?: TagAccessory[];
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;
@@ -981,6 +1075,38 @@ export function defaultBadgeProps(): BadgeLayerProps {
 
 export function defaultFeatureIconsProps(): FeatureIconsLayerProps {
   return { kind: 'feature_icons', iconSize_mm: 8, gap_mm: 1.5, align: 'left' };
+}
+
+export function defaultAccessoriesProps(): AccessoriesLayerProps {
+  return {
+    kind: 'accessories',
+    direction: 'vertical',
+    // Owner hand test (6 Nov ~15:00): the printed Dealer Kit box. A frame with the header on its
+    // top border, each item a picture above a centred bold name and spec; no "+" badge.
+    itemLayout: 'stacked',
+    showHeader: true,
+    showFrame: true,
+    headerOnBorder: true,
+    headerBackground: '#ffffff',
+    nameStyle: { fontWeight: 700 },
+    specStyle: { fontWeight: 400 },
+    headerText: 'ACCESSORIES INCLUDED',
+    headerFontSize: 9,
+    headerColor: '#1f4d36',
+    showBadge: false,
+    badgeColor: '#c2410c',
+    fill: '#f3f7f4',
+    stroke: '#1f4d36',
+    strokeWidth_mm: 0.4,
+    cornerRadius_mm: 3,
+    cardFill: '#ffffff',
+    textColor: '#111827',
+    imageSize_mm: 10,
+    nameFontSize: 8,
+    specFontSize: 6.5,
+    gap_mm: 1.5,
+    cardWidth_mm: 26,
+  };
 }
 
 export function defaultBarcodeProps(): BarcodeLayerProps {

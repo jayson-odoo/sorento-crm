@@ -11,7 +11,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { GroupBinding, SlotBinding, TagLayer } from './tag-template-types';
-import { defaultImageProps, defaultShapeProps, defaultTextProps } from './tag-template-types';
+import {
+  defaultAccessoriesProps,
+  defaultImageProps,
+  defaultShapeProps,
+  defaultTextProps,
+} from './tag-template-types';
 import {
   WHOLE_TAG_BLOCK_ID,
   previewBindingFor,
@@ -322,5 +327,53 @@ describe('previewBlockOf', () => {
   it('finds nothing for a layer outside every previewable block', () => {
     expect(previewBlockOf(find('band'), blocks, groupOf)).toBeNull();
     expect(previewBlockOf(find('acc-title'), blocks, groupOf)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PRICETAG-ACCESSORIES crew pass 4 (6 Nov): a previewed PRODUCT shows its own accessories list
+// ---------------------------------------------------------------------------
+
+function accessoriesBox(id: string): TagLayer {
+  return { ...shape(id), type: 'accessories', props: defaultAccessoriesProps() } as TagLayer;
+}
+
+const WASTE = { product_id: 'p-waste' } as GroupBinding;
+const SINK = { product_id: 'p-sink' } as GroupBinding;
+
+describe('an Accessories box follows the product being previewed', () => {
+  it('a loose box alone earns the whole-tag eye', () => {
+    expect(wholeTagBlock([accessoriesBox('acc')])?.groupId).toBe(WHOLE_TAG_BLOCK_ID);
+  });
+
+  it('a loose box follows the whole-tag preview', () => {
+    const layers = [accessoriesBox('acc')];
+    expect(previewBindingFor(layers[0], { [WHOLE_TAG_BLOCK_ID]: WASTE }, groupsOf(layers))).toEqual(WASTE);
+  });
+
+  it('with no whole-tag preview, a loose box follows the ONE product block being previewed', () => {
+    const layers = [image('hero', 'product_image'), group('main', ['hero']), accessoriesBox('acc')];
+    const acc = layers[2];
+    expect(previewBindingFor(acc, { main: WASTE }, groupsOf(layers))).toEqual(WASTE);
+  });
+
+  it('the whole-tag preview wins over a block preview', () => {
+    const layers = [image('hero', 'product_image'), group('main', ['hero']), accessoriesBox('acc')];
+    const previews = { main: SINK, [WHOLE_TAG_BLOCK_ID]: WASTE };
+    expect(previewBindingFor(layers[2], previews, groupsOf(layers))).toEqual(WASTE);
+  });
+
+  it('two blocks previewed at once is ambiguous: the loose box follows neither', () => {
+    const layers = [
+      image('a-img', 'product_image'), group('a', ['a-img']),
+      image('b-img', 'product_image'), group('b', ['b-img']),
+      accessoriesBox('acc'),
+    ];
+    expect(previewBindingFor(layers[4], { a: SINK, b: WASTE }, groupsOf(layers))).toBeUndefined();
+  });
+
+  it('a box inside a block follows that block', () => {
+    const layers = [image('hero', 'product_image'), accessoriesBox('acc'), group('main', ['hero', 'acc'])];
+    expect(previewBindingFor(layers[1], { main: WASTE }, groupsOf(layers))).toEqual(WASTE);
   });
 });

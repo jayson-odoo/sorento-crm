@@ -11,6 +11,7 @@
  * Stand-ins as in `TagCanvasEditor.inline-edit.test.tsx`.
  */
 
+import '@/test-utils/prosemirrorGeometry';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -116,6 +117,19 @@ function docWith(layer: TagLayer): TagTemplateDoc {
   return { width_mm: 60, height_mm: 40, layers: [layer] };
 }
 
+
+/** DESIGNER-RICH-TEXT: the designer's in-place editor for a layer's own content is the rich
+ *  editor; its TipTap instance sits on its own DOM element. */
+async function inPlace(): Promise<{ dom: HTMLElement; editor: import('@tiptap/react').Editor }> {
+  const host = await screen.findByTestId('inline-rich-editor');
+  const dom = await waitFor(() => {
+    const el = host.querySelector<HTMLElement>('.ProseMirror');
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  return { dom, editor: (dom as unknown as { editor: import('@tiptap/react').Editor }).editor };
+}
+
 describe('inline edit of a description-bound layer (R16)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -158,12 +172,37 @@ describe('inline edit of a description-bound layer (R16)', () => {
     render(<TagCanvasEditor doc={docWith(layerWith('p', null, 'Original', null))} onChange={onChange} />);
 
     fireEvent.doubleClick(screen.getByTestId('layer-p'));
-    const editor = (await screen.findByTestId('inline-text-editor')) as HTMLTextAreaElement;
+    const { dom, editor } = await inPlace();
 
-    expect(editor.readOnly).toBe(false);
-    expect(editor.value).toBe('Original');
-    fireEvent.change(editor, { target: { value: 'Edited' } });
-    fireEvent.blur(editor);
+    expect(dom.getAttribute('contenteditable')).toBe('true');
+    expect(dom.textContent).toBe('Original');
+    editor.chain().focus().selectAll().insertContent('Edited').run();
+    fireEvent.keyDown(dom, { key: 'Escape', bubbles: true });
     await waitFor(() => expect(screen.getByTestId('layer-p')).toHaveTextContent('Edited'));
+  });
+});
+
+// DESIGNER-RICH-TEXT: Cmd+B typed in the Inspector's Content box formats the selection there,
+// never the whole layer. (In-place editing of formatted content: TagCanvasEditor.inPlaceRich.test.tsx.)
+describe('a layer with formatted own content (DESIGNER-RICH-TEXT)', () => {
+  it('Cmd+B with focus in the Inspector Content box does not bold the whole layer', async () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(layerWith('p', null, 'Plain', null))} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId('layer-p'));
+    const box = await waitFor(() => {
+      const el = container.querySelector<HTMLElement>('.ProseMirror');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    box.focus();
+    expect(document.activeElement).toBe(box);
+    fireEvent.keyDown(box, { key: 'b', metaKey: true, bubbles: true });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const saved = onChange.mock.calls.at(-1)![0] as TagTemplateDoc;
+    const layer = saved.layers.find((l) => l.id === 'p')!;
+    expect(layer.props.kind === 'text' && layer.props.fontWeight).toBe(defaultTextProps().fontWeight);
   });
 });

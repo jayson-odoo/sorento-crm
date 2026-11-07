@@ -9,7 +9,7 @@
  * (whichever form the implementation passes them in, the value `unset` must be in them).
  * Mocks follow `TagTemplatesList.test.tsx`.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -121,19 +121,7 @@ describe('TagTemplatesList price type (AC-29)', () => {
     expect(screen.getByText('Small Price Tag LP').closest('tr')).not.toHaveTextContent('Set price type');
   });
 
-  it('AC-29: the Price type filter offers LP, SP, LP & SP and Not set', async () => {
-    draw();
-    await screen.findByText('Bathroom Furniture SP');
-    const filter = screen.getByLabelText('Price type');
-    const labels = Array.from(filter.querySelectorAll('option')).map((o) => o.textContent);
-    expect(labels).toEqual(expect.arrayContaining(['LP', 'SP', 'LP & SP', 'Not set']));
-  });
-
-  it('AC-29: choosing "Not set" asks the server for price_type=unset', async () => {
-    draw();
-    await screen.findByText('Bathroom Furniture SP');
-    fireEvent.change(screen.getByLabelText('Price type'), { target: { value: 'unset' } });
-
-    await waitFor(() => expect(JSON.stringify(listTemplates.mock.calls.at(-1))).toContain('unset'));
-  });
+  // The Price type filter moved into the standard toolbar's Filters menu and went multi-select
+  // (TAG-TEMPLATE-DUPLICATE item 5): `TagTemplatesList.toolbar.test.tsx` owns it now, the
+  // "Not set" -> `price_type=unset` request included.
 });

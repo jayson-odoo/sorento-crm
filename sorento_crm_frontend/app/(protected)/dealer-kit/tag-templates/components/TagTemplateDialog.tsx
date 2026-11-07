@@ -1,10 +1,9 @@
 'use client';
 
 /**
- * Modal for creating a new tag template.
- *
- * Fields: name, family (select from the 7 families), print size width_mm
- * and height_mm. Creates with an empty layers array.
+ * Modal for creating a new tag template: the shared `TemplateSettingsForm` (the editor's
+ * Template settings renders the same one, TAG-TEMPLATE-DUPLICATE item 7). Creates with an empty
+ * layers array.
  */
 
 import { useEffect, useState } from 'react';
@@ -19,28 +18,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { NumberInput } from '@/components/ui/number-input';
-import { numberFieldError, parseNumberDraft } from '@/lib/number-field';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import {
-  TEMPLATE_PRICE_TYPE_OPTIONS,
-  type TemplatePriceType,
-} from '@/lib/dealer-kit/template-price-type';
-import {
-  DEFAULT_TAG_SIZE,
-  ALL_TEMPLATE_FAMILIES,
-  type TagTemplateFamily,
-} from '@/lib/dealer-kit/tag-template-types';
+import { parseNumberDraft } from '@/lib/number-field';
+import { DEFAULT_TAG_SIZE, ALL_TEMPLATE_FAMILIES } from '@/lib/dealer-kit/tag-template-types';
 import { createTemplate } from '../../services/tagTemplateService';
+import {
+  TemplateSettingsForm,
+  templateSettingsErrors,
+  templateSettingsValid,
+  type TemplateSettingsDraft,
+} from './TemplateSettingsForm';
 
 interface TagTemplateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated?: () => void;
 }
+
+const BLANK: TemplateSettingsDraft = {
+  name: '',
+  family: 'ala_carte',
+  price_type: null,
+  width_mm: DEFAULT_TAG_SIZE.width_mm,
+  height_mm: DEFAULT_TAG_SIZE.height_mm,
+};
 
 export function TagTemplateDialog({
   open,
@@ -49,44 +49,34 @@ export function TagTemplateDialog({
 }: TagTemplateDialogProps) {
   const router = useRouter();
 
-  const [name, setName] = useState('');
-  const [family, setFamily] = useState<TagTemplateFamily>('ala_carte');
-  const [widthMm, setWidthMm] = useState<number | null>(DEFAULT_TAG_SIZE.width_mm);
-  const [heightMm, setHeightMm] = useState<number | null>(DEFAULT_TAG_SIZE.height_mm);
-  const [priceType, setPriceType] = useState<TemplatePriceType | null>(null);
+  const [draft, setDraft] = useState<TemplateSettingsDraft>(BLANK);
   const [checked, setChecked] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
-      setName('');
-      setFamily('ala_carte');
-      setWidthMm(DEFAULT_TAG_SIZE.width_mm);
-      setHeightMm(DEFAULT_TAG_SIZE.height_mm);
-      setPriceType(null);
+      setDraft(BLANK);
       setError(null);
       setChecked(false);
     }
   }, [open]);
 
-  const canSubmit = name.trim().length > 0 && !saving;
-  const widthError = checked ? numberFieldError(widthMm, { min: 10 }) : undefined;
-  const heightError = checked ? numberFieldError(heightMm, { min: 10 }) : undefined;
+  const canSubmit = !templateSettingsErrors(draft).name && !saving;
 
   const submit = async () => {
     setError(null);
     setChecked(true);
-    if (numberFieldError(widthMm, { min: 10 }) || numberFieldError(heightMm, { min: 10 })) return;
+    if (!templateSettingsValid(draft)) return;
     setSaving(true);
     try {
       const template = await createTemplate({
-        name: name.trim(),
-        family,
-        price_type: priceType,
+        name: draft.name.trim(),
+        family: draft.family,
+        price_type: draft.price_type,
         print_size: {
-          width_mm: parseNumberDraft(widthMm) as number,
-          height_mm: parseNumberDraft(heightMm) as number,
+          width_mm: parseNumberDraft(draft.width_mm) as number,
+          height_mm: parseNumberDraft(draft.height_mm) as number,
         },
       });
       toast.success(`Created template "${template.name}"`);
@@ -105,78 +95,17 @@ export function TagTemplateDialog({
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New tag template</DialogTitle>
-          <DialogDescription>
-            Define the template name, product family and print dimensions.
-          </DialogDescription>
+          <DialogDescription>Name, product family, price type and print size.</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4 py-2">
-          {/* Name */}
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="tt-name">Name</Label>
-            <Input
-              id="tt-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Sink Combo Tag A4"
-              autoFocus
-            />
-          </div>
-
-          {/* Family and price type */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="flex min-w-0 flex-col gap-2">
-              <Label>Family</Label>
-              <SearchableSelect
-                value={family}
-                onChange={(v: string) => setFamily(v as TagTemplateFamily)}
-                options={ALL_TEMPLATE_FAMILIES}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col gap-2">
-              <Label id="tt-price-type-label">Price type</Label>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="sm"
-                aria-labelledby="tt-price-type-label"
-                value={priceType ?? ''}
-                onValueChange={(next) => setPriceType((next || null) as TemplatePriceType | null)}
-                className="flex-wrap"
-              >
-                {TEMPLATE_PRICE_TYPE_OPTIONS.map((option) => (
-                  <ToggleGroupItem key={option.value} value={option.value}>
-                    {option.label}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </div>
-          </div>
-
-          {/* Print size */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tt-width">Width (mm)</Label>
-              <NumberInput
-                id="tt-width"
-                value={widthMm}
-                min={10}
-                onValueChange={setWidthMm}
-                error={widthError}
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="tt-height">Height (mm)</Label>
-              <NumberInput
-                id="tt-height"
-                value={heightMm}
-                min={10}
-                onValueChange={setHeightMm}
-                error={heightError}
-              />
-            </div>
-          </div>
-
+          <TemplateSettingsForm
+            value={draft}
+            onChange={setDraft}
+            familyOptions={ALL_TEMPLATE_FAMILIES}
+            showErrors={checked}
+            autoFocusName
+          />
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

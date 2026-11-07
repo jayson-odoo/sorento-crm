@@ -380,6 +380,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Spec Verification",
           },
           {
+            "path": "/master-data-management/accessories",
+            "title": "Accessories",
+          },
+          {
             "path": "/master-data-management/flyer-spec-proposals",
             "title": "Flyer Spec Proposals",
           },

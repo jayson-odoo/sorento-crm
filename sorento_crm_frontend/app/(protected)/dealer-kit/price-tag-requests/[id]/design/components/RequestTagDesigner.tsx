@@ -102,6 +102,7 @@ import { useAutosave } from '@/hooks/useAutosave';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
+import { accessoryDrops } from '@/lib/dealer-kit/accessory-drops';
 import { FeatureIconDropWarning } from '@/components/dealer-kit/FeatureIconDropWarning';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
@@ -969,6 +970,11 @@ export function RequestTagDesigner({
       featureIconDrops(doc, (tagId) => resolved.get(tagId) ?? null, library.featureIcons, library.assetUrls),
     [doc, resolved, library.featureIcons, library.assetUrls],
   );
+  // PRICETAG-ACCESSORIES (A6): accessories whose box is too small, named the same way.
+  const accDrops = useMemo(
+    () => accessoryDrops(doc, (tagId) => resolved.get(tagId) ?? null),
+    [doc, resolved],
+  );
 
   /** Template name by id, for the Arrange view's per-sheet line (AC-S7-6) -
    *  `templates` is already loaded for the size presets above. */
@@ -1749,9 +1755,9 @@ export function RequestTagDesigner({
         )}
       </div>
 
-      {iconDrops.length > 0 && (
+      {(iconDrops.length > 0 || accDrops.length > 0) && (
         <div className="border-b px-3 py-2">
-          <FeatureIconDropWarning drops={iconDrops} />
+          <FeatureIconDropWarning drops={iconDrops} accessoryDrops={accDrops} />
         </div>
       )}
 

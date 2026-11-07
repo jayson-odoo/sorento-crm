@@ -25,6 +25,7 @@
 
 import { isRich, richPlainText } from './rich-text';
 import { comboPositions } from './combo-slots';
+import { formatTagPrice } from './price-badge';
 import { comboOf, resolveSlotText, slotLabel, subjectOf } from './product-block';
 import type {
   SlotBinding,
@@ -108,13 +109,39 @@ const PATH_SLOTS: Record<string, Exclude<SlotBinding, null>> = {
 /**
  * O1: the fields a `{{slot.*}}` token may read, each one a `product.<field>` path above, so a
  * position token and a position-bound layer resolve through the same code.
+ *
+ * `kinds` limits a field to the positions that have it. PRICETAG-PICK-SELLPRICE: `sell_price` is
+ * the combo's own "Sell price if picked" for one choice (`combo.choices[].options[].sell_price`),
+ * so only a choice-group pick has one; it is read by `pickSellPrice`, not `product.sell_price`
+ * (that is the part's promo offer, a different number).
  */
-const SLOT_TOKEN_FIELDS: { field: string; label: string }[] = [
+const SLOT_TOKEN_FIELDS: { field: string; label: string; kinds?: SubjectSlot['kind'][] }[] = [
   { field: 'code', label: 'code' },
   { field: 'name', label: 'name' },
   { field: 'list_price', label: 'list price' },
   { field: 'price_tag_description', label: 'price tag description' },
+  { field: 'sell_price', label: 'sell price (if picked)', kinds: ['pick'] },
 ];
+
+function slotFieldAllowed(slot: SubjectSlot, field: string): boolean {
+  const entry = SLOT_TOKEN_FIELDS.find((f) => f.field === field);
+  return Boolean(entry) && (!entry!.kinds || entry!.kinds.includes(slot.kind));
+}
+
+/** The combo's sell price for the pick at this position, bare like other tag prices; empty
+ *  (never `RM 0`) when the combo leaves it blank or the position has no pick. Matched by
+ *  product, not index: a real line places only the chosen option. */
+function pickSellPrice(data: TagBindingData, slots: TagSlots, slot: Extract<SubjectSlot, { kind: 'pick' }>): string {
+  const group = slots.groups[slot.group];
+  const pick = group?.picks[slot.index];
+  if (!pick) return '';
+  const choices = comboOf(data)?.choices ?? [];
+  const options = (choices.find((choice) => choice.role === group.role) ?? choices[slot.group])?.options ?? [];
+  const option =
+    options.find((o) => pick.product_id && o.product_id === pick.product_id) ??
+    options.find((o) => o.code === pick.code);
+  return option?.sell_price == null ? '' : formatTagPrice(Number(option.sell_price), false);
+}
 
 /** The token path for a position and field, numbered from 1 like the UI labels. */
 export function slotTokenPath(slot: SubjectSlot, field: string): string {
@@ -331,9 +358,10 @@ function resolvePath(
     // O1: a position of its own, through the same `subjectOf` position code a bound layer uses.
     // Empty (never the main product, never the token) for a position the line does not have.
     const parsed = parseSlotToken(path);
-    if (!parsed || !SLOT_TOKEN_FIELDS.some((f) => f.field === parsed.field)) return '';
+    if (!parsed || !slotFieldAllowed(parsed.slot, parsed.field)) return '';
     const slots = data.kind === 'line' ? data.line.slots : data.kind === 'product' ? data.product.slots : undefined;
     if (!slots) return '';
+    if (parsed.slot.kind === 'pick' && parsed.field === 'sell_price') return pickSellPrice(data, slots, parsed.slot);
     const at = { props: { kind: 'text', subjectSlot: parsed.slot } } as unknown as Pick<TagLayer, 'props'>;
     return resolvePath(`product.${parsed.field}`, data, at, mode) ?? '';
   }
@@ -483,7 +511,7 @@ export function mergeFieldCatalog(
 
   // O1: the previewed combo's own positions with their codes, else the generic counts.
   const positions: MergeField[] = comboPositions(slots).flatMap(({ slot, code, group }) =>
-    SLOT_TOKEN_FIELDS.map(({ field, label }) => {
+    SLOT_TOKEN_FIELDS.filter(({ field }) => slotFieldAllowed(slot, field)).map(({ field, label }) => {
       const path = slotTokenPath(slot, field);
       const known = field === 'code' && code ? `: ${code}` : '';
       return {

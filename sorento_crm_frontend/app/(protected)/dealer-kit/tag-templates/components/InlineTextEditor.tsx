@@ -34,9 +34,20 @@
  * the template - so every exit path (Enter, Escape, blur) is a cancel; typing
  * is blocked at the DOM level (`readOnly`), and the value stays fully
  * selected the whole time it is open.
+ *
+ * `rich` (DESIGNER-RICH-TEXT, owner hand test 6 Nov): whenever the box shows the layer's own
+ * content (not a resolved value), it is the same rich editor as the Inspector's Content box,
+ * bare, over the drawn text: tokens are chips, and Cmd+B / I / U on a selection mark only that
+ * range (TipTap's own keys; the canvas's whole-layer format skips a focused rich editor). It
+ * stores through `contentFromEditorHtml`, the Inspector's rule, so unformatted text stays plain.
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
+import type { Editor } from '@tiptap/react';
+
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
+import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 
 interface InlineTextEditorProps {
@@ -58,6 +69,8 @@ interface InlineTextEditorProps {
   /** A sole-token layer previewing its resolved value (S3) - see the module
    *  docstring. Every exit is a cancel; nothing can be typed. */
   readOnly?: boolean;
+  /** The layer's own content: edit it as rich text (see the module docstring). */
+  rich?: boolean;
 }
 
 export function InlineTextEditor({
@@ -70,17 +83,24 @@ export function InlineTextEditor({
   onCancel,
   onChangeText,
   readOnly = false,
+  rich = false,
 }: InlineTextEditorProps) {
   const props = layer.props as Extract<TagLayerProps, { kind: 'text' }>;
   const [text, setText] = useState(value);
+  /** The live value, for a commit that runs in the same tick as the last edit. */
+  const textRef = useRef(value);
   const ref = useRef<HTMLTextAreaElement>(null);
   const committedRef = useRef(false);
+  const labelId = useId();
+  const focusedRef = useRef(false);
+  /** Seeded once: the editor is the source of truth while it is open. */
+  const [seedHtml] = useState(() => toEditorHtml(value));
 
   // Focused, and selected all (readOnly, AC-S3-1) or caret at the end
   // (ordinary edit, AC-S2-1).
   useEffect(() => {
     const el = ref.current;
-    if (!el) return;
+    if (rich || !el) return;
     el.focus();
     if (readOnly) {
       el.select();
@@ -97,11 +117,12 @@ export function InlineTextEditor({
     // readOnly never has anything to save back (the value is derived, not
     // the template) - every exit is the same cancel `text === value` already
     // produces, made explicit rather than relying on typing being blocked.
-    if (readOnly || text === value) {
+    const current = rich ? textRef.current : text;
+    if (readOnly || current === value) {
       onCancel?.();
       return;
     }
-    onCommit(text);
+    onCommit(current);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -154,6 +175,51 @@ export function InlineTextEditor({
     overflow: 'hidden',
     zIndex: 30,
   };
+
+  if (rich) {
+    return (
+      <div
+        data-testid="inline-rich-editor"
+        style={{ ...style, resize: undefined, cursor: 'text' }}
+        onKeyDownCapture={(e) => {
+          const modifier = e.ctrlKey || e.metaKey;
+          if (e.key === 'Escape' || (modifier && e.key === 'Enter')) {
+            e.preventDefault();
+            e.stopPropagation();
+            commit();
+          }
+        }}
+        onBlur={(e) => {
+          // Moving within the editor is not leaving it.
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          commit();
+        }}
+      >
+        <span id={labelId} className="sr-only">
+          Edit text
+        </span>
+        <RichTextEditor
+          toolbar="none"
+          mergeFields
+          className="h-full"
+          value={seedHtml}
+          aria-labelledby={labelId}
+          onChange={(html) => {
+            const next = contentFromEditorHtml(html);
+            textRef.current = next;
+            setText(next);
+            onChangeText?.(next);
+          }}
+          onEditorReady={(editor: Editor) => {
+            // Once, on open: caret at the end (AC-S2-1), never re-grabbed on a later render.
+            if (focusedRef.current) return;
+            focusedRef.current = true;
+            editor.commands.focus('end');
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <textarea
