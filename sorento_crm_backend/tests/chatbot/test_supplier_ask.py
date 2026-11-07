@@ -774,9 +774,11 @@ def test_a_customer_typed_span_resolves_to_a_supplier_row_when_only_the_supplier
 
 
 def test_two_suppliers_with_one_name_are_one_supplier_never_asked(session_factory, monkeypatch):
-    """Console pass 3 note a showed two suppliers of the very same name as one line nobody could pick from. Crew live
-    check on #2120 (7 Nov, HANLIM TRADING SDN BHD 403-H007 + 400-H018): records of one name are one supplier (the
-    `ledger_family` rule customers already have), so the PO list runs for both and nothing is asked."""
+    """Console pass 3 note a (#2066) had "CO.,LTD" and "CO., LTD." as two companies on two lines, and two suppliers of
+    the very same name on one line nobody could pick from; it ruled every supplier its own line with its code. Crew
+    live check on #2120 (7 Nov, HANLIM TRADING SDN BHD 403-H007 + 400-H018) replaces that: records of one trading name
+    are one supplier, keyed as customer ledgers are (`ledger_family_key`: brackets, punctuation and legal-form words
+    ignored, so the note a pair is one supplier too). The PO list runs for every record and nothing is asked."""
     ids = _staff_world(session_factory)
     same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
     span = list_resolver.Span("taiyang", "supplier")
