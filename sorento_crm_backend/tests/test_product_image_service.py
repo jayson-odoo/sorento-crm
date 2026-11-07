@@ -498,7 +498,10 @@ def test_an_image_over_the_pixel_ceiling_is_refused_before_it_is_decoded(monkeyp
 
     from app.services import product_image_service as images
 
-    monkeypatch.setattr(images, "MAX_IMAGE_PIXELS", 1_000_000, raising=False)
+    from app.services import image_thumbnailer
+
+    # IMAGE-UNIFY: the ceiling lives with the one resize routine; images re-exports it.
+    monkeypatch.setattr(image_thumbnailer, "MAX_IMAGE_PIXELS", 1_000_000)
     # Built before the spy: writing the PNG calls load() itself.
     data = _png_of((1100, 1100))
     loaded = []
