@@ -553,6 +553,106 @@ def _side_of_the_picked_party(verdict: dict[str, Any], pending: Any) -> dict[str
     return verdict
 
 
+def _report_owned_names(verdict: dict[str, Any]) -> frozenset[str]:
+    """REPORT-FILTER-ALL: the names (casefolded) the kept report object holds as its company and its non-party lists
+    (brands, agents, categories, account types, products). The object is final, so such a name is never a supplier
+    word. ALL is no name. Empty when the turn carries no report object.
+
+    Its `customers` are not held here (crew live x3 step 19, "outstanding for supplier LASHIQI" ran the customer list):
+    the object has no supplier slot, so a supplier lands in `customers`, and a party word's side is its entity kind
+    (owner, 2 Nov), never the slot the object found for it."""
+    ask = verdict.get("report_ask")
+    if not isinstance(ask, dict):
+        return frozenset()
+    from app.services.chatbot.head.parser import REPORT_ALL, REPORT_ASK_LISTS
+
+    lists = [key for key in REPORT_ASK_LISTS if key != "customers"]
+    values = [ask.get("company"), *(v for key in lists for v in jsc.array(ask.get(key)))]
+    return frozenset(
+        v.strip().casefold() for v in values if isinstance(v, str) and v.strip() and v.strip().upper() != REPORT_ALL
+    )
+
+
+def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: Any, turn_trace: Any) -> dict[str, Any]:
+    """SUPPLIER-ASK, for an asker who may see suppliers: the picked party's side, the span list's supplier readings,
+    and the swap of a supplier's outstanding to its open purchase orders (owner, 1 Nov 2026). Returns the verdict.
+
+    REPORT-FILTER-ALL (crew gate steps 8 / 12, "couldn't find a supplier called Sorento"): a name the kept report object
+    holds (`_report_owned_names`) is never read as a supplier. The span pass's re-reading of such a name is undone and
+    it does not count toward the swap; every other supplier word of the message still swaps."""
+    from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
+
+    owned = _report_owned_names(verdict)
+    picked_side = _side_of_the_picked_party(verdict, pending)
+    if picked_side is not verdict:
+        turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
+        verdict = picked_side
+    _with_party_readings(verdict, prep)
+    with_spans = _with_span_suppliers(verdict, prep)
+    if owned and with_spans is not verdict:
+        with_spans = _owned_names_kept(verdict, with_spans, owned)
+    if with_spans is not verdict:
+        # The span list placed a phrase on suppliers alone; the parser named no supplier id for it (no entity,
+        # a customer hint, or a supplier with no id), and the id now binds that span's supplier group.
+        turn_trace.add(
+            "supplier_span",
+            {
+                "before": [(e.get("raw"), e.get("hint")) for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)],
+                "suppliers": [
+                    e.get("raw") for e in with_spans["entities"] if isinstance(e, dict) and e.get("hint") == "supplier"
+                ],
+            },
+        )
+        verdict = with_spans
+
+    probe = verdict
+    if owned:
+        probe = {
+            **verdict,
+            "entities": [
+                e for e in jsc.array(verdict.get("entities"))
+                if not (isinstance(e, dict) and _owned_supplier(e, owned))
+            ],
+        }
+    swapped = supplier_ask_reads_purchase_orders(probe)
+    if swapped is not probe:
+        turn_trace.record(
+            "supplier_ask",
+            summary="A supplier's outstanding is its open purchase orders.",
+            why="The message names a supplier and no customer, so the order ask reads the open PO book.",
+            facts={"from_domain": verdict.get("domain_hint"), "to_domain": swapped.get("domain_hint")},
+        )
+        verdict = {**swapped, "entities": verdict.get("entities")} if probe is not verdict else swapped
+    return verdict
+
+
+def _owned_supplier(entity: dict[str, Any], owned: frozenset[str]) -> bool:
+    """A supplier-hinted entity whose word is a name the kept report object holds."""
+    return jsc.lower_or_empty(entity.get("hint")) == "supplier" and jsc.nullish_str(entity.get("raw")).strip().casefold() in owned
+
+
+def _owned_names_kept(before: dict[str, Any], after: dict[str, Any], owned: frozenset[str]) -> dict[str, Any]:
+    """`after` (the span pass's verdict) with every entity of a report-owned name as it was in `before`: an entity the
+    span pass re-hinted supplier goes back to the parser's own reading, one it added is dropped. `before` when
+    nothing else changed."""
+    was = {
+        jsc.nullish_str(e.get("raw")).strip().casefold(): e for e in jsc.array(before.get("entities")) if isinstance(e, dict)
+    }
+    out: list[Any] = []
+    for e in jsc.array(after.get("entities")):
+        word = jsc.nullish_str(e.get("raw")).strip().casefold() if isinstance(e, dict) else ""
+        if word in owned and isinstance(e, dict) and e.get("hint") == "supplier":
+            if word in was:
+                out.append(was[word])
+            continue
+        out.append(e)
+    if out == jsc.array(before.get("entities")) and {k: v for k, v in after.items() if k != "entities"} == {
+        k: v for k, v in before.items() if k != "entities"
+    }:
+        return before
+    return {**after, "entities": out}
+
+
 def _supplier_scope(
     state_in: Any, state_out: Any, verdict: dict[str, Any], domains: Any, asker_sees_suppliers: bool,
     prep: Any = None,
@@ -572,6 +672,12 @@ def _supplier_scope(
     # Owner ruling 3 Nov: on a sales question the span model's supplier type is not the side (a both-sides name).
     if verdict.get("party_side") != "customer":
         named += [t for t in (getattr(prep, "supplier_typed", None) or []) if t not in named]
+    # REPORT-FILTER-ALL (crew gate steps 8 / 12, "couldn't find a supplier called Sorento"): a name the kept report
+    # object holds is that object's company, brand or customer, never a supplier. Any other supplier word still scopes.
+    owned = _report_owned_names(verdict)
+    named = [t for t in named if t.casefold() not in owned]
+    if isinstance(verdict.get("report_ask"), dict) and not named:
+        return None
     pending = getattr(state_in, "pending", None)
     asked = pending is not None and getattr(pending, "kind", None) == "supplier_pick" and bool(pending.options)
     focus = getattr(state_out, "focus", None)
@@ -6376,6 +6482,8 @@ def _run_stages_body(  # noqa: PLR0915
     verdict = _report_ask_basis.from_object(
         verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending,
         companies=own_companies, said_as_text=bool(getattr(parser_config, "said_as_text", False)),
+        # REPORT-FILTER-ALL: the prompt in use writes the explicit ALL of a filter slot.
+        all_value="ALL" in (getattr(parser_config, "report_ask_defined", None) or ()),
     )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
@@ -6737,37 +6845,7 @@ def _run_stages_body(  # noqa: PLR0915
         elif "party_side" in verdict:
             verdict = {k: v for k, v in verdict.items() if k != "party_side"}
         if asker_sees_suppliers:
-            from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
-
-            picked_side = _side_of_the_picked_party(verdict, getattr(state_in, "pending", None))
-            if picked_side is not verdict:
-                turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
-                verdict = picked_side
-            _with_party_readings(verdict, span_prep)
-            with_spans = _with_span_suppliers(verdict, span_prep)
-            if with_spans is not verdict:
-                # The span list placed a phrase on suppliers alone; the parser named no supplier id for it (no entity,
-                # a customer hint, or a supplier with no id), and the id now binds that span's supplier group.
-                turn_trace.add(
-                    "supplier_span",
-                    {
-                        "before": [(e.get("raw"), e.get("hint")) for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)],
-                        "suppliers": [
-                            e.get("raw") for e in with_spans["entities"] if isinstance(e, dict) and e.get("hint") == "supplier"
-                        ],
-                    },
-                )
-                verdict = with_spans
-
-            swapped = supplier_ask_reads_purchase_orders(verdict)
-            if swapped is not verdict:
-                turn_trace.record(
-                    "supplier_ask",
-                    summary="A supplier's outstanding is its open purchase orders.",
-                    why="The message names a supplier and no customer, so the order ask reads the open PO book.",
-                    facts={"from_domain": verdict.get("domain_hint"), "to_domain": swapped.get("domain_hint")},
-                )
-                verdict = swapped
+            verdict = _supplier_side(verdict, span_prep, getattr(state_in, "pending", None), turn_trace)
 
         stage[0] = "routed"
         settings_row = switches
