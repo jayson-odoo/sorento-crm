@@ -1,6 +1,7 @@
 # PLAN: SALES-INSIGHTS-P2 (leaderboard phase 2: drilldown, perspectives, targets, customisable)
 
-Status: Build (Phase 2). Owner 7 Nov: card + mockup v7 "Ok": Q1-Q5 all (a) + customer names, Channel filter / view,
+Status: Review done (reviewer READY, security CLEAN after fix round 1, 7 Nov); crew browser pass + owner hand test next
+(`sales-insights-p2-handtest.md`). Was: Build (Phase 2). Owner 7 Nov: card + mockup v7 "Ok": Q1-Q5 all (a) + customer names, Channel filter / view,
 basis switch; self-service option A (remember last setup) included. Track: full (size L). Track: full (size L). Depends on #2230 (SALES-SUBTOTAL-LINES) for correct figures.
 Parent: `PLAN-sales-leaderboard-07nov.md` (#2227, main 76afa03f).
 
