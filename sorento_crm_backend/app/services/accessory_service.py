@@ -186,6 +186,12 @@ def tag_accessory(
     picture choice and the name / spec / remark overrides, each used only when non-blank."""
     if pictures is None:
         pictures = _picture_rows(db, accessory.id)
+    if not pictures and accessory.image_attachment_id:
+        # A database where `ptag_0017`'s copy step never ran keeps the picture only on the old column:
+        # still print it (no colour), so a legacy box and a card's picture element both show it.
+        legacy = image_of(db, accessory.image_attachment_id)
+        if legacy is not None:
+            pictures = [{"id": None, **legacy, "colour_name": None, "colour_hex": None}]
     chosen = None
     if link is not None and link.image_id:
         chosen = next((picture for picture in pictures if picture["id"] == link.image_id), None)

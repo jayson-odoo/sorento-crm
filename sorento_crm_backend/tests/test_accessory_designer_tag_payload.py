@@ -291,3 +291,29 @@ def test_a_pinned_request_row_keeps_the_new_keys_and_resigns(db, monkeypatch, st
     assert entry["remark"] == "Pinned remark"
     assert entry["image"]["attachment_id"] == grey["attachment_id"]
     assert len(entry["images"]) == 2 and len(entry["colours"]) == 2
+
+
+def test_a_picture_only_on_the_legacy_column_still_reaches_the_tag(db, monkeypatch, storage, signed):
+    """Owner hand test 07/11: on a database where `ptag_0017`'s data copy never ran (a dev copy that
+    converges through `create_all` or the crew SQL), an accessory's picture lives ONLY on
+    `accessories.image_attachment_id`. The tag must still draw it (legacy boxes print as before, a card's
+    picture element shows it): `image` and a one-entry `images`, no colour."""
+    from app.models.accessory import AccessoryImage
+
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = seed.product(db, "ZZPAY")
+    item = _accessory(db, _name("LEGACYPIC"))
+    uploaded = _picture(client, item.id, 7)
+    # The state before the copy step: the column holds the picture, no accessory_images row.
+    db.query(AccessoryImage).filter(AccessoryImage.accessory_id == item.id).delete()
+    item.image_attachment_id = uploaded["attachment_id"]
+    db.commit()
+    _list(client, host, {"accessory_id": item.id})
+
+    (entry,) = _payload(db, host)
+    assert entry["image"] is not None, "the legacy picture is dropped from the tag"
+    assert entry["image"]["attachment_id"] == uploaded["attachment_id"]
+    assert entry["image"]["url"].startswith("https://")
+    assert [image["attachment_id"] for image in entry["images"]] == [uploaded["attachment_id"]]
+    assert entry["images"][0]["colour_hex"] is None
+    assert entry["colours"] == []
