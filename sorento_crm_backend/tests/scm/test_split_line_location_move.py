@@ -35,3 +35,30 @@ def test_a_moved_line_with_acting_splits_says_new_location_once(api, emails):
     assert told[0]["location"] == sibling.warehouse_code, told[0]
     # The lines AutoCount did not move say nothing about a location.
     assert sum("NEW LOCATION" in (ln.get("remark") or "") for ln in lines) == 1
+
+
+def test_a_first_confirmed_moved_line_with_splits_says_new_location_once(api, emails):
+    """Review round 3 S-a: no earlier decision, only a raised ORDER at the old location; the
+    line carries saved splits and AutoCount moved it. The rows' line carries the move into
+    the plan rows (`_say_moved` -> `moved_from`), said once."""
+    from types import SimpleNamespace
+
+    from tests.scm.test_line_splits_api import _put, _sp
+    from tests.test_oi_saved_line_email import D_A, D_B
+    from tests.test_so_line_location_change_email import _imported, _post
+    from tests.test_planning_changes import _line_payload
+
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["10"], line_qty="10")
+    s = SimpleNamespace(client=_client, order=order)
+    r = _put(s, [{"line_id": str(line.id), "splits": [
+        _sp(6, D_A, on=str(line.id)), _sp(4, D_B, on=None),
+    ]}])
+    assert r.status_code == 200, f"premise: the splits save ({r.status_code}) {r.text}"
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, buy_qty="10")])
+
+    lines = [ln for h in emails for ln in h.get("lines") or []]
+    told = [ln for ln in lines if f"NEW LOCATION (was {old})" in (ln.get("remark") or "")]
+    assert len(told) == 1, [(ln.get("location"), ln.get("remark")) for ln in lines]
