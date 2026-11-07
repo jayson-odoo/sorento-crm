@@ -160,9 +160,13 @@ export default function LeaderboardView() {
     [],
   );
 
+  // The Codes column only earns its width when some row has codes worth showing.
+  const showCodes = rows.some((row) => codesText(row.person, row.codes) !== '');
+
   const table = useReactTable({
     columns,
     data: rows,
+    state: { columnVisibility: { codes: showCodes } },
     getRowId: (row) => String(row.rank),
     getCoreRowModel: getCoreRowModel(),
     // The server returns the ranking; the order is the point.

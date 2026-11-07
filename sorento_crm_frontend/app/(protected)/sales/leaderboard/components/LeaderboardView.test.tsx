@@ -160,6 +160,20 @@ describe('LeaderboardView', () => {
     expect(cells).not.toContain('LCL, LCL');
     expect(container.querySelector('td span[title="SEAN I, SEAN III"]')).toBeTruthy();
     expect(container.querySelector('td span[title="JIM-1"]')).toBeTruthy();
+    expect(screen.queryAllByText('Codes').length).toBeGreaterThan(0);
+  });
+
+  it('hides the whole Codes column when no row has codes to show', () => {
+    state.data = response(
+      [
+        { ...row(1, 'LCL', 900), codes: ['LCL'] },
+        { ...row(2, 'JUSTIN', 700), codes: ['JUSTIN'] },
+      ],
+      null,
+    );
+    render(<LeaderboardView />);
+    expect(screen.queryByText('Codes')).toBeNull();
+    expect(screen.getAllByText('Sales person').length).toBeGreaterThan(0);
   });
 
   it('asks for This month with its previous window by default', () => {
