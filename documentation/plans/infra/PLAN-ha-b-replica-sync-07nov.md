@@ -1,6 +1,6 @@
 # PLAN: node B exists as a replica; deploy both, then LB, then no-data-loss failover (HA-CF-FAILOVER, 7 Nov)
 
-Status: Build (7 Nov). Card answered 7 Nov about 11:00 (section 7): all five recommendations. Step 1 (deploy both on the plain compose) in build; section 3 (sync record) next.
+Status: Build (7 Nov). Card answered (section 7). Step 1 built in the repo (7a, 10.4: plain-compose role, DB_CONTAINER). Exposure fixes 10.1-10.3 are owner commands. Section 3 (sync record) next.
 Track: full (prod infra). Nothing in this lane touches production: every prod step is an owner
 command, and every block in section 5 is READ-ONLY.
 
@@ -527,3 +527,206 @@ healthy (`/api/v1/health`), the outside test closed.
      `"127.0.0.1:5432:5432"`);
    - replication over WireGuard (or `hostssl` with a certificate) so it is encrypted (X6);
    - pin pgbouncer's image (A runs `edoburu/pgbouncer:latest`).
+
+## 10. pg_hba result, the exposure fix and B's first start (owner 7 Nov about 11:55)
+
+**pg_hba facts on A:**
+- `trust` only on `local`, `127.0.0.1/32` and `::1/128` (all and replication). These are the image defaults, so the G12 trust risk is LOW.
+- Line 128: `host all all all scram-sha-256`.
+- Replication: `replicator` with scram from `172.18.0.1/32` (the docker gateway) and from B's PUBLIC address `/32`.
+- `pg_stat_ssl` is empty: the replication stream crosses the public internet unencrypted.
+
+**Updated severity:**
+
+| Finding | Severity |
+|---|---|
+| X1: A 5432 open to the internet, with password logins for any role (line 128) | HIGH |
+| X6: replication in clear text over the public internet (the whole database, continuously) | HIGH |
+| X2, X3: B's Redis and Mongo | CRITICAL only if 9b shows them answering without credentials, else HIGH |
+| X4, X5 | HIGH, unchanged |
+
+Order below: (1) A's 5432, (2) encryption, (3) B's ports, then step 1. Every block is **THIS
+CHANGES PROD**, owner-run, with its rollback and its check. `<IF>` = the public interface
+(`ip route get <B>` on A prints it as `dev ...`); `<A>` / `<B>` = public addresses.
+
+### 10.1 A: 5432 from B only (no restart, zero app impact)
+
+The app and pgbouncer reach `db` container to container on the compose bridge. Those packets
+never enter on `<IF>`, so a rule on `<IF>` cannot touch them. Docker-published ports bypass ufw.
+IPv4 is filtered in `DOCKER-USER` (after DNAT; `--ctorigdstport` = the port the client dialled).
+If `ss -ltnp | grep ':5432'` shows a `docker-proxy` on `[::]`, IPv6 arrives through that proxy on
+`INPUT`, and then reaches Postgres FROM `172.18.0.1`, the gateway row above. So IPv6 is dropped
+on `INPUT`.
+
+```bash
+# THIS CHANGES PROD (node A). Persistent: a oneshot unit re-applies it after a reboot or a docker restart.
+sudo tee /usr/local/sbin/sorento-edge.sh >/dev/null <<'SH'
+#!/bin/sh
+set -eu
+IF=<IF>; B=<B>
+add()  { iptables  -C "$@" 2>/dev/null || iptables  -I "$@"; }
+add6() { ip6tables -C "$@" 2>/dev/null || ip6tables -I "$@"; }
+add DOCKER-USER -i "$IF" -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL ! -s "$B/32" -j DROP
+add6 INPUT -i "$IF" -p tcp --dport 5432 -j DROP
+SH
+sudo chmod 700 /usr/local/sbin/sorento-edge.sh
+sudo tee /etc/systemd/system/sorento-edge.service >/dev/null <<'UNIT'
+[Unit]
+Description=Sorento edge rules (published DB ports)
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/sorento-edge.sh
+[Install]
+WantedBy=multi-user.target docker.service
+UNIT
+sudo systemctl daemon-reload && sudo systemctl enable --now sorento-edge.service
+```
+
+Check:
+- `sudo iptables -L DOCKER-USER -v -n | grep 5432` shows the rule.
+- Block 5.A's `pg_stat_replication` query: still `streaming`, 0 bytes behind.
+- `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<active backend port>/api/v1/health` returns 200 (8000 blue, 8010 green).
+- From the phone hotspot: `nc -4 -z -w 5 <A> 5432` gives closed (and `-6` closed).
+
+Rollback:
+
+```bash
+sudo systemctl disable --now sorento-edge.service
+sudo iptables -D DOCKER-USER -i <IF> -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL ! -s <B>/32 -j DROP
+sudo ip6tables -D INPUT -i <IF> -p tcp --dport 5432 -j DROP
+```
+
+6432 on A stays as `prod-edge-lockdown.md` step 1 has it (from n8n only) until n8n retires.
+
+### 10.2 Encrypt replication: WireGuard A<->B (recommended) vs TLS
+
+**Recommendation: WireGuard.** The link will carry more than Postgres replication:
+- the controller's peer reads;
+- active-active (#2170): B's app reaching A's pgbouncer, and Redis replication, which Postgres TLS
+  would leave in clear text.
+A's Postgres does not restart. B's replica switches with a reload (`primary_conninfo` is
+reloadable since PG 13). TLS (`ssl=on` is also a reload, but it needs a certificate in A's data
+directory and a CA on B for `verify-full`) protects only Postgres.
+
+```bash
+# THIS CHANGES PROD (both nodes). On each: install, make keys, swap the PUBLIC keys by hand.
+sudo apt-get install -y wireguard
+sudo sh -c 'umask 077; wg genkey | tee /etc/wireguard/private.key | wg pubkey > /etc/wireguard/public.key'
+# /etc/wireguard/wg0.conf from infra/templates/wireguard/wg0.conf.template:
+#   A: Address = 10.77.0.1/32, peer AllowedIPs = 10.77.0.2/32, Endpoint = <B>:51820
+#   B: Address = 10.77.0.2/32, peer AllowedIPs = 10.77.0.1/32, Endpoint = <A>:51820
+sudo chmod 600 /etc/wireguard/wg0.conf && sudo systemctl enable --now wg-quick@wg0
+# 51820/udp from the peer only: add  "add INPUT -i \"$IF\" -p udp --dport 51820 ! -s <peer>/32 -j DROP"
+# to sorento-edge.sh (and the Hostinger firewall: 51820/udp from the peer), then restart sorento-edge.
+sudo wg show wg0 latest-handshakes && ping -c 20 -q 10.77.0.2   # (from A; 10.77.0.1 from B)
+```
+
+Then point replication at the tunnel:
+
+```bash
+# THIS CHANGES PROD. Node A: let B's tunnel address replicate (pg_hba reload, no restart). Keeps a backup.
+cd /opt/sorento-crm2
+docker compose exec -T -u postgres db sh -c 'f="$PGDATA/pg_hba.conf"; cp "$f" "$f.bak-07nov" &&
+  sed -i "/^host[[:space:]]\+all[[:space:]]\+all[[:space:]]\+all/i host replication replicator 10.77.0.2/32 scram-sha-256" "$f"'
+docker compose exec -T -u postgres db psql -U postgres -c "select pg_reload_conf()" \
+  -c "select line_number, error from pg_hba_file_rules where error is not null"   # expect 0 rows
+# Node B: same conninfo, host changed to the tunnel. `show` prints the password: read it on your screen, never paste it.
+docker exec -it sorento_crm_replica psql -U "<replica superuser>" -d postgres -c "show primary_conninfo"
+docker exec -it sorento_crm_replica psql -U "<replica superuser>" -d postgres \
+  -c "alter system set primary_conninfo = '<the same string with host=10.77.0.1>'" -c "select pg_reload_conf()"
+```
+
+Check on A (superuser, block 9b): `client_addr = 10.77.0.2`, `streaming`, 0 bytes behind.
+
+Rollback:
+- B: `alter system set primary_conninfo = '<the old string>'` + reload.
+- A: `cp "$PGDATA/pg_hba.conf.bak-07nov" "$PGDATA/pg_hba.conf"` + reload.
+- Both: `systemctl disable --now wg-quick@wg0`.
+
+Once it has streamed over the tunnel for a day:
+- in `sorento-edge.sh` on A, drop the `! -s "$B/32"` part, so 5432 is closed on `<IF>` to everyone;
+- delete the pg_hba row for B's public address and reload.
+Postgres traffic then never crosses the internet. The 5432 bind to loopback plus the tunnel
+address waits for the next restart window (with `wal_log_hints`, `archive_mode`; G2, G8).
+
+### 10.3 B: n8n stores and the host pgbouncer to localhost/A only
+
+n8n reaches its own Postgres, Redis and MongoDB over its docker network, so nothing outside needs
+them. Run 9b's conntrack first: if a source other than `<A>` shows up, stop and tell crew.
+
+```bash
+# THIS CHANGES PROD (node B). Same unit pattern as 10.1, with this sorento-edge.sh:
+sudo tee /usr/local/sbin/sorento-edge.sh >/dev/null <<'SH'
+#!/bin/sh
+set -eu
+IF=<IF>; A=<A>
+add()  { iptables  -C "$@" 2>/dev/null || iptables  -I "$@"; }
+add6() { ip6tables -C "$@" 2>/dev/null || ip6tables -I "$@"; }
+for p in 5432 6379 27017; do       # n8n Postgres, Redis, MongoDB (docker-published)
+  add DOCKER-USER -i "$IF" -p tcp -m conntrack --ctorigdstport $p --ctdir ORIGINAL ! -s "$A/32" -j DROP
+  add6 INPUT -i "$IF" -p tcp --dport $p -j DROP
+done
+add  INPUT -i "$IF" -p tcp --dport 6432 ! -s "$A/32" -j DROP   # host pgbouncer (not docker)
+add6 INPUT -i "$IF" -p tcp --dport 6432 -j DROP
+SH
+sudo chmod 700 /usr/local/sbin/sorento-edge.sh
+# then the same /etc/systemd/system/sorento-edge.service as 10.1, daemon-reload, enable --now
+```
+
+Check:
+- n8n works: `docker exec n8n-main wget -qO- http://127.0.0.1:5678/healthz` returns `{"status":"ok"}`.
+- Run one test workflow in the n8n UI.
+- `docker logs --since 10m n8n-main 2>&1 | grep -ciE 'ECONNREFUSED|ETIMEDOUT'` returns 0.
+- Phone hotspot: 5432, 6379, 27017 and 6432 on `<B>` closed, v4 and v6.
+
+Rollback: `systemctl disable --now sorento-edge.service`, then the same `iptables -D ...` /
+`ip6tables -D ...` lines.
+
+n8n UI 5678 stays public (n8n has its own login and is being retired). Restrict it in the
+Hostinger firewall if no one outside needs it.
+
+### 10.4 Step 1 on B: bring the CRM app up as a STANDBY (workers and scheduler off)
+
+Built in the repo (this branch): `DB_CONTAINER` in `.deploy.env` makes the release reach B's
+standalone replica through `docker exec` (`scripts/blue_green_deploy.sh` `db_exec` / `db_cid`).
+The name is validated, and `DB_CONTAINER` is refused in HA compose mode. With it, `--role` on B
+answers `standby`. B's app reads the local replica: nothing on B can write until step 3 (or
+#2170 re-points it), and the chatbot sweeper's claim fails on a replica, so B never sends. The
+release never starts workers on a standby. B gets no users until the LB is on.
+
+Owner commands on B, in order (THIS CHANGES PROD, B only; A is untouched):
+
+1. **Parity check (read-only).** `sha256sum docker-compose.yml` on both nodes must match.
+   `grep -vE '^(DATABASE_URL|DIRECT_URL|REDIS_URL)=' .env | sha256sum` on both must match.
+   `FIELD_ENCRYPTION_KEY`, `JWT_SECRET` and `NEXTAUTH_SECRET` must be identical.
+2. **Put the replica on B's compose network** (live, no restart):
+   `docker network ls | grep sorento`, then `docker network connect <sorento-crm2 network> sorento_crm_replica`.
+   Rollback: `docker network disconnect ...`.
+3. **B's `.env`:**
+   - `DATABASE_URL` and `DIRECT_URL`: host `sorento_crm_replica`, port `5432`, A's app user and database.
+   - `REDIS_URL=redis://redis:6379/0`, B's own compose Redis.
+4. **B's `.deploy.env`, mode 600:** `DB_CONTAINER=sorento_crm_replica` and `DEPLOY_DB_NAME=<db>`.
+   There is no backend on B to read the name from.
+5. **Recommended, both nodes (keeps the compose files identical):** add
+   `SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-0}` to the backend colours' `environment:`. A's release
+   behaviour is unchanged. B never migrates even without it (section 7a), but this makes it
+   explicit.
+6. **Start only B's Redis:** `docker compose up -d redis`.
+   - Never run a bare `docker compose up -d` on B: it would start the workers and the compose `db`.
+   - Remove the stale never-started workers: `docker compose rm -f worker worker_fast`.
+7. **nginx, sudo and registry login on B, as on A:**
+   - nginx with A's site config (not the upstreams file; the release writes that);
+   - the deploy user's passwordless `sudo install` / `nginx -t` / `nginx -s reload`;
+   - `docker login` to the image registry.
+8. **Dry run (read-only):** copy `scripts/blue_green_deploy.sh` from this branch to B, then run
+   `./scripts/blue_green_deploy.sh --preflight` (all PASS) and `--role` (`standby`).
+9. **First start on B, the release A runs now:** `IMAGE_TAG=<A's full 40-hex SHA> ./scripts/blue_green_deploy.sh`.
+   - Expect: `Node role: standby`, the replica is already at the head, no snapshot, workers untouched, `Deploy complete`.
+   - Check: `/api/v1/health` 200 on B's active port; `/api/v1/health/role` 503 (correct on a replica).
+   - Rollback: `docker compose stop backend_<c> frontend_<c> mcp_<c>`, which leaves B a replica only, as today.
+10. After #2166 (with this change) is merged: add the secrets `SSH_HOST_B` and `SSH_KNOWN_HOSTS`.
+    From then on every release deploys A, then B.
