@@ -166,15 +166,15 @@ cached selection under 2 s.
 | Rule | Selects |
 | --- | --- |
 | changed test file | itself |
-| dependents | test files that import, through any chain of module-level imports, a changed module or a module that imports one (a lazy import is followed one hop, not further) |
+| dependents | test files that import a changed module directly, or import directly a module that imports one: two hops, never through a hub (`app/main.py`, `app/api/**/__init__.py`, a `conftest.py`); plus test files named after a changed module (`test_<stem>*.py`). Crew, 5 Nov: the transitive rule reached `app/main.py` and selected 3,274 of 3,274 files on `30bbcc6a..311a6b52` and 2,519 on `311a6b52..9ebae8e9`; the two-hop rule selects 1,428 and 815 there |
 | depended-by | for a changed module M and each module D it imports directly: `test_<D>.py` / `test_<D>_*.py` that import D |
 | changed non-module file | test files that name it (alembic revision, workflow, shell script, frontend path); a template or data file under `app/` also through the module that names it |
 | deleted module | test files that name its dotted path |
 | migration tests | `tests/test_migration_*.py` only when `alembic/`, `alembic.ini` or `app/models/` changed |
 | regression guards | `tests/test_lessons_learnt_regressions.py` on any backend change |
 
-A test file counts as importing, at module level, every `conftest.py` above it (pytest imports
-them first), and a changed package `__init__.py` counts as a change to every module of the package
+A `conftest.py` is a hub (a module it loads does not reach every test under it; a change to a
+conftest itself runs the full suite), and a changed package `__init__.py` counts as a change to every module of the package
 (Python runs it before any of them). `tests/scm/` runs only when these rules reach it.
 `tests/ci_excluded.txt` entries never run.
 The selection runs in the PR gate's split: main tree and `tests/scm/` each under xdist and then
@@ -225,6 +225,32 @@ ran 316 test files (4,063 tests) in 763 s, and the source guards 62 files in 51 
 The second range is not a defect of the rule: a changed User model is imported, directly or
 through the root `conftest.py`, by every test file, so the honest affected set is the suite. The
 old one-level regex missed 1,459 of those dependents.
+
+### The same on GitHub Actions, sharded (CI-PARALLEL-ACTIONS, owner 5 Nov 2026)
+
+`.github/workflows/tests-sharded.yml` runs the nightly full sweep and the release delta on
+GitHub-hosted runners in parallel instead of serially in one sandbox (4 cores, 2 h command cap):
+
+```
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm \
+  -f mode=delta -f base=<nightly sha> -f head=<release sha> -f comment_on=<PR or issue>
+gh workflow run tests-sharded.yml --repo foundryx-sdn-bhd/sorento-crm -f mode=full -f head=main -f comment_on=2176
+```
+
+`select` plans the run (`sorento_crm_backend/scripts/sharded_tests_plan.py`): mode=full is every
+test file (the nightly), mode=delta is the selector above. The backend runs one runner per
+(pool, shard): the main tree on 24 runners, `tests/scm/` on 3, and one `serial` runner (alembic
+heads == 1, `alembic upgrade head`, the migration tests, both pools' `serial_ddl`); the planner packs whole
+files onto each pool's runners by estimated seconds (`.test_durations` plus untimed functions). A delta pool gets its share of the full
+pool's recorded seconds in runners (a 10% delta gets 3 of 24). vitest: `--shard=i/8` on a full
+run, one runner with `vitest related` + the source guards on a related delta. `summary` posts one
+`crew-tests:` comment (per-shard results, failing ids, wall clock, billable minutes) on
+`comment_on` (the nightly passes 2176). Dispatch only, no schedule or push trigger (crew, 5 Nov
+2026): every run spends Actions budget, see the costs below, and crew decides each one.
+
+**Nightly-only tests.** `sorento_crm_backend/tests/nightly_only.txt` (the reorder-planning tests,
+owner 5 Nov: "reorder planning are not really in use") is the one list: the release delta
+selector and `scripts/crew-tests.sh` never run its entries; the full sweep does.
 
 `scripts/sweep-lib.sh` closes the sandbox gaps the 4 Nov sweep measured (RELEASE-SWEEP-4NOV-PM,
 #2171), each of which shows up as reds that CI does not have:
