@@ -253,7 +253,7 @@ def _readable(entity: EntityDef, slugs: set[str]) -> str | None:
     return None
 
 
-def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef, bool]:
+def _entity_for(db, user_id: str, key: Any, slugs: set[str], panel: bool) -> tuple[EntityDef, bool]:
     """The entity and whether only the user's own rows are readable, after every entity-level refusal."""
     entity = ENTITIES.get(key) if isinstance(key, str) else None
     if entity is None or entity.view_permission is None:
@@ -266,6 +266,8 @@ def _entity_for(db, user_id: str, key: Any, slugs: set[str]) -> tuple[EntityDef,
         raise QueryRefused(
             "own_only_unsupported", f"This user may see only their own {entity.label.lower()}, which this tool cannot narrow to."
         )
+    if entity.panel_only and not panel:
+        raise QueryRefused("restricted", entity.panel_only)
     if _module_blocked(db, user_id, entity.module):
         raise QueryRefused("module_disabled", f"The {entity.label} module is not enabled.")
     if entity.brand_blind and _brand_scoped(db):
@@ -608,7 +610,7 @@ def _base(db, user_id: str, entity: EntityDef, own_only: bool, stmt, paths: _Pat
     if brands is not None:
         stmt = stmt.where(brands)
     if entity.scope is not None:
-        for clause in entity.scope(db):
+        for clause in entity.scope(db, user_id):
             stmt = stmt.where(clause)
     if own_only:
         from app.services.own_scope import me
@@ -631,16 +633,16 @@ def _brand_clause(db, root):
     return brand_predicate(scope, Product.brand_id, Product.company_id, Product.item_class_id)
 
 
-def run_query(db, user_id: str, spec: Any) -> dict:
+def run_query(db, user_id: str, spec: Any, *, panel: bool = False) -> dict:
     """Rows or groups of one registered entity, as `user_id` may see them. The session's company scope must
-    already be the user's (`run_as_user`)."""
+    already be the user's (`run_as_user`). `panel`: a staff panel turn (`EntityDef.panel_only`); fails closed."""
     if not isinstance(spec, dict):
         raise QueryRefused("invalid", "The query must be an object.")
     unknown = sorted(str(k) for k in spec if k not in SPEC_KEYS)
     if unknown:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
-    entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs, panel)
     spec = shorthands(entity, spec)
     if entity.compute is not None:
         from app.services.assistant_registry.computed import run_computed
@@ -933,7 +935,7 @@ def _field_rows(entity: EntityDef, slugs: set[str], brand_scoped: bool) -> list[
     return out
 
 
-def describe(db, user_id: str, entity: Any = None) -> dict:
+def describe(db, user_id: str, entity: Any = None, *, panel: bool = False) -> dict:
     """With no entity: the entities this user may query. With one: its fields, relations, ops and limits."""
     slugs = _slugs(db, user_id)
     if entity is None:
@@ -943,11 +945,12 @@ def describe(db, user_id: str, entity: Any = None) -> dict:
             if _readable(e, slugs) == "all" or (_readable(e, slugs) == "own" and e.own_clause is not None)
             if not _module_blocked(db, user_id, e.module)
             if not (e.brand_blind and _brand_scoped(db))
+            if panel or not e.panel_only
         ]
         return {"entities": listed}
     from app.models.base import get_brand_scope
 
-    found, own_only = _entity_for(db, user_id, entity, slugs)
+    found, own_only = _entity_for(db, user_id, entity, slugs, panel)
     brand_scoped = bool(get_brand_scope(db))
     relations = {}
     for name, (target_key, _fk) in found.relations.items():

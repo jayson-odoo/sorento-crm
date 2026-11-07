@@ -5,8 +5,11 @@ from app.models.order import Customer, Order, OrderStatus
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
+#: The billing documents screen, which shows a customer's amount owed.
+BILLING_VIEW = "finance.billing_documents.view"
 
-def _screen_rules(db) -> list:
+
+def _screen_rules(db, user_id: str | None = None) -> list:
     """The list's own rules (`order_service.py`): a soft-deleted order is not on the screen, and a brand-scoped
     contact sees only orders with a line of one of its brands (`scope_product_filter`)."""
     from sqlalchemy import select
@@ -23,9 +26,8 @@ def _screen_rules(db) -> list:
 
 
 
-def _customer_agent():
-    """The customer's agent as the Customers list links it (`Customer.sales_agent_id`, the agent's Customers tab,
-    `order_service._build_customer_list_query`) and as the screens print it: "CODE - Name"
+def agent_label_for(model, fk) -> object:
+    """The record's sales agent (`fk`, a column of `model`) as the screens print it: "CODE - Name"
     (`team_service.agent_label`), so a question naming the agent by code or by name both match (crew pass on
     69b3b479: "Agent A" is a name, and a code-only field found none)."""
     from sqlalchemy import func, select
@@ -36,7 +38,13 @@ def _customer_agent():
     agent = aliased(SalesAgent)
     name = func.nullif(func.btrim(agent.description), "")
     label = func.coalesce(agent.sales_agent + " - " + name, agent.sales_agent)
-    return select(label).where(agent.id == Customer.sales_agent_id).correlate(Customer).scalar_subquery()
+    return select(label).where(agent.id == fk).correlate(model).scalar_subquery()
+
+
+def _customer_agent():
+    """The customer's agent as the Customers list links it (`Customer.sales_agent_id`, the agent's Customers tab,
+    `order_service._build_customer_list_query`)."""
+    return agent_label_for(Customer, Customer.sales_agent_id)
 
 
 register(
@@ -60,13 +68,22 @@ register(
                 note="'CODE - Name'; filter with eq on the code or the name (one agent, as its Customers tab).",
             ),
             "created_at": FieldDef("Created at"),
+            # Amounts owed (AI-TOOLS-WAVE3): AutoCount's figure, shown on the billing documents screen
+            # (`CustomerOutstandingMeta.tsx`, `billing_document_query_service.customer_outstanding`), so its slug.
+            "ar_outstanding": FieldDef(
+                "Outstanding (RM)", permission=BILLING_VIEW, whole_document=True,
+                note="What the customer still owes, synced from AutoCount; empty = not synced. No ageing buckets are "
+                     "available (overdue per invoice: billing_document outstanding with due_date before today).",
+            ),
+            "ar_as_of": FieldDef("Outstanding as of", permission=BILLING_VIEW, note="When AutoCount last synced it."),
         },
         name_by=("code", "name"),
         # "Active customers": the Customers list's own Active filter (`order_service._build_customer_list_query`,
         # `status=active` is `is_active`), applied unless the query names `is_active` (crew pass, 5 Nov).
         default_filters=(("is_active", "eq", True, "Inactive customers excluded."),),
         list_fields=("agent", "region"),
-        hint="customers (active only unless is_active is filtered); an agent's customers: agent=<code or name as said>",
+        hint="customers (active only unless is_active is filtered); an agent's customers: agent=<code or name as said>; "
+             "who owes us / amounts owed: ar_outstanding",
         screen_path="/order-management/customers/{id}",
         pages=("/order-management/customers",),
         routes=("GET /api/v1/order-management/customers/",),

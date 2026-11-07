@@ -13,7 +13,7 @@ from app.services.assistant_registry.query import SALES_REPORT
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 
-def _screen_rules(db) -> list:
+def _screen_rules(db, user_id: str | None = None) -> list:
     return [SalesOrder.doc_type == DOC_TYPE_SALES_ORDER]
 
 

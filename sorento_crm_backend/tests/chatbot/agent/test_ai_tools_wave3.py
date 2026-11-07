@@ -184,7 +184,10 @@ def test_AR1_who_owes_us_the_most_needs_the_billing_screen(world, grant):
     assert [(r["label"].split(": ")[1], r["ar_outstanding"]) for r in out["rows"]] == [("ZZT AR A", 1200.5), ("ZZT AR B", 300.0)]
     # Without the billing documents screen the figure is restricted, as on the screen.
     grant(CUSTOMERS_VIEW)
-    assert refused(db, {"entity": "customer", "fields": ["ar_outstanding"]}).code == "restricted"
+    hidden = run(db, {"entity": "customer", "fields": ["ar_outstanding"],
+                      "filters": [{"field": "name", "op": "eq", "value": "ZZT AR A"}]})
+    assert hidden["restricted"] == ["ar_outstanding"] and "ar_outstanding" not in hidden["rows"][0]
+    assert refused(db, {"entity": "customer", "sort": [{"field": "ar_outstanding", "dir": "desc"}]}).code == "restricted"
     plain = run(db, {"entity": "customer", "filters": [{"field": "name", "op": "eq", "value": "ZZT AR A"}]})
     assert "ar_outstanding" not in plain["rows"][0]
 
@@ -250,7 +253,7 @@ def test_OP1_open_opportunities_of_an_agent_closing_this_month(opps):
     assert row["stage"] == "ZZT Negotiation"
     assert row["expected_amount"] == 1000.0
     assert row["customer.name"] == "ZZT OPP CUST"
-    assert out["period_display"] == "Period 01/10/2026 to 31/10/2026"
+    assert out["period_display"] == "Close date 01/10/2026 to 31/10/2026"
 
 
 def test_OP2_amount_per_agent_and_outcome(opps):
@@ -324,7 +327,7 @@ def test_PR1_drafts_only_to_their_owner(projects):
     db, _cid, t = projects
     out = run(db, {"entity": "project", "filters": [{"field": "title", "op": "starts_with", "value": "ZZT P"}],
                    "fields": ["title"], "limit": 50}, user_id=t["me"].id)
-    assert {r["title"] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
+    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
 
 
 def test_PR2_project_fields_and_value_per_owner(projects):
@@ -347,7 +350,7 @@ def test_PR3_own_only_holder_sees_owned_and_collaborated(projects, grant, monkey
     db.flush()
     _me(monkeypatch, t["me"].id)
     out = run(db, {"entity": "project", "fields": ["title"], "limit": 50}, user_id=t["me"].id)
-    assert {r["title"] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
+    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
     stranger = str(uuid.uuid4())
     _me(monkeypatch, stranger)
     assert run(db, {"entity": "project"}, user_id=stranger)["rows"] == []
