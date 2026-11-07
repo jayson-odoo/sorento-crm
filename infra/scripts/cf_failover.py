@@ -142,6 +142,7 @@ class Obs:
     rec_mode: str = 'unknown'
     rec_primary: Optional[str] = None
     rec_since: Optional[int] = None
+    peer_flush_lsn: Optional[int] = None   # primary only: the sync standby's flushed (write for remote_write) position
 
 
 # Windows: seconds a condition has held without a break. Reset when the controller was not
@@ -169,6 +170,7 @@ def initial_state() -> dict:
         "lag_alerted": False,
         "two_primaries_alerted": False,
         "rec_alerted": False,
+        "sync_from_lsn": None,
         **{k: None for k in WINDOWS},
     }
 
@@ -176,7 +178,7 @@ def initial_state() -> dict:
 def decide(state: dict, o: Obs, now: float, c: Config):
     """One tick. Returns (new_state, actions). Actions are tuples:
     ("fence", reason) ("promote",) ("start_standby",) ("rejoin",) ("rejoin", "reseed")
-    ("set_sync", names) ("ensure_slot",) ("alert", text)
+    ("set_sync", names) ("sync_record", "sync"|"async") ("ensure_slot",) ("alert", text)
     """
     s = {**initial_state(), **state}
     acts = []
@@ -268,11 +270,23 @@ def decide(state: dict, o: Obs, now: float, c: Config):
         want = "sync" if desired else "async"
         if o.sync_names != desired:
             if desired:
-                acts.append(("set_sync", desired)); acts.append(("sync_record", "sync"))
+                # The record says sync only after the standby has caught up to this position.
+                acts.append(("set_sync", desired))
+                s["sync_from_lsn"] = o.self_lsn
             else:
                 acts.append(("sync_record", "async")); acts.append(("set_sync", ""))
-        elif o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name):
-            acts.append(("sync_record", want))
+                s["sync_from_lsn"] = None
+        elif not desired:
+            s["sync_from_lsn"] = None
+            if o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name):
+                acts.append(("sync_record", want))
+        else:
+            if s["sync_from_lsn"] is None:  # restart or an old state file
+                s["sync_from_lsn"] = o.self_lsn
+            if (o.rec_mode != "unknown" and (o.rec_mode, o.rec_primary) != (want, c.node_name)
+                    and o.peer_flush_lsn is not None and s["sync_from_lsn"] is not None
+                    and o.peer_flush_lsn >= s["sync_from_lsn"]):
+                acts.append(("sync_record", want))
         if not o.peer_slot_ok:  # P5: the standby can only stream into its slot
             acts.append(("ensure_slot",))
         return s, acts
@@ -311,7 +325,15 @@ def decide(state: dict, o: Obs, now: float, c: Config):
             if not (o.rec_mode == "sync" and o.rec_primary == c.peer_name):
                 if not s["rec_alerted"]:
                     s["rec_alerted"] = True
-                    acts.append(("alert", f"record async since {o.rec_since}" if o.rec_mode == "async" else "sync record could not be read"))
+                    if o.rec_mode == "async":
+                        since = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(o.rec_since))
+                                 if o.rec_since is not None else "an unknown time")
+                        why = f"sync record says async since {since} (primary {o.rec_primary})"
+                    elif o.rec_mode == "sync":
+                        why = f"sync record names {o.rec_primary} as primary, not {c.peer_name}"
+                    else:
+                        why = "sync record could not be read"
+                    acts.append(("alert", f"{c.node_name}: NOT promoting: {why}"))
                 return s, acts
             promote(f"peer Cloudflare-unhealthy and unreachable for {c.promote_after}s")
             acts.append(("sync_record", "async"))
@@ -499,9 +521,13 @@ def main() -> int:
         return 2
     if token_file and os.path.exists(token_file) and os.stat(token_file).st_mode & 0o077:
         log(f"warning: {token_file} is readable by group or others; make it mode 600")
-    if c.sync_mode != "off" and not all(env.get(k) for k in ("R2_ENDPOINT", "R2_BUCKET", "R2_CREDENTIALS_FILE")):
-        log("config refused: R2")
-        return 2
+    if c.sync_mode != "off":
+        r2_file = env.get("R2_CREDENTIALS_FILE", "")
+        if not (env.get("R2_ENDPOINT") and env.get("R2_BUCKET") and r2_file and os.path.isfile(r2_file)):
+            log("config refused: SYNC_MODE needs R2_ENDPOINT, R2_BUCKET and an existing R2_CREDENTIALS_FILE")
+            return 2
+        if os.stat(r2_file).st_mode & 0o077:
+            log(f"warning: {r2_file} is readable by group or others; make it mode 600")
     watchdog = Watchdog(env.get("WATCHDOG_DEVICE", ""))
 
     def stop(signum, frame):
@@ -550,6 +576,7 @@ def main() -> int:
             self_lsn=lsn("self_lsn"),
             peer_pg=d.get("peer_pg") if d.get("peer_pg") in PEER_ROLES else "unreachable",
             peer_lsn=lsn("peer_lsn"),
+            peer_flush_lsn=lsn("peer_flush_lsn"),
             peer_slot_ok=d.get("peer_slot", "t") != "f",
             cf_self=cf_pool_health(cf_base, cf_account, pool_self, token),
             cf_peer=cf_pool_health(cf_base, cf_account, pool_peer, token),
@@ -567,7 +594,8 @@ def main() -> int:
                 argv = [pg_cmd, "sync-record", "put", a[1]]
                 rc, out = run_cmd(argv, watchdog, 30, c.tick)
                 if rc != 0:
-                    alert("sync record write failed; NOT dropping the sync standby")
+                    alert("sync record write failed; NOT dropping the sync standby" if a[1] == "async"
+                          else "sync record write failed (sync)")
                     break
                 continue
             if a[0] == "fence":
@@ -586,6 +614,8 @@ def main() -> int:
                     alert(f"{c.node_name}: rejoin failed (rc={rc}): {' | '.join(tail)}")
             elif rc != 0:
                 alert(f"{c.node_name}: {a[0]} failed (rc={rc}): {' | '.join(tail)}")
+            if rc != 0 and not (a[0] == "rejoin" and rc == 3):
+                break  # a failed action never lets a later one of the same tick run
         return state
 
     log(f"started: node={c.node_name} peer={c.peer_name} fence_after={c.fence_after}s "

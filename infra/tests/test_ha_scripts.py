@@ -573,7 +573,7 @@ if [ "$sql" = "SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary
 elif [[ "$sql" == *pg_promote* ]]; then
   echo t
 elif [[ "$sql" == *pg_stat_replication* ]]; then
-  echo "primary|100|t||t"
+  echo "${FAKE_SELF_ROW:-primary|100|t||t}"
 else
   echo ok
 fi
@@ -627,6 +627,26 @@ def test_observe_sql_uses_the_adopted_peer_names(tmp_path):
     assert "application_name = 'sorento_crm_peer_app'" in sql
     assert "slot_name = 'sorento_crm_peer_slot'" in sql
     assert "'crm-b'" not in sql and "'crm_b'" not in sql
+
+
+def test_observe_prints_the_peer_flush_position_of_the_primary(tmp_path):
+    e = adapter_env(tmp_path, PG_RUNNING="true", FAKE_SELF_ROW="primary|100|t|crm-b|t|777")
+    r = adapter(e, "observe")
+    assert r.returncode == 0, r.stderr
+    assert "peer_flush_lsn=777" in r.stdout.splitlines(), r.stdout
+    r = adapter(adapter_env(tmp_path, PG_RUNNING="true"), "observe")  # no row for the peer: empty
+    assert "peer_flush_lsn=" in r.stdout.splitlines(), r.stdout
+
+
+def test_observe_flush_sql_reads_flush_lsn_or_write_lsn_for_remote_write(tmp_path):
+    adapter(adapter_env(tmp_path, PG_RUNNING="true", SYNC_MODE="on_commit", **ADOPTED), "observe")
+    sql = sql_log(tmp_path)
+    assert "flush_lsn" in sql and "write_lsn" not in sql
+    assert "pg_wal_lsn_diff(flush_lsn" in sql and "'sorento_crm_peer_app'" in sql
+    (tmp_path / "sql.log").unlink()
+    adapter(adapter_env(tmp_path, PG_RUNNING="true", SYNC_MODE="remote_write"), "observe")
+    sql = sql_log(tmp_path)
+    assert "pg_wal_lsn_diff(write_lsn" in sql and "pg_wal_lsn_diff(flush_lsn" not in sql
 
 
 def test_observe_sql_defaults_to_the_node_names(tmp_path):
@@ -732,7 +752,7 @@ def _curl_has_sigv4():
 
 needs_sigv4 = pytest.mark.skipif(not _curl_has_sigv4(), reason="the installed curl has no --aws-sigv4 (needs curl 7.75+)")
 
-SECRET = "wJalrXUtnFEMI-K7MDENG-bPxRfiCYEXAMPLEKEY"
+SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 KEY_ID = "AKIDEXAMPLE0123456789"
 GOOD_BODY = {"mode": "sync", "primary": "crm-b", "since": 1700000000}
 
@@ -961,6 +981,86 @@ def test_sync_record_missing_settings_exit_2(tmp_path, s3, missing, verb):
     assert r.returncode == 2, (r.stdout, r.stderr)
     assert "usage" not in r.stderr
     assert not (tmp_path / "curl.argv").exists(), "no request without complete settings"
+
+
+def _curl_lines(tmp):
+    return (tmp / "curl.argv").read_text().splitlines()
+
+
+@needs_sigv4
+@pytest.mark.parametrize("verb", [("get",), ("put", "sync")])
+def test_sync_record_curl_ignores_curlrc_and_limits_protocols(tmp_path, s3, verb):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, *verb)
+    for line in _curl_lines(tmp_path):
+        assert line.startswith("-q "), line
+        assert "--proto =https,http" in line, line
+
+
+@needs_sigv4
+def test_sync_record_put_declares_json(tmp_path, s3):
+    baseline_ok(r2_adapter_env(tmp_path, s3), "put", "sync")
+    assert "Content-Type: application/json" in "\n".join(_curl_lines(tmp_path))
+
+
+@needs_sigv4
+@pytest.mark.parametrize("idv, secv", [
+    ("short", SECRET), ("AKID WITH SPACE0123456", SECRET), ("AKIDEXAMPLE0123456789\\\"x", SECRET),
+    (KEY_ID, "short"), (KEY_ID, "wJalrXUtnFEMI-K7MDENG-bPxRfiCYEXAMPLEKEY"), (KEY_ID, 'ab"cd/efghijklmnop'),
+    ("A" * 129, SECRET), (KEY_ID, "a" * 129), ("", SECRET), (KEY_ID, ""),
+])
+def test_sync_record_refuses_malformed_credentials_without_a_request(tmp_path, s3, idv, secv):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    (tmp_path / "curl.argv").unlink()
+    Path(e["R2_CREDENTIALS_FILE"]).write_text(f"AWS_ACCESS_KEY_ID={idv}\nAWS_SECRET_ACCESS_KEY={secv}\n")
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert not (tmp_path / "curl.argv").exists()
+
+
+@needs_sigv4
+def test_sync_record_a_duplicate_credential_line_uses_only_the_first(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    Path(e["R2_CREDENTIALS_FILE"]).write_text(
+        f"AWS_ACCESS_KEY_ID={KEY_ID}\nAWS_ACCESS_KEY_ID=AKIDSECONDLINE0000\nAWS_SECRET_ACCESS_KEY={SECRET}\n")
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    auth = s3["reqs"][-1]["auth"]
+    assert KEY_ID in auth and "SECONDLINE" not in auth
+
+
+@needs_sigv4
+@pytest.mark.parametrize("extra", [
+    {"R2_BUCKET": "Bad"}, {"R2_BUCKET": "a/b"}, {"R2_BUCKET": "a b"}, {"R2_BUCKET": "a" * 201},
+    {"SYNC_RECORD_KEY": "UPPER"}, {"SYNC_RECORD_KEY": "a b"}, {"SYNC_RECORD_KEY": "k?x=1"},
+    {"SYNC_RECORD_KEY": "k" * 201},
+])
+def test_sync_record_refuses_a_bad_bucket_or_key_without_a_request(tmp_path, s3, extra):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    (tmp_path / "curl.argv").unlink()
+    e.update(extra)
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode == 2, (r.stdout, r.stderr)
+    assert not (tmp_path / "curl.argv").exists()
+
+
+@needs_sigv4
+def test_sync_record_parsing_survives_optimised_python_and_ignores_pythonpath(tmp_path, s3):
+    e = r2_adapter_env(tmp_path, s3)
+    baseline_ok(e, "get")
+    e["PYTHONOPTIMIZE"] = "1"  # strips assert: the checks must be explicit
+    s3["body"] = b'{"mode": "bogus", "primary": "crm-b", "since": 1}'
+    assert adapter(e, "sync-record", "get").returncode != 0
+    s3["body"] = json.dumps(GOOD_BODY).encode()
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    (evil / "json.py").write_text(f"open({str(tmp_path / 'pwned')!r}, 'w').write('x')\n")
+    e["PYTHONPATH"] = str(evil)
+    r = adapter(e, "sync-record", "get")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    assert not (tmp_path / "pwned").exists()
 
 
 @needs_sigv4

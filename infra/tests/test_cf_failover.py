@@ -440,11 +440,49 @@ def test_p4_drop_still_writes_the_record_when_the_record_is_unreadable():
     assert a.index(("sync_record", "async")) < a.index(("set_sync", ""))
 
 
-def test_p4_add_sets_the_standby_before_writing_the_sync_record():
+def test_p4_add_sets_the_standby_and_writes_the_sync_record_only_after_a_confirmed_catch_up():
     c = cfg(SYNC_MODE="on_commit")
-    _, a = decide(initial_state(), prim(**SYNC_TICK, rec_mode="async", rec_primary="crm-a", rec_since=1), 0, c)
-    assert ("set_sync", "crm-b") in a and ("sync_record", "sync") in a
-    assert a.index(("set_sync", "crm-b")) < a.index(("sync_record", "sync"))
+    rec = dict(rec_mode="async", rec_primary="crm-a", rec_since=1)
+    # tick 1: set_sync ONLY, even if the standby already reports a position
+    s, a = decide(initial_state(), prim(**SYNC_TICK, self_lsn=1000, peer_flush_lsn=1000, **rec), 0, c)
+    assert a == [("set_sync", "crm-b")]
+    assert s["sync_from_lsn"] == 1000
+    # later tick, standby still behind the position at set_sync time: no record
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=999, **rec), 15, c)
+    assert a == []
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=None, **rec), 30, c)
+    assert a == []
+    # caught up to that position: the record goes up
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=1500, peer_flush_lsn=1000, **rec), 45, c)
+    assert a == [("sync_record", "sync")]
+
+
+def test_p4_sync_from_lsn_is_taken_in_steady_state_after_a_restart_and_cleared_on_drop():
+    c = cfg(SYNC_MODE="on_commit")
+    rec = dict(rec_mode="async", rec_primary="crm-a", rec_since=1)
+    s, a = decide(initial_state(), prim(**SYNC_TICK, sync_names="crm-b", self_lsn=2000, peer_flush_lsn=1900, **rec), 0, c)
+    assert a == [] and s["sync_from_lsn"] == 2000
+    s, a = decide(s, prim(**SYNC_TICK, sync_names="crm-b", self_lsn=2100, peer_flush_lsn=2000, **rec), 15, c)
+    assert a == [("sync_record", "sync")]
+    # the standby stops streaming: dropped, and the mark goes with it
+    s, a = decide(s, prim(cf_self="healthy", self_streaming=False, sync_names="crm-b", **rec), 30, c)
+    assert s["sync_from_lsn"] is None
+    # steady async state keeps it cleared
+    s, _ = decide(s, prim(cf_self="healthy", self_streaming=False, **rec), 45, c)
+    assert s["sync_from_lsn"] is None
+
+
+def test_p4_a_record_that_already_says_sync_by_this_node_is_not_rewritten():
+    c = cfg(SYNC_MODE="on_commit")
+    _, a = decide(initial_state(), prim(**SYNC_TICK, sync_names="crm-b", peer_flush_lsn=5000, rec_mode="sync",
+                                        rec_primary="crm-a", rec_since=1), 0, c)
+    assert a == []
+
+
+def test_p4_an_unreadable_record_is_not_written_even_when_caught_up():
+    c = cfg(SYNC_MODE="on_commit")
+    _, a = decide(initial_state(), prim(**SYNC_TICK, sync_names="crm-b", peer_flush_lsn=5000, rec_mode="unknown"), 0, c)
+    assert a == []
 
 
 def test_p4_sync_mode_off_drops_with_the_async_record_first():
@@ -466,7 +504,7 @@ def test_peer_app_name_drives_set_sync():
 
 
 @pytest.mark.parametrize("rec, names, streaming, want", [
-    (("async", "crm-a"), "crm-b", True, ("sync_record", "sync")),     # record behind Postgres
+    (("async", "crm-a"), "crm-b", True, ("sync_record", "sync")),     # record behind Postgres (standby caught up)
     (("sync", "crm-a"), "", False, ("sync_record", "async")),         # record more optimistic than Postgres
     (("sync", "crm-b"), "crm-b", True, ("sync_record", "sync")),      # right mode, written by the peer
     (("async", "crm-b"), "", False, ("sync_record", "async")),        # same, async
@@ -474,7 +512,8 @@ def test_peer_app_name_drives_set_sync():
 def test_p4_steady_state_repairs_a_record_that_differs(rec, names, streaming, want):
     c = cfg(SYNC_MODE="on_commit")
     o = prim(cf_self="healthy", self_streaming=streaming, peer_pg="standby" if streaming else "unreachable",
-             sync_names=names, rec_mode=rec[0], rec_primary=rec[1], rec_since=1)
+             sync_names=names, rec_mode=rec[0], rec_primary=rec[1], rec_since=1,
+             peer_flush_lsn=1000 if streaming else None)
     _, a = decide(initial_state(), o, 0, c)
     assert want in a
     assert not any(x[0] == "set_sync" for x in a)
@@ -533,7 +572,9 @@ def test_s1_record_async_never_promotes_and_alerts_once_with_the_since_time():
     assert first(out, "sync_record") is None
     alerts = [a for _, acts in out for a in acts if a[0] == "alert"]
     assert len(alerts) == 1, alerts
-    assert "1234567" in alerts[0][1]
+    assert alerts[0][1].startswith("crm-a: NOT promoting")
+    assert "1970-01-15T06:56:07Z" in alerts[0][1]  # 1234567 as UTC ISO time
+    assert "primary crm-b" in alerts[0][1]
 
 
 def test_s1_record_unknown_never_promotes_and_alerts_once_that_it_could_not_be_read():
@@ -542,6 +583,7 @@ def test_s1_record_unknown_never_promotes_and_alerts_once_that_it_could_not_be_r
     assert first(out, "promote") is None
     alerts = [a for _, acts in out for a in acts if a[0] == "alert"]
     assert len(alerts) == 1, alerts
+    assert alerts[0][1].startswith("crm-a: NOT promoting")
     assert "could not be read" in alerts[0][1]
 
 
@@ -655,7 +697,8 @@ class World:
         self.sync = {"a": "", "b": ""}
         # The sync record in R2 (one shared object) and the commits a client was told succeeded.
         # R2 is on the internet: a node without it (net down) can neither read nor write the record.
-        self.rec = None
+        # Armed per the runbook: `put async` from the primary already created the object.
+        self.rec = {"mode": "async", "primary": "crm-a", "since": 0}
         self.rec_up = True
         self.acked = 0
         self.fence_fails = {"a": False, "b": False}
@@ -712,6 +755,7 @@ class World:
                 rec_primary=rec["primary"] if rec else None,
                 rec_since=rec["since"] if rec else None,
                 self_pg=self.pg[n], self_streaming=self.streaming(n), self_lsn=self.lsn[n],
+                peer_flush_lsn=self.lsn[p] if self.pg[n] == "primary" and self.streaming(n) else None,
                 peer_pg=(self.pg[p] if self.pg[p] != "down" else "unreachable") if self.link else "unreachable",
                 peer_lsn=self.lsn[p] if self.link and self.pg[p] != "down" else None,
                 cf_self=seen(n), cf_peer=seen(p), sync_names=self.sync[n],
@@ -719,7 +763,7 @@ class World:
             self.state[n], actions = decide(self.state[n], o, t, self.cfg[n])
             for a in actions:
                 if self.apply(n, a, t) is False:
-                    break  # a failed sync_record skips every later action of the tick
+                    break  # any failed action skips every later action of the tick
         assert not (self.pg["a"] == "primary" and self.pg["b"] == "primary"), f"two writers at t={t}: {self.log[-6:]}"
 
     def apply(self, n, a, t):
@@ -935,6 +979,18 @@ def test_world_r2_unreachable_when_a_dies_b_does_not_promote():
     w.net["a"] = False
     w.run(5000, start=135)
     assert w.pg["b"] == "standby"
+
+
+def test_world_a_dies_between_set_sync_and_the_catch_up_b_does_not_promote():
+    w = World(sync="on_commit")
+    w.run(0)  # tick 0: A sets synchronous_standby_names; the record is not up yet
+    assert w.sync["a"] == "crm-b" and w.rec["mode"] == "async"
+    w.pg["a"] = "down"  # A dies before B's catch-up is confirmed
+    w.net["a"] = False
+    w.link = False
+    w.run(5000, start=15)
+    assert w.pg["b"] == "standby"
+    assert not any(n == "b" and a[0] == "promote" for _, n, a in w.log)
 
 
 def test_obs_is_a_frozen_value():

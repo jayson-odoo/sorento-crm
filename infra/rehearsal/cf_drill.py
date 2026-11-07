@@ -259,7 +259,7 @@ class Stack:
                "CF_API_TOKEN_FILE": str(self.dir / "token"),
                "ALERT_CMD": f"cat >> {self.dir}/alerts-{n}.log; echo >> {self.dir}/alerts-{n}.log"}
         (self.dir / "token").write_text("drill-token\n")
-        (self.dir / "r2-credentials").write_text("AWS_ACCESS_KEY_ID=drill\nAWS_SECRET_ACCESS_KEY=drill\n")
+        (self.dir / "r2-credentials").write_text("AWS_ACCESS_KEY_ID=drilldrilldrilldrill\nAWS_SECRET_ACCESS_KEY=drilldrilldrilldrill\n")
         log = open(self.dir / f"controller-{n}.log", "a")
         self.procs[n] = subprocess.Popen([sys.executable, str(CONTROLLER)], env=env, stdout=log, stderr=subprocess.STDOUT)
 

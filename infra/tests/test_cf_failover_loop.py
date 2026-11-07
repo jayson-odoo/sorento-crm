@@ -22,6 +22,8 @@ FAKE_PG = r"""#!/usr/bin/env bash
 echo "$*" >> "$FAKE_DIR/pg.log"
 case "$1" in
   fence) [ -e "$FAKE_DIR/fence_fail" ] && exit 1 ;;
+  set-sync) [ -e "$FAKE_DIR/set_sync_fail" ] && exit 1 ;;
+  promote) [ -e "$FAKE_DIR/promote_fail" ] && exit 1 ;;
   sync-record)
     case "$2" in
       get)
@@ -31,7 +33,7 @@ case "$1" in
     esac ;;
   observe)
     [ -e "$FAKE_DIR/observe_fail" ] && exit 1
-    printf 'self_pg=primary\nself_streaming=t\nself_lsn=100\nsync_names=\npeer_pg=standby\npeer_lsn=100\n' ;;
+    printf 'self_pg=primary\nself_streaming=t\nself_lsn=100\nsync_names=\npeer_pg=standby\npeer_lsn=100\npeer_flush_lsn=100\n' ;;
 esac
 exit 0
 """
@@ -215,7 +217,7 @@ def test_a_confirmed_sync_record_is_followed_by_the_drop(box, cf):
     assert "NOT dropping" not in r.stdout
 
 
-def test_an_add_sets_the_standby_then_writes_the_sync_record(box, cf):
+def test_an_add_sets_the_standby_and_writes_the_record_only_on_a_later_caught_up_tick(box, cf):
     tmp, env = box
     _, base = cf
     primary_obs(tmp, "t", "")
@@ -223,8 +225,69 @@ def test_an_add_sets_the_standby_then_writes_the_sync_record(box, cf):
     r = run(env, ticks=1, CF_API_BASE=base, **r2_env(tmp))
     assert r.returncode == 0, r.stdout + r.stderr
     lines = pg_lines(tmp)
-    assert "set-sync crm-b" in lines and "sync-record put sync" in lines, lines
-    assert lines.index("set-sync crm-b") < lines.index("sync-record put sync")
+    assert "set-sync crm-b" in lines and "sync-record put sync" not in lines, lines
+    # later: the primary already carries the standby and the standby has flushed past the mark
+    primary_obs(tmp, "t", "crm-b")
+    (tmp / "pg.log").unlink()
+    r = run(env, ticks=2, CF_API_BASE=base, **r2_env(tmp))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "sync-record put sync" in pg_lines(tmp), pg_lines(tmp)
+
+
+def test_a_failed_set_sync_skips_every_later_action_of_the_tick(box, cf):
+    tmp, env = box
+    _, base = cf
+    # an add (set_sync) and a lost peer slot (ensure_slot) in the same tick; set_sync fails
+    (tmp / "ha-pg.sh").write_text(FAKE_PG.replace("peer_flush_lsn=100", "peer_flush_lsn=100\\npeer_slot=f"))
+    (tmp / "set_sync_fail").write_text("")
+    r = run(env, ticks=1, CF_API_BASE=base, **r2_env(tmp))
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = pg_lines(tmp)
+    assert "set-sync crm-b" in lines, lines
+    assert "ensure-slot" not in lines and "sync-record put sync" not in lines, lines
+    assert "set_sync failed" in r.stdout, r.stdout
+
+
+def test_a_failed_promote_skips_the_async_record_that_follows_it(box, cf):
+    tmp, env = box
+    state, base = cf
+    state["body"] = {"success": True, "result": {"pop_health": {"SG": {"healthy": False}}}}
+    standby_box(tmp, "rec_mode=sync\nrec_primary=crm-b\nrec_since=5\n")
+    (tmp / "promote_fail").write_text("")
+    r = run(env, ticks=10, CF_API_BASE=base, **FAST_PROMOTE, **r2_env(tmp))
+    assert r.returncode == 0, r.stdout + r.stderr
+    lines = pg_lines(tmp)
+    assert "promote" in lines, (lines, r.stdout)
+    assert "sync-record put async" not in lines[lines.index("promote"):], lines
+    assert "promote failed" in r.stdout
+
+
+def test_a_failed_sync_put_keeps_its_own_alert_text(box, cf):
+    tmp, env = box
+    _, base = cf
+    primary_obs(tmp, "t", "crm-b")
+    (tmp / "rec").write_text("rec_mode=async\nrec_primary=crm-a\nrec_since=1\n")
+    (tmp / "rec_put_fail").write_text("")
+    r = run(env, ticks=2, CF_API_BASE=base, **r2_env(tmp))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "sync record write failed (sync)" in r.stdout, r.stdout
+    assert "NOT dropping" not in r.stdout
+
+
+def test_r2_credentials_readable_by_others_warn_and_a_missing_file_refuses(box, cf):
+    tmp, env = box
+    _, base = cf
+    primary_obs(tmp, "t", "crm-b")
+    e = r2_env(tmp)
+    Path(e["R2_CREDENTIALS_FILE"]).chmod(0o644)
+    r = run(env, ticks=1, CF_API_BASE=base, **e)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "warning" in r.stdout and "r2.creds" in r.stdout and "mode 600" in r.stdout
+    Path(e["R2_CREDENTIALS_FILE"]).unlink()
+    (tmp / "pg.log").unlink()
+    r = run(env, ticks=1, CF_API_BASE=base, **e)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert pg_calls(tmp) == []
 
 
 def test_an_unreadable_record_is_unknown_and_changes_nothing_in_steady_state(box, cf):
@@ -274,7 +337,7 @@ def test_a_standby_does_not_promote_through_the_loop_on_an_async_record(box, cf)
     r = run(env, ticks=10, CF_API_BASE=base, **FAST_PROMOTE, **r2_env(tmp))
     assert r.returncode == 0, r.stdout + r.stderr
     assert "promote" not in pg_lines(tmp)
-    assert "4242" in r.stdout, r.stdout
+    assert "1970-01-01T01:10:42Z" in r.stdout, r.stdout  # 4242 as UTC ISO time
 
 
 def test_a_standby_does_not_promote_through_the_loop_when_the_record_cannot_be_read(box, cf):

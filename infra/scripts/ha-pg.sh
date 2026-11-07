@@ -4,7 +4,9 @@
 # Plan: documentation/plans/infra/PLAN-ha-cf-failover-04nov.md section 3.
 #
 # Commands:
-#   observe            key=value lines: self_pg self_streaming self_lsn sync_names peer_slot peer_pg peer_lsn
+#   observe            key=value lines: self_pg self_streaming self_lsn sync_names peer_slot peer_flush_lsn peer_pg peer_lsn
+#                      (peer_flush_lsn: primary only, the sync standby's flush position, write position
+#                      under SYNC_MODE=remote_write; empty when it has no row)
 #   role               primary | standby | down (local only; the role watcher reads this)
 #   (observe prints self_pg=unknown when psql fails but the container runs: not "down")
 #   fence              stop Postgres FIRST (workers cannot write without it), mark it a standby
@@ -74,6 +76,8 @@ running() { sh -c "$PG_RUNNING" >/dev/null 2>&1; }
 pg_start() { sh -c "$PG_START"; }
 pg_stop() { sh -c "$PG_STOP"; }
 
+# The sync standby's acknowledged position: write_lsn is what remote_write waits for, else flush_lsn.
+PEER_ACK_COL=flush_lsn; [ "${SYNC_MODE:-off}" = remote_write ] && PEER_ACK_COL=write_lsn
 SELF_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END,
   (CASE WHEN pg_is_in_recovery()
         THEN pg_wal_lsn_diff(coalesce(greatest(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()), '0/0'), '0/0')
@@ -83,7 +87,9 @@ SELF_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END
         ELSE EXISTS (SELECT 1 FROM pg_stat_replication WHERE application_name = '$PEER_APP_NAME' AND state = 'streaming') END),
   replace(current_setting('synchronous_standby_names'), '\"', ''),
   (CASE WHEN pg_is_in_recovery() THEN true
-        ELSE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT' AND coalesce(wal_status, '') <> 'lost') END)"
+        ELSE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$PEER_SLOT' AND coalesce(wal_status, '') <> 'lost') END),
+  (CASE WHEN pg_is_in_recovery() THEN NULL
+        ELSE (SELECT max(pg_wal_lsn_diff($PEER_ACK_COL, '0/0'))::bigint FROM pg_stat_replication WHERE application_name = '$PEER_APP_NAME') END)"
 PEER_SQL="SELECT CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END,
   (CASE WHEN pg_is_in_recovery()
         THEN pg_wal_lsn_diff(coalesce(greatest(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn()), '0/0'), '0/0')
@@ -109,9 +115,9 @@ cmd="${1:-}"
 case "$cmd" in
   observe)
     if out=$(local_sql "$SELF_SQL" 2>/dev/null) && [ -n "$out" ]; then
-      IFS='|' read -r role lsn streaming sync slot <<<"$out"
+      IFS='|' read -r role lsn streaming sync slot flush <<<"$out"
       echo "self_pg=$role"; echo "self_lsn=$lsn"; echo "self_streaming=$streaming"; echo "sync_names=$sync"
-      echo "peer_slot=$slot"
+      echo "peer_slot=$slot"; echo "peer_flush_lsn=$flush"
     elif running; then
       # Postgres may still be up and taking writes over TCP while `exec psql` fails (wedged
       # dockerd, cgroup pressure). Never call that "down": the controller counts the tick as
@@ -199,21 +205,34 @@ case "$cmd" in
   sync-record)
     [ -n "${R2_ENDPOINT:-}" ] && [ -n "${R2_BUCKET:-}" ] && [ -n "${R2_CREDENTIALS_FILE:-}" ] || exit 2
     [[ "$R2_ENDPOINT" =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?|http://127\.0\.0\.1(:[0-9]+)?)(/.*)?$ ]] || exit 2
-    url="$R2_ENDPOINT/$R2_BUCKET/${SYNC_RECORD_KEY:-ha/sync-state.json}"
-    id=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' "$R2_CREDENTIALS_FILE"); sec=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' "$R2_CREDENTIALS_FILE")
+    rec_key="${SYNC_RECORD_KEY:-ha/sync-state.json}"
+    [[ "$R2_BUCKET" =~ ^[a-z0-9._-]{1,200}$ && "$rec_key" =~ ^[a-z0-9._/-]{1,200}$ ]] || exit 2
+    url="$R2_ENDPOINT/$R2_BUCKET/$rec_key"
+    # First match only: a duplicated key line must not become a multi-line value.
+    id=$(sed -n 's/^AWS_ACCESS_KEY_ID=//p' "$R2_CREDENTIALS_FILE" | head -n 1)
+    sec=$(sed -n 's/^AWS_SECRET_ACCESS_KEY=//p' "$R2_CREDENTIALS_FILE" | head -n 1)
+    [[ $id =~ ^[A-Za-z0-9]{16,128}$ && $sec =~ ^[A-Za-z0-9/+=]{16,128}$ ]] || exit 2
     cfg() { printf 'user = "%s:%s"\n' "$id" "$sec"; }
+    # -q first: no ~/.curlrc; the credentials reach curl on stdin only, never on argv.
+    r2curl() { cfg | curl -q --proto =https,http -fsS -m 5 -K - --aws-sigv4 "aws:amz:auto:s3" "$@"; }
     case "${2:-}" in
       get)
-        body=$(cfg | curl -fsS -m 5 -K - --aws-sigv4 "aws:amz:auto:s3" "$url") || exit 1
-        printf '%s' "$body" | python3 -c '
-import json,re,sys
-d=json.load(sys.stdin)
-assert d["mode"] in ("sync","async") and re.fullmatch(r"[a-z0-9_-]{1,32}",d["primary"])
-assert type(d["since"]) is int and d["since"]>=0
-print("rec_mode=%s\nrec_primary=%s\nrec_since=%d"%(d["mode"],d["primary"],d["since"]))' || exit 1 ;;
+        body=$(r2curl "$url") || exit 1
+        printf '%s' "$body" | python3 -I -c '
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+    ok = (isinstance(d, dict) and d.get("mode") in ("sync", "async")
+          and isinstance(d.get("primary"), str) and re.fullmatch(r"[a-z0-9_-]{1,32}", d["primary"])
+          and type(d.get("since")) is int and d["since"] >= 0)
+except ValueError:
+    ok = False
+if not ok:
+    sys.exit(1)
+print("rec_mode=%s\nrec_primary=%s\nrec_since=%d" % (d["mode"], d["primary"], d["since"]))' || exit 1 ;;
       put)
         m="${3:-}"; [ "$m" = sync ] || [ "$m" = async ] || exit 2
-        code=$(cfg | curl -sS -m 5 -K - --aws-sigv4 "aws:amz:auto:s3" -o /dev/null -w '%{http_code}' -X PUT --data "{\"mode\": \"$m\", \"primary\": \"$NODE_NAME\", \"since\": $(date +%s)}" "$url") || exit 1
+        code=$(r2curl -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' --data "{\"mode\": \"$m\", \"primary\": \"$NODE_NAME\", \"since\": $(date +%s)}" "$url") || exit 1
         [ "$code" = 200 ] || exit 1 ;;
       *) exit 2 ;;
     esac ;;
