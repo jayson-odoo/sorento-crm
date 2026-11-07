@@ -337,7 +337,7 @@ New and changed gaps:
 - **G14 B's database is not the compose `db`.** Step 1 impact:
   - `--role` on B reads `single` (psql fails), so `ha_release.sh` refuses the whole release ("not an HA node", nothing deployed).
   - **Do not add `SSH_HOST_B` until B answers `standby`.** If the replica is a compose service under another name, `DB_SERVICE=<name>` in B's `.deploy.env` is enough (`blue_green_deploy.sh:107`). If it is a host install, step 1 needs a small extra change.
-  - 5b finds out which, and also how B's app connects (B3 printed nothing).
+  - 8b finds out which, and also how B's app connects (B3 printed nothing).
 - **Q3 resolved by the measurement.** A write_lag of 0.86 ms means the RTT is under 1 ms, so `synchronous_commit=on` per Q3 (a). 8c's ping confirms it.
 
 ### 8b. Next READ-ONLY block, node B (finds the replica and the app's connections)
