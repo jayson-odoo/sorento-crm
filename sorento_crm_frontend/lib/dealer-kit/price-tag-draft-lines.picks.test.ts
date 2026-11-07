@@ -312,7 +312,9 @@ describe('linePickProblems', () => {
     expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
-  it('a discontinued single pick does not block; a discontinued fixed part still does', () => {
+  // Owner ruling, 7 Nov ~21:50: a discontinued fixed part is a warning (its row badge), not an
+  // Approve block either.
+  it('neither a discontinued single pick nor a discontinued fixed part blocks', () => {
     const combo = {
       ...S1_COMBO,
       parts: [
@@ -323,7 +325,22 @@ describe('linePickProblems', () => {
     const single = { key: 's', product_id: id(OPTIONS[0]), code: OPTIONS[0], name: OPTIONS[0], role: 'Kitchen tap', candidates };
     const fixed = { key: 'f', product_id: 'fx', code: 'SRTMCB8083-BL', name: 'Mirror', role: null, candidates: [] };
     const l = line({ combos: [combo], tag_template_id: 't1', parts: [fixed, single] });
-    expect(api.linePickProblems([l], {})).toEqual(['SRTMCB8083-BL is discontinued.']);
+    expect(api.linePickProblems([l], {})).toEqual([]);
+  });
+
+  it('a discontinued Upgrade pick and a discontinued one-option group do not block', () => {
+    const combo = {
+      ...S1_COMBO,
+      parts: [
+        { product_id: 'solo', code: 'SRTSOLO', name: 'Solo', choice_group: 'Waste', is_discontinued: true },
+        { product_id: 'up', code: 'SRTUP', name: 'Up', choice_group: null, is_upgrade: true, is_discontinued: true },
+        ...S1_COMBO.parts,
+      ],
+    };
+    const solo = { key: 'w', product_id: 'solo', code: 'SRTSOLO', name: 'Solo', role: 'Waste', candidates: [] };
+    const upgrade = { key: 'u', product_id: 'up', code: 'SRTUP', name: 'Up', role: 'Upgrade', candidates: [] };
+    const l = line({ combos: [combo], parts: [...line().parts, solo, upgrade] });
+    expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
   it('an LP combo line with no combo list price blocks', () => {
