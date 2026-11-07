@@ -25,6 +25,7 @@ export function AccessoryEditOverlay({
   layer,
   target,
   elementId,
+  count = 2,
   scale,
   onSelectElement,
   onUpdateElement,
@@ -32,6 +33,8 @@ export function AccessoryEditOverlay({
   layer: TagLayer;
   target: AccessoryEditTarget;
   elementId: string | null;
+  /** How many cards the canvas draws for this box (its previewed list, else the two samples). */
+  count?: number;
   /** Canvas pixels per millimetre. */
   scale: number;
   onSelectElement: (elementId: string | null) => void;
@@ -55,7 +58,7 @@ export function AccessoryEditOverlay({
     target === 'footer'
       ? { ...props, footer: { height_mm: 6, elements: [], ...props.footer, show: true } }
       : props;
-  const box = cardBoxLayout(2, shown, layer.width_mm, layer.height_mm);
+  const box = cardBoxLayout(count, shown, layer.width_mm, layer.height_mm);
   const origin = target === 'card' ? box.cards[0] : box.footer;
   const elements = target === 'card' ? props.card?.elements : props.footer?.elements;
   if (!origin || !elements) return null;

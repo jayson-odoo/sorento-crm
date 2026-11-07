@@ -261,7 +261,7 @@ import {
 import {
   accessoryDesign,
   accessoryDesignChanged,
-  accessoryDesignSamples,
+  accessoryEditItems,
   designKey,
   linkCorrectionPatches,
   type AccessoryDesign,
@@ -1881,11 +1881,12 @@ export function TagCanvasEditor({
     }
   };
 
-  /** What the canvas draws for a layer: the box under edit shows full sample data (and the footer). */
+  /** What the canvas draws for a layer: the box under edit shows its previewed list (samples when it has
+   *  none), card 1 as the editable frame. */
   const displayFor = (layer: TagLayer) => {
     const display = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons);
     if (accessoryEdit?.layerId !== layer.id) return display;
-    return { ...display, accessories: accessoryDesignSamples(), accessoryEditing: true };
+    return { ...display, accessories: accessoryEditItems(display.accessories), accessoryEditing: true };
   };
   const drawnLayer = (layer: TagLayer): TagLayer => {
     if (accessoryEdit?.layerId !== layer.id || accessoryEdit.target !== 'footer') return layer;
@@ -4558,6 +4559,7 @@ export function TagCanvasEditor({
                             layer={editedLayer}
                             target={accessoryEdit.target}
                             elementId={accessoryEdit.elementId}
+                            count={displayFor(editedLayer).accessories?.length}
                             scale={scale}
                             onSelectElement={(elementId) =>
                               setAccessoryEdit((prev) => (prev ? { ...prev, elementId } : prev))

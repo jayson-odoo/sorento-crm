@@ -277,6 +277,8 @@ export function cardElementsFor(item: TagAccessory, card: CardLayout): ResolvedC
  * placeholder. The faded cards keep the real rule (`cardElementsFor`).
  */
 export function cardElementsForDesign(item: TagAccessory, card: CardLayout): ResolvedCardElement[] {
+  // A field this accessory has nothing for is drawn from the sample, so the element stays visible to place.
+  const [sample] = accessoryDesignSamples();
   return (card.elements ?? [])
     .filter((element) => !element.hidden)
     .map((element): ResolvedCardElement => {
@@ -285,10 +287,14 @@ export function cardElementsForDesign(item: TagAccessory, card: CardLayout): Res
           return { ...element, src: null, placeholder: true };
         case 'colour_dots': {
           const picked = element.colours && element.colours.length > 0 ? element.colours : null;
-          return { ...element, colours: picked ?? (cardFieldValue(item, 'colours') as string[]) };
+          const own = cardFieldValue(item, 'colours') as string[];
+          const colours = picked ?? (own.length > 0 ? own : (cardFieldValue(sample, 'colours') as string[]));
+          return { ...element, colours };
         }
         case 'text': {
-          const value = element.field ? cardFieldValue(item, element.field) : (element.text ?? '');
+          if (!element.field) return { ...element, text: element.text ?? '' };
+          const own = textOf(cardFieldValue(item, element.field));
+          const value = own ?? cardFieldValue(sample, element.field);
           return { ...element, text: typeof value === 'string' ? value : '' };
         }
         default:
@@ -541,6 +547,14 @@ export function accessoryDesignSamples(): TagAccessory[] {
     images: [],
     colours,
   }));
+}
+
+/**
+ * What a box under card editing draws: the previewed list, so the faded cards show what will really
+ * print (CARD V1); the two samples only when there is no list to show (A7).
+ */
+export function accessoryEditItems(previewed: TagAccessory[] | null | undefined): TagAccessory[] {
+  return previewed && previewed.length > 0 ? previewed : accessoryDesignSamples();
 }
 
 // ---------------------------------------------------------------------------
