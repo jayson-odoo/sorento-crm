@@ -12,7 +12,8 @@ equal the lines above it, e.g. item 50.00 + freight 50.00, stays a sale).
 parent row ("... SET PACKAGE ...": no item code, no product, no UOM, but a quantity and a unit
 price) whose package child, a line that names an item, repeats its quantity, unit price,
 discount and net amount exactly. On `AED_V2_MOCHA` the first child carries the package's money as
-well, so both rows count it. The parent's `line_no` need not be the child's (M2601-1517: 48 and 16),
+well, so both rows count it. The copies are taken only when the document's lines less the copies
+equal its header `net_total` exactly; otherwise none is. The parent's `line_no` need not be the child's (M2601-1517: 48 and 16),
 so it is not compared. One real line excuses one copy (copies paired in `source_ref` byte order).
 
 **Subtotal** (`is_subtotal`): a line naming no item and nothing sold (no item code, product, UOM,
@@ -43,7 +44,8 @@ _SOLD_FIELDS = ("uom", "quantity", "unit_price")
 
 
 def _is_empty(value: Any) -> bool:
-    return value is None or (isinstance(value, str) and not value.strip())
+    # Spaces only, as the SQL's BTRIM: a tab is not blank to either.
+    return value is None or (isinstance(value, str) and not value.strip(" "))
 
 
 def _names_item(line: Mapping[str, Any]) -> bool:
@@ -78,18 +80,30 @@ def _is_package_copy_shape(line: Mapping[str, Any]) -> bool:
     return not _names_item(line) and _is_empty(line.get("uom")) and _money_key(line) is not None
 
 
-def _mark_duplicates(lines: list) -> None:
+def _mark_duplicates(lines: list, net_total: Optional[Decimal]) -> None:
+    """Mark the package copies, or none: the copies are taken only when the document's lines
+    less the copies equal its header `net_total` exactly (review round 2: on a document off for
+    another reason, a subtotal line or header-only money, a charge equal to an item line stays a
+    sale, and the subtotal walk still sees it)."""
     real: dict[tuple, int] = {}
     for line in lines:
         key = _money_key(line)
         if _names_item(line) and key is not None:
             real[key] = real.get(key, 0) + 1
+    copies = []
     for line in sorted(lines, key=_ref_key):
         key = _money_key(line)
-        is_copy = _is_package_copy_shape(line) and real.get(key, 0) > 0
-        if is_copy:
+        if _is_package_copy_shape(line) and real.get(key, 0) > 0:
             real[key] -= 1
-        line["is_duplicate"] = is_copy
+            copies.append(line)
+    total = sum((Decimal(x["net_amount"]) for x in lines if x.get("net_amount") is not None), Decimal("0"))
+    exact = (
+        net_total is not None
+        and total - sum((Decimal(x["net_amount"]) for x in copies), Decimal("0")) == Decimal(net_total)
+    )
+    chosen = {id(x) for x in copies} if exact else set()
+    for line in lines:
+        line["is_duplicate"] = id(line) in chosen
 
 
 def mark_uncounted_lines(
@@ -108,7 +122,7 @@ def mark_uncounted_lines(
             line["is_subtotal"] = False
         return
 
-    _mark_duplicates(lines)
+    _mark_duplicates(lines, net_total)
     since_start = Decimal("0")
     since_previous = Decimal("0")
     counted = 0

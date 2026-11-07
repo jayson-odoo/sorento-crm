@@ -73,14 +73,27 @@ copies AS (
       AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
       AND s.document_id NOT IN (SELECT document_id FROM balanced)
 ),
-dup AS (
+pairs AS (
     -- One real line excuses one copy (same document, quantity, price, discount and money).
-    SELECT c.id
+    SELECT c.id, c.document_id, c.net_amount
     FROM copies c
     JOIN real r ON r.document_id = c.document_id AND r.quantity = c.quantity
                 AND r.unit_price = c.unit_price AND r.net_amount = c.net_amount
                 AND r.discount_amount IS NOT DISTINCT FROM c.discount_amount
     WHERE c.rk <= r.n
+),
+exact AS (
+    -- The copies are taken only when the lines less the copies equal the header exactly.
+    SELECT d.id AS document_id
+    FROM finance.billing_documents d
+    JOIN (SELECT document_id, SUM(COALESCE(net_amount, 0)) AS total FROM scoped GROUP BY document_id) t
+      ON t.document_id = d.id
+    JOIN (SELECT document_id, SUM(net_amount) AS copied FROM pairs GROUP BY document_id) p
+      ON p.document_id = d.id
+    WHERE t.total - p.copied = d.net_total
+),
+dup AS (
+    SELECT id FROM pairs WHERE document_id IN (SELECT document_id FROM exact)
 ),
 ordered AS (
     SELECT s.id, s.document_id, s.net_amount,

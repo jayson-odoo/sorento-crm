@@ -161,9 +161,9 @@ def _package_parent(qty, price, net, n, ref, discount="0.00"):
                  description="IBORN TOP MOUNT NANO GRAIN KITCHEN SINK SET PACKAGE")
 
 
-def _child(code, qty, price, net, n, ref, discount="0.00"):
+def _child(code, qty, price, net, n, ref, discount="0.00", **over):
     return _item(net, n, source_ref=ref, item_code=code, quantity=D(qty), unit_price=D(price),
-                 discount_amount=D(discount))
+                 discount_amount=D(discount), **over)
 
 
 def test_r5_m2601_0858_the_package_parent_is_a_copy_of_its_first_child():
@@ -224,17 +224,42 @@ def test_r5_pswr26_0001_dated_charge_lines_are_sales_and_their_do_subtotal_is_no
     assert _marks(lines, "57991.23") == ("----S-", D("57991.23"))
 
 
+def test_r5_review2_a_charge_equal_to_an_item_is_not_a_copy_unless_dropping_it_balances():
+    # Review round 2 probe: the subtotal makes the document off, so the header guard alone is off.
+    lines = [_child("IT1", "1", "500", "500.00", 1, "a"), _package_parent("1", "500", "500.00", 2, "b"),
+             _blank("1000.00", 3, source_ref="c", description="SubTotal")]
+    assert _marks(lines, "1000.00") == ("--S", D("1000.00"))
+    # Off by header-only money (footer charge 20.00): the charge stays a sale.
+    lines = [_child("IT1", "1", "500", "500.00", 1, "a"), _package_parent("1", "500", "500.00", 2, "b")]
+    assert _marks(lines, "1020.00") == ("--", D("1000.00"))
+
+
+def test_r5_a_real_line_may_name_its_item_by_product_only():
+    child = _child(None, "17", "329", "5593.00", 16, "b", product_id="5b8b9c10-9999-4222-8333-4444555566aa")
+    assert _marks([_package_parent("17", "329", "5593.00", 16, "a"), child], "5593.00") == ("D-", D("5593.00"))
+
+
+def test_r1_a_tab_is_not_blank_to_the_sql_btrim_either():
+    # BTRIM trims spaces only; the Python rule must agree with the backfill.
+    assert _verdicts([_item("9.00", 1), _blank("9.00", 2, item_code="\t")]) == [False, False]
+
+
 def test_r5_one_real_line_excuses_one_copy():
     lines = [_child("X", "1", "50", "50.00", 1, "a"),
-             _package_parent("1", "50", "50.00", 1, "b"), _package_parent("1", "50", "50.00", 2, "c")]
-    marks, counted = _marks(lines, "50.00")
-    assert marks == "-D-" and counted == D("100.00")
+             _package_parent("1", "50", "50.00", 1, "b"), _child("Y", "1", "50", "50.00", 2, "c"),
+             _package_parent("1", "50", "50.00", 2, "d"), _package_parent("1", "50", "50.00", 3, "e")]
+    # Two real lines excuse two copies (b, d); the third (e) is left, so the doc stays off and
+    # nothing is marked: a visible miss in reconcile Query 2, never a guess.
+    assert _marks(lines, "100.00") == ("-----", D("250.00"))
+    assert _marks(lines[:4], "100.00") == ("-D-D", D("100.00"))
 
 
-def test_r5_a_copy_is_not_counted_in_a_subtotal_below_it():
+def test_r5_known_limit_a_package_and_a_subtotal_on_one_document_are_left_unmarked():
+    # Copies are taken only when dropping them balances the header; with a subtotal also on the
+    # document it does not, so both stay counted and reconcile Query 2 lists the document.
     lines = [_child("X", "1", "10", "10.00", 1, "a"), _package_parent("1", "10", "10.00", 1, "b"),
              _child("Y", "2", "10", "20.00", 2, "c"), _blank("30.00", 3, source_ref="d")]
-    assert _marks(lines, "30.00") == ("-D-S", D("30.00"))
+    assert _marks(lines, "30.00") == ("----", D("70.00"))
 
 
 # ------------------------------------------------------------------------------ R2
@@ -367,6 +392,7 @@ def _random_lines(rng, so_line_id):
             values = _item(str(net), rng.choice([real["line_no"], line_no]), **ref, item_code=None,
                            uom=None, quantity=real["quantity"], unit_price=real["unit_price"])
             values.update(extra)
+            values["copy"] = True
         else:
             values = _item(str(D(rng.randint(1, 9999)) / 100), line_no, **ref)
         specs.append(values)
@@ -380,8 +406,12 @@ def test_r4_the_migration_backfill_agrees_with_the_ingest_rule(db):
     for _ in range(60):
         specs = _random_lines(rng, so_line.id)
         lines_sum = sum((x["net_amount"] or D("0") for x in specs), D("0"))
-        # Half the headers equal the line sum (the guard), half differ from it.
-        net_total = lines_sum if rng.random() < 0.5 else lines_sum + D("1.00")
+        copied = sum((x["net_amount"] for x in specs if x.get("copy")), D("0"))
+        # The header equals the line sum (the guard), the lines less the package copies (the
+        # copies' exact check), or neither.
+        net_total = rng.choice([lines_sum, lines_sum - copied, lines_sum - copied, lines_sum + D("1.00")])
+        for x in specs:
+            x.pop("copy", None)
         header = doc(db, "invoice", str(net_total), JAN15)
         mark_uncounted_lines(specs, net_total)
         for values in specs:
