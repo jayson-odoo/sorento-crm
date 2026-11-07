@@ -12,6 +12,7 @@ import Link from 'next/link';
 import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
 import type { FormDetailExtraTab } from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 import { InquiryApplicationsList } from '@/components/common/NewProductApplicationBanners';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useStockInquiryApplicationsQuery } from '../../new-product-applications/hooks/useNewProductApplications';
 
@@ -40,7 +41,7 @@ export default function StockInquiryDetailTabs({
               ? 'New product applications'
               : `New product applications (${applications.length})`,
           content: applications === undefined && !isError ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">Loading...</p>
+            <SectionSkeleton rows={2} />
           ) : isError ? (
             <p role="alert" className="py-6 text-center text-sm text-destructive">
               Could not load the new product applications.
