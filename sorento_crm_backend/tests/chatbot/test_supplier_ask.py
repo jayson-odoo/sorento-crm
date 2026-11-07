@@ -2847,3 +2847,17 @@ def test_the_supplier_side_never_rewrites_a_word_the_user_did_not_type():
     assert _side_suppliers(verdict, prep, SimpleNamespaceTrace()) is verdict
     prep.message = "PO for hanlim"
     assert _side_suppliers(verdict, prep, SimpleNamespaceTrace())["entities"][0]["hint"] == "supplier"
+
+
+def test_the_supplier_side_po_read_waits_on_any_order_party_or_report_owned_word():
+    """Review round 3 (#2120): A3 never swaps a turn an order-side party word (a customer PO ref) or a report-owned word
+    still holds, the same rule the old supplier swap keeps."""
+    from app.services.chatbot.engine import _supplier_side_po_ask
+
+    base = {"party_side": "supplier", "domain_hint": "order", "intent_hint": "check_po", "document": ["PO"]}
+    assert _supplier_side_po_ask({**base, "entities": []})
+    ref = {"raw": "4500123", "hint": "customer_po_ref", "current_message": True}
+    assert not _supplier_side_po_ask({**base, "entities": [ref]})
+    own = {"raw": "Sorento", "hint": "supplier", "current_message": True}
+    assert _supplier_side_po_ask({**base, "entities": [own]})
+    assert not _supplier_side_po_ask({**base, "entities": [own]}, frozenset({"sorento"}))

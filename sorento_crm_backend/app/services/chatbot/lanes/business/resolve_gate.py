@@ -1849,7 +1849,7 @@ def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: d
                 }
                 for key, name in group
                 # Several records of one name are named once, by that name (the same-key twins `gate` binds together).
-                for shown in [_supplier_family_label(name) if one and len(group) > 1 else name]
+                for shown in [_supplier_family_label(name) if one and not customers and len(group) > 1 else name]
             ] + [
                 {
                     "entity_type": "customer", "uuid": key, "canonical_code": name, "match_field": "span",

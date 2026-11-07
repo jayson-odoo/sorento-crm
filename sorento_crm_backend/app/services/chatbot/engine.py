@@ -589,7 +589,7 @@ def _supplier_side(verdict: dict[str, Any], prep: "_SpanPrep | None", pending: A
         verdict = picked_side
     _with_party_readings(verdict, prep)
     verdict = _side_suppliers(verdict, prep, turn_trace, owned)
-    if _supplier_side_po_ask(verdict):
+    if _supplier_side_po_ask(verdict, owned):
         from app.services.chatbot.lanes.business.resolve_gate import as_purchase_orders
 
         turn_trace.add("party_side_po", {"from_domain": verdict.get("domain_hint")})
@@ -677,18 +677,22 @@ def _side_suppliers(
     return {**verdict, "entities": out}
 
 
-def _supplier_side_po_ask(verdict: dict[str, Any]) -> bool:
+def _supplier_side_po_ask(verdict: dict[str, Any], owned: frozenset[str] = frozenset()) -> bool:
     """SUPPLIER-PARTY-SIDE A3 (crew live re-run at 73e1c41a: "outstanding PO hanlim" parsed domain order, intent
     check_po, document [PO], party_side supplier, stayed on the sales side): the parser read the supplier side and a
     purchase order ask (its intent or its document), on an order-side domain. Parser fields only."""
-    from app.services.chatbot.lanes.business.resolve_gate import SUPPLIER_SWITCH_DOMAINS
+    from app.services.chatbot.lanes.business.resolve_gate import ORDER_PARTY_HINTS, SUPPLIER_SWITCH_DOMAINS
 
     po = verdict.get("intent_hint") == "check_po" or "PO" in jsc.array(verdict.get("document"))
     if not (verdict.get("party_side") == "supplier" and po and verdict.get("domain_hint") in SUPPLIER_SWITCH_DOMAINS):
         return False
     # Review B1: never while a customer-side party word is left (a carried one, or one the report object holds):
     # that turn is not read as purchase orders by its words, as `supplier_ask_reads_purchase_orders` rules too.
-    return not any(isinstance(e, dict) and e.get("hint") == "customer" for e in jsc.array(verdict.get("entities")))
+    # Review round 3: every order-side party hint blocks it, as it blocks the old swap, and so does a report-owned word.
+    return not any(
+        isinstance(e, dict) and (jsc.lower_or_empty(e.get("hint")) in ORDER_PARTY_HINTS or _owned_supplier(e, owned))
+        for e in jsc.array(verdict.get("entities"))
+    )
 
 
 def _owned_supplier(entity: dict[str, Any], owned: frozenset[str]) -> bool:
