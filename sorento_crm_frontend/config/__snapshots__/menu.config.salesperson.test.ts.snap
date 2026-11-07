@@ -44,6 +44,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Sales Teams",
       },
       {
+        "path": "/sales/leaderboard",
+        "title": "Leaderboard",
+      },
+      {
         "path": "/master-data-management/sales-agents",
         "title": "Sales Agents",
       },

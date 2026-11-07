@@ -127,7 +127,32 @@ def test_mcp_tool_catalog_is_readable_from_the_backend_alone():
 
 
 # ---------------------------------------------------------------------------
-# LESSON 122: "The purchasing email has ONE trigger, the board Confirm" (owner, 6 Nov 2026:
+# LESSON 122: a post-commit side effect opens a fresh `SessionLocal()` with NO
+# company scope (UNSET, fail-closed: 0 rows), and conftest's after_begin default
+# hides it in tests. OI-ROUTE-BY-RAISER's handover rows read `raised_by`;
+# `_queue_saved_line` queued no `raised_by` and the header fallback read it on
+# that fresh session, so every saved-line Confirm (qty / date / donor moves)
+# emailed nobody on prod for three days (OI-SAVED-LINE-RAISER-HOTFIX, 7 Nov 2026).
+# Behaviour: tests/test_oi_saved_line_raiser_route.py.
+# ---------------------------------------------------------------------------
+
+def test_saved_line_handover_items_carry_their_raiser_and_the_fallback_reads_unscoped():
+    """Both legs of the fix: the item names its raiser, and the fallback never reads scoped."""
+    import inspect
+
+    from app.services import project_order_inquiry_service as svc
+
+    queue_src = inspect.getsource(svc.ProjectOrderInquiryService._queue_saved_line)
+    assert '"raised_by":' in queue_src, "_queue_saved_line must put raised_by on its item"
+    groups_src = inspect.getsource(svc.handover_route_groups)
+    assert "company_scope(db, None)" in groups_src, (
+        "handover_route_groups' OI-header fallback must read unscoped: its post-commit "
+        "session carries no company scope"
+    )
+
+
+# ---------------------------------------------------------------------------
+# LESSON 123: "The purchasing email has ONE trigger, the board Confirm" (owner, 6 Nov 2026:
 # "I only want the email to purchasing to have 1 trigger, which is this button"; SO398322, an
 # AutoCount re-key retired an order inquiry row and auto-emailed purchasing a false cancel).
 # The gate: `mark_purchasing_email_trigger` marks the root transaction of a press that may email
@@ -284,7 +309,7 @@ _PURCHASING_TRIGGER_SPELLINGS = {
 
 
 def test_structural_every_purchasing_dispatch_sits_behind_the_one_gate():
-    """LESSON 122, the structural gate, Postgres-free (the heavy twin is
+    """LESSON 123, the structural gate, Postgres-free (the heavy twin is
     `tests/scm/test_purchasing_email_one_trigger.py::test_structural_...`). The handover and
     changed-with-links emails leave the app only behind the gate, so a new path that emails
     purchasing without the board Confirm's mark is red here:

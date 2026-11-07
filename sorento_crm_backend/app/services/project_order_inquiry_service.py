@@ -5703,16 +5703,18 @@ class ProjectOrderInquiryService:
                 was["item_code"] = before.get("item_code")
                 keys.append("CHANGE_ITEM_CODE")
         facts = self._handover_order_facts(pso_id)
-        inquiry_id = (
-            self.db.query(OrderInquiry.id)
+        # OI-SAVED-LINE-RAISER-HOTFIX: the raiser rides the item, as a row line's does
+        # (`handover_item`), so routing never has to read the header back post-commit.
+        inquiry_id, raised_by = (
+            self.db.query(OrderInquiry.id, OrderInquiry.raised_by)
             .filter(
                 OrderInquiry.project_sales_order_id == pso_id,
                 OrderInquiry.amendment_id.is_(None),
             )
             .order_by(OrderInquiry.inquiry_no)
             .limit(1)
-            .scalar()
-        )
+            .first()
+        ) or (None, None)
         required = now.get("required_date")
         line_entry = {
             "so_date": _handover_fmt_date(facts.get("so_date")),
@@ -5735,6 +5737,8 @@ class ProjectOrderInquiryService:
                 "row_id": f"saved:{line.id}",
                 "so_line_id": str(line.id),
                 "order_inquiry_id": str(inquiry_id) if inquiry_id else None,
+                #: OI-ROUTE-BY-RAISER: who raised this OI, the `order_inquiry.raisedBy` fact.
+                "raised_by": str(raised_by) if raised_by else None,
                 "pso_id": pso_id,
                 "so_number": facts.get("so_number"),
                 "customer": facts.get("customer"),
@@ -15306,7 +15310,10 @@ def handover_route_groups(
     `dispatch_event`'s own filter fires exactly that group's rows.
 
     A line with no `raised_by` (queued before the field existed, or a stand-in) reads it off
-    its OI header."""
+    its OI header, read unscoped: `_fire_pending_handover`'s post-commit session carries no
+    company scope, so a scoped read there returns nothing (fail-closed) and the line would
+    reach no raiser-conditioned row (OI-SAVED-LINE-RAISER-HOTFIX). The ids only ever come
+    from rows the caller already wrote or was allowed to read (`_handover_excel_names`)."""
     from app.models.automation import Automation
     from app.services.automation_service import AutomationService
 
@@ -15316,11 +15323,13 @@ def handover_route_groups(
         if not item.get("raised_by") and item.get("order_inquiry_id")
     }
     if missing:
-        raisers = dict(
-            db.query(OrderInquiry.id, OrderInquiry.raised_by)
-            .filter(OrderInquiry.id.in_(list(missing)))
-            .all()
-        )
+        with company_scope(db, None):
+            raisers = {
+                str(oi_id): raiser
+                for oi_id, raiser in db.query(OrderInquiry.id, OrderInquiry.raised_by)
+                .filter(OrderInquiry.id.in_(list(missing)))
+                .all()
+            }
         for item in items:
             if not item.get("raised_by") and item.get("order_inquiry_id"):
                 raiser = raisers.get(str(item["order_inquiry_id"]))
