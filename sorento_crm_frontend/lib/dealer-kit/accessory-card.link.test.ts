@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessoryDesign,
+  applyLinkActions,
   changedLinkedDesign,
+  linkRefreshActions,
   linkCorrectionPatches,
   designKey,
   detachLinked,
@@ -72,5 +74,30 @@ describe('no baseline and correction patches', () => {
     const [gone] = linkCorrectionPatches([own], [{ kind: 'detach', id: 'p1' }]);
     expect(gone.props.presetId).toBeNull();
     expect(gone.props.headerText).toBe('OLD');
+  });
+});
+
+describe('a copy of linked boxes follows the saved template', () => {
+  const stale = box('a', { headerText: 'OLD' });
+  const server = accessoryDesign(box('x', { headerText: 'SERVER' }).props);
+
+  it('takes the template design where the box differs, and nothing where it already matches', async () => {
+    const actions = await linkRefreshActions([stale], async () => ({ design: server }));
+    expect(actions).toEqual([{ kind: 'set', id: 'p1', design: server }]);
+    const [out] = applyLinkActions([stale], actions);
+    expect(out.props.headerText).toBe('SERVER');
+    expect(await linkRefreshActions([out], async () => ({ design: server }))).toEqual([]);
+  });
+
+  it('detaches where the template is gone, keeping the design', async () => {
+    const actions = await linkRefreshActions([stale], async () => null);
+    expect(actions).toEqual([{ kind: 'detach', id: 'p1' }]);
+    const [out] = applyLinkActions([stale], actions);
+    expect(out.props.presetId).toBeNull();
+    expect(out.props.headerText).toBe('OLD');
+  });
+
+  it('leaves a box alone when its template cannot be read', async () => {
+    expect(await linkRefreshActions([stale], async () => Promise.reject(new Error('down')))).toEqual([]);
   });
 });

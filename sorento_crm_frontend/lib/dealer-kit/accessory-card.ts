@@ -776,3 +776,42 @@ export function linkCorrectionPatches(
   }
   return patches;
 }
+
+/**
+ * What a copy of linked boxes (a request's tag) must do to follow the saved templates: detach where the
+ * template is gone, take the template's design where the box differs from it. `find` answers null for a
+ * deleted template; one that cannot be read is left alone.
+ */
+export async function linkRefreshActions(
+  layers: readonly LinkLayer[] | null | undefined,
+  find: (presetId: string) => Promise<{ design: AccessoryDesign } | null>,
+): Promise<LinkAction[]> {
+  const actions: LinkAction[] = [];
+  for (const id of linkedPresetIds(layers)) {
+    let record: { design: AccessoryDesign } | null;
+    try {
+      record = await find(id);
+    } catch {
+      continue;
+    }
+    if (!record) {
+      actions.push({ kind: 'detach', id });
+      continue;
+    }
+    const key = designKey(record.design);
+    const stale = (layers ?? []).some((layer) => {
+      const props = boxProps(layer);
+      return props?.presetId === id && designKey(accessoryDesign(props)) !== key;
+    });
+    if (stale) actions.push({ kind: 'set', id, design: record.design });
+  }
+  return actions;
+}
+
+/** `layers` with `actions` carried out (the patches applied to a plain array). */
+export function applyLinkActions<T extends LinkLayer>(layers: readonly T[], actions: readonly LinkAction[]): T[] {
+  const patches = new Map(linkCorrectionPatches(layers, actions).map((patch) => [patch.layerId, patch]));
+  return layers.map((layer) =>
+    patches.has(layer.id) ? ({ ...layer, props: patches.get(layer.id)!.props } as unknown as T) : layer,
+  );
+}
