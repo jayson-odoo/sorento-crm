@@ -56,6 +56,7 @@ import type {
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import type { TagFont } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 
 export interface TagSheetDesignPayload {
@@ -71,6 +72,8 @@ export interface TagSheetDesignPayload {
   images: Record<string, string>;
   /** Brand fonts, loaded through `ensureFontsLoaded` before the sheet draws. */
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers. */
+  featureIcons: FeatureIcon[];
 }
 
 /** The raw body either endpoint answers with. */
@@ -83,6 +86,7 @@ export interface TagSheetDesignResponse {
   assets?: Record<string, string> | null;
   images?: Record<string, string> | null;
   fonts?: TagFont[] | null;
+  feature_icons?: FeatureIcon[] | null;
 }
 
 /**
@@ -135,6 +139,7 @@ export function designPayloadFromResponse(
     assets: body.assets ?? {},
     images,
     fonts: body.fonts ?? [],
+    featureIcons: body.feature_icons ?? [],
   };
 }
 

@@ -95,3 +95,18 @@ def test_self_approve_refuses_it_before_anything_is_written(db):
     with pytest.raises(AppException) as raised:
         PriceTagRequestService.self_approve(db, request, {"kind": "tag_sheet"}, "Sales")
     assert raised.value.detail["code"] in ("TEMPLATE_POSITIONS_MISSING", "COMBO_PRICE_MISSING")
+
+
+def test_hotfix_a_plain_template_on_a_combo_with_fixed_parts_is_approved(db):
+    """PRICETAG-COMBO-FIT-HOTFIX: no TEMPLATE_POSITIONS_MISSING for a template with no position field."""
+    s = shapes.s4(db)
+    request = _request(db, s, [], ({"kind": "main"},))
+    PriceTagRequestService.require_template_positions(db, request)
+
+
+def test_hotfix_a_partial_template_still_owes_its_fixed_parts(db):
+    s = shapes.s4(db)
+    request = _request(db, s, [], ({"kind": "fixed", "index": 0},))
+    with pytest.raises(AppException) as raised:
+        PriceTagRequestService.require_template_positions(db, request)
+    assert raised.value.detail["code"] == "TEMPLATE_POSITIONS_MISSING"

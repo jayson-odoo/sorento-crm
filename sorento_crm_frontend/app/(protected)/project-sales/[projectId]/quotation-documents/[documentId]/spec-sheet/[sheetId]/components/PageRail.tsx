@@ -45,6 +45,7 @@ export function PageRail({
   onSelect,
   onReorder,
   onVisibleChange,
+  className,
 }: {
   /** Cover first. */
   pages: SpecSheetPage[];
@@ -61,6 +62,8 @@ export function PageRail({
   onReorder: (items: SpecSheetPage[]) => void;
   /** The thumbnails in the rail's own view. */
   onVisibleChange: (keys: ReadonlySet<string>) => void;
+  /** Extra classes for the column (the host sets its height, e.g. taller in full screen). */
+  className?: string;
 }) {
   const scroller = React.useRef<HTMLDivElement>(null);
   const [inView, setInView] = React.useState<ReadonlySet<string>>(new Set());
@@ -200,6 +203,7 @@ export function PageRail({
         strip
           ? 'flex w-full gap-1.5 overflow-x-auto overscroll-contain pb-1'
           : 'flex max-h-[calc(100dvh-16rem)] min-h-[20rem] w-44 shrink-0 flex-col gap-1.5 overflow-y-auto overscroll-contain',
+        className,
       )}
     >
       {body}

@@ -173,7 +173,7 @@ def test_notifications_is_drained_by_default():
 @pytest.mark.parametrize(
     "queue",
     ["imports", "respond_io", "catalogue_render", "media", "project_docs", "flyer_read",
-     "notifications", "chat", "knowledge"],
+     "notifications", "chat", "knowledge", "scm_recalc"],
 )
 def test_every_known_queue_is_drained_by_default(queue):
     """Each queue the codebase enqueues to, named individually so a drop is legible.
@@ -254,7 +254,8 @@ def test_default_queues_keeps_the_pre_split_order():
 
 def test_queues_for_role_fast(monkeypatch):
     # `chat` joined at S7 (AC-703); the others are #569's.
-    assert worker.queues_for_role("fast") == ["respond_io", "media", "chat", "notifications"]
+    # `scm_recalc` joined with PACKING-LIST-RECALC.
+    assert worker.queues_for_role("fast") == ["respond_io", "media", "chat", "scm_recalc", "notifications"]
 
 
 def test_queues_for_role_batch(monkeypatch):

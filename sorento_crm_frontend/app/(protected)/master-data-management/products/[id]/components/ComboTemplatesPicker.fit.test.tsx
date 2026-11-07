@@ -67,7 +67,7 @@ type PickerProps = React.ComponentProps<typeof ComboTemplatesPicker> & { parts?:
 const Picker = ComboTemplatesPicker as unknown as React.ComponentType<PickerProps>;
 
 function draw(parts?: unknown[]) {
-  render(<Picker idPrefix="c" value={[]} defaultId="" onChange={vi.fn()} parts={parts as PickerProps['parts']} />);
+  render(<Picker idPrefix="c" value={[]} onChange={vi.fn()} parts={parts as PickerProps['parts']} />);
 }
 const row = (id: string) => screen.getByTestId(`opt-${id}`);
 const description = (id: string) => within(row(id)).getByTestId('description').textContent;
@@ -78,6 +78,7 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     draw(S1);
     expect(description('a')).toBe('105 x 148 mm. Needs 3 from Kitchen tap, upgrade');
     expect(row('a').dataset.disabled).toBe('false');
+    // R20: the price type is on the description line; these fixtures carry no price_type, so neither shows it. The badge only says Does not fit.
     expect(row('a').dataset.badge).toBe('');
   });
 
@@ -131,6 +132,20 @@ describe('ComboTemplatesPicker with the combo parts', () => {
     draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
     expect(description('a')).toBe("Prints 2 of this combo's 4 fixed parts");
     expect(row('a').dataset.disabled).toBe('true');
+  });
+
+  it('HOTFIX: a plain template fits a combo with fixed parts and prints it as one product', () => {
+    templates.mockReturnValue([
+      tpl('plain', { fixed: 0, groups: [], upgrades: 0 }),
+      tpl('partial', { fixed: 2, groups: [], upgrades: 0 }),
+    ]);
+    draw([...S4, part('SRTW2600', null), part('SRTWB2380', null)]);
+    expect(row('plain').dataset.disabled).toBe('false');
+    expect(row('plain').dataset.badge).toBe('');
+    expect(description('plain')).toBe('105 x 148 mm. Needs the main product only');
+    expect(row('partial').dataset.disabled).toBe('true');
+    expect(row('partial').dataset.badge).toBe('Does not fit');
+    expect(description('partial')).toBe("Prints 2 of this combo's 4 fixed parts");
   });
 
   it('keeps the template name as the label', () => {

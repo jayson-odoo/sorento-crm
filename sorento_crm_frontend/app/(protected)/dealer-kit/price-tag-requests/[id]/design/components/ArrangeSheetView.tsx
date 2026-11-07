@@ -23,6 +23,7 @@ import type {
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import { layerDisplay } from '@/lib/dealer-kit/product-block';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type { SheetPlacement } from '@/lib/dealer-kit/request-tags';
 
 // Rendered inside a component the shell loads with ssr:false, so the direct
@@ -47,6 +48,8 @@ interface Props {
   /** Resolved line data, keyed by request line id. */
   resolved: Map<string, LineTagData>;
   assetUrls: Record<string, string>;
+  /** Feature icons: the rule-carrying icon library. */
+  featureIcons?: FeatureIcon[];
   onPrintSheet: (sheetIndex: number) => void;
   printing: boolean;
   /** One entry per `doc.sheets` entry, same index (S7, AC-S7-6): what that
@@ -66,6 +69,7 @@ export function ArrangeSheetView({
   onSelectTag,
   resolved,
   assetUrls,
+  featureIcons,
   onPrintSheet,
   printing,
   placement,
@@ -195,6 +199,7 @@ export function ArrangeSheetView({
                           isSelected={selectedTagId === tag.request_tag_id}
                           resolvedData={resolved.get(tag.request_tag_id) ?? null}
                           assetUrls={assetUrls}
+                          featureIcons={featureIcons}
                           onSelect={onSelectTag}
                         />
                       ))}
@@ -260,6 +265,7 @@ function TagOnCanvas({
   isSelected,
   resolvedData,
   assetUrls,
+  featureIcons,
   onSelect,
 }: {
   tag: PlacedTag;
@@ -267,6 +273,7 @@ function TagOnCanvas({
   isSelected: boolean;
   resolvedData: LineTagData | null;
   assetUrls: Record<string, string>;
+  featureIcons?: FeatureIcon[];
   onSelect: (tagId: string) => void;
 }) {
   const x = tag.x_mm * scale;
@@ -333,7 +340,7 @@ function TagOnCanvas({
             key={layer.id}
             layer={layer}
             scale={scale}
-            display={layerDisplay(layer, bindingData, assetUrls)}
+            display={layerDisplay(layer, bindingData, assetUrls, featureIcons)}
             // A placed tag is ONE object on the sheet: its layers are read-only
             // here, so they neither drag nor swallow the click that selects the
             // tag around them. Editing happens in the Design half.

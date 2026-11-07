@@ -96,3 +96,63 @@ describe('slot.* merge fields', () => {
     expect(mergeFieldCatalog([], ['Product'], SLOTS as never).some((f) => f.group === 'Combo positions')).toBe(false);
   });
 });
+
+/**
+ * PRICETAG-PICK-SELLPRICE: `{{slot.pick.G.N.sell_price}}` is the combo's own "Sell price if
+ * picked" for that choice (`combo.choices[].options[].sell_price`), never the part's promo offer.
+ */
+describe('slot.pick.G.N.sell_price', () => {
+  const COMBO = {
+    id: 'c', name: 'Sink combo', description: null, free_items: null, upgrades: [],
+    choices: [
+      {
+        role: 'Tap colour',
+        options: [
+          { product_id: 'id-PICKA', code: 'PICKA', description: '', list_price: 270, sell_price: 899, picked: false },
+          { product_id: 'id-PICKB', code: 'PICKB', description: '', list_price: 270, sell_price: 1099, picked: false },
+          { product_id: 'id-PICKC', code: 'PICKC', description: '', list_price: 270, sell_price: null, picked: false },
+        ],
+      },
+    ],
+  };
+  const withCombo = (slots: unknown, combo: unknown = COMBO): TagBindingData => {
+    const data = line(slots);
+    (data as { line: { combo?: unknown } }).line.combo = combo;
+    return data;
+  };
+  const PREVIEW = {
+    ...SLOTS,
+    // The pick's own promo offer must never leak into this field.
+    groups: [{ role: 'Tap colour', size: 3, picks: [part('PICKA', { sell_price: 5 }), part('PICKB'), part('PICKC')] }],
+  };
+
+  it('prints each pick its combo sell price, grouped like other tag prices', () => {
+    const data = withCombo(PREVIEW);
+    expect(render('{{slot.pick.1.1.sell_price}}|{{slot.pick.1.2.sell_price}}', data)).toBe('899|1,099');
+  });
+
+  it('matches the pick by product, not by its index among the options', () => {
+    // A real line places only the chosen option, so pick 1 is the combo's second option.
+    const data = withCombo({ ...SLOTS, groups: [{ role: 'Tap colour', size: 3, picks: [part('PICKB')] }] });
+    expect(render('{{slot.pick.1.1.sell_price}}', data)).toBe('1,099');
+  });
+
+  it('is empty, never RM 0, for a blank price, a missing pick, no combo, or a non-pick slot', () => {
+    expect(render('[{{slot.pick.1.3.sell_price}}]', withCombo(PREVIEW))).toBe('[]');
+    expect(render('[{{slot.pick.1.4.sell_price}}]', withCombo(PREVIEW))).toBe('[]');
+    expect(render('[{{slot.pick.1.1.sell_price}}]', withCombo(PREVIEW, null))).toBe('[]');
+    expect(render('[{{slot.pick.1.1.sell_price}}]', line(PREVIEW))).toBe('[]');
+    expect(render('[{{slot.fixed.1.sell_price}}]', withCombo(PREVIEW))).toBe('[]');
+  });
+
+  it('is offered in Insert field for picks only, labelled as the sell price if picked', () => {
+    const generic = mergeFieldCatalog([], undefined, undefined).filter((f) => f.group === 'Combo positions');
+    const field = generic.find((f) => f.path === 'slot.pick.1.2.sell_price');
+    expect(field?.label).toBe('Choice group 1, pick 2 sell price (if picked)');
+    expect(field?.token).toBe('{{slot.pick.1.2.sell_price}}');
+    expect(generic.some((f) => f.path === 'slot.fixed.1.sell_price')).toBe(false);
+    expect(generic.some((f) => f.path === 'slot.upgrade.1.sell_price')).toBe(false);
+    const named = mergeFieldCatalog([], undefined, PREVIEW as never).find((f) => f.path === 'slot.pick.1.2.sell_price');
+    expect(named?.label).toBe('Tap colour, pick 2 sell price (if picked)');
+  });
+});

@@ -1,5 +1,6 @@
 'use client';
 
+import { randomId } from '@/lib/id';
 import { useMemo } from 'react';
 import { GripVertical, Plus, Trash2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -221,7 +222,7 @@ export function WorkflowHeaderSectionsEditor({
   };
 
   const onAddField = (sectionId: string) => {
-    const id = `f_${crypto.randomUUID().slice(0, 8)}`;
+    const id = `f_${randomId().slice(0, 8)}`;
     const f: WorkflowHeaderField = { id, type: 'text', label: 'New field', required: false };
     onChange(
       sections.map((s) => (s.id === sectionId ? { ...s, fields: [...s.fields, f] } : s)),

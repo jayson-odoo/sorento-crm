@@ -70,7 +70,11 @@ const row = (id: string, isDefault = false) => ({
   published: true,
   width_mm: 80,
   height_mm: 50,
+  price_type: null,
   is_default: isDefault,
+  // The release backfill: an old default is the default for both types.
+  default_list: isDefault,
+  default_selling: isDefault,
 });
 
 const manager = () => {
@@ -89,21 +93,28 @@ describe('ProductTagTemplatesSection default (AC-24)', () => {
     manager();
     linked.mockReturnValue({ data: [row('a'), row('b', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    const select = screen.getByLabelText('Default template') as HTMLSelectElement;
-    expect(select.value).toBe('b');
-    const offered = within(select).getAllByRole('option').map((o) => o.textContent);
-    expect(offered).toContain('Template a');
-    expect(offered).toContain('Template b');
-    expect(offered).not.toContain('Template c');
+    for (const name of ['Default LP template', 'Default SP template']) {
+      const select = screen.getByLabelText(name) as HTMLSelectElement;
+      expect(select.value, name).toBe('b');
+      const offered = within(select).getAllByRole('option').map((o) => o.textContent);
+      expect(offered).toContain('Template a');
+      expect(offered).toContain('Template b');
+      expect(offered).not.toContain('Template c');
+    }
   });
 
   it('choosing another default saves it with every current link', () => {
     manager();
     linked.mockReturnValue({ data: [row('a'), row('b', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    fireEvent.change(screen.getByLabelText('Default template'), { target: { value: 'a' } });
+    fireEvent.change(screen.getByLabelText('Default LP template'), { target: { value: 'a' } });
     expect(save).toHaveBeenCalledTimes(1);
-    expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'b'], default_template_id: 'a' });
+    // The SP default is untouched (AC-32: set per type).
+    expect(save).toHaveBeenCalledWith({
+      template_ids: ['a', 'b'],
+      default_list_template_id: 'a',
+      default_selling_template_id: 'b',
+    });
   });
 
   it('adding a template keeps the current default', () => {
@@ -111,7 +122,11 @@ describe('ProductTagTemplatesSection default (AC-24)', () => {
     linked.mockReturnValue({ data: [row('a'), row('b', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
     fireEvent.click(screen.getByText('add c'));
-    expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'b', 'c'], default_template_id: 'b' });
+    expect(save).toHaveBeenCalledWith({
+      template_ids: ['a', 'b', 'c'],
+      default_list_template_id: 'b',
+      default_selling_template_id: 'b',
+    });
   });
 
   it('adding a 2nd template to a lone link does not store the lone link as the default', () => {
@@ -119,30 +134,36 @@ describe('ProductTagTemplatesSection default (AC-24)', () => {
     linked.mockReturnValue({ data: [row('a', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
     fireEvent.click(screen.getByText('add c'));
-    expect(save).toHaveBeenCalledWith({ template_ids: ['a', 'c'], default_template_id: null });
+    expect(save).toHaveBeenCalledWith({
+      template_ids: ['a', 'c'],
+      default_list_template_id: null,
+      default_selling_template_id: null,
+    });
   });
 
   it('offers no default choice for a single link, which is its own default', () => {
     manager();
     linked.mockReturnValue({ data: [row('a', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    expect(screen.queryByLabelText('Default template')).toBeNull();
+    expect(screen.queryByLabelText(/^Default (LP |SP )?template$/)).toBeNull();
   });
 
   it('offers no default choice with no links', () => {
     manager();
     linked.mockReturnValue({ data: [], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    expect(screen.queryByLabelText('Default template')).toBeNull();
+    expect(screen.queryByLabelText(/^Default (LP |SP )?template$/)).toBeNull();
   });
 
   it('a viewer reads the default as a mark on its row and cannot change it', () => {
     granted.add('dealer_kit.tag_templates.view');
     linked.mockReturnValue({ data: [row('a'), row('b', true)], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    expect(screen.queryByLabelText('Default template')).toBeNull();
-    const marks = screen.getAllByText('Default');
-    expect(marks).toHaveLength(1);
-    expect(marks[0].closest('[title]')?.getAttribute('title')).toBe('Template b');
+    expect(screen.queryByLabelText(/^Default (LP |SP )?template$/)).toBeNull();
+    for (const mark of ['Default LP', 'Default SP']) {
+      const marks = screen.getAllByText(mark);
+      expect(marks, mark).toHaveLength(1);
+      expect(marks[0].closest('[title]')?.getAttribute('title')).toBe('Template b');
+    }
   });
 });

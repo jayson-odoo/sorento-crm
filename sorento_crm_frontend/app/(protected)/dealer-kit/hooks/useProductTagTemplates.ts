@@ -100,7 +100,12 @@ export function useAssignTemplate(templateId: string | null) {
 export function usePriceTagTemplateOptions(enabled: boolean) {
   return useQuery({
     queryKey: ['tag-templates', 'price-tag-options'],
-    queryFn: async () => (await listTemplates()).filter((t) => isPriceTagFamily(t.family)),
+    // Family then name, the order this picker always had: with no sort the list endpoint now
+    // answers the Tag Templates list's manual (drag) order (TAG-TEMPLATE-DUPLICATE item 6).
+    queryFn: async () =>
+      (await listTemplates())
+        .filter((t) => isPriceTagFamily(t.family))
+        .sort((a, b) => a.family.localeCompare(b.family) || a.name.localeCompare(b.name)),
     enabled,
   });
 }
