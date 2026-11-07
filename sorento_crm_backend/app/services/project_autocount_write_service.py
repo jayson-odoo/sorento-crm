@@ -466,6 +466,23 @@ class ProjectAutocountWriteService:
         return str(stamp)[:64] if stamp else None
 
     @staticmethod
+    def _done_if_only_untouched_ignored(answer: Dict[str, Any], asked: Iterable[str]) -> Dict[str, Any]:
+        """B11: SS answers `mismatch` FIELD_IGNORED when AutoCount kept its own value for a field.
+        If every ignored field is one this call never asked to change (AutoCount mirrors Remark1
+        into Remark2-4), what was asked landed: treat it as done. Names come from SS's message
+        "ignored: A, B"; no names, or any asked field among them, stays a mismatch."""
+        if answer.get("outcome") != "mismatch" or answer.get("errorCode") != "FIELD_IGNORED":
+            return answer
+        message = str(answer.get("message") or "")
+        _before, sep, tail = message.partition("ignored:")
+        if not sep:
+            return answer
+        ignored = {n.strip().rstrip(".").strip().lower() for n in tail.split(",")} - {""}
+        if not ignored or ignored & {name.lower() for name in asked}:
+            return answer
+        return {**answer, "outcome": "done", "errorCode": None}
+
+    @staticmethod
     def _is_done(answer: Dict[str, Any]) -> bool:
         return answer.get("outcome") in _DONE
 
@@ -1073,6 +1090,8 @@ class ProjectAutocountWriteService:
                 f"{base_key}-edit",
                 lambda c, idem: c.patch(f"documents/quotations/{key}", body, idempotency_key=idem),
             )
+            asked = set(body["header"]) | {f for line in patched for f in line if f != "dtlKey"}
+            answer = self._done_if_only_untouched_ignored(answer, asked)
             if not self._is_done(answer):
                 refused = self._interpret(answer, verb="updated", stale_since=stale_since)
                 refused["waiting"] = waiting
