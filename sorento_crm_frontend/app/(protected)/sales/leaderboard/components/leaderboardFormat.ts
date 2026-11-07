@@ -84,10 +84,12 @@ export function changeTone(pct: number | null): string {
   return pct > 0 ? 'text-emerald-600' : 'text-destructive';
 }
 
-/** `Sep` when the previous window is one whole calendar month, else `previous period`. */
+/** `Sep` when the previous window is one whole calendar month (first day to last day), else `previous period`. */
 export function previousLabel(previousFrom: string, previousTo: string): string {
-  if (previousFrom.slice(0, 7) === previousTo.slice(0, 7)) {
-    return MONTH_NAMES[Number(previousFrom.slice(5, 7)) - 1] ?? 'previous period';
+  const [fy, fm, fd] = previousFrom.split('-').map(Number);
+  const [ty, tm, td] = previousTo.split('-').map(Number);
+  if (fy === ty && fm === tm && fd === 1 && td === lastDay(ty, tm)) {
+    return MONTH_NAMES[fm - 1] ?? 'previous period';
   }
   return 'previous period';
 }

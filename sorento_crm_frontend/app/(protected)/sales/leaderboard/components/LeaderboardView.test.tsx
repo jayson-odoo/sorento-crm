@@ -25,11 +25,16 @@ vi.mock('@/components/common/PageHeader', () => ({
   PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
 
-const state = vi.hoisted(() => ({ data: undefined as unknown, calls: [] as unknown[] }));
+const state = vi.hoisted(() => ({ data: undefined as unknown, calls: [] as unknown[], isError: false }));
 vi.mock('@/hooks/useSalesLeaderboardQuery', () => ({
   useSalesLeaderboardQuery: (params: unknown) => {
     state.calls.push(params);
-    return { data: state.data, isLoading: false, isError: false, error: null };
+    return {
+      data: state.data,
+      isLoading: false,
+      isError: state.isError,
+      error: state.isError ? new Error('Failed to load the leaderboard') : null,
+    };
   },
   useSalesLeaderboardOptionsQuery: () => ({ data: { companies: [], brands: [], categories: [] } }),
 }));
@@ -51,6 +56,7 @@ function response(rows: LeaderboardRow[], me: LeaderboardResponse['me']): Leader
 
 beforeEach(() => {
   state.calls = [];
+  state.isError = false;
 });
 
 describe('LeaderboardView', () => {
@@ -89,6 +95,15 @@ describe('LeaderboardView', () => {
     expect(within(empty).getByText('No sales in this period')).toBeTruthy();
     expect(within(empty).queryByRole('button')).toBeNull();
     expect(screen.queryByTestId('leaderboard-podium')).toBeNull();
+  });
+
+  it('shows the error and no empty-state heading when the read failed', () => {
+    state.data = undefined;
+    state.isError = true;
+    render(<LeaderboardView />);
+    expect(screen.getByText('Failed to load the leaderboard')).toBeTruthy();
+    expect(screen.queryByTestId('leaderboard-empty')).toBeNull();
+    expect(screen.queryByText('No sales in this period')).toBeNull();
   });
 
   it('asks for This month with its previous window by default', () => {

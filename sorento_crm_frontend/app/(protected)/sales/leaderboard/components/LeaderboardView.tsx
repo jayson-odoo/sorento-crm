@@ -208,7 +208,7 @@ export default function LeaderboardView() {
     </>
   );
 
-  const empty = !isLoading && rows.length === 0;
+  const empty = runnable && !isLoading && !isError && rows.length === 0;
 
   return (
     <>
@@ -308,7 +308,7 @@ export default function LeaderboardView() {
             </div>
           ) : null}
 
-          {empty ? (
+          {!runnable || isError ? null : empty ? (
             <div
               data-testid="leaderboard-empty"
               className="flex flex-col items-center gap-1 rounded-lg border border-border py-10 text-center"

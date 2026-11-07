@@ -14,7 +14,8 @@ export function useSalesLeaderboardQuery(params: LeaderboardParams, enabled = tr
     queryKey: [...SALES_LEADERBOARD_KEY, params],
     queryFn: () => getLeaderboard(params),
     enabled,
-    placeholderData: (previous) => previous,
+    // Keep the last board while the next one loads, but never behind a disabled (half-picked) range.
+    placeholderData: enabled ? (previous) => previous : undefined,
     retry: 1,
   });
 }

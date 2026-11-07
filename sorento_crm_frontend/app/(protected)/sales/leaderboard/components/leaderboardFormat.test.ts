@@ -86,5 +86,8 @@ describe('formatting', () => {
   it('labels the previous window by month when it is one month', () => {
     expect(previousLabel('2026-09-01', '2026-09-30')).toBe('Sep');
     expect(previousLabel('2026-07-01', '2026-08-07')).toBe('previous period');
+    expect(previousLabel('2026-10-01', '2026-10-07')).toBe('previous period'); // part of a month
+    expect(previousLabel('2026-10-02', '2026-10-31')).toBe('previous period');
+    expect(previousLabel('2026-02-01', '2026-02-28')).toBe('Feb');
   });
 });

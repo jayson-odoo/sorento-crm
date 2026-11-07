@@ -52,23 +52,29 @@ def _as_of(db: Session, grants: frozenset[str]) -> Optional[str]:
     return latest.isoformat() if latest else None
 
 
-def _persons_of_codes(db: Session, codes: list[str], grants: frozenset[str]) -> dict[str, str]:
-    """Agent code -> the person it ranks under (its person_label, else the code itself)."""
-    if not codes or not grants:
-        return {}
-    with company_scope(db, None):
-        rows = (
-            db.query(SalesAgent.sales_agent, SalesAgent.person_label)
-            .filter(SalesAgent.sales_agent.in_(codes), SalesAgent.company_id.in_(sorted(grants)))
-            .order_by(SalesAgent.sales_agent, SalesAgent.id)
-            .all()
-        )
-    out: dict[str, str] = {}
-    for code, person in rows:
-        label = (person or "").strip()
-        if label or code not in out:
-            out[code] = label or code
-    return out
+def _person_of(label: Optional[str], code: str) -> str:
+    """The person a code ranks under: its person_label (btrim, as the SQL), else the code itself."""
+    return (label or "").strip(" ") or code
+
+
+def _codes_by_person(db: Session, run: Any, grants: frozenset[str]) -> dict[str, set[str]]:
+    """Person -> the agent codes that sold in the period. A code is read per company (the same code may be a
+    different person in another company), so the engine's `sales_agent` grouping runs once per granted company."""
+    codes: dict[str, set[str]] = {}
+    for company_id in sorted(grants):
+        names = [r["name"] for r in run(company_grants=frozenset({company_id}))["rows"] if r["name"] != inv.NO_AGENT]
+        if not names:
+            continue
+        with company_scope(db, None):
+            labels = dict(
+                db.query(SalesAgent.sales_agent, SalesAgent.person_label)
+                .filter(SalesAgent.sales_agent.in_(names), SalesAgent.company_id == company_id)
+                .order_by(SalesAgent.id)
+                .all()
+            )
+        for name in names:
+            codes.setdefault(_person_of(labels.get(name), name), set()).add(name)
+    return codes
 
 
 def build(
@@ -101,13 +107,12 @@ def build(
 
     def run(frm: date, to: date, group_by: str, **extra: Any) -> dict[str, Any]:
         return ask.run_ask(
-            db, group_by=group_by, date_from=frm, date_to=to, filters=filters, company_grants=grants,
-            top_n=_TOP, **_RUN, **extra,
+            db, group_by=group_by, date_from=frm, date_to=to, filters=filters,
+            **{"company_grants": grants, "top_n": _TOP, **_RUN, **extra},
         )
 
     now = run(date_from, date_to, "sales_person", also=("customers",))
     before = run(previous_from, previous_to, "sales_person")
-    by_code = run(date_from, date_to, "sales_agent")
 
     prev_by_person = {r["name"]: r["amount"] for r in before["rows"]}
     no_agent = 0.0
@@ -119,11 +124,7 @@ def build(
         ranked.append(r)
     ranked.sort(key=lambda r: (-Decimal(str(r["amount"])), r["name"]))
 
-    persons = _persons_of_codes(db, [r["name"] for r in by_code["rows"] if r["name"] != inv.NO_AGENT], grants)
-    codes: dict[str, set[str]] = {}
-    for r in by_code["rows"]:
-        if r["name"] != inv.NO_AGENT:
-            codes.setdefault(persons.get(r["name"], r["name"]), set()).add(r["name"])
+    codes = _codes_by_person(db, lambda **extra: run(date_from, date_to, "sales_agent", **extra), grants)
 
     rows = []
     for rank, r in enumerate(ranked, start=1):
@@ -147,7 +148,7 @@ def build(
         by_person = {row["person"]: row for row in rows}
         with company_scope(db, None):
             mine = db.query(SalesAgent.sales_agent, SalesAgent.person_label).filter(SalesAgent.id.in_(agent_ids)).all()
-        found = [by_person[(p or "").strip() or c] for c, p in mine if ((p or "").strip() or c) in by_person]
+        found = [by_person[_person_of(p, c)] for c, p in mine if _person_of(p, c) in by_person]
         if found:
             best = min(found, key=lambda row: row["rank"])
             best["is_me"] = True
