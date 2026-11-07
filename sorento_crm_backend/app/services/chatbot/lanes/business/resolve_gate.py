@@ -1800,6 +1800,22 @@ def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str
     return groups.get(jsc.nullish_str(jsc.get(entity, "canonical_code")).strip()) or None
 
 
+def _supplier_family(name: str) -> str:
+    """A supplier line's trading-name key, the `ledger_family` rule with no customer group in play."""
+    from app.services.ledger_family import customer_groups, ledger_family_key
+
+    with customer_groups({}):
+        return ledger_family_key(str(name or ""))
+
+
+def _supplier_family_label(name: str) -> str:
+    """The trading name a family of supplier records is called by (its line without the bracketed code)."""
+    from app.services.ledger_family import customer_groups, ledger_family_label
+
+    with customer_groups({}):
+        return ledger_family_label(str(name or ""))
+
+
 def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:
     """SUPPLIER-ASK (owner ruling, 1 Nov 2026: "match by meaning"): each supplier entity the span pass placed joins
     the resolver's answer as one resolution holding its whole score group: one supplier binds, a near tie stays
@@ -1816,16 +1832,24 @@ def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: d
         # beside the suppliers, so the reconciliation asks "customer or supplier?" and neither is assumed.
         both = ctx.get("span_supplier_customers") if isinstance(ctx.get("span_supplier_customers"), dict) else {}
         customers = list(dict.fromkeys(c for key, _n in group for c in (both.get(key) or [])))
+        if parser.get("party_side") == "supplier":
+            customers = []  # SUPPLIER-PARTY-SIDE: the parser read the supplier side; no customer rides beside it
+        # SUPPLIER-PARTY-SIDE (crew live re-run 2, HANLIM TRADING SDN BHD 403-H007 + 400-H018): records of one trading
+        # name are one supplier (`chatbot_entity_kinds.family_grouping`), so the group is an exact match, never a near
+        # tie a miss would offer back as "did you mean".
+        one = len({_supplier_family(n) for _k, n in group}) == 1
         added.append({
             "raw": token,
             "token": token,
             "matches": [
                 {
-                    "entity_type": "supplier", "uuid": key, "canonical_code": name, "match_field": "span",
-                    "match_tier": "exact" if len(group) == 1 and not customers else "span",
-                    "display": {"supplier_name": name},
+                    "entity_type": "supplier", "uuid": key, "canonical_code": shown, "match_field": "span",
+                    "match_tier": "exact" if one and not customers else "span",
+                    "display": {"supplier_name": shown},
                 }
                 for key, name in group
+                # Several records of one name are named once, by that name (the same-key twins `gate` binds together).
+                for shown in [_supplier_family_label(name) if one and len(group) > 1 else name]
             ] + [
                 {
                     "entity_type": "customer", "uuid": key, "canonical_code": name, "match_field": "span",

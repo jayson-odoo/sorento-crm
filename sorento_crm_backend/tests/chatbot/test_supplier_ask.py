@@ -640,7 +640,7 @@ def _seed_named(session_factory, name: str, code: str) -> str:
 
 def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
                qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True, embed=None,
-               party_side: bool = False):
+               party_side: bool = False, mcp_response: Any = None):
     import functools
 
     from app.services import contact_field_reveal_service
@@ -661,7 +661,7 @@ def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=text_body,
         msg_id=f"ZZT-supplier-span-{uuid.uuid4().hex[:10]}", attributes=list(attributes), real_resolver=True,
-        capture_user_block=seen,
+        capture_user_block=seen, mcp_response=mcp_response,
     )
     return ((result.reply or {}).get("text") or ""), captured, seen
 
@@ -2775,3 +2775,28 @@ def test_a_supplier_side_miss_names_a_supplier_never_a_customer(session_factory,
     )
     assert reply == 'Sorry, I couldn\'t find a supplier called "qqcust".', reply
     assert not [n for n, _a in captured], captured
+
+
+#: The PO route's own empty body (`GET /procurement/purchase-orders/placed`), pushed through the real presenter.
+_PO_EMPTY = {"data": [], "pagination": {"total": 0, "page": 1, "limit": 0}, "empty": True}
+
+
+@pytest.mark.parametrize("supplier_ids", [True, False])
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text,parse", [("PO for hanlim", _LIVE_PO), ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO)])
+def test_no_open_po_for_a_supplier_family_names_the_supplier(session_factory, monkeypatch, text, parse, hint, supplier_ids):
+    """Crew live re-run 2 (7 Nov, verdict (i)): every HANLIM PO line is closed, so the PO list is empty and correct. The
+    reply names the supplier once, by its trading name: never "customer", never a "did you mean" over its own records."""
+    ids = _live_hanlim_world(session_factory)
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+        party_side="supplier", **parse,
+    )
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("hanlim", hint), {"hanlim"}, qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, supplier_ids=supplier_ids, mcp_response=_PO_EMPTY,
+    )
+    assert "customer" not in reply.lower() and "did you mean" not in reply.lower(), reply
+    assert f"supplier: {HANLIM_TRADING}\n" in reply and "no purchase order" in reply.lower(), reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), captured
