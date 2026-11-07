@@ -20,7 +20,14 @@ Card: `CARD-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-o
 ## Contract draft (on the card's recommended options; rewritten once answered)
 
 `GET /api/v1/sales/leaderboard` keeps every #2227 param and field, and gains:
-- `by` = `person` (default) | `customer` | `product` | `brand` | `category`; anything else 422 `REPORT_INVALID_PARAMS`.
+- `basis` = `invoiced` (default) | `delivered` | `ordered` | `outstanding` (owner 7 Nov), passed to `run_ask(basis=...)`.
+  Gate per basis: invoiced `sales.reports.view`, the others `order_management.orders.view`, except the person view
+  (`sales.leaderboard.view` suffices, #2227 ruling). Outstanding: dates optional (`ask.OPEN_BASES`), `prev_*` and
+  `change_pct` null.
+- `channel` filter (repeatable; invoiced: `inv.SALES_TYPES` values, order bases: dealer / project / other) and
+  `by=channel`. `/leaderboard/options` gains `channels` per basis.
+- Customer rows carry `code` (customers.customer_code of the row's ids, comma-joined when a name spans two companies).
+- `by` = `person` (default) | `customer` | `product` | `brand` | `category` | `channel`; anything else 422 `REPORT_INVALID_PARAMS`.
   It is `run_ask(group_by=...)`, `sales_person` for `person`.
 - Drill filters, each repeatable: `person` (person labels, the new `sales_person` filter word), `customer` (ids),
   `product` (ids); `brand`, `category` as today. A drill chip is one of these.
@@ -35,7 +42,7 @@ Card: `CARD-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-o
   `target_periods.target_value` and `achievement_service.achieved_by_period`. No commission field, ever.
 - `no_agent_amount` only on `by=person` (0.0 elsewhere).
 
-Engine: `sales_person` filter word on the invoiced ask only (`ask.CATALOGUE["sales"]["invoiced"]["filters"]`, a
+Engine: `sales_person` dimension on the three order bases (one column each over `SalesAgent.person_label`); channel filter values on invoiced through `inv.normalise_sales_types` instead of `_CHANNEL_CLASS` (`ask.py:290`). `sales_person` filter word on every sales basis, first the invoiced ask (`ask.CATALOGUE["sales"]["invoiced"]["filters"]`, a
 `SelectParam` on `billing_document_lines.ASK_DEFINITION` over `inv.person_label()`, options = person labels), so
 `crm_report_ask` and the Sales & outstanding screen take it too; `sales_person` dimension unhidden on that screen.
 
