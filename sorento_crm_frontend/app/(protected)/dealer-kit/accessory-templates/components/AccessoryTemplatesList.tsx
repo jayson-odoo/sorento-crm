@@ -118,11 +118,14 @@ export function AccessoryTemplatesList() {
         id: 'created_by_name',
         header: 'By',
         size: 150,
-        cell: ({ row }) => (
-          <span className="truncate text-muted-foreground" title={row.original.created_by_name ?? ''}>
-            {row.original.created_by_name ?? '-'}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const by = row.original.updated_by_name ?? row.original.created_by_name;
+          return (
+            <span className="truncate text-muted-foreground" title={by ?? ''}>
+              {by ?? '-'}
+            </span>
+          );
+        },
       },
       {
         id: 'actions',

@@ -10,7 +10,8 @@
  *  POST   /accessories/{id}/image (multipart `file`) -> {attachment_id, url}
  *  DELETE /accessories/{id}/image -> 204
  *  POST   /accessories/{id}/images (multipart `file`, `colour_name?`, `colour_hex?`) -> picture, 201
- *  PATCH  /accessories/{id}/images/{image_id} {colour_name?, colour_hex?}; DELETE -> 204
+ *  PATCH  /accessories/{id}/images/{image_id} {colour_name?, colour_hex?}; removal is the deferred
+ *         action `accessory_image.delete` (the DELETE route is the same service call)
  *  PUT    /accessories/{id}/images/order {ids} -> pictures
  *  GET|PUT /products/{id}/accessories and /product-combos/{id}/accessories
  *    PUT {items: [{accessory_id | product_id, image_id?, name?, spec?, remark?}]} replaces the whole ordered list -> { data }
@@ -124,13 +125,6 @@ export async function patchAccessoryPicture(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the colour'));
   return (await res.json()) as AccessoryPicture;
-}
-
-export async function deleteAccessoryPicture(id: string, imageId: string): Promise<void> {
-  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/images/${encodeURIComponent(imageId)}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove the picture'));
 }
 
 export async function orderAccessoryPictures(id: string, ids: string[]): Promise<AccessoryPicture[]> {

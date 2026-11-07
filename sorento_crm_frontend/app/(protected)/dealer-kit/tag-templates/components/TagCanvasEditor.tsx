@@ -2465,7 +2465,9 @@ export function TagCanvasEditor({
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedIds, layers, scale, view]);
+    // `dataOf`: an accessories box closes up around whatever the preview lists, so its selection
+    // frame is measured again whenever the preview data changes (not only when the layers do).
+  }, [selectedIds, layers, scale, view, dataOf]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).

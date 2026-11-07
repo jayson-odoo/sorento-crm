@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   addAccessoryPicture,
   createAccessory,
   deleteAccessoryImage,
-  deleteAccessoryPicture,
   getAccessories,
   listOwnerAccessories,
   orderAccessoryPictures,
@@ -108,11 +108,6 @@ export function useAccessoryPictures() {
     onSuccess: refresh,
     onError: fail('Failed to save the colour'),
   });
-  const remove = useMutation({
-    mutationFn: ({ id, imageId }: { id: string; imageId: string }) => deleteAccessoryPicture(id, imageId),
-    onSuccess: refresh,
-    onError: fail('Failed to remove the picture'),
-  });
   const order = useMutation({
     mutationFn: ({ id, ids }: { id: string; ids: string[] }) => orderAccessoryPictures(id, ids),
     onSuccess: refresh,
@@ -121,9 +116,8 @@ export function useAccessoryPictures() {
   return {
     addMutateAsync: add.mutateAsync,
     patchMutateAsync: patch.mutateAsync,
-    removeMutateAsync: remove.mutateAsync,
     orderMutateAsync: order.mutateAsync,
-    busy: add.isPending || patch.isPending || remove.isPending || order.isPending,
+    busy: add.isPending || patch.isPending || order.isPending,
   };
 }
 
@@ -165,5 +159,19 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
       queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
       queryClient.invalidateQueries({ queryKey: ['product-combos'] });
     },
+  });
+}
+
+/**
+ * Removing a picture is a server-deferred action (`accessory_image.delete`): a countdown with Cancel,
+ * no confirm dialog. `onCommitted` runs once the server has removed it.
+ */
+export function useDeleteAccessoryPicture(onCommitted?: () => void) {
+  return useDeferredRowAction({
+    actionKey: 'accessory_image.delete',
+    entityType: 'accessory_image',
+    successMessage: 'Picture removed',
+    invalidateKeys: [ACCESSORIES_KEY, ['owner-accessories']],
+    onCommitted,
   });
 }

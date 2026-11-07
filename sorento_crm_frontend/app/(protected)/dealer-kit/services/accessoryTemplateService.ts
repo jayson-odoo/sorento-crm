@@ -24,6 +24,8 @@ export interface AccessoryTemplateRecord {
   /** Tag templates carrying a box linked to this design. */
   used_in: number;
   created_by_name: string | null;
+  /** Who last changed it. */
+  updated_by_name?: string | null;
   created_at: string;
   updated_at: string;
   rewritten?: number;
@@ -50,6 +52,16 @@ export async function listAccessoryTemplates(): Promise<AccessoryTemplateRecord[
 
 export async function getAccessoryTemplate(id: string): Promise<AccessoryTemplateRecord> {
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the accessories template'));
+  }
+  return response.json();
+}
+
+/** The template, or null when it no longer exists (a 404): the live link detaches boxes then. */
+export async function findAccessoryTemplate(id: string): Promise<AccessoryTemplateRecord | null> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
+  if (response.status === 404) return null;
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load the accessories template'));
   }

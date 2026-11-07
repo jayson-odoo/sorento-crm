@@ -68,6 +68,7 @@ import {
   boxColours,
   cardBoxLayout,
   cardElementsFor,
+  cardElementsForDesign,
   cardTextProps,
   colourDotLayout,
   DEFAULT_DOT_OUTLINE,
@@ -1453,7 +1454,10 @@ function DesignedAccessoriesContent({
               fill={props.cardFill}
               cornerRadius={px(Math.min(props.cornerRadius_mm, 1.5))}
             />
-            {cardElementsFor(item, props.card!).map((element) => (
+            {(editing && i === 0
+              ? cardElementsForDesign(item, props.card!)
+              : cardElementsFor(item, props.card!)
+            ).map((element) => (
               <CardElementNode
                 key={element.id}
                 element={element}
@@ -1522,6 +1526,21 @@ function CardElementNode({
   const hMm = element.height_mm * factor;
   switch (element.kind) {
     case 'picture':
+      if (element.placeholder) {
+        // Designer only: where a picture goes, never printed.
+        return (
+          <Rect
+            x={x}
+            y={y}
+            width={px(element.width_mm)}
+            height={px(element.height_mm)}
+            fill="#e5e7eb"
+            stroke="#9ca3af"
+            strokeWidth={1}
+            listening={false}
+          />
+        );
+      }
       return (
         <Group x={x} y={y}>
           <ImageContent

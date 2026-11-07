@@ -190,7 +190,11 @@ export function boxColours(items: readonly TagAccessory[]): string[] {
 
 /** An element with its content resolved: `text` is the value to print, `colours` the hex dots,
  *  `src` the picture URL. The rect is final, in card (or footer) millimetres, unscaled. */
-export type ResolvedCardElement = CardElement & { src?: string | null };
+export type ResolvedCardElement = CardElement & {
+  src?: string | null;
+  /** Designer only: a picture element drawn as a neutral placeholder (never printed). */
+  placeholder?: boolean;
+};
 
 function isBlank(value: string): boolean {
   return (isRich(value) ? richPlainText(value) : value).trim() === '';
@@ -265,6 +269,32 @@ export function cardElementsFor(item: TagAccessory, card: CardLayout): ResolvedC
       }
     }
   });
+}
+
+/**
+ * Card 1 while it is being edited: EVERY visible element at its own rect, none dropped for an empty
+ * field and none moved up, so what is drawn sits exactly where its frame is. A picture is a
+ * placeholder. The faded cards keep the real rule (`cardElementsFor`).
+ */
+export function cardElementsForDesign(item: TagAccessory, card: CardLayout): ResolvedCardElement[] {
+  return (card.elements ?? [])
+    .filter((element) => !element.hidden)
+    .map((element): ResolvedCardElement => {
+      switch (element.kind) {
+        case 'picture':
+          return { ...element, src: null, placeholder: true };
+        case 'colour_dots': {
+          const picked = element.colours && element.colours.length > 0 ? element.colours : null;
+          return { ...element, colours: picked ?? (cardFieldValue(item, 'colours') as string[]) };
+        }
+        case 'text': {
+          const value = element.field ? cardFieldValue(item, element.field) : (element.text ?? '');
+          return { ...element, text: typeof value === 'string' ? value : '' };
+        }
+        default:
+          return { ...element };
+      }
+    });
 }
 
 /**

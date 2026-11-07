@@ -96,7 +96,20 @@ import { TagSizeControl } from '../../components/TagSizeControl';
 import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
-import { linkedBoxDesigns } from '@/lib/dealer-kit/accessory-card';
+import {
+  changedLinkedDesign,
+  designKey,
+  detachLinked,
+  linkedBoxDesigns,
+  linkedPresetIds,
+  setLinkedDesign,
+  type AccessoryDesign,
+} from '@/lib/dealer-kit/accessory-card';
+import {
+  useFetchAccessoryTemplate,
+  useRefreshAccessoryTemplates,
+  useUpdateAccessoryTemplate,
+} from '../../accessory-templates/hooks/useAccessoryTemplates';
 import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
@@ -184,6 +197,74 @@ function TagTemplateEditor() {
       Array.from(linkedBoxDesigns(layers), ([id, linked]) => [id, linked.key] as [string, string]),
     );
   }, []);
+  const pushTemplate = useUpdateAccessoryTemplate();
+  const fetchTemplate = useFetchAccessoryTemplate();
+  const refreshTemplates = useRefreshAccessoryTemplates();
+  // The autosave callback is created once, so it reaches the latest hooks through this ref.
+  const syncLinksRef = useRef<(layers: TagLayer[]) => Promise<void>>(async () => {});
+  syncLinksRef.current = async (layers: TagLayer[]) => {
+    const ids = linkedPresetIds(layers);
+    const baseline = linkBaselineRef.current;
+    let usageChanged = ids.length !== baseline.size || ids.some((id) => !baseline.has(id));
+    const actions: (
+      | { kind: 'detach'; id: string }
+      | { kind: 'set'; id: string; design: AccessoryDesign }
+    )[] = [];
+    for (const id of baseline.keys()) if (!ids.includes(id)) baseline.delete(id);
+    for (const id of ids) {
+      const baselineKey = baseline.get(id);
+      let server;
+      try {
+        server = await fetchTemplate(id);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not check the accessories template');
+        continue;
+      }
+      if (!server) {
+        actions.push({ kind: 'detach', id });
+        baseline.delete(id);
+        usageChanged = true;
+        toast.warning('Saved accessories template was deleted; box detached');
+        continue;
+      }
+      const serverKey = designKey(server.design);
+      const changed = changedLinkedDesign(layers, id, baselineKey);
+      if (changed && designKey(changed) !== serverKey) {
+        try {
+          await pushTemplate.mutateAsync({ id, input: { design: changed } });
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Could not update the accessories template');
+          continue;
+        }
+        const key = designKey(changed);
+        const othersDiffer = layers.some(
+          (l) => l.props.kind === 'accessories' && l.props.presetId === id && designKey(linkedBoxDesigns([l]).get(id)?.design) !== key,
+        );
+        if (othersDiffer) actions.push({ kind: 'set', id, design: changed });
+        baseline.set(id, key);
+        usageChanged = true;
+      } else if (!changed && baselineKey !== undefined && serverKey !== baselineKey) {
+        // Somebody else saved it since this page loaded and this one did not touch it: follow.
+        actions.push({ kind: 'set', id, design: server.design });
+        baseline.set(id, serverKey);
+      } else {
+        baseline.set(id, serverKey);
+      }
+    }
+    if (actions.length > 0) {
+      setDraftLayers((prev) =>
+        actions.reduce(
+          (acc, action) =>
+            action.kind === 'detach' ? detachLinked(acc, action.id) : setLinkedDesign(acc, action.id, action.design),
+          prev,
+        ),
+      );
+      // The canvas reads its document once, so it is reopened on the corrected boxes.
+      setEditorGeneration((n) => n + 1);
+    }
+    if (usageChanged) void refreshTemplates();
+  };
+
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
@@ -238,17 +319,7 @@ function TagTemplateEditor() {
         { keepalive: teardownRef.current },
       );
       setTemplate(updated);
-      for (const [id, linked] of linkedBoxDesigns(layers)) {
-        if (linkBaselineRef.current.get(id) === linked.key) continue;
-        try {
-          // Loaded on first use: most templates carry no linked box.
-          const { updateAccessoryTemplate } = await import('../../services/accessoryTemplateService');
-          await updateAccessoryTemplate(id, { design: linked.design });
-          linkBaselineRef.current.set(id, linked.key);
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : 'Could not update the accessories template');
-        }
-      }
+      await syncLinksRef.current(layers);
     }, []),
   );
 

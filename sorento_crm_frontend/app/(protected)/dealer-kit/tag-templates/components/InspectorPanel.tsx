@@ -21,7 +21,7 @@ import {
   itemLayoutOf,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
-import { cardDropped } from '@/lib/dealer-kit/accessory-card';
+import { cardDropped, colourDotLayout } from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -2083,12 +2083,14 @@ function AccessoriesInspector({
           )}
         </div>
       )}
-      {props.presetId && template && (
+      {props.presetId && (
         <div className="flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2 text-xs">
-          <p>
-            Linked: {template.name} (used in {template.usedIn} tag template
-            {template.usedIn === 1 ? '' : 's'})
-          </p>
+          {template ? (
+            <p>
+              Linked: {template.name} (used in {template.usedIn} tag template
+              {template.usedIn === 1 ? '' : 's'})
+            </p>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -2440,7 +2442,7 @@ function AccessoryElementInspector({
     element.kind === 'picture'
       ? [{ value: 'picture', label: 'Picture' }]
       : element.kind === 'colour_dots'
-        ? [{ value: 'colours', label: 'Colours' }]
+        ? [{ value: 'colours', label: inCard ? 'Colours' : 'Colours (all in this box)' }]
         : TEXT_FIELD_OPTIONS;
 
   return (
@@ -2459,7 +2461,7 @@ function AccessoryElementInspector({
         </Button>
       </div>
 
-      {inCard && element.kind !== 'shape' && (
+      {(inCard ? element.kind !== 'shape' : element.kind === 'colour_dots') && (
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Shows</Label>
           <SearchableSelect
@@ -2547,7 +2549,7 @@ function AccessoryElementInspector({
           <div className="grid grid-cols-2 gap-2">
             <AccessoryNumberField
               label="Dot size (mm)"
-              value={element.dotSize_mm ?? null}
+              value={element.dotSize_mm ?? Math.round(colourDotLayout(element, 2)[0].d_mm * 10) / 10}
               onChange={(value) => patch({ dotSize_mm: value })}
               step={0.1}
               min={0.5}
@@ -2584,20 +2586,29 @@ function AccessoryElementInspector({
             onChange={(value) => patch({ dotOutline: value })}
             usedColours={usedColours}
           />
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">Picked colours</Label>
+          <label className="flex items-center gap-1.5 text-xs">
+            <Checkbox
+              checked={Boolean(element.colours && element.colours.length > 0)}
+              onCheckedChange={(on) => patch({ colours: on ? ['#1f2937'] : null })}
+              aria-label="Pick colours"
+            />
+            Pick colours
+          </label>
+          {element.colours && element.colours.length > 0 && (
             <Input
+              aria-label="Colours"
               className="h-7 px-2 text-xs"
               placeholder="#1f2937, #9ca3af"
-              value={(element.colours ?? []).join(', ')}
-              onChange={(e) => {
+              key={element.id}
+              defaultValue={element.colours.join(', ')}
+              onBlur={(e) => {
                 const picked = e.target.value
                   .split(/[\s,]+/)
                   .filter((value) => /^#[0-9a-fA-F]{6}$/.test(value));
                 patch({ colours: picked.length > 0 ? picked : null });
               }}
             />
-          </div>
+          )}
         </>
       )}
 

@@ -21,6 +21,7 @@ import {
   boxColours,
   cardBoxLayout,
   cardElementsFor,
+  cardElementsForDesign,
   cardFieldValue,
   cardFromLegacy,
 } from './accessory-card';
@@ -531,5 +532,21 @@ describe('accessoryDesign / applyAccessoryDesign', () => {
     const applied = applyAccessoryDesign(own, accessoryDesign(own) as never, null) as unknown as El;
     expect(applied.presetId == null).toBe(true);
     expect(applied.subjectPart).toBe(2);
+  });
+});
+
+describe('cardElementsForDesign (card 1 while editing)', () => {
+  it('keeps every visible element at its own rect, even when the accessory has nothing for it', () => {
+    const out = cardElementsForDesign(CHOPPING_BOARD, card()) as unknown as El[];
+    expect(out.map((e) => e.id)).toEqual(['pic', 'name', 'spec', 'dots', 'note']);
+    expect(byId(out, 'note')!.y_mm).toBe(20);
+    expect(byId(out, 'dots')!.y_mm).toBe(15);
+    expect(byId(out, 'pic')).toMatchObject({ placeholder: true });
+  });
+
+  it('still skips a hidden element', () => {
+    const c = card();
+    (c.elements as unknown as El[]).find((e) => e.id === 'spec')!.hidden = true;
+    expect((cardElementsForDesign(COLANDER, c) as unknown as El[]).map((e) => e.id)).not.toContain('spec');
   });
 });

@@ -1,10 +1,12 @@
 'use client';
 
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
   createAccessoryTemplate,
+  findAccessoryTemplate,
   getAccessoryTemplate,
   getAccessoryTemplateUsage,
   listAccessoryTemplates,
@@ -27,6 +29,29 @@ export function useAccessoryTemplateQuery(id: string | null | undefined) {
     queryFn: () => getAccessoryTemplate(id as string),
     enabled: Boolean(id),
   });
+}
+
+/** Reads one template fresh (never from cache); null when it is gone. For the live link's pre-push check. */
+export function useFetchAccessoryTemplate() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    (id: string) =>
+      queryClient.fetchQuery({
+        queryKey: [ACCESSORY_TEMPLATES_QUERY_KEY, 'fresh', id],
+        queryFn: () => findAccessoryTemplate(id),
+        staleTime: 0,
+      }),
+    [queryClient],
+  );
+}
+
+/** Usage counts change when a tag template gains or loses a linked box. */
+export function useRefreshAccessoryTemplates() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    () => queryClient.invalidateQueries({ queryKey: [ACCESSORY_TEMPLATES_QUERY_KEY] }),
+    [queryClient],
+  );
 }
 
 export function useAccessoryTemplateUsage(id: string | null | undefined, enabled = true) {

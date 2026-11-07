@@ -24,7 +24,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useAccessoryPictures } from '../hooks/useAccessories';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
+import { useAccessoryPictures, useDeleteAccessoryPicture } from '../hooks/useAccessories';
 import type { AccessoryPicture } from '../types/accessory.types';
 
 /** The short palette; anything else is a custom hex. */
@@ -50,12 +51,15 @@ function PictureRow({
   picture,
   index,
   canEdit,
+  pending,
   onColour,
   onRemove,
 }: {
   picture: AccessoryPicture;
   index: number;
   canEdit: boolean;
+  /** Its removal is counting down. */
+  pending: boolean;
   onColour: (colour: { colour_name: string | null; colour_hex: string | null }) => void;
   onRemove: () => void;
 }) {
@@ -70,7 +74,7 @@ function PictureRow({
     <li
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      className={`flex items-center gap-2 rounded-md border bg-background p-2 ${isDragging ? 'z-10 shadow-md' : ''}`}
+      className={`flex items-center gap-2 rounded-md border bg-background p-2 ${isDragging ? 'z-10 shadow-md' : ''} ${pending ? 'opacity-50' : ''}`}
     >
       {canEdit ? (
         <button
@@ -133,6 +137,7 @@ function PictureRow({
           size="sm"
           className="shrink-0"
           aria-label={`Remove picture ${index + 1}`}
+          disabled={pending}
           onClick={onRemove}
         >
           <X className="size-4" />
@@ -158,8 +163,15 @@ export function AccessoryPicturesField({
   canEdit: boolean;
   onChanged: (pictures: AccessoryPicture[]) => void;
 }) {
-  const { addMutateAsync, patchMutateAsync, removeMutateAsync, orderMutateAsync, busy } =
-    useAccessoryPictures();
+  const { addMutateAsync, patchMutateAsync, orderMutateAsync, busy } = useAccessoryPictures();
+  const latest = useRef({ pictures, onChanged });
+  latest.current = { pictures, onChanged };
+  const requested = useRef<string | null>(null);
+  const removal = useDeleteAccessoryPicture(() => {
+    const id = requested.current;
+    if (id) latest.current.onChanged(latest.current.pictures.filter((p) => p.id !== id));
+  });
+  const isPending = useRowPending<AccessoryPicture>('accessory_image');
   const inputRef = useRef<HTMLInputElement | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -221,12 +233,11 @@ export function AccessoryPicturesField({
                       onChanged(pictures.map((p) => (p.id === saved.id ? saved : p)));
                     })
                   }
-                  onRemove={() =>
-                    void run(async () => {
-                      await removeMutateAsync({ id: accessoryId, imageId: picture.id });
-                      onChanged(pictures.filter((p) => p.id !== picture.id));
-                    })
-                  }
+                  pending={isPending(picture)}
+                  onRemove={() => {
+                    requested.current = picture.id;
+                    removal.run({ id: picture.id, subject: picture.colour_name ?? `Picture ${index + 1}` });
+                  }}
                 />
               ))}
             </ul>
