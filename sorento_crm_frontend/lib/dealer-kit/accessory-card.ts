@@ -702,7 +702,11 @@ export function linkedPresetIds(layers: readonly LinkLayer[] | null | undefined)
   return [...ids];
 }
 
-/** The design of the LAST box linked to `presetId` whose design differs from `baselineKey`, else null. */
+/**
+ * The design of the LAST box linked to `presetId` whose design differs from `baselineKey`, else null.
+ * With no baseline (a box inserted from a stale menu, pasted from another tab) nothing is "changed":
+ * that box follows the server instead of being pushed.
+ */
 export function changedLinkedDesign(
   layers: readonly LinkLayer[] | null | undefined,
   presetId: string,
@@ -713,7 +717,7 @@ export function changedLinkedDesign(
     const props = boxProps(layer);
     if (!props || props.presetId !== presetId) continue;
     const design = accessoryDesign(props);
-    if (baselineKey === undefined || designKey(design) !== baselineKey) changed = design;
+    if (baselineKey !== undefined && designKey(design) !== baselineKey) changed = design;
   }
   return changed;
 }
@@ -736,4 +740,39 @@ export function detachLinked<T extends LinkLayer>(layers: readonly T[], presetId
       ? ({ ...layer, props: { ...props, presetId: null } } as unknown as T)
       : layer;
   });
+}
+
+/** A correction to apply to a live box: only when its design still equals `expectedKey`. */
+export interface LayerPropsPatch {
+  layerId: string;
+  /** `designKey(accessoryDesign(props))` of the box when the correction was worked out. */
+  expectedKey: string;
+  props: AccessoriesLayerProps;
+}
+
+export type LinkAction =
+  | { kind: 'detach'; id: string }
+  | { kind: 'set'; id: string; design: AccessoryDesign };
+
+/** The live-box patches that carry out `actions`, worked out from the layers as they were saved. */
+export function linkCorrectionPatches(
+  layers: readonly LinkLayer[] | null | undefined,
+  actions: readonly LinkAction[],
+): LayerPropsPatch[] {
+  const patches: LayerPropsPatch[] = [];
+  for (const layer of layers ?? []) {
+    const props = boxProps(layer);
+    if (!props?.presetId) continue;
+    const action = actions.find((candidate) => candidate.id === props.presetId);
+    if (!action) continue;
+    patches.push({
+      layerId: layer.id,
+      expectedKey: designKey(accessoryDesign(props)),
+      props:
+        action.kind === 'detach'
+          ? ({ ...props, presetId: null } as AccessoriesLayerProps)
+          : applyAccessoryDesign(props, action.design, action.id),
+    });
+  }
+  return patches;
 }

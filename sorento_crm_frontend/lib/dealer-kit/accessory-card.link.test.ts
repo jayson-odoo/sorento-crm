@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accessoryDesign,
   changedLinkedDesign,
+  linkCorrectionPatches,
   designKey,
   detachLinked,
   linkedPresetIds,
@@ -51,5 +52,25 @@ describe('live link helpers', () => {
     const [out] = detachLinked([box('a', { headerText: 'KEEP' })], 'p1');
     expect(out.props.presetId).toBeNull();
     expect(out.props.headerText).toBe('KEEP');
+  });
+});
+
+describe('no baseline and correction patches', () => {
+  it('a box with no baseline is never "changed": it follows the server instead of being pushed', () => {
+    const odd = box('a', { headerText: 'DIFFERENT' });
+    expect(changedLinkedDesign([odd], 'p1', undefined)).toBeNull();
+  });
+
+  it('builds a patch per linked box that remembers the design it was worked out from', () => {
+    const own = box('a', { headerText: 'OLD', subjectPart: 3 });
+    const server = accessoryDesign(box('x', { headerText: 'SERVER' }).props);
+    const [patch] = linkCorrectionPatches([own], [{ kind: 'set', id: 'p1', design: server }]);
+    expect(patch.layerId).toBe('a');
+    expect(patch.expectedKey).toBe(key(own));
+    expect(patch.props.headerText).toBe('SERVER');
+    expect(patch.props.subjectPart).toBe(3);
+    const [gone] = linkCorrectionPatches([own], [{ kind: 'detach', id: 'p1' }]);
+    expect(gone.props.presetId).toBeNull();
+    expect(gone.props.headerText).toBe('OLD');
   });
 });

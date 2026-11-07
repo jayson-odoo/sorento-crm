@@ -49,6 +49,12 @@ export async function searchAccessories(query: string, limit = 50): Promise<Acce
   return body.data ?? [];
 }
 
+export async function getAccessory(id: string): Promise<Accessory> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the accessory'));
+  return (await res.json()) as Accessory;
+}
+
 export async function createAccessory(write: AccessoryWrite): Promise<Accessory> {
   const res = await apiFetch(BASE, {
     method: 'POST',

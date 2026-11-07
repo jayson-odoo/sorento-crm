@@ -245,6 +245,7 @@ export function richPlainText(value: string | null | undefined): string {
 
 /** A colour safe to put in a `style` value: a hex or rgb() colour, else `fallback`. */
 export function safeColour(value: string | null | undefined, fallback = 'transparent'): string {
+  if (typeof value === 'string' && value.trim().toLowerCase() === 'transparent') return 'transparent';
   return validColour(value ?? undefined) ?? fallback;
 }
 

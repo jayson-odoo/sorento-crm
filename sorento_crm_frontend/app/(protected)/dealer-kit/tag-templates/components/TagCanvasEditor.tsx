@@ -43,6 +43,7 @@ import {
   useSyncExternalStore,
   lazy,
   Suspense,
+  type MutableRefObject,
   type ReactNode,
 } from 'react';
 
@@ -259,6 +260,9 @@ import {
 import {
   accessoryDesign,
   accessoryDesignSamples,
+  designKey,
+  type AccessoryDesign,
+  type LayerPropsPatch,
   applyAccessoryDesign,
   cardDropped,
   cardFromLegacy,
@@ -564,6 +568,14 @@ interface TagCanvasEditorProps {
    * designer): the box is detached first, so a request never edits a template other tags follow.
    */
   linkedAccessoryBoxes?: 'live' | 'detach';
+  /**
+   * The host fills this with a function that corrects live accessories boxes (follow the server's
+   * design, or detach) as ONE history step, with no remount, touching only boxes whose design still
+   * equals the one the correction was worked out from.
+   */
+  layerPatchesRef?: MutableRefObject<((patches: LayerPropsPatch[]) => void) | null>;
+  /** Called after a saved template is inserted, with the design that was used (the host's baseline). */
+  onAccessoryTemplateInserted?: (presetId: string, design: AccessoryDesign) => void;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -628,6 +640,8 @@ export function TagCanvasEditor({
   onReviewPinResolve,
   specSheet = false,
   linkedAccessoryBoxes = 'live',
+  layerPatchesRef,
+  onAccessoryTemplateInserted,
 }: TagCanvasEditorProps) {
   // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
   const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
@@ -1741,20 +1755,75 @@ export function TagCanvasEditor({
     if (!stillThere) setAccessoryEdit(null);
   }, [accessoryEdit, selectedIds, layers]);
 
-  /** Inserting a saved template: a default box carrying its design, linked by `presetId`. */
+  /** Reads one template fresh; set by the bridge, which owns the query client. */
+  const templateFetcherRef = useRef<((id: string) => Promise<AccessoryTemplateRecord | null>) | null>(null);
+  const handleTemplateFetcher = useCallback(
+    (fetcher: (id: string) => Promise<AccessoryTemplateRecord | null>) => {
+      templateFetcherRef.current = fetcher;
+    },
+    [],
+  );
+
+  /**
+   * Inserting a saved template: a default box carrying its design, linked by `presetId`. The design is
+   * read fresh first (the menu list may be stale); one that is gone is refused.
+   */
   const handleInsertAccessoryTemplate = useCallback(
-    (template: AccessoryTemplateRecord) => {
+    async (template: AccessoryTemplateRecord) => {
+      let current: AccessoryTemplateRecord | null = template;
+      if (templateFetcherRef.current) {
+        try {
+          current = await templateFetcherRef.current(template.id);
+        } catch {
+          current = template;
+        }
+      }
+      if (!current) {
+        toast.error('That accessories template no longer exists');
+        return;
+      }
       addLayer({
         ...makeBaseLayer(
           'accessories',
           ACCESSORY_DEFAULT_BOX_MM.width_mm,
           ACCESSORY_DEFAULT_BOX_MM.height_mm,
         ),
-        props: applyAccessoryDesign(defaultAccessoriesProps(), template.design, template.id),
+        props: applyAccessoryDesign(defaultAccessoriesProps(), current.design, current.id),
+      });
+      onAccessoryTemplateInserted?.(current.id, current.design);
+    },
+    [addLayer, makeBaseLayer, onAccessoryTemplateInserted],
+  );
+
+  /** Host corrections to linked boxes: one history step, only where the box is as the host last saw it. */
+  const applyExternalLayerProps = useCallback(
+    (patches: LayerPropsPatch[]) => {
+      setLayers((prev) => {
+        let changed = false;
+        const next = prev.map((layer) => {
+          const patch = patches.find((candidate) => candidate.layerId === layer.id);
+          if (!patch || layer.props.kind !== 'accessories') return layer;
+          const { kind: _kind, subjectSlot: _slot, subjectPart: _part, presetId: _preset, ...design } =
+            layer.props;
+          void [_kind, _slot, _part, _preset];
+          if (designKey(design) !== patch.expectedKey) return layer;
+          changed = true;
+          return { ...layer, props: patch.props as TagLayerProps };
+        });
+        if (!changed) return prev;
+        history.pushState(next);
+        return next;
       });
     },
-    [addLayer, makeBaseLayer],
+    [history],
   );
+  useEffect(() => {
+    if (!layerPatchesRef) return;
+    layerPatchesRef.current = applyExternalLayerProps;
+    return () => {
+      layerPatchesRef.current = null;
+    };
+  }, [layerPatchesRef, applyExternalLayerProps]);
 
   const accessoryTemplateOf = useCallback(
     (layer: TagLayer | null | undefined) => {
@@ -5132,6 +5201,7 @@ export function TagCanvasEditor({
         <Suspense fallback={null}>
         <AccessoryTemplatesBridge
           onTemplates={handleAccessoryTemplates}
+          onFetcher={handleTemplateFetcher}
           request={saveTemplateRequest}
           onClose={() => setSaveTemplateRequest(null)}
           onSaved={(layerId, saved) => {

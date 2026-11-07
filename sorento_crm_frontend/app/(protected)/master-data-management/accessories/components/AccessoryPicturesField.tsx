@@ -25,7 +25,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
-import { useAccessoryPictures, useDeleteAccessoryPicture } from '../hooks/useAccessories';
+import {
+  useAccessoryPictures,
+  useDeleteAccessoryPicture,
+  useFreshAccessoryPictures,
+} from '../hooks/useAccessories';
 import type { AccessoryPicture } from '../types/accessory.types';
 
 /** The short palette; anything else is a custom hex. */
@@ -164,12 +168,15 @@ export function AccessoryPicturesField({
   onChanged: (pictures: AccessoryPicture[]) => void;
 }) {
   const { addMutateAsync, patchMutateAsync, orderMutateAsync, busy } = useAccessoryPictures();
-  const latest = useRef({ pictures, onChanged });
-  latest.current = { pictures, onChanged };
-  const requested = useRef<string | null>(null);
+  const freshPictures = useFreshAccessoryPictures();
+  const latest = useRef({ onChanged });
+  latest.current = { onChanged };
+  // Several countdowns can overlap, and a cancelled one never commits: when ANY removal commits the
+  // list is read back from the server, so each picture leaves exactly when it was really removed.
   const removal = useDeleteAccessoryPicture(() => {
-    const id = requested.current;
-    if (id) latest.current.onChanged(latest.current.pictures.filter((p) => p.id !== id));
+    void freshPictures(accessoryId)
+      .then((fresh) => latest.current.onChanged(fresh))
+      .catch(() => undefined);
   });
   const isPending = useRowPending<AccessoryPicture>('accessory_image');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -235,7 +242,6 @@ export function AccessoryPicturesField({
                   }
                   pending={isPending(picture)}
                   onRemove={() => {
-                    requested.current = picture.id;
                     removal.run({ id: picture.id, subject: picture.colour_name ?? `Picture ${index + 1}` });
                   }}
                 />

@@ -53,6 +53,12 @@ describe('TagSheetRenderer, designed card colours', () => {
     expect(container.innerHTML).not.toContain('url(');
   });
 
+  it('lets legacy text be transparent again, and still refuses url()', () => {
+    mount({ nameStyle: { color: 'transparent' }, specStyle: { color: 'url(https://evil.test/x)' } });
+    const lines = screen.getAllByTestId('accessories-line') as HTMLElement[];
+    expect(lines[0].style.color).toBe('transparent');
+  });
+
   it('keeps a real fill', () => {
     mount({ fill: '#f3f7f4', card: { width_mm: 30, height_mm: 20, elements: [] } });
     expect((screen.getByTestId('accessories-frame') as HTMLElement).style.backgroundColor).toBe('rgb(243, 247, 244)');

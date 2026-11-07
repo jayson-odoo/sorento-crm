@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
@@ -7,6 +8,7 @@ import {
   addAccessoryPicture,
   createAccessory,
   deleteAccessoryImage,
+  getAccessory,
   getAccessories,
   listOwnerAccessories,
   orderAccessoryPictures,
@@ -174,4 +176,20 @@ export function useDeleteAccessoryPicture(onCommitted?: () => void) {
     invalidateKeys: [ACCESSORIES_KEY, ['owner-accessories']],
     onCommitted,
   });
+}
+
+/** The accessory's pictures as the server holds them now (after a removal committed, whatever its order). */
+export function useFreshAccessoryPictures() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (id: string) =>
+      (
+        await queryClient.fetchQuery({
+          queryKey: ['accessory-pictures', id],
+          queryFn: () => getAccessory(id),
+          staleTime: 0,
+        })
+      ).images ?? [],
+    [queryClient],
+  );
 }

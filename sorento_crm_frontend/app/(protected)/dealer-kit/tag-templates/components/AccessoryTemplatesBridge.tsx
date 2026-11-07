@@ -21,6 +21,7 @@ import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateSe
 import {
   useAccessoryTemplatesQuery,
   useCreateAccessoryTemplate,
+  useFetchAccessoryTemplate,
 } from '../../accessory-templates/hooks/useAccessoryTemplates';
 
 export interface SaveTemplateRequest {
@@ -30,17 +31,21 @@ export interface SaveTemplateRequest {
 
 export function AccessoryTemplatesBridge({
   onTemplates,
+  onFetcher,
   request,
   onSaved,
   onClose,
 }: {
   onTemplates: (templates: AccessoryTemplateRecord[]) => void;
+  /** Hands up a function that reads one template fresh (null when it is gone). */
+  onFetcher: (fetcher: (id: string) => Promise<AccessoryTemplateRecord | null>) => void;
   request: SaveTemplateRequest | null;
   onSaved: (layerId: string, template: AccessoryTemplateRecord) => void;
   onClose: () => void;
 }) {
   const query = useAccessoryTemplatesQuery();
   const create = useCreateAccessoryTemplate();
+  const fetchFresh = useFetchAccessoryTemplate();
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const templates = query.data;
@@ -48,6 +53,10 @@ export function AccessoryTemplatesBridge({
   useEffect(() => {
     onTemplates(templates ?? []);
   }, [templates, onTemplates]);
+
+  useEffect(() => {
+    onFetcher(fetchFresh);
+  }, [fetchFresh, onFetcher]);
 
   useEffect(() => {
     if (!request) return;

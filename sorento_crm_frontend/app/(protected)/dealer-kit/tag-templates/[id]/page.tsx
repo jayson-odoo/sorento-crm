@@ -103,7 +103,9 @@ import {
   linkedBoxDesigns,
   linkedPresetIds,
   setLinkedDesign,
-  type AccessoryDesign,
+  linkCorrectionPatches,
+  type LayerPropsPatch,
+  type LinkAction,
 } from '@/lib/dealer-kit/accessory-card';
 import {
   useFetchAccessoryTemplate,
@@ -201,15 +203,13 @@ function TagTemplateEditor() {
   const fetchTemplate = useFetchAccessoryTemplate();
   const refreshTemplates = useRefreshAccessoryTemplates();
   // The autosave callback is created once, so it reaches the latest hooks through this ref.
+  const layerPatchesRef = useRef<((patches: LayerPropsPatch[]) => void) | null>(null);
   const syncLinksRef = useRef<(layers: TagLayer[]) => Promise<void>>(async () => {});
   syncLinksRef.current = async (layers: TagLayer[]) => {
     const ids = linkedPresetIds(layers);
     const baseline = linkBaselineRef.current;
     let usageChanged = ids.length !== baseline.size || ids.some((id) => !baseline.has(id));
-    const actions: (
-      | { kind: 'detach'; id: string }
-      | { kind: 'set'; id: string; design: AccessoryDesign }
-    )[] = [];
+    const actions: LinkAction[] = [];
     for (const id of baseline.keys()) if (!ids.includes(id)) baseline.delete(id);
     for (const id of ids) {
       const baselineKey = baseline.get(id);
@@ -228,6 +228,12 @@ function TagTemplateEditor() {
         continue;
       }
       const serverKey = designKey(server.design);
+      if (baselineKey === undefined) {
+        // No baseline (inserted from a stale menu, pasted from another tab): follow the server, never push.
+        actions.push({ kind: 'set', id, design: server.design });
+        baseline.set(id, serverKey);
+        continue;
+      }
       const changed = changedLinkedDesign(layers, id, baselineKey);
       if (changed && designKey(changed) !== serverKey) {
         try {
@@ -243,7 +249,7 @@ function TagTemplateEditor() {
         if (othersDiffer) actions.push({ kind: 'set', id, design: changed });
         baseline.set(id, key);
         usageChanged = true;
-      } else if (!changed && baselineKey !== undefined && serverKey !== baselineKey) {
+      } else if (!changed && serverKey !== baselineKey) {
         // Somebody else saved it since this page loaded and this one did not touch it: follow.
         actions.push({ kind: 'set', id, design: server.design });
         baseline.set(id, serverKey);
@@ -252,15 +258,21 @@ function TagTemplateEditor() {
       }
     }
     if (actions.length > 0) {
-      setDraftLayers((prev) =>
-        actions.reduce(
-          (acc, action) =>
-            action.kind === 'detach' ? detachLinked(acc, action.id) : setLinkedDesign(acc, action.id, action.design),
-          prev,
-        ),
-      );
-      // The canvas reads its document once, so it is reopened on the corrected boxes.
-      setEditorGeneration((n) => n + 1);
+      const patches = linkCorrectionPatches(layers, actions);
+      if (layerPatchesRef.current) {
+        // Corrected on the live canvas as one history step: no remount, nothing lost.
+        layerPatchesRef.current(patches);
+      } else {
+        // No canvas to patch (not mounted): correct the draft and reopen it.
+        setDraftLayers((prev) =>
+          actions.reduce(
+            (acc, action) =>
+              action.kind === 'detach' ? detachLinked(acc, action.id) : setLinkedDesign(acc, action.id, action.design),
+            prev,
+          ),
+        );
+        setEditorGeneration((n) => n + 1);
+      }
     }
     if (usageChanged) void refreshTemplates();
   };
@@ -703,6 +715,8 @@ function TagTemplateEditor() {
             doc={{ ...template.doc, layers: draftLayers }}
             onChange={(doc) => setDraftLayers(doc.layers)}
             onLayersChange={setDraftLayers}
+            layerPatchesRef={layerPatchesRef}
+            onAccessoryTemplateInserted={(id, design) => linkBaselineRef.current.set(id, designKey(design))}
             hideSaveBar
             docId={template.id}
             specSheet={isSpecSheetFamily(template.family)}
