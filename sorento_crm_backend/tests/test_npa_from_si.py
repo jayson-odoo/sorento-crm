@@ -392,31 +392,35 @@ def test_lineage_hides_application_detail_from_a_product_viewer(world, monkeypat
 
 
 @pytest.mark.parametrize(
-    "method,path",
+    "method,path,code",
     [
-        ("get", "/products?q=x"),
-        ("get", "/reuse-suggestions?product_ids="),
-        ("get", "/lineage?product_id=00000000-0000-0000-0000-000000000000"),
+        ("get", "/products?q=x", 403),
+        ("get", "/reuse-suggestions?product_ids=", 403),
+        ("post", "/{aid}/new-code/link", 404),
     ],
 )
-def test_own_only_staff_are_refused_the_new_staff_reads(world, method, path):
-    from app.api.v1 import _request_own_scope as guard
+def test_own_only_staff_are_refused_the_new_staff_routes_by_the_guard(world, method, path, code):
+    """`view_own` + `create`: `create` alone passes each route's own permission check, so only the
+    own-scope guard (`new_product_application_own_scope`) can refuse."""
     from app.services.user_service import UserPermissionService
 
-    # Swapped and put back by hand: a monkeypatch undo would run after the world fixture's own
-    # restore and leave this file's fakes on the class for the next test in the worker.
-    own = "procurement.new_product_applications.view_own"
+    d = _draft(world, [])  # raised by sales A, not the caller
+    held = {"procurement.new_product_applications.view_own", "procurement.new_product_applications.create"}
     names = ("get_user_permission_slugs", "check_user_has_permission", "check_user_has_any_permission")
+    # Swapped and put back by hand: a monkeypatch undo would run after the world fixture's own
+    # restore and leave these fakes on the class for the next test in the worker.
     saved = {n: getattr(UserPermissionService, n) for n in names}
-    UserPermissionService.get_user_permission_slugs = lambda self, uid: {own}
-    UserPermissionService.check_user_has_permission = lambda self, uid, s: s == own
-    UserPermissionService.check_user_has_any_permission = lambda self, uid, ss: own in ss
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: set(held)
+    UserPermissionService.check_user_has_permission = lambda self, uid, s: s in held
+    UserPermissionService.check_user_has_any_permission = lambda self, uid, ss: bool(held & set(ss))
     try:
-        res = getattr(world.api.as_(world.stranger), method)(f"{NPA}{path}")
+        url = f"{NPA}{path.format(aid=d['id'])}"
+        kw = {"json": {"product_id": world.product.id}} if method == "post" else {}
+        res = getattr(world.api.as_(world.stranger), method)(url, **kw)
     finally:
         for n, f in saved.items():
             setattr(UserPermissionService, n, f)
-    assert res.status_code in (403, 404), res.text
+    assert res.status_code == code, res.text
 
 
 def test_undoing_an_old_per_row_link_keeps_a_new_code_application_completed(world):
