@@ -241,3 +241,17 @@ describe('portal stock inquiry: npa_form_visible (the contact holds the NPA form
     expect(screen.queryByRole('link', { name: CTA })).toBeNull();
   });
 });
+
+// Crew 375 px pass (8 Nov): gear + Create + the "< 3/12 >" pager made the header 426 px wide.
+// jsdom cannot measure, so the layout contract is pinned: the action row wraps, and on a phone
+// the Create button takes its own full-width row (it shares the row from sm up).
+describe('portal stock inquiry: header fits a 375 px phone', () => {
+  it('the header action row wraps and the Create button takes its own row on a phone', async () => {
+    renderKind('stock_inquiry', responded({ npa_form_visible: true }));
+    const link = await screen.findByRole('link', { name: CTA });
+    expect(link.className).toMatch(/\bbasis-full\b/);
+    expect(link.className).toMatch(/\bsm:basis-auto\b/);
+    const row = link.parentElement as HTMLElement;
+    expect(row.className).toMatch(/\bflex-wrap\b/);
+  });
+});

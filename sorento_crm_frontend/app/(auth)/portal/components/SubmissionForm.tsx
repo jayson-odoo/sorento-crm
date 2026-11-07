@@ -2414,7 +2414,9 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
             </Link>
           </Button>
         )}
-        <div className="flex min-w-0 items-center gap-3">
+        {/* flex-wrap: on a 375 px phone the Create button below takes its own row instead of
+            pushing the "< 3/12 >" pager off-screen (crew 375 px pass, 8 Nov). */}
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
           {editing && (
             <Button
               type="button"
@@ -2491,7 +2493,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
             </DetailActionsMenu>
           )}
           {canCreateApplication && detail && (
-            <Button size="sm" asChild className="shrink-0">
+            <Button size="sm" asChild className="order-last basis-full sm:order-none sm:basis-auto">
               <Link
                 href={`${
                   paths
