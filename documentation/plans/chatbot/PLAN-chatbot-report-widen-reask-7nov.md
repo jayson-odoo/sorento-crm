@@ -1,8 +1,11 @@
 # PLAN: report follow-ups widen what the parser widened; a settled name is not asked again (7 Nov 2026)
 
-Status: Build (small fix track: code only, no migration, no prompt change, expected diff under 300 lines). Crew go
-5 Nov (fixes 1 and 2 of the prod-transcript diagnosis, #2156 crew-note 6652690440); fix 3 (prompt) skipped by crew:
-report follow-ups move to the agent path (lane AGENT-REPORTS), so no more parser prompt spend.
+Status: Review, PR #2224 READY (7 Nov 2026; reviewer READY at 0885547437 after 3 rounds). Small fix track by kind (code
+only, no migration, no prompt change, about 60 lines of code) but the diff is about 540 lines with tests and docs, over
+the ~300-line guide. Crew go 5 Nov (fixes 1 and 2 of the prod-transcript diagnosis, #2156 crew-note 6652690440); fix 3
+(prompt) skipped by crew: report follow-ups move to the agent path (lane AGENT-REPORTS), so no more parser prompt spend.
+Known trade (lead ruling WR-10): the owner's T5 "all" was parsed as a date widen, so it still keeps the held brand and
+category; "all brand all category" / "for all brands and categories" / "clear all" widen.
 UAC: chatbot-report-widen-reask-acceptance-criteria.md.
 
 ## Journey
