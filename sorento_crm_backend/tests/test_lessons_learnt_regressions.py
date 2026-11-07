@@ -152,7 +152,7 @@ def test_saved_line_handover_items_carry_their_raiser_and_the_fallback_reads_uns
 
 
 # ---------------------------------------------------------------------------
-# LESSON 123: "The purchasing email has ONE trigger, the board Confirm" (owner, 6 Nov 2026:
+# LESSON 124: "The purchasing email has ONE trigger, the board Confirm" (owner, 6 Nov 2026:
 # "I only want the email to purchasing to have 1 trigger, which is this button"; SO398322, an
 # AutoCount re-key retired an order inquiry row and auto-emailed purchasing a false cancel).
 # The gate: `mark_purchasing_email_trigger` marks the root transaction of a press that may email
@@ -309,7 +309,7 @@ _PURCHASING_TRIGGER_SPELLINGS = {
 
 
 def test_structural_every_purchasing_dispatch_sits_behind_the_one_gate():
-    """LESSON 123, the structural gate, Postgres-free (the heavy twin is
+    """LESSON 124, the structural gate, Postgres-free (the heavy twin is
     `tests/scm/test_purchasing_email_one_trigger.py::test_structural_...`). The handover and
     changed-with-links emails leave the app only behind the gate, so a new path that emails
     purchasing without the board Confirm's mark is red here:
