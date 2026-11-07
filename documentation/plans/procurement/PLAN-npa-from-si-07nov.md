@@ -1,11 +1,11 @@
 # PLAN - NPA from Stock Inquiry with product code lineage (NPA-FROM-SI)
 
-Lane NPA-FROM-SI, size L, issue #2200. Status: Plan (card + mock v1 posted as crew-ask 7 Nov; build waits for Q1-Q5).
+Lane NPA-FROM-SI, size L, issue #2200. Status: Build (card + mock v2 posted 7 Nov; Q1 answered (a) by the owner's v1 notes; Q2-Q5 open, built on the recommendations, all additive).
 Track: full (additive migration, portal surface, security-reviewer for portal access).
 
 Builds on NEW-PRODUCT-APP (#1769, `PLAN-new-product-application-17oct.md`).
 - Behaviour card (the rules; not restated here): `CARD-npa-from-si-07nov.md`.
-- Mock: `mockups/npa-from-si-v1.html`.
+- Mock: `mockups/npa-from-si-v2.html` (v1 kept).
 - UAC: `npa-from-si-acceptance-criteria.md` (written once Q1-Q5 are answered).
 
 ## Design draft (with the recommended answers; revised after the owner answers)

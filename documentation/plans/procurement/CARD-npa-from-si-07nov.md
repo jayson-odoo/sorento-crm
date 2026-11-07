@@ -1,8 +1,9 @@
 # Behaviour card: NPA from Stock Inquiry, with product code lineage (NPA-FROM-SI)
 
-Status: card filed 7 Nov 2026, waiting on the owner's answers to Q1-Q5. Size L, full track (additive migration,
+Status: card filed 7 Nov 2026; mock v2 after the owner's v1 notes ("multi select at product code field just like
+current form"), which also settle Q1 (a). Q2-Q5 wait for the owner. Size L, full track (additive migration,
 portal surface). Issue #2200. Builds on NEW-PRODUCT-APP (#1769, merged 22 Oct).
-Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Mock: `mockups/npa-from-si-v1.html`.
+Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Mock: `mockups/npa-from-si-v2.html` (v1 kept for the record).
 
 **Waits for the product manager's artifact** (not readable from the lane sandbox): the exact field list of the
 "third example" layout, any status the PM wants beyond the shipped ones, and whether "the same change" (not only
@@ -51,11 +52,15 @@ the same codes) is part of the reuse match. Everything marked (ART) below is a d
    offered as the NPA's attachments (copied links, applicant can remove before save), and **Current product codes**
    per Q3. Dimension / material / brand are NOT on the SI today (`models/procurement.py:1061-1069`), so they stay
    empty (ART: if the PM wants them asked on the SI, that is an SI change, follow-up).
-4. **Current codes -> one new code** (Q1). Each product line gains **Current product codes**: a
-   `SearchableMultiSelect` over the company's products (same product search as Link product: ignores dashes,
-   spaces, case; only lists; a person picks). One or many, optional (a brand-new item has none). The line's NEW code
-   stays what purchasing links (`opened_product_id`): exactly one per line. Shown as
-   `SRTWB888 -> SRTWB893` on the line once linked.
+4. **Current codes -> one new code** (Q1 (a), owner v1 notes). The form stays today's form: the existing
+   **Product code** cell of the line table (`components/common/NewProductApplicationLines.tsx:93,115`, an `Input`
+   today) becomes a `SearchableMultiSelect` (`components/common/SearchableMultiSelect.tsx`) of catalogue codes,
+   one or many = the CURRENT codes; empty = a brand-new item. Same product search as Link product (ignores dashes,
+   spaces, case; only lists; a person picks). No extra column. The line's NEW code stays what purchasing links
+   (`opened_product_id`): exactly one per line, shown as `CBM111-BL -> CBM111-BL-69` once linked. The old free-text
+   `proposed_code` stays in the table (no drop) but leaves the form; when the SI's code text did not equal one
+   catalogue code, it shows read-only under the cell as "Inquiry asked: <text>" so nothing the salesperson typed on
+   the SI is lost (never parsed).
 5. **Lineage is remembered.** Stored as rows `new_product_application_line_sources (line_id, product_id, position)`.
    Lineage = a resolved line: its sources -> its opened product, why = the line's PRODUCT TYPE text + the NPA
    (number, applicant, customer, project, qty, date). No separate lineage table: the NPA is the record of why.
@@ -85,10 +90,13 @@ the same codes) is part of the reuse match. Everything marked (ART) below is a d
 
 ## Data
 
-`crew-data-request` (read-only, aggregates + one case with names masked), in the PR thread:
-how many SIs say "new code" / "NPA" / "new product" in `purchasing_response`; NPAs per SI; one Responded SI whose
-code field holds exactly one existing product code (the mock case). Until it answers, the mock uses the issue's own
-third example (SRTWB888 -> SRTWB893, qty 70, customer withheld).
+Crew data request on the dev copy (7 Nov, PR #2233, aggregates + masked rows):
+- Responded SIs whose purchasing response asks for a new code / NPA: 7 of 89.
+- NPAs on the copy: 0 (feature merged 22 Oct, not used yet), so no reuse history exists today.
+- Responded SIs whose code text equals exactly one catalogue code (trim, case-fold): **61 of 89**: Q3 (a) prefills
+  the current code for about two in three.
+- Mock v2 case: SI26-0193, CBM111-BL, "client want the mirror size with 600 mm x 900 mm", qty 270 (the new code in
+  the mock is invented).
 
 ## Examples
 
@@ -112,7 +120,7 @@ third example (SRTWB888 -> SRTWB893, qty 70, customer withheld).
 
 ## Questions (max 5, each with a recommendation)
 
-- **Q1 Shape.** (a) Keep the multi-product NPA; EACH line = current codes -> one new code (the paper form is one
+- **Q1 Shape. Answered (a)** by the owner's v1 notes ("follow current forms"). Was: (a) Keep the multi-product NPA; EACH line = current codes -> one new code (the paper form is one
   line; a set-order of 3 colours stays one NPA). (b) One NPA = exactly one new code (one line, a second product
   needs a second NPA). **Recommend (a)**: no rework of the shipped form, the Excel and the open-code flow; (b)
   forces three NPAs for the colour case of #1769.
