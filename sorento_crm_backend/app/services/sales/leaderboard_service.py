@@ -22,7 +22,6 @@ from app.services.reports import ask, engine
 from app.services.sales import invoiced_sales as inv
 
 _RUN = dict(measure="amount", warehouse_codes=[], policy=None, capped_by_policy=False)
-_TOP = 1000
 
 BASES = ("invoiced", "delivered", "ordered", "outstanding")
 BYS = ("person", "customer", "product", "brand", "category", "channel")
@@ -91,10 +90,11 @@ def _person_of(label: Optional[str], code: str) -> str:
     return (label or "").strip(" ") or code
 
 
-def _codes_by_person(db: Session, run: Any, grants: frozenset[str]) -> dict[str, set[str]]:
-    """Person -> the agent codes that sold in the period. A code is read per company (the same code may be a
-    different person in another company), so the engine's `sales_agent` grouping runs once per granted company."""
-    codes: dict[str, set[str]] = {}
+def _codes_by_person(db: Session, run: Any, grants: frozenset[str]) -> dict[str, set[tuple[str, str]]]:
+    """Person -> the (company, agent code) pairs that sold in the period. A code is read per company (the same code
+    may be a different person in another company), so the engine's `sales_agent` grouping runs once per granted
+    company."""
+    codes: dict[str, set[tuple[str, str]]] = {}
     for company_id in sorted(grants):
         names = [r["name"] for r in run(company_grants=frozenset({company_id}))["rows"] if r["name"] != inv.NO_AGENT]
         if not names:
@@ -107,7 +107,7 @@ def _codes_by_person(db: Session, run: Any, grants: frozenset[str]) -> dict[str,
                 .all()
             )
         for name in names:
-            codes.setdefault(_person_of(labels.get(name), name), set()).add(name)
+            codes.setdefault(_person_of(labels.get(name), name), set()).add((company_id, name))
     return codes
 
 
@@ -122,31 +122,56 @@ def _own_persons(db: Session, user_id: str) -> set[str]:
     return {_person_of(p, c) for c, p in mine}
 
 
+def _own_agent_ids(db: Session, user_id: str) -> list[str]:
+    """The caller's own agents and their same-company label siblings (one person, several codes): the only agents
+    an own-person drill may read, whatever another company's agent is called."""
+    from app.services import own_scope
+    from app.services.sales import achievement_service
+
+    ids = own_scope.me(db, user_id).agent_ids
+    if not ids:
+        return []
+    with company_scope(db, None):
+        by_company: dict[Any, set[str]] = {}
+        for agent_id, company_id in db.query(SalesAgent.id, SalesAgent.company_id).filter(SalesAgent.id.in_(ids)):
+            by_company.setdefault(company_id, set()).add(str(agent_id))
+        out = set(str(i) for i in ids)
+        for company_id, agents in by_company.items():
+            if company_id is not None:
+                for siblings in achievement_service.label_siblings(db, company_id, agents).values():
+                    out |= {str(i) for i in siblings}
+    return sorted(out)
+
+
 def _check_access(
     db: Session, user: dict, basis: str, by: str, persons: list[str], customers: list[str], products: list[str]
-) -> bool:
-    """403 unless the caller may see this slice (Q2); returns whether they hold the basis slug."""
+) -> tuple[bool, Optional[list[str]]]:
+    """403 unless the caller may see this slice (Q2). Returns whether they hold the basis slug and, when the way in
+    was the own-person exception, the agent ids every figure must be narrowed to."""
     from app.services.user_service import holds_permission
 
     holds = holds_permission(db, user, _SLUG[basis])
     board = by == "person" and not (persons or customers or products)
     if holds or board:
-        return holds
+        return holds, None
     if persons and set(persons) <= _own_persons(db, str(user["id"])):
-        return holds
+        return holds, _own_agent_ids(db, str(user["id"]))
     raise AppException(status_code=403, message="Not available to you", code="PERMISSION_DENIED")
 
 
 def _targets(
-    db: Session, grants: frozenset[str], people: set[str], basis: str, date_from: Optional[date], date_to: Optional[date]
+    db: Session, grants: frozenset[str], people: dict[str, set[str]], basis: str, date_from: Optional[date],
+    date_to: Optional[date],
 ) -> dict[str, dict[str, Any]]:
-    """Person -> the lowest-numbered agent target (amount, all products) whose period holds the board's end date."""
+    """Person -> the lowest-numbered agent target (amount, all products) whose period holds the board's end date.
+    `people` maps a row's person to the companies its codes sold in: a target of another company's agent that merely
+    shares the label or code is not the row's."""
     from app.models.sales import SalesTarget, SalesTargetPeriod
     from app.services.sales import achievement_service, target_service
 
     if not people or not grants:
         return {}
-    anchor = date_to or date.today()
+    anchor = date_to or target_service._today()
     with company_scope(db, None):
         found = (
             db.query(SalesTarget, SalesTargetPeriod, SalesAgent.person_label, SalesAgent.sales_agent)
@@ -164,7 +189,7 @@ def _targets(
         chosen: dict[str, tuple[Any, Any]] = {}
         for target, period, label, code in found:
             person = _person_of(label, code)
-            if person in people and person not in chosen:
+            if person in people and target.company_id in people[person] and person not in chosen:
                 chosen[person] = (target, period)
         achieved: dict[str, Decimal] = {}
         for company_id in {t.company_id for t, _p in chosen.values()}:
@@ -246,7 +271,7 @@ def build(
     persons, customers, products = list(persons or []), list(customers or []), list(products or [])
     customers, products = inv.uuid_values(customers, "customer"), inv.uuid_values(products, "product")
     user_id = str(user["id"])
-    holds = _check_access(db, user, basis, by, persons, customers, products)
+    holds, own_agents = _check_access(db, user, basis, by, persons, customers, products)
 
     all_grants = _grants(db, user_id)
     grants = all_grants
@@ -268,6 +293,8 @@ def build(
         filters["customer"] = customers
     if products:
         filters["product"] = products
+    if own_agents is not None:
+        filters["sales_agent"] = own_agents or [ask.NO_AGENT_KEY]
 
     run_from, run_to = (date_from, date_to) if date_from else (_OPEN_FROM, _OPEN_TO)
     if open_basis:
@@ -278,7 +305,7 @@ def build(
     def run(frm: date, to: date, group_by: Optional[str], **extra: Any) -> dict[str, Any]:
         return ask.run_ask(
             db, group_by=group_by, date_from=frm, date_to=to, filters=filters, basis=basis,
-            **{"company_grants": grants, "top_n": _TOP if group_by else None, **_RUN, **extra},
+            **{"company_grants": grants, "top_n": None, **_RUN, **extra},
         )
 
     now = run(run_from, run_to, _DIMENSION.get(by, by), also=("customers", "products"))
@@ -291,8 +318,8 @@ def build(
         if by == "person" and r["name"] == inv.NO_AGENT:
             no_agent = _money(r["amount"])
             continue
-        if _money(r["amount"]) == 0:
-            continue
+        if by == "person" and _money(r["amount"]) == 0:
+            continue  # the engine already drops a row with neither qty nor amount; only a person row needs a figure
         ranked.append(r)
     shown = {r["name"]: _BLANK_NAMES.get(by, r["name"]) if r["name"] == engine.BLANK_VALUE else r["name"] for r in ranked}
     ranked.sort(key=lambda r: (-Decimal(str(r["amount"])), shown[r["name"]]))
@@ -318,7 +345,7 @@ def build(
             "products": int(r.get("products") or 0),
         }
         if by == "person":
-            row.update(person=r["name"], codes=sorted(codes.get(r["name"], {r["name"]})), is_me=False, target=None)
+            row.update(person=r["name"], codes=sorted({c for _co, c in codes.get(r["name"], set())} or {r["name"]}), is_me=False, target=None)
         elif by == "customer":
             info = [customer_info[k] for k in r["keys"] if k in customer_info]
             row["code"] = ", ".join(sorted({c for c, _co in info if c}))
@@ -332,7 +359,7 @@ def build(
 
     me = None
     if by == "person":
-        for person, target in _targets(db, grants, {r["person"] for r in rows}, basis, date_from, date_to).items():
+        for person, target in _targets(db, grants, {p: {co for co, _c in codes.get(p, set())} for p in (r["person"] for r in rows)}, basis, date_from, date_to).items():
             next(r for r in rows if r["person"] == person)["target"] = target
         mine = _own_persons(db, user_id)
         found = [row for row in rows if row["person"] in mine]

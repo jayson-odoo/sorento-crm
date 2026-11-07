@@ -598,3 +598,18 @@ describe('P11-1 remember the last setup', () => {
     expect(last().basis).toBe('delivered');
   });
 });
+
+describe('review fix: a view of a thousand rows pages client-side', () => {
+  it('shows one page of the grid and the rest behind the pager and Show more', () => {
+    nav.set('?by=customer');
+    state.respond = () =>
+      board('customer', Array.from({ length: 120 }, (_, i) => customerRow(i + 1, `CUSTOMER ${i + 1}`, [`c-${i}`], `C-${i}`, ['SOR'])));
+    const { container } = render(<LeaderboardView />);
+    expect(trs(container).length).toBe(50);
+    expect(screen.getByText(/1 - 50 of 120/)).toBeTruthy();
+    const list = screen.getByTestId('leaderboard-list');
+    expect(list.querySelectorAll('button').length).toBe(50 + 1);
+    fireEvent.click(within(list).getByRole('button', { name: /Show more \(70\)/ }));
+    expect(list.querySelectorAll('button').length).toBe(100 + 1);
+  });
+});

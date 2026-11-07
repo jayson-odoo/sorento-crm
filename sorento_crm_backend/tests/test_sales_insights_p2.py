@@ -884,3 +884,87 @@ def test_p7_1_crm_report_ask_sales_person_filter_also_works_on_the_order_bases(d
                               date_from="2026-10-01", date_to="2026-10-31")
     assert resp.status_code == 200, resp.text
     assert _money(resp.json()["total"]["amount"]) == expected
+
+
+# ============================================================ review fix round 1
+
+
+def test_r1_no_view_cuts_its_rows_at_a_top_n_so_rows_always_add_up_to_the_total(db, monkeypatch):
+    from app.services.reports import ask
+
+    _world(db)
+    seen = []
+    real = ask.run_ask
+
+    def spy(*args, **kwargs):
+        seen.append((kwargs.get("group_by"), kwargs.get("top_n")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ask, "run_ask", spy)
+    with make_client(db, allow=ALL3) as client:
+        for by in BYS:
+            _ok(client, by=by)
+    grouped = [top for group, top in seen if group]
+    assert grouped and all(top is None for top in grouped)
+
+
+def test_r1_s1_the_own_person_drill_is_narrowed_to_the_callers_own_agents_not_a_label_match(db):
+    s = unique_code("W", alpha=True)[-8:]
+    code = f"ZZT-AG01-{s}"
+    mine = _agent(db, code, person=None, company_id=DEFAULT_COMPANY_ID)
+    theirs = _agent(db, code, person=None, company_id=MOCHA_ID)  # the same code, another company's person
+    impostor = _agent(db, f"ZZT-IMP-{s}", person=code, company_id=DEFAULT_COMPANY_ID)  # labelled with my code
+    c_mine = cust(db, name=f"ZZT Mine {s}", code=f"ZZT-M-{s}")
+    c_theirs = cust(db, name=f"ZZT Theirs {s}", code=f"ZZT-T-{s}", company_id=MOCHA_ID)
+    c_imp = cust(db, name=f"ZZT Impostor {s}", code=f"ZZT-I-{s}")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    other = product(db, company_id=MOCHA_ID)
+    doc(db, "invoice", "100.00", date(2026, 10, 5), customer=c_mine, agent_row=mine, lines=[line(net="100.00", prod=prod)])
+    doc(db, "invoice", "200.00", date(2026, 10, 6), customer=c_theirs, agent_row=theirs, company_id=MOCHA_ID,
+        lines=[line(net="200.00", prod=other)])
+    doc(db, "invoice", "300.00", date(2026, 10, 7), customer=c_imp, agent_row=impostor, lines=[line(net="300.00", prod=prod)])
+    contact = _linked_user(db, mine)
+    db.commit()
+    with make_client(db, allow=(LB,), contact=contact) as client:
+        body = _ok(client, by="customer", person=code)
+        ordered = _ok(client, basis="ordered", by="customer", person=code)
+    assert _by_name(body) == {c_mine.customer_name: D("100.00")}
+    assert _money(body["total"]["amount"]) == D("100.00")
+    assert ordered["rows"] == []
+
+
+def test_r1_n1_a_target_attaches_only_to_a_row_that_has_a_code_in_the_targets_company(db):
+    s = unique_code("W", alpha=True)[-8:]
+    code = f"ZZT-AG02-{s}"
+    in_a = _agent(db, code, person=None, company_id=DEFAULT_COMPANY_ID)  # sold nothing in October
+    in_b = _agent(db, code, person=None, company_id=MOCHA_ID)
+    customer = cust(db, name=f"ZZT B Customer {s}", code=f"ZZT-B-{s}", company_id=MOCHA_ID)
+    doc(db, "invoice", "100.00", date(2026, 10, 5), customer=customer, agent_row=in_b, company_id=MOCHA_ID,
+        lines=[line(net="100.00", prod=product(db, company_id=MOCHA_ID))])
+    _target(db, in_a, basis="invoiced", start=OCT_D[0], end=OCT_D[1], value="5000")
+    db.commit()
+    with make_client(db) as client:
+        rows = {r["person"]: r for r in _ok(client)["rows"]}
+    assert code in rows and rows[code]["target"] is None
+
+
+def test_r1_s3_a_free_item_is_listed_and_the_qty_column_adds_up(db):
+    world = _world(db)
+    free = product(db, company_id=DEFAULT_COMPANY_ID)
+    _order(db, world.a1, world.c1, "retail", "0.00", False, prod=free)
+    db.commit()
+    with make_client(db, allow=ALL3) as client:
+        body = _ok(client, basis="ordered", by="product")
+    row = next(r for r in body["rows"] if r["name"] == free.product_code)
+    assert row["qty"] == 2 and _money(row["amount"]) == D("0")
+    assert sum(r["qty"] for r in body["rows"]) == body["total"]["qty"]
+
+
+def test_r1_person_options_include_inactive_agents(db):
+    from app.services.reports import ask_params as ap
+
+    s = unique_code("W", alpha=True)[-8:]
+    row = _agent(db, f"ZZT-OLD-{s}", person=f"ZZT PAST {s}", company_id=DEFAULT_COMPANY_ID)
+    row.is_active = False
+    db.commit()
+    assert (f"ZZT PAST {s}", f"ZZT PAST {s}") in ap.person_options(db)

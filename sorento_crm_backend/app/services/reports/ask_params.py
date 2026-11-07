@@ -37,7 +37,8 @@ def person_options(db: Any) -> List[Tuple[str, str]]:
     from app.models.sales_agent import SalesAgent
     from app.services.scm.sales_agent_service import scope_filter
 
-    q = db.query(SalesAgent.sales_agent, SalesAgent.person_label).filter(SalesAgent.is_active.is_(True))
+    # Inactive agents too: a past person must stay pickable.
+    q = db.query(SalesAgent.sales_agent, SalesAgent.person_label)
     predicate = scope_filter(get_company_scope(db))
     if predicate is not None:
         q = q.filter(predicate)

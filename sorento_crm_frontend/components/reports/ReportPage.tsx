@@ -466,7 +466,15 @@ export function ReportPage({
       : null;
     const seed = seedRef.current;
     seedRef.current = null;
-    const usable = seed && (!seed.pivot || meta.catalog.some((c) => c.key === seed.pivot?.rows)) ? seed : null;
+    const known = (key: string) => meta.catalog.some((c) => c.key === key);
+    const pivotOk =
+      !seed?.pivot ||
+      (known(seed.pivot.rows) &&
+        known(seed.pivot.cols) &&
+        Array.isArray(seed.pivot.measures) &&
+        seed.pivot.measures.every(known));
+    // An unknown pivot drops only the pivot: the seed's params still apply.
+    const usable = seed ? { params: seed.params, pivot: pivotOk ? seed.pivot : undefined } : null;
     const config = fallback?.view ?? meta.default_view;
     // A report opens on the tab it is read by: the Yearly comparison is its summary.
     if (meta.opens_on) setActiveTab(meta.opens_on);

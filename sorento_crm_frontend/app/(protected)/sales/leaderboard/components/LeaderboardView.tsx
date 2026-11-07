@@ -3,13 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import {
+  ColumnDef,
+  getCoreRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type PaginationState,
+} from '@tanstack/react-table';
 import { Loader2, SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Label } from '@/components/ui/label';
@@ -83,6 +90,7 @@ const NAME_TITLE: Record<LeaderboardBy, string> = {
   channel: 'Channel',
 };
 
+const MOBILE_PAGE = 50;
 const STORAGE_KEY = 'sales-leaderboard-setup';
 
 const NO_CHANNELS = { invoiced: [], delivered: [], ordered: [], outstanding: [] };
@@ -321,9 +329,20 @@ export default function LeaderboardView() {
     return [rank, name, amount, change, count('customers', 'Customers'), ...(dataBy === 'channel' ? [] : [count('products', 'Items')])];
   }, [dataBy, dataBasis, outstanding, showCodes, showTarget]);
 
+  // A view can hold a thousand rows (every customer of a month): the grid pages client-side, the server sends all.
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [mobileShown, setMobileShown] = useState(MOBILE_PAGE);
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    setMobileShown(MOBILE_PAGE);
+  }, [data]);
+
   const table = useReactTable({
     columns,
     data: rows,
+    state: { pagination },
+    onPaginationChange: setPagination,
+    getPaginationRowModel: getPaginationRowModel(),
     getRowId: (row) => String(row.rank),
     getCoreRowModel: getCoreRowModel(),
     // The server returns the ranking; the order is the point.
@@ -417,7 +436,8 @@ export default function LeaderboardView() {
     if (patch) navigate(patch);
   };
 
-  const mobileRows = dataBy === 'person' ? rows.slice(3) : rows;
+  const mobileAll = dataBy === 'person' ? rows.slice(3) : rows;
+  const mobileRows = mobileAll.slice(0, mobileShown);
   const showReportLinks = Boolean(data) || runnable;
 
   return (
@@ -664,6 +684,17 @@ export default function LeaderboardView() {
                     </Row>
                   );
                 })}
+                {mobileAll.length > mobileRows.length ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 w-full"
+                    onClick={() => setMobileShown((n) => n + MOBILE_PAGE)}
+                  >
+                    Show more ({mobileAll.length - mobileRows.length})
+                  </Button>
+                ) : null}
               </div>
 
               <div className="hidden md:block">
@@ -685,6 +716,9 @@ export default function LeaderboardView() {
                     <CardTable>
                       <DataGridTable />
                     </CardTable>
+                    <CardFooter>
+                      <DataGridPagination />
+                    </CardFooter>
                   </Card>
                 </DataGrid>
               </div>

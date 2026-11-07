@@ -227,4 +227,16 @@ describe('ReportPage seed (P5-1)', () => {
     await waitFor(() => expect(runs().length).toBeGreaterThan(0));
     expect(runs()[0][2].pivot.rows).toBe('customer');
   });
+
+  it.each([
+    ['measure', { rows: 'sales_person', cols: 'all', measures: ['amount', 'bogus'] }],
+    ['cols', { rows: 'sales_person', cols: 'bogus', measures: ['amount'] }],
+  ])('a seed with an unknown %s keeps the default pivot and still applies its params', async (_n, pivot) => {
+    nav.seed = JSON.stringify({ params: SEED.params, pivot });
+    render();
+    await waitFor(() => expect(runs().length).toBeGreaterThan(0));
+    expect(runs()[0][2].pivot.rows).toBe('customer');
+    expect(runs()[0][1].brand).toEqual(['b1']);
+    expect(runs()[0][1].sales_person).toEqual(['LCL']);
+  });
 });
