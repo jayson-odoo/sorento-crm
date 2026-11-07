@@ -384,3 +384,146 @@ ping -c 100 -i 0.2 -q <B address> | tail -2
 
 When pasting: replace every address with `<A>`, `<B>` or `private` / `public`, and every CIDR
 with `loopback`, `docker net`, `private` or `public`.
+
+## 9. 8b/8c results (owner, 7 Nov about 11:45): exposure first
+
+Facts:
+- **Node B.**
+  - The CRM compose project in `/opt/sorento-crm2` is NOT running; `docker compose ls` lists only n8n.
+  - The replica is a standalone container `sorento_crm_replica`: `pgvector/pgvector:pg17`, 17.11 (A runs 17.9; same major, so streaming is fine). In recovery, `primary_slot_name=sorento_crm_replica_slot`, `hot_standby_feedback=off`. Published on `127.0.0.1:5433` only.
+  - CRM app: only `sorento_crm_worker` and `sorento_crm_worker_fast`, state Created (never started), old tag `backend-1.0.1`. No backend or frontend.
+  - A host `pgbouncer.service` listens on `0.0.0.0:6432` and `[::]:6432`.
+  - The n8n stack listens on all interfaces: n8n 5678, Redis 6379, Postgres 15 on 5432, MongoDB 27017.
+- **Node A.**
+  - db 5432 is published on `0.0.0.0`. The nft DNAT for 5432 accepts any input interface except the compose bridge (11711 packets). 6432 is DNATed to the pgbouncer container's 5432 too.
+  - 8c's queries ran as `$POSTGRES_USER`, which is not a superuser here, so:
+    - `pg_hba_file_rules` was denied;
+    - `pg_stat_replication.client_addr` and `pg_stat_ssl` read empty. They are hidden from non-superusers, so empty does NOT mean "local socket".
+
+**Corrections to "node B is built".** B holds a streaming replica, but no CRM app runs on it (G15).
+Step 1 on B would be the FIRST start of B's app, not an update. What B's app connects to is the
+active-active design question: A's primary through pgbouncer (#2170), not B's replica.
+
+So:
+- step 1 stays repo-ready;
+- `SSH_HOST_B` waits until B's compose `.env` is reviewed (DATABASE_URL target, REDIS_URL) and B's
+  `DB_SERVICE` question (G14) is settled. The replica is a standalone container, not a compose
+  service, so `DB_SERVICE` cannot name it: G14 needs the small extra change (a `DB_CONTAINER`
+  knob for `docker exec`) in the next PR.
+
+### 9a. Severity
+
+| # | Finding | Severity | Why |
+|---|---|---|---|
+| X1 | A: Postgres 5432 on every interface; nft DNAT from any interface | **CRITICAL until 9b proves the trust rows are loopback only; HIGH after** | A `host replication all <wide CIDR> trust` row would let anyone who reaches 5432 copy the whole database (`pg_basebackup`) with no password. Even with loopback-only trust rows, every role with a password can be guessed from the internet (scram, no rate limit) |
+| X2 | B: n8n Redis 6379 public | **CRITICAL if `redis-cli ping` answers PONG without a password** | an open Redis on the internet allows data reads and writes and is a common host-takeover path (`CONFIG SET dir`) |
+| X3 | B: n8n MongoDB 27017 public | **CRITICAL if it answers without auth** | full read and write of n8n's data |
+| X4 | A: pgbouncer 6432 public (DNAT) | HIGH | the 14 Oct finding (`prod-edge-lockdown.md`); only n8n should reach it |
+| X5 | B: host pgbouncer 6432 public; n8n Postgres 5432 public | HIGH | password guessing; the target behind B's pgbouncer is unknown, possibly A |
+| X6 | replication over eth0, TLS unknown | MEDIUM (HIGH if 9b shows `ssl = f` over a public address) | the whole database crosses the provider network in clear text |
+| X7 | B: n8n UI 5678 public | MEDIUM | n8n has its own login; n8n is being retired |
+
+The Hostinger VPS firewall (`prod-edge-lockdown.md` step 1) may already drop some of these in
+front of the box. Docker's DNAT does not prove a port is reachable from outside. The outside
+connect test in 9b is what decides each severity. Run it first.
+
+### 9b. READ-ONLY block (run before any fix)
+
+On node A:
+
+```bash
+# READ-ONLY: nothing below changes prod. Run as the postgres superuser, as block 5.A did.
+cd /opt/sorento-crm2
+P='docker compose exec -T -u postgres db psql -U postgres -d postgres'
+$P -c "select line_number, type, database, user_name, address, netmask, auth_method
+       from pg_hba_file_rules order by line_number;"
+$P -c "select r.application_name, r.usename, r.client_addr, s.ssl, s.version
+       from pg_stat_replication r left join pg_stat_ssl s using (pid);"
+# Every non-local client, by address and user (the app arrives from the compose network).
+$P -c "select client_addr, usename, count(*) from pg_stat_activity
+       where client_addr is not null group by 1, 2 order by 3 desc;"
+# Who arrives on the published ports (sources of tracked flows), and the current DOCKER-USER chain.
+for p in 5432 6432; do echo "== $p"; sudo conntrack -L -p tcp --orig-port-dst $p 2>/dev/null \
+  | grep -oE 'src=[0-9a-f.:]+' | sort | uniq -c | sort -rn | head; done
+sudo iptables -S DOCKER-USER 2>/dev/null
+ip -brief addr
+```
+
+On node B:
+
+```bash
+# READ-ONLY: nothing below changes prod. Passwords masked.
+docker exec sorento_crm_replica sh -c 'psql -U "${POSTGRES_USER:-postgres}" -d postgres -Atc "show primary_conninfo"' \
+  | sed -E 's/password=[^ ]*/password=***/g'
+docker inspect -f '{{.HostConfig.NetworkMode}}' sorento_crm_replica
+ps -eo args | grep -E '[s]sh .*-[LR]|[a]utossh|[s]tunnel|[s]ocat' | cut -c1-200   # a tunnel to A?
+sudo grep -vE '^\s*(;|#|$)' /etc/pgbouncer/pgbouncer.ini | sed -E 's/password=[^ ]*/password=***/g'
+sudo ss -tn state established '( sport = :6432 )' | awk 'NR>1 {print $4}' | sed -E 's/:[0-9]+$//' | sort | uniq -c
+# n8n stores: does each answer WITHOUT credentials? (PONG / 1 = open; NOAUTH / Unauthorized = protected)
+docker exec n8n-redis redis-cli ping
+docker exec n8n-mongodb mongosh --quiet --eval 'try { db.adminCommand({listDatabases: 1}).ok } catch (e) { e.codeName }'
+for p in 5432 6379 27017 5678 6432; do echo "== $p"; sudo conntrack -L -p tcp --orig-port-dst $p 2>/dev/null \
+  | grep -oE 'src=[0-9a-f.:]+' | sort | uniq -c | sort -rn | head -5; done
+grep -E '^(DATABASE_URL|DIRECT_URL|REDIS_URL)=' /opt/sorento-crm2/.env 2>/dev/null | sed -E 's#://[^@/]*@#://***@#'
+```
+
+From a machine that is on NO allowlist (phone hotspot), one connection attempt per port:
+
+```bash
+for p in 5432 6432; do nc -4 -z -w 5 <A public> $p && echo "A $p OPEN <- FAIL" || echo "A $p closed"; done
+for p in 5432 6379 27017 5678 6432; do nc -4 -z -w 5 <B public> $p && echo "B $p OPEN <- FAIL" || echo "B $p closed"; done
+```
+
+When pasting: keep `client_addr` / `address` as `loopback`, `docker net`, `<B>`, `private` or
+`public`. Paste a "trust" row's CIDR class exactly, because the severity depends on it.
+
+### 9c. Fix plan: THIS CHANGES PROD. Reviewed commands for the owner, in order
+
+Docker-published ports bypass ufw, so the rule goes in `DOCKER-USER` (it sees packets after
+DNAT; `--ctorigdstport` matches the host port the client dialled). Put each rule on the public
+interface (`-i eth0`), so container-to-container traffic is never touched. Every step has its
+rollback beside it. Check after every step: replication still `streaming` (block 5.A), the app
+healthy (`/api/v1/health`), the outside test closed.
+
+1. **Hostinger firewall first (both nodes, 5 minutes, no restart; the outer guard,
+   `prod-edge-lockdown.md` step 1).**
+   - A: accept 22/80/443 from any, 5432 from `<B>` only (replication), 6432 from the hosts 9b's
+     conntrack shows (n8n), nothing else.
+   - B: accept 22 from any, 5678 only if n8n's UI must stay public, nothing else.
+   - Rollback: delete the added rules in hPanel.
+2. **A, `DOCKER-USER` (immediate, no restart):**
+   ```bash
+   # THIS CHANGES PROD. 5432: only B may connect from outside. 6432: only the hosts 9b listed.
+   sudo iptables -I DOCKER-USER -i eth0 -p tcp -m conntrack --ctorigdstport 5432 --ctdir ORIGINAL ! -s <B>/32 -j DROP
+   sudo iptables -I DOCKER-USER -i eth0 -p tcp -m conntrack --ctorigdstport 6432 --ctdir ORIGINAL ! -s <N8N>/32 -j DROP
+   # rollback: the same lines with -D instead of -I
+   ```
+   Persist: `netfilter-persistent save` if the package is installed. Otherwise add the two rules to
+   a oneshot unit `After=docker.service`, as in `n8n-private-path.md:709`. Without persistence a
+   reboot reopens the ports.
+3. **A, pg_hba (reload, no restart), only if 9b shows a `trust` row wider than loopback:**
+   - Delete that row.
+   - Keep `local ... trust`, the loopback rows, and `host replication replicator <B>/32 scram-sha-256`.
+   - Then: `docker compose exec -T -u postgres db psql -U postgres -c 'select pg_reload_conf()'`.
+   - Check: `pg_hba_file_rules` has no `error` column set, and replication reconnects.
+   - Rollback: restore the saved copy (`cp` it aside first) and reload.
+4. **B, `DOCKER-USER` for the n8n stores (immediate, no restart):** n8n reaches its Postgres,
+   Redis and Mongo over its own docker network, so nothing outside needs them unless 9b's
+   conntrack shows a source.
+   ```bash
+   # THIS CHANGES PROD.
+   for p in 5432 6379 27017; do
+     sudo iptables -I DOCKER-USER -i eth0 -p tcp -m conntrack --ctorigdstport $p --ctdir ORIGINAL -j DROP
+   done
+   # rollback: the same with -D
+   ```
+5. **B, host pgbouncer 6432** (not docker, so ufw or `listen_addr` works): after 9b names its
+   clients, set `listen_addr = 127.0.0.1` in `/etc/pgbouncer/pgbouncer.ini` (or `127.0.0.1,<private>`)
+   and `sudo systemctl reload pgbouncer`. If something outside uses it, use
+   `ufw allow from <client> to any port 6432` plus `ufw deny 6432` instead.
+   Rollback: restore the ini and reload.
+6. **Next restart window on A (with G2 `wal_log_hints`, G8 `archive_mode`):**
+   - bind 5432 to loopback plus the private or WireGuard address (`prod-edge-lockdown.md` step 4,
+     `"127.0.0.1:5432:5432"`);
+   - replication over WireGuard (or `hostssl` with a certificate) so it is encrypted (X6);
+   - pin pgbouncer's image (A runs `edoburu/pgbouncer:latest`).
