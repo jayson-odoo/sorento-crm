@@ -71,11 +71,13 @@ register(
             # Amounts owed (AI-TOOLS-WAVE3): AutoCount's figure, shown on the billing documents screen
             # (`CustomerOutstandingMeta.tsx`, `billing_document_query_service.customer_outstanding`), so its slug.
             "ar_outstanding": FieldDef(
-                "Outstanding (RM)", permission=BILLING_VIEW, whole_document=True,
+                "Outstanding (RM)", permission=BILLING_VIEW, whole_document=True, module="finance",
                 note="What the customer still owes, synced from AutoCount; empty = not synced. No ageing buckets are "
                      "available (overdue per invoice: billing_document outstanding with due_date before today).",
             ),
-            "ar_as_of": FieldDef("Outstanding as of", permission=BILLING_VIEW, note="When AutoCount last synced it."),
+            "ar_as_of": FieldDef(
+                "Outstanding as of", permission=BILLING_VIEW, module="finance", note="When AutoCount last synced it.",
+            ),
         },
         name_by=("code", "name"),
         # "Active customers": the Customers list's own Active filter (`order_service._build_customer_list_query`,

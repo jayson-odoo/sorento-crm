@@ -34,6 +34,9 @@ class FieldDef:
     #: or `starts_with` on it names agents (`query.match_agents`, exact first) and matches by that link, as the
     #: agent's own Customers tab does. On a computed entity, True: the "CODE - Name" value is matched exact first.
     agent_id: Callable[[], Any] | bool | None = None
+    #: A module whose switch also gates this field, when the screen showing it belongs to another module than the
+    #: entity (a customer's amount owed is on the finance screen): off = restricted (review, wave 3).
+    module: str | None = None
 
 
 @dataclass(frozen=True)

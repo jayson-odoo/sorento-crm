@@ -74,13 +74,15 @@ def is_approved(project) -> bool:
     return getattr(project, "approval_state", None) in (None, APPROVAL_APPROVED)
 
 
+def approved_clause():
+    """The rows that are projects yet (R4): staff-registered ones and approved portal registrations."""
+    return or_(Project.approval_state.is_(None), Project.approval_state == APPROVAL_APPROVED)
+
+
 def approved_projects(query):
-    """Narrow a `Project` query to the rows that are projects yet (R4): staff-registered
-    ones and approved portal registrations. Every internal path (pickers, validators,
-    reports, the clash check, the sweeps, embeddings) reads through this."""
-    return query.filter(
-        or_(Project.approval_state.is_(None), Project.approval_state == APPROVAL_APPROVED)
-    )
+    """Narrow a `Project` query to the rows that are projects yet (R4). Every internal path (pickers,
+    validators, reports, the clash check, the sweeps, embeddings) reads through this."""
+    return query.filter(approved_clause())
 
 
 # Each opens with the label the project carries in place of a code (R2).

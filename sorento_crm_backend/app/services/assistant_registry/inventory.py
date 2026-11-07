@@ -23,12 +23,18 @@ def _status():
     return stock_status_expr()
 
 
-def _reorder_level():
-    from sqlalchemy import select
+def _product_column(name: str):
+    """A column of the row's product, read on the stock row itself: the code and name the grid shows on every row,
+    and the reorder level its status reads."""
 
-    from app.models.product import Product
+    def expr():
+        from sqlalchemy import select
 
-    return select(Product.reorder_level).where(Product.id == Stock.product_id).correlate(Stock).scalar_subquery()
+        from app.models.product import Product
+
+        return select(getattr(Product, name)).where(Product.id == Stock.product_id).correlate(Stock).scalar_subquery()
+
+    return expr
 
 
 def _screen_rules(db, user_id: str | None = None) -> list:
@@ -59,11 +65,13 @@ register(
         model=Stock,
         view_permission=STOCK_VIEW,
         fields={
+            "product_code": FieldDef("Product code", expr=_product_column("product_code")),
+            "product_name": FieldDef("Product name", expr=_product_column("product_name")),
             "quantity_on_hand": FieldDef("Quantity", note="On hand in that warehouse."),
             "quantity_reserved": FieldDef("Reserved"),
             "quantity_available": FieldDef("Available", note="On hand minus reserved; the figure status reads."),
             "quantity_damaged": FieldDef("Damaged"),
-            "reorder_level": FieldDef("Reorder level", expr=_reorder_level, note="The product's reorder level."),
+            "reorder_level": FieldDef("Reorder level", expr=_product_column("reorder_level"), note="The product's reorder level."),
             "status": FieldDef(
                 "Status", expr=_status,
                 note="critical (nothing available), low (under the reorder level), overstock (over twice it) or "
@@ -72,7 +80,8 @@ register(
             "last_count_date": FieldDef("Last counted"),
         },
         relations={"product": ("product", "product_id"), "warehouse": ("warehouse", "warehouse_id")},
-        list_fields=("product.product_code", "warehouse.code", "quantity_available", "status"),
+        name_by=("product_code", "product_name"),
+        list_fields=("warehouse.code", "quantity_available", "status"),
         pages=("/inventory-management/stock",),
         routes=("GET /api/v1/inventory/stock/balance",),
         scope=_screen_rules,

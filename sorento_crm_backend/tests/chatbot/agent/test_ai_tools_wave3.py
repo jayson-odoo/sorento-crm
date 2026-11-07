@@ -122,8 +122,11 @@ def test_ST2_status_equals_the_grid_property_on_every_edge(stock):
     from app.models.inventory import Stock
 
     db, _cid, t, rows = stock
+    zero, negative = _product(db, _cid, t["p1"].category_id), _product(db, _cid, t["p1"].category_id)
+    zero.reorder_level, negative.reorder_level = 0, -3
+    db.flush()
     for case in ((0, 0), (0, 5), (3, 0), (10, 0), (21, 0), (20, 0), (-2, 0)):
-        for product in (t["p1"], t["p2"]):
+        for product in (t["p1"], t["p2"], zero, negative):
             rows[f"x{case}{product.id}"] = _stock(db, _cid, product, _warehouse(db, _cid), on_hand=case[0], reserved=case[1])
     out = run(db, {"entity": "stock", "fields": ["status"], "limit": 50})
     by_id = {r["id"]: r["status"] for r in out["rows"]}
@@ -190,6 +193,27 @@ def test_AR1_who_owes_us_the_most_needs_the_billing_screen(world, grant):
     assert refused(db, {"entity": "customer", "sort": [{"field": "ar_outstanding", "dir": "desc"}]}).code == "restricted"
     plain = run(db, {"entity": "customer", "filters": [{"field": "name", "op": "eq", "value": "ZZT AR A"}]})
     assert "ar_outstanding" not in plain["rows"][0]
+
+
+def test_AR3_amount_owed_follows_the_finance_module_switch(world, grant, monkeypatch):
+    """The figure is on the finance screen (module `finance`), the customer list is module `order`: with finance
+    switched off, the amount owed is restricted as the screen is gone (review, wave 3)."""
+    from app.services.assistant_registry import query
+
+    db, company_id = world
+    c = _customer(db, company_id, "ZZT AR FIN")
+    c.ar_outstanding = Decimal("50")
+    db.flush()
+    grant(CUSTOMERS_VIEW, BILLING_VIEW)
+    monkeypatch.setattr(query, "_module_blocked", lambda db, user_id, module: module == "finance")
+    spec = {"entity": "customer", "fields": ["ar_outstanding"], "filters": [{"field": "name", "op": "eq", "value": "ZZT AR FIN"}]}
+    out = run(db, spec)
+    assert out["restricted"] == ["ar_outstanding"] and "ar_outstanding" not in out["rows"][0]
+    assert refused(db, {**spec, "sort": [{"field": "ar_outstanding", "dir": "desc"}]}).code == "restricted"
+    fields = {f["field"]: f for f in query.describe(db, str(uuid.uuid4()), "customer")["fields"]}
+    assert fields["ar_outstanding"].get("restricted") is True
+    monkeypatch.setattr(query, "_module_blocked", lambda db, user_id, module: False)
+    assert run(db, spec)["rows"][0]["ar_outstanding"] == 50.0
 
 
 def test_AR2_ageing_is_not_offered(world, grant):
@@ -319,15 +343,21 @@ def projects(world, grant):
         "other": _project(db, company_id, owner=other.id, title="ZZT P other", value="20000"),
         "my_draft": _project(db, company_id, owner=me.id, title="ZZT P my draft", approval_state="draft"),
         "their_draft": _project(db, company_id, owner=other.id, title="ZZT P their draft", approval_state="draft"),
+        "pending": _project(db, company_id, owner=me.id, title="ZZT P pending", approval_state="pending", value="9"),
+        "approved": _project(db, company_id, owner=other.id, title="ZZT P approved reg", approval_state="approved"),
     }
     return db, company_id, {"me": me, "other": other, "stage": stage, "rows": rows}
 
 
-def test_PR1_drafts_only_to_their_owner(projects):
+def test_PR1_approved_projects_only_and_said(projects):
+    """PROJECT-REG-PORTAL R4: the AI read tools never answer about a registration waiting for approval, so a draft
+    (even the viewer's own), a pending and a rejected registration stay out; a staff project and an approved
+    registration are in, and the result says what was left out."""
     db, _cid, t = projects
     out = run(db, {"entity": "project", "filters": [{"field": "title", "op": "starts_with", "value": "ZZT P"}],
                    "fields": ["title"], "limit": 50}, user_id=t["me"].id)
-    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
+    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P approved reg"}
+    assert "Registrations not yet approved excluded." in out["scope_note"]
 
 
 def test_PR2_project_fields_and_value_per_owner(projects):
@@ -350,7 +380,8 @@ def test_PR3_own_only_holder_sees_owned_and_collaborated(projects, grant, monkey
     db.flush()
     _me(monkeypatch, t["me"].id)
     out = run(db, {"entity": "project", "fields": ["title"], "limit": 50}, user_id=t["me"].id)
-    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other", "ZZT P my draft"}
+    # Owned and collaborated; their own pending registration stays out (R4).
+    assert {r["label"].split(": ", 1)[1] for r in out["rows"]} == {"ZZT P mine", "ZZT P other"}
     stranger = str(uuid.uuid4())
     _me(monkeypatch, stranger)
     assert run(db, {"entity": "project"}, user_id=stranger)["rows"] == []
@@ -386,3 +417,27 @@ def test_IX1_new_entities_are_in_the_compact_index():
     for key in ("stock", "opportunity", "project"):
         assert any(line.startswith(f"{key} (") for line in index.splitlines()), key
     assert "ar_outstanding" in index
+
+
+def test_ST6_a_relation_into_stock_is_refused_off_the_panel_too(stock, grant, monkeypatch):
+    """Security review (wave 3): a later relation into a panel-only entity must not be a side door off the panel,
+    in a query or in crm_describe."""
+    import dataclasses
+
+    from app.services.assistant_registry import ENTITIES
+    from app.services.assistant_registry.query import describe
+
+    db, *_ = stock
+    grant(STOCK_VIEW, "master_data.products.view")
+    product = ENTITIES["product"]
+    monkeypatch.setitem(ENTITIES, "product", dataclasses.replace(
+        product, relations={**product.relations, "stock_row": ("stock", "id")},
+    ))
+    exc = refused(db, {"entity": "product", "filters": [{"field": "stock_row.quantity_on_hand", "op": "gt", "value": 0}]},
+                  panel=False)
+    assert exc.code == "restricted" and "crm_inventory_stock_balance_list" in exc.message
+    shown = run(db, {"entity": "product", "fields": ["stock_row.quantity_on_hand"]}, panel=False)
+    assert shown["restricted"] == ["stock_row.quantity_on_hand"]
+    assert all("stock_row.quantity_on_hand" not in r for r in shown["rows"])
+    assert "stock_row" not in describe(db, str(uuid.uuid4()), "product")["relations"]
+    assert "stock_row" in describe(db, str(uuid.uuid4()), "product", panel=True)["relations"]

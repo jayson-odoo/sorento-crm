@@ -5,8 +5,10 @@ Opportunities: `sales.opportunities.view`, or `.view_own` for the opportunities 
 (`opportunity_service.list_opportunities`).
 
 Projects: `projects.projects.view`, or `.view_own` for projects the user owns, collaborates on or registered
-through their contact (`own_scope.project_clause`, as `project_service.list_projects`). A draft is shown only to its
-owner (`project_service._draft_visible_to`). Quotations are wave 4: they have no company-wide list and their value
+through their contact (`own_scope.project_clause`, as `project_service.list_projects`). Approved projects only: the
+AI read tools never answer about a registration waiting for approval (PROJECT-REG-PORTAL R4,
+`api/v1/projects/projects.py` `_MACHINE_AUTH_METHODS`, `project_service.approved_clause`), so drafts, pending and
+rejected registrations stay out, and every result says so. Quotations are wave 4: they have no company-wide list and their value
 is computed from versions.
 """
 from __future__ import annotations
@@ -44,9 +46,9 @@ def _project_own(m):
 
 
 def _project_rules(db, user_id: str | None = None) -> list:
-    from app.services.project_service import _draft_visible_to
+    from app.services.project_service import approved_clause
 
-    return [_draft_visible_to(user_id)]
+    return [approved_clause()]
 
 
 def _project_owner():
@@ -121,7 +123,7 @@ register(
             "loss_reason": FieldDef("Loss reason"),
             "estimated_value": FieldDef("Estimated value", expr=_estimated_value),
             "owner": FieldDef("Owner", expr=_project_owner, note="The staff member who owns the project."),
-            "approval_state": FieldDef("Approval", note="draft, pending, resubmitted, rejected, approved or empty."),
+            "approval_state": FieldDef("Approval", note="approved or empty (a staff project); others are not read."),
             "is_critical": FieldDef("Critical"),
             "last_meaningful_activity_at": FieldDef("Last activity"),
             "created_at": FieldDef("Created at"),
@@ -132,7 +134,8 @@ register(
         scope=_project_rules,
         screen_path="/project-sales/{id}",
         pages=("/project-sales",),
-        routes=("GET /api/v1/projects/projects",),
+        routes=("GET /api/v1/project-sales/projects/",),
+        always_note="Registrations not yet approved excluded.",
         hint="projects (project sales pipeline): stage, outcome, estimated value, owner, critical",
     ),
 )
