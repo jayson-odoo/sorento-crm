@@ -514,6 +514,11 @@ def design_media(
         for part in row.get("parts") or []:
             for image in part.get("images") or []:
                 images[image["attachment_id"]] = image["url"]
+        # PRICETAG-ACCESSORIES: the accessories box draws each accessory's own picture.
+        for item in row.get("accessories") or []:
+            image = item.get("image")
+            if image and image.get("attachment_id") and image.get("url"):
+                images[image["attachment_id"]] = image["url"]
 
     # Feature icons (contract B5): a feature_icons layer draws whichever library icons the
     # subject's specs match, so every rule-carrying icon travels with the media, signed.

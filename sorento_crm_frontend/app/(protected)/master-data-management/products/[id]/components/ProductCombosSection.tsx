@@ -5,10 +5,8 @@ import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-rea
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
-import { Textarea } from '@/components/ui/textarea';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { RichTextView } from '@/components/dealer-kit/RichTextView';
@@ -39,6 +37,7 @@ import type {
 import { AddComboModal } from './AddComboModal';
 import { ComboTagPreview } from './ComboTagPreview';
 import { ComboTemplatesField } from './ComboTemplatesField';
+import { AccessoryListField } from './AccessoryListField';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
 /** Server-searched and PAGED, never one cached page: the catalogue is 22,000 rows. */
@@ -124,40 +123,6 @@ function MoneyField({
           if (draft !== saved) onSave(draft, () => setDraft(saved));
         }}
       />
-    </div>
-  );
-}
-
-/** A text box that saves on blur, and only when the text changed. Empty saves null. */
-function TextField({
-  id,
-  label,
-  value,
-  onSave,
-  multiline,
-  maxLength,
-}: {
-  id: string;
-  label: string;
-  value: string | null | undefined;
-  onSave: (next: string | null, revert: () => void) => void;
-  multiline?: boolean;
-  /** The server refuses longer text, so the box stops it instead of reverting a long paste. */
-  maxLength?: number;
-}) {
-  const saved = value ?? '';
-  const [draft, setDraft] = useState(saved);
-  const commit = () => {
-    if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
-  };
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {multiline ? (
-        <Textarea id={id} rows={3} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      ) : (
-        <Input id={id} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
-      )}
     </div>
   );
 }
@@ -604,13 +569,7 @@ function ComboBlock({
             />
           </div>
           <div className="sm:col-span-2">
-            <TextField
-              id={`${combo.id}-free-items`}
-              label="Free items"
-              value={combo.free_items}
-              onSave={(next, revert) => onComboWrite({ free_items: next }, revert)}
-              maxLength={2000}
-            />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit />
           </div>
         </div>
       ) : (
@@ -622,7 +581,7 @@ function ComboBlock({
             <RichTextView value={combo.description} />
           </div>
           <div className="sm:col-span-2">
-            <ReadOnlyField label="Free items" value={combo.free_items} />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit={false} />
           </div>
         </div>
       )}

@@ -872,17 +872,14 @@ def test_r1_c_a_frame_does_not_make_a_one_row_axis_over_a_one_value_slot_a_break
 def test_r1_b_a_frame_on_an_open_question_reply_does_not_swap_the_held_axis(rbot, world, frame) -> None:
     """C6-2(b) (turn f26a5645) with `frame` on the object: the reply "invoiced" answers the open question; the object swapped
     month for sales_agent. The held month stays."""
-    from tests.chatbot.test_report_all_companies_r7 import _sorento_type
-
-    sorento, _m = world
-    _sorento_type(rbot)
+    sorento, _m = world  # the asked word is CABANA (a brand and a stored type, no company: REPORT-FILTER-ALL round 4)
     ra = _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"],
-             brand_or_account_type=["SORENTO"], **Y26)
+             brand_or_account_type=["CABANA"], **Y26)
     v = _v("sales_analysis", ra, _ent(AGENT_1, "sales_agent"), _ent("ceramic", "account_type", None, "account type"),
-           _ent("sorento", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
+           _ent("cabana", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
            domain_in_message=True, **Y26F)
-    text, calls = rbot.say(v, "agent a ceramic account type sorento by month 2026 invoiced")
-    assert not _ran(calls) and "brand, account type or company?" in text.lower(), f"setup: {text!r} {calls}"
+    text, calls = rbot.say(v, "agent a ceramic account type cabana by month 2026 invoiced")
+    assert not _ran(calls) and "brand or account type?" in text.lower(), f"setup: {text!r} {calls}"
     # The new axis is NOT over a one-value slot (no single agent or customer filter), so only the fresh-ask clause
     # (`open_question_answer.mode is None`) can keep the held month from being swapped.
     ra2 = _ra(basis="invoiced", group_by="customer", company=sorento, sales_agents=[], account_types=[], **Y26)

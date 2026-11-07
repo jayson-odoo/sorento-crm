@@ -37,6 +37,7 @@ class StorageBackend(Protocol):
         file_path: str,
         content_type: Optional[str] = ...,
         signed_url_expires_in: int = ...,
+        cache_control: Optional[str] = ...,
     ) -> tuple[str, str]: ...
 
     def upload_fileobj(
@@ -64,6 +65,17 @@ def sanitize_storage_filename(name: Optional[str]) -> str:
         c for c in (name or "") if c.isalnum() or c in (" ", "-", "_", ".")
     ).strip()
     return base or "file"
+
+
+def replace_storage_key(entity_type: str, attachment_id: str, basename: str, content_sha256: str) -> str:
+    """Key for the NEW bytes of a replaced attachment: never the key it had.
+
+    Renditions beside a key are cached for a year as immutable (IMAGE-UNIFY, crew ruling (b) on
+    #2133), so overwriting an original in place would leave every CDN and browser showing the old
+    picture. The content hash makes the key differ whenever the bytes do, and replacing with the
+    same bytes again lands on the same key. The old objects are left for a cleanup job.
+    """
+    return f"{entity_type}/{attachment_id}/v-{content_sha256[:16]}/{basename}"
 
 
 def normalize_provider(value: Optional[str]) -> str:
@@ -417,6 +429,14 @@ def delete_object_best_effort(provider: str, key: str) -> None:
         get_backend(provider).delete_file(k)
     except Exception as e:  # noqa: BLE001
         logger.warning("delete_object_best_effort: delete of %s failed (orphan left): %s", k, e)
+    # An image original has a medium rendition beside it (IMAGE-UNIFY) that no caller knows to
+    # delete; the thumb is already deleted by the callers that keep one. A non-image has none, and
+    # deleting an absent object is a no-op.
+    if not k.endswith((".thumb.jpg", ".medium.jpg")):
+        try:
+            get_backend(provider).delete_file(f"{k}.medium.jpg")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("delete_object_best_effort: delete of %s.medium.jpg failed: %s", k, e)
 
 
 def _looks_signed(url: str) -> bool:

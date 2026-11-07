@@ -127,7 +127,30 @@ def test_mcp_tool_catalog_is_readable_from_the_backend_alone():
 
 
 # ---------------------------------------------------------------------------
-# LESSON 122: "A line matched only by its foreign key reads a re-key as a removal".
+# LESSON 122: a post-commit side effect opens a fresh `SessionLocal()` with NO
+# company scope (UNSET, fail-closed: 0 rows), and conftest's after_begin default
+# hides it in tests. OI-ROUTE-BY-RAISER's handover rows read `raised_by`;
+# `_queue_saved_line` queued no `raised_by` and the header fallback read it on
+# that fresh session, so every saved-line Confirm (qty / date / donor moves)
+# emailed nobody on prod for three days (OI-SAVED-LINE-RAISER-HOTFIX, 7 Nov 2026).
+# Behaviour: tests/test_oi_saved_line_raiser_route.py.
+# ---------------------------------------------------------------------------
+
+def test_saved_line_handover_items_carry_their_raiser_and_the_fallback_reads_unscoped():
+    """Both legs of the fix: the item names its raiser, and the fallback never reads scoped."""
+    import inspect
+
+    from app.services import project_order_inquiry_service as svc
+
+    queue_src = inspect.getsource(svc.ProjectOrderInquiryService._queue_saved_line)
+    assert '"raised_by":' in queue_src, "_queue_saved_line must put raised_by on its item"
+    groups_src = inspect.getsource(svc.handover_route_groups)
+    assert "company_scope(db, None)" in groups_src, (
+        "handover_route_groups' OI-header fallback must read unscoped: its post-commit "
+        "session carries no company scope"
+    )
+
+# LESSON 123: "A line matched only by its foreign key reads a re-key as a removal".
 # SO398322, 4 Nov 2026: an AutoCount re-save gave line Seq 2552 (118 @ 19.35, nothing else
 # changed) a new DtlKey. Ingest matched SO lines only by `source_ref`, so it cancelled the
 # old line, retired its order inquiry row, queued the purchasing handover email and created
@@ -212,7 +235,7 @@ def _capture_every_dispatch(monkeypatch) -> list:
     return calls
 
 
-def test_lesson_122_an_autocount_rekeyed_so_line_is_the_same_line(env, monkeypatch):
+def test_lesson_123_an_autocount_rekeyed_so_line_is_the_same_line(env, monkeypatch):
     """Same SO, Seq, item, qty, price, location and delivery date, nothing delivered, new
     DtlKey: the line keeps its row, its project line and its OI row, and nothing is sent."""
     from sqlalchemy import text
@@ -277,7 +300,7 @@ def _seed_do_on(env, core):
     "case",
     ["old_line_delivered", "do_against_old_line", "different_qty", "different_delivery_date"],
 )
-def test_lesson_122_guard_cases_stay_a_removal(env, case):
+def test_lesson_123_guard_cases_stay_a_removal(env, case):
     """The owner's guards (6 Nov): delivered qty, a DO against the old line, a different qty
     or delivery date. The old line is cancelled under its old key and the push's line is a
     new row: never paired."""

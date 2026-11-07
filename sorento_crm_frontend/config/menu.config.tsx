@@ -165,6 +165,12 @@ const STAFF_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Leaderboard',
+        path: '/sales/leaderboard',
+        permission: 'sales.leaderboard.view',
+        moduleKey: 'sales',
+      },
+      {
         title: 'Sales Agents',
         path: '/master-data-management/sales-agents',
         permission: 'master_data.sales_agents.view',
@@ -600,6 +606,11 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             title: 'Spec Verification',
             path: '/master-data-management/spec-verification',
+            permission: 'master_data.products.view',
+          },
+          {
+            title: 'Accessories',
+            path: '/master-data-management/accessories',
             permission: 'master_data.products.view',
           },
           {
@@ -2013,6 +2024,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     {
       title: 'Spec Verification',
       path: '/master-data-management/spec-verification',
+      permission: 'master_data.products.view',
+    },
+    {
+      title: 'Accessories',
+      path: '/master-data-management/accessories',
       permission: 'master_data.products.view',
     },
     {

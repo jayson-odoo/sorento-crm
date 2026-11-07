@@ -321,7 +321,11 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // PROPOSAL-HEADER-LAYOUT (#2194): the Lines tab is gone and its grid sits on the Header tab,
     // so `[documentId]/(view)/lines` (now a redirect) is replaced by `[documentId]/(view)`
     // (bodyOnly, see BODY_ONLY_SEGMENTS). Total unchanged: 170.
-    expect(requiredSegmentNames.length).toBe(170);
+    // PRICETAG-ACCESSORIES: `master-data-management/accessories` is a new DataGrid list segment
+    // with its own `loading.tsx` (ListPageSkeleton). Total: 171.
+    // SALES-LEADERBOARD (#2227): `sales/leaderboard` is a new DataGrid segment with its own `loading.tsx`
+    // (ListPageSkeleton). Total: 172.
+    expect(requiredSegmentNames.length).toBe(172);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

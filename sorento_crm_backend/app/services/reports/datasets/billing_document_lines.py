@@ -199,6 +199,9 @@ ASK_COLUMNS = tuple(
 ) + (
     # The account type split and filter (SALES-ACCOUNT-TYPE): the ask's copy only, so Top selling items is unchanged.
     reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
+    # The sales leaderboard's grouping (SALES-LEADERBOARD): codes sharing a person_label are one person.
+    reg.Column("sales_person", "Sales person", "text", "dimension",
+               lambda c: sa.func.coalesce(inv.person_label(), inv.NO_AGENT), size=140, hidden=True),
 )
 
 DATASET = reg.Dataset(

@@ -372,7 +372,11 @@ def _open_page_env(db, monkeypatch, original: bytes):
             extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
         }
     )
+    from app.services import image_thumbnailer, storage_router
+
+    # IMAGE-UNIFY: renditions are made and signed by the rendition service through storage_router.
     monkeypatch.setattr(images, "get_backend", lambda provider: store)
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: store)
     signed = []
 
     def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
@@ -380,7 +384,8 @@ def _open_page_env(db, monkeypatch, original: bytes):
         return f"https://signed.zzt.test/{source}"
 
     monkeypatch.setattr(images, "resolve_signed_url", fake_sign)
-    images._medium_cache.clear()
+    monkeypatch.setattr(storage_router, "resolve_signed_url", fake_sign)
+    image_thumbnailer.reset_rendition_memo()
     return c, sheet, photo, drawing, store, signed
 
 
@@ -641,7 +646,10 @@ def test_a_picture_with_no_thumbnail_reads_its_original_once_and_saves_a_thumbna
         first = qdocs.serialize_sign_page(db, issued)
         assert first["scopes"][0]["lines"][0]["image_url"].startswith("data:image/jpeg;base64,")
         assert store.keys and not any("thumb" in k for k in store.keys)
-        assert len(store.uploads) == 2
+        # IMAGE-UNIFY: the missing thumbnail is made with its medium (one decode), per original.
+        assert len(store.uploads) == 4
+        assert sum(k.endswith(".thumb.jpg") for k in store.uploads) == 2
+        assert sum(k.endswith(".medium.jpg") for k in store.uploads) == 2
 
         line = first["scopes"][0]["lines"][0]
         assert line["drawing_url"]
@@ -867,13 +875,19 @@ def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
 
         assert set(out["images"]) == {photo.id, drawing.id}
         assert all(".medium.jpg" in url for url in out["images"].values())
-        assert not any(s in (photo.file_path, drawing.file_path) for s in signed)
-        medium = next(k for k in store.uploads if k.startswith("products/") and "basin.png" in k)
+        # `signed` holds storage KEYS; compare keys, so this can actually fail (review nit).
+        from app.services.storage_router import extract_key
+
+        originals = {extract_key(photo.file_path), extract_key(drawing.file_path)}
+        assert originals and not originals & set(signed)
+        medium = next(k for k in store.uploads if k.endswith("basin.png.medium.jpg"))
         with Image.open(io.BytesIO(store.uploads[medium])) as im:
             assert max(im.size) == images.MEDIUM_BOX == 1024
 
         # Made once: a later open signs the stored rendition without reading the original.
-        images._medium_cache.clear()
+        from app.services import image_thumbnailer
+
+        image_thumbnailer.reset_rendition_memo()
         store.downloads.clear()
         spec.page_images(db, sheet, c["basin"].id)
         assert store.downloads == []
@@ -963,12 +977,16 @@ def test_the_asset_list_carries_a_thumb_url_that_is_never_the_original(monkeypat
         thumbed_att = db.get(Attachment, db.get(Asset, thumbed.id).attachment_id)
         thumbed_att.thumbnail_path = "https://cdn.zzt.test/library/logo-thumb.jpg"
         store = _MediumStore({extract_key(plain_att.file_path): _big_jpeg(4000, 3000)})
+        from app.services import image_thumbnailer, storage_router
+
+        # IMAGE-UNIFY: renditions are made and signed through storage_router.
+        def sign(source, *, provider=None, expires_in=3600, strict=False):
+            return f"https://signed.zzt.test/{source}"
+
         monkeypatch.setattr(images, "get_backend", lambda provider: store)
-        monkeypatch.setattr(
-            images,
-            "resolve_signed_url",
-            lambda source, *, provider=None, expires_in=3600, strict=False: f"https://signed.zzt.test/{source}",
-        )
+        monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+        monkeypatch.setattr(images, "resolve_signed_url", sign)
+        monkeypatch.setattr(storage_router, "resolve_signed_url", sign)
         from app.services.dealer_kit import asset_service
 
         monkeypatch.setattr(
@@ -976,8 +994,8 @@ def test_the_asset_list_carries_a_thumb_url_that_is_never_the_original(monkeypat
             "resolve_signed_url",
             lambda source, *, provider=None, expires_in=3600, strict=False: f"https://signed.zzt.test/ORIGINAL/{source}",
         )
-        images._medium_cache.clear()
-        images._url_cache.clear()
+        image_thumbnailer.reset_rendition_memo()
+        storage_router.clear_signed_url_cache()
         db.commit()
         with company_scope(db, frozenset({c["company_id"]})):
             client, originals = _client(db, c["owner"], slugs=["dealer_kit.library.manage"])

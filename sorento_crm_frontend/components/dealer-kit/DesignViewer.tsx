@@ -23,6 +23,7 @@ import DesignLightbox, { type DesignDownload } from './DesignLightbox';
 import type { DesignReview } from './DesignPinLayer';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
+import { accessoryDrops } from '@/lib/dealer-kit/accessory-drops';
 import { FeatureIconDropWarning } from './FeatureIconDropWarning';
 
 interface DesignViewerProps {
@@ -113,6 +114,11 @@ export default function DesignViewer({
       ),
     [payload],
   );
+  // PRICETAG-ACCESSORIES (A6): accessories whose box is too small, the same warning.
+  const accDrops = useMemo(
+    () => accessoryDrops(payload?.doc ?? null, (tagId) => payload?.resolvedData?.[tagId] ?? null),
+    [payload],
+  );
 
   const body = () => {
     if (loading) return <SectionSkeleton rows={6} />;
@@ -187,7 +193,7 @@ export default function DesignViewer({
           </div>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {!loading && <FeatureIconDropWarning drops={iconDrops} className="mb-2" />}
+          {!loading && <FeatureIconDropWarning drops={iconDrops} accessoryDrops={accDrops} className="mb-2" />}
           {body()}
           {footer}
         </CardContent>
