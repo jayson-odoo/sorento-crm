@@ -208,3 +208,40 @@ InspectorPanel box section (Edit card, Save as template, Detach); AccessoryListF
 
 - Per-accessory own layout (v3 Q2): later lane when a real tag needs it.
 - Shrink minimum editable per box: shown fixed at 70% until asked.
+
+## S6 Layout flexibility (owner ruling 08/11/2026 ~02:10, option (a))
+
+Built after the hand-test fix (card layout lost after Done). No new mock (existing components).
+
+### Columns
+- `AccessoriesLayerProps.columns?: 'auto' | 1 | 2 | 3 | 4`. Absent = today's behaviour (vertical = 1 column,
+  horizontal = one row), so saved boxes do not move. Card path only; the inspector shows "Columns" with a
+  SearchableSelect (Auto, 1, 2, 3, 4); choosing one on a box without a card converts it (cardFromLegacy, as Edit card).
+- Grid: cards fill left to right, then wrap to the next row (7 items in 4 columns = 4 + 3). Rows are left aligned,
+  every card the same size. Auto: the most columns that fit the box's inner width at scale 1 (`floor((innerW + gap) /
+  (cardW + gap))`), at least 1, at most the item count.
+- Fit is the same rule as today: one uniform scale for every card so the grid fits width AND height (footer under the
+  grid), never below 70%; below that only whole cards print, in reading order, and the drop warning shows.
+- One layout function: `cardBoxLayout` gains the grid; canvas, request preview and print keep calling it.
+
+### Hide when empty
+Already the rule (V7): picture, name, code, spec, remark, price and colour dots each hide for an accessory with no
+value. Tests must prove it on the SAVED and reloaded layout (the bug that lost the layout after Done hid this).
+
+### Box style override per product / per combo
+- `products.accessory_box_preset_id` and `product_combos.accessory_box_preset_id` (FK
+  `dealer_kit.accessory_box_preset` ON DELETE SET NULL, NULL = the tag template's own box). Additive migration.
+- UI: on the product's and each combo's "Accessories included" section, a "Box style" SearchableSelect (clearable):
+  empty = "Tag template's own box", else a saved accessories template. Saved through the same list endpoints:
+  `GET|PUT /products/{id}/accessories` and `/product-combos/{id}/accessories` gain `box_style_id` (read and write;
+  omitted on PUT = unchanged, null = cleared; another company's or unknown id = 404).
+- Resolution, ONE function each side (a category default may be added later: product -> category -> template):
+  - BE `accessory_service.box_style_for(db, *, product_id=None, combo_id=None)` returns `{id, name, design} | None`.
+  - Every place the tag payload carries an `accessories` list also carries `accessory_box_style` for the same owner
+    (product data, combo object, request line row = its combo's else its product's, parts / slots = that product's).
+    Pinned rows freeze it with the list; a row pinned before reads null.
+  - FE `accessoryBoxStyleOf(data, layer)` in `accessory-card.ts`, branching exactly like `accessoriesOf`; the
+    renderers draw `applyAccessoryDesign(layer.props, style.design, layer.props.presetId)` when a style resolves,
+    keeping the box's position, size and "Reads from". The editor canvas shows the override too when previewing that
+    product / combo, with an inspector note "Box style from <product or combo>: <name>".
+- Deleting a saved accessories template clears the overrides (SET NULL); those tags fall back to the template's box.
