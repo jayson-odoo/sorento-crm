@@ -3,7 +3,7 @@
 Status: card filed 7 Nov 2026; mock v2 after the owner's v1 notes ("multi select at product code field just like
 current form"), which also settle Q1 (a). Q2-Q5 wait for the owner. Size L, full track (additive migration,
 portal surface). Issue #2200. Builds on NEW-PRODUCT-APP (#1769, merged 22 Oct).
-Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Mock: `mockups/npa-from-si-v2.html` (v1 kept for the record).
+Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Mock: `mockups/npa-from-si-v3.html` (v1, v2 kept for the record).
 
 **Waits for the product manager's artifact** (not readable from the lane sandbox): the exact field list of the
 "third example" layout, any status the PM wants beyond the shipped ones, and whether "the same change" (not only
@@ -53,17 +53,16 @@ the same codes) is part of the reuse match. Everything marked (ART) below is a d
    remove the SI's file too (the generic portal attachment delete), so it needs its own link-only path; today the
    applicant attaches files as before. Dimension / material / brand are NOT on the SI today (`models/procurement.py:1061-1069`), so they stay
    empty (ART: if the PM wants them asked on the SI, that is an SI change, follow-up).
-4. **Current codes -> one new code** (Q1 (a), owner v1 notes). The form stays today's form: the existing
-   **Product code** cell of the line table (`components/common/NewProductApplicationLines.tsx:93,115`, an `Input`
-   today) becomes a `SearchableMultiSelect` (`components/common/SearchableMultiSelect.tsx`) of catalogue codes,
-   one or many = the CURRENT codes; empty = a brand-new item. Same product search as Link product (ignores dashes,
-   spaces, case; only lists; a person picks). No extra column. The line's NEW code stays what purchasing links
-   (`opened_product_id`): exactly one per line, shown as `CBM111-BL -> CBM111-BL-69` once linked. The old free-text
-   `proposed_code` stays in the table (no drop) but leaves the form; when the SI's code text did not equal one
-   catalogue code, it shows read-only under the cell as "Inquiry asked: <text>" so nothing the salesperson typed on
-   the SI is lost (never parsed).
-5. **Lineage is remembered.** Stored as rows `new_product_application_line_sources (line_id, product_id, position)`.
-   Lineage = a resolved line: its sources -> its opened product, why = the line's PRODUCT TYPE text + the NPA
+4. **PRODUCT CODES -> ONE NEW PRODUCT CODE** (owner, mock v3 notes). Header rows, the product table unchanged:
+   **PRODUCT CODES** directly under STOCK INQUIRY is one `SearchableMultiSelect` of catalogue codes (the CURRENT
+   codes; one or many; empty = a brand-new item), the same product search as purchasing's (ignores dashes, spaces,
+   case; only lists; a person picks). **NEW PRODUCT CODE** under REMARK is ONE field: read-only for the applicant
+   ("Purchasing fills this in when the code is created."); purchasing links the product AutoCount sent, or marks
+   Not opening with a reason; either completes the application; Undo returns it to Approved (Q1').
+   The product table is today's form (`components/common/NewProductApplicationLines.tsx:92-102`), no change.
+5. **Lineage is remembered.** Stored as rows `new_product_application_sources (application_id, product_id, position)`.
+   Lineage = an application with its new code linked: its PRODUCT CODES -> its NEW PRODUCT CODE, why = its products'
+   PRODUCT TYPE text + the NPA
    (number, applicant, customer, project, qty, date). No separate lineage table: the NPA is the record of why.
    A product page shows it (Q5): **Lineage** tab with "Created from: SRTWB888 (NPA-000123, 3 Nov 2026, 'use the
    existing model but no tap hole & overflow')" and "New codes made from this product: ...". Empty state:
