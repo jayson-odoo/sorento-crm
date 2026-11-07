@@ -42,6 +42,7 @@ async function unwrap<T>(res: Response, fallback: string): Promise<T> {
     message,
     typeof body?.code === 'string' ? body.code : null,
     typeof body?.details?.field === 'string' ? body.details.field : null,
+    res.status,
   );
 }
 

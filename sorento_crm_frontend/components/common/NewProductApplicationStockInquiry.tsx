@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { Badge } from '@/components/ui/badge';
 import { STOCK_INQUIRY_STATUS_LABELS } from '@/app/(protected)/procurement-management/stock-inquiries/types/stockInquiry.types';
 import type { NewProductApplicationStockInquiry as StockInquiry } from '@/types/newProductApplication';
 
@@ -45,15 +45,7 @@ export function NewProductApplicationStockInquiry({
     ],
     [
       'Status',
-      inquiry.status ? (
-        <span
-          className={`${STATUS_PILL_BASE} ${statusPillClass(inquiry.status)}`}
-        >
-          {label}
-        </span>
-      ) : (
-        '-'
-      ),
+      inquiry.status ? <Badge status={inquiry.status}>{label}</Badge> : '-',
     ],
     ['Product code', dash(inquiry.product_code)],
     ['Item description', dash(inquiry.item_description)],

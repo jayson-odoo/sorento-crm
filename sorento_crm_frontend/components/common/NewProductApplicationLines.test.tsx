@@ -34,7 +34,6 @@ function Harness({
         setLines(next);
         onState?.(next);
       }}
-      brands={async () => []}
       {...extra}
     />
   );

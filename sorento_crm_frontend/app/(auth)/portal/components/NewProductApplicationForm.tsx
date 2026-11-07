@@ -10,7 +10,7 @@
  * path goes through the injected client (`lib/submission-client`), the portal's own without one.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Download, Loader2, XCircle } from 'lucide-react';
@@ -38,10 +38,7 @@ import { NewProductApplicationProductCodes } from '@/components/common/NewProduc
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  NewProductApplicationLines,
-  type LookupFetcher,
-} from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
 import {
   EMPTY_FORM,
   blankLine,
@@ -60,10 +57,8 @@ import { isAwaitingReview } from '@/lib/submission-status';
 import { submitVerb, type PortalAttachment } from '../lib/portal-client';
 import * as portalNewProductApplication from '../lib/new-product-application-service';
 import type {
-  NewProductApplicationService,
   PortalCustomerHit,
   PortalInquiryHit,
-  PortalLookupKind,
 } from '../lib/new-product-application-service';
 import {
   clientEmbedded,
@@ -76,20 +71,6 @@ import { AttachmentDropzone } from './AttachmentDropzone';
 
 const LOCK_SENTENCE =
   'Locked: Revise to change it; it goes back to Draft and needs approval again.';
-
-/** The select fetcher for one portal lookup list (the server filters by `q`). */
-const portalLookup =
-  (
-    service: () => NewProductApplicationService,
-    kind: PortalLookupKind,
-    label: (hit: { code: string; name: string }) => string,
-  ): LookupFetcher =>
-  async (q) =>
-    (await service().lookupNewProductApplication(kind, q)).map((hit) => ({
-      value: hit.id,
-      label: label(hit),
-      code: hit.code,
-    }));
 
 function ReasonDialog({
   title,
@@ -166,15 +147,6 @@ export default function NewProductApplicationForm({
   const paths = clientPaths(client);
   // Inside a CRM page its header carries the title and Back.
   const embedded = clientEmbedded(client);
-  const brands = useMemo<LookupFetcher>(
-    () =>
-      portalLookup(
-        () => clientService(client, 'newProductApplication', portalNewProductApplication),
-        'brands',
-        (h) => h.name,
-      ),
-    [client],
-  );
   const products = useCallback(
     async (q: string): Promise<SearchableMultiSelectOption[]> =>
       (await service().searchNewProductApplicationProducts(q)).map((h) => ({
@@ -634,10 +606,32 @@ export default function NewProductApplicationForm({
             <NewProductApplicationLines
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={brands}
               errors={errors}
               readOnly={readOnly}
               showCost={Boolean(application)}
+              renderOpenedAs={
+                application?.lines.some(
+                  (l) => l.opened_product_id || l.closed_reason,
+                )
+                  ? (draftLine) => {
+                      const l = application.lines.find(
+                        (x) => x.id === draftLine.id,
+                      );
+                      if (!l) return null;
+                      return l.opened_product_id ? (
+                        <span className="break-words font-medium">
+                          {l.opened_product_code}
+                        </span>
+                      ) : l.closed_reason ? (
+                        <span className="break-words">
+                          Not opening: {l.closed_reason}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      );
+                    }
+                  : undefined
+              }
             />
           </div>
           <div className="mt-6">

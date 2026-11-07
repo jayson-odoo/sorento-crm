@@ -48,6 +48,7 @@ async function fail(res: Response, fallback: string): Promise<never> {
     message,
     typeof body?.code === 'string' ? body.code : null,
     typeof body?.details?.field === 'string' ? body.details.field : null,
+    res.status,
   );
 }
 

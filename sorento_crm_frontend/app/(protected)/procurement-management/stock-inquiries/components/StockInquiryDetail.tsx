@@ -25,7 +25,7 @@ import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
 import { withRevisionSuffix } from '@/lib/document-number';
-import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
@@ -440,9 +440,9 @@ function StaffStockInquiryDetail({
             {inquiry.status && (
               <>
                 {' · '}
-                <span className={`${STATUS_PILL_BASE} ${statusPillClass(inquiry.status)}`}>
+                <Badge status={inquiry.status}>
                   {STOCK_INQUIRY_STATUS_LABELS[inquiry.status] ?? inquiry.status}
-                </span>
+                </Badge>
               </>
             )}
           </p>
@@ -1158,11 +1158,13 @@ function StaffStockInquiryDetail({
         }
       />
 
-      <NewProductApplicationBanners
-        requested={inquiry.npa_requested}
-        applications={applications ?? []}
-        audience="staff"
-      />
+      {canSeeApplications && applications !== undefined && (
+        <NewProductApplicationBanners
+          requested={inquiry.npa_requested}
+          applications={applications}
+          audience="staff"
+        />
+      )}
 
       {canSeeApplications && (
         <Tabs value={tab} onValueChange={setTab}>
@@ -1267,7 +1269,7 @@ function StaffStockInquiryDetail({
                   className="shrink-0"
                   onClick={() => {
                     setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
-                  setEditNpaRequested(Boolean(inquiry.npa_requested));
+                    setEditNpaRequested(Boolean(inquiry.npa_requested));
                     setEditPurchasingResponseOpen(true);
                   }}
                   aria-label="Edit purchasing response"

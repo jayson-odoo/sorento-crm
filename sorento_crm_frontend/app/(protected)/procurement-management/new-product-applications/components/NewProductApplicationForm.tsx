@@ -289,7 +289,6 @@ function StaffNewProductApplicationForm({
             <NewProductApplicationLines
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              brands={lookups.brands}
               errors={errors}
             />
           </div>

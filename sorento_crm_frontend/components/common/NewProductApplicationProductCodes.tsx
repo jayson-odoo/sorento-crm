@@ -151,7 +151,7 @@ export function NewProductApplicationProductCodes({
                   value.current_products.find((p) => p.id === id)
                     ?.product_code ??
                   known.current.get(id) ??
-                  id,
+                  '',
               })),
             })
           }

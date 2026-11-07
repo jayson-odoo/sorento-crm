@@ -5,7 +5,7 @@
  * product, like the purchase request and sample request lines. Staff and portal use this one
  * component so the two cannot drift. `readOnly` shows plain text in place of the inputs (same
  * columns, same order); `showCost` adds purchasing's Cost (MYR) (`costEditable` makes it an input
- * for purchasing); `renderOpenedAs` adds the staff "Opened as" column. The table scrolls
+ * for purchasing); `renderOpenedAs` adds the "Opened as" column (only for older applications worked row by row). The table scrolls
  * sideways inside its own box (phone width); the page never does.
  */
 
@@ -14,21 +14,11 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
-import {
-  SearchableSelect,
-  type SearchableSelectOption,
-} from '@/components/common/SearchableSelect';
 import { blankLine, type DraftLine } from '@/lib/new-product-application-form';
-
-export type LookupFetcher = (
-  query: string,
-  pageIndex: number,
-) => Promise<SearchableSelectOption[]>;
 
 export interface NewProductApplicationLinesProps {
   lines: DraftLine[];
   onChange: (next: DraftLine[]) => void;
-  brands: LookupFetcher;
   /** Keys are `expected_qty_<line key>` plus `lines`. */
   errors?: Record<string, string>;
   readOnly?: boolean;
@@ -47,7 +37,6 @@ const TD = 'px-2 py-2 align-top';
 export function NewProductApplicationLines({
   lines,
   onChange,
-  brands,
   errors = {},
   readOnly,
   showCost,
@@ -81,7 +70,7 @@ export function NewProductApplicationLines({
       />
     );
 
-  const minWidth = 900 + (showCost ? 120 : 0) + (renderOpenedAs ? 300 : 0);
+  const minWidth = 760 + (showCost ? 120 : 0) + (renderOpenedAs ? 300 : 0);
 
   return (
     <div className="space-y-3">
@@ -96,7 +85,6 @@ export function NewProductApplicationLines({
               <th className={`${TH} w-32`}>Material</th>
               <th className={`${TH} w-24`}>Thickness</th>
               <th className={`${TH} w-28`}>Packing</th>
-              <th className={`${TH} w-40`}>Brand</th>
               <th className={`${TH} w-24`}>Qty</th>
               {showCost && <th className={`${TH} w-28`}>Cost (MYR)</th>}
               {renderOpenedAs && <th className={`${TH} w-72`}>Opened as</th>}
@@ -121,39 +109,6 @@ export function NewProductApplicationLines({
                 <td className={TD}>{text(line, 'material', 'Material')}</td>
                 <td className={TD}>{text(line, 'thickness', 'Thickness')}</td>
                 <td className={TD}>{text(line, 'packing', 'Packing')}</td>
-                <td className={TD}>
-                  {readOnly ? (
-                    <div className="truncate" title={line.brand_label}>
-                      {dash(line.brand_label)}
-                    </div>
-                  ) : (
-                    <SearchableSelect
-                      aria-label="Brand"
-                      value={line.brand_id}
-                      clearable
-                      truncateTriggerLabel
-                      wrapOptions
-                      placeholder="Search brand"
-                      fetchOptions={brands}
-                      selectedOption={
-                        line.brand_id
-                          ? { value: line.brand_id, label: line.brand_label }
-                          : undefined
-                      }
-                      onChange={(v) => {
-                        if (!v)
-                          patch(line.key, { brand_id: '', brand_label: '' });
-                      }}
-                      onOptionChange={(opt) =>
-                        opt &&
-                        patch(line.key, {
-                          brand_id: opt.value,
-                          brand_label: opt.label,
-                        })
-                      }
-                    />
-                  )}
-                </td>
                 <td className={TD}>
                   {readOnly ? (
                     dash(line.expected_qty)

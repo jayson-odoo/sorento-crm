@@ -1832,15 +1832,17 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
     kind === 'stock_inquiry' && Array.isArray(detail?.new_product_applications)
       ? (detail.new_product_applications as InquiryApplicationRow[])
       : [];
+  // Only for a contact who holds the NPA form (the server says so).
+  const npaVisible = kind === 'stock_inquiry' && detail?.npa_form_visible === true;
   const applicationsTabbed = Boolean(
-    kind === 'stock_inquiry' &&
+    npaVisible &&
       submissionId &&
       detail &&
       !detail.is_draft &&
       Array.isArray(detail.new_product_applications),
   );
   const canCreateApplication =
-    kind === 'stock_inquiry' &&
+    npaVisible &&
     detail?.status === 'responded' &&
     npaStillToCreate(detail.npa_requested as boolean | undefined, inquiryApplications);
   const tabbed =
@@ -2516,7 +2518,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
         </div>
       </div>
 
-      {kind === 'stock_inquiry' && detail && !detail.is_draft && (
+      {npaVisible && detail && !detail.is_draft && (
         <NewProductApplicationBanners
           requested={detail.npa_requested as boolean | undefined}
           applications={inquiryApplications}

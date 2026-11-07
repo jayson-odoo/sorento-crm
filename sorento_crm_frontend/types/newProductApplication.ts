@@ -234,9 +234,17 @@ export interface NewProductApplicationLineage {
 export class NewProductApplicationError extends Error {
   readonly code: string | null;
   readonly field: string | null;
+  /** The HTTP status of the refusal, when it came from a response. */
+  readonly status: number | null;
 
-  constructor(message: string, code: string | null, field: string | null) {
+  constructor(
+    message: string,
+    code: string | null,
+    field: string | null,
+    status: number | null = null,
+  ) {
     super(message);
+    this.status = status;
     this.name = 'NewProductApplicationError';
     this.code = code;
     this.field = field;

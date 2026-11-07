@@ -62,7 +62,6 @@ import {
 } from '../services/newProductApplicationService';
 
 // The sheet is read-only here, so no brand or product is ever searched.
-const NO_BRANDS = async () => [];
 const NO_PRODUCTS = async () => [];
 
 const DETAIL_TABS = ['details', 'stock_inquiry'] as const;
@@ -369,6 +368,7 @@ function StaffNewProductApplicationDetail({
     reject,
     revise,
     cancel,
+    undo,
     linkNewCode,
     closeNewCode,
     undoNewCode,
@@ -422,7 +422,8 @@ function StaffNewProductApplicationDetail({
     cancel.isPending ||
     linkNewCode.isPending ||
     closeNewCode.isPending ||
-    undoNewCode.isPending;
+    undoNewCode.isPending ||
+    undo.isPending;
 
   if (isLoading) {
     return (
@@ -814,10 +815,60 @@ function StaffNewProductApplicationDetail({
                           ),
                         }))
                       }
-                      brands={NO_BRANDS}
                       readOnly
                       showCost
                       costEditable={canFeedback}
+                      renderOpenedAs={
+                        r.lines.some(isResolved)
+                          ? (draftLine) => {
+                              const l = r.lines.find(
+                                (x) => x.id === draftLine.id,
+                              );
+                              if (!l || !isResolved(l)) return null;
+                              const showUndo =
+                                canOpen &&
+                                ['approved', 'completed'].includes(r.status);
+                              return (
+                                <div className="min-w-0 space-y-0.5">
+                                  {l.opened_product_id ? (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <Link
+                                        href={`/master-data-management/products/${l.opened_product_id}`}
+                                        className="truncate font-medium text-primary hover:underline"
+                                      >
+                                        {codeWithName(
+                                          l.opened_product_code,
+                                          l.opened_product_name,
+                                        )}
+                                      </Link>
+                                      {l.opened_product_active === false && (
+                                        <Badge variant="secondary">
+                                          Inactive
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="break-words">
+                                      Not opening: {l.closed_reason}
+                                    </span>
+                                  )}
+                                  {showUndo && (
+                                    <button
+                                      type="button"
+                                      className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        undo.mutate({ id: r.id, lineId: l.id })
+                                      }
+                                    >
+                                      Undo
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            }
+                          : undefined
+                      }
                     />
                   </div>
                 </>

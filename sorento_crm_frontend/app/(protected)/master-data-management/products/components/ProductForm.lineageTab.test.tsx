@@ -60,6 +60,7 @@ const lineage = vi.hoisted(() => ({
     data: unknown;
     isLoading: boolean;
     isError: boolean;
+    error?: unknown;
   },
 }));
 vi.mock(
@@ -101,6 +102,7 @@ vi.mock('@/components/common/ListPager', () => ({
   default: () => <div data-testid="list-pager-stub" />,
 }));
 
+import { NewProductApplicationError } from '@/types/newProductApplication';
 import ProductForm from './ProductForm';
 
 const row = (over: Record<string, unknown> = {}) => ({
@@ -141,7 +143,12 @@ describe('Lineage tab', () => {
   });
 
   it('shows the empty state when the read is refused', () => {
-    lineage.state = { data: undefined, isLoading: false, isError: true };
+    lineage.state = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new NewProductApplicationError('Forbidden', null, null, 403),
+    };
     render(<ProductForm productId="p-69" />);
     openLineage();
     expect(screen.getByText('No lineage')).toBeInTheDocument();

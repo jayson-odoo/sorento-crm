@@ -1,4 +1,3 @@
-import { useMemo, useRef } from 'react';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   useMutation,
@@ -9,10 +8,7 @@ import {
 import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
-import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type { LookupFetcher } from '@/components/common/NewProductApplicationLines';
 import type { ProductFetcher } from '@/components/common/NewProductApplicationProductCodes';
-import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import type {
   NewProductApplicationFeedbackWrite,
   NewProductApplicationWrite,
@@ -177,38 +173,15 @@ export function useProductLineageQuery(
   });
 }
 
-const matches = (label: string, q: string) =>
-  label.toLowerCase().includes(q.trim().toLowerCase());
-
-/**
- * The one select of the paper sheet: brand, from the master-data select hook (read once,
- * filtered here). The portal passes its own lookup to the same sheet.
- */
+/** The lookups of the paper sheet: the PRODUCT CODES search and the earlier-codes check. */
 export function useNewProductApplicationLookups(): {
-  brands: LookupFetcher;
   products: ProductFetcher;
   reuse: typeof getNewProductApplicationReuseSuggestions;
 } {
-  const brands = useBrandSelectQuery();
-  // The fetcher stays the same function between renders, so an open dropdown is not
-  // refetched each time the query settles; it reads what the hook last returned.
-  const latest = useRef<SearchableSelectOption[]>([]);
-  latest.current = (brands.data ?? []).map((b) => ({
-    value: b.id,
-    label: b.brand_name,
-    code: b.brand_code,
-  }));
-  return useMemo(
-    () => ({
-      brands: async (q: string) =>
-        latest.current.filter(
-          (o) => !q.trim() || matches(`${o.label} ${o.code ?? ''}`, q),
-        ),
-      products: staffProductOptions,
-      reuse: getNewProductApplicationReuseSuggestions,
-    }),
-    [],
-  );
+  return {
+    products: staffProductOptions,
+    reuse: getNewProductApplicationReuseSuggestions,
+  };
 }
 
 export function useNewProductApplicationMutations() {

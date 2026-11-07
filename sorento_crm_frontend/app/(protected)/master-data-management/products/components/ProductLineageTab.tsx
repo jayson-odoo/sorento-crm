@@ -3,7 +3,10 @@
 import Link from 'next/link';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import type { NewProductApplicationLineageRow } from '@/types/newProductApplication';
+import {
+  NewProductApplicationError,
+  type NewProductApplicationLineageRow,
+} from '@/types/newProductApplication';
 import { useProductLineageQuery } from '@/app/(protected)/procurement-management/new-product-applications/hooks/useNewProductApplications';
 
 const TH = 'px-3 py-2 text-left font-medium';
@@ -46,7 +49,10 @@ function LineageTable({
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={`${row.application_no}-${row.product_id}`} className="border-t">
+                <tr
+                  key={`${row.application_no}-${row.product_id}`}
+                  className="border-t"
+                >
                   {showNewCode && (
                     <td className={TD}>
                       <Link
@@ -102,11 +108,20 @@ export default function ProductLineageTab({
 }: {
   productId: string;
 }) {
-  const { data, isLoading, isError } = useProductLineageQuery(productId);
+  const { data, isLoading, isError, error } = useProductLineageQuery(productId);
   if (isLoading) return <Skeleton className="h-32 w-full" />;
   const created = data?.created_from ?? [];
   const made = data?.made_from_this ?? [];
-  // A refusal (no permission) reads the same as nothing to show.
+  // A refusal (403, no permission) reads the same as nothing to show; any other failure says so.
+  const refused =
+    error instanceof NewProductApplicationError && error.status === 403;
+  if (isError && !refused) {
+    return (
+      <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center text-sm">
+        Could not load the lineage.
+      </div>
+    );
+  }
   if (isError || (created.length === 0 && made.length === 0)) {
     return (
       <div className="rounded-lg border border-dashed px-6 py-10 text-center">

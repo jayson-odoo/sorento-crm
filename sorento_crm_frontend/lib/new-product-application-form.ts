@@ -25,8 +25,9 @@ export interface DraftLine {
   material: string;
   thickness: string;
   packing: string;
-  brand_id: string;
-  brand_label: string;
+  /** Retired with the Brand column: never filled or sent. */
+  brand_id?: string;
+  brand_label?: string;
   /** Typed text; an emptied box is sent as null, never 0. */
   expected_qty: string;
   /** Purchasing feedback, shown and edited on the sheet but never part of the write body. */
@@ -85,8 +86,6 @@ export const blankLine = (): DraftLine => ({
   material: '',
   thickness: '',
   packing: '',
-  brand_id: '',
-  brand_label: '',
   expected_qty: '',
   cost_price: '',
 });
@@ -112,6 +111,7 @@ function lineFromDetail(l: NewProductApplicationLine): DraftLine {
     material: text(l.material),
     thickness: text(l.thickness),
     packing: text(l.packing),
+    // Retired with the Brand column: read into the draft only, never shown or sent.
     brand_id: text(l.brand_id),
     brand_label: text(l.brand_name),
     expected_qty: figure(l.expected_qty),
@@ -196,7 +196,6 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
       material: clean(l.material),
       thickness: clean(l.thickness),
       packing: clean(l.packing),
-      brand_id: l.brand_id || null,
       expected_qty: clean(l.expected_qty),
     })),
   };

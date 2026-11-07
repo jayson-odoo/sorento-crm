@@ -160,7 +160,7 @@ describe('limited user, New Product Application create renders the portal form',
     expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
   });
 
-  it('inquiries, customers and brands are searched on my-requests only', async () => {
+  it('inquiries and customers are searched on my-requests only (Brand column removed)', async () => {
     mountForm(LIMITED);
     const inquiry = await screen.findByLabelText(pickInquiryLabel);
     fireEvent.focus(inquiry);
@@ -170,8 +170,7 @@ describe('limited user, New Product Application create renders the portal form',
     fireEvent.focus(customer);
     fireEvent.change(customer, { target: { value: 'ZZ' } });
     await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/customers`)).length).toBeGreaterThan(0), { timeout: 3000 });
-    fireEvent.click(screen.getByLabelText('Brand'));
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/lookups/brands`)).length).toBeGreaterThan(0), { timeout: 3000 });
+    expect(screen.queryByLabelText('Brand')).toBeNull();
     expect(portalCalls()).toHaveLength(0);
     expect(staffApi()).toHaveLength(0);
     expect(where((c) => c.url.startsWith('/api/v1/procurement/stock-inquiries'))).toHaveLength(0);
