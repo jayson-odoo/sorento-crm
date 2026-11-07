@@ -280,3 +280,34 @@ def test_S4_a_turn_never_adds_the_reports_other_bases_to_an_invoiced_answer():
     assert replies[0]["status"] == "ok"
     for later in replies[1:]:
         assert later["status"] == "denied" and "invoiced (billing documents)" in later["message"]
+
+
+def test_A6_an_agent_of_another_company_is_never_matched_nor_named(api, grant):
+    """Review round 8: `match_agents` reads the session's companies' agents and the shared masters only, so another
+    company's agent with the same name is neither taken nor printed in the scope note."""
+    from app.models.base import get_company_scope, set_company_scope
+    from app.services.assistant_registry.query import match_agents
+    from tests.chatbot.agent.test_ai_tools_wave2 import _company_b
+
+    _client, db, company_id = api
+    grant(CUSTOMERS_VIEW)
+    other = _company_b(db)
+    mine = _agent(db, "SC", "ZZT Scope Agent", company_id=company_id)
+    shared = _agent(db, "SS", "ZZT Scope Agent")
+    theirs = _agent(db, "ST", "ZZT Scope Agent", company_id=other)
+    before = get_company_scope(db)
+    try:
+        set_company_scope(db, frozenset({company_id}))
+        assert {a.id for a in match_agents(db, "ZZT Scope Agent", "eq")} == {mine.id, shared.id}
+        out = run(db, {"entity": "customer", "filters": [{"field": "agent", "op": "eq", "value": "ZZT Scope Agent"}]})
+        assert theirs.sales_agent not in out["scope_note"] and mine.sales_agent in out["scope_note"]
+        set_company_scope(db, frozenset())
+        assert {a.id for a in match_agents(db, "ZZT Scope Agent", "eq")} == {shared.id}
+    finally:
+        set_company_scope(db, before)
+
+
+def test_S5_a_chat_dataset_however_written_is_not_a_sales_basis():
+    from app.services.chatbot.agent.query_tools import money_basis
+
+    assert money_basis({"dataset": " Chat ", "basis": "invoiced"}, "crm_report_ask") is None

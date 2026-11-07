@@ -168,10 +168,6 @@ def expand_window(item: Any, today: dt.date | None = None) -> Any:
 
 # ------------------------------------------------------------------ an agent named in a filter (crew pass on ffdd7f87)
 
-#: The most agents a name may match before the answer says which were taken.
-MAX_AGENT_MATCHES = 20
-
-
 def _plain_text(value: Any) -> str:
     return " ".join(str(value or "").split()).lower()
 
@@ -206,7 +202,7 @@ def match_agents(db, value: str, op: str) -> list:
     candidates = q.filter(
         any_of(SalesAgent.sales_agent.ilike(pattern, escape="\\"), SalesAgent.description.ilike(pattern, escape="\\"),
                (SalesAgent.sales_agent + " - " + func.coalesce(SalesAgent.description, "")).ilike(pattern, escape="\\"))
-    ).order_by(SalesAgent.sales_agent).limit(MAX_AGENT_MATCHES * 5).all()
+    ).order_by(SalesAgent.sales_agent).all()
     exact = [a for a in candidates if agent_exact(agent_label(a), needle)]
     return exact if exact or op == "eq" else candidates
 

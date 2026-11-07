@@ -234,6 +234,12 @@ Root causes, all decided in code (no prompt tuning beyond one line):
   Customers tab; `invoiced_sales.agent_id`), and the answer says which agent was taken ("Agent: CODE - Name.").
   Computed entities (`agent_target_summary.owner`, `target_list.subject`, `sales_target.agent`) match exact first
   the same way. Agent A's 83 vs 79 is the same cause (a code or name contained in another agent's).
+- Review round 8 (reviewer READY, four kill tests red): candidates are no longer capped; a `dataset` of " Chat " is
+  not a sales basis; another company's agent of the same name is never taken nor named (test A6). Known and
+  accepted: once a name matches an agent master, billing documents match by agent id, so a document whose
+  AutoCount agent code never resolved to a master drops out of that agent's figure (it is in no agent's figure on
+  the sales reports either). An asked comparison ("invoiced vs delivered") is refused by the one-basis rule and the
+  model offers the other basis in one line: an owner call, not changed here.
 
 ## Token measurement (task item 5)
 

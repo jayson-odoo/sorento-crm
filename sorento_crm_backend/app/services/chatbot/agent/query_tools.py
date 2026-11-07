@@ -199,7 +199,8 @@ def money_basis(args: Any, name: str = QUERY) -> str | None:
         return None
     if name == "crm_report_ask":
         basis = str(args.get("basis") or "").strip().lower()
-        return basis if basis in REPORT_BASES and args.get("dataset") != "chat" else None
+        dataset = str(args.get("dataset") or "").strip().lower()
+        return basis if basis in REPORT_BASES and dataset != "chat" else None
     if name != QUERY or args.get("entity") not in MONEY_FIELDS:
         return None
     money = MONEY_FIELDS[args["entity"]]
