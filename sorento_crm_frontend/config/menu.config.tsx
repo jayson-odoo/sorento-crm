@@ -730,6 +730,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/dealer-kit/tag-sizes',
             permission: 'dealer_kit.page.view',
           },
+          {
+            title: 'Accessory Templates',
+            path: '/dealer-kit/accessory-templates',
+            permission: 'dealer_kit.page.view',
+          },
         ],
       },
     ],
