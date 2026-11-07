@@ -653,12 +653,15 @@ def _side_suppliers(
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         held = jsc.nullish_str(e.get("canonical_code")).strip() if isinstance(e, dict) else ""
         party = isinstance(e, dict) and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
-        if not (party and text) or text.casefold() in owned or (e.get("hint") == "supplier" and held in groups):
+        # Only a word the user typed in this message (fix round 8: the parser echoes the asked word on a pick answer).
+        if not (party and text and _typed_here(text, prep)) or text.casefold() in owned or (
+            e.get("hint") == "supplier" and held in groups
+        ):
             out.append(e)
             continue
         res = (
             next(iter(list_resolver.resolve([list_resolver.Span(text, "supplier")], suppliers, embed=None)), None)
-            if usable and _typed_here(text, prep) else None
+            if usable else None
         )
         group = [(str(c.row.key), _supplier_line(c.row)) for c in res.candidates] if res and _names_rows(res) else []
         for key, _line in group:
@@ -681,7 +684,11 @@ def _supplier_side_po_ask(verdict: dict[str, Any]) -> bool:
     from app.services.chatbot.lanes.business.resolve_gate import SUPPLIER_SWITCH_DOMAINS
 
     po = verdict.get("intent_hint") == "check_po" or "PO" in jsc.array(verdict.get("document"))
-    return verdict.get("party_side") == "supplier" and po and verdict.get("domain_hint") in SUPPLIER_SWITCH_DOMAINS
+    if not (verdict.get("party_side") == "supplier" and po and verdict.get("domain_hint") in SUPPLIER_SWITCH_DOMAINS):
+        return False
+    # Review B1: never while a customer-side party word is left (a carried one, or one the report object holds):
+    # that turn is not read as purchase orders by its words, as `supplier_ask_reads_purchase_orders` rules too.
+    return not any(isinstance(e, dict) and e.get("hint") == "customer" for e in jsc.array(verdict.get("entities")))
 
 
 def _owned_supplier(entity: dict[str, Any], owned: frozenset[str]) -> bool:

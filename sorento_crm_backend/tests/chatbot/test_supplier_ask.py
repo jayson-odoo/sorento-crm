@@ -2800,3 +2800,50 @@ def test_no_open_po_for_a_supplier_family_names_the_supplier(session_factory, mo
     assert f"supplier: {HANLIM_TRADING}\n" in reply and "no purchase order" in reply.lower(), reply
     calls = _po_calls(captured)
     assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), captured
+
+
+@pytest.mark.parametrize("parse", [_LIVE_OUTSTANDING_PO, {**_LIVE_OUTSTANDING_PO, "intent_hint": "check_order"}])
+def test_a_supplier_side_po_ask_on_the_order_domain_reads_the_po_book(session_factory, monkeypatch, parse):
+    """Crew A3 (live re-run 2: domain_hint order, intent check_po, document [PO], party_side supplier): the parser read
+    a purchase order ask on the supplier side, so the turn is the purchase_order domain whatever domain_hint says, never
+    the sales side's "Sales order or delivery order?". Here no party is named, so A3 alone decides."""
+    _live_hanlim_world(session_factory)
+    qf = _parser_output(entities=[], party_side="supplier", **parse)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO", list_resolver.Span("outstanding PO", None), set(), qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, mcp_response=_PO_EMPTY,
+    )
+    assert "Sales order or delivery order?" not in reply, reply
+    assert _po_calls(captured), (reply, captured)
+    assert not [n for n, _a in captured if n != PO_TOOL], captured
+
+
+def test_a_supplier_side_po_ask_with_a_carried_customer_never_says_customer_purchase_orders(session_factory, monkeypatch):
+    """Review B1 (#2120 round 2): a customer word the parser carried (not typed now) keeps the turn off A3's swap, so
+    the reply is never "Could not find purchase order for customer ..."."""
+    _live_hanlim_world(session_factory)
+    qf = _parser_output(
+        entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": False, "confident": True}],
+        party_side="supplier", **_LIVE_OUTSTANDING_PO,
+    )
+    reply, _captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO", list_resolver.Span("outstanding PO", None), set(), qf=qf,
+        attributes=OWNER_GRANTS, party_side=True, supplier_ids=False, mcp_response=_PO_EMPTY,
+    )
+    assert "purchase order for customer" not in reply.lower(), reply
+
+
+def test_the_supplier_side_never_rewrites_a_word_the_user_did_not_type():
+    """Review S1 (#2120 round 2, fix round 8's rule): the parser echoes the asked word on a pick answer ("1"); that
+    echo is not this message's party word and is never re-sided."""
+    from app.services.chatbot.engine import _SpanPrep, _side_suppliers
+    from app.services.chatbot.head.lookup_lists import LookupRow
+
+    prep = _SpanPrep.__new__(_SpanPrep)
+    prep.supplier_ids, prep.message, prep.supplier_groups = True, "1", {}
+    prep.rows = [LookupRow("supplier", "s1", HANLIM_TRADING, (HANLIM_TRADING.casefold(),))]
+    echo = {"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True}
+    verdict = {"party_side": "supplier", "entities": [echo]}
+    assert _side_suppliers(verdict, prep, SimpleNamespaceTrace()) is verdict
+    prep.message = "PO for hanlim"
+    assert _side_suppliers(verdict, prep, SimpleNamespaceTrace())["entities"][0]["hint"] == "supplier"
