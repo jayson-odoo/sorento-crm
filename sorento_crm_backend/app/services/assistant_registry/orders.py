@@ -66,7 +66,7 @@ register(
         # `status=active` is `is_active`), applied unless the query names `is_active` (crew pass, 5 Nov).
         default_filters=(("is_active", "eq", True, "Inactive customers excluded."),),
         list_fields=("agent", "region"),
-        hint="customers (active only unless is_active is filtered); an agent's customers: agent eq <code or name>",
+        hint="customers (active only unless is_active is filtered); an agent's customers: agent=<code or name as said>",
         screen_path="/order-management/customers/{id}",
         pages=("/order-management/customers",),
         routes=("GET /api/v1/order-management/customers/",),

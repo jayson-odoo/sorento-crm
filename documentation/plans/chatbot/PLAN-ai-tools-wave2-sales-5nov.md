@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 9: crew live x3 on 3c6924bf answered 21/21 right; the token budget failed on extra resolve / describe rounds, fixed here). Track: full (RBAC, one
+Status: Review (round 10: crew live rerun on 53908030, answers 12/12, budget met on Q1-Q4 and Q7; Q5/Q6 agent's customers fixed here). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -259,6 +259,18 @@ Answers 21/21 right and stable on gemini-3.6-flash; the budget failed (Q3, Q5, Q
   table (the reply kept only the last card). Now one table per entity in the order asked: a same-entity re-query
   still replaces its own table, another entity's table is added below, never in place of the answer's.
 - Cost: about +100 tokens per call for the two arguments (chars/4 estimate; no tokenizer call, OpenAI is out).
+
+## Crew live rerun on 53908030 (round 10, 7 Nov)
+
+Answers 12/12 right (run 1 and run 2, Q1-Q5); Q1-Q4 and Q7 in 2 calls at 27-30k. Q5/Q6 "active customers of LONG I
+/ SEAN I" still took crm_resolve then crm_query (3 calls, ~35k). Cause: the question says "customers", crm_resolve's
+description lists customers and sales agents, and LONG I resolved among customer look-alikes ("ambiguous"), so the
+round neither pointed at crm_query nor narrowed. Fixes:
+- `loop.found_agents`: a term whose matches include a sales agent whose code or name IS the term names that agent,
+  look-alikes or not; the pointer ("crm_query takes the agent by name") and the narrowing follow.
+- `loop.resolve_beside_query`: when crm_query is offered, crm_resolve's own description says a sales agent's name
+  needs no id and no crm_resolve: pass it as crm_query's `agent`.
+- The index hints of customer and agent_target_summary name the `agent` argument (they still said `agent eq`).
 
 ## Token measurement (task item 5)
 

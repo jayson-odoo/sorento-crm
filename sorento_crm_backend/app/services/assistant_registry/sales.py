@@ -360,7 +360,7 @@ register(
         },
         name_by=("owner",),
         hint="PAYOUT / COMMISSION / TARGET vs ACHIEVED per agent or for one agent: one row per agent over the window, "
-             "totals row. One agent: owner eq <code or name>",
+             "totals row. One agent: agent=<code or name as said>",
         list_fields=("targets", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,

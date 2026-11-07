@@ -125,21 +125,54 @@ def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict],
     return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
 
 
+#: Said in crm_resolve's description when crm_query is offered too (crew live rerun on 53908030).
+RESOLVE_AGENT_LINE = (
+    " A sales agent's name or code needs no id and no crm_resolve: pass it as crm_query's `agent` (an agent's "
+    "customers, sales, targets, commission)."
+)
+
+
+def resolve_beside_query(schemas: list[dict]) -> list[dict]:
+    """crm_resolve's schema says that crm_query takes an agent by name, when both are offered."""
+    if not any(s.get("function", {}).get("name") == "crm_query" for s in schemas):
+        return schemas
+    out = []
+    for schema in schemas:
+        if schema.get("function", {}).get("name") == "crm_resolve":
+            schema = copy.deepcopy(schema)
+            schema["function"]["description"] = schema["function"]["description"].rstrip() + RESOLVE_AGENT_LINE
+        out.append(schema)
+    return out
+
+
 def found_agents(data) -> list[str]:
-    """The sales agents a `crm_resolve` result found, as "CODE - Name", when it found sales agents and nothing
-    else; [] otherwise."""
+    """The sales agents a `crm_resolve` result named, as "CODE - Name", when every term named one: found with only
+    sales agents, or among look-alikes (customers whose names contain it) a sales agent whose code or name IS the
+    term (crew live rerun on 53908030: "active customers of LONG I" resolved LONG I among customers and took a
+    third call). [] when any term names no agent."""
+    from app.services.assistant_registry.query import agent_exact
+
     results = data.get("results") if isinstance(data, dict) else None
     if not isinstance(results, list) or not results:
         return []
-    labels = []
+    labels: list[str] = []
     for row in results:
         matches = row.get("matches") if isinstance(row, dict) else None
-        if row.get("status") != "found" or not matches or any(m.get("kind") != "sales_agent" for m in matches):
+        if not isinstance(matches, list) or not matches:
             return []
+        agents = []
         for m in matches:
+            if not isinstance(m, dict) or m.get("kind") != "sales_agent":
+                continue
             code, name = str(m.get("code") or "").strip(), str(m.get("name") or "").strip()
-            labels.append(f"{code} - {name}" if code and name else code or name)
-    return [label for label in labels if label]
+            agents.append(f"{code} - {name}" if code and name else code or name)
+        only_agents = row.get("status") == "found" and len(agents) == len(matches)
+        exact = [label for label in agents if agent_exact(label, row.get("term"))]
+        named = agents if only_agents else exact
+        if not named:
+            return []
+        labels.extend(named)
+    return [label for label in dict.fromkeys(labels) if label]
 
 
 @dataclass
@@ -1404,6 +1437,7 @@ def _run(
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
+        schemas = resolve_beside_query(schemas)
         if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
             schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
