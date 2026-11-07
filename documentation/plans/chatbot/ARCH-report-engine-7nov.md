@@ -1,7 +1,8 @@
 # ARCH: can the chatbot report engine scale? (REPORT-ASK-ARCH, 7 Nov 2026)
 
-Status: proposal (scout, docs only, no app code changed). Track: architecture plan; each wave below is its own lane
-with its own PLAN + UAC when the owner picks it up.
+Status: final (plan accepted). Owner, 7 Nov ~16:15, on PR #2229: "2229 ok", which accepts all 5 recommendations
+(section 4). Delivery is the lanes in section 3 (REPORT-SPEC-W1 to W7). W1 starts after #2209 merges; none has
+started. Each lane writes its own PLAN + UAC under `documentation/plans/chatbot/` before code.
 
 Owner, 7 Nov ~16:00, after REPORT-FILTER-ALL (#2209) took 8 rounds: "you see, ~480 branches, can we really scale for
 more future features?"
@@ -124,7 +125,7 @@ The two `crew-note` recordings (7 Nov 07:51, rec_part_aa / ab) are 6 runs x 26 s
   turn; each copy is a chance to drop or invent one.
 - **The engine feeds the parser.** Step 11 "buang semua filter" writes company ALL in 3/3 runs on 2a8e6f7c and company
   Sorento in 3/3 runs on 4c1b310a, same prompt. The difference is the `Held report:` line the engine printed into the
-  parse, so an engine change moves the parse. The corpus must record that line (the recording does not; Q4).
+  parse, so an engine change moves the parse. The corpus must record that line (the recording does not; ruling 4, lane W1).
 - Step 17 "break down project and retail" (dealer vs project split) already parses as `group_by: channel` 6/6:
   that "new report type" needs no code at all.
 
@@ -240,7 +241,7 @@ The agent already calls the SAME route (`crm_report_ask`, `agent/tools.py:111`, 
 params, and it has no held-state problem: it sends a full spec each call. Give `crm_report_ask` the `ReportSpec` JSON
 schema as its tool schema, and run `validate` + `resolve` for both callers. `crm_query` (`agent/query_tools.py`,
 `assistant_registry/query.py`) is a row/group read over registry entities with no basis, period or reveal semantics,
-so the recommendation is NOT to fold sales into it (Q2).
+so sales is NOT folded into it (ruling 2).
 
 ### 2.6 How a new feature lands (end state)
 
@@ -257,65 +258,218 @@ No feature touches `merge.py` or `validate.py`'s order. Today the same "new axis
 
 ---
 
-## 3. Migration path
+## 3. Migration path: the lanes
 
-**Golden corpus (built in W0, kept green by every wave):**
+### 3.0 Rules for every lane
 
-- L1 engine corpus, no LLM: `tests/chatbot/golden/report_turns.jsonl`, one row per turn: `held_spec`, the recorded
-  parser object (or delta), `open_question`, expected `{route_params | ask_field | refusal}`. Sources: the 156
-  recorded turns on #2209 (6 runs x 26 steps, distinct objects deduplicated), the owner's Expected list from the
-  7 Nov 04:41 `crew-handtest` (steps 1-20), the 5 Nov / 5 Nov 23:32 crew gate notes (2a8e6f7c, ee34327b, d15853fa
-  findings), and the existing gold files in 1.4. Run as one parametrized pytest through the real engine with
-  `replay.py`'s recorded-parse mode.
-- L0 parser corpus, live, budgeted: same messages + the `Held report:` line -> expected delta, graded by
-  `scripts/chatbot_eval/parser_gold.py`. Every prompt is pinned by md5 (as `test_report_filter_all.py:382-390` pins
-  698e137b / d29c1983 today); a prompt edit is a new md5, a new candidate file and a re-grade, never an edit in place.
-- Pass bar per wave: L1 100% (the corpus is the spec); L0 per-step pass rate n/3 not below the previous published
-  prompt's on the same step.
+- **Golden corpus:** W1 builds it and every later lane keeps it green.
+  - L1 engine corpus, no LLM. File: `tests/chatbot/golden/report_turns.jsonl`. Each row is one turn: `held_spec`, the
+    `Held report:` line, the recorded parser object (or delta), `open_question`, and the expected
+    `{route_params | ask_field | refusal}`. It runs as one parametrized pytest through the real engine, using
+    `scripts/chatbot_eval/replay.py`'s recorded-parse mode.
+  - L0 parser corpus, live and budgeted. Input: the same messages plus the `Held report:` line. Expected: the delta.
+    Graded by `scripts/chatbot_eval/parser_gold.py`.
+  - The expectation for each turn is the owner's Expected list from the 7 Nov 04:41 `crew-handtest` on #2209
+    (ruling 4).
+- **Pass bar:** L1 at 100%. L0's pass rate per step (n/3) must not fall below the published prompt's rate on the same
+  step.
+- **Prompt changes:** every prompt is pinned by md5, as `test_report_filter_all.py:382-390` pins 698e137b / d29c1983
+  today. A prompt edit means a new candidate file, a new md5, a re-grade and a `PROMPT-*-<md5>.md` doc. A pinned text
+  is never edited in place. Publishing a prompt is the owner's call. No lane publishes.
+- **Rule freeze (ruling 3, from #2209's merge):**
+  - No new keep/clear/widen rule goes into `report_ask.py`, `engine.py` or `order_list.py`.
+  - A failing phrasing becomes a corpus row marked `xfail` with its lane id. It waits for W3 or W4.
+  - Reviewers treat a new rule as a blocker.
+- **Track (CLAUDE.md "Small fix track"):** decided per lane from its expected diff, as listed below. A full-track lane
+  runs the `/feature` phases: tester-first, one coder kept alive, then reviewer and browser verification (console
+  only, since no screen changes). `security-reviewer` joins only where noted.
+- **Sizes:** lines are app lines plus test lines, measured against main at the time. Days are lane-days for one coder.
 
-| Wave | What | App change | Delete | Size | Time | Risk |
-|---|---|---|---|---|---|---|
-| W0 | Corpus + harness (above); re-record the 26 steps with the `Held report:` line (Q4) | none (tests + data) | nothing | ~300 test lines + data | 0.5-1 day | low |
-| W1 | `spec.py`, `merge.py`, `validate.py`, `to_params` as pure functions; **shadow**: on every object turn, convert the full-state object to a delta (absent = keep, ALL = all, a changed list = set) and log new-path params vs legacy params into `turn_trace` | additive only | nothing | ~600 + ~400 tests | 2 days | low (no behaviour change) |
-| W2 | Delta prompt: the parser emits per-axis ops; the engine takes the new path when the prompt text carries a `report_delta` marker (as `ParserConfig.report_ask` gates today), old prompts keep the old path | engine seam at `engine.py:6367`, new prompt candidate (md5 pinned), gold rewritten to deltas | nothing yet | ~300 + prompt + 40 gold rows | 2-3 days | medium: model reliability on ops (the corpus says ops are the stable part) |
-| W3 | Clarify as delta: the open question's answer merges like any message | `turn/` open-ask plumbing for this ask | `as_basis_answer`, `as_kind_answer`, `kind_edits`, `names_its_own_ask`, `restates_the_ask`, `_reply_fills`, `_resolve_*`, the 6 engine seams at `:6818-6850` (~ -900) | net ~ -700 | 2 days | medium |
-| W4 | Delete the legacy follow-up path once the delta prompt is published in production and W1's shadow log shows no unexplained diffs for a week (Q5) | report_ask.py, `order_list.py:163-170`, `turn/decide.widened_kinds` report use | `with_held`, `as_held_refine`, `_refine`, `_settle`'s refill (`:2400-2510`), `from_object`'s rules, `_keep_held*`, `_held_spelling`, `_legacy_all`, `_customer_stays`, `_widened`, `_carry` leftovers; rule-only tests rewritten as corpus rows (~ -1800 app lines, a few hundred rule tests) | net ~ -1600 | 2-3 days | high, mitigated by W0 corpus + W1 shadow |
-| W5 | Agent shares the spec: `crm_report_ask` schema = `ReportSpec`, route body path, one `validate` | `agent/tools.py`, route | the agent's own arg guards that `validate` covers | ~200 | 1 day | low |
-| W6 | Resolution as the AXES resolver table; `_settle` / `_fresh_args` split | report_ask.py | `_settle` (cc 199), `_fresh_args` (cc 85) as monoliths | net ~ -400 | 2 days | medium |
+### 3.1 Lane order
 
-Total ~12-14 working days of lanes, sequential (W1 before W2; W3 and W5 can run in parallel after W2). End state
-estimate: `report_ask.py` 3931 lines / 478 `if`s becomes ~1200 lines across `spec.py` (~250), `merge.py` (~80),
-`validate.py` (~200), resolvers (~500), lane glue (~150), with ~120 `if`s, almost all in resolvers that do not change
-when a phrasing changes.
+```
+#2209 merges -> W1 corpus -> W2 spec + shadow -> W3 delta prompt -> W4 clarify as delta -+-> W6 delete old path -> W7 resolver table
+                                   (prod shadow week starts when W2 deploys)             +-> W5 agent (after W3, parallel to W4)
+```
+
+### 3.2 The lanes
+
+**REPORT-SPEC-W1: golden corpus + harness**
+- Depends on: #2209 merged. Crew re-records the 26 steps on #2209's final head and published-candidate prompt, with
+  the `Held report:` line per turn (ruling 4). The 156 existing rows go in as seed rows marked `recorded_without_held`.
+- Scope:
+  - `tests/chatbot/golden/report_turns.jsonl` (new);
+  - `tests/chatbot/test_report_golden.py` (new);
+  - a `held` field in `scripts/chatbot_eval/gold/parser_report_*.jsonl` rows that lack it;
+  - converting the existing gold files (`parser_report_semantic_carry`, `totals_filters`, `v92`, `filter_all`) into
+    corpus rows.
+- App change: none.
+- Size: ~350 test and harness lines plus data, 1 day. Track: small fix.
+- Exit:
+  - the corpus is green on main as #2209 left it;
+  - known failures are `xfail` with a reason;
+  - the corpus row count is posted.
+- Deletes: nothing.
+
+**REPORT-SPEC-W2: ReportSpec, merge table, validator, to_params + production shadow**
+- Depends on: W1.
+- Scope:
+  - `app/services/reports/spec.py`: the `AXES` table, `ReportSpec`, `ReportDelta`, `AxisOp` (2.1).
+  - `reports/merge.py`: the 5-row table plus invariants I1-I3 (2.2).
+  - `reports/validate.py`: the ordered checks plus one `Ask` (2.3).
+  - `to_params` (2.4).
+  - The shadow, at the `from_object` seam (`engine.py:6367`): on every object turn, the full-state object is turned
+    into a delta (absent = keep, ALL = all, a changed list = set). The new path runs as a pure computation, and
+    `turn_trace.add("report_spec_shadow", {params_new, params_old, equal, diff_keys})` records the result.
+  - The reply is still the old path's (ruling 5).
+- Tests:
+  - the merge table, parametrized over `AXES` x ops;
+  - validate order;
+  - to_params against route params, for every L1 corpus row;
+  - a shadow test that asserts nothing user-facing changes.
+- Size: ~650 app + ~450 test lines, 2-3 days. Track: full (over 300 lines; no migration, auth or RBAC change).
+- Exit:
+  - L1 is green;
+  - the shadow diff on the corpus is 0, or each diff is listed as a known legacy-rule difference in the lane PLAN.
+- Clock: the **one-week production shadow (ruling 5) starts when W2 is deployed**. Crew posts the daily diff count
+  from `turn_trace`.
+- Deletes: nothing.
+
+**REPORT-SPEC-W3: the delta prompt (parser emits per-axis ops, ruling 1)**
+- Depends on: W2.
+- Scope:
+  - A new candidate prompt built on the published text. Edits:
+    - the `report_ask` object becomes the `ReportDelta` schema (`head/parser.py:1022` `REPORT_ASK_KEYS` and the
+      schema at `:1061`);
+    - a missing key means keep;
+    - ALL becomes op `all`;
+    - `new_report: true` marks a fresh ask.
+  - Both prompt files are pinned by md5.
+  - Engine: the new path answers when the prompt text carries the `report_delta` marker, read the way
+    `ParserConfig.report_ask` is read today. Older prompts keep the old path unchanged.
+  - Gold: the L0 rows rewritten as deltas (~60 rows: the 28 from `filter_all` plus the 26 re-recorded steps plus
+    EN/BM/ZH mixes).
+- Tests: L1 corpus with the delta rows; marker on/off, where a prompt without the marker gives a byte-identical
+  outcome; the md5 pin test.
+- Eval: crew runs the L0 gate and live x3 on the candidate. Budget: the crew's usual cap.
+- Size: ~300 app + ~250 test lines, plus the prompt and gold rows, 2-3 days. Track: full.
+- Exit:
+  - L1 is green;
+  - L0 n/3 per step is not below the published prompt's;
+  - the owner hand test passes on the candidate;
+  - the owner publishes, or holds, the prompt.
+- Deletes: nothing (the old path still serves unmarked prompts).
+
+**REPORT-SPEC-W4: clarify as delta (one clarify policy)**
+- Depends on: W3. Can run beside W5.
+- Scope:
+  - On a `report_delta` prompt, the open question is held as `(spec_so_far, field)`. The reply is parsed to a delta
+    and merged, then validated again.
+  - A numbered pick becomes the same op through `rf.picked_option`.
+  - The open-ask plumbing in `turn/` is narrowed to this ask.
+- Deletes, for the delta path, which is the only caller left once the old seams are skipped there:
+  - `as_basis_answer` (`report_ask.py:963`), `as_kind_answer` (`:1022`), `kind_edits` (`:1098`),
+    `names_its_own_ask` (`:821`), `restates_the_ask` (`:1178`), `_reply_fills` (`:2070`), `_resolve_period`,
+    `_resolve_top_n`, `_resolve_metric`, `_resolve_basis`;
+  - the delta-path branch of the 6 seams at `engine.py:6818-6850`.
+  - The functions themselves are removed in W6, together with the old path.
+- Tests: corpus rows for each open question (period, basis, outstanding kind, brand / account type / company, count),
+  answered by a word, a pick, and a new ask under the question.
+- Size: ~250 app + ~300 test lines, 2 days. Track: full.
+- Exit: L1 green; L0 is not below W3's rate; a hand-test section on the clarify steps (15 and the basis ask).
+
+**REPORT-SPEC-W5: the agent shares the spec (ruling 2)**
+- Depends on: W3 (the schema is stable). Runs beside W4.
+- Scope:
+  - The `crm_report_ask` agent tool schema is generated from `ReportSpec`.
+  - The route (`api/v1/order_management/report_ask.py:229`) gains a spec body path that calls the same `validate` +
+    `resolve` + `reports.ask.run_ask`.
+  - The agent's argument guards that `validate` now covers (`agent/tools.py:1252-1272`) collapse into it. The
+    permission and grant checks stay where they are, unchanged.
+  - `crm_query` is not touched.
+- Tests:
+  - the agent calls the route with a spec;
+  - every refusal the guards gave is still given (`ARG_PERMISSIONS`, `ARG_CONTACT_GRANTS`, the sales-basis rule);
+  - a chatbot spec and an agent spec give the same route params.
+- Size: ~200 app + ~200 test lines, 1-1.5 days. Track: full. **`security-reviewer` joins**: this lane changes the
+  route's input surface and the agent's permission guards.
+- Exit: the agent and chatbot corpus rows give identical params; the security review is clean.
+
+**REPORT-SPEC-W6: delete the old follow-up path**
+- Depends on, all of them:
+  - W4 merged;
+  - the delta prompt published in production;
+  - the one-week production shadow complete, with crew's report of 0 unexplained diffs (ruling 5).
+- Deletes:
+  - in `report_ask.py`: `with_held` (:1288), `as_held_refine` (:1195), `_refine` (:2628), `_settle`'s held refill
+    (:2400-2510), the rules in `from_object` (:3456), `_keep_held`, `_keep_held_report`, `_held_spelling`,
+    `_legacy_all`, `_read_all`, `_customer_stays` (:2603), `_widened` (:2618), `_carry` leftovers, and the W4
+    functions;
+  - the engine seams at `engine.py:6818-6850` and `:6555-6560` where only the old path reads them;
+  - in `order_list.py:163-170`, the report-turn branch;
+  - the report use of `turn/decide.widened_kinds`;
+  - the prompt marker check, now always on.
+- Tests: rule-only tests whose behaviour is a corpus row are deleted. A test that pins a behaviour with no corpus row
+  is first turned into a row.
+- Size: about -1800 app lines, a few hundred rule tests removed, and ~150 new corpus rows. Net around -1600 app lines.
+  2-3 days. Track: full.
+- Exit:
+  - L1 green;
+  - L0 unchanged;
+  - `report_ask.py` re-measured and the numbers posted (radon and `if` count, as in 1.1).
+
+**REPORT-SPEC-W7: resolution as the AXES resolver table**
+- Depends on: W6.
+- Scope:
+  - `_word_filters` (:1506), `_account_plan` (:1626), `_company_or_brand` (:1756), `_product_args` (:1818),
+    `_customer_in` and `_in_company` become one resolver entry each under `AXES`. Their insides are unchanged.
+  - `_settle` (cc 199) and `_fresh_args` (cc 85) are split up and removed.
+  - The presenter header labels are read from `AXES[...].label`.
+- Tests: one resolver test per axis; L1 green.
+- Size: about -400 app lines net, ~200 test lines, 2 days. Track: full.
+- Exit:
+  - end-state measurement posted (target: ~1200 lines and ~120 `if`s across the report modules);
+  - the "new filter axis" recipe in 2.6 is proven by a dry-run diff in the PR body.
+
+### 3.3 Totals
+
+| Lane | Depends on | Size (app / test) | Days | Track | Deletes |
+|---|---|---|---|---|---|
+| W1 corpus | #2209 merged, re-record | 0 / ~350 + data | 1 | small fix | - |
+| W2 spec + shadow | W1 | ~650 / ~450 | 2-3 | full | - |
+| W3 delta prompt | W2 | ~300 / ~250 + prompt, gold | 2-3 | full | - |
+| W4 clarify as delta | W3 | ~250 / ~300 | 2 | full | delta-path seams |
+| W5 agent spec | W3 | ~200 / ~200 | 1-1.5 | full + security | agent arg guards covered by `validate` |
+| W6 delete old path | W4, prompt published, 1-week shadow | about -1800 / rule tests to corpus | 2-3 | full | old follow-up path, ~29 rules |
+| W7 resolver table | W6 | about -400 net / ~200 | 2 | full | `_settle`, `_fresh_args` monoliths |
+
+Total: ~13-15 lane-days. Calendar time is longer, because of the production shadow week and the owner publishing
+the prompt. End-state estimate: `report_ask.py`, now 3931 lines and 478 `if`s, becomes ~1200 lines across
+`spec.py` (~250), `merge.py` (~80), `validate.py` (~200), resolvers (~500) and lane glue (~150). About 120 `if`s
+remain, almost all in resolvers that do not change when a phrasing changes.
 
 What this does NOT fix: parser variance. 8-12 of 26 steps already vary across 3 runs of the same text. Ops shrink how
-much the model has to copy each turn (only what the message changes), which is the part that varies most, but a
-misread op is still a misread; the corpus measures it per step instead of a patch chasing it.
+much the model copies each turn: only what the message changes, which is the part that varies most. A misread op is
+still a misread. The corpus measures it per step, instead of a patch chasing it.
 
-### 3.1 While the waves run
-
-- No new keep/clear rule in `report_ask.py`. A failing phrasing becomes a corpus row (red, marked expected-fail) and
-  waits for W2.
-- #2209 is the bridge, not wasted work: its ALL value is exactly the `all` op, and its prompt edits are the first
-  half of the delta prompt.
+#2209 is the bridge, not wasted work. Its ALL value is exactly the `all` op, and its prompt edits are the first half
+of the delta prompt.
 
 ---
 
-## 4. Questions (max 5, each with a recommendation)
+## 4. Rulings (owner, 7 Nov ~16:15, "2229 ok": all 5 recommendations accepted)
 
-1. **Parser contract: per-axis ops (delta, absent = keep) or full-state object (today)?** Recommendation: ops,
-   because the ~29 rules exist only to guess what an empty full-state slot meant, and the corpus shows the explicit
-   op is the stable output ("clear brand" with ALL 6/6, without 0/6 distinguishable).
-2. **Agent sharing: `crm_report_ask` with the `ReportSpec` schema, or sales as a `crm_query` entity?**
-   Recommendation: `crm_report_ask` + `ReportSpec`, one route and one executor; `crm_query` has no basis, period or
-   reveal semantics and would be a second sales engine.
-3. **#2209: merge it as the bridge and freeze rules, or park it for W2?** Recommendation: merge once its hand test
-   passes, then freeze: no new rule patches, failures become corpus rows.
-4. **Corpus: may crew re-record the 26 steps with the `Held report:` line, and is the 7 Nov hand-test Expected list
-   the expectation per turn?** Recommendation: yes to both; without the held line a parser row is not replayable
-   (step 11 shows the held line moves the parse).
-5. **Shadow logging (W1) in production for a week before W4 deletes the old path?** Recommendation: yes, trace only,
-   no behaviour change; it turns "did we break a phrasing" into a diff count.
+1. **Parser contract: explicit per-axis ops.** The ops are keep / set / add / remove / all, and a missing key means
+   keep (lane W3). The reason: the ~29 rules exist only to guess what an empty full-state slot meant. The corpus shows
+   the explicit op is the stable output: "clear brand" gave ALL 6/6, and without ALL the turn could not be told apart
+   from one that never mentioned brands.
+2. **`crm_report_ask` takes the `ReportSpec` schema.** One engine serves the chatbot and the agent; `crm_query` is
+   not used for sales (W5).
+3. **Merge #2209 when its hand test passes, then freeze keep/clear rules** (3.0). W1 starts after that merge.
+4. **Crew re-records the 26 steps with the `Held report:` line.** The owner's hand-test Expected list is the
+   expectation per turn (W1).
+5. **One week of production shadow logging into `turn_trace` before the old path is deleted.** The shadow starts with
+   W2's deploy; the deletion is W6.
 
 ---
 

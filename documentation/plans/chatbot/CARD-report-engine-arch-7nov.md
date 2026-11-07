@@ -13,15 +13,15 @@ resolution, route params and header labels; `crm_report_ask` takes the same `Rep
 **New feature cost, end state:** new filter axis ~40-80 lines, no merge change; dealer vs project split 0 lines
 (already `group_by: channel`); supplier outstanding ~250 lines (a dataset + a kind); leaderboard vs target ~120.
 
-**Waves:** W0 corpus (156 #2209 turns + owner Expected list, L1 no-LLM + L0 md5-pinned) -> W1 shadow -> W2 delta
-prompt -> W3 clarify-as-delta -> W4 delete the old path (~ -1600 net) -> W5 agent -> W6 resolver table.
-~12-14 lane-days.
+**Lanes (plan section 3):** W1 corpus (after #2209 merges) -> W2 spec + prod shadow -> W3 delta prompt ->
+W4 clarify as delta (beside W5 agent spec) -> W6 delete the old path (after the shadow week + published prompt) ->
+W7 resolver table. ~13-15 lane-days.
 
-## Questions
+## Rulings (owner 7 Nov ~16:15, "2229 ok")
 
-1. Parser contract: per-axis ops or full-state object? **Rec: ops.**
-2. Agent: `crm_report_ask` with `ReportSpec`, or sales inside `crm_query`? **Rec: `crm_report_ask`.**
-3. #2209: merge as the bridge then freeze rules, or park? **Rec: merge after its hand test, then freeze.**
-4. Re-record the 26 steps with the `Held report:` line, and the 7 Nov hand-test Expected list as the per-turn
-   expectation? **Rec: yes.**
-5. One week of production shadow logging before W4 deletes? **Rec: yes, trace only.**
+1. Parser emits explicit per-axis ops (keep / set / add / remove / all, missing = keep).
+2. `crm_report_ask` takes `ReportSpec`: one engine for chatbot and agent.
+3. Merge #2209 when done, then freeze keep/clear rules.
+4. Crew re-records the 26 steps with the `Held report:` line; the owner's hand-test Expected list is the per-turn
+   expectation.
+5. One week of production shadow logging (`turn_trace`) before the old path is deleted.
