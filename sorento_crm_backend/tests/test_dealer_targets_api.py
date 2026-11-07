@@ -406,9 +406,10 @@ def test_existing_agent_target_reads_as_before(api):
     assert body["rounding"] == "sen"
     assert body["tiers_per_period"] is False
     period = body["periods"][0]
-    # Marginal: 2% x 1,000 + 4% x 500 = 40; bonuses 50 + 100.
+    # Marginal: 2% x 1,000 + 4% x 500 = 40. Bonus is the reached tier's RM Additional only
+    # (lane TARGET-TIER-ADDITIONAL, owner 5 Nov): 100, no longer 50 + 100.
     assert period["commission_earned"] == 40
-    assert period["bonus_earned"] == 150
+    assert period["bonus_earned"] == 100
     assert [t["from_pct"] for t in body["tiers"]] == [0, 100]
 
 

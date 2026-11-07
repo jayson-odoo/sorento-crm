@@ -598,6 +598,9 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 "threshold": None if t.threshold is None else Decimal(str(t.threshold)),
                 "rate": Decimal(str(t.rate or 0)),
                 "bonus": t.bonus_amount,
+                "additional_rate": (
+                    None if t.additional_rate is None else Decimal(str(t.additional_rate))
+                ),
                 "is_additional": bool(t.is_additional),
                 "period_start": t.period_start,
                 "account_rates": (
@@ -616,6 +619,7 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 "threshold": t.threshold,
                 "rate": t.rate,
                 "bonus": t.bonus_amount,
+                "additional_rate": t.additional_rate,
                 "is_additional": t.is_additional,
                 "period_start": t.period_start,
                 "account_rates": list(rates[t.id].items()) if t.id in rates else None,
@@ -659,6 +663,14 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
             raise _unprocessable(
                 "Turn on own tiers per period to give a tier a period.", "INVALID_TIERS"
             )
+        if t["additional_rate"] is not None and t["bonus"] is not None:
+            raise _unprocessable(
+                "A tier's Additional is a % or an RM amount, not both.", "INVALID_TIERS"
+            )
+        if t["is_additional"] and t["additional_rate"] is not None:
+            raise _unprocessable(
+                "A \"+ Additional\" row cannot carry an Additional of its own.", "INVALID_TIERS"
+            )
         key = (t["period_start"], t["is_additional"], value)
         if key in seen:
             raise _unprocessable(
@@ -679,6 +691,20 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
                 raise _unprocessable(
                     "A rate names an account this target does not count.", "INVALID_TIERS"
                 )
+    # A tier that carries its own % Additional cannot also keep a legacy "+ Additional" row on its
+    # threshold: both would pay (review, lane TARGET-TIER-ADDITIONAL).
+    def _at(t: dict):
+        return (t["period_start"], (t["from_pct"] if unit == "pct" else t["threshold"]).quantize(Decimal("0.01")))
+
+    # The % Additional only: a Bonus beside a legacy row was a valid shape before this lane and
+    # the fold leaves it alone, so refusing it would block saving those targets.
+    carrying = {_at(t) for t in tiers if not t["is_additional"] and t["additional_rate"]}
+    if any(t["is_additional"] and _at(t) in carrying for t in tiers):
+        raise _unprocessable(
+            "A tier has its own Additional and a \"+ Additional\" row on the same threshold: "
+            "remove the row.",
+            "INVALID_TIERS",
+        )
     target.commission_method = method
     target.threshold_unit = unit
     target.rounding = rounding
@@ -695,6 +721,7 @@ def _write_commission(db: Session, target: SalesTarget, commission: dict) -> Non
             threshold=None if t["threshold"] is None else _money(t["threshold"]),
             rate=t["rate"],
             bonus_amount=None if t["bonus"] is None else _money(t["bonus"]),
+            additional_rate=t["additional_rate"],
             is_additional=t["is_additional"],
             period_start=t["period_start"],
         )
@@ -1168,6 +1195,7 @@ def _copy(
             threshold=tier.threshold,
             rate=tier.rate,
             bonus_amount=tier.bonus_amount,
+            additional_rate=tier.additional_rate,
             is_additional=tier.is_additional,
             period_start=None if tier.period_start is None else new_start[tier.period_start],
         )
@@ -1355,6 +1383,7 @@ def _engine_tiers(
             threshold=t.threshold,
             is_additional=bool(t.is_additional),
             account_rates=rates.get(t.id),
+            additional_rate=t.additional_rate,
         )
         for t in tiers
     ]
@@ -1790,6 +1819,7 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
             # The reached main tier's rate(s), one per account on per-account rates
             # (TARGET-COMMISSION-VIEW); empty below the first tier.
             "tier_rates": reached_rung["rates"] if reached_rung else [],
+            "tier_additional": reached_rung["additional"] if reached_rung else None,
             "tier_ladder": ladder,
             "point_ratio": _num(ratio),
             "ratio_missing": payout.ratio_missing,
@@ -1901,6 +1931,7 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
                 "threshold": _num(t.threshold),
                 "rate": None if t.id in rates else _num(t.rate),
                 "bonus_amount": _num(t.bonus_amount),
+                "additional_rate": _num(t.additional_rate),
                 "is_additional": bool(t.is_additional),
                 "period_start": t.period_start,
                 "account_rates": (
@@ -2242,7 +2273,8 @@ def tier_ladder(
 ) -> List[dict]:
     """The period's main rungs sorted by RM threshold (the engine's ordering, so `tier` is the
     engine's `tier_reached` number), each with its rates and the additional rates sharing its
-    RM threshold. An additional tier matching no rung is left out. Empty when no threshold can
+    RM threshold (after the tier's own % Additional, if any), and `additional`: its own
+    Additional as `{kind: pct|amount, value}`. An additional tier matching no rung is left out. Empty when no threshold can
     be known (a points target with no ratio)."""
     unit = target.threshold_unit or "pct"
     ratio = ratio_on(ratios, period.period_end) if unit == "points" else None
@@ -2255,10 +2287,19 @@ def tier_ladder(
     def at(tier: commission_service.Tier) -> Optional[Decimal]:
         return commission_service.threshold_in_rm(tier, unit, period.target_value, ratio)
 
-    def entries(tier: commission_service.Tier) -> List[dict]:
+    def entries(tier: commission_service.Tier, rate: Optional[Decimal] = None) -> List[dict]:
+        # `rate`: the tier's own % Additional, on the same accounts the tier pays.
         if tier.account_rates is not None:
-            return _rate_entries(tier.account_rates, labels or [])
-        return [{"label": None, "rate": _r2(tier.rate)}]
+            rates = tier.account_rates if rate is None else {k: rate for k in tier.account_rates}
+            return _rate_entries(rates, labels or [])
+        return [{"label": None, "rate": _r2(tier.rate if rate is None else rate)}]
+
+    def additional(tier: commission_service.Tier) -> Optional[dict]:
+        if tier.additional_rate:
+            return {"kind": "pct", "value": float(tier.additional_rate)}
+        if tier.bonus_amount:
+            return {"kind": "amount", "value": float(tier.bonus_amount)}
+        return None
 
     main = sorted(
         (t for t in mine if not t.is_additional and at(t) is not None), key=lambda t: at(t)
@@ -2271,7 +2312,11 @@ def tier_ladder(
             "threshold_rm": at(tier),
             "threshold_points": _r2(tier.threshold) if unit == "points" else None,
             "rates": entries(tier),
-            "additional_rates": [r for a in extra if at(a) == at(tier) for r in entries(a)],
+            "additional_rates": (
+                entries(tier, tier.additional_rate) if tier.additional_rate else []
+            )
+            + [r for a in extra if at(a) == at(tier) for r in entries(a)],
+            "additional": additional(tier),
         }
         for index, tier in enumerate(main, start=1)
     ]

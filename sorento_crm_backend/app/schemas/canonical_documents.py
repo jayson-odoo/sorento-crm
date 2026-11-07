@@ -477,6 +477,12 @@ class CanonicalBillingDocumentLine(BaseModel):
     from_doc_type: Optional[str] = Field(None, max_length=10)
     from_doc_no: Optional[str] = Field(None, max_length=50)
     from_line_ref: Optional[str] = Field(None, max_length=255)
+    # v2.13 (SS-PACKAGE-LINES, ss PR #226): on an AutoCount item-package CHILD line, the parent
+    # line's `source_ref` (`{database}:IV:{DocKey}:{ParentDtlKey}`); null on a parent or a plain
+    # line. `line_type` is AutoCount's raw `DtlType` as sent (null today). Stored as sent; a
+    # parent whose children carry its money is not summed (`billing_subtotal_lines`).
+    parent_line_ref: Optional[str] = Field(None, max_length=255)
+    line_type: Optional[str] = Field(None, max_length=20)
 
     @model_validator(mode="before")
     @classmethod

@@ -89,6 +89,7 @@ from app.services.master_ref_resolver import (
     WARN_UNCLASSIFIED_DEMAND,
     MasterRefResolver,
     dedupe_warnings,
+    line_product_unresolved_warning,
 )
 from app.services.scm.po_ref import po_ref_key
 from app.services.project_label_rules import (
@@ -650,6 +651,17 @@ class DocumentIngestService(MasterRefResolver):
                 ref = getattr(line, "source_ref", None)
                 if ref:
                     dropped_refs.append(ref)
+                # INGEST-DROP-WARN-CRM: say WHICH line was dropped and why, not
+                # only count it. Products match by code only (3 Oct ruling), so
+                # the code is the missing value, blank when none was sent.
+                warnings.append(
+                    line_product_unresolved_warning(
+                        getattr(payload, spec.number_field, None),
+                        ref,
+                        getattr(line, "line_number", None),
+                        getattr(line, "product_code", None),
+                    )
+                )
 
         if spec.entity_type == "sales_orders" and outcome is IngestOutcome.UPDATED:
             self._capture_planning_diff_before(header, payload)
