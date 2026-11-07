@@ -14,7 +14,8 @@ price) whose package child, a line that names an item, repeats its quantity, uni
 discount and net amount exactly. On `AED_V2_MOCHA` the first child carries the package's money as
 well, so both rows count it. The copies are taken only when the document's lines less the copies
 equal its header `net_total` exactly; otherwise none is. The parent's `line_no` need not be the
-child's (M2601-1517: 48 and 16), so it is not compared. One real line excuses one copy (copies paired in `source_ref` byte order).
+child's (M2601-1517: 48 and 16), so it is not compared. One real line excuses one copy (copies
+paired in `source_ref` byte order).
 
 **Package parent, explicit** (`is_duplicate`; contract v2.13): once the shared service sends
 `parent_line_ref` on a document's child lines, the parent is any line a child names, and it is
@@ -74,9 +75,18 @@ def _order_key(line: Mapping[str, Any]) -> tuple:
     return (line_no is None, line_no or 0, _ref_key(line))
 
 
+def _net(line: Mapping[str, Any]) -> Decimal:
+    """The line's net amount, 0 when it has none."""
+    net = line.get("net_amount")
+    return Decimal(net) if net is not None else Decimal("0")
+
+
+_MONEY_FIELDS = ("quantity", "unit_price", "discount_amount", "net_amount")
+
+
 def _money_key(line: Mapping[str, Any]) -> Optional[tuple]:
     """(quantity, unit price, discount, net) when the line states quantity, price and net."""
-    values = [line.get(name) for name in ("quantity", "unit_price", "discount_amount", "net_amount")]
+    values = [line.get(name) for name in _MONEY_FIELDS]
     if values[0] is None or values[1] is None or values[3] is None:
         return None
     return tuple(None if v is None else Decimal(v) for v in values)
@@ -102,11 +112,9 @@ def _mark_duplicates(lines: list, net_total: Optional[Decimal]) -> None:
         if _is_package_copy_shape(line) and real.get(key, 0) > 0:
             real[key] -= 1
             copies.append(line)
-    total = sum((Decimal(x["net_amount"]) for x in lines if x.get("net_amount") is not None), Decimal("0"))
-    exact = (
-        net_total is not None
-        and total - sum((Decimal(x["net_amount"]) for x in copies), Decimal("0")) == Decimal(net_total)
-    )
+    total = sum((_net(x) for x in lines), Decimal("0"))
+    copied = sum((_net(x) for x in copies), Decimal("0"))
+    exact = net_total is not None and total - copied == Decimal(net_total)
     chosen = {id(x) for x in copies} if exact else set()
     for line in lines:
         line["is_duplicate"] = id(line) in chosen
@@ -118,13 +126,15 @@ def _mark_explicit_parents(lines: list) -> None:
         ref = line.get("parent_line_ref")
         # A line naming itself is no package (review round 3): never its own child.
         if not _is_empty(ref) and ref != line.get("source_ref"):
-            net = line.get("net_amount")
-            children[ref] = children.get(ref, Decimal("0")) + (Decimal(net) if net is not None else Decimal("0"))
+            children[ref] = children.get(ref, Decimal("0")) + _net(line)
     for line in lines:
         net = line.get("net_amount")
         ref = line.get("source_ref")
         line["is_duplicate"] = (
-            ref in children and net is not None and Decimal(net) != 0 and children[ref] == Decimal(net)
+            ref in children
+            and net is not None
+            and Decimal(net) != 0
+            and children[ref] == Decimal(net)
         )
 
 
