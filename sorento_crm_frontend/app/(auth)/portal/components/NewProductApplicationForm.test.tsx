@@ -321,23 +321,19 @@ describe('an existing application', () => {
     );
   });
 
-  it('hides Revise once a line is resolved and shows the result of each line', async () => {
+  it('hides Revise once the new code is linked, and shows no per-row Opened as column', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({
         status: 'approved',
         status_label: 'Approved',
-        lines: [
-          line({ opened_product_id: 'p-1', opened_product_code: 'XY-1234-MB' }),
-          line({ id: 'l-2', line_no: 2, closed_reason: 'supplier dropped it' }),
-        ],
+        new_product_id: 'p-1',
+        new_product_code: 'XY-1234-MB-69',
+        new_product_active: true,
       }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
-    expect(
-      await screen.findByText('XY-1234-MB', { selector: 'span,p,a' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/not opening/i)).toBeInTheDocument();
-    expect(screen.getByText('supplier dropped it')).toBeInTheDocument();
+    expect(await screen.findByText('XY-1234-MB-69')).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /^revise$/i })).toBeNull();
   });
 
@@ -433,12 +429,11 @@ describe('purchasing feedback on the portal (PQ1)', () => {
       status: 'approved',
       status_label: 'Approved',
       lead_time: '3 weeks',
-      lines: [
-        line({
-          cost_price: '12.50',
-          opened_supplier_name: 'Example Supplier Co',
-        }),
-      ],
+      new_product_id: 'p-9',
+      new_product_code: 'XY-1234-MB-69',
+      new_product_active: true,
+      new_product_facts: { opened_supplier_name: 'Example Supplier Co' },
+      lines: [line({ cost_price: '12.50' })],
     });
 
   it('shows COST, LEADTIME and the supplier read-only, with no Save feedback', async () => {

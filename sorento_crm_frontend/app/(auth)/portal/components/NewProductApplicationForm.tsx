@@ -251,7 +251,9 @@ export default function NewProductApplicationForm({
   const readOnly = !editable;
   const locked = isAwaitingReview(status) || status === 'approved';
   const anyResolved = Boolean(
-    application?.lines.some((l) => l.opened_product_id || l.closed_reason),
+    application?.new_product_id ||
+      application?.new_code_closed_reason ||
+      application?.lines.some((l) => l.opened_product_id || l.closed_reason),
   );
   const canRevise = locked && !anyResolved;
   const canCancel =
