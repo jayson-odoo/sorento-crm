@@ -1422,8 +1422,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
     const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l, priceMode) ? [index] : []));
-    // Approve also reads the facts that stop a tag being drawn (no combo price, a discontinued
-    // part, no template, a short pick). They are found HERE, on the click, and shown on the line;
+    // Approve also reads the facts that stop a tag being drawn (no combo price, no template, a
+    // short pick). They are found HERE, on the click, and shown on the line;
     // Escalate is the way out of them, so it does not ask (owner, 5 Nov; same mechanism as #2138).
     const perLine = lines.map((l, index) => {
       const found: string[] = [];

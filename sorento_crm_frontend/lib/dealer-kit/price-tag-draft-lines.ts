@@ -658,13 +658,8 @@ export function lineProblemsOf(
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
     const k = picksNeeded(line, part.role, priceMode);
     if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
-    // Owner, 7 Nov: a discontinued option picked in a choice group is a valid choice. A fixed
-    // part (no role) is not chosen, so a discontinued one still stops Approve.
-    if (part.role) continue;
-    for (const id of picked) {
-      const option = combo?.parts.find((p) => p.product_id === id);
-      if (option?.is_discontinued) out.push(`${option.code} is discontinued.`);
-    }
+    // Owner, 7 Nov: a discontinued product never stops Approve, picked or fixed. Its row's
+    // "Discontinued" badge is the warning.
   }
   if (line.combo_id && pricing) {
     if (linePriceType(line, priceMode) === 'list') {
@@ -694,7 +689,6 @@ function isCheckMessage(message: string): boolean {
     message === 'No tag template yet.' ||
     message.startsWith('Template needs ') ||
     /^No combo (list|selling) price\.$/.test(message) ||
-    / is discontinued\.$/.test(message) ||
     /: pick \d+ more\.$/.test(message) ||
     / template linked$/.test(message)
   );

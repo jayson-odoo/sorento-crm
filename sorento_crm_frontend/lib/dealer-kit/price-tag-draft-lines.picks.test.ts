@@ -16,8 +16,8 @@
  * - `linePickProblems(lines, pricingByKey, priceMode = 'list')` -> string[] in line order;
  *   `priceMode` is the request's mode, used when a line has no own `price_type` (the plan's
  *   two-argument signature cannot tell an LP line from an SP line).
- * - Reason words, exact: "Line i: <group>: pick n more.", "<code> is discontinued. Pick another
- *   or escalate it to marketing.", "No combo list price for line i. Escalate it to marketing."
+ * - Reason words, exact: "Line i: <group>: pick n more.", "No combo list price for line i. Escalate it
+ *   to marketing." (A discontinued product is not a reason since PRICETAG-DISCONTINUED-PICK, 7 Nov.)
  * - Only a group the template needs k >= 2 from can be short; an open k <= 1 group is not a
  *   problem (it is today's "any of" row).
  */

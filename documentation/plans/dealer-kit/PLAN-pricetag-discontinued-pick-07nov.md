@@ -1,6 +1,6 @@
 # PLAN: price tag request, discontinued combo options stay selectable
 
-Status: in progress (small fix track: no migration, no auth/RBAC, FE-only diff expected)
+Status: in review, PR #2236 (small fix track: no migration, no auth/RBAC, FE-only behaviour change)
 
 Lane: PRICETAG-DISCONTINUED-PICK. UAC: `pricetag-discontinued-pick-acceptance-criteria.md`.
 
@@ -27,9 +27,10 @@ be picked. "discontineud should still be able to choose".
 
 1. The two option builders keep the grey "Discontinued" hint (description on the single select,
    `badgeText` on the multi select) but drop `disabled`.
-2. `lineProblemsOf` no longer names a discontinued product held in a choice-group row (a row with
-   a `role`). A fixed part (role null) that is discontinued still blocks Approve: it is not a
-   choice, and the owner's rule is about the picker; crew asks the owner about it separately.
+2. `lineProblemsOf` no longer writes "<code> is discontinued." for any part, picked or fixed
+   (owner ruling 7 Nov ~21:50, item 1a). The row's existing "Discontinued" badge
+   (`PriceTagLinesTable.tsx:355`) is the warning. The Upgrade row stays pickable for a
+   discontinued option (ruling 2a); the Dealer Kit catalogue is unchanged (ruling 3a).
 3. Backend: a pytest pinning that save accepts a discontinued candidate pick, so a future reject
    cannot land silently.
 
