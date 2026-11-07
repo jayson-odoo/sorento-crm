@@ -143,6 +143,14 @@ def agent_label() -> Any:
     return sa.func.coalesce(code, as_sent)
 
 
+def person_label() -> Any:
+    """The person behind the sale's agent (`sales_agents.person_label`), else the agent's own label (code);
+    NULL when there is no agent (SALES-LEADERBOARD)."""
+    agent = aliased(SalesAgent)
+    person = sa.select(agent.person_label).where(agent.id == agent_id()).correlate(BillingDocument).scalar_subquery()
+    return sa.func.coalesce(sa.func.nullif(sa.func.btrim(person), ""), agent_label())
+
+
 def uuid_values(values: List[str], name: str) -> List[str]:
     """`values` when every one is a UUID, else 422 (never a 500 from the uuid cast)."""
     import uuid as _uuid

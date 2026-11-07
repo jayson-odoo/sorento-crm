@@ -63,13 +63,16 @@ def _select(tmp_path, changed, files=None, **kw):
     return rds.select(changed, root, **kw)
 
 
-def test_dependents_are_transitive_through_module_level_imports(tmp_path):
+def test_dependents_stop_after_two_hops(tmp_path):
+    # crew, 5 Nov 2026: the tests that import the changed module, and those that import a module
+    # importing it; no further.
     res = _select(tmp_path, [B + "app/models/user.py"])
     assert res.backend == "selected"
-    # order.py imports user at module level, pricing imports Order (re-exported), test_pricing
-    # imports pricing: all three hops followed.
-    for t in ("tests/test_user.py", "tests/test_pricing.py", "tests/scm/test_scm_orders.py"):
+    # test_user imports user (hop 1); test_scm_orders imports order, which imports user (hop 2).
+    for t in ("tests/test_user.py", "tests/scm/test_scm_orders.py"):
         assert t in res.tests, t
+    # test_pricing imports pricing, which imports order, which imports user: three hops.
+    assert "tests/test_pricing.py" not in res.tests
     assert "tests/test_unrelated.py" not in res.tests
     assert "tests/scm/test_scm_other.py" not in res.tests
 
@@ -88,9 +91,25 @@ def test_lazy_import_is_one_hop_not_propagated(tmp_path):
     assert "tests/test_api.py" not in res.tests
 
 
-def test_module_level_chain_reaches_api_tests_through_main(tmp_path):
+def test_app_main_is_never_a_hop(tmp_path):
+    # app/main.py imports every router: through it every API test depends on every module
+    # (3,274 of 3,274 test files on the 5 Nov release).
     res = _select(tmp_path, [B + "app/services/ingest.py"])
-    assert {"tests/test_ingest.py", "tests/test_api.py"} <= set(res.tests)
+    assert "tests/test_ingest.py" in res.tests
+    assert "tests/test_api.py" not in res.tests
+
+
+def test_a_router_aggregator_is_never_a_hop(tmp_path):
+    files = {B + "app/api/v1/__init__.py": "from app.api import ingest_route\n",
+             B + "tests/test_v1.py": "from app.api.v1 import router\n"}
+    res = _select(tmp_path, [B + "app/api/ingest_route.py"], files)
+    assert "tests/test_v1.py" not in res.tests
+
+
+def test_a_test_named_after_a_changed_route_runs_without_importing_it(tmp_path):
+    files = {B + "tests/test_ingest_route_flow.py": "from app.main import app\n"}
+    res = _select(tmp_path, [B + "app/api/ingest_route.py"], files)
+    assert "tests/test_ingest_route_flow.py" in res.tests
 
 
 def test_depended_by_selects_the_named_tests_of_a_direct_import(tmp_path):
@@ -256,16 +275,17 @@ def test_release_delta_uses_the_selector():
     assert "selected $" in text or "selected ${" in text  # the crew-tests line carries "selected N of M"
 
 
-def test_module_level_chain_of_four_hops(tmp_path):
+def test_a_chain_of_three_hops_is_not_followed(tmp_path):
     files = {
         B + "app/services/a.py": "X = 1\n",
         B + "app/services/b.py": "from app.services.a import X\n",
         B + "app/services/c.py": "from app.services.b import X\n",
-        B + "app/services/d.py": "from app.services.c import X\n",
-        B + "tests/test_d_only.py": "from app.services.d import X\n",
+        B + "tests/test_b_only.py": "from app.services.b import X\n",
+        B + "tests/test_c_only.py": "from app.services.c import X\n",
     }
     res = _select(tmp_path, [B + "app/services/a.py"], files)
-    assert "tests/test_d_only.py" in res.tests
+    assert "tests/test_b_only.py" in res.tests
+    assert "tests/test_c_only.py" not in res.tests
 
 
 def test_changed_package_init_reaches_every_module_of_the_package(tmp_path):
@@ -276,14 +296,16 @@ def test_changed_package_init_reaches_every_module_of_the_package(tmp_path):
     assert "tests/test_unrelated.py" not in res.tests
 
 
-def test_a_module_a_conftest_imports_reaches_the_tests_under_it(tmp_path):
+def test_a_conftest_is_never_a_hop(tmp_path):
+    # tests/conftest.py imports runtime settings, company scope and models at module level:
+    # through it every test would depend on them. A change to a conftest itself runs the full
+    # suite (test_full_fallbacks).
     files = {
         B + "app/services/scope.py": "def install(): ...\n",
         B + "tests/scm/conftest.py": "from app.services.scope import install\n",
     }
     res = _select(tmp_path, [B + "app/services/scope.py"], files)
-    assert {"tests/scm/test_scm_orders.py", "tests/scm/test_scm_other.py"} <= set(res.tests)
-    assert "tests/test_unrelated.py" not in res.tests
+    assert "tests/scm/test_scm_other.py" not in res.tests
 
 
 def test_deleted_frontend_file_runs_the_tests_that_still_name_it(tmp_path):
@@ -292,3 +314,21 @@ def test_deleted_frontend_file_runs_the_tests_that_still_name_it(tmp_path):
     res = _select(tmp_path, [F + "lib/gone.ts"], files)
     assert res.vitest == "related" and res.vitest_files == ["lib/b.test.ts"]
     assert "1 deleted" in res.vitest_reason
+
+
+FIXTURES = BACKEND / "tests" / "fixtures" / "release_delta"
+
+
+@pytest.mark.parametrize("name, before", [("30bbcc6a..311a6b52", 3274), ("311a6b52..9ebae8e9", 2519)])
+def test_the_5_nov_release_ranges_no_longer_select_almost_everything(name, before):
+    """Regression (crew, 5 Nov 2026): on the release these two ranges selected 3,274 of 3,274 and
+    2,519 test files, because following importers from any changed module reached app/main.py.
+    The changed-file lists are the ranges' own (`git diff --name-only --no-renames`); they are
+    judged against this checkout's tree, so the bound is generous: never the suite, and well
+    under the old count. Measured on the ranges' own heads: 1,428 and 815."""
+    changed = (FIXTURES / f"{name}.txt").read_text().split()
+    res = rds.select(changed, BACKEND)
+    assert res.backend == "selected", res.backend_reason
+    assert len(res.tests) < 0.6 * before, (len(res.tests), res.total)
+    # No API test arrives only because app/main.py imports every router.
+    assert not [t for t, why in res.why.items() if "app/main.py" in why]
