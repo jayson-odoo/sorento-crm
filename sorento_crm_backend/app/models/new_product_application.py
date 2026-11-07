@@ -99,6 +99,11 @@ class NewProductApplication(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=True
     )
     new_code_closed_reason = Column(Text, nullable=True)
+    #: The code purchasing typed for a NEW item it opens in AutoCount (owner 8 Nov). Read as that
+    #: product by exact code (case folded) once AutoCount sends it; `new_product_id` stays NULL.
+    new_code_text = Column(String(100), nullable=True)
+    #: PURCHASING FEEDBACK cost for an application with no product rows (raised from an SI).
+    cost_price = Column(Numeric(12, 2), nullable=True)
     new_code_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     new_code_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -135,6 +140,9 @@ class NewProductApplication(Base, CompanyScopedMixin):
         CheckConstraint(
             "new_product_id IS NULL OR new_code_closed_reason IS NULL",
             name="ck_new_product_applications_one_new_code_outcome",
+        ),
+        CheckConstraint(
+            "cost_price IS NULL OR cost_price >= 0", name="ck_new_product_applications_cost"
         ),
     )
 

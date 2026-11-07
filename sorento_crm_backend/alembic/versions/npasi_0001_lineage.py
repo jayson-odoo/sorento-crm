@@ -35,6 +35,8 @@ UPGRADE = (
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_by VARCHAR(100) "
     "REFERENCES users(id) ON DELETE SET NULL",
     "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_at TIMESTAMP",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS new_code_text VARCHAR(100)",
+    "ALTER TABLE new_product_applications ADD COLUMN IF NOT EXISTS cost_price NUMERIC(12, 2)",
     "CREATE INDEX IF NOT EXISTS ix_new_product_applications_new_product "
     "ON new_product_applications (new_product_id)",
     """
@@ -44,6 +46,16 @@ UPGRADE = (
         ) THEN
             ALTER TABLE new_product_applications ADD CONSTRAINT ck_new_product_applications_one_new_code_outcome
             CHECK (new_product_id IS NULL OR new_code_closed_reason IS NULL);
+        END IF;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'ck_new_product_applications_cost'
+        ) THEN
+            ALTER TABLE new_product_applications ADD CONSTRAINT ck_new_product_applications_cost
+            CHECK (cost_price IS NULL OR cost_price >= 0);
         END IF;
     END $$
     """,
@@ -73,6 +85,9 @@ def downgrade() -> None:
         "ALTER TABLE new_product_applications DROP CONSTRAINT IF EXISTS "
         "ck_new_product_applications_one_new_code_outcome",
         "DROP INDEX IF EXISTS ix_new_product_applications_new_product",
+        "ALTER TABLE new_product_applications DROP CONSTRAINT IF EXISTS ck_new_product_applications_cost",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS cost_price",
+        "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_text",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_at",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_by",
         "ALTER TABLE new_product_applications DROP COLUMN IF EXISTS new_code_closed_reason",

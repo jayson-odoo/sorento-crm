@@ -20,6 +20,7 @@ from app.schemas.new_product_application import (
     AttachmentLinkIn,
     LinkIn,
     NewProductApplicationWrite,
+    PurchasingResponseIn,
     ReasonIn,
 )
 from app.services import new_product_application_service as svc
@@ -341,6 +342,19 @@ def close_new_code(
 @router.post("/{application_id}/new-code/undo")
 def undo_new_code(application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     return _move(db, user, application_id, svc.undo_new_code)
+
+
+@router.put("/{application_id}/purchasing-response")
+def save_purchasing_response(
+    application_id: str,
+    payload: PurchasingResponseIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner 8 Nov: purchasing's one dialog (outcome, lead time, cost)."""
+    return _move(
+        db, user, application_id, svc.save_purchasing_response, data=payload.model_dump(exclude_unset=True)
+    )
 
 
 @router.put("/{application_id}/feedback")

@@ -419,7 +419,8 @@ def test_ac05_prefill_leaves_a_non_numeric_quantity_and_bad_date_empty(world):
 
 
 def test_ac10_submit_needs_at_least_one_line(world):
-    d = _draft(world, lines=[])
+    # A STANDALONE application (no stock inquiry): one raised from an SI needs no rows (owner, 8 Nov).
+    d = _draft(world, lines=[], stock_inquiry_id=None)
     res = _act(world, d["id"], "submit", world.sales)
     assert res.status_code == 422
     assert _get(world, d["id"])["status"] == "draft"
@@ -1102,7 +1103,8 @@ def test_ac72_a_product_with_only_a_type_submits(world):
 
 
 def test_ac72_submit_needs_at_least_one_product(world):
-    d = _draft(world, lines=[])
+    # A STANDALONE application (no stock inquiry): one raised from an SI needs no rows (owner, 8 Nov).
+    d = _draft(world, lines=[], stock_inquiry_id=None)
     assert _act(world, d["id"], "submit", world.sales).status_code == 422
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,6 +57,21 @@ class FeedbackIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     lead_time: Optional[str] = Field(None, max_length=2000)
+    lines: Optional[List[FeedbackLineIn]] = Field(None, max_length=100)
+
+
+class PurchasingResponseIn(BaseModel):
+    """Owner 8 Nov: purchasing's ONE dialog, like the stock inquiry's "Edit purchasing response".
+    ``outcome`` link | new | not_opening; sent as null clears it. A key left out is not changed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Optional[Literal["link", "new", "not_opening"]] = None
+    product_id: Optional[str] = None
+    new_code: Optional[str] = Field(None, max_length=100)
+    reason: Optional[str] = Field(None, max_length=2000)
+    lead_time: Optional[str] = Field(None, max_length=2000)
+    cost_price: Optional[Decimal] = Field(None, ge=0, max_digits=12, decimal_places=2)
     lines: Optional[List[FeedbackLineIn]] = Field(None, max_length=100)
 
 

@@ -406,7 +406,9 @@ def delete_draft(db: Session, application_id: str, user_id: Optional[str]) -> No
 
 
 def validate_submit(app: NewProductApplication) -> None:
-    if not app.lines:
+    # Owner 8 Nov: an application raised from a stock inquiry needs no product rows (the inquiry
+    # carries the product; PRODUCT CODES + REMARK say what is asked). A standalone one still does.
+    if not app.lines and not app.stock_inquiry_id:
         raise _invalid("lines", "Add at least one product before you submit.")
     missing = [line.line_no for line in app.lines if not (line.description or "").strip()]
     if missing:
@@ -478,7 +480,11 @@ def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
 
 
 def _new_code_resolved(app: NewProductApplication) -> bool:
-    return app.new_product_id is not None or app.new_code_closed_reason is not None
+    return (
+        app.new_product_id is not None
+        or app.new_code_text is not None
+        or app.new_code_closed_reason is not None
+    )
 
 
 def _assert_nothing_resolved(app: NewProductApplication, verb: str) -> None:
@@ -511,6 +517,7 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     app.reject_reason = None
     # AC-NPA-75: purchasing's answer was for the old version of the request.
     app.lead_time = None
+    app.cost_price = None
     app.feedback_by = None
     app.feedback_at = None
     for line in app.lines:
@@ -639,6 +646,7 @@ def link_new_code(
     if product is None:
         raise _invalid("product_id", "Pick an active product from the product list.")
     app.new_product_id = product.id
+    app.new_code_text = None
     app.new_code_by = actor.user_id
     app.new_code_at = datetime.utcnow()
     event = _maybe_complete(app)
@@ -667,6 +675,7 @@ def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> N
     if app.status not in (APPROVED, COMPLETED) or not _new_code_resolved(app):
         raise _conflict("There is nothing to undo.", "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE")
     app.new_product_id = None
+    app.new_code_text = None
     app.new_code_closed_reason = None
     app.new_code_by = None
     app.new_code_at = None
@@ -674,6 +683,88 @@ def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> N
         app.status = APPROVED
         app.completed_at = None
     db.flush()
+
+
+OUTCOMES = ("link", "new", "not_opening")
+
+
+def _product_by_code(db: Session, code: Optional[str]) -> Optional[Product]:
+    """The company's product whose code is exactly ``code`` (trimmed, case folded): the code a
+    person typed, never a near one."""
+    text = (code or "").strip().upper()
+    if not text:
+        return None
+    rows = db.query(Product).filter(func.upper(Product.product_code) == text).limit(2).all()
+    return rows[0] if len(rows) == 1 else None
+
+
+def save_purchasing_response(
+    db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]
+) -> Optional[str]:
+    """Owner 8 Nov: purchasing answers in ONE dialog, like the stock inquiry's "Edit purchasing
+    response": the outcome (link an existing code / a new code it opens in AutoCount / not
+    opening), lead time and cost. Approved or Completed only. Any outcome completes; ``outcome``
+    sent as null clears it (back to Approved). A key left out is not changed."""
+    if not actor.can_open_code:
+        raise _forbidden("Only purchasing can answer new product applications.")
+    if app.status not in (APPROVED, COMPLETED):
+        raise _conflict(
+            "Purchasing answers once the application is approved.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+    by_id = {str(line.id): line for line in app.lines}
+    for item in data.get("lines") or []:
+        if str(item["id"]) not in by_id:
+            raise _invalid("lines", "That product is not on this application.")
+    event = None
+    if "outcome" in data:
+        outcome = data["outcome"]
+        if outcome is not None and outcome not in OUTCOMES:
+            raise _invalid("outcome", "Choose link, new or not opening.")
+        product_id, text, reason = None, None, None
+        if outcome == "link":
+            product = (
+                db.query(Product).filter(Product.id == data.get("product_id"), Product.is_active.is_(True)).first()
+                if _is_uuid(data.get("product_id"))
+                else None
+            )
+            if product is None:
+                raise _invalid("product_id", "Pick an active product from the product list.")
+            product_id = product.id
+        elif outcome == "new":
+            text = _clean(data.get("new_code"))
+            if not text:
+                raise _invalid("new_code", "Enter the new product code.")
+            existing = _product_by_code(db, text)
+            product_id = existing.id if existing is not None else None
+            text = None if existing is not None else text
+        elif outcome == "not_opening":
+            reason = _clean(data.get("reason"))
+            if not reason:
+                raise _invalid("reason", "Enter why this code is not being opened.")
+        app.new_product_id, app.new_code_text, app.new_code_closed_reason = product_id, text, reason
+        if outcome is None:
+            app.new_code_by = None
+            app.new_code_at = None
+            if app.status == COMPLETED and not (app.lines and all(_resolved(line) for line in app.lines)):
+                app.status = APPROVED
+                app.completed_at = None
+        else:
+            app.new_code_by = actor.user_id
+            app.new_code_at = datetime.utcnow()
+            if app.status == APPROVED:
+                event = _maybe_complete(app)
+    if "lead_time" in data:
+        app.lead_time = _clean(data["lead_time"])
+    if "cost_price" in data:
+        app.cost_price = data["cost_price"]
+    for item in data.get("lines") or []:
+        if "cost_price" in item:
+            by_id[str(item["id"])].cost_price = item["cost_price"]
+    app.feedback_by = actor.user_id
+    app.feedback_at = datetime.utcnow()
+    db.flush()
+    return event
 
 
 def save_feedback(db: Session, app: NewProductApplication, *, actor: Actor, data: Dict[str, Any]) -> None:
@@ -911,17 +1002,39 @@ def _sources_by_app(db: Session, app_ids: List[Any]) -> Dict[str, List[Dict[str,
 
 
 def _why(app: NewProductApplication) -> Optional[str]:
-    """Why the code was asked for: the PRODUCT TYPE text of its products, in order."""
+    """Why the code was asked for: the PRODUCT TYPE text of its products, in order; with no
+    product rows (raised from a stock inquiry), the REMARK."""
     texts = [l.description for l in app.lines if l.description]
-    return "; ".join(texts) or None
+    return "; ".join(texts) or _clean(app.remark)
+
+
+def _new_product_join():
+    """The new code's product: the linked one, or the product whose code is exactly the code
+    purchasing typed (case folded) once AutoCount has sent it."""
+    return or_(
+        Product.id == NewProductApplication.new_product_id,
+        (NewProductApplication.new_product_id.is_(None))
+        & (func.upper(Product.product_code) == func.upper(func.trim(NewProductApplication.new_code_text))),
+    )
 
 
 def _created_apps(db: Session):
-    """Applications with a linked new code, with that product. The application query carries the
+    """Applications with a new code (linked, or typed by purchasing), with that product when it
+    exists: (application, product id, code, name, active). The application query carries the
     company filter, so another company's lineage never shows."""
-    return db.query(
-        NewProductApplication, Product.product_code, Product.product_name, Product.is_active
-    ).join(Product, Product.id == NewProductApplication.new_product_id)
+    return (
+        db.query(
+            NewProductApplication,
+            Product.id,
+            func.coalesce(Product.product_code, NewProductApplication.new_code_text),
+            Product.product_name,
+            Product.is_active,
+        )
+        .outerjoin(Product, _new_product_join())
+        .filter(
+            or_(NewProductApplication.new_product_id.isnot(None), NewProductApplication.new_code_text.isnot(None))
+        )
+    )
 
 
 def reuse_suggestions(
@@ -952,12 +1065,13 @@ def reuse_suggestions(
     rows = query.order_by(NewProductApplication.new_code_at.desc()).limit(MAX_SUGGESTIONS * 3).all()
     out: List[Dict[str, Any]] = []
     seen = set()
-    for app, code, name, active in rows:
-        if str(app.new_product_id) in seen:
+    for app, pid, code, name, active in rows:
+        key = str(pid) if pid else (code or "").upper()
+        if key in seen:
             continue
-        seen.add(str(app.new_product_id))
+        seen.add(key)
         item = {
-            "product_id": app.new_product_id,
+            "product_id": pid,
             "product_code": code,
             "product_name": name,
             "is_active": active,
@@ -979,7 +1093,7 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     if not _is_uuid(product_id):
         return {"created_from": [], "made_from_this": []}
     order = NewProductApplication.new_code_at.desc()
-    created = _created_apps(db).filter(NewProductApplication.new_product_id == product_id).order_by(order).all()
+    created = _created_apps(db).filter(Product.id == product_id).order_by(order).all()
     made = (
         _created_apps(db)
         .filter(
@@ -994,11 +1108,11 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
     )
     sources = _sources_by_app(db, [r[0].id for r in (*created, *made)])
 
-    def row(app, code, name, active) -> Dict[str, Any]:
+    def row(app, pid, code, name, active) -> Dict[str, Any]:
         qty = [l.expected_qty for l in app.lines if l.expected_qty is not None]
         item = {
             "application_no": app.application_no,
-            "product_id": app.new_product_id,
+            "product_id": pid,
             "product_code": code,
             "product_name": name,
             "is_active": active,
@@ -1271,20 +1385,20 @@ def _created_codes_for(db: Session, apps: List[NewProductApplication]) -> Dict[s
     """NPA-FROM-SI: application id -> the new code purchasing linked, with its current codes and
     when (the stock inquiry's "code created" indicator reads this; nothing is stored for it).
     Two queries for any number of applications."""
-    done = [a for a in apps if a.new_product_id]
+    done = [a for a in apps if a.new_product_id or a.new_code_text]
     if not done:
         return {}
     codes = {
         str(k): v
         for k, v in db.query(Product.id, Product.product_code)
-        .filter(Product.id.in_([a.new_product_id for a in done]))
+        .filter(Product.id.in_([a.new_product_id for a in done if a.new_product_id] or [None]))
         .all()
     }
     sources = _sources_by_app(db, [a.id for a in done])
     return {
         str(a.id): [
             {
-                "product_code": codes.get(str(a.new_product_id)),
+                "product_code": codes.get(str(a.new_product_id)) if a.new_product_id else a.new_code_text,
                 "current_codes": [c["product_code"] for c in sources.get(str(a.id), [])],
                 "created_at": _iso(a.new_code_at),
             }
@@ -1343,12 +1457,17 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     facts = _linked_product_facts(db, [l.opened_product_id for l in lines])
     sources = _sources_by_app(db, [app.id]).get(str(app.id), [])
     new_product = (
-        db.query(Product.product_code, Product.product_name, Product.is_active)
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
         .filter(Product.id == app.new_product_id)
         .first()
         if app.new_product_id
         else None
     )
+    if new_product is None and app.new_code_text:
+        typed = _product_by_code(db, app.new_code_text)
+        if typed is not None:
+            new_product = (typed.id, typed.product_code, typed.product_name, typed.is_active)
+    new_product_id = new_product[0] if new_product else None
     users = _user_names(
         db, [app.decided_by, app.applicant_id, app.feedback_by, app.new_code_by, *[l.resolved_by for l in lines]]
     )
@@ -1428,6 +1547,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "customer_code": customer[0] if customer else None,
         "remark": app.remark,
         "lead_time": app.lead_time,
+        "cost_price": _money(app.cost_price),
         "feedback_by_name": users.get(str(app.feedback_by)) if app.feedback_by else None,
         "feedback_at": _iso(app.feedback_at),
         "decided_at": _iso(app.decided_at),
@@ -1445,10 +1565,12 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "suggestions": reuse_suggestions(
             db, [c["id"] for c in sources], exclude_application_id=app.id, portal=portal
         ),
-        "new_product_id": app.new_product_id,
-        "new_product_code": new_product[0] if new_product else None,
-        "new_product_name": new_product[1] if new_product else None,
-        "new_product_active": new_product[2] if new_product else None,
+        "new_product_id": new_product_id,
+        "new_product_code": new_product[1] if new_product else app.new_code_text,
+        "new_product_name": new_product[2] if new_product else None,
+        "new_product_active": new_product[3] if new_product else None,
+        # The code purchasing typed for a new item (owner 8 Nov); null once linked by id.
+        "new_code_text": app.new_code_text,
         "new_code_closed_reason": app.new_code_closed_reason,
         "new_code_by_name": users.get(str(app.new_code_by)) if app.new_code_by else None,
         "new_code_at": _iso(app.new_code_at),
@@ -1457,10 +1579,10 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         "new_product_facts": (
             {
                 k: v
-                for k, v in _linked_product_facts(db, [app.new_product_id]).get(str(app.new_product_id), {}).items()
+                for k, v in _linked_product_facts(db, [new_product_id]).get(str(new_product_id), {}).items()
                 if not (portal and k in _PORTAL_HIDDEN)
             }
-            if app.new_product_id
+            if new_product_id
             else None
         ),
         "lines": [line_out(l) for l in lines],
