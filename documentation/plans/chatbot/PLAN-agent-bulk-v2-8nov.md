@@ -1,7 +1,6 @@
 # PLAN: Agent bulk actions v2, make #2226 work well (AGENT-BULK-V2)
 
 Status: Build (crew answered Q1 a, Q3 a, Q5 a; Q4 pending data; Q2 with the owner). Track: full (agent write path).
-answers). Track: named after the card (expected full: writes + permissions).
 
 Follow-up to merged #2226 (`PLAN-agent-bulk-actions-7nov.md`). Owner beta feedback 7-8 Nov: "it didn't really work
 well". This lane maps today's flow, reads the owner's failing sessions as masked evidence, files ONE behaviour card,
