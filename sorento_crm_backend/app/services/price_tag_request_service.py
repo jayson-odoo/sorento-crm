@@ -442,29 +442,53 @@ class PriceTagRequestService:
                     if not p.get("product_id")
                     for c in (p.get("candidates") or [])
                 ]
-                pricing_row = line_pricing(
-                    db,
-                    lines=[
-                        {
-                            "key": "_p",
-                            "product_id": product_id,
-                            "part_product_ids": resolved_part_ids,
-                            "candidate_product_ids": candidate_ids,
-                            "combo_id": combo_id,
-                            "promotion_id": promotion_id,
-                            "manual_sell_price": manual_sell_price,
-                        }
-                    ],
-                    viewer=viewer,
-                    # A SAVED line's basis is what the salesperson committed
-                    # to, never the lookup's auto pick (owner ruling, review
-                    # round 2): with no stored promotion the line is `list`,
-                    # however many promotions cover its product.
-                    auto_pick=False,
-                )[0]
-                if promotion_id and promotion_id not in {
-                    option["id"] for option in pricing_row["promotion_options"]
-                }:
+                def _price(promo_id, candidates):
+                    return line_pricing(
+                        db,
+                        lines=[
+                            {
+                                "key": "_p",
+                                "product_id": product_id,
+                                "part_product_ids": resolved_part_ids,
+                                "candidate_product_ids": candidates,
+                                "combo_id": combo_id,
+                                "promotion_id": promo_id,
+                                "manual_sell_price": manual_sell_price,
+                            }
+                        ],
+                        viewer=viewer,
+                        # A SAVED line's basis is what the salesperson committed
+                        # to, never the lookup's auto pick (owner ruling, review
+                        # round 2): with no stored promotion the line is `list`,
+                        # however many promotions cover its product.
+                        auto_pick=False,
+                    )[0]
+
+                def _offered(row) -> bool:
+                    return promotion_id in {o["id"] for o in row["promotion_options"]}
+
+                pricing_row = _price(promotion_id, candidate_ids)
+                if (
+                    promotion_id
+                    and not _offered(pricing_row)
+                    and combo_id
+                    and _offered(
+                        _price(
+                            promotion_id,
+                            PriceTagRequestService._combo_part_ids(db, combo_id),
+                        )
+                    )
+                ):
+                    # PRICETAG-DISCONTINUED-PICK (crew pass, 7 Nov): the form
+                    # pre-fills a promotion while a group is open, when any
+                    # option covers it (AC-S7-2). A pick that narrows the group
+                    # past every covered option leaves a promotion that covers
+                    # one of the line's OWN package options but nothing on the
+                    # line: it prices nothing, so it is dropped rather than
+                    # refusing the save. The form says so after the save.
+                    promotion_id = None
+                    pricing_row = _price(None, candidate_ids)
+                if promotion_id and not _offered(pricing_row):
                     # AC-S6-5: a line's promotion must be active, visible to
                     # this viewer, and cover at least one product on the line
                     # (the parent, a resolved part, or any candidate) -
@@ -876,6 +900,19 @@ class PriceTagRequestService:
             .all()
         )
         return [row.product_id for row in rows if row.product_id]
+
+    @staticmethod
+    def _combo_part_ids(db: Session, combo_id: str) -> list[str]:
+        """Every product the package offers (fixed parts, group options, upgrades)."""
+        from app.models.product_combo import ProductComboPart
+
+        return [
+            pid
+            for (pid,) in db.query(ProductComboPart.part_product_id)
+            .filter(ProductComboPart.combo_id == combo_id)
+            .all()
+            if pid
+        ]
 
     @staticmethod
     def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:
