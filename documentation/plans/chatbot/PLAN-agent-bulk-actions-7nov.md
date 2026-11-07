@@ -55,20 +55,20 @@ Example (fake numbers; same columns as the 28 Oct Allowed Contacts sheet):
 
 ```
 Phone          Name        Access          Customer             Company
-012-345 6701   Ali         Business owner  ABC Trading (A123)   Sorento
-012-345 6702   Mei Ling    Employee        A123                 Sorento, Mocha
-012-345 6703   Raju        Pemilik         XYZ Hardware         Mocha
-012-345 6704   Siti        Employee        Kedai Baru Enterprise Sorento
+012-000 0701   Ali         Business owner  ABC Trading (A123)   Sorento
+012-000 0702   Mei Ling    Employee        A123                 Sorento, Mocha
+012-000 0703   Raju        Pemilik         XYZ Hardware         Mocha
+012-000 0704   Siti        Employee        Kedai Baru Enterprise Sorento
 ```
 
 Preview the agent shows (one table, then Confirm 3 changes / Cancel):
 
 | # | Phone | Name | Contact | Will change | Skipped / why |
 |---|---|---|---|---|---|
-| 1 | +60123456701 | Ali | existing | Role Employee -> Business owner (Sorento); link A123 ABC Trading | |
-| 2 | +60123456702 | Mei Ling | new | create contact; Employee; link A123; companies Sorento, Mocha | |
-| 3 | +60123456703 | Raju | existing | Role -> Business owner (Mocha); link X900 XYZ Hardware | |
-| 4 | +60123456704 | Siti | existing | | skipped: no customer named "Kedai Baru Enterprise" (exact code or exact name only) |
+| 1 | +60120000701 | Ali | existing | Role Employee -> Business owner (Sorento); link A123 ABC Trading | |
+| 2 | +60120000702 | Mei Ling | new | create contact; Employee; link A123; companies Sorento, Mocha | |
+| 3 | +60120000703 | Raju | existing | Role -> Business owner (Mocha); link X900 XYZ Hardware | |
+| 4 | +60120000704 | Siti | existing | | skipped: no customer named "Kedai Baru Enterprise" (exact code or exact name only) |
 
 Matching rules: phone exact after normalising (0123... / 60123... / +60 1...); customer by code, or by exact name
 with exactly one match inside the user's companies; anything else is skipped with its reason, never guessed.
