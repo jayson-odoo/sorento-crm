@@ -1,6 +1,6 @@
 # PLAN: AutoCount subtotal lines excluded from line-based sales sums (SALES-SUBTOTAL-LINES)
 
-Status: in review, round 2 (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026, PR #2230)
+Status: verified on the dev copy, awaiting CI and merge (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026, PR #2230)
 
 ## Problem
 
@@ -108,3 +108,14 @@ Round 1 removed RM 1,494,224.00 (25 documents, 0 false exclusions). Still off: 4
 - A dev copy that already ran the round 1 SQL takes the round 2 crew-migration SQL as is
   (`ADD COLUMN IF NOT EXISTS`); one stamped at `sbt_0001_billing_subtotal_lines` by alembic needs
   `alembic downgrade -1 && alembic upgrade head` (additive, safe). Prod has never run it.
+
+## Verification on the dev copy (crew, head e0f10875, PR #2230 comment 6705356432)
+
+Shipped reconciliation SQL, read-only, on sorento_prod_1104: `diff_after` 0.00 in all 22 company-months
+of 2026; Query 2 returns 0 rows. Overstatement removed: SRT RM 1,558,658.70 (Jan 64,743.70, Mar 3,287.40,
+Apr 33,761.70, May 383,429.50, Jun 414,281.60, Jul 279,476.80, Aug 87,756.40, Sep 147,317.60, Oct
+144,604.00), MCH RM 138,356.80 (Jan 49,640.30, Feb 27,740.20, Mar 12,822.40, Apr 15,409.90, May
+32,650.00, Aug 94.00). Unchanged: SRT Feb, Nov; MCH Jun, Jul, Sep, Oct, Nov. False exclusions 0: all
+257 documents with excluded lines (all years; 33 subtotal, 267 package-copy lines) balance to their
+header exactly. API on the copy: SRT Oct 13,151,657.03, ERIC NG Oct 805,048.34, MCH Jan 3,424,512.45,
+MCH May 2,591,192.47, each equal to the header.
