@@ -589,3 +589,61 @@ export function linkedBoxDesigns(
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Snapping while an element is dragged in the card / footer editor
+// ---------------------------------------------------------------------------
+
+export const ELEMENT_SNAP_MM = 1;
+
+export interface ElementGuide {
+  orientation: 'horizontal' | 'vertical';
+  /** Millimetres inside the card (or footer). */
+  position_mm: number;
+}
+
+interface Box {
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+}
+
+/** The nearest alignment of `[start, start + size]` (start, centre, end) to any target, within `limit`. */
+function snapAxis(start: number, size: number, targets: number[], limit: number) {
+  let best: { delta: number; guide: number } | null = null;
+  for (const edge of [start, start + size / 2, start + size]) {
+    for (const target of targets) {
+      const delta = target - edge;
+      if (Math.abs(delta) <= limit && (!best || Math.abs(delta) < Math.abs(best.delta))) {
+        best = { delta, guide: target };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Where a dragged element lands: its left / centre / right and top / middle / bottom pulled onto the
+ * card's edges and centre lines and onto the other elements' edges and centres, within
+ * `ELEMENT_SNAP_MM`, with a guide for each axis that snapped.
+ */
+export function snapElement(
+  moving: Box,
+  others: readonly Box[],
+  area: { width_mm: number; height_mm: number },
+  limit = ELEMENT_SNAP_MM,
+): { x_mm: number; y_mm: number; guides: ElementGuide[] } {
+  const xs = [0, area.width_mm / 2, area.width_mm];
+  const ys = [0, area.height_mm / 2, area.height_mm];
+  for (const other of others) {
+    xs.push(other.x_mm, other.x_mm + other.width_mm / 2, other.x_mm + other.width_mm);
+    ys.push(other.y_mm, other.y_mm + other.height_mm / 2, other.y_mm + other.height_mm);
+  }
+  const sx = snapAxis(moving.x_mm, moving.width_mm, xs, limit);
+  const sy = snapAxis(moving.y_mm, moving.height_mm, ys, limit);
+  const guides: ElementGuide[] = [];
+  if (sx) guides.push({ orientation: 'vertical', position_mm: sx.guide });
+  if (sy) guides.push({ orientation: 'horizontal', position_mm: sy.guide });
+  return { x_mm: moving.x_mm + (sx?.delta ?? 0), y_mm: moving.y_mm + (sy?.delta ?? 0), guides };
+}
