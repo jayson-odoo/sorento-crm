@@ -331,7 +331,7 @@ def _plain(value: Any) -> Any:
     if isinstance(value, dt.datetime):
         if value.tzinfo is None:
             value = value.replace(tzinfo=dt.timezone.utc)
-        return value.astimezone(_MYT).strftime("%d/%m/%Y %H:%M")
+        return value.astimezone(_MYT).strftime("%d/%m/%Y %H:%M")  # date-format-ok: owner ruling 5 Nov, crm_query answers carry 24h hh:mm (test_ai_query_core pins it)
     if isinstance(value, dt.date):
         return value.strftime("%d/%m/%Y")
     return value
