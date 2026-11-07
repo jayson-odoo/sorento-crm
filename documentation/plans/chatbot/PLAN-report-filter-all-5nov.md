@@ -72,7 +72,8 @@ carries a report object (`order_list.py:164`, K1). They stay for the plain order
 `broaden_axis`, `scope_intent` and `entity_op: "clear"` are no longer read for reports on an ALL prompt (FA-2).
 `widened_kinds` stays for the which-one customer pick. `topic_reset` still means "no held report" (CL-7).
 
-Code size: `report_ask.py` loses `_carry`, `_CARRY_KINDS`, the HT1-18 block, the CP-1 rule and the refill. It gains
+Code size: `report_ask.py` loses `_carry`, `_CARRY_KINDS`, the HT1-18 block and the CP-1 rule. The `held_filters` refill
+stays until PR B (crew ruling Q3, TODO in `_fresh_args`). It gains
 `_read_all`, `_keep_held` and `_held_spelling`, and the temporary `_legacy_all` adds about 20 lines until the publish.
 The new rule names no case: it has no per-kind table and reads no message-level parser field (no `sales_company`, no
 `entities`, no open question).

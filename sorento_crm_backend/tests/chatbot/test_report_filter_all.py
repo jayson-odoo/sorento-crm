@@ -711,3 +711,90 @@ def test_fa36_the_gold_step1_object_is_the_dealer_project_breakdown(rbot, world)
            sales_company=sorento, domain_in_message=True, **SEPF)
     args = _args(rbot.say(v, "Total sale delivered September 2026 Sorento company, Sorento brand, show dealer and project")[1])
     assert args.get("group_by") == "channel" and args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), args
+
+
+# ------------------------------------------------------------------------------------------ review round 7 (7 Nov)
+
+
+def _span_prep(**kw: Any) -> Any:
+    """The span pass's readings `engine._supplier_side` reads, with no lookup rows (the party read stands down)."""
+    from types import SimpleNamespace
+
+    base: dict[str, Any] = dict(
+        supplier_spans={}, span_kinds={}, supplier_groups={}, supplier_customers={}, party_suppliers={},
+        supplier_ids=frozenset(), rows=[], supplier_typed=[], message="",
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+class _Trace:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    def add(self, name: str, _facts: Any = None) -> None:
+        self.events.append(name)
+
+    def record(self, name: str, **_kw: Any) -> None:
+        self.events.append(name)
+
+
+def test_g5b_the_span_pass_never_turns_a_name_the_report_object_holds_into_a_supplier() -> None:
+    """B1 (review round 7): crew gate steps 8 / 12 through the engine's supplier block itself, not only the scope guard.
+    The span list placed Sorento on supplier rows alone; the object holds Sorento as its company and brand, so the
+    entity keeps the parser's brand reading and the turn stays on the sales side."""
+    from app.services.chatbot import engine
+
+    prep = _span_prep(supplier_spans={"Sorento": "sup-1"}, supplier_groups={"sup-1": [("sup-1", "SORENTO SDN BHD")]})
+    brand = {"raw": "Sorento", "hint": "brand", "canonical_code": "SORENTO", "current_message": True}
+    v = {
+        "domain_hint": "sales", "order_status": "sales_analysis", "entities": [brand],
+        "report_ask": _ra2(None, company="Sorento", brands=["Sorento", "Cabana"]),
+    }
+    out = engine._supplier_side(v, prep, None, _Trace())
+    assert out["domain_hint"] == "sales", out
+    assert [e.get("hint") for e in out["entities"]] == ["brand"], out["entities"]
+    # Lock: the same span with no report object is the supplier (SUPPLIER-ASK fix round 4).
+    plain = engine._supplier_side({**v, "report_ask": None}, prep, None, _Trace())
+    assert [e.get("hint") for e in plain["entities"]] == ["supplier"], plain["entities"]
+
+
+def test_g5c_a_supplier_word_the_report_object_does_not_hold_still_reads_the_open_purchase_orders() -> None:
+    """B1 lock (owner, 1 Nov: a supplier's outstanding is its open POs): an outstanding report object beside a supplier
+    the object does not hold still swaps to the purchase side, and the scope guard still answers for it."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot import engine
+
+    supplier = {"raw": "Acme", "hint": "supplier", "canonical_code": "sup-9", "current_message": True}
+    v = {
+        "domain_hint": "order", "order_status": "outstanding", "entities": [supplier],
+        "report_ask": _ra2(None, kind="outstanding"),
+    }
+    out = engine._supplier_side(v, _span_prep(), None, _Trace())
+    assert out["domain_hint"] == "purchase_order", out
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    named = {**v, "entities": [{**supplier, "canonical_code": None}]}
+    line = (engine._supplier_scope(state, state, named, ["order"], True, _span_prep()) or {}).get("line", "")
+    assert "Acme" in line, line
+    # A supplier-hinted word the object holds does not swap.
+    held = {**v, "report_ask": _ra2(None, kind="outstanding", customers=["Acme"])}
+    assert engine._supplier_side(held, _span_prep(), None, _Trace())["domain_hint"] == "order"
+
+
+@pytest.mark.parametrize("status", [None, "pending_delivery"], ids=["no-status", "order-list-status"])
+def test_s1_a_follow_up_object_needs_no_status_or_a_report_status(monkeypatch, status) -> None:
+    """S1 (review round 7): G3's follow-up rule reads a report object of the held kind as that report's follow-up when
+    the parse has no status; a parse on another lane's status (an order list) keeps its own lane."""
+    monkeypatch.setattr(report_ask, "_held_object", lambda _focus: ({"kind": "sales"}, None))
+    v = {"order_status": status, "report_ask": _ra2(None, kind="sales"), "entities": []}
+    out = report_ask.from_object(v, on=True, all_value=True)
+    kept = out.get(report_ask.OBJECT_KEY) is not None
+    assert kept is (status is None), out.get(report_ask.OBJECT_KEY)
+
+
+def test_n1_all_in_an_open_reading_list_is_no_word() -> None:
+    """N1 (review round 7): ALL in `brand_or_account_type` / `company_or_brand` is never a brand called "ALL"."""
+    ask = {"brands": [ALL], "brand_or_account_type": [ALL, "Sorento"], "company_or_brand": [ALL]}
+    assert report_ask._read_all(ask) == {"brands"}
+    assert ask == {"brands": [], "brand_or_account_type": ["Sorento"], "company_or_brand": []}

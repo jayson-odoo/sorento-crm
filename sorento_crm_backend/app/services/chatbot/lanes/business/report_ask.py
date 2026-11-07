@@ -1647,7 +1647,7 @@ def _account_plan(
         (e.get("hint"), e.get("word")): e for e in jsc.array(parse_output.get("report_ask_kind")) if isinstance(e, dict)
     }
     numbers = [w for w in acct_words if w.casefold() not in stored]
-    own = [c for c in list(companies or ()) if isinstance(c, (list, tuple)) and len(c) >= 3]
+    own = _own_companies(companies)
     decided: list[tuple[str, str, str, str]] = []  # (how, hint, word, stored type); how: brand | account | ask
     for hint, word in [("brand", w) for w in brand_words] + [("account_type", w) for w in acct_words]:
         entry = entries.get((hint, word))
@@ -3513,7 +3513,7 @@ def from_object(
     # (a clear with no report word came back with no status and a casual message type).
     follow_up = (
         all_value and isinstance(raw, dict) and held_ask is not None and verdict.get("topic_reset") is not True
-        and raw.get("kind") == held_ask.get("kind")
+        and raw.get("kind") == held_ask.get("kind") and status in ("", *REPORT_STATUSES)
     )
     reported = (
         status in REPORT_STATUSES or _dict(getattr(focus, "required_ask", None)).get("ask") == ASK_NAME or follow_up
@@ -3672,7 +3672,6 @@ def from_object(
     entities.extend(_entity(name, "sales_agent") for name in names("sales_agents"))
     entities.extend(_entity(name, "category") for name in names("categories"))
     picked = pick[1] if pick is not None and pick[0] == "kind" else None
-    held_company = (held_ask or {}).get("company") if carrying else None
     for word, how, entity, slot in _word_kinds(
         ask, verdict, focus, picked, company=own_company, companies=companies, said_as_text=said_as_text
     ):
@@ -3741,6 +3740,11 @@ def _read_all(ask: dict[str, Any]) -> set[str]:
         if any(isinstance(v, str) and v.strip().casefold() == REPORT_ALL.casefold() for v in values):
             ask[slot] = [] if isinstance(value, list) else None
             out.add(slot)
+    # Review round 7 (N1): the two open-reading lists hold words to ask about, not filters; ALL there is no word (never a
+    # brand called "ALL" for the resolver).
+    for slot in ("brand_or_account_type", "company_or_brand"):
+        if isinstance(ask.get(slot), list):
+            ask[slot] = [v for v in ask[slot] if not (isinstance(v, str) and v.strip().casefold() == REPORT_ALL.casefold())]
     return out
 
 
