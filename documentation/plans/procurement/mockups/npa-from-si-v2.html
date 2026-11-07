@@ -105,7 +105,7 @@ table.kv th{width:210px;text-align:right}
   </table>
   <div style="margin-top:8px"><span class="btn out sm">+ Add product</span></div>
   <p class="note">4 = the SAME column and cell as today's form (NewProductApplicationLines.tsx:93/115, an Input), now components/common/SearchableMultiSelect.tsx over GET .../products (staff) or .../new-product-application/products (portal): catalogue codes only, one or many = the CURRENT codes; empty = a brand-new item. The new code is still purchasing's "Opened as". Row 3: the SI code text did not equal one catalogue code, so nothing is picked; the text shows as a hint (never parsed). 5 = exact SET match against lines with a linked new code, newest first, max 3; information only.</p>
-  <p class="note">Attachments: the SI's image attachments are offered as the NPA's attachments (removable before save), existing AttachmentDropzone / PanelDataGrid.</p>
+  <p class="note">Attachments: unchanged from today (AttachmentDropzone / PanelDataGrid). Offering the SI's files on the NPA is a follow-up (a shared link must not be deletable through the portal's generic delete).</p>
 </div>
 
 <h2 class="ft">4. Staff NPA detail: purchasing links the new code (suggestion = one click to fill, never auto)</h2>

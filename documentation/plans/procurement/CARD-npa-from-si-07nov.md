@@ -48,9 +48,10 @@ the same codes) is part of the reuse match. Everything marked (ART) below is a d
    "New code SRTWB893 created on 3 Nov 2026 (NPA-000123)". This is the "code created" indicator: read from the
    NPA line's `opened_product_id` + `resolved_at`, no second flag for purchasing to forget.
 3. **Create from the SI, prefilled.** The button opens the NPA New form with the SI preset (portal: own Responded
-   SI only, as today's prefill). Prefill adds to today's: the SI's remark into REMARK, the SI's image attachments
-   offered as the NPA's attachments (copied links, applicant can remove before save), and **Current product codes**
-   per Q3. Dimension / material / brand are NOT on the SI today (`models/procurement.py:1061-1069`), so they stay
+   SI only, as today's prefill). Prefill adds to today's: the SI's remark into REMARK and **Current product codes** per Q3.
+   **Follow-up, not in this lane:** offering the SI's attachments on the NPA. A portal delete of a shared link would
+   remove the SI's file too (the generic portal attachment delete), so it needs its own link-only path; today the
+   applicant attaches files as before. Dimension / material / brand are NOT on the SI today (`models/procurement.py:1061-1069`), so they stay
    empty (ART: if the PM wants them asked on the SI, that is an SI change, follow-up).
 4. **Current codes -> one new code** (Q1 (a), owner v1 notes). The form stays today's form: the existing
    **Product code** cell of the line table (`components/common/NewProductApplicationLines.tsx:93,115`, an `Input`
