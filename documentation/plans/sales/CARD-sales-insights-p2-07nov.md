@@ -1,9 +1,9 @@
 # CARD: SALES-INSIGHTS-P2 (leaderboard phase 2: drilldown, perspectives, targets, customisable)
 
-Status: Asked (crew-ask on PR #2231, 7 Nov). Evidence SQL sent to crew; the mockup is drawn on its output. Build waits
-for the owner's answers. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
+Status: Asked (crew-ask on PR #2231, 7 Nov, comment 6705350934). Evidence round 1 back (comment 6705369461), mockup
+drawn on it; round 2 (#2230 counted-line flags, dealer targets, ACCOUNT items) with crew. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
 Plan: `PLAN-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-oct-dev.sql`.
-Mockup: `mockups/sales-insights-p2-07nov.html` (after the evidence run).
+Mockup: `mockups/sales-insights-p2-07nov.html` (real October figures, evidence round 1).
 
 ## The ask in one line
 
@@ -83,14 +83,33 @@ by reusing the reporting tooling we already have.
 | Open in Top selling items | `/sales/top-selling-items` (`ReportPage`, `top_selling_items`) |
 | Pin | `app/components/layouts/demo1/components/menu-item-pin-button.tsx` (existing sidebar star) |
 
+## What the evidence changed (round 1, dev copy `sorento_prod_1104`)
+
+- **No agent target has an amount.** The 3 agent targets (TGT-000002..4, FANNY I / III / IV, ordered, 2026) and the one
+  team target ("Test") are RM 0.00. The only targets with values are **164 dealer targets** (ordered; yearly or
+  quarterly). So a person Target column is blank for every row today. Q3 recommendation now: build the column but hide
+  it when no row has a target (as #2227 hides Codes); it lights up when amounts are entered. Dealer targets belong to
+  the Customer view if anywhere; round 2 Q7 measures how they map to customers (a dealer target can cover several
+  accounts), so no dealer-target column is proposed until that is known.
+- **Customisation is barely used.** One saved report view in the whole system (`sponsorship`), zero sidebar pins on
+  `/sales/*`. More reason to reuse saved views (Q4 a) than to build a dashboard.
+- **Drill tells a story the board cannot.** LCL's #1 (RM 1,856,856.61) is 24 customers / 684 items, but one customer
+  (304-R015) is RM 845,188.21 and three ACCOUNT category items (AC-EXP-006 / -027 / -022, no brand) are
+  RM 1,123,963.15 of it; AC-EXP-006 alone RM 735,826.08 to that one customer. ACCOUNT is RM 1,135,248.96 of October
+  overall. Round 2 Q8 asks what these items are. Not a question yet: they rank like any item unless the owner says.
+- **Customer view.** 1,075 customers invoiced in October; the top 12 hold 24.1%. 300-O024 bought from 8 sales persons.
+- **Brand view.** SORENTO RM 8,880,157.22; "(no brand)" RM 4,328,777.30 (ACCOUNT items and unbranded lines); BRAVAT Sep
+  was negative, so its change is blank (the #2227 rule).
+
 ## Questions (max 5)
 
 1. Top selling: (a) link both ways, board Product view <-> Top selling items report / (b) merge: Top selling menu
    entry opens the board's Product view. Rec (a).
 2. Who drills: (a) perspectives and other people's drilldown need `sales.reports.view`, own row drill for everyone /
    (b) anyone with `sales.leaderboard.view` drills anyone. Rec (a).
-3. Target: (a) Target column labelled with the target's own basis + period (FANNY "x% of 2026, ordered") /
-   (b) only like-for-like invoiced targets, blank otherwise / (c) no target until invoiced targets exist. Rec (a).
+3. Target: (a) Target column labelled with the target's own basis + period ("x% of 2026, ordered"), hidden while no
+   row has one (today: all agent targets are RM 0.00) / (b) only like-for-like invoiced targets / (c) no target column
+   until agent targets carry amounts. Rec (a) (updated after evidence round 1).
 4. Customise: (a) Open as report into Sales & outstanding + saved views + sidebar star, no dashboard /
    (b) also a home dashboard with pinned views (new widget module). Rec (a).
 5. Drill UI: (a) same screen, chip + view switch, URL state / (b) side drawer per row with Customers / Items tabs.
