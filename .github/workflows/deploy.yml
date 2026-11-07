@@ -259,7 +259,7 @@ jobs:
   #    `NOT_DOCS_RE`: the parts of documentation/ that tests READ as live
   #    inputs (`documentation/reference/*.md`, `plans/<domain>/fixtures/`,
   #    `plans/<domain>/samples/`, `plans/<domain>/seed-assets/`,
-  #    `plans/chatbot/` (prompt candidates a test hashes) and the few plan
+  #    `plans/(_archive/)?chatbot/` (prompt candidates a test hashes) and the few plan
   #    files whose text a test asserts against). A change there can
   #    turn a test red, so it keeps the full pipeline. Nothing under the
   #    four service trees counts either, whatever its extension: `*.md`
@@ -587,7 +587,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$|plans/chatbot/|plans/sales/SQL-sales-subtotal-reconcile\.sql$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$|plans/scm/SQL-oi-date-was-fix-count-04nov\.sql$|plans/(_archive/)?chatbot/|plans/sales/SQL-sales-subtotal-reconcile\.sql$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true

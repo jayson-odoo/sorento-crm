@@ -1427,7 +1427,7 @@ def _run(
         dealer = portal_writes.offered(db, ctx)
         reads += [portal_writes.PORTAL_READS[n] for n in dealer if n in portal_writes.PORTAL_READS]
         write_tools += [portal_writes.PORTAL_WRITES[n] for n in dealer if n in portal_writes.PORTAL_WRITES]
-        batch_schema = batch.schema_for(db, ctx)
+        batch_schema = batch.batch_tool_schema(db, ctx)
         system = _system_prompt(
             db, ctx.user_name,
             {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools),
