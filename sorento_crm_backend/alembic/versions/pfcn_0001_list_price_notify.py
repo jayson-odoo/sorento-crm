@@ -11,14 +11,14 @@ Second watched product field of product_watched_field_notify_service:
 Idempotent (IF NOT EXISTS / NOT EXISTS) so a DB converged through create_all upgrades cleanly.
 
 Revision ID: pfcn_0001_list_price_notify
-Revises: sbt_0001_billing_subtotal_lines
+Revises: sfam_0001_supplier_ledger_family
 Create Date: 2026-11-07
 """
 from alembic import op
 
 
 revision = "pfcn_0001_list_price_notify"
-down_revision = "sbt_0001_billing_subtotal_lines"
+down_revision = "sfam_0001_supplier_ledger_family"
 branch_labels = None
 depends_on = None
 
