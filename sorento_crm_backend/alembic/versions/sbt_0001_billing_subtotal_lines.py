@@ -16,14 +16,14 @@ Idempotent (`IF NOT EXISTS`; the backfill sets the same verdict on a rerun and w
 whose verdict changes). Additive only; the downgrade drops the columns.
 
 Revision ID: sbt_0001_billing_subtotal_lines
-Revises: ptag_0016_accessories
+Revises: slb_0001_leaderboard_perm
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "sbt_0001_billing_subtotal_lines"
-down_revision = "ptag_0016_accessories"
+down_revision = "slb_0001_leaderboard_perm"
 branch_labels = None
 depends_on = None
 
