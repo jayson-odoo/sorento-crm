@@ -21,12 +21,17 @@ export function LeaderboardPodium({
   rows,
   versus,
   showChange = true,
+  canOpen,
+  onOpen,
 }: {
   rows: LeaderboardRow[];
   /** `Sep`, `previous period` */
   versus: string;
   /** False on Undelivered, which has no earlier window. */
   showChange?: boolean;
+  /** A card opens its row exactly when the row would open (same handler as the grid). */
+  canOpen?: (row: LeaderboardRow) => boolean;
+  onOpen?: (row: LeaderboardRow) => void;
 }) {
   const cards = podiumOrder(rows);
   if (cards.length === 0) return null;
@@ -39,11 +44,16 @@ export function LeaderboardPodium({
       {cards.map((row) => {
         const person = row.person ?? row.name;
         const codes = row.codes ?? [];
+        const open = onOpen && canOpen?.(row);
+        const Card = open ? 'button' : 'div';
         return (
-        <div
+        <Card
           key={row.rank}
           data-testid={`leaderboard-podium-${row.rank}`}
+          data-drill={open ? 'true' : undefined}
+          {...(open ? { type: 'button' as const, onClick: () => onOpen(row) } : {})}
           className={cn(
+            open && 'cursor-pointer hover:bg-muted/40',
             'min-w-0 rounded-lg border border-border p-2 text-center md:p-4',
             row.rank === 1 && 'border-amber-500 ring-1 ring-amber-500 md:pt-6',
             row.is_me && 'bg-primary/5',
@@ -77,7 +87,7 @@ export function LeaderboardPodium({
               {row.change_pct === null ? '-' : `${formatChange(row.change_pct)} vs ${versus}`}
             </p>
           ) : null}
-        </div>
+        </Card>
         );
       })}
     </div>

@@ -689,9 +689,11 @@ describe('fix round 2', () => {
 
   it('7a: the URL sort comes back into the query, and the default is rank asc', () => {
     nav.set('?by=customer&sort=name&dir=desc');
-    render(<LeaderboardView />);
+    const first = render(<LeaderboardView />);
     expect(last()).toMatchObject({ sort: 'name', dir: 'desc' });
-    nav.set('');
+    first.unmount();
+    nav.set('?by=customer');
+    render(<LeaderboardView />);
     expect(last()).toMatchObject({ sort: 'rank', dir: 'asc' });
   });
 

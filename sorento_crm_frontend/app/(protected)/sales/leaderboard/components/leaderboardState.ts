@@ -94,7 +94,8 @@ export function serializeSetup(s: Setup): string {
 export function rememberable(s: Setup): string {
   const drilled = s.person.length + s.customer.length + s.product.length > 0;
   return serializeSetup({
-    ...s, by: drilled ? 'person' : s.by, person: [], customer: [], product: [], customerLabel: '', productLabel: '',
+    ...s, by: drilled ? 'person' : s.by, sort: 'rank', dir: 'asc',
+    person: [], customer: [], product: [], customerLabel: '', productLabel: '',
   });
 }
 

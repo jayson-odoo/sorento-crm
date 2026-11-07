@@ -15,7 +15,7 @@ vi.mock('@/components/reports/ReportPage', () => ({
   ),
 }));
 
-import { ReportParamsContext } from '@/components/reports/reportParamsContext';
+import { ReportParamsContext } from '@/lib/report-params-context';
 import TopSellingItemsPage from './page';
 
 describe('Top selling items page', () => {

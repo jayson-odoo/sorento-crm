@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { ReportParamsContext } from './reportParamsContext';
+import { ReportParamsContext } from '@/lib/report-params-context';
 import {
   type ColumnDef,
   type PaginationState,

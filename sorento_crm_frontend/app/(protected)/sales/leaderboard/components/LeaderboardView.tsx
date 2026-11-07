@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -9,6 +9,7 @@ import {
   getPaginationRowModel,
   useReactTable,
   type PaginationState,
+  type SortingState,
 } from '@tanstack/react-table';
 import { Loader2, SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +26,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { StatCard } from '@/components/scm/StatCard';
 import { useSalesLeaderboardOptionsQuery, useSalesLeaderboardQuery } from '@/hooks/useSalesLeaderboardQuery';
@@ -146,12 +146,20 @@ export default function LeaderboardView() {
     localStore.setItem(STORAGE_KEY, rememberable(setup));
   }, [urlHasState, setup]);
 
+  // The last dated period the user had (Undelivered's "All open" has none), for the way back from Undelivered.
+  const lastDated = useRef<Pick<Setup, 'period' | 'from' | 'to'> | null>(null);
   const navigate = useCallback(
     (patch: Partial<Setup>) => {
       let next: Setup = { ...setup, ...patch };
+      // A new view starts on its own order: a column the old view had may not exist in the new one.
+      if (patch.by && patch.by !== setup.by && patch.sort === undefined) next = { ...next, sort: 'rank', dir: 'asc' };
       if (patch.basis && patch.basis !== setup.basis) {
         if (patch.basis === 'outstanding') next.period = 'all_open';
-        else if (next.period === 'all_open') next.period = defaultPeriod(patch.basis);
+        else if (next.period === 'all_open') {
+          // Leaving Undelivered: back to the last dated period chosen, else the default one.
+          const back = lastDated.current;
+          next = back ? { ...next, ...back } : { ...next, period: defaultPeriod(patch.basis) };
+        }
         const valid = options?.channels?.[patch.basis]?.map((o) => o.value);
         if (valid) next = { ...next, channel: next.channel.filter((c) => valid.includes(c)) };
       }
@@ -160,6 +168,10 @@ export default function LeaderboardView() {
     },
     [setup, options, router, pathname],
   );
+
+  useEffect(() => {
+    if (setup.period !== 'all_open') lastDated.current = { period: setup.period, from: setup.from, to: setup.to };
+  }, [setup.period, setup.from, setup.to]);
 
   const runnable = isRunnable(setup);
   const { data, isLoading, isFetching, isError, error, isPlaceholderData } = useSalesLeaderboardQuery(
@@ -175,7 +187,7 @@ export default function LeaderboardView() {
   const versus = data ? previousLabel(data.previous_from, data.previous_to) : 'previous period';
   const myRow = rows.find((row) => row.is_me);
   const activeFilters =
-    (setup.company ? 1 : 0) + (setup.brand.length ? 1 : 0) + (setup.category.length ? 1 : 0) + (setup.channel.length ? 1 : 0);
+    (setup.company.length ? 1 : 0) + (setup.brand.length ? 1 : 0) + (setup.category.length ? 1 : 0) + (setup.channel.length ? 1 : 0);
   const canOpenRows = Boolean(data?.can_drill_others) || setup.person.length > 0;
 
   const drillOf = useCallback(
@@ -336,18 +348,29 @@ export default function LeaderboardView() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     setMobileShown(MOBILE_PAGE);
     // Keyed on what identifies an answer, not the object (a refetch of the same board keeps your page).
-  }, [data?.basis, data?.by, data?.total.amount, data?.rows.length]);
+  }, [data?.basis, data?.by, data?.total.amount, data?.rows.length, setup.sort, setup.dir]);
+
+  // The server orders the rows (every column sorts there); the grid only shows the arrow.
+  const sorting = useMemo<SortingState>(
+    () => (setup.sort === 'rank' && setup.dir === 'asc' ? [] : [{ id: setup.sort, desc: setup.dir === 'desc' }]),
+    [setup.sort, setup.dir],
+  );
 
   const table = useReactTable({
     columns,
     data: rows,
-    state: { pagination },
     onPaginationChange: setPagination,
     getPaginationRowModel: getPaginationRowModel(),
     getRowId: (row) => String(row.rank),
     getCoreRowModel: getCoreRowModel(),
     // The server returns the ranking; the order is the point.
-    enableSorting: false,
+    enableSorting: true,
+    manualSorting: true,
+    state: { pagination, sorting },
+    onSortingChange: (updater) => {
+      const next = typeof updater === 'function' ? updater(sorting) : updater;
+      navigate(next.length ? { sort: next[0].id, dir: next[0].desc ? 'desc' : 'asc' } : { sort: 'rank', dir: 'asc' });
+    },
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
@@ -356,14 +379,13 @@ export default function LeaderboardView() {
     <>
       <div className="w-full sm:w-44">
         <Label htmlFor={`${idPrefix}-company`}>Company</Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           id={`${idPrefix}-company`}
           value={setup.company}
-          onChange={(company: string) => navigate({ company })}
+          onChange={(company: string[]) => navigate({ company })}
           options={options?.companies ?? []}
           placeholder="All"
           triggerClassName="mt-1 w-full"
-          clearable
         />
       </div>
       <div className="w-full sm:w-56">
@@ -414,20 +436,20 @@ export default function LeaderboardView() {
     ...setup.person.map((label) => ({
       id: `person:${label}`,
       text: `Sales person: ${label}`,
-      remove: () => navigate({ person: setup.person.filter((p) => p !== label) }),
+      remove: () => navigate({ by: 'person', person: setup.person.filter((p) => p !== label) }),
     })),
     ...(setup.customer.length
       ? [{
           id: 'customer',
           text: setup.customerLabel ? `Customer: ${setup.customerLabel}` : 'Customer',
-          remove: () => navigate({ customer: [], customerLabel: '' }),
+          remove: () => navigate({ by: 'customer', customer: [], customerLabel: '' }),
         }]
       : []),
     ...(setup.product.length
       ? [{
           id: 'product',
           text: setup.productLabel ? `Product: ${setup.productLabel}` : 'Product',
-          remove: () => navigate({ product: [], productLabel: '' }),
+          remove: () => navigate({ by: 'product', product: [], productLabel: '' }),
         }]
       : []),
   ];
@@ -647,7 +669,7 @@ export default function LeaderboardView() {
             </div>
           ) : (
             <>
-              {dataBy === 'person' ? <LeaderboardPodium rows={rows} versus={versus} showChange={!outstanding} /> : null}
+              {dataBy === 'person' ? <LeaderboardPodium rows={rows} versus={versus} showChange={!outstanding} canOpen={(row) => drillOf(row) !== null} onOpen={openRow} /> : null}
 
               <div className="md:hidden" data-testid="leaderboard-list">
                 {mobileRows.map((row) => {
@@ -727,6 +749,12 @@ export default function LeaderboardView() {
           )}
 
           </div>
+
+          {data?.blank ? (
+            <p className="text-xs text-muted-foreground" data-testid="leaderboard-blank">
+              {data.blank.name}: {formatRm(data.blank.amount)} (not ranked)
+            </p>
+          ) : null}
 
           {data && dataBy === 'person' ? (
             <p className="text-xs text-muted-foreground" data-testid="leaderboard-no-agent">

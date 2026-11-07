@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useReportRunParams } from '@/components/reports/reportParamsContext';
+import { useReportRunParams } from '@/lib/report-params-context';
 import type { ReportPeriod } from '@/services/reportService';
 
 const pad = (n: number) => String(n).padStart(2, '0');
