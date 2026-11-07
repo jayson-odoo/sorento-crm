@@ -175,6 +175,15 @@ function TagTemplateEditor() {
   const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
+  // Live link (PRICETAG-ACCESSORY-DESIGNER): after a save lands, every linked accessories box whose
+  // design moved since it was loaded is written to its saved template, which rewrites the other
+  // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
+  const linkBaselineRef = useRef<Map<string, string>>(new Map());
+  const rebaseLinks = useCallback((layers: TagLayer[]) => {
+    linkBaselineRef.current = new Map(
+      Array.from(linkedBoxDesigns(layers), ([id, linked]) => [id, linked.key] as [string, string]),
+    );
+  }, []);
   useEffect(() => {
     let cancelled = false;
     setIsLoading(true);
@@ -196,7 +205,7 @@ function TagTemplateEditor() {
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, rebaseLinks]);
 
   // -- Autosave (D22, S8) -----------------------------------------------------
 
@@ -204,15 +213,6 @@ function TagTemplateEditor() {
   // callback stays stable and does not restart the debounce on every save that
   // lands (`setTemplate` below is its own re-render). Same reason the effect
   // further down keeps it out of its dependency array.
-  // Live link (PRICETAG-ACCESSORY-DESIGNER): after a save lands, every linked accessories box whose
-  // design moved since it was loaded is written to its saved template, which rewrites the other
-  // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
-  const linkBaselineRef = useRef<Map<string, string>>(new Map());
-  const rebaseLinks = useCallback((layers: TagLayer[]) => {
-    linkBaselineRef.current = new Map(
-      Array.from(linkedBoxDesigns(layers), ([id, linked]) => [id, linked.key] as [string, string]),
-    );
-  }, []);
   const templateRef = useRef<TagTemplate | null>(null);
   useEffect(() => {
     templateRef.current = template;
