@@ -25,7 +25,7 @@ from typing import Any, Callable
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.ai_wishlist_service import NO_TOOL_EVENT
 from app.services.chatbot import principal as staff_principal
-from app.services.chatbot.agent import actions, memory, portal_writes, writes
+from app.services.chatbot.agent import actions, batch, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
@@ -677,6 +677,8 @@ def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
     is_test: bool = True,
 ) -> ToolResult:
+    if any(s.get("batch") for s in steps):
+        return ToolResult("invalid", message="A table of changes is already proposed this turn; propose this after it is decided.")
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
     # An idea create carries what only the loop knows: the user's own message of this turn (I7: the transcript,
@@ -1194,6 +1196,8 @@ def _run(
     conversation_id = str(conv.id)
 
     steps: list[dict] = []
+    # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
+    batch_skipped: list[dict] = []
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1323,8 +1327,11 @@ def _run(
         dealer = portal_writes.offered(db, ctx)
         reads += [portal_writes.PORTAL_READS[n] for n in dealer if n in portal_writes.PORTAL_READS]
         write_tools += [portal_writes.PORTAL_WRITES[n] for n in dealer if n in portal_writes.PORTAL_WRITES]
+        batch_schema = batch.schema_for(db, ctx)
         system = _system_prompt(
-            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
+            db, ctx.user_name,
+            {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools),
+             *((batch.BATCH,) if batch_schema else ())},
             principal=ctx.principal,
         )
         if waiting is not None:
@@ -1341,6 +1348,8 @@ def _run(
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
+        if batch_schema is not None:
+            schemas.append(batch_schema)
         if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
             schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
@@ -1485,6 +1494,10 @@ def _run(
                     # A contact has no user: no staff write or user read, and a confirm or cancel only of its own
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
+                elif name == batch.BATCH:
+                    out = batch.propose(db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped)
+                    if out.status == "proposed":
+                        out.data = {**out.data, "action_id": action_id}
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
                 elif name in portal_writes.PORTAL_READS:
@@ -1676,7 +1689,10 @@ def _run(
             )
             lines = actions.proposal_lines(stored)
             pending = actions.pending_dict(stored)
-            reply = f"{reply}\n\n{proposal_block(lines)}"
+            if all(s.get("batch") for s in stored.steps or []):
+                reply = f"{reply}\n\n{batch.preview_block(stored.steps, batch_skipped)}"
+            else:
+                reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()

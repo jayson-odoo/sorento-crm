@@ -57,6 +57,12 @@ class WriteDef:
     runs_as: str = "user"
     #: One plain note the model is given with the proposal (data `note`); the shared `message` stays as is.
     proposal_note: str | None = None
+    #: True = rows of a pasted table may be proposed together through `crm_batch_propose` (AGENT-BULK-ACTIONS).
+    batchable: bool = False
+    #: (args, shown or None) -> the row's cells in the batch preview table; None for a skipped row.
+    preview: Callable[[dict, dict | None], dict] | None = None
+    #: (args) -> what makes two rows the same record (a later duplicate is skipped); None = never the same.
+    batch_key: Callable[[dict], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -2674,3 +2680,6 @@ WRITES[CREATE_TICKET] = WriteDef(
 
 # Registers `crm_query` and `crm_describe` in USER_READS; imported last because it builds on this module.
 from app.services.chatbot.agent import query_tools  # noqa: E402,F401
+
+# AGENT-BULK-ACTIONS: the contact grant row write and the generic batch tool; imported last for the same reason.
+from app.services.chatbot.agent import batch, contact_grant  # noqa: E402,F401
