@@ -167,8 +167,8 @@ COVERED_DELAYED = WHEN - timedelta(days=2)
 
 
 def _human(day: date) -> str:
-    """The reason sentence's form of a date, "1 Sep 2026"."""
-    return f"{day.day} {day:%b %Y}"
+    """The reason sentence's form of a date, "01/09/2026"."""
+    return day.strftime("%d/%m/%Y")
 
 
 def _covered_board(db, *, reveal_eta_delay: bool) -> str:

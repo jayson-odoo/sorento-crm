@@ -172,7 +172,7 @@ def test_a_placement_on_a_po_line_transferred_onto_an_spo_in_transit_pins_the_sp
     [spo_row] = [row for row in cell["supply"] if row["kind"] == "spo"]
     assert spo_row["outstanding_qty"] == 50
     assert spo_row["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50, "customer_name": None, "project_label": None},
     ]
     # 100 owed against the 50 on the SPO: the month owes 50, never 0.
     assert cell["supply_total_qty"] == 50
@@ -213,7 +213,7 @@ def test_a_placement_on_a_partly_transferred_po_line_holds_the_po_only_for_what_
     assert (po_row["qty"], po_row["received_qty"], po_row["outstanding_qty"]) == (100, 20, 80)
     assert po_row["po_line_id"] == str(po_line.id)
     assert po_row["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 30},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 30, "customer_name": None, "project_label": None},
     ]
 
 

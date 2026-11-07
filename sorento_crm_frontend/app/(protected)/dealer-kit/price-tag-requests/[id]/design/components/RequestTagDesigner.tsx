@@ -101,6 +101,9 @@ import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeC
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { ArrangeSheetView } from './ArrangeSheetView';
+import { featureIconDrops } from '@/lib/dealer-kit/feature-icon-drops';
+import { accessoryDrops } from '@/lib/dealer-kit/accessory-drops';
+import { FeatureIconDropWarning } from '@/components/dealer-kit/FeatureIconDropWarning';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 import { UpdateTemplateDialog } from './UpdateTemplateDialog';
@@ -202,6 +205,19 @@ function fallBackOutOfRangeSubjects(
     if (changed) next[tagId] = { ...tag, layers };
   }
   return { tags: next, affected };
+}
+
+/**
+ * Whether the server will take a design write for this request: mirrors
+ * `PriceTagRequestService.validate_designable` (a claimed `new`, `designing`,
+ * `changes_requested`, or a `proof_ready` marketing holds).
+ */
+export function isDesignableRequest(
+  request: Pick<PriceTagRequestDetail, 'status' | 'assigned_to_id'>,
+): boolean {
+  const status = (request.status ?? '').toLowerCase();
+  if (status === 'designing' || status === 'changes_requested') return true;
+  return (status === 'new' || status === 'proof_ready') && !!request.assigned_to_id;
 }
 
 interface Props {
@@ -947,6 +963,19 @@ export function RequestTagDesigner({
     [arranged, defaultTagSize],
   );
 
+  // Feature icons that will not print because their box is too narrow (crew pass, 5 Nov): named
+  // per tag above the canvas, the same check the request previews run.
+  const iconDrops = useMemo(
+    () =>
+      featureIconDrops(doc, (tagId) => resolved.get(tagId) ?? null, library.featureIcons, library.assetUrls),
+    [doc, resolved, library.featureIcons, library.assetUrls],
+  );
+  // PRICETAG-ACCESSORIES (A6): accessories whose box is too small, named the same way.
+  const accDrops = useMemo(
+    () => accessoryDrops(doc, (tagId) => resolved.get(tagId) ?? null),
+    [doc, resolved],
+  );
+
   /** Template name by id, for the Arrange view's per-sheet line (AC-S7-6) -
    *  `templates` is already loaded for the size presets above. */
   const templateNameById = useMemo(() => {
@@ -961,9 +990,19 @@ export function RequestTagDesigner({
   // the teardown request is sent `keepalive` (a keepalive body is capped at
   // 64KB, which a busy tag sheet exceeds - see the service).
   const teardownRef = useRef(false);
+  // The server takes a draft only while the request is in design (the same
+  // rule as `validate_designable`); once it is approved or handed over, a
+  // stray autosave answers 409 and the indicator read "Save failed" after a
+  // perfectly good Mark ready for collection. Read through a ref so a status
+  // change lands in the very next save, pending ones included.
+  const designableRef = useRef(isDesignableRequest(request));
+  designableRef.current = isDesignableRequest(request);
   const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
     useCallback(
-      (next: TagSheetDoc) => onAutosave(next, { keepalive: teardownRef.current }),
+      (next: TagSheetDoc) =>
+        designableRef.current
+          ? onAutosave(next, { keepalive: teardownRef.current })
+          : Promise.resolve(),
       [onAutosave],
     ),
   );
@@ -997,7 +1036,7 @@ export function RequestTagDesigner({
     const isAutoClone = autoCloneRef.current;
     autoCloneRef.current = false;
     lastSeenDocRef.current = doc;
-    if (isInitial || isAutoClone) return;
+    if (isInitial || isAutoClone || !designableRef.current) return;
     schedule(doc);
   }, [doc, schedule]);
 
@@ -1716,6 +1755,12 @@ export function RequestTagDesigner({
         )}
       </div>
 
+      {(iconDrops.length > 0 || accDrops.length > 0) && (
+        <div className="border-b px-3 py-2">
+          <FeatureIconDropWarning drops={iconDrops} accessoryDrops={accDrops} />
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
         {/* r10 S10 (cause: `<TagCanvasEditor key={selectedTag.id} leftRail=
             {rail}>` put the rail INSIDE the keyed subtree, so selecting a
@@ -1782,6 +1827,7 @@ export function RequestTagDesigner({
               onSelectTag={setSelectedTagId}
               resolved={resolved}
               assetUrls={library.assetUrls}
+              featureIcons={library.featureIcons}
               onPrintSheet={handlePrintSheet}
               printing={printing}
               placement={arranged.placement}

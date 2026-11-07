@@ -1,4 +1,4 @@
-"""Auto-assign on submit (D8, PLAN-price-tag-r7-request-ux AC-S3-1..3).
+"""Auto-assign on Escalate (D8, PLAN-price-tag-r7-request-ux AC-S3-1..3; moved from submit by PRICETAG-SELF-APPROVAL).
 
 ``portal_submit_price_tag_request`` fires the form SLA (``emit_form_event``)
 today and stops there - nothing copies the tracker's resolved assignee onto
@@ -180,15 +180,23 @@ def _submittable_payload(product_id: str) -> dict:
     }
 
 
+def _submit_and_escalate(c, request_id: str):
+    """PRICETAG-SELF-APPROVAL: submit now lands at proof_ready; auto-assign runs on Escalate."""
+    res = c.post(f"{_BASE}/{request_id}/submit")
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "proof_ready"
+    return c.post(f"{_BASE}/{request_id}/escalate", json={"note": "Please redo the layout"})
+
+
 class TestAutoAssignWithAnActiveConfig:
-    def test_submit_lands_as_designing_assigned_to_the_lone_tier1_member(self, client):
-        """AC-S3-1."""
+    def test_escalate_lands_as_designing_assigned_to_the_lone_tier1_member(self, client):
+        """AC-S3-1, PRICETAG-SELF-APPROVAL: the same happens on Escalate, not Submit."""
         c, db, _contact_id = client
         product_id = _seed_product(db)
         member_id = _seed_one_member_tier1_config(db)
         created = c.post(_BASE, json=_submittable_payload(product_id)).json()
 
-        res = c.post(f"{_BASE}/{created['id']}/submit")
+        res = _submit_and_escalate(c, created["id"])
 
         assert res.status_code == 200, res.text
         body = res.json()
@@ -204,7 +212,7 @@ class TestAutoAssignWithAnActiveConfig:
         member_id = _seed_one_member_tier1_config(db)
         created = c.post(_BASE, json=_submittable_payload(product_id)).json()
 
-        res = c.post(f"{_BASE}/{created['id']}/submit")
+        res = _submit_and_escalate(c, created["id"])
         assert res.status_code == 200, res.text
 
         tracker = (
@@ -230,7 +238,7 @@ class TestAutoAssignWithAnActiveConfig:
         _seed_one_member_tier1_config(db)
         created = c.post(_BASE, json=_submittable_payload(product_id)).json()
 
-        res = c.post(f"{_BASE}/{created['id']}/submit")
+        res = _submit_and_escalate(c, created["id"])
         assert res.status_code == 200, res.text
 
         db.expire_all()
@@ -247,13 +255,13 @@ class TestAutoAssignWithAnActiveConfig:
 
 
 class TestNoActiveConfig:
-    def test_submit_leaves_the_request_new_and_unassigned(self, client):
+    def test_escalate_leaves_the_request_new_and_unassigned(self, client):
         """AC-S3-2: the Claim path is unchanged - nothing to auto-place with."""
         c, db, _contact_id = client
         product_id = _seed_product(db)
         created = c.post(_BASE, json=_submittable_payload(product_id)).json()
 
-        res = c.post(f"{_BASE}/{created['id']}/submit")
+        res = _submit_and_escalate(c, created["id"])
 
         assert res.status_code == 200, res.text
         body = res.json()
@@ -262,7 +270,7 @@ class TestNoActiveConfig:
 
 
 class TestTheAssignmentBlockFailingDoesNotFailSubmit:
-    def test_submit_still_succeeds_as_new_when_auto_assign_raises(self, client, monkeypatch):
+    def test_escalate_still_succeeds_as_new_when_auto_assign_raises(self, client, monkeypatch):
         """AC-S3-3. Patch target: ``PriceTagRequestService.auto_assign_from_tracker``
         (the coder implements the D8 read-tracker-and-copy block under that name)."""
         c, db, _contact_id = client
@@ -279,7 +287,7 @@ class TestTheAssignmentBlockFailingDoesNotFailSubmit:
             PriceTagRequestService, "auto_assign_from_tracker", staticmethod(_boom)
         )
 
-        res = c.post(f"{_BASE}/{created['id']}/submit")
+        res = _submit_and_escalate(c, created["id"])
 
         assert res.status_code == 200, res.text
         body = res.json()

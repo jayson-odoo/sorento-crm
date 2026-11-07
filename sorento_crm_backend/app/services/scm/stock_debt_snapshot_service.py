@@ -27,21 +27,23 @@ from app.models.project_so import (
     OrderInquiryRow,
     ProjectSalesOrderLine,
     RESERVE_REQUESTED,
+    RESERVE_RESERVED,
 )
 from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
 from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
+from app.services.oi_delivery_date import resolve as resolve_oi_date
+from app.services.oi_row_visibility import is_live_row, is_reservable_row, live_row_clause
 from app.services.order_inquiry_reserve_service import (
-    _REQUESTABLE_STATES,
-    _REQUESTABLE_VERBS,
     _open_request_row_ids,
     _requestable,
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.demand import demand_qty
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
-from app.services.scm.stock_debt_service import StockDebtService
+from app.services.scm.stock_debt_po_link_service import po_links_for
+from app.services.scm.stock_debt_service import StockDebtService, annotate_so_parties
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
 from app.utils.multi_value import multi_values
@@ -112,10 +114,11 @@ class StockDebtSnapshotService:
             core_ids.extend(line["sales_order_line_id"] for line in lines)
 
         linked = self._linked_oi_rows(core_ids)
+        needed_by = resolve_oi_date(self.db, [r for pairs in linked.values() for r, _i in pairs])
         for lines in stored_lines:
             for line in lines:
                 line["oi_rows"] = [
-                    self._frozen_oi(oi_row, inquiry)
+                    self._frozen_oi(oi_row, inquiry, needed_by)
                     for oi_row, inquiry in linked.get(line["sales_order_line_id"], [])
                 ]
 
@@ -175,8 +178,10 @@ class StockDebtSnapshotService:
         }
 
     def _linked_oi_rows(self, core_line_ids: Sequence[str]) -> Dict[str, List[tuple]]:
-        """`{core line id: [(OrderInquiryRow, OrderInquiry)]}` for every row whose
-        `so_line_id` is a project mirror of that core line (AC-5)."""
+        """`{core line id: [(OrderInquiryRow, OrderInquiry)]}` for every LIVE row whose
+        `so_line_id` is a project mirror of that core line (AC-5). OI-RESERVE-USED-ROW: a
+        used or cancelled row is never linked (`oi_row_visibility`), the same rule the OI
+        page and Order Inquiries > Lines list by."""
         out: Dict[str, List[tuple]] = {}
         for chunk in _chunks(sorted(set(core_line_ids))):
             query = (
@@ -185,21 +190,31 @@ class StockDebtSnapshotService:
                 )
                 .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
                 .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-                .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(chunk))
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(chunk),
+                    live_row_clause(),
+                )
                 .order_by(OrderInquiry.inquiry_no, OrderInquiryRow.id)
             )
             for core_id, oi_row, inquiry in query.all():
                 out.setdefault(str(core_id), []).append((oi_row, inquiry))
         return out
 
-    @staticmethod
-    def _frozen_oi(oi_row: OrderInquiryRow, inquiry: OrderInquiry) -> Dict[str, Any]:
+    def _frozen_oi(
+        self,
+        oi_row: OrderInquiryRow,
+        inquiry: OrderInquiry,
+        needed_by: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """One frozen OI row. `delivery_date` is the SO line's (OI-ONE-DELIVERY-DATE, AC-A7);
+        `needed_by` is a batch `resolve` the caller already ran, else one read here."""
+        one_date = (needed_by or resolve_oi_date(self.db, [oi_row]))[str(oi_row.id)].date
         return {
             "oi_id": str(inquiry.id),
             "inquiry_no": inquiry.inquiry_no,
             "row_id": str(oi_row.id),
             "qty": float(oi_row.qty),
-            "delivery_date": oi_row.delivery_date.isoformat() if oi_row.delivery_date else None,
+            "delivery_date": one_date.isoformat() if one_date else None,
             "stock_location": oi_row.stock_location,
             "verb": oi_row.verb,
             "state": oi_row.state,
@@ -428,8 +443,27 @@ class StockDebtSnapshotService:
         lines = [dict(l) for l in row.lines if month is None or l["bucket"] == month]
         lines.sort(key=lambda l: (l["required_date"] is None, l["required_date"] or "", l["so_number"]))
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
+        # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
+        # stored before the lines carried them names them too.
+        annotate_so_parties(self.db, lines)
 
         now = self._line_now(core_ids)
+        # AC-LINK-CRM-UI: the PO lines linked to each line now, live, so a link made from the
+        # drill shows on it without a new snapshot.
+        po_links = po_links_for(self.db, core_ids)
+        for line_id, entry in now.items():
+            entry["po_links"] = po_links.get(line_id, [])
+        # A snapshot stored before the demand row carried `line_no` reads it off the SO line.
+        missing = [l["sales_order_line_id"] for l in lines if l.get("line_no") is None]
+        if missing:
+            numbers = dict(
+                self.db.query(SalesOrderLine.id, SalesOrderLine.line_no)
+                .filter(SalesOrderLine.id.in_(sorted(set(missing))))
+                .all()
+            )
+            for line in lines:
+                if line.get("line_no") is None:
+                    line["line_no"] = numbers.get(line["sales_order_line_id"])
         # Security L1: without `projects.projects.view` no order inquiry row is served,
         # frozen or live.
         if not UserPermissionService(self.db).check_user_has_permission(user_id, OI_PERMISSION):
@@ -447,21 +481,26 @@ class StockDebtSnapshotService:
             for oi_row, _inq in linked.get(core_id, [])
         ]
         oi_now = self._oi_now(sorted(set(live_ids)))
+        needed_by = resolve_oi_date(self.db, [r for pairs in linked.values() for r, _i in pairs])
 
         for line in lines:
             line["now"] = now.get(line["sales_order_line_id"]) or {
                 "so_status": "missing", "open_qty": 0.0,
             }
             seen = {oi["row_id"] for oi in line["oi_rows"]}
+            # OI-RESERVE-USED-ROW: a row frozen live that is now used, cancelled or gone is
+            # not shown, so a snapshot saved before the change reads the same as a new one.
             oi_rows = [
-                {**oi, **oi_now.get(oi["row_id"], self._oi_gone())} for oi in line["oi_rows"]
+                {**oi, **oi_now[oi["row_id"]]}
+                for oi in line["oi_rows"]
+                if oi_now.get(oi["row_id"], {}).get("live")
             ]
             for oi_row, inquiry in linked.get(line["sales_order_line_id"], []):
                 if str(oi_row.id) in seen:
                     continue
                 oi_rows.append(
                     {
-                        **self._frozen_oi(oi_row, inquiry),
+                        **self._frozen_oi(oi_row, inquiry, needed_by),
                         **oi_now[str(oi_row.id)],
                         "after_snapshot": True,
                     }
@@ -484,13 +523,6 @@ class StockDebtSnapshotService:
                 }
         return out
 
-    @staticmethod
-    def _oi_gone() -> Dict[str, Any]:
-        return {
-            "now_state": "missing", "reserve_state": None, "remaining": None,
-            "requestable": False,
-        }
-
     def _oi_now(self, row_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         """The live reading of order inquiry rows: state, latest reserve request, what is
         left to request and whether the existing request would accept the row. The rules are
@@ -503,12 +535,14 @@ class StockDebtSnapshotService:
             for r in self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(chunk)).all()
         }
         open_requests = _open_request_row_ids(self.db, list(rows))
-        latest: Dict[str, str] = {}
-        for rr_row_id, state, parked_at in (
+        latest: Dict[str, tuple] = {}
+        for rr_row_id, state, parked_at, qty_requested, qty_reserved in (
             self.db.query(
                 OrderInquiryReserveRequestRow.row_id,
                 OrderInquiryReserveRequest.state,
                 OrderInquiryReserveRequest.parked_at,
+                OrderInquiryReserveRequestRow.qty_requested,
+                OrderInquiryReserveRequestRow.qty_reserved,
             )
             .join(
                 OrderInquiryReserveRequest,
@@ -521,22 +555,35 @@ class StockDebtSnapshotService:
             )
             .all()
         ):
-            latest.setdefault(
-                str(rr_row_id),
-                "parked" if state == RESERVE_REQUESTED and parked_at is not None else state,
-            )
+            # OI-RESERVE-USED-ROW (Now, one pill): a row CS already answered reads reserved
+            # with the answered qty, even while the request stays open for its siblings.
+            if qty_reserved is not None:
+                # An answer of 0 is a rejection (`_status_of`), not a reserve: it reads as
+                # nothing, so the line falls back to Open.
+                reading = (RESERVE_RESERVED, qty_reserved) if qty_reserved > 0 else (None, None)
+            elif state == RESERVE_REQUESTED and parked_at is not None:
+                reading = ("parked", qty_requested)
+            else:
+                reading = (state, qty_requested)
+            latest.setdefault(str(rr_row_id), reading)
         out: Dict[str, Dict[str, Any]] = {}
         for row_id, row in rows.items():
             # What `create_request` caps a request against (OI-RESERVE-RECEIVED: includes
             # links on a fully received PO/SPO), so `requestable` here and the request agree.
             remaining = _requestable(self.db, row)
             out[row_id] = {
+                "live": is_live_row(row),
                 "now_state": row.state,
-                "reserve_state": latest.get(row_id),
+                "reserve_state": latest[row_id][0] if row_id in latest else None,
+                "reserve_qty": (
+                    float(latest[row_id][1])
+                    if row_id in latest and latest[row_id][1] is not None
+                    else None
+                ),
                 "remaining": float(remaining),
                 "requestable": (
-                    row.verb in _REQUESTABLE_VERBS
-                    and row.state in _REQUESTABLE_STATES
+                    # OI-RESERVE-ANY-ROW: live and not Done, any verb (the request guard's rule).
+                    is_reservable_row(row)
                     and row_id not in open_requests
                     and remaining > 0
                 ),

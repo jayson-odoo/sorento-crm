@@ -9,12 +9,15 @@
 
 import type {
   LinePartCandidate,
+  PriceMode,
   PriceTagLineType,
   PriceTagRequestLineInput,
   ProductComboOption,
   ProductTagTemplateOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import { comboShape, fitReason, groupIndexOf } from '@/lib/dealer-kit/combo-slots';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import { defaultOptionFor, fittingOptions, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 
 /**
  * One part row under a draft line (D2).
@@ -32,6 +35,10 @@ export interface DraftPart {
   /** The choice group this row answers. Null on a fixed or hand-added part. */
   role: string | null;
   candidates: LinePartCandidate[];
+  /** Ordered picks for a group the chosen template needs 2 or more from (K5). */
+  product_ids?: string[];
+  /** The part's product is discontinued (a fixed part cannot be swapped, AC-C6). */
+  is_discontinued?: boolean;
 }
 
 export interface DraftLine {
@@ -79,6 +86,23 @@ export interface DraftLine {
   tag_templates?: ProductTagTemplateOption[];
   /** Which product `tag_templates` was answered for; anything else = not asked yet. */
   tag_templates_for?: string | null;
+  /** PRICETAG-LPSP: which combo `tag_templates` was answered for (null = none). */
+  tag_templates_combo?: string | null;
+  /** PRICETAG-LPSP: this line's own LP or SP. Absent = the header's mode. */
+  price_type?: PriceMode | null;
+  /** R13: the template and LP/SP a LOADED line was saved with. While both are unchanged the
+   *  template is kept (AC-37): no "No SP template linked" pill, eye enabled, no Submit reason. */
+  kept_template?: { id: string; price_type: PriceMode } | null;
+}
+
+/** The combo the line is asked for as, once the combos lookup has answered. */
+export function comboOfLine(line: Pick<DraftLine, 'combo_id' | 'combos'>): ProductComboOption | undefined {
+  return line.combo_id ? line.combos.find((c) => c.combo_id === line.combo_id) : undefined;
+}
+
+/** The line's effective LP/SP: its own, else the request's mode. */
+export function linePriceType(line: Pick<DraftLine, 'price_type'>, priceMode: PriceMode): PriceMode {
+  return line.price_type ?? priceMode;
 }
 
 /**
@@ -107,6 +131,7 @@ export interface DraftLineSource {
   promotion_id?: string | null;
   manual_sell_price?: number | null;
   tag_template_id?: string | null;
+  price_type?: PriceMode | null;
 }
 
 let partKeySeq = 0;
@@ -133,6 +158,7 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
         name: part.name,
         role: null,
         candidates: [],
+        is_discontinued: part.is_discontinued ?? false,
       });
       continue;
     }
@@ -140,7 +166,12 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
     seen.add(part.choice_group);
     const candidates = combo.parts
       .filter((p) => !p.is_upgrade && p.choice_group === part.choice_group)
-      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name }));
+      .map((p) => ({
+        product_id: p.product_id,
+        code: p.code,
+        name: p.name,
+        is_discontinued: p.is_discontinued ?? false,
+      }));
     // D17 (AC-S12-1): one candidate is not a choice - the group resolves on
     // the spot, same as a fixed part. `candidates` is kept (not cleared) so
     // the row still knows what it came from if it is ever removed and
@@ -176,6 +207,45 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
   return out;
 }
 
+/** Whether a line row is the one the combo row `row` describes: a group or the upgrade by role, a fixed part by product. */
+function isSameComboRow(held: DraftPart, row: DraftPart): boolean {
+  return row.role ? held.role === row.role : !held.role && held.product_id === row.product_id;
+}
+
+/**
+ * The combo's own rows the line does not hold (P2), each with a stable id and the label the Add
+ * part select shows: a choice group or "Upgrade" by name, a fixed part by code. The rows are the
+ * ones `partsFromCombo` builds, in combo order.
+ */
+export function missingComboRows(line: DraftLine): { id: string; label: string; row: DraftPart }[] {
+  const combo = comboOfLine(line);
+  if (!combo) return [];
+  return partsFromCombo(combo)
+    .filter((row) => !line.parts.some((held) => isSameComboRow(held, row)))
+    .map((row) => ({
+      id: row.role ? `role:${row.role}` : `part:${row.product_id}`,
+      label: row.role ?? row.code,
+      row,
+    }));
+}
+
+/** The line's parts with the missing combo row `id` back at its combo position (an a la carte part stays after). */
+export function insertComboRow(line: DraftLine, id: string): DraftPart[] {
+  const combo = comboOfLine(line);
+  const missing = missingComboRows(line).find((m) => m.id === id);
+  if (!combo || !missing) return line.parts;
+  const order = partsFromCombo(combo);
+  const placeOf = (part: DraftPart) => {
+    const at = order.findIndex((row) => isSameComboRow(part, row));
+    return at < 0 ? Infinity : at;
+  };
+  const mine = order.findIndex((row) => isSameComboRow(missing.row, row));
+  const before = line.parts.findIndex((held) => placeOf(held) > mine);
+  const parts = [...line.parts];
+  parts.splice(before < 0 ? parts.length : before, 0, missing.row);
+  return parts;
+}
+
 /**
  * The package warning, computed exactly as the server computes it at submit
  * (D2) so the row says the same thing before and after. Submit is never refused
@@ -183,11 +253,14 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
  */
 export function packageWarningFor(line: DraftLine): string | null {
   if (line.line_type !== 'product' || !line.product_id) return null;
-  if (!line.combos_loaded || !line.host_guarded) return null;
+  if (!line.combos_loaded) return null;
   if (!line.combo_id) {
+    // Whether a package is expected at all is the server's call (guarded families only).
+    if (!line.host_guarded) return null;
     return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
   }
-  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+  // A chosen package says what it holds, on any host: removing a part of it is always worth a note.
+  const combo = comboOfLine(line);
   if (!combo) return null;
   const missing: string[] = [];
   for (const part of combo.parts) {
@@ -213,7 +286,7 @@ export function packageWarningFor(line: DraftLine): string | null {
 /** AC-S1-2: an unresolved choice group prices as nothing, and the List price
  *  cell says so rather than silently under-counting. */
 export function hasOpenGroup(line: DraftLine): boolean {
-  return line.parts.some((part) => !part.product_id && part.candidates.length > 0);
+  return line.parts.some((part) => isOpenPart(part) && part.candidates.length > 0);
 }
 
 /** RM amounts round to whole ringgit everywhere on this form (mock pricing
@@ -276,7 +349,37 @@ export function itemValue(line: DraftLine): string {
   return line.product_id ? `product:${line.product_id}` : '';
 }
 
-export function lineToDraft(line: DraftLineSource): DraftLine {
+/** Two or more resolved parts sharing a role are one multi-pick row, where the first sat. */
+function foldPicks(parts: DraftPart[]): DraftPart[] {
+  const out: DraftPart[] = [];
+  for (const part of parts) {
+    const same = part.role && part.product_id ? out.find((p) => p.role === part.role && p.product_id !== null) : undefined;
+    if (!same) {
+      out.push(part);
+      continue;
+    }
+    same.product_ids = [...(same.product_ids ?? [same.product_id as string]), part.product_id as string];
+  }
+  return out;
+}
+
+/**
+ * A reopened multi-pick row has no candidates (the server stores the picks only). Once the combos
+ * lookup answers, give it back its group's options, the same source `partsFromCombo` uses, so it
+ * renders as the multi-select it was.
+ */
+export function restoreGroupCandidates(parts: DraftPart[], combo: ProductComboOption | undefined): DraftPart[] {
+  if (!combo) return parts;
+  return parts.map((part) => {
+    if (!part.role || part.candidates.length > 0 || (part.product_ids?.length ?? 0) < 2) return part;
+    const candidates = combo.parts
+      .filter((p) => !p.is_upgrade && p.choice_group === part.role)
+      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name, is_discontinued: p.is_discontinued ?? false }));
+    return candidates.length > 0 ? { ...part, candidates } : part;
+  });
+}
+
+export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
     line_type: line.line_type,
@@ -298,14 +401,16 @@ export function lineToDraft(line: DraftLineSource): DraftLine {
     combos: [],
     combos_loaded: false,
     host_guarded: false,
-    parts: (line.parts ?? []).map((part) => ({
-      key: part.id,
-      product_id: part.product_id,
-      code: part.code ?? '',
-      name: part.name ?? '',
-      role: part.role,
-      candidates: part.candidates ?? [],
-    })),
+    parts: foldPicks(
+      (line.parts ?? []).map((part) => ({
+        key: part.id,
+        product_id: part.product_id,
+        code: part.code ?? '',
+        name: part.name ?? '',
+        role: part.role,
+        candidates: part.candidates ?? [],
+      })),
+    ),
     // D1 (Phase 2, not wired yet): a server that already carries these wins;
     // a pre-migration server (Phase 1) leaves them null and the line waits
     // for `lookupLinePricing`'s auto pick like a brand new line does.
@@ -315,8 +420,16 @@ export function lineToDraft(line: DraftLineSource): DraftLine {
     pricing: null,
     // The templates lookup answers the options once the line is on screen.
     tag_template_id: line.tag_template_id ?? null,
+    kept_template:
+      line.tag_template_id && (line.price_type ?? requestMode)
+        ? { id: line.tag_template_id, price_type: (line.price_type ?? requestMode) as PriceMode }
+        : null,
     tag_templates: [],
     tag_templates_for: null,
+    // The server stores an explicit type on every line, so a line whose type equals the
+    // request's mode is read as FOLLOWING Preferred Default (price_type null); only a line that
+    // differs keeps its own.
+    price_type: line.price_type && line.price_type !== requestMode ? line.price_type : null,
   };
 }
 
@@ -330,33 +443,118 @@ export type LineTemplateState =
   | { kind: 'none' }
   | { kind: 'loading' }
   | { kind: 'single'; template: ProductTagTemplateOption }
-  | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null };
+  | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null }
+  /** The item has links, but none fits this line's LP / SP: "No SP template linked". */
+  | { kind: 'mismatch'; priceType: 'list' | 'selling' };
 
-export function lineTemplateState(line: DraftLine): LineTemplateState {
+function comboShapeOf(line: DraftLine) {
+  const combo = comboOfLine(line);
+  return combo ? comboShape(combo.parts) : null;
+}
+
+export function lineTemplateState(line: DraftLine, priceMode?: PriceMode | null): LineTemplateState {
   if (line.line_type !== 'product' || !line.product_id) return { kind: 'none' };
-  if (line.tag_templates_for !== line.product_id) return { kind: 'loading' };
-  const options = line.tag_templates ?? [];
+  if (
+    line.tag_templates_for !== line.product_id ||
+    (line.tag_templates_combo ?? null) !== (line.combo_id ?? null)
+  ) {
+    return { kind: 'loading' };
+  }
+  // AC-B4: only templates that fit the line's combo are offered.
+  const shape = comboShapeOf(line);
+  const options = (line.tag_templates ?? []).filter(
+    (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
+  );
   if (options.length === 0) return { kind: 'none' };
-  if (options.length === 1) return { kind: 'single', template: options[0] };
+  // PRICETAG-COMBO-FORMAT: only the templates that fit the line's LP / SP are offered.
+  const lineType = line.price_type ?? priceMode ?? null;
+  let fitting = fittingOptions(options, lineType);
+  // R6 (AC-37): a loaded line keeps the template it was saved with even when it stopped fitting;
+  // it shows by name and is re-sent. Only a user change (pick or LP/SP flip) re-filters.
+  const saved = options.find((o) => o.id === line.tag_template_id);
+  if (saved && !fitting.includes(saved)) fitting = [...fitting, saved];
+  if (fitting.length === 0) return { kind: 'mismatch', priceType: lineType as 'list' | 'selling' };
+  if (fitting.length === 1) return { kind: 'single', template: fitting[0] };
   return {
     kind: 'many',
-    options,
-    picked: options.find((o) => o.id === line.tag_template_id) ?? null,
+    options: fitting,
+    picked: fitting.find((o) => o.id === line.tag_template_id) ?? null,
   };
 }
 
+/**
+ * The line's type when the item has linked templates but none fits it ("No SP template linked").
+ * Unlike `lineTemplateState` this ignores a kept saved pick (R6): the saved template still shows
+ * and prints, but the gap is still worth saying.
+ */
+export function unfittedPriceType(line: DraftLine, priceMode?: PriceMode | null): 'list' | 'selling' | null {
+  if (line.line_type !== 'product' || !line.product_id) return null;
+  if (
+    line.tag_templates_for !== line.product_id ||
+    (line.tag_templates_combo ?? null) !== (line.combo_id ?? null)
+  ) {
+    return null;
+  }
+  const shape = comboShapeOf(line);
+  const options = (line.tag_templates ?? []).filter(
+    (t) => !shape || !t.needs || fitReason(t.needs, shape) === null,
+  );
+  const lineType = line.price_type ?? priceMode ?? null;
+  if (options.length === 0 || !lineType) return null;
+  // R13: a loaded line still holding its saved template and type raises nothing.
+  const kept = line.kept_template;
+  if (kept && kept.id === line.tag_template_id && kept.price_type === lineType) return null;
+  return fittingOptions(options, lineType).length === 0 ? lineType : null;
+}
+
+/** "SRTBF11416: No SP template linked" (a combo line is named by the combo). */
+export function noTemplateForTypeMessage(line: DraftLine, priceType: 'list' | 'selling'): string {
+  const label = comboOfLine(line)?.name || line.code || line.name;
+  return `${label}: No ${lineTypeLabel(priceType)} template linked`;
+}
+
 /** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
+export const EMPTY_LINE = 'Pick a set or a product for this line.';
+
 export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 
-export function lineNeedsTemplate(line: DraftLine): boolean {
-  const state = lineTemplateState(line);
+export function lineNeedsTemplate(line: DraftLine, priceMode?: PriceMode | null): boolean {
+  const state = lineTemplateState(line, priceMode);
   return state.kind === 'many' && state.picked === null;
+}
+
+/** The parts as the server takes them: a multi-pick row becomes one resolved part per pick, in order. */
+export function partsPayload(parts: DraftPart[]) {
+  return parts.flatMap((part) =>
+    part.product_ids && part.product_ids.length > 0
+      ? part.product_ids.map((product_id) => ({ product_id, role: part.role, candidates: [] as string[] }))
+      : [
+          {
+            product_id: part.product_id,
+            role: part.role,
+            candidates: part.product_id ? [] : part.candidates.map((candidate) => candidate.product_id),
+          },
+        ],
+  );
+}
+
+/** Every product the parts have resolved so far, picks included. */
+export function pickedProductIds(parts: DraftPart[]): string[] {
+  return parts.flatMap((p) => (p.product_ids?.length ? p.product_ids : p.product_id ? [p.product_id] : []));
+}
+
+/** A row is still open while nothing is picked from it. */
+export function isOpenPart(part: DraftPart): boolean {
+  return !part.product_id && !part.product_ids?.length;
 }
 
 /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
  *  place, in display order. A resolved part sends its product, an open one
  *  sends the candidate ids it is still choosing between. */
-export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[] {
+export function draftLinesPayload(
+  lines: DraftLine[],
+  priceMode?: PriceMode,
+): PriceTagRequestLineInput[] {
   return lines.map((l) => ({
     line_type: l.line_type,
     product_id: l.product_id,
@@ -366,19 +564,157 @@ export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[
     included_accessories: l.included_accessories || null,
     remarks: l.remarks || null,
     product_class: null,
-    parts: l.parts.map((part) => ({
-      product_id: part.product_id,
-      role: part.role,
-      candidates: part.product_id
-        ? []
-        : part.candidates.map((candidate) => candidate.product_id),
-    })),
+    parts: partsPayload(l.parts),
     // D1/D2 (S6): the line's own price basis - built here for create,
     // update AND revise, the one function all three send through, so the
     // server never sees a line missing what `choosePromotion`/
     // `setManualSellPrice` already set on it.
     promotion_id: l.promotion_id,
-    manual_sell_price: l.manual_sell_price,
+    // PRICETAG-LPSP: a typed price only means something on an SP line with no promotion; the
+    // server refuses it anywhere else.
+    // An untyped line follows Preferred Default: it is saved with the header's value now.
+    price_type: l.price_type ?? priceMode ?? null,
+    manual_sell_price:
+      (l.price_type ?? priceMode) === 'list' || l.promotion_id ? null : l.manual_sell_price,
     tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
   }));
+}
+
+/** The template the line prints with: its pick, or the lone link. Null when not decided. */
+function chosenTemplate(line: DraftLine, priceMode?: PriceMode | null): ProductTagTemplateOption | null {
+  const state = lineTemplateState(line, priceMode);
+  if (state.kind === 'single') return state.template;
+  return state.kind === 'many' ? state.picked : null;
+}
+
+/** How many picks the chosen template reads from this part's group (0 when it reads none). */
+export function picksNeeded(line: DraftLine, role: string | null, priceMode?: PriceMode | null): number {
+  const needs = chosenTemplate(line, priceMode)?.needs;
+  const combo = comboOfLine(line);
+  if (!needs || !combo || !role) return 0;
+  const index = groupIndexOf(role, comboShape(combo.parts));
+  return index < 0 ? 0 : (needs.groups[index] ?? 0);
+}
+
+/** AC-C4: a template that needs fewer keeps the first picks; one pick goes back to a plain row. */
+export function trimPicksToTemplate(line: DraftLine): DraftLine {
+  return {
+    ...line,
+    parts: line.parts.map((part) => {
+      if (!part.product_ids || part.product_ids.length === 0) return part;
+      const keep = Math.max(picksNeeded(line, part.role), 1);
+      if (part.product_ids.length <= keep && keep >= 2) return part;
+      const ids = part.product_ids.slice(0, keep);
+      if (ids.length >= 2) return { ...part, product_ids: ids };
+      const rest = { ...part };
+      delete rest.product_ids;
+      const chosen = part.candidates.find((c) => c.product_id === ids[0]);
+      return { ...rest, product_id: ids[0], code: chosen?.code ?? part.code, name: chosen?.name ?? part.name };
+    }),
+  };
+}
+
+type PricingByKey = Record<
+  string,
+  Partial<Pick<LinePricingResult, 'list_price' | 'sell_price'>> | null | undefined
+>;
+
+/**
+ * The facts that block Approve for one line (AC-C5, AC-C6, AC-D2), worded as facts only: nothing
+ * here tells the user what to do. Shown on the line when Approve is clicked, not before.
+ */
+export function lineProblemsOf(
+  line: DraftLine,
+  pricing: PricingByKey[string],
+  priceMode: PriceMode = 'list',
+): string[] {
+  const out: string[] = [];
+  const combo = comboOfLine(line);
+  const templateState = lineTemplateState(line, priceMode);
+  const unfitted = unfittedPriceType(line, priceMode);
+  if (unfitted) out.push(noTemplateForTypeMessage(line, unfitted));
+  const needs = chosenTemplate(line, priceMode)?.needs;
+  const heldPicks = (role: string) =>
+    line.parts
+      .filter((part) => part.role === role)
+      .reduce((n, part) => n + (part.product_ids?.length ?? (part.product_id ? 1 : 0)), 0);
+  // N1: what the chosen template reads, not the rows present: a deleted group row still owes its picks.
+  if (needs && combo) {
+    const shape = comboShape(combo.parts);
+    shape.groups.forEach((group, index) => {
+      const k = needs.groups[index] ?? 0;
+      if (k > 0 && !line.parts.some((part) => part.role === group.role) && heldPicks(group.role) < k) {
+        out.push(`${group.role}: pick ${k - heldPicks(group.role)} more.`);
+      }
+    });
+    const fixedParts = combo.parts.filter((p) => !p.is_upgrade && !p.choice_group);
+    for (let i = 0; i < Math.min(needs.fixed, fixedParts.length); i += 1) {
+      if (!line.parts.some((part) => part.product_id === fixedParts[i].product_id)) {
+        out.push(`Template needs ${fixedParts[i].code}.`);
+      }
+    }
+  }
+  for (const part of line.parts) {
+    const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
+    const k = picksNeeded(line, part.role, priceMode);
+    if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
+    for (const id of picked) {
+      const option = combo?.parts.find((p) => p.product_id === id);
+      if (option?.is_discontinued) out.push(`${option.code} is discontinued.`);
+    }
+  }
+  if (line.combo_id && pricing) {
+    if (linePriceType(line, priceMode) === 'list') {
+      if (pricing.list_price == null) out.push('No combo list price.');
+    } else if (pricing.sell_price === null && line.manual_sell_price == null) {
+      // An SP line prints the stored or option price, else the typed one, else nothing (AC-D3).
+      out.push('No combo selling price.');
+    }
+  }
+  return out;
+}
+
+/** `lineProblemsOf` for every line, flattened in line order. */
+export function linePickProblems(
+  lines: DraftLine[],
+  pricingByKey: PricingByKey,
+  priceMode: PriceMode = 'list',
+): string[] {
+  return lines.flatMap((line) => lineProblemsOf(line, pricingByKey[line.key], priceMode));
+}
+
+/** The messages the Approve click writes on a line; a server refusal is none of these. */
+function isCheckMessage(message: string): boolean {
+  return (
+    message === EMPTY_LINE ||
+    message === MISSING_TAG_TEMPLATE ||
+    message === 'No tag template yet.' ||
+    message.startsWith('Template needs ') ||
+    /^No combo (list|selling) price\.$/.test(message) ||
+    / is discontinued\.$/.test(message) ||
+    /: pick \d+ more\.$/.test(message) ||
+    / template linked$/.test(message)
+  );
+}
+
+/**
+ * A line's click-time message with the facts that no longer hold taken out (A): `holding` is what
+ * is wrong with the line right now. It only removes; a new problem waits for the next click.
+ */
+export function pruneGuardError(guardError: string | null, holding: string[]): string | null {
+  if (!guardError) return null;
+  const kept = guardError.split('\n').filter((message) => !isCheckMessage(message) || holding.includes(message));
+  return kept.length > 0 ? kept.join('\n') : null;
+}
+
+/**
+ * What flipping a line to `mode` does to its template: a pick that still fits is kept (nothing
+ * changes); otherwise it moves to that type's default, or is cleared when the item has none.
+ */
+export function templateAfterFlip(line: DraftLine, mode: PriceMode): { tag_template_id?: string | null } {
+  const options = line.tag_templates ?? [];
+  if (options.length === 0) return {};
+  const current = options.find((option) => option.id === line.tag_template_id);
+  if (current && templateFitsLine(current.price_type, mode)) return {};
+  return { tag_template_id: defaultOptionFor(options, mode)?.id ?? null };
 }

@@ -1,9 +1,11 @@
-"""Project spec sheet routes (PS-SPEC-SHEET), on a quotation document.
+"""Project spec sheet routes (SPEC-SHEET-V2), on a quotation document.
 
-The Spec sheet tab reads and saves its settings here, previews the pages with the same payload the
-PDF prints from, and queues the PDF into My Downloads. Reads take the quotation's read permission;
-saving takes the same right as editing the quotation (edit + write access to the project).
-Card: ``documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md``.
+A spec sheet is a saved record (SS1, SS2 ...). The list, the create dialog's options, the reader's
+page list and its windowed previews, the per-page designer and the PDF export all live here.
+Reads take the quotation's read permission; every write takes the same right as editing the
+quotation (edit + write access to the project). Every route checks project -> document -> sheet,
+so a sheet id from another document answers 404.
+Plan: ``documentation/plans/project-sales/PLAN-spec-sheet-v2-03nov.md``.
 """
 from __future__ import annotations
 
@@ -13,10 +15,11 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.v1.projects._common import permission_slugs
 from app.api.v1.projects.quotation_documents import EDIT, READ, _editable_project
 from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key, require_permission
-from app.models.dealer_kit import TagTemplate
+from app.models.projects import ProjectQuotationSpecSheet
 from app.services import project_quotation_document_service as qdocs
 from app.services import project_service as projects
 from app.services import project_spec_sheet_service as spec
@@ -25,7 +28,7 @@ from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
-BASE = "/projects/{project_id}/quotation-documents/{document_id}/spec-sheet"
+BASE = "/projects/{project_id}/quotation-documents/{document_id}/spec-sheets"
 
 
 class SpecSheetRowIn(BaseModel):
@@ -39,14 +42,32 @@ class SpecSheetRowIn(BaseModel):
     )
 
 
-class SpecSheetSettingsIn(BaseModel):
-    """Every field optional: a field left out keeps its saved value."""
-
+class SpecSheetCreateIn(BaseModel):
+    source: str = Field(..., min_length=1, max_length=64)
     cover_template_id: Optional[str] = None
     page_template_id: Optional[str] = None
     single_page_template_id: Optional[str] = None
-    issue_id: Optional[str] = None
+
+
+class SpecSheetPatchIn(BaseModel):
+    """Every field optional: a field left out keeps its saved value."""
+
     rows: Optional[List[SpecSheetRowIn]] = Field(None, max_length=500)
+    use_latest_templates: Optional[bool] = None
+    # Pick the templates again (keeps the rows and page edits).
+    cover_template_id: Optional[str] = None
+    page_template_id: Optional[str] = None
+    single_page_template_id: Optional[str] = None
+
+
+class SpecSheetLayersIn(BaseModel):
+    layers: List[dict] = Field(default_factory=list, max_length=spec.LAYERS_MAX)
+
+
+class SpecSheetApplyIn(BaseModel):
+    changes: dict = Field(default_factory=dict)
+    # The page the change was made on: a cover applies to the cover, an item page to item pages.
+    origin_page_key: Optional[str] = Field(None, max_length=200)
 
 
 def _document(db: Session, project_id: str, document_id: str):
@@ -56,133 +77,239 @@ def _document(db: Session, project_id: str, document_id: str):
     return qdocs.get_document_or_404(db, project_id, document_id)
 
 
-def _issue(db: Session, document, issue_id: Optional[str]):
-    if issue_id:
-        validate_uuid_path(issue_id, resource="Revision")
-    issue = spec.issue_for(db, document, issue_id)
-    if issue_id and (issue is None or str(issue.id) != issue_id):
-        raise AppException(
-            status_code=404, message="Revision not found.", code="quotation_issue_not_found"
-        )
-    return issue
-
-
-def _templates(db: Session) -> dict:
-    rows = (
-        db.query(TagTemplate)
-        .filter(
-            TagTemplate.family.in_([spec.COVER_FAMILY, spec.PAGE_FAMILY]),
-            TagTemplate.published_version_id.isnot(None),
-        )
-        .order_by(TagTemplate.name)
-        .all()
+def _sheet(db: Session, document, sheet_id: str, *, lock: bool = False) -> ProjectQuotationSpecSheet:
+    """The sheet, 404 when it is not on this document. ``lock`` (every write) holds the row until
+    commit: each write rewrites the whole ``page_edits`` / ``rows`` value, so two saves of different
+    pages read in parallel would otherwise each write back a copy missing the other's page."""
+    validate_uuid_path(sheet_id, resource="Spec sheet")
+    query = db.query(ProjectQuotationSpecSheet).filter(
+        ProjectQuotationSpecSheet.id == sheet_id,
+        ProjectQuotationSpecSheet.document_id == document.id,
     )
-    out: dict = {"cover": [], "page": []}
-    for row in rows:
-        doc = (row.published_version.doc if row.published_version else None) or {}
-        out["cover" if row.family == spec.COVER_FAMILY else "page"].append(
-            {
-                "id": row.id,
-                "name": row.name,
-                "width_mm": doc.get("width_mm"),
-                "height_mm": doc.get("height_mm"),
-            }
+    if lock:
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
+    if sheet is None:
+        raise AppException(
+            status_code=404, message="Spec sheet not found.", code="spec_sheet_not_found"
         )
-    return out
+    return sheet
 
 
-def _public(page: dict) -> dict:
-    """A page without its print-only (underscore) keys, accessories included."""
-    out = {k: v for k, v in page.items() if not k.startswith("_")}
-    out["accessories"] = [
-        {k: v for k, v in acc.items() if not k.startswith("_")} for acc in page["accessories"]
-    ]
-    return out
+def _can_edit(db: Session, project_id: str, user: dict) -> bool:
+    if EDIT not in permission_slugs(db, user["id"]):
+        return False
+    try:
+        _editable_project(db, project_id, user)
+    except AppException:
+        return False
+    return True
 
 
-def _view(db: Session, document, issue) -> dict:
-    issues = qdocs.list_issues(db, document)
-    return {
-        "settings": spec.settings_of(document),
-        "issue_id": issue.id if issue is not None else None,
-        "issues": [
-            {
-                "id": row.id,
-                "issue_no": row.issue_no,
-                # Built, never read back from `our_ref_text`, as every other reader does.
-                "label": qdocs.quotation_no(document.document_no, row.issue_no),
-                "issued_at": row.issued_at.isoformat() if row.issued_at else None,
-            }
-            for row in issues
-        ],
-        "pages": [_public(page) for page in spec.pages(db, document, issue)],
-        "templates": _templates(db),
-    }
+def _fail(exc: Exception):
+    return exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get(BASE)
-def read_spec_sheet(
+def list_spec_sheets(
     project_id: str,
     document_id: str,
-    issue_id: Optional[str] = Query(None),
-    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
         document = _document(db, project_id, document_id)
-        return _view(db, document, _issue(db, document, issue_id))
+        return spec.list_view(db, document, str(user["id"]))
     except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise _fail(exc)
 
 
-@router.put(BASE)
-def save_spec_sheet(
+@router.post(BASE, status_code=201)
+def create_spec_sheet(
     project_id: str,
     document_id: str,
-    payload: SpecSheetSettingsIn,
+    payload: SpecSheetCreateIn,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     try:
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
-        spec.save_settings(db, document, payload.model_dump(exclude_unset=True))
+        sheet = spec.create_sheet(
+            db,
+            document,
+            source=payload.source,
+            cover_template_id=payload.cover_template_id,
+            page_template_id=payload.page_template_id,
+            single_page_template_id=payload.single_page_template_id,
+            user_id=str(current_user["id"]),
+        )
         db.commit()
-        db.refresh(document)
-        return _view(db, document, _issue(db, document, None))
+        db.refresh(sheet)
+        return spec.detail_view(db, document, sheet, can_edit=True)
     except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise _fail(exc)
 
 
-@router.get(f"{BASE}/preview")
+@router.get(f"{BASE}/{{sheet_id}}")
+def read_spec_sheet(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    try:
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id)
+        return spec.detail_view(db, document, sheet, can_edit=_can_edit(db, project_id, user))
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.patch(f"{BASE}/{{sheet_id}}")
+def update_spec_sheet(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    payload: SpecSheetPatchIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        _editable_project(db, project_id, current_user)
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
+        spec.update_sheet(
+            db, sheet, payload.model_dump(exclude_unset=True), user_id=str(current_user["id"])
+        )
+        db.commit()
+        db.refresh(sheet)
+        return spec.detail_view(db, document, sheet, can_edit=True)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.get(f"{BASE}/{{sheet_id}}/preview")
 def preview_spec_sheet(
     project_id: str,
     document_id: str,
-    issue_id: Optional[str] = Query(None),
+    sheet_id: str,
+    keys: List[str] = Query([], alias="key", description="A page key; repeat up to 12 times"),
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
-    """The exact payload the PDF prints from, for the tab's on-screen pages."""
+    """The print payload for one window of pages, thumbnails only (the reader's single call)."""
     try:
         document = _document(db, project_id, document_id)
-        issue = _issue(db, document, issue_id)
-        if issue is None:
+        sheet = _sheet(db, document, sheet_id)
+        wanted = list(dict.fromkeys(k for k in keys if k))
+        if not wanted or len(wanted) > spec.PREVIEW_KEYS_MAX:
             raise AppException(
-                status_code=409,
-                message="Issue a revision first.",
-                code="spec_sheet_no_issue",
+                status_code=422,
+                message=f"Ask for 1 to {spec.PREVIEW_KEYS_MAX} pages at a time.",
+                code="spec_sheet_keys_invalid",
             )
-        return spec.build_print_payload(db, document, issue)
+        return spec.build_print_payload(db, sheet, keys=wanted)
     except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise _fail(exc)
 
 
-@router.post(f"{BASE}/export")
+@router.get(f"{BASE}/{{sheet_id}}/page-images")
+def spec_sheet_page_images(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    key: str = Query(..., min_length=1),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The open page's pictures and artwork at medium size (the other pages keep thumbnails)."""
+    try:
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id)
+        # The DB connection goes back before any picture is read or made.
+        return spec.page_images(db, sheet, key, release=db.close)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.get(f"{BASE}/{{sheet_id}}/pages/{{page_key:path}}/design")
+def design_spec_sheet_page(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    page_key: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        # The designer is the edit surface: edit right on this project, though nothing is written.
+        _editable_project(db, project_id, current_user, write=False)
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id)
+        return spec.design(db, sheet, page_key)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.put(f"{BASE}/{{sheet_id}}/pages/{{page_key:path}}/edit")
+def save_spec_sheet_page(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    page_key: str,
+    payload: SpecSheetLayersIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    try:
+        _editable_project(db, project_id, current_user)
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
+        spec.save_page_edit(db, sheet, page_key, payload.layers, user_id=str(current_user["id"]))
+        db.commit()
+        db.refresh(sheet)
+        return spec.detail_view(db, document, sheet, can_edit=True)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.post(f"{BASE}/{{sheet_id}}/layers/{{layer_id}}/apply-all")
+def apply_spec_sheet_layer_to_all(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    layer_id: str,
+    payload: SpecSheetApplyIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Move or restyle one layer on every page of the sheet that has it."""
+    try:
+        _editable_project(db, project_id, current_user)
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
+        spec.apply_to_all_pages(
+            db,
+            sheet,
+            layer_id,
+            payload.changes,
+            user_id=str(current_user["id"]),
+            origin_page_key=payload.origin_page_key,
+        )
+        db.commit()
+        db.refresh(sheet)
+        return spec.detail_view(db, document, sheet, can_edit=True)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.post(f"{BASE}/{{sheet_id}}/export")
 def export_spec_sheet(
     project_id: str,
     document_id: str,
-    issue_id: Optional[str] = Query(None),
+    sheet_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
@@ -191,14 +318,9 @@ def export_spec_sheet(
 
     try:
         document = _document(db, project_id, document_id)
-        issue = _issue(db, document, issue_id)
-        if issue is None:
-            raise AppException(
-                status_code=409,
-                message="Issue a revision first.",
-                code="spec_sheet_no_issue",
-            )
-        download = spec.request_export(db, document, issue, user_id=str(current_user["id"]))
+        sheet = _sheet(db, document, sheet_id)
+        download = spec.request_export(db, sheet, user_id=str(current_user["id"]))
+        db.commit()
         return DownloadResponse.model_validate(download)
     except Exception as exc:
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+        raise _fail(exc)

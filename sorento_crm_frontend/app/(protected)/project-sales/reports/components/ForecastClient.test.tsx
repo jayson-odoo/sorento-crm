@@ -139,6 +139,14 @@ describe('ForecastClient', () => {
     expect(await screen.findByText(/No project has a launch date/i)).toBeInTheDocument();
   });
 
+  it('speaks of the project outcome, not of scopes (PROJECT-OUTCOME-SINGLE)', async () => {
+    renderPage(dashboard({ loss_reasons: [] }));
+
+    expect(await screen.findByText(/Nothing has been marked lost yet\./)).toBeInTheDocument();
+    expect(screen.getByText('2 won, 1 lost, 1 still open.')).toBeInTheDocument();
+    expect(screen.queryByText(/scope/i)).toBeNull();
+  });
+
   it('says "nothing decided yet" rather than 0% conversion', async () => {
     renderPage(
       dashboard({ conversion: { won: 0, lost: 0, decided: 0, open: 4, rate: null } }),

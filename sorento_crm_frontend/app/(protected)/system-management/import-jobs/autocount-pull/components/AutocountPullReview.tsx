@@ -35,6 +35,7 @@ import {
   type ProductPullCounts,
   type StockPullCounts,
 } from '../types/autocountPull.types';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const PHASE_LABEL: Record<AutocountPullPhase, string> = {
   building: 'Building',
@@ -73,22 +74,10 @@ const WARNING_LABEL: Record<string, string> = {
   content_hash_mismatch: 'Snapshot checksum did not match',
 };
 
-/** dd/MM/yyyy HH:mm, Malaysia time - the one place this page states a snapshot time. */
+/** dd/mm/yyyy, h:mm am/pm, Malaysia time - the one place this page states a snapshot time. */
 function formatSnapshotTime(iso?: string | null): string {
   if (!iso) return '-';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '-';
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: 'Asia/Kuala_Lumpur',
-  }).formatToParts(date);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}`;
+  return formatDateTimeInMalaysia(iso) || '-';
 }
 
 function productCounters(counts: ProductPullCounts) {

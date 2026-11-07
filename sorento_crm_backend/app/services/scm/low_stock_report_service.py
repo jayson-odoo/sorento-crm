@@ -32,6 +32,7 @@ What is DIFFERENT from the order sheet, and why:
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import logging
 from io import BytesIO
 from typing import Optional
@@ -537,7 +538,7 @@ def ready_context(db: Session, run_id: str) -> dict:
         "report": {
             "link": report_link(run_id),
             "as_of": as_of,
-            "date_label": f"{day.day} {day.strftime('%b %Y')}",
+            "date_label": fmt_date(day),
             "low": len(frozen["low_rows"]),
             "rows": len(frozen["all_rows"]),
         },

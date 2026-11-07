@@ -459,6 +459,12 @@ class SystemSetting(Base):
     sample_request_require_project = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-LINK-CRM-UI (owner, 5 Nov): "AutoCount links from Stock Debt". OFF on deploy; the
+    # owner turns it on only after the full AutoCount + Shared Service test. Off, the Stock
+    # Debt drill offers no PO actions and every po-link route answers 403.
+    stock_debt_po_link_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
     price_tag_auto_collect_days = Column(
@@ -551,6 +557,18 @@ class SystemSetting(Base):
         nullable=True,
     )
     sponsorship_form_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
+    off_series_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Who approves a project quotation discount when no override or superior resolves (R4.4).
+    default_quotation_approver_user_id = Column(
         String,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,

@@ -106,6 +106,7 @@ export function mapSettingsFromApi(
     localBuyRoutingEnabled: Boolean(raw.local_buy_routing_enabled),
     borrowFromOrderEnabled: Boolean(raw.borrow_from_order_enabled),
     sampleRequestRequireProject: Boolean(raw.sample_request_require_project),
+    stockDebtPoLinkEnabled: Boolean(raw.stock_debt_po_link_enabled),
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -118,6 +119,12 @@ export function mapSettingsFromApi(
       (raw.sponsorship_form_default_approver_name as string | null) ?? null,
     sponsorshipFormDefaultApproverEmail:
       (raw.sponsorship_form_default_approver_email as string | null) ?? null,
+    offSeriesApproverUserId: (raw.off_series_approver_user_id as string | null) ?? null,
+    offSeriesApproverName: (raw.off_series_approver_name as string | null) ?? null,
+    defaultQuotationApproverUserId:
+      (raw.default_quotation_approver_user_id as string | null) ?? null,
+    defaultQuotationApproverName:
+      (raw.default_quotation_approver_name as string | null) ?? null,
     n8nAttachmentWebhookUrl:
       (raw.n8n_attachment_webhook_url as string | null) ?? null,
     n8nCrmChatOutboundWebhookUrl:
@@ -230,12 +237,17 @@ function createDefaultSettings(): SystemSetting {
     localBuyRoutingEnabled: false,
     borrowFromOrderEnabled: false,
     sampleRequestRequireProject: false,
+    stockDebtPoLinkEnabled: false,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,
     sponsorshipFormDefaultApproverUserId: null,
     sponsorshipFormDefaultApproverName: null,
     sponsorshipFormDefaultApproverEmail: null,
+    offSeriesApproverUserId: null,
+    offSeriesApproverName: null,
+    defaultQuotationApproverUserId: null,
+    defaultQuotationApproverName: null,
     n8nAttachmentWebhookUrl: null,
     n8nCrmChatOutboundWebhookUrl: null,
     n8nStockInquiryReviseWebhookUrl: null,

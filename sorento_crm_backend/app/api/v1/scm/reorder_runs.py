@@ -50,6 +50,7 @@ from app.services.scm import (
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
 from app.services.scm import demand
+from app.services.scm.demand import OIR_DATE
 from app.services.scm import demand_source_service
 from app.services.scm import location_stock_service
 from app.services.scm import unplanned_demand_service
@@ -541,7 +542,7 @@ def get_candidate_orders(
                    spso.project_id AS project_id,
                    so.customer_id AS customer_id,
                    so.company_id AS company_id,
-                   oir.delivery_date AS delivery_date,
+                   {OIR_DATE} AS delivery_date,
                    oir.ack_state AS ack_state,
                    oir.created_at AS created_at
             FROM projects.order_inquiry_rows oir
@@ -576,7 +577,7 @@ def get_candidate_orders(
                    spso.project_id AS project_id,
                    so.customer_id AS customer_id,
                    so.company_id AS company_id,
-                   oir.delivery_date AS delivery_date,
+                   {OIR_DATE} AS delivery_date,
                    oir.ack_state AS ack_state,
                    oir.created_at AS created_at
             FROM projects.order_inquiry_rows oir

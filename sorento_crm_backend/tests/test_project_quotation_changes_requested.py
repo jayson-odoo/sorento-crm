@@ -35,6 +35,7 @@ from app.services import project_seed_service
 from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 
 MARKER = "zzt-qchg"
 
@@ -70,7 +71,7 @@ def _product(db, code: str) -> Product:
         product_name=f"{MARKER} {code}",
         category_id=category.id,
         base_uom_id=uom.id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(UNDISCOUNTED_LIST_PRICE),
     )
     db.add(product)
     db.flush()

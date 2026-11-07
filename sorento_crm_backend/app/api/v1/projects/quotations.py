@@ -27,6 +27,8 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_board import StockDetail
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
+    QuotationColumnsResponse,
+    QuotationColumnsWrite,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
     DrawingEscalationResponse,
@@ -36,7 +38,6 @@ from app.schemas.projects import (
     ProjectQuotationLineCreate,
     ProjectQuotationLineResponse,
     ProjectQuotationLineUpdate,
-    ProjectQuotationOutcomeRequest,
     ProjectQuotationResponse,
     ProjectQuotationUpdate,
     ProjectQuotationVersionResponse,
@@ -199,35 +200,6 @@ def update_quotation(
         quotation = _quotation_for_edit(db, quotation_id, current_user)
         svc.update_quotation(
             db, quotation=quotation, payload=payload.model_dump(exclude_unset=True)
-        )
-        db.commit()
-        db.refresh(quotation)
-        return svc.serialize_quotations(db, [quotation])[0]
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post("/quotations/{quotation_id}/outcome", response_model=ProjectQuotationResponse)
-def set_quotation_outcome(
-    quotation_id: str,
-    payload: ProjectQuotationOutcomeRequest,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Win or lose ONE scope; the project's outcome is re-derived from all of them.
-
-    The project's STATUS is deliberately untouched (AC-E10a) -- a project at "PO
-    Received" with an open Common Area scope is still live on the board.
-    """
-    try:
-        validate_uuid_path(quotation_id, resource="Quotation")
-        quotation = _quotation_for_edit(db, quotation_id, current_user)
-        svc.set_outcome(
-            db,
-            quotation=quotation,
-            outcome=payload.outcome,
-            loss_reason=payload.loss_reason,
         )
         db.commit()
         db.refresh(quotation)
@@ -643,6 +615,32 @@ def update_line(
         db.commit()
         db.refresh(line)
         return svc.serialize_lines(db, [line], viewer_id=current_user["id"])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/quotation-versions/{version_id}/columns",
+    response_model=QuotationColumnsResponse,
+)
+def set_version_columns(
+    version_id: str,
+    payload: QuotationColumnsWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Set the scope's column headers; each line's cells move with them (PS-QUOTE-MATRIX)."""
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        version, _quotation = _version_for_edit(db, version_id, current_user)
+        lines = svc.set_columns(db, version=version, columns=payload.columns)
+        db.commit()
+        db.refresh(version)
+        return {
+            "version": svc.serialize_versions(db, [version])[0],
+            "lines": svc.serialize_lines(db, lines, viewer_id=current_user["id"]),
+        }
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

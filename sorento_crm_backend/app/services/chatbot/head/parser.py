@@ -128,6 +128,18 @@ class ParserConfig:
     # neither the key in its schema nor the line in its user turn.
     kind_said: bool = False
     account_types: bool = False
+    # CHATBOT-TOTALS-FILTERS HT1-11: the prompt in use defines `said_as` (`SAID_AS_WORD`, an entity key: the message read
+    # a name as a company, a brand or both). False for a bare config: a text that does not define it gets no such key.
+    said_as: bool = False
+    # CHATBOT-TOTALS-FILTERS HT1-13: the prompt in use defines `said_as_text` (`SAID_AS_TEXT_WORD`, an entity key: the word
+    # of the message that calls the name a company or a brand); a `said_as` then counts only beside such a word.
+    said_as_text: bool = False
+    # CHATBOT-TOTALS-FILTERS: the prompt in use names the `Known companies` line (`KNOWN_COMPANIES_WORD`), so the user
+    # turn prints the companies the contact holds. False for a bare config: the user turn is unchanged.
+    known_companies: bool = False
+    # CHATBOT-TOTALS-FILTERS HT1-1: the prompt in use names the `Company candidates` block (`COMPANY_CANDIDATES_WORD`), so
+    # the lookup lists offer the contact's own companies a span of the message matches. False for a bare config.
+    company_candidates: bool = False
     # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
     # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
     # that names it; production v63 names none). True keeps the line for a bare config.
@@ -165,6 +177,14 @@ class ParserConfig:
     # ends with its row id and the parser may answer with it. False for a bare config; `resolve_config` turns it
     # on only for a version that carries the sentence: every other version is unchanged.
     row_ids: bool = False
+    # SALES-ACCOUNT-TYPE semantic carry: the prompt in use carries `REPORT_ASK_LINE`, so the schema offers the
+    # `report_ask` object (`with_report_ask`), the user turn carries the `Held report:` line and the report lane builds
+    # the ask from the object. False for a bare config and for every text without the line: all of it unchanged.
+    report_ask: bool = False
+    # CHATBOT-TOTALS-FILTERS: the `report_ask` keys of `REPORT_ASK_DEFINED` the prompt in use defines
+    # (`report_ask_defined_in`): only those join its schema and its `Held report:` line. Empty for a bare config and for
+    # #2105's text.
+    report_ask_defined: frozenset[str] = frozenset()
     # SUPPLIER-ASK: the prompt in use carries `SUPPLIER_ID_ASK`, so a Supplier candidate line ends with its row id
     # and the parser answers with it; the id binds the supplier (and every supplier the span pass scored as close).
     supplier_ids: bool = False
@@ -907,6 +927,14 @@ def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
 #: SALES-ACCOUNT-TYPE PR 2: the raw template words that turn the entity key and the user-turn line on.
 KIND_SAID_WORD = "kind_said"
 KNOWN_ACCOUNT_TYPES_WORD = "Known account types"
+#: CHATBOT-TOTALS-FILTERS: the raw template words that turn the `Known companies:` user-turn line on.
+KNOWN_COMPANIES_WORD = "Known companies"
+#: CHATBOT-TOTALS-FILTERS HT1-1 / HT1-11: the raw template words that turn the `Company candidates` lookup block and the
+#: entity key `said_as` on.
+COMPANY_CANDIDATES_WORD = "Company candidates"
+SAID_AS_WORD = "said_as"
+#: HT1-13: the raw template word that turns the entity key `said_as_text` on.
+SAID_AS_TEXT_WORD = "said_as_text"
 
 
 def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
@@ -916,6 +944,39 @@ def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
     entity = out["properties"]["entities"]["items"]
     entity["properties"]["kind_said"] = {"type": ["string", "null"]}
     entity["required"] = [*[k for k in entity["required"] if k != "kind_said"], "kind_said"]
+    return out
+
+
+def with_said_as(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the entity key `said_as` (how the message reads a name that is a brand and one of the
+    contact's companies: company, brand or both; null: it does not say), last in the entity's `properties` and
+    `required` (required and nullable, as strict mode needs)."""
+    out = copy.deepcopy(schema)
+    entity = out["properties"]["entities"]["items"]
+    entity["properties"]["said_as"] = {"type": ["string", "null"], "enum": ["company", "brand", "both", None]}
+    entity["required"] = [*[k for k in entity["required"] if k != "said_as"], "said_as"]
+    return out
+
+
+def with_said_as_text(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the entity key `said_as_text` (the word or words of this message that call the name a
+    company or a brand, as typed; null: none), required and nullable, placed right before `said_as` in the entity's
+    `properties` and `required`, so the word is written before the slot is chosen. Gemini writes a `responseSchema`'s
+    keys in alphabetical order unless it is given `propertyOrdering`, so the entity gets one: that order, with
+    `said_as_text` moved right before `said_as` and nothing else moved (the other providers drop the keyword,
+    `llm_provider._without_property_ordering`)."""
+    out = copy.deepcopy(schema)
+    entity = out["properties"]["entities"]["items"]
+
+    def before_said_as(keys: list[str]) -> list[str]:
+        keys = [k for k in keys if k != "said_as_text"]
+        at = keys.index("said_as") if "said_as" in keys else len(keys)
+        return [*keys[:at], "said_as_text", *keys[at:]]
+
+    props = {**entity["properties"], "said_as_text": {"type": ["string", "null"]}}
+    entity["properties"] = {key: props[key] for key in before_said_as(list(props))}
+    entity["required"] = before_said_as(list(entity["required"]))
+    entity["propertyOrdering"] = before_said_as(sorted(props))
     return out
 
 
@@ -954,6 +1015,71 @@ def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: SALES-ACCOUNT-TYPE semantic carry (PLAN-report-semantic-carry-2nov.md A1): the heading line of the prompt section
+#: that turns the `report_ask` key on and the `Held report:` line of the user turn (the `OPPORTUNITY_LINE` pattern).
+REPORT_ASK_LINE = "== REPORT_ASK: the whole sales or outstanding report after this message, one object =="
+#: The `report_ask` keys, in the order the schema, the `Held report:` line and the gold rows share.
+REPORT_ASK_KEYS = (
+    "kind", "frame", "basis", "date_from", "date_to", "group_by", "top_n", "measure", "channel", "company",
+    "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "company_or_brand",
+)
+#: CHATBOT-TOTALS-FILTERS M1: what the report gives back (`report_ask.from_object` acts on it): one figure, one row per
+#: value of the axis, or the axis's rows in order cut to a count.
+REPORT_ASK_FRAMES = ("total", "breakdown", "ranking")
+#: CHATBOT-TOTALS-FILTERS: the keys a prompt text offers only when it defines them (`report_ask_defined_in`), so a text
+#: without them (#2105's) keeps its schema and its `Held report:` line exactly.
+REPORT_ASK_DEFINED = ("frame", "company_or_brand")
+#: The keys that hold a list of names.
+REPORT_ASK_LISTS = (
+    "sales_agents", "account_types", "brands", "categories", "customers", "products", "brand_or_account_type",
+    "company_or_brand",
+)
+
+
+def report_ask_defined_in(raw_template: Any) -> frozenset[str]:
+    """The keys of `REPORT_ASK_DEFINED` the prompt text defines: the text names the key as `"<key>":`."""
+    return frozenset(key for key in REPORT_ASK_DEFINED if f'"{key}":' in (raw_template or ""))
+
+
+def report_ask_keys(defined: Any = ()) -> tuple[str, ...]:
+    """The `report_ask` keys in order, less the `REPORT_ASK_DEFINED` ones the prompt in use does not define."""
+    return tuple(key for key in REPORT_ASK_KEYS if key not in REPORT_ASK_DEFINED or key in set(defined or ()))
+
+
+def with_report_ask(schema: dict[str, Any], defined: Any = ()) -> dict[str, Any]:
+    """A copy of `schema` with the flag-gated `report_ask` object last in `properties` and `required` (required and
+    nullable, as strict mode needs): the whole report the user wants after this message. `basis`, `group_by` and
+    `measure` take the enums of `schema`'s own top-level keys, so the account type axis and the old measures follow
+    the text exactly as those keys do. `defined`: the `REPORT_ASK_DEFINED` keys the prompt defines (the others are left
+    out)."""
+    out = copy.deepcopy(schema)
+    props = out["properties"]
+    strings = {"type": "array", "items": {"type": "string"}}
+    shape: dict[str, Any] = {
+        "kind": {"type": ["string", "null"], "enum": ["sales", "outstanding", None]},
+        "frame": {"type": ["string", "null"], "enum": [*REPORT_ASK_FRAMES, None]},
+        "basis": copy.deepcopy(props["basis"]),
+        "date_from": {"type": ["string", "null"]},
+        "date_to": {"type": ["string", "null"]},
+        "group_by": copy.deepcopy(props["group_by"]),
+        "top_n": {"type": ["integer", "null"]},
+        "measure": copy.deepcopy(props["measure"]),
+        "channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
+        "company": {"type": ["string", "null"]},
+        **{key: copy.deepcopy(strings) for key in REPORT_ASK_LISTS},
+    }
+    keys = report_ask_keys(defined)
+    props["report_ask"] = {
+        "type": ["object", "null"],
+        "additionalProperties": False,
+        "properties": {key: shape[key] for key in keys},
+        "required": list(keys),
+    }
+    out["required"] = [*[k for k in out["required"] if k != "report_ask"], "report_ask"]
+    return out
+
+
 #: EEM-CATEGORY-PICK: the raw template sentences that turn the two flags on (the `MEANING_ASK` pattern).
 CATEGORY_PICK_ASK = "For a category entity, canonical_code is the label before the colon of the Category candidates line the message means."
 #: REPORT-UNIFY slice 3: the raw template sentence that turns `row_ids` on (the `CATEGORY_PICK_ASK` pattern). A
@@ -979,7 +1105,7 @@ def with_message_language(schema: dict[str, Any]) -> dict[str, Any]:
 
 def closed_lists_schema(
     items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True, kind_said: bool = False,
-    account_types: bool = False,
+    account_types: bool = False, said_as: bool = False, said_as_text: bool = False,
 ) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
@@ -1000,6 +1126,8 @@ def closed_lists_schema(
     schema = schema if report_fields else without_report_fields(schema)
     schema = schema if by_words else without_by_words(schema)
     schema = with_kind_said(schema) if kind_said else schema
+    schema = with_said_as(schema) if said_as else schema
+    schema = with_said_as_text(schema) if said_as_text else schema
     return with_account_type_axis(schema) if account_types else schema
 
 
@@ -1112,6 +1240,8 @@ def resolve_config(
     report_fields = "compare_to" in (raw_template or "")
     by_words = "by_words" in (raw_template or "")
     kind_said = KIND_SAID_WORD in (raw_template or "")
+    said_as = SAID_AS_WORD in (raw_template or "")
+    said_as_text = SAID_AS_TEXT_WORD in (raw_template or "")
     sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
     json_schema = None
     if closed_lists:
@@ -1119,12 +1249,15 @@ def resolve_config(
 
         json_schema = closed_lists_schema(
             closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words,
-            kind_said=kind_said, account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
+            kind_said=kind_said, account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""), said_as=said_as,
+            said_as_text=said_as_text,
         )
         if OPPORTUNITY_LINE in (raw_template or ""):
             json_schema = with_opportunity(json_schema)
         if LANGUAGE_ASK in (raw_template or ""):
             json_schema = with_message_language(json_schema)
+        if REPORT_ASK_LINE in (raw_template or ""):
+            json_schema = with_report_ask(json_schema, report_ask_defined_in(raw_template))
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1140,13 +1273,19 @@ def resolve_config(
         report_fields=report_fields,
         by_words=by_words,
         kind_said=kind_said,
+        said_as=said_as,
+        said_as_text=said_as_text,
         account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
+        known_companies=KNOWN_COMPANIES_WORD in (raw_template or ""),
+        company_candidates=COMPANY_CANDIDATES_WORD in (raw_template or ""),
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
         row_ids=ROW_ID_ASK in (raw_template or ""),
         supplier_ids=SUPPLIER_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
+        report_ask=REPORT_ASK_LINE in (raw_template or ""),
+        report_ask_defined=report_ask_defined_in(raw_template),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         max_output_tokens=max_output_tokens_setting(db),
@@ -1419,9 +1558,12 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = schema if config.report_fields else without_report_fields(schema)
     schema = schema if config.by_words else without_by_words(schema)
     schema = with_kind_said(schema) if config.kind_said else schema
+    schema = with_said_as(schema) if config.said_as else schema
+    schema = with_said_as_text(schema) if config.said_as_text else schema
     schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
-    return with_message_language(schema) if config.message_language else schema
+    schema = with_message_language(schema) if config.message_language else schema
+    return with_report_ask(schema, config.report_ask_defined) if config.report_ask else schema
 
 
 def _usage(config: ParserConfig, result: Any, effort: str, started: float) -> dict[str, Any]:

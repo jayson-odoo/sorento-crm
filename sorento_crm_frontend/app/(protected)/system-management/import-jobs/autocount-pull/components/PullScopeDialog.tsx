@@ -19,7 +19,7 @@ export const DEFAULT_WINDOW_DAYS = 31;
 
 /** Today's calendar day in Malaysia, as `YYYY-MM-DD` - the day AutoCount's own DocDate uses. */
 export function todayInMalaysia(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', {
+  return new Intl.DateTimeFormat('en-CA', { // date-format-ok: builds the YYYY-MM-DD wire day, not shown
     timeZone: 'Asia/Kuala_Lumpur',
     year: 'numeric',
     month: '2-digit',

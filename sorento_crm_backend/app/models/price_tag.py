@@ -213,6 +213,9 @@ class PriceTagRequestLine(Base):
         nullable=True,
     )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
+    # PRICETAG-LPSP: 'list' | 'selling'. Effective type = this or the request's
+    # `price_mode`; a save stores it explicitly.
+    price_type = Column(String(16), nullable=True)
     quantity = Column(Integer, nullable=False, server_default="1")
     # D1 (ptag_0011): the promotion moved from the header to the LINE - a
     # request-level promotion breaks the moment two lines sit on two
@@ -272,6 +275,9 @@ class PriceTagRequestLine(Base):
         ),
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
+        CheckConstraint(
+            "price_type IN ('list','selling')", name="ck_price_tag_request_lines_price_type"
+        ),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
         Index("ix_price_tag_request_lines_promotion_id", "promotion_id"),
     )

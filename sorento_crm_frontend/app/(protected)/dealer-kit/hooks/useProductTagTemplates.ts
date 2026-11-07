@@ -10,9 +10,12 @@ import { listTemplates } from '../services/tagTemplateService';
 import {
   assignTemplate,
   isPriceTagFamily,
+  listComboTagTemplates,
   listProductTagTemplates,
   previewTemplateAssignment,
+  setComboTagTemplates,
   setProductTagTemplates,
+  type TagTemplateLinks,
   type TemplateAssignAction,
   type TemplateAssignFilter,
 } from '../services/productTagTemplateService';
@@ -31,9 +34,35 @@ export function useProductTagTemplates(productId: string, enabled = true) {
 export function useSetProductTagTemplates(productId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (templateIds: string[]) => setProductTagTemplates(productId, templateIds),
+    mutationFn: (links: TagTemplateLinks) => setProductTagTemplates(productId, links),
     onSuccess: (rows) => {
       queryClient.setQueryData(productTagTemplatesKey(productId), rows);
+      toast.success('Price tag templates saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export const comboTagTemplatesKey = (comboId: string) =>
+  ['combo-tag-templates', comboId] as const;
+
+export function useComboTagTemplates(comboId: string, enabled = true) {
+  return useQuery({
+    queryKey: comboTagTemplatesKey(comboId),
+    queryFn: () => listComboTagTemplates(comboId),
+    enabled: enabled && !!comboId,
+  });
+}
+
+/** A combo's template links: saved once a new combo exists (the combo modal) and from the
+ *  combo's own block on the product page. */
+export function useSetComboTagTemplates() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ combo_id, ...links }: TagTemplateLinks & { combo_id: string }) =>
+      setComboTagTemplates(combo_id, links),
+    onSuccess: (rows, { combo_id }) => {
+      queryClient.setQueryData(comboTagTemplatesKey(combo_id), rows);
       toast.success('Price tag templates saved');
     },
     onError: (error: Error) => toast.error(error.message),
@@ -71,7 +100,12 @@ export function useAssignTemplate(templateId: string | null) {
 export function usePriceTagTemplateOptions(enabled: boolean) {
   return useQuery({
     queryKey: ['tag-templates', 'price-tag-options'],
-    queryFn: async () => (await listTemplates()).filter((t) => isPriceTagFamily(t.family)),
+    // Family then name, the order this picker always had: with no sort the list endpoint now
+    // answers the Tag Templates list's manual (drag) order (TAG-TEMPLATE-DUPLICATE item 6).
+    queryFn: async () =>
+      (await listTemplates())
+        .filter((t) => isPriceTagFamily(t.family))
+        .sort((a, b) => a.family.localeCompare(b.family) || a.name.localeCompare(b.name)),
     enabled,
   });
 }

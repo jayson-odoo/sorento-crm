@@ -476,18 +476,35 @@ export function FulfilmentBoardListView({
         // "row N" only where AutoCount gave the line none.
         accessorFn: (row) => row.so_line_no ?? row.line_no,
         header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
-        cell: ({ row }) => (
-          <span
-            className="block tabular-nums"
-            title={
-              soLineNoIsSynced(row.original)
-                ? undefined
-                : 'AutoCount line number not synced for this order'
-            }
-          >
-            {soLineNoText(row.original)}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const text = (
+            <span
+              className="block tabular-nums"
+              title={
+                soLineNoIsSynced(row.original)
+                  ? undefined
+                  : 'AutoCount line number not synced for this order'
+              }
+            >
+              {soLineNoText(row.original)}
+            </span>
+          );
+          // Owner hand test (5 Nov 2026, PR #2187): the LINE lands on this exact line of
+          // the sales order's own Lines tab, highlighted (S6, AC-B6-3; it used to be the
+          // Sales order cell). `line_id` is the CORE sales-order line id.
+          const { sales_order_id: soId, line_id: lineId } = row.original;
+          return soId && lineId ? (
+            <Link
+              href={`/scm/sales-orders/${soId}?tab=lines&line=${lineId}`}
+              onClick={(event) => event.stopPropagation()}
+              className="block min-w-0 font-medium text-primary hover:underline"
+            >
+              {text}
+            </Link>
+          ) : (
+            text
+          );
+        },
         size: 70,
         minSize: 60,
         enableSorting: true,
@@ -531,13 +548,10 @@ export function FulfilmentBoardListView({
               </div>
             </div>
           );
-          // S6 (AC-B6-3/AC-B6-14): lands on this exact line of the sales order's own Lines
-          // tab. `line_id` is already the CORE sales-order line id (its own doc comment,
-          // `fulfilmentPlanning.types.ts`) - no backend change needed for this one.
+          // Owner hand test (5 Nov 2026, PR #2187): the sales order itself. Landing on the
+          // exact line moved to the Line column, where the owner reaches for it.
           const href = contribution.sales_order_id
-            ? `/scm/sales-orders/${contribution.sales_order_id}${
-                contribution.line_id ? `?tab=lines&line=${contribution.line_id}` : ''
-              }`
+            ? `/scm/sales-orders/${contribution.sales_order_id}`
             : null;
           return href ? (
             <Link
@@ -630,6 +644,26 @@ export function FulfilmentBoardListView({
             </span>
           ) : (
             <span className="text-muted-foreground">Not recorded</span>
+          ),
+        size: 180,
+        minSize: 130,
+        enableSorting: true,
+      },
+      {
+        // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): the SO list's own Project column, right
+        // after Customer, so every sales order on the board names its project.
+        id: 'project',
+        meta: { headerTitle: 'Project' },
+        // The SO list's Project (`so_project_label`), never the board's own note fallback.
+        accessorFn: (row) => row.so_project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) =>
+          row.original.so_project_label ? (
+            <span className="block truncate" title={row.original.so_project_label}>
+              {row.original.so_project_label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
           ),
         size: 180,
         minSize: 130,

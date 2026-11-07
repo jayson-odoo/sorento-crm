@@ -323,7 +323,11 @@ def test_every_listed_field_survives_the_response_model(api):
         )
         rows = client.get("/api/v1/dealer-kit/assets").json()
 
-    assert set(rows[0]) == {"id", "name", "kind", "tags", "url", "mime_type"}
+    # thumb_url (SPEC-SHEET-V2, #2124): the picker grid's screen rendition; url stays the original.
+    # No show_when_*: feature icon rules live on the spec VALUE (owner ruling 5 Nov 20:35).
+    assert set(rows[0]) == {
+        "id", "name", "kind", "tags", "url", "thumb_url", "mime_type",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,8 @@ import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
 import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
-import { MockupLinesContext } from './LineSplitSheet';
+import { MockupLinesContext, RemarkWordsPendingContext } from './LineSplitSheet';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -42,12 +43,20 @@ export interface ConfirmGuidePage {
   /** The core sales order: what the board adopts when the page has no planning record yet. */
   salesOrderId: string;
   soNumber: string;
+  /** OI-UX-FILTER-SNAPSHOT: the order's customer and project, printed under the number. */
+  customerName?: string | null;
+  projectLabel?: string | null;
   /** The board's SO date for the order (`YYYY-MM-DD`); null when the board has none. */
   soDate?: string | null;
   /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
   remarkType?: string | null;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
+  /**
+   * CONFIRM-SPEED-PR2: lines the page's email prints that this Confirm does not cover, shown
+   * read-only with the email's words once its dry run has landed.
+   */
+  emailOnly?: ConfirmGuideLine[];
 }
 
 /** A read-only row prints the planner's own remark, else the default words (UAC F25). */
@@ -108,6 +117,11 @@ export function ConfirmGuideDialog({
   refreshing = false,
   refreshFailed = false,
   wordsLoading = false,
+  wordsFailed = false,
+  wordsPendingPsoIds,
+  wordsErrors,
+  onRetryWords,
+  onPageSaved,
   onRetryRefresh,
   onPageChange,
   prepareErrors,
@@ -145,10 +159,26 @@ export function ConfirmGuideDialog({
    */
   refreshFailed?: boolean;
   /**
-   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read again after a
-   * save. The sheet stays up with the last words; only Next and Confirm wait.
+   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read (as the guide
+   * opens, and again after a save). CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026): the Review split
+   * stays usable meanwhile, Next included; only Confirm waits.
    */
   wordsLoading?: boolean;
+  /**
+   * CONFIRM-DIALOG-SPEED review B2: the email preview (dry run) failed. The sheet stays as it
+   * is (unsaved edits included); only Confirm waits, behind its own Retry.
+   */
+  wordsFailed?: boolean;
+  /**
+   * CONFIRM-DIALOG-SPEED (crew ruling S2): the pages (pso ids) whose email words have not
+   * landed yet. Their REMARK cells print "Preparing email preview...", never board words.
+   */
+  wordsPendingPsoIds?: ReadonlySet<string>;
+  /** CONFIRM-SPEED-PR2: a refused page's own dry-run sentence, by pso id. */
+  wordsErrors?: ReadonlyMap<string, string>;
+  onRetryWords?: () => void;
+  /** CONFIRM-DIALOG-SPEED review B1: a page's Save landed, so the email preview is read again. */
+  onPageSaved?: () => void;
   onRetryRefresh?: () => void;
   /**
    * CONFIRM-REMARK-FIX: the planning record of the order on screen (null on the Confirm step,
@@ -176,9 +206,14 @@ export function ConfirmGuideDialog({
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   const pagePsoId = page?.psoId ?? null;
+  // CONFIRM-DIALOG-SPEED: the Confirm step keeps the last page's order, so an email dry run
+  // still out when Next was pressed finishes there (Confirm waits for it) instead of being
+  // cancelled.
+  const onConfirmStep = step.kind === 'confirm';
   React.useEffect(() => {
+    if (onConfirmStep) return;
     onPageChange?.(pagePsoId);
-  }, [pagePsoId, onPageChange]);
+  }, [pagePsoId, onPageChange, onConfirmStep]);
   // Every page's split read, kept while the guide is open; the current page reads its own.
   // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
   // and a page reads as loading until the read answered after that moment: a cached sheet
@@ -206,6 +241,8 @@ export function ConfirmGuideDialog({
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
   const readFailed = Boolean(splitRead?.isError);
+  // CONFIRM-SPEED-PR2: the dry run's own refusal of the page on screen (Confirm stays open).
+  const refusal = (page?.psoId && wordsErrors?.get(page.psoId)) || null;
   // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
   // the order's split read, else the board's (an order nobody adopted has no read at all).
   const soDate = splitRead?.data?.so_date ?? page?.soDate ?? null;
@@ -214,7 +251,10 @@ export function ConfirmGuideDialog({
   const sheet = React.useMemo(
     () =>
       page && !reading && !readFailed && !unready
-        ? coveredSheetLines(splitRead?.data ?? null, page.covered.map(readOnlyWords))
+        ? coveredSheetLines(
+            splitRead?.data ?? null,
+            [...page.covered, ...(page.emailOnly ?? [])].map(readOnlyWords),
+          )
         : null,
     [page, reading, readFailed, unready, splitRead?.data],
   );
@@ -256,6 +296,7 @@ export function ConfirmGuideDialog({
         null,
         page.covered
           .filter((line) => !line.lineId || !read.has(line.lineId))
+          .concat(page.emailOnly ?? [])
           .map(readOnlyWords),
       ),
     };
@@ -306,7 +347,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting || refreshing || stale || wordsLoading) return;
+    if (posting || refreshing || stale || wordsLoading || wordsFailed) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -331,7 +372,6 @@ export function ConfirmGuideDialog({
     !readFailed &&
     !unready &&
     !stale &&
-    !wordsLoading &&
     !dirty;
 
   return (
@@ -366,6 +406,9 @@ export function ConfirmGuideDialog({
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
           {!page && stale ? <RefreshFailed onRetry={onRetryRefresh} /> : null}
           {page ? (
+            <RemarkWordsPendingContext.Provider
+              value={Boolean(page.psoId && wordsPendingPsoIds?.has(page.psoId))}
+            >
             <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
               data-testid="confirm-guide-split-page"
@@ -391,6 +434,12 @@ export function ConfirmGuideDialog({
                   {plural(sheet ? sheet.lines.length : page.covered.length, 'line')}
                 </span>
               </div>
+              {/* OI-UX-FILTER-SNAPSHOT: the order's customer / project. */}
+              <SoCustomerProject
+                customer={page.customerName}
+                project={page.projectLabel}
+                className="text-sm"
+              />
               {/* FULFIL-SO-REMARK (AC-8): the REMARK the purchasing email prints beside this SO. */}
               <div className="max-w-md">
                 <Label htmlFor={`confirm-guide-remark-${page.salesOrderId}`} className="mb-1 block text-xs">
@@ -485,6 +534,7 @@ export function ConfirmGuideDialog({
                       }
                       readLoaded
                       stayAfterSave
+                      onSaved={onPageSaved}
                       onDirtyChange={setDirty}
                       handleRef={editorRef}
                       className="h-auto"
@@ -534,6 +584,7 @@ export function ConfirmGuideDialog({
               )}
             </section>
             </MockupLinesContext.Provider>
+            </RemarkWordsPendingContext.Provider>
           ) : null}
 
           {step.kind === 'confirm' ? (
@@ -566,6 +617,30 @@ export function ConfirmGuideDialog({
           {dirty ? (
             <p className="w-full text-xs text-muted-foreground">
               Save or undo your split changes first
+            </p>
+          ) : null}
+          {(refusal || (wordsFailed && !wordsLoading)) && !stale ? (
+            <div
+              data-testid="confirm-guide-words-failed"
+              className="flex w-full flex-wrap items-center gap-2 text-xs"
+            >
+              <span role="alert" className="break-words">
+                {refusal || 'The email preview could not be prepared.'}
+              </span>
+              {onRetryWords ? (
+                <Button type="button" variant="outline" size="sm" onClick={onRetryWords}>
+                  Retry
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+          {wordsLoading && !stale ? (
+            <p
+              data-testid="confirm-guide-words-loading"
+              role="status"
+              className="w-full text-xs text-muted-foreground"
+            >
+              Preparing email preview...
             </p>
           ) : null}
           <Button
@@ -602,7 +677,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting || refreshing || stale || wordsLoading}
+              disabled={posting || refreshing || stale || wordsLoading || wordsFailed}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}

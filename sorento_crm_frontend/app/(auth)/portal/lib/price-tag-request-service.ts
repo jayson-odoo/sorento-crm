@@ -86,10 +86,13 @@
  */
 
 import { extractApiError } from '@/lib/api-client';
+import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplateNeeds } from '@/lib/dealer-kit/combo-slots';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import type { TagFont } from '@/lib/dealer-kit/fonts';
+import type { FeatureIcon } from '@/lib/dealer-kit/feature-icons';
 import type {
   ChangeRequestPayload,
   ReviewComment,
@@ -117,6 +120,8 @@ export interface LinePartCandidate {
   name: string;
   /** Set on an upgrade candidate: its top-up. */
   topup_amount?: number | null;
+  /** The product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /**
@@ -163,6 +168,8 @@ export interface PriceTagRequestLine {
   /** Human-readable code resolved from the product/set. */
   code: string;
   show_promo_price: boolean;
+  /** PRICETAG-LPSP: this line's own LP/SP; null on a line saved before it existed. */
+  price_type?: PriceMode | null;
   quantity: number;
   included_accessories: string | null;
   /** Free-text note on the line (D6). Set on the line, not the header, so
@@ -203,6 +210,15 @@ export interface ProductTagTemplateOption {
   published: boolean;
   width_mm: number | null;
   height_mm: number | null;
+  /** PRICETAG-LPSP: the link preselected on a line (a default of either kind). */
+  is_default?: boolean;
+  /** PRICETAG-COMBO-FORMAT: the template's hand-picked type (null = not set, fits both) and the
+   *  link's default per type. */
+  price_type?: 'list' | 'selling' | 'both' | null;
+  default_list?: boolean;
+  default_selling?: boolean;
+  /** What the template reads from a combo (from its published layers). */
+  needs?: TemplateNeeds;
 }
 
 /** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
@@ -216,6 +232,8 @@ export interface TagPreviewLineInput {
   promotion_id: string | null;
   manual_sell_price: number | null;
   tag_template_id: string | null;
+  /** PRICETAG-LPSP: null = the request's mode. */
+  price_type?: PriceMode | null;
 }
 
 /** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
@@ -225,6 +243,8 @@ export interface TagPreviewResponse {
   assets: Record<string, string>;
   images: Record<string, string>;
   fonts: TagFont[];
+  /** Rule-carrying library icons, for `feature_icons` layers. */
+  feature_icons?: FeatureIcon[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -296,6 +316,10 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   revision?: PortalRevisionPolicy | null;
   /** The in-progress revise composer, if any - rides along the same way. */
   revision_draft?: PortalRevisionDraft | null;
+  /** PRICETAG-SELF-APPROVAL: his own proof - approve the generated tag, edit, escalate. */
+  self_review?: boolean;
+  /** PRICETAG-SELF-APPROVAL: his own proof or an approved request may go to marketing. */
+  can_escalate?: boolean;
 }
 
 export interface DebtorOption {
@@ -334,6 +358,9 @@ export interface TagItemOption {
   id: string;
   code: string;
   name: string;
+  /** None when unpriced or zero; a set answers its override only. Optional so a
+   *  caller that builds one by hand need not invent a price. */
+  list_price?: number | null;
 }
 
 /** One part of a combo, as the combos lookup answers it. */
@@ -347,6 +374,8 @@ export interface ComboPartOption {
   is_upgrade?: boolean;
   /** An upgrade's top-up, when set. */
   topup_amount?: number | null;
+  /** The part product is discontinued: listed, not pickable. */
+  is_discontinued?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */
@@ -398,6 +427,8 @@ export type PriceTagRequestLineInput = {
   manual_sell_price?: number | null;
   /** PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's pick (null = none). */
   tag_template_id?: string | null;
+  /** PRICETAG-LPSP: this line's LP or SP; null/absent = the request's mode. */
+  price_type?: PriceMode | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -595,9 +626,12 @@ export function makePriceTagRequestService(
    */
   async function lookupProductTagTemplates(
     productId: string,
+    comboId?: string | null,
   ): Promise<ProductTagTemplateOption[]> {
+    // PRICETAG-LPSP: with a combo, the combo's own links when it has any.
+    const query = comboId ? `?combo_id=${encodeURIComponent(comboId)}` : '';
     const res = await fetcher(
-      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}`,
+      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}${query}`,
     );
     return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
   }
@@ -771,12 +805,66 @@ export function makePriceTagRequestService(
     throw new Error(await extractApiError(res, 'Failed to delete draft'));
   }
 
-  async function approveRequest(id: string): Promise<{ status: string }> {
+  /**
+   * Approve a proof. His own proof (PRICETAG-SELF-APPROVAL) sends `doc`, the tag
+   * sheet his screen built, which becomes the design the PDF prints; a proof
+   * marketing drew sends nothing.
+   */
+  async function approveRequest(id: string, doc?: TagSheetDoc): Promise<{ status: string }> {
     const res = await fetcher(
       `${BASE}/${encodeURIComponent(id)}/approve`,
-      { method: 'POST' },
+      doc
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ doc }),
+          }
+        : { method: 'POST' },
     );
     return unwrap<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /**
+   * Owner ruling 3 Nov: the form has no plain Submit. A DRAFT is submitted and
+   * approved in one call, with the sheet built from its saved tags...
+   */
+  async function submitAndApprove(id: string, doc: TagSheetDoc): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /** ... or submitted straight to marketing with a note. */
+  async function submitAndEscalate(id: string, note: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-escalate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to send to marketing');
+  }
+
+  /** Send the request to marketing with a note (PRICETAG-SELF-APPROVAL R6). */
+  async function escalateRequest(id: string, note: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/escalate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    return unwrap<{ status: string }>(res, 'Failed to escalate request');
+  }
+
+  /** The saved request's tags, drawn data and templates, for his own proof. */
+  async function lookupTagPreviewForRequest(requestId: string): Promise<TagPreviewResponse> {
+    const res = await fetcher(`${LOOKUPS}/tag-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId }),
+    });
+    return unwrap<TagPreviewResponse>(res, 'Failed to draw the tag');
   }
 
   /**
@@ -900,6 +988,10 @@ export function makePriceTagRequestService(
     submitRequest,
     deleteRequest,
     approveRequest,
+    submitAndApprove,
+    submitAndEscalate,
+    escalateRequest,
+    lookupTagPreviewForRequest,
     requestChanges,
     listReviewComments,
     downloadPriceTagPdf,
@@ -928,6 +1020,10 @@ export const {
   submitRequest,
   deleteRequest,
   approveRequest,
+  submitAndApprove,
+  submitAndEscalate,
+  escalateRequest,
+  lookupTagPreviewForRequest,
   requestChanges,
   listReviewComments,
   downloadPriceTagPdf,

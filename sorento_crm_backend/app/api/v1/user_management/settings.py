@@ -92,6 +92,9 @@ class SystemSettingUpdate(BaseModel):
     n8n_close_convo_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
+    # PS-QUOTE-RULES R4: who approves an off-series line, and the last-resort approver.
+    off_series_approver_user_id: Optional[str] = None
+    default_quotation_approver_user_id: Optional[str] = None
     # AI assistant trace (M2) retention + payload caps.
     ai_trace_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
     ai_trace_error_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
@@ -130,6 +133,9 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
+    # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
+    # dict, and in AppConfigResponse below.
+    stock_debt_po_link_enabled: Optional[bool] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -282,6 +288,26 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
+    #: purchasing user who links holds no `user_management.settings.view`.
+    stock_debt_po_link_enabled: bool = False
+    #: Seconds a destructive action waits before it commits; the quotation column-removal
+    #: countdown reads it. Not sensitive.
+    deferred_delete_seconds: Optional[int] = None
+
+
+def _quotation_approver_fields(db: Session, settings) -> dict:
+    """The two project quotation approver settings (PS-QUOTE-RULES R4), id + name each."""
+    out: dict = {}
+    for col, stem in (
+        ("off_series_approver_user_id", "off_series_approver"),
+        ("default_quotation_approver_user_id", "default_quotation_approver"),
+    ):
+        uid = getattr(settings, col, None) if settings else None
+        user = db.query(User).filter(User.id == uid).first() if uid else None
+        out[f"{stem}_user_id"] = uid
+        out[f"{stem}_name"] = (user.name or user.email) if user else None
+    return out
 
 
 @router.get("/")
@@ -391,6 +417,7 @@ def get_settings(
                 "sponsorship_form_default_approver_user_id": sf_uid,
                 "sponsorship_form_default_approver_name": user_sf.name if user_sf else None,
                 "sponsorship_form_default_approver_email": user_sf.email if user_sf else None,
+                **_quotation_approver_fields(db, settings),
                 "n8n_attachment_webhook_url": getattr(settings, "n8n_attachment_webhook_url", None)
                 if settings
                 else None,
@@ -453,6 +480,9 @@ def get_settings(
                 ),
                 "sample_request_require_project": (
                     bool(getattr(settings, "sample_request_require_project", False)) if settings else False
+                ),
+                "stock_debt_po_link_enabled": (
+                    bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
                 ),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
@@ -593,6 +623,9 @@ def get_app_config(
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
             ),
+            stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
+            # Same value and fallback as the admin GET above.
+            deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -955,6 +988,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     for col in (
         "purchase_request_default_approver_user_id",
         "sponsorship_form_default_approver_user_id",
+        "off_series_approver_user_id",
+        "default_quotation_approver_user_id",
     ):
         if col in update_data:
             uid = update_data[col]
@@ -1200,7 +1235,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     )
 
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
-    for column in ("sample_request_require_project",):
+    for column in ("sample_request_require_project", "stock_debt_po_link_enabled"):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 

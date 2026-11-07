@@ -95,33 +95,33 @@ def test_a_text_era_says_how_much_of_it_was_read(db):
     _run_row(db, "A", 50, started=datetime(2026, 10, 1, tzinfo=UTC))
     _run_row(db, "A", 10, started=datetime(2026, 10, 2, tzinfo=UTC))  # the latest run counts
     note = _run(db).note
-    assert note.startswith("From bot traces, 5 Sep 2026 on.")
-    assert "17 Apr to 21 Jul: from message text (estimated), 50% of 10 messages read." in note
+    assert note.startswith("From bot traces, 05/09/2026 on.")
+    assert "17/04/2026 - 21/07/2026: from message text (estimated), 50% of 10 messages read." in note
 
 
 def test_an_era_with_no_run_is_not_loaded_yet(db):
     note = _run(db).note
-    assert "17 Apr to 21 Jul: not loaded yet." in note
+    assert "17/04/2026 - 21/07/2026: not loaded yet." in note
 
 
 def test_only_the_eras_the_period_touches_get_a_line(db):
     note = _run(db, params={"period": {"kind": "custom", "from": "2026-07-01", "to": "2026-08-31"}}).note
-    assert "17 Apr to 21 Jul" in note and "22 Jul to 18 Aug" in note and "19 Aug to 4 Sep" in note
-    assert "5 to 22 Sep" not in note
-    assert "17 Apr to 21 Jul" not in _run(db, params={"period": OCTOBER}).note
-    assert "5 to 22 Sep" not in _run(db, params={"period": OCTOBER}).note
+    assert "17/04/2026 - 21/07/2026" in note and "22/07/2026 - 18/08/2026" in note and "19/08/2026 - 04/09/2026" in note
+    assert "05/09/2026 - 22/09/2026" not in note
+    assert "17/04/2026 - 21/07/2026" not in _run(db, params={"period": OCTOBER}).note
+    assert "05/09/2026 - 22/09/2026" not in _run(db, params={"period": OCTOBER}).note
 
 
 def test_the_untraced_september_slice_has_its_own_line(db):
     _history_fact(db, datetime(2026, 9, 8, 3, tzinfo=UTC))
     _run_row(db, "D", 4, started=datetime(2026, 10, 1, tzinfo=UTC))
     note = _run(db, params={"period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-30"}}).note
-    assert "5 to 22 Sep, messages the bot never traced: from message text (estimated), 25% of 4 messages read." in note
+    assert "05/09/2026 - 22/09/2026, messages the bot never traced: from message text (estimated), 25% of 4 messages read." in note
 
 
 def test_a_run_with_no_eligible_messages_reads_zero_not_a_division_error(db):
     _run_row(db, "A", 0, started=datetime(2026, 10, 1, tzinfo=UTC))
-    assert "17 Apr to 21 Jul: from message text (estimated), 0% of 0 messages read." in _run(db).note
+    assert "17/04/2026 - 21/07/2026: from message text (estimated), 0% of 0 messages read." in _run(db).note
 
 
 @pytest.mark.parametrize("key", ["chat_top_asks", "chat_bot_failures"])
@@ -130,14 +130,14 @@ def test_top_asks_and_bot_failures_carry_the_same_lines(db, key):
     _history_fact(db, datetime(2026, 5, 2, 3, tzinfo=UTC), topic_code=None)
     note = _run(db, key=key).note
     assert "Topics labelled:" in note
-    assert "17 Apr to 21 Jul: from message text (estimated), 13% of 8 messages read." in note
+    assert "17/04/2026 - 21/07/2026: from message text (estimated), 13% of 8 messages read." in note
 
 
 def test_the_share_read_never_reads_over_100(db):
     for day in range(1, 4):
         _history_fact(db, datetime(2026, 5, day, 3, tzinfo=UTC))
     _run_row(db, "A", 2, started=datetime(2026, 10, 1, tzinfo=UTC))
-    assert "17 Apr to 21 Jul: from message text (estimated), 100% of 2 messages read." in _run(db).note
+    assert "17/04/2026 - 21/07/2026: from message text (estimated), 100% of 2 messages read." in _run(db).note
 
 
 def test_a_text_era_line_carries_the_reply_rules_once(db):

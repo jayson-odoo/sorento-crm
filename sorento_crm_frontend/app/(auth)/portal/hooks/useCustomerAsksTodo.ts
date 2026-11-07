@@ -13,6 +13,7 @@ import {
 } from '../lib/customer-asks-service';
 import type { StockAskPatch } from '@/lib/stock-asks';
 import { useAskThread, type AskThreadService } from '@/hooks/useAskThread';
+import { localStore } from '@/lib/storage';
 
 /** The portal-keyed pair of thread loaders (a module constant, so the hook sees one identity). */
 const PORTAL_ASK_THREAD: AskThreadService = { getPage: getAskConversationPage, search: searchAskConversation };
@@ -108,7 +109,7 @@ export function usePortalAsksSort(contactId: string | null | undefined) {
       return;
     }
     try {
-      const raw = window.localStorage.getItem(`${SORT_KEY_PREFIX}${contactId}`);
+      const raw = localStore.getItem(`${SORT_KEY_PREFIX}${contactId}`);
       setSortState(normalizeAskSort(raw ? JSON.parse(raw) : null));
     } catch {
       setSortState(DEFAULT_ASK_SORT);
@@ -119,7 +120,7 @@ export function usePortalAsksSort(contactId: string | null | undefined) {
     (next: LandingSort) => {
       setSortState(next);
       if (contactId && typeof window !== 'undefined') {
-        window.localStorage.setItem(`${SORT_KEY_PREFIX}${contactId}`, JSON.stringify(next));
+        localStore.setItem(`${SORT_KEY_PREFIX}${contactId}`, JSON.stringify(next));
       }
     },
     [contactId],

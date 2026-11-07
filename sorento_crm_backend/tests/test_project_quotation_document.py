@@ -38,6 +38,11 @@ from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-qdoc"
 
 # Off the real workbook (Cabana Elmina - nadi cergas R2): one priced line and one rate-only
@@ -222,7 +227,7 @@ def test_a_rate_only_line_is_quoted_but_adds_nothing_to_any_total():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -297,7 +302,7 @@ def test_issuing_freezes_the_version_the_customer_now_holds():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -367,7 +372,7 @@ def test_reissuing_records_the_version_each_scope_actually_contributed():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -571,7 +576,7 @@ def test_a_line_carries_the_columns_the_real_quotation_actually_prints():
         owner = _user(db, f"{MARKER} Baser")
         uom = _uom(db)
         category = _category(db, "Sanitary Ware")
-        product = _product(db, category.id, uom, "300.00")
+        product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
@@ -607,12 +612,9 @@ def test_a_line_carries_the_columns_the_real_quotation_actually_prints():
 # ------------------------------------------------------------------------- AC-A5
 
 
-def test_the_document_layer_does_not_disturb_the_derived_project_outcome():
-    """This is the regression that matters most: the document was added ABOVE the scope
-    precisely so that winning the townhouse stays a fact about the townhouse and not about a
-    revision. A project with one decided scope and one still open is not decided, and one win
-    beside one loss is still a win - the pipeline's rule (AC-E10), unchanged, now reached
-    through a document."""
+def test_the_document_layer_never_writes_an_outcome():
+    """BE9. One outcome per project: adding scopes to a document, or deleting one, leaves
+    the project outcome alone (the area-delete recompute is gone)."""
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_service as quotes
 
@@ -624,26 +626,25 @@ def test_the_document_layer_does_not_disturb_the_derived_project_outcome():
         project = _project(db, company_id, owner)
 
         document = qdocs.create_document(db, project=project, actor_user_id=owner)
-        townhouse = qdocs.add_scope(
+        qdocs.add_scope(
             db, document=document, scope_label=f"{MARKER} Townhouse", actor_user_id=owner
         )
         guard_house = qdocs.add_scope(
             db, document=document, scope_label=f"{MARKER} Guard House", actor_user_id=owner
         )
-
-        assert quotes.derive_project_outcome(db, project) == "open"
-
-        # One scope lost, the other still open: the project is still live.
-        quotes.set_outcome(db, quotation=townhouse, outcome="lost", loss_reason="price")
-        assert quotes.derive_project_outcome(db, project) == "open"
         db.refresh(project)
         assert project.outcome == "open"
 
-        # A won scope beside a lost one is a won project (AC-E10, any-won wins).
-        quotes.set_outcome(db, quotation=guard_house, outcome="won", loss_reason=None)
-        assert quotes.derive_project_outcome(db, project) == "won"
+        project.outcome = "lost"
+        project.loss_reason = "price"
+        db.flush()
+        quotes.delete_quotation(db, guard_house)
         db.refresh(project)
-        assert project.outcome == "won"
+        assert project.outcome == "lost"
+        assert project.loss_reason == "price"
+        assert not hasattr(quotes, "derive_project_outcome")
+        assert not hasattr(quotes, "set_outcome")
+        assert not hasattr(quotes, "sync_project_outcome")
 
 
 # ------------------------------------------------------------------------- AC-A6

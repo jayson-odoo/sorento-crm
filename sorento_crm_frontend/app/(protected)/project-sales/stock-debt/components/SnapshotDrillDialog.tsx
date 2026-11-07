@@ -2,9 +2,8 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ColumnDef } from '@tanstack/react-table';
+import { ColumnDef, type RowSelectionState } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -14,6 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -23,7 +24,14 @@ import { cn } from '@/lib/utils';
 import { RequestReserveDialog } from '../../_shared/components/RequestReserveDialog';
 import { useOrderInquiryHeaderLines } from '../../_shared/hooks/useOrderInquiry';
 import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
-import { SNAPSHOTS_KEY, useSnapshotLinesQuery } from '../hooks/useStockDebtSnapshots';
+import { reserveRowsOfLines } from '../../_shared/lib/orderInquiryLineFold';
+import {
+  SNAPSHOTS_KEY,
+  usePoLinkOptions,
+  usePoLinkSwitch,
+  useSnapshotLinesQuery,
+} from '../hooks/useStockDebtSnapshots';
+import { poLinkMenu, type PoLinkKind } from '../lib/poLinkWording';
 import { buildDemandColumns, sumDemand } from '../lib/stockDebtDemandColumns';
 import { signed } from '../lib/stockDebtColumns';
 import type {
@@ -32,8 +40,12 @@ import type {
   SnapshotRow,
 } from '../types/stockDebtSnapshot.types';
 import { decisionText } from './SnapshotDecisionPopover';
+import { SnapshotDecideControl, type DecideItem } from './SnapshotDecideControl';
+import { PoLinkDialog, coveredText } from './PoLinkDialog';
 
 const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
+/** AC-LINK-CRM-UI: link / unlink / move a PO line through AutoCount. */
+const LINK_PO_PERMISSION = 'projects.stock_debt.link_po';
 
 /** RESERVE-REQ-PICK AC-RP-6 (owner, 30 Oct): an OI row frozen on a line that reads Short 0
  *  (covered or pinned) opens UNTICKED in "Request CS to reserve"; the operator can tick it
@@ -41,7 +53,7 @@ const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 const PRE_UNTICK_COVERED_LINES = true;
 
 /** A line as one OI group shows it: the frozen line plus only that OI's rows. */
-type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
+export type GroupLine = SnapshotLine & { group_oi_rows: SnapshotOiRow[] };
 
 interface OiGroup {
   oiId: string | null;
@@ -53,53 +65,79 @@ const NEUTRAL = 'bg-muted text-foreground';
 const AMBER = 'bg-amber-100 text-amber-800';
 const GREEN = 'bg-emerald-100 text-emerald-800';
 const RED = 'bg-red-100 text-red-800';
-const SKY = 'bg-sky-100 text-sky-800';
 
-function stateLabel(state: string): string {
-  const text = state.replace(/_/g, ' ');
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-const RESERVE_LABEL: Record<string, { text: string; tone: string }> = {
-  parked: { text: 'Reserve parked', tone: AMBER },
-  requested: { text: 'Reserve requested', tone: AMBER },
-  reserved: { text: 'Reserved', tone: GREEN },
-  cancelled: { text: 'Reserve cancelled', tone: NEUTRAL },
-};
-
-function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
-  return <span className={cn(STATUS_PILL_BASE, 'normal-case', tone)}>{children}</span>;
-}
-
-/** What the line and its OI rows read like NOW (AC-12). */
-function NowCell({ line }: { line: GroupLine }) {
+/** OI-RESERVE-USED-ROW (owner, 4 Nov): "Now" is ONE pill per line, the first match wins -
+ *  SO cancelled (or gone) > Reserved N > Reserve requested N / Reserve parked N > Open N. The
+ *  only live column of the drill: what changed since the snapshot. The OI row's own state
+ *  stays on the OI page. Exported for its test. */
+export function nowPill(line: GroupLine): { text: string; tone: string } {
   const soStatus = line.now.so_status;
+  if (soStatus !== 'open') return { text: `SO ${soStatus ?? 'missing'}`, tone: RED };
+  const sum = (state: string) =>
+    line.group_oi_rows
+      .filter((oi) => oi.reserve_state === state)
+      .reduce((total, oi) => total + (oi.reserve_qty ?? 0), 0);
+  const has = (state: string) => line.group_oi_rows.some((oi) => oi.reserve_state === state);
+  if (has('reserved')) return { text: `Reserved ${sum('reserved').toLocaleString()}`, tone: GREEN };
+  if (has('requested')) {
+    return { text: `Reserve requested ${sum('requested').toLocaleString()}`, tone: AMBER };
+  }
+  if (has('parked')) return { text: `Reserve parked ${sum('parked').toLocaleString()}`, tone: AMBER };
+  return { text: `Open ${line.now.open_qty.toLocaleString()}`, tone: NEUTRAL };
+}
+
+/** AC-LINK-CRM-UI: the PO lines linked to the line now, e.g. "PO 202609-S0029 (120)". */
+export function poLinksText(line: GroupLine): string {
+  return (line.now.po_links ?? [])
+    .map((po) => `PO ${po.po_number} (${po.qty.toLocaleString()})`)
+    .join(', ');
+}
+
+function NowCell({ line, showPoLinks }: { line: GroupLine; showPoLinks: boolean }) {
+  const pill = nowPill(line);
+  const links = showPoLinks ? poLinksText(line) : '';
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1">
-      {soStatus === 'open' ? (
-        <Pill tone={NEUTRAL}>{`Open ${line.now.open_qty.toLocaleString()}`}</Pill>
-      ) : (
-        <Pill tone={RED}>{`SO ${soStatus ?? 'missing'}`}</Pill>
-      )}
-      {line.group_oi_rows.map((oi) => {
-        const reserve = oi.reserve_state ? RESERVE_LABEL[oi.reserve_state] : null;
-        return (
-          <React.Fragment key={oi.row_id}>
-            <Pill tone={NEUTRAL}>
-              {oi.now_state === 'missing' ? 'Row gone' : stateLabel(oi.now_state ?? oi.state)}
-            </Pill>
-            {reserve && <Pill tone={reserve.tone}>{reserve.text}</Pill>}
-            {oi.after_snapshot && <Pill tone={SKY}>after the snapshot</Pill>}
-          </React.Fragment>
-        );
-      })}
+    <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap">
+      <span className={cn(STATUS_PILL_BASE, 'normal-case whitespace-nowrap', pill.tone)} title={pill.text}>
+        {pill.text}
+      </span>
+      {links ? (
+        <p className="truncate text-xs text-muted-foreground" title={links} data-testid="now-po-links">
+          {links}
+        </p>
+      ) : null}
     </div>
   );
 }
 
-function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine>[] {
+const LINE_COLUMN: ColumnDef<GroupLine> = {
+  id: 'line_no',
+  accessorKey: 'line_no',
+  header: ({ column }) => <DataGridColumnHeader title="Line" column={column} />,
+  size: 70,
+  meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
+  cell: ({ row }) => <span className="tabular-nums">{row.original.line_no ?? '-'}</span>,
+};
+
+function buildColumns(
+  totals: ReturnType<typeof sumDemand>,
+  /** Switch ON: row ticks + Decide, and Now names the PO covering each line. */
+  poMode: boolean,
+): ColumnDef<GroupLine>[] {
+  const selectable = poMode;
+  const [salesOrder, ...demand] = buildDemandColumns<GroupLine>(totals);
   return [
-    ...buildDemandColumns<GroupLine>(totals),
+    ...(selectable
+      ? [
+          buildSelectColumn<GroupLine>({
+            rowLabel: (row) =>
+              `Select ${row.original.so_number}${row.original.line_no != null ? ` line ${row.original.line_no}` : ''}`,
+          }),
+        ]
+      : []),
+    salesOrder,
+    LINE_COLUMN,
+    ...demand,
     {
       id: 'short_qty',
       header: ({ column }) => <DataGridColumnHeader title="Short" column={column} />,
@@ -114,9 +152,10 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
       id: 'oi_row',
       header: ({ column }) => <DataGridColumnHeader title="OI row" column={column} />,
       size: 110,
+      // OI-RESERVE-USED-ROW (owner, 4 Nov): the server sends live rows only, one line per row.
       cell: ({ row }) =>
         row.original.group_oi_rows.length ? (
-          <div className="flex flex-wrap gap-x-2">
+          <div className="flex flex-nowrap gap-x-2 overflow-hidden whitespace-nowrap">
             {row.original.group_oi_rows.map((oi) => (
               <Link
                 key={oi.row_id}
@@ -137,7 +176,7 @@ function buildColumns(totals: ReturnType<typeof sumDemand>): ColumnDef<GroupLine
       id: 'now',
       header: ({ column }) => <DataGridColumnHeader title="Now" column={column} />,
       size: 260,
-      cell: ({ row }) => <NowCell line={row.original} />,
+      cell: ({ row }) => <NowCell line={row.original} showPoLinks={poMode} />,
     },
   ];
 }
@@ -163,10 +202,12 @@ function OiRequestDialog({
   onSent: () => void;
 }) {
   const live = useOrderInquiryHeaderLines(oiId);
+  // OI-RESERVE-ANY-ROW (crew, 5 Nov): one request per line, on the line's primary row, even
+  // when its ORDER and DELAY rows are both live.
   const rows = React.useMemo(
     () =>
-      (live.data ?? []).filter(
-        (row) => drillRowIds.has(row.id) && reserveIneligibleReason(row) === null,
+      reserveRowsOfLines(live.data ?? [], (row) => drillRowIds.has(row.id)).filter(
+        (row) => reserveIneligibleReason(row) === null,
       ),
     [live.data, drillRowIds],
   );
@@ -185,18 +226,26 @@ function OiRequestDialog({
 
 function OiGroupGrid({
   group,
+  snapshotId,
+  rowId,
   canRequest,
+  canLinkPo,
   defaultWarehouseId,
   onRequested,
 }: {
   group: OiGroup;
+  snapshotId: string;
+  rowId: string;
   canRequest: boolean;
+  canLinkPo: boolean;
   defaultWarehouseId: string | null;
   onRequested: () => void;
 }) {
   const [requestOpen, setRequestOpen] = React.useState(false);
+  const [poDialog, setPoDialog] = React.useState<PoLinkKind | null>(null);
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const totals = React.useMemo(() => sumDemand(group.lines), [group.lines]);
-  const columns = React.useMemo(() => buildColumns(totals), [totals]);
 
   // RESERVE-REQ-PICK AC-RP-8 (owner, 30 Oct: "we snapshot the sales order but not the
   // OI"): rows linked after the snapshot count too, ticked like any line still short.
@@ -216,6 +265,65 @@ function OiGroupGrid({
   const requestable = group.lines.some((line) =>
     line.group_oi_rows.some((oi) => oi.requestable),
   );
+  const showRequest = Boolean(group.oiId) && canRequest && requestable;
+  // Owner, 5 Nov ("minimise the change management"): with the switch OFF the drill is
+  // exactly today's - one Request CS to reserve button, no ticks, no Decide. Decide (with
+  // Request CS to reserve inside it, beside the PO actions) only exists while it is ON.
+  const selectable = canLinkPo;
+  const columns = React.useMemo(() => buildColumns(totals, selectable), [totals, selectable]);
+
+  // OWNER (Lavish v1, 4 Nov): tick the lines first, then Decide.
+  const tickedLines = group.lines.filter((line) => rowSelection[line.sales_order_line_id]);
+  const tickedIds = new Set(tickedLines.map((line) => line.sales_order_line_id));
+  // Request CS to reserve keeps its own popup: the ticked lines' rows open ticked, every other
+  // row of the group (and, as before, a covered line's) opens unticked.
+  const untickedRowIds = [
+    ...new Set([
+      ...group.lines
+        .filter((line) => !tickedIds.has(line.sales_order_line_id))
+        .flatMap((line) => line.group_oi_rows.map((oi) => oi.row_id)),
+      ...coveredRowIds,
+    ]),
+  ];
+
+  // The capabilities are read when the menu opens and while a PO popup is up: never cached.
+  const options = usePoLinkOptions(snapshotId, rowId, canLinkPo && (menuOpen || poDialog !== null));
+  const menu = poLinkMenu({
+    ticked: tickedLines.length,
+    linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
+    capabilities: options.data?.capabilities ?? null,
+    loading: options.isFetching,
+    // Crew round 3: every ticked line already covered by POs -> Link greyed, naming them.
+    coveredBy:
+      tickedLines.length > 0 && tickedLines.every((line) => coveredText(line) !== null)
+        ? [...new Set(tickedLines.flatMap((line) => (line.now.po_links ?? []).map((po) => po.po_number)))]
+        : null,
+  });
+  const items: DecideItem[][] = [
+    showRequest
+      ? [
+          {
+            key: 'reserve',
+            label: 'Request CS to reserve…',
+            enabled: tickedLines.length > 0,
+            reason: null,
+            onSelect: () => setRequestOpen(true),
+          },
+        ]
+      : [],
+    canLinkPo
+      ? [
+          { key: 'link', label: 'Link to PO…', ...menu.link, onSelect: () => setPoDialog('link') },
+          { key: 'unlink', label: 'Unlink from PO…', ...menu.unlink, onSelect: () => setPoDialog('unlink') },
+          {
+            key: 'relink',
+            label: 'Move PO to another sales order…',
+            ...menu.relink,
+            onSelect: () => setPoDialog('relink'),
+          },
+        ]
+      : [],
+  ];
 
   return (
     <>
@@ -235,7 +343,9 @@ function OiGroupGrid({
           )
         }
         toolbar={
-          group.oiId && canRequest && requestable ? (
+          selectable ? (
+            <SnapshotDecideControl count={tickedLines.length} items={items} onOpenChange={setMenuOpen} />
+          ) : showRequest ? (
             <Button type="button" size="sm" onClick={() => setRequestOpen(true)}>
               Request CS to reserve
             </Button>
@@ -243,6 +353,8 @@ function OiGroupGrid({
         }
         columns={columns}
         rows={group.lines}
+        getRowId={(line) => line.sales_order_line_id}
+        {...(selectable ? { rowSelection, onRowSelectionChange: setRowSelection } : {})}
         listingKey="projects.stock_debt.view::snapshot-drill"
         emptyTitle="Nothing is due here"
         pageSize={10}
@@ -253,12 +365,28 @@ function OiGroupGrid({
         <OiRequestDialog
           oiId={group.oiId}
           drillRowIds={drillRowIds}
-          coveredRowIds={coveredRowIds}
+          coveredRowIds={selectable ? untickedRowIds : coveredRowIds}
           defaultWarehouseId={defaultWarehouseId}
           onOpenChange={setRequestOpen}
           onSent={onRequested}
         />
       )}
+      {poDialog && options.data ? (
+        <PoLinkDialog
+          mode={poDialog}
+          snapshotId={snapshotId}
+          rowId={rowId}
+          lines={tickedLines}
+          allLines={group.lines}
+          capabilities={options.data.capabilities}
+          poLines={options.data.po_lines}
+          soBooks={options.data.so_books}
+          onClose={() => {
+            setPoDialog(null);
+            setRowSelection({});
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -310,6 +438,10 @@ export function SnapshotDrillDialog({
 }) {
   const queryClient = useQueryClient();
   const canRequest = useHasPermission(ACKNOWLEDGE_PERMISSION);
+  const holdsLinkPo = useHasPermission(LINK_PO_PERMISSION);
+  // Owner, 5 Nov: the PO actions stay inert until "AutoCount links from Stock Debt" is on.
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
   const lines = useSnapshotLinesQuery(snapshotId, row.row_id, month);
   const stored = React.useMemo(() => lines.data?.lines ?? [], [lines.data]);
   const groups = React.useMemo(() => groupByOi(stored), [stored]);
@@ -369,7 +501,10 @@ export function SnapshotDrillDialog({
               <OiGroupGrid
                 key={group.oiId ?? 'no-oi'}
                 group={group}
+                snapshotId={snapshotId}
+                rowId={row.row_id}
                 canRequest={canRequest}
+                canLinkPo={canLinkPo}
                 defaultWarehouseId={row.decision_warehouse_id}
                 onRequested={() =>
                   queryClient.invalidateQueries({ queryKey: [...SNAPSHOTS_KEY, 'lines', snapshotId] })

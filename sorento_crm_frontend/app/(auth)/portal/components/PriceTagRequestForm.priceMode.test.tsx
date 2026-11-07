@@ -41,6 +41,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   updateRequest: vi.fn(),
   deleteRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
@@ -163,6 +166,7 @@ beforeEach(() => {
 // Item picker and Add line button live.
 async function fillMinimalRequiredFields() {
   await selectOption('Customer', 'ZZTD01');
+  fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
   await pickPrinting();
@@ -181,7 +185,7 @@ async function pickPrinting() {
 }
 
 function submit() {
-  fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  sendToMarketing();
 }
 
 async function lastCreatePayload() {
@@ -297,3 +301,20 @@ describe('PriceTagRequestForm - line remarks (D6, AC-S2-4)', () => {
     expect(payload.lines[0].remarks).toBeNull();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  if (!screen.queryByLabelText('What marketing needs to fix')) return;
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

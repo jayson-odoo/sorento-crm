@@ -4,7 +4,7 @@ E3  a salesperson ranking with the default askers prints `Unclassified askers: N
     never `Unclassified askers left out` (nothing is left out by default, so the route's
     `unclassified_left_out` is null).
 E4  the period has asks but the filters match none: "No asks match those filters in that period.";
-    "No asks in that period. Chat data starts 5 Sep 2026." stays for a truly empty period.
+    "No asks in that period. Chat data starts 05/09/2026." stays for a truly empty period.
 """
 from __future__ import annotations
 
@@ -203,7 +203,7 @@ def test_with_history_loaded_the_empty_message_names_the_earliest_day(db):
     seed_world(db)
     _history_fact(db, day(8, 20))
     body = _run_august(db, date_from=date(2026, 8, 21), date_to=date(2026, 8, 25))
-    assert body["rows"] == [] and body["message"] == "No asks in that period. Chat data starts 20 Aug 2026.", body
+    assert body["rows"] == [] and body["message"] == "No asks in that period. Chat data starts 20/08/2026.", body
 
 
 def test_with_no_history_an_august_report_is_unchanged(db):

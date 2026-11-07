@@ -194,7 +194,7 @@ const BODY_ONLY_SEGMENTS: Record<string, string> = {
     "headerless - no PageHeader anywhere; McpToolsList titles itself with a CardTitle, not a route header",
   'user-management/settings/notifications':
     'parent layout.tsx renders PageHeader ("Settings") for every settings page',
-  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/lines':
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)':
     'parent (view)/layout.tsx renders QuotationDocumentPageHeader for every tab of this quotation',
 };
 
@@ -213,6 +213,12 @@ const SECTION_SKELETON_SEGMENTS = [
   'dealer-kit/pages/[pageId]',
   'dealer-kit/bundles',
   'dealer-kit/price-tag-requests/[id]/design',
+  // PROPOSAL-HEADER-LAYOUT (#2194): the quotation document's prose tabs sit under `(view)`,
+  // whose loading.tsx is the Header tab's list skeleton.
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/cover-letter',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/terms',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/signatures',
+  'project-sales/[projectId]/quotation-documents/[documentId]/(view)/feedback',
 ];
 
 // Every segment that must carry a loading.tsx: what the walk finds, plus the manually
@@ -308,7 +314,16 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 167.
     // DOC-ACCESS-SIMPLE: `resource-management/document-access` is a new DataGrid list segment with
     // its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 168.
-    expect(requiredSegmentNames.length).toBe(168);
+    // CLIENT-ERROR-REPORT (#2165): `system-management/client-errors` is a new DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 169.
+    // AI-PROMPTS-STD-VIEWS: `system-management/ai-assistant/prompts` is now a DataGrid list
+    // segment with its own `loading.tsx` (ListPageSkeleton), found by the walk. Total: 170.
+    // PROPOSAL-HEADER-LAYOUT (#2194): the Lines tab is gone and its grid sits on the Header tab,
+    // so `[documentId]/(view)/lines` (now a redirect) is replaced by `[documentId]/(view)`
+    // (bodyOnly, see BODY_ONLY_SEGMENTS). Total unchanged: 170.
+    // PRICETAG-ACCESSORIES: `master-data-management/accessories` is a new DataGrid list segment
+    // with its own `loading.tsx` (ListPageSkeleton). Total: 171.
+    expect(requiredSegmentNames.length).toBe(171);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

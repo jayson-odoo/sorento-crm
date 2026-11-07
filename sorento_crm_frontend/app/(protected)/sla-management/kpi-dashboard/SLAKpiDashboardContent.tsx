@@ -4,7 +4,7 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { formatDateTime, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTime, formatMaybeDate, parseDateTimeAsUTC } from '@/lib/helpers';
 import {
   ColumnDef,
   PaginationState,
@@ -209,9 +209,9 @@ function TrendCard({ scope, window }: { scope: KpiScope; window?: KpiWindow }) {
           <ChartContainer config={TREND_CONFIG} className="h-64 w-full min-w-0">
             <LineChart data={trendQ.data} margin={{ left: 8, right: 8, top: 8, bottom: 8 }}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="bucket" tick={{ fontSize: 11 }} tickFormatter={formatMaybeDate} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-              <ChartTooltip content={<ChartTooltipContent />} />
+              <ChartTooltip content={<ChartTooltipContent labelFormatter={formatMaybeDate} />} />
               <Line type="monotone" dataKey="opened" stroke="var(--color-opened)" strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="resolved" stroke="var(--color-resolved)" strokeWidth={1.5} dot={false} />
             </LineChart>

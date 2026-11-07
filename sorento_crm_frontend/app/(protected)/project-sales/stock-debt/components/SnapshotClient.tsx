@@ -83,7 +83,7 @@ function metaFacts(snapshot: Snapshot): string[] {
   if (filters.date_from || filters.date_to) {
     facts.push(
       filters.date_from && filters.date_to
-        ? `Delivery ${dmy(filters.date_from)} to ${dmy(filters.date_to)}`
+        ? `Delivery ${dmy(filters.date_from)} - ${dmy(filters.date_to)}`
         : filters.date_from
           ? `Delivery from ${dmy(filters.date_from)}`
           : `Delivery to ${dmy(filters.date_to as string)}`,

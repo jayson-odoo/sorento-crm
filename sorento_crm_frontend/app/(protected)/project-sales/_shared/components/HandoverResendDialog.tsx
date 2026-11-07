@@ -19,6 +19,7 @@ const SKIP_TEXT: Record<HandoverResendSkipReason, string> = {
   nothing_open: 'nothing open, not sent',
   no_recipient: 'no purchasing recipient, not sent',
   failed: 'could not be sent',
+  partly_failed: 'sent to some recipients only, the rest could not be sent',
 };
 
 export function lastSentText(last: HandoverLastSent | null): string {
@@ -91,7 +92,8 @@ export function HandoverResendDialog({
 
   async function handleSend() {
     const result = await send.mutateAsync({
-      ids: emails.map((email) => email.inquiry_id),
+      // One OI can go through several rows, one email each: name it once.
+      ids: Array.from(new Set(emails.map((email) => email.inquiry_id))),
       rowIds: single ? rowIds : null,
     });
     const failed = result.skipped.filter((skip) => skip.reason === 'failed');
@@ -168,9 +170,13 @@ export function HandoverResendDialog({
       isSending={send.isPending}
       sendDisabled={(single && tickedIds.length === 0) || preview.isFetching}
       notice={notice}
-      tabLabel={(email, index) =>
-        emails[index]?.inquiry_no ?? `Email to ${email.to.name}`
-      }
+      tabLabel={(email, index) => {
+        const current = emails[index];
+        if (!current?.inquiry_no) return `Email to ${email.to.name}`;
+        // An OI going through more than one row has one tab per row: name who each is to.
+        const shared = emails.filter((e) => e.inquiry_id === current.inquiry_id).length > 1;
+        return shared ? `${current.inquiry_no} to ${email.to.name}` : current.inquiry_no;
+      }}
       emailNote={(index) => {
         const current = emails[index];
         if (!current) return null;

@@ -233,3 +233,37 @@ describe('IntegrationLogsList - failure-cause drill-down (OBS-S1-19, OBS-S1-20)'
     expect(screen.queryByTestId('integration-logs-cause-filter')).not.toBeInTheDocument();
   });
 });
+
+describe('IntegrationLogsList - capped total (INTLOG-SPEED)', () => {
+  it('shows "10,000+" when the backend capped the count', () => {
+    mockData({
+      data: {
+        data: [
+          {
+            id: 'log-1',
+            integration_channel: 'n8n',
+            business_table: 'attachments',
+            business_id: '11111111-2222-3333-4444-555555555555',
+            status: 'success',
+            retry_count: 0,
+            max_retry_allowed: 3,
+            created_at: '2026-11-03T05:00:00',
+            processed_at: null,
+          },
+        ],
+        pagination: { total: 10000, page: 1, limit: 50, total_capped: true },
+        empty: false,
+      },
+    });
+    renderWithClient(<IntegrationLogsList />);
+    expect(screen.getByText('1 - 50 of 10,000+')).toBeInTheDocument();
+  });
+
+  it('shows the exact total when it is not capped', () => {
+    mockData({
+      data: { data: [], pagination: { total: 7, page: 1, limit: 50, total_capped: false }, empty: false },
+    });
+    renderWithClient(<IntegrationLogsList />);
+    expect(screen.queryByText(/10,000\+/)).toBeNull();
+  });
+});

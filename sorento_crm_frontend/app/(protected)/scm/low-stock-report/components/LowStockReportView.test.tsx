@@ -119,7 +119,7 @@ describe('LowStockReportView', () => {
     expect(await screen.findByRole('tab', { name: 'Acme - BASIN - Low' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Low stock report' })).toBeInTheDocument();
     // Review N3: the subtitle reads as the approved mockup.
-    expect(screen.getByText('Daily plan, 26 Sep 2026 07:40')).toBeInTheDocument();
+    expect(screen.getByText('Daily plan, 26/09/2026, 7:40 am')).toBeInTheDocument();
     expect(screen.getByText('2 rows, 2 sheets')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Supplier and category' })).toHaveAttribute(
       'data-state',
@@ -140,7 +140,7 @@ describe('LowStockReportView', () => {
     );
     renderPage();
 
-    expect(await screen.findByText('Daily plan, 5 Sep 2026')).toBeInTheDocument();
+    expect(await screen.findByText('Daily plan, 05/09/2026')).toBeInTheDocument();
   });
 
   it('refetches with the chosen split', async () => {

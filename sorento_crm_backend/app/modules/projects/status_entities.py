@@ -43,11 +43,23 @@ def _count_projects(db: Session, status_id: str) -> int:
 
 
 def _migrate_projects(db: Session, from_status_id: str, to_status_id: str) -> int:
-    return (
+    moved_ids = [
+        row.id for row in db.query(Project.id).filter(Project.status_id == from_status_id).all()
+    ]
+    count = (
         db.query(Project)
         .filter(Project.status_id == from_status_id)
         .update({Project.status_id: to_status_id}, synchronize_session=False)
     )
+    if moved_ids:
+        # Outcome follows a Lost / Dormant stage (PROJECT-CLASH-LOST), so a bulk move onto
+        # or off such a rung re-derives it, exactly as a single move does.
+        from app.services.project_service import outcome_follows_stage
+
+        for project in db.query(Project).filter(Project.id.in_(moved_ids)).all():
+            db.refresh(project)
+            outcome_follows_stage(db, project)
+    return count
 
 
 def register() -> None:

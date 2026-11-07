@@ -1292,17 +1292,17 @@ describe('R21 - the four figures open the shared lightbox', () => {
     expect(within(dialog).queryByText('SO-2201')).not.toBeInTheDocument();
     // Column 6 is S5's Taken column (dash - nothing here is covered by another SPO); Take
     // (7) is an editable input, seeded from the cascade (R19).
-    const projectTakeInput = projectRows[1].querySelectorAll('td')[7].querySelector('input');
+    const projectTakeInput = projectRows[1].querySelectorAll('td')[8].querySelector('input');
     expect(projectTakeInput).toHaveValue(40);
 
     fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     const retailRows = within(dialog).getAllByRole('row');
     expect(retailRows[1].textContent).toContain('SO-2201');
     expect(retailRows[2].textContent).toContain('SO-2202');
-    expect(retailRows[2].querySelectorAll('td')[5].textContent).toBe('90');
+    expect(retailRows[2].querySelectorAll('td')[6].textContent).toBe('90');
     // 40 and 30 are served in full, and the order nobody ticked gets nothing.
-    expect(retailRows[1].querySelectorAll('td')[7].querySelector('input')).toHaveValue(30);
-    expect(retailRows[2].querySelectorAll('td')[7].querySelector('input')).toHaveValue(0);
+    expect(retailRows[1].querySelectorAll('td')[8].querySelector('input')).toHaveValue(30);
+    expect(retailRows[2].querySelectorAll('td')[8].querySelector('input')).toHaveValue(0);
     // The footer is shared beneath BOTH tabs - still reads 30 after switching tabs.
     expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
   });
@@ -1476,7 +1476,7 @@ describe('R19 - Take is editable and re-flows only the rows after it (AC-I2, AC-
     within(dialog)
       .getByText(document_)
       .closest('tr')!
-      .querySelectorAll('td')[7]
+      .querySelectorAll('td')[8]
       .querySelector('input') as HTMLInputElement;
 
   beforeEach(() => {
@@ -1658,7 +1658,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
@@ -1670,7 +1670,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/SO covered · SRTWT7443/)).toBeInTheDocument();
@@ -1680,7 +1680,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const hitRow = within(dialog).getByText('202605-S0060').closest('tr') as HTMLElement;
@@ -1696,7 +1696,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     // Project tab is the default - the bucket-hit project row is there.
@@ -1714,7 +1714,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const search = within(dialog).getByPlaceholderText('Search POs');
@@ -1846,7 +1846,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
 
     // "Sep" not "Sep 2026" - `en-GB` abbreviates September as "Sept", so a regex requiring
     // the space right after "Sep" would miss it (`SpoPlannerTable.test.tsx`'s own precedent).
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28 Sep/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28\/09\/2026/ });
     expect(cell.className).toContain('bg-muted');
     expect(cell.className).not.toContain('bg-primary/10');
     expect(within(cell).getByText('50')).toBeTruthy();
@@ -1857,7 +1857,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     await screen.findByRole('button', { name: /schedule/i });
     fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
 
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31\/08\/2026/ });
     expect(cell.className).toContain('bg-primary/10');
     expect(within(cell).getByText('60')).toBeTruthy();
     expect(within(cell).getByText('+25 on CRM-SPO-2026/08-0005')).toBeTruthy();
@@ -1871,7 +1871,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     fireEvent.click(control);
     fireEvent.click(await screen.findByText('Sales order'));
 
-    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ });
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 07\/09\/2026/ });
     expect(cell.className).toContain('bg-primary/10');
     expect(within(cell).getByText('40')).toBeTruthy();
     expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
@@ -2228,7 +2228,7 @@ describe('SpoPlannerTable - review round 1', () => {
       within(dialog)
         .getByText(document_)
         .closest('tr')!
-        .querySelectorAll('td')[7]
+        .querySelectorAll('td')[8]
         .querySelector('input') as HTMLInputElement;
 
     // Delivery date ascending: SO-3001 is first on screen and takes the whole 38.

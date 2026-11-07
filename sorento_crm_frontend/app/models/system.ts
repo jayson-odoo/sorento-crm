@@ -100,6 +100,7 @@ export interface SystemSetting {
 
   /** Sample requests (SR-CORE): submit needs a registered project / a quotation. Off by default. */
   sampleRequestRequireProject?: boolean;
+  stockDebtPoLinkEnabled?: boolean;
 
   /**
    * "Borrow from another order" (PLAN-borrow-location-only-8oct.md D1), off by default.
@@ -114,6 +115,12 @@ export interface SystemSetting {
   sponsorshipFormDefaultApproverUserId?: string | null;
   sponsorshipFormDefaultApproverName?: string | null;
   sponsorshipFormDefaultApproverEmail?: string | null;
+  /** PS-QUOTE-RULES: who approves a project quotation line outside its series. */
+  offSeriesApproverUserId?: string | null;
+  offSeriesApproverName?: string | null;
+  /** PS-QUOTE-RULES: who approves a project quotation discount when nothing else routes it. */
+  defaultQuotationApproverUserId?: string | null;
+  defaultQuotationApproverName?: string | null;
 
   /** When set, used for attachment upload webhooks; otherwise backend may use N8N_WEBHOOK_URL env. */
   n8nAttachmentWebhookUrl?: string | null;

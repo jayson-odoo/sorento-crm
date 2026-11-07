@@ -230,9 +230,11 @@ def test_detail_pdf_task_renders_the_excel_sheet(api, monkeypatch):
     pdf = _pdf_text(captured["bytes"])
     flat = " ".join(pdf.split())
     squashed = "".join(pdf.split())  # a long test code may wrap inside its cell
-    for heading in ("ORDER INQUIRY", "SO DATE", "S/O NO", "ITEM CODE", "QTY", "SUPPLIER",
+    # OI-EXPORT-SHARED: the list layout, header row first and no title above it.
+    for heading in ("SO DATE", "S/O NO", "ITEM CODE", "QTY", "SUPPLIER",
                     "LOCATION", "ACKNOWLEDGED", "REMARK"):
         assert heading in flat, f"{heading!r} missing from the PDF: {flat}"
+    assert "ORDER INQUIRY" not in flat, f"no title is printed: {flat}"
     assert seeded["core"].so_number in squashed
     assert "03/09/2026" in squashed
     assert item_code in squashed and "BRW-BB" in squashed
@@ -381,29 +383,33 @@ _SHEET_ROWS = [
 ]
 
 
-def _xlsx_rows(rows):
-    """The OI workbook's own header + data rows, read back from the real writer."""
-    from openpyxl import Workbook
-
-    from app.services.order_inquiry_worklist_service import (
-        EXPORT_TITLE, OrderInquiryWorklistService,
-    )
-
-    wb = Workbook()
-    wb.remove(wb.active)
-    OrderInquiryWorklistService(db=None)._write_sheet(wb, EXPORT_TITLE, rows)
-    ws = wb[EXPORT_TITLE]
-    return [[cell.value for cell in row] for row in ws.iter_rows(min_row=2)]
-
-
-def _pdf_html(rows):
-    from app.services import order_inquiry_pdf
+def _records(rows, columns=None):
     from app.services.order_inquiry_worklist_service import (
         EXPORT_HEADINGS, OrderInquiryWorklistService,
     )
 
-    values = OrderInquiryWorklistService(db=None)._sheet_values(rows)
-    return order_inquiry_pdf.build_html(EXPORT_HEADINGS, values)
+    columns = columns or EXPORT_HEADINGS
+    return OrderInquiryWorklistService(db=None)._records(rows, columns=columns), columns
+
+
+def _xlsx_rows(rows, columns=None):
+    """The OI workbook's own header + data rows, read back from the real writer."""
+    import io
+
+    import openpyxl
+
+    from app.services import order_inquiry_export
+
+    records, columns = _records(rows, columns)
+    ws = openpyxl.load_workbook(io.BytesIO(order_inquiry_export.xlsx(records, columns))).active
+    return [[cell.value for cell in row] for row in ws.iter_rows(min_row=1)]
+
+
+def _pdf_html(rows, columns=None):
+    from app.services import order_inquiry_export, order_inquiry_pdf
+
+    records, columns = _records(rows, columns)
+    return order_inquiry_pdf.build_html(columns, order_inquiry_export.values(records, columns))
 
 
 def test_pdf_is_one_table_whose_header_is_the_xlsx_header_row():
@@ -414,6 +420,7 @@ def test_pdf_is_one_table_whose_header_is_the_xlsx_header_row():
     xlsx = _xlsx_rows(_SHEET_ROWS)
     assert parsed.tables == 1, f"expected ONE table, got {parsed.tables}"
     assert parsed.rows[0] == list(xlsx[0]), parsed.rows[0]
+    assert "<h1" not in html, "no title above the table"
     assert len(parsed.rows) == len(xlsx), "one PDF row per xlsx row"
 
 
@@ -425,12 +432,13 @@ def test_pdf_rows_are_the_xlsx_rows_cell_for_cell():
     xlsx = _xlsx_rows(_SHEET_ROWS)
 
     assert parsed.rows[1:] == [[cell_text(v) for v in row] for row in xlsx[1:]]
-    # Spot values the way a reader sees them: dd/mm/yyyy dates, whole quantities, the
-    # TOTAL QTY on the last row of a supplier + item code run.
+    # Spot values the way a reader sees them: dd/mm/yyyy dates, whole quantities.
     flat = [cell for row in parsed.rows[1:] for cell in row]
     assert "01/12/2025" in flat and "03/08/2026" in flat
-    assert "8" in flat  # TOTAL QTY of the CWCY605 run (5 + 3)
-    assert "5" in flat and "5.0" not in flat
+    assert "5" in flat and "3" in flat and "12" in flat and "5.0" not in flat
+    assert "8" in flat  # TOTAL QTY of the CWCY605 run (5 + 3), on its last row
+    # Rows go by S/O NO, then earliest delivery date within it.
+    assert [row[1] for row in parsed.rows[1:]] == ["SO380096", "SO380096", "SO394881"]
 
 
 def test_pdf_wears_the_house_style_landscape_with_a_repeating_header():
@@ -470,10 +478,8 @@ def test_pdf_header_carries_requested_reserve_and_reserved_beside_qty():
     """OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): the one-table PDF prints the same header row
     as the Excel, so REQUESTED RESERVE / RESERVED sit right after QTY there too, and a
     partly answered line (asked 70, reserved 50) prints both numbers."""
-    from app.services import order_inquiry_pdf
-    from app.services.order_inquiry_worklist_service import (
-        EXPORT_HEADINGS, OrderInquiryWorklistService,
-    )
+    from app.services import order_inquiry_export, order_inquiry_pdf
+    from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
     rows = [
         {"so_date": date(2026, 9, 1), "so_number": "SO426913", "item_code": "CB315",
@@ -487,7 +493,8 @@ def test_pdf_header_carries_requested_reserve_and_reserved_beside_qty():
     assert header[at : at + 3] == ["QTY", "REQUESTED RESERVE", "RESERVED"], header
     assert [row[at], row[at + 1], row[at + 2]] == ["170", "70", "50"], row
 
-    values = OrderInquiryWorklistService(db=None)._sheet_values(rows)
+    records, _ = _records(rows)
+    values = order_inquiry_export.values(records, EXPORT_HEADINGS)
     text = _pdf_text(order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values))
     flat = " ".join(text.split())
     assert "REQUESTED RESERVE" in flat or ("REQUESTED" in flat and "RESERVE" in flat), flat[:400]

@@ -1,24 +1,25 @@
 'use client';
 
 /**
- * The target record's actions (D15, S1-23): Duplicate, then Delete, in the gear dropdown.
+ * The target record's actions (D15, S1-23): Export commission statement (TARGET-COMMISSION-VIEW),
+ * Duplicate, then Delete, in the gear dropdown.
  *
- * The record adds Edit ahead of these (the S1 hand test of 27 Sep, F2 and F4: Edit lives in
- * the gear, beside the pager, never as a button of its own). Delete asks nothing
+ * Edit is not here: the record shows it as its primary button (owner, 5 Nov, superseding the
+ * 27 Sep hand test that put it in the gear). Delete asks nothing
  * (D7): it parks `sales_target.delete` on the server for the hard-delete window and the
  * countdown takes over the primary button. A team target's children go with it (FK cascade),
  * so the countdown names them: "Deleting North FY26 H2 and 2 agent targets" (plan 3.8).
  */
 
 import { useRouter } from 'next/navigation';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, FileSpreadsheet, Trash2 } from 'lucide-react';
 import type {
   RecordAction,
   RecordActionSet,
 } from '@/components/common/recordActions';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { useDuplicateSalesTarget } from './hooks/useSalesTargets';
+import { useDownloadCommissionStatement, useDuplicateSalesTarget } from './hooks/useSalesTargets';
 
 interface TargetRef {
   id: string;
@@ -41,6 +42,7 @@ export function useSalesTargetActions(
   const canEdit = useHasPermission('sales.targets.edit');
   const canDelete = useHasPermission('sales.targets.delete');
   const duplicate = useDuplicateSalesTarget();
+  const statement = useDownloadCommissionStatement();
 
   const deletion = useDeferredAction({
     actionKey: 'sales_target.delete',
@@ -67,6 +69,16 @@ export function useSalesTargetActions(
     }
   };
   // Hidden while a delete counts down: the record on its way out offers only Cancel.
+  if (!deletion.countdown) {
+    // Every viewer may export: the statement shows what the target page already shows.
+    actions.push({
+      key: 'sales_target.commission_statement',
+      label: 'Export commission statement',
+      icon: FileSpreadsheet,
+      disabled: statement.isPending,
+      run: () => statement.mutate([target.id]),
+    });
+  }
   if (canEdit && !deletion.countdown) {
     actions.push({
       key: 'sales_target.duplicate',

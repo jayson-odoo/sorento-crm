@@ -343,6 +343,7 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
             # changing - the two facts this whole slice moved onto the line.
             "promotion_id": ln.promotion_id,
             "manual_sell_price": _jsonable(ln.manual_sell_price),
+            "price_type": ln.price_type,
         }
         for ln in lines
     ]
@@ -428,6 +429,8 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     # price basis above - absent means carry the old line's pick.
     if "tag_template_id" in raw:
         converted["tag_template_id"] = clean.get("tag_template_id")
+    if "price_type" in raw:
+        converted["price_type"] = clean.get("price_type")
     return converted
 
 
@@ -533,6 +536,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 old.promotion_id,
                 old.manual_sell_price,
                 old.tag_template_id,
+                old.price_type,
             )
             for old in row.lines
         }
@@ -546,6 +550,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                     promotion_id,
                     manual_sell_price,
                     tag_template_id,
+                    price_type,
                 ) = old_by_key[key]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
@@ -568,6 +573,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 line.setdefault("promotion_id", promotion_id)
                 line.setdefault("manual_sell_price", manual_sell_price)
                 line.setdefault("tag_template_id", tag_template_id)
+                line.setdefault("price_type", price_type)
         # Security review (this round): a revision is a PORTAL CONTACT
         # writing, exactly like create/update - `replace_lines` with no
         # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),
@@ -854,11 +860,47 @@ class PortalRevisionService:
 
         return {kind: self.type_policy(kind)[0] for kind in SUPPORTED_TYPES}
 
+    def _price_tag_policy(self, row: Any) -> RevisionPolicy:
+        """Price tags (PRICETAG-SELF-APPROVAL R4, owner 2 Nov): no cap, always on.
+
+        The salesperson approves his own tags and no office person is involved,
+        so Settings > Portal revisions does not apply. He may edit his own proof
+        or an approved request; never a draft (that is plain editing), never
+        while marketing holds an escalated request, never once the office has
+        printed (`PriceTagRequestService.is_with_salesperson`, owner Q4 a).
+        """
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        used = int(getattr(row, "revision_no", 0) or 0) if row is not None else 0
+        blocked: Optional[str] = None
+        if row is None:
+            blocked = _DISABLED_SENTENCE
+        elif row.portal_draft_at is not None:
+            blocked = "This price tag request is still a draft. Edit and submit it instead."
+        elif PriceTagRequestService.is_with_marketing(row):
+            blocked = "Marketing is working on this request. Wait for their proof."
+        elif not PriceTagRequestService.is_with_salesperson(row):
+            status = (row.status or "").replace("_", " ")
+            blocked = f"This price tag request is {status} and can no longer be edited."
+        return RevisionPolicy(
+            enabled=True,
+            allowed=blocked is None,
+            used=used,
+            # 0 = no cap. The portal words price tags without a count.
+            max=0,
+            remaining=0,
+            blocked_reason=blocked,
+            restart_stage_label="you, for approval",
+        )
+
     def resolve_policy(self, source_entity_type: str, row: Any) -> RevisionPolicy:
         """Effective revision policy for one submission (UAC A3/A4, B1, B2).
 
         Fails closed: no adapter or no config row means disabled.
         """
+        if source_entity_type == "price_tag_request":
+            return self._price_tag_policy(row)
+
         adapter = get_adapter(source_entity_type)
         config = self.get_config(source_entity_type)
         type_enabled, cap = self.type_policy(source_entity_type)
@@ -1731,7 +1773,15 @@ class PortalRevisionService:
         # 9. Restart status. The stage is declared once on the config; the adapter only
         #    maps it to the status the entity carries (UAC J4).
         restart_stage, start_event = self._restart_stage(source_entity_type)
-        setattr(row, "status", adapter.status_for_stage(restart_stage or ""))
+        # PRICETAG-SELF-APPROVAL R4: an edited price tag comes back to the
+        # salesperson for his own approval - not to marketing, and the SLA flow is
+        # not restarted. Clearing the assignee is what makes the next proof his.
+        self_service = source_entity_type == "price_tag_request"
+        if self_service:
+            row.status = "proof_ready"
+            row.assigned_to_id = None
+        else:
+            setattr(row, "status", adapter.status_for_stage(restart_stage or ""))
         self.db.flush()
 
         # 10. Void every active form-SLA stage. Done LAST inside the transaction: the
@@ -1761,7 +1811,8 @@ class PortalRevisionService:
         #     revision has committed and a retry would take the stale-guard path and
         #     never backfill any of this (UAC F5).
         self._void_pending_takeovers(voided_ids)
-        self._restart_flow(source_entity_type, row, start_event)
+        if not self_service:
+            self._restart_flow(source_entity_type, row, start_event)
         self._notify_voided_handlers(
             adapter=adapter,
             row=row,

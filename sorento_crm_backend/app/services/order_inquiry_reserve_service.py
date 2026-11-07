@@ -40,11 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.project_so import (
-    INQUIRY_PARTLY_LINKED,
-    INQUIRY_PLACED,
-    INQUIRY_RAISED,
-    IV_ORDER,
-    IV_ORDER_BACK,
+    INQUIRY_LINK_STATES,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryReleasedLink,
@@ -59,13 +55,15 @@ from app.models.project_so import (
     RESERVE_RESERVED,
 )
 from app.services.certificate_service import today_malaysia
+from app.services.oi_row_visibility import live_row_clause
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import OiDate, resolve as resolve_oi_date
 
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
-_REQUESTABLE_VERBS = (IV_ORDER, IV_ORDER_BACK)
-_REQUESTABLE_STATES = (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+#: OI-RESERVE-ANY-ROW: not Done, any verb (`oi_row_visibility.is_reservable_row`).
+_REQUESTABLE_STATES = INQUIRY_LINK_STATES
 
 
 def _dec(value: Any) -> Decimal:
@@ -319,17 +317,21 @@ def _status_of(rr: OrderInquiryReserveRequestRow) -> tuple:
     return f"Partial {_qty_str(got)} of {_qty_str(asked)}", "partial"
 
 
-def _row_context(db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow) -> Dict[str, Any]:
+def _row_context(
+    db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow,
+    dates: Optional[Dict[str, OiDate]] = None,
+) -> Dict[str, Any]:
     """One `reserve.rows[]` entry, read fresh off the row/request-row at dispatch time -
     the same field set both the request and the reserved template read (3.6): `remaining`
     doubles as the request mail's REMAINING and the reserved mail's BALANCE, since the two
     templates print it at different MOMENTS (before the request changes nothing, after the
     reserve link has already landed) rather than under two different keys."""
     status, status_kind = _status_of(rr)
+    needed_by = (dates or resolve_oi_date(db, [row]))[str(row.id)].date
     return {
         "item_code": row.item_code,
-        "delivery_date": _fmt_date(row.delivery_date),
-        "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
+        "delivery_date": _fmt_date(needed_by),
+        "delivery_iso": needed_by.isoformat() if needed_by else None,
         "qty": _qty_str(row.qty),
         "remaining": _qty_str(_remaining(db, row)),
         "qty_requested": _qty_str(rr.qty_requested),
@@ -367,10 +369,12 @@ def _build_context(
         facts = ProjectOrderInquiryService(db)._handover_order_facts(
             inquiry.project_sales_order_id
         )
-    rows_ctx = [_row_context(db, row, rr) for rr, row in pairs]
+    dates = resolve_oi_date(db, [row for _rr, row in pairs])
+    rows_ctx = [_row_context(db, row, rr, dates) for rr, row in pairs]
     link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
     reserve = {
         "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
+        "request_id": str(request.id),
         "ordinal": request.ordinal,
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
@@ -453,16 +457,18 @@ def _build_commit_context(
                 released_by_rr.setdefault(str(rr_id), []).append(document)
 
     rows_ctx = []
+    dates = resolve_oi_date(db, [item["row"] for item in touched])
     for item in touched:
         rr = item["rr"]
         row = item["row"]
         balance = _qty_str(_remaining(db, row))
         status, status_kind = _status_of(rr)
+        needed_by = dates[str(row.id)].date
         rows_ctx.append(
             {
                 "item_code": row.item_code,
-                "delivery_date": _fmt_date(row.delivery_date),
-                "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
+                "delivery_date": _fmt_date(needed_by),
+                "delivery_iso": needed_by.isoformat() if needed_by else None,
                 "qty": _qty_str(row.qty),
                 "qty_requested": _qty_str(rr.qty_requested),
                 "location": _warehouse_code(db, rr.warehouse_id),
@@ -478,6 +484,7 @@ def _build_commit_context(
     link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
     reserve = {
         "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
+        "request_id": str(request.id),
         "ordinal": request.ordinal,
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
@@ -510,9 +517,9 @@ def _plural(count: int, word: str) -> str:
 def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """RESERVE-EMAIL-FULL-TABLE: the ONE context every reserve email is rendered from, built
     from one or more request contexts (`_build_context` / `_build_commit_context`). The
-    flat table is `reserve.lines` (one entry per request row, OI NO on each, sorted by item
-    code, then real delivery date, then OI no); the small sentences that are awkward in
-    Jinja are precomputed here (`what`, `short`, `tag`, `lines_text`, `verdict`). The keys an
+    flat table is `reserve.lines` (one entry per request row, OI NO on each, in the OI
+    export's order: S/O, then delivery date, `order_inquiry_export.in_export_order`); the
+    small sentences that are awkward in Jinja are precomputed here (`what`, `short`, `tag`, `lines_text`, `verdict`). The keys an
     admin-edited template reads stay (`rows`, `ordinal`, `inquiry_no`, `so_number`, `link`,
     `oi_count`, `line_count`, `more_count`), and `requests` exists only for 2 or more OIs."""
     from app.services import park_send
@@ -563,9 +570,15 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                     "reason": reason or "",
                 }
             )
-    # A line with no delivery date sorts last within its item code.
-    lines.sort(
-        key=lambda line: (line["item_code"], line["delivery_iso"] or "9999-12-31", line["oi_no"])
+    # The OI export's order (OI-EXPORT-SHARED, owner 3 Nov 2026): S/O, then delivery date
+    # earliest first, a line with no date last within its S/O; same-day lines by item code,
+    # then OI no.
+    from app.services.order_inquiry_export import in_export_order
+
+    lines = in_export_order(
+        sorted(lines, key=lambda line: (line["item_code"], line["oi_no"])),
+        so=lambda line: line["so_number"],
+        when=lambda line: line["delivery_iso"],
     )
     ordered = sorted(per_inquiry.values(), key=lambda entry: entry["inquiry_no"])
     inquiry_count = len(ordered)
@@ -594,8 +607,23 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     else:
         what = short = f"{inquiry_count} order inquiries{by}"
 
+    # The button opens THIS email's lines: the distinct request ids, grouped by OI in the
+    # same sorted order as `ordered`, first-seen within an OI.
+    ids_by_oi: Dict[str, List[str]] = {}
+    for context in contexts:
+        ctx_reserve = context["reserve"]
+        request_id = ctx_reserve.get("request_id")
+        bucket = ids_by_oi.setdefault(ctx_reserve.get("inquiry_no") or "", [])
+        if request_id and request_id not in bucket:
+            bucket.append(request_id)
+    request_ids = [rid for entry in ordered for rid in ids_by_oi.get(entry["inquiry_no"], [])]
     if inquiry_count >= 2:
-        link = f"{build_order_inquiry_link(None)}?inquiry_no={','.join(e['inquiry_no'] for e in ordered)}"
+        numbers = ",".join(e["inquiry_no"] for e in ordered)
+        link = f"{build_order_inquiry_link(None)}?display=lines&inquiry_no={numbers}"
+        if request_ids:
+            link += f"&reserve_request={','.join(request_ids)}"
+    elif request_ids:
+        link = f"{ordered[0]['link']}?reserve={','.join(request_ids)}"
     elif len(contexts) == 1:
         link = base["reserve"]["link"]
     else:
@@ -672,18 +700,21 @@ class OrderInquiryReserveService:
                     f"Row {row_id} does not belong to this order inquiry.",
                     code="reserve_request_wrong_inquiry",
                 )
-            if row.verb not in _REQUESTABLE_VERBS:
-                raise AppException(
-                    409,
-                    f"{_row_label(row)} is not an ORDER / ORDER BACK row and cannot be "
-                    "requested for reserve.",
-                    code="reserve_request_wrong_verb",
-                )
+            # OI-RESERVE-ANY-ROW (owner, 5 Nov): any verb; the two checks below are
+            # `oi_row_visibility.is_reservable_row`, split so each says why.
             if row.state not in _REQUESTABLE_STATES:
                 raise AppException(
                     409,
                     f"{_row_label(row)} is not open for a reserve request.",
                     code="reserve_request_wrong_state",
+                )
+            if row.redirected_to_pool:
+                # OI-RESERVE-USED-ROW (owner, 4 Nov): a used row's goods went back to the
+                # pool when its line changed; the line's live row is the one to ask on.
+                raise AppException(
+                    409,
+                    f"{_row_label(row)} is a used row. Request on its line's live row.",
+                    code="reserve_request_used_row",
                 )
             if row_id in already_open:
                 raise AppException(
@@ -1491,6 +1522,9 @@ class OrderInquiryReserveService:
             )
             .select_from(rr)
             .join(req, req.id == rr.request_id)
+            # OI-RESERVE-USED-ROW: counted on LIVE rows only, as Lines lists them.
+            .join(OrderInquiryRow, OrderInquiryRow.id == rr.row_id)
+            .filter(live_row_clause())
             .one()
         )
         keys = (

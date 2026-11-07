@@ -260,7 +260,7 @@ describe('TasksPanel', () => {
 
     // Twice on purpose: the tab-wide summary and the work-stream section header.
     expect(await screen.findAllByText('1 overdue')).toHaveLength(2);
-    expect(screen.getByText(/01 Jul 2026 \(overdue\)/)).toBeInTheDocument();
+    expect(screen.getByText(/01\/07\/2026 \(overdue\)/)).toBeInTheDocument();
   });
 
   it('says a task has no due date rather than leaving the row silent', async () => {

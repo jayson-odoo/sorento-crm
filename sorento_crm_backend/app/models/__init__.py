@@ -9,6 +9,7 @@ from app.models.country import Country
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.models.product_combo import ProductCombo, ProductComboPart
+from app.models.accessory import Accessory, ProductAccessory, ProductComboAccessory
 from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetProposal
 from app.models.product_compatibility import ProductCompatibility
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
@@ -200,6 +201,7 @@ from app.models.stock_transfer import StockTransfer  # noqa: F401
 from app.models.sample_request import SampleRequest, SampleRequestLine  # noqa: F401
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
+from app.models.client_error_report import ClientErrorReport  # noqa: F401
 
 __all__ = [
     "IdeationStatusEventCursor",

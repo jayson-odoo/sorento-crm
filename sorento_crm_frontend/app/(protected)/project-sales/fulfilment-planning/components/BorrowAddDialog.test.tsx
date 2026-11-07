@@ -307,6 +307,19 @@ describe('BorrowAddDialog', () => {
       recommended: false,
     };
 
+    it('names each donor order\'s customer and project beside its line (OI-UX-FILTER-SNAPSHOT)', () => {
+      renderDialog([
+        { ...A, donor_customer_name: 'Maju Debtor', donor_project_label: 'Tuju Residences' },
+        B,
+      ]);
+
+      const rows = within(screen.getByTestId('borrow-donor-table')).getAllByRole('row').slice(1);
+      expect(
+        within(rows[0]).getByText('SO371334 line 2 - Maju Debtor / Tuju Residences'),
+      ).toBeInTheDocument();
+      expect(within(rows[1]).getByText('SO371335 line 7')).toBeInTheDocument();
+    });
+
     it('lists both rows, each naming its own donor line, and selects positionally', () => {
       renderDialog([A, B]);
 

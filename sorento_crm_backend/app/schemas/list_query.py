@@ -213,6 +213,10 @@ class UserListColumnConfigPayload(BaseModel):
     # bound existed (or restored from a backup) can still hold an out-of-range value, and
     # GET returns it as-is - the FE apply gate drops it on read, same predicate as here.
     pageSize: Optional[int] = Field(default=None, ge=1, le=100)
+    # PROJECTS-BOARD-VIEW-PREF: which view a page with a board / grid / list toggle was
+    # left in (Pipeline today), owned by `useListingViewMode`. A closed set, so a stray
+    # value cannot be stored and then fail to apply on every open.
+    view: Optional[Literal["board", "grid", "list"]] = None
 
 
 class UserListColumnConfigResponse(BaseModel):

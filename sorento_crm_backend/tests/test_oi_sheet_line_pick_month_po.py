@@ -217,7 +217,9 @@ def _uac_month_and_rollup(rows: dict[str, tuple]) -> bytes:
 def _rows_by_date(w: World) -> dict:
     held: dict = {}
     for row in w.rows():
-        held.setdefault(row.delivery_date, []).append(row)
+        # OI-ONE-DELIVERY-DATE: a row carries its line's date, and the sheet's own date as
+        # the Was; the sheet's date is what these tests pair rows by.
+        held.setdefault(row.previous_delivery_date or row.delivery_date, []).append(row)
     return held
 
 

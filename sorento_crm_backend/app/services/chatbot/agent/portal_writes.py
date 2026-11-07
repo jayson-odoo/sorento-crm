@@ -14,6 +14,7 @@ within `WITHDRAW_MINUTES` of its submit while no staff member has touched it (W2
 """
 from __future__ import annotations
 
+from app.utils.date_format import fmt_date
 import html
 import logging
 import re
@@ -391,7 +392,7 @@ def _si_read_before(db, token, args: dict) -> dict:
     qty = _quantity(args.get("quantity"))
     day = _needed_by(args.get("delivery_date"))
     return {"_show": {"code": product.product_code, "name": product.product_name or "", "quantity": qty,
-                      "day": f"{day.day} {day.strftime('%b %Y')}" if day else ""}}
+                      "day": fmt_date(day) if day else ""}}
 
 
 def _si_summary(args: dict, before: dict) -> str:

@@ -15,6 +15,7 @@ import pytest
 
 from app.services.order_inquiry_worklist_service import (
     EXPORT_HEADINGS,
+    WORKSHEET_HEADINGS,
     OrderInquiryWorklistService,
 )
 from app.services.project_order_inquiry_service import (
@@ -84,13 +85,16 @@ def _on(s, no):
     return str(s.line[no].id)
 
 
-def _sheet_rows(s):
-    _name, data = OrderInquiryWorklistService(s.db).export_xlsx(query=s.core_so.so_number)
+def _sheet_rows(s, columns=EXPORT_HEADINGS):
+    _name, data = OrderInquiryWorklistService(s.db).export_xlsx(
+        query=s.core_so.so_number, columns=columns
+    )
     book = openpyxl.load_workbook(io.BytesIO(data))
     assert len(book.sheetnames) == 1, book.sheetnames
     rows = list(book.worksheets[0].iter_rows(values_only=True))
-    heads = list(rows[1])
-    return heads, [r for r in rows[2:] if r[1]]
+    heads = list(rows[0])
+    assert heads == list(columns), "row 1 is the header, no title row above it"
+    return heads, [r for r in rows[1:] if r[1]]
 
 
 def _day(value):
@@ -122,15 +126,37 @@ def _has_block(rows, block):
 # ---------------------------------------------------------------------------
 
 
-def test_remark_is_the_last_heading_and_the_ten_before_it_are_unchanged():
+def test_remark_is_the_last_heading_and_the_list_layout_is_pinned():
     assert EXPORT_HEADINGS[-1] == "REMARK"
     # OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): REQUESTED RESERVE and RESERVED
-    # sit right after QTY; the rest keep their order.
+    # sit right after QTY; the rest keep their order. The list-page export keeps this full
+    # layout (OI-EXPORT-SHARED answer (b)); emails and attachments print the eight columns.
     assert EXPORT_HEADINGS[:12] == (
         "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED",
         "TOTAL QTY", "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION",
     )
     assert EXPORT_HEADINGS[12:16] == ("ACKNOWLEDGED", "TAKEN", "REMAINING", "SUGGESTED")
+    assert EXPORT_HEADINGS[16:] == ("CHANGE QUANTITY", "CHANGE DATE", "REMARK")
+
+
+def test_a_split_line_without_change_columns_prints_each_split_rows_own_qty_and_date(api):
+    s = _order(api, [(10, 10, D_A)])
+    _confirm_all(s)
+    _save(s, {10: [_sp(4, D_A, on=_on(s, 10)), _sp(6, D_B, on=_on(s, 10))]})
+    heads, rows = _sheet_rows(s, columns=WORKSHEET_HEADINGS)
+    qty, when = heads.index("QTY"), heads.index("DELIVERY DATE")
+    assert [(r[qty], _day(r[when])) for r in rows] == [(4.0, D_A), (6.0, D_B)], rows
+
+
+def test_a_split_line_in_the_list_export_prints_the_lines_qty_once_and_each_splits_change(api):
+    s = _order(api, [(10, 10, D_A)])
+    _confirm_all(s)
+    _save(s, {10: [_sp(4, D_A, on=_on(s, 10)), _sp(6, D_B, on=_on(s, 10))]})
+    heads, rows = _sheet_rows(s)
+    assert _plan_rows(heads, rows) == [
+        (10.0, D_A, 4.0, D_A, "REMAIN"),
+        (None, None, 6.0, D_B, "DELAY"),
+    ]
 
 
 def test_unsplit_rows_print_once_with_an_empty_remark(api):
@@ -155,7 +181,8 @@ def test_a_row_whose_splits_add_up_prints_one_row_per_split(api):
         (10.0, D_A, 4.0, D_A, "REMAIN"),
         (None, None, 6.0, D_B, "site not ready"),
     ], _plan_rows(heads, rows)
-    # TOTAL QTY stays the sum of the printed QTY cells, on the last row of the run
+    # TOTAL QTY: the two rows share SUPPLIER and ITEM CODE, so it prints on the run's last row
+    # and adds the rows' live qty (4 + 6).
     assert rows[-1][heads.index("TOTAL QTY")] == 10.0
 
 
@@ -174,7 +201,7 @@ def test_splits_swapped_between_two_lines_print_under_their_own_line(api):
     assert _has_block(got, [(10.0, D_A, 6.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert _has_block(got, [(12.0, D_A, 8.0, D_A, "REMAIN"), (None, None, 4.0, D_B, "DELAY")]), got
     assert not [r for r in got if "line" in r[4]], ("no line labels in REMARK", got)
-    assert rows[-1][heads.index("TOTAL QTY")] == 22.0, "TOTAL QTY is the sum of the printed QTY cells"
+    assert rows[-1][heads.index("TOTAL QTY")] == 22.0, "TOTAL QTY is the sum of the live qty"
 
 
 def test_a_line_whose_splits_do_not_cover_its_autocount_qty_prints_the_extra_row(api):

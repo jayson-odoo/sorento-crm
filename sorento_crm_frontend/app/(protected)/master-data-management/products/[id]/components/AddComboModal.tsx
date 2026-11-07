@@ -13,6 +13,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useSetComboTagTemplates } from '@/app/(protected)/dealer-kit/hooks/useProductTagTemplates';
+import { ComboTemplatesPicker } from './ComboTemplatesPicker';
+import {
+  linksBody,
+  type LinkDefaults,
+} from '@/app/(protected)/dealer-kit/services/productTagTemplateService';
 import { useCreateProductCombo } from '../../hooks/useProductCombos';
 
 interface AddComboModalProps {
@@ -36,14 +43,21 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const create = useCreateProductCombo(productId);
+  // PRICETAG-LPSP: the combo's own price tag templates, for those who manage templates.
+  const canManageTemplates = useHasPermission('dealer_kit.tag_templates.manage');
+  const saveLinks = useSetComboTagTemplates();
+  const [templateIds, setTemplateIds] = useState<string[]>([]);
+  const [defaults, setDefaults] = useState<LinkDefaults>({ list: '', selling: '' });
 
   useEffect(() => {
     if (!open) return;
     setName('');
     setError(null);
+    setTemplateIds([]);
+    setDefaults({ list: '', selling: '' });
   }, [open]);
 
-  const canSave = name.trim().length > 0 && !create.isPending;
+  const canSave = name.trim().length > 0 && !create.isPending && !saveLinks.isPending;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -51,6 +65,15 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
     setError(null);
     try {
       const combo = await create.mutateAsync({ name: name.trim() });
+      if (canManageTemplates && templateIds.length > 0) {
+        // A failed link save is toasted by the hook; the combo itself exists by now.
+        await saveLinks
+          .mutateAsync({
+            combo_id: combo.id,
+            ...linksBody(templateIds, defaults),
+          })
+          .catch(() => undefined);
+      }
       onCreated?.(combo.id);
       onOpenChange(false);
     } catch (caught) {
@@ -87,6 +110,18 @@ export function AddComboModal({ open, onOpenChange, productId, onCreated }: AddC
               />
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
             </div>
+            {canManageTemplates ? (
+              <ComboTemplatesPicker
+                idPrefix="new-combo"
+                value={templateIds}
+                defaultListId={defaults.list}
+                defaultSellingId={defaults.selling}
+                onChange={(ids, nextDefaults) => {
+                  setTemplateIds(ids);
+                  setDefaults(nextDefaults);
+                }}
+              />
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button

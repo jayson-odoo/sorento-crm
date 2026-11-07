@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -132,11 +133,20 @@ function pickerOptions(
   way: 'borrow_order' | 'borrow_other',
 ): SearchableSelectOption[] {
   const counts = new Map<string, number>();
+  // OI-UX-FILTER-SNAPSHOT: a donor order is named with its customer and project.
+  const parties = new Map<string, string>();
   for (const row of rows) {
     const seen = new Set<string>();
     for (const candidate of borrowCandidatesOf(row)) {
       if (way === 'borrow_order') {
-        if (candidate.donor_so_number) seen.add(candidate.donor_so_number);
+        if (candidate.donor_so_number) {
+          seen.add(candidate.donor_so_number);
+          const party = soCustomerProjectLabel(
+            candidate.donor_customer_name,
+            candidate.donor_project_label,
+          );
+          if (party) parties.set(candidate.donor_so_number, party);
+        }
       } else if (
         candidate.source === 'other_location' &&
         // Every location is listed, 0 free included, and never capped (owner, 14 Oct for the
@@ -151,7 +161,10 @@ function pickerOptions(
   }
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([key]) => ({ value: key, label: key }));
+    .map(([key]) => ({
+      value: key,
+      label: parties.get(key) ? `${key} - ${parties.get(key)}` : key,
+    }));
 }
 
 /** A same-agent donor for the picked order, so the "Who authorised it" field can appear. */

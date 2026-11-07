@@ -1,6 +1,7 @@
 /**
- * TagTemplatesList - delete, one row or a selection, as a deferred action
- * (PLAN-price-tag-feedback-r2.md D26, S11; UAC AC-S11-1).
+ * TagTemplatesList - delete a selection as a deferred action
+ * (PLAN-price-tag-feedback-r2.md D26, S11; UAC AC-S11-1), and delete one row
+ * behind a confirm (TAG-TEMPLATE-DELETE-CONFIRM, owner 5 Nov).
  *
  * Mocked at the SERVICE boundary (`pendingActionService`) rather than at the hook,
  * so the thing under test is what the list actually does with the grace window:
@@ -58,14 +59,19 @@ vi.mock('@/lib/toast', () => ({
     success: vi.fn(),
     error: vi.fn(),
     dismiss: vi.fn(),
+    custom: vi.fn(),
   },
 }));
 
 const listTemplates = vi.fn();
 const createTemplate = vi.fn();
+const getTemplateUsage = vi.fn();
+const deleteTemplate = vi.fn();
 vi.mock('../../services/tagTemplateService', () => ({
   listTemplates: (...a: unknown[]) => listTemplates(...a),
   createTemplate: (...a: unknown[]) => createTemplate(...a),
+  getTemplateUsage: (...a: unknown[]) => getTemplateUsage(...a),
+  deleteTemplate: (...a: unknown[]) => deleteTemplate(...a),
 }));
 
 /** Every countdown toast raised, with the copy it was given. */
@@ -159,6 +165,8 @@ beforeEach(() => {
     template({ id: 'tmpl-1', name: 'Toilet tag' }),
     template({ id: 'tmpl-2', name: 'Basin tag' }),
   ]);
+  getTemplateUsage.mockResolvedValue({ products: 2, combos: 1, requests: 3 });
+  deleteTemplate.mockResolvedValue(undefined);
   parked = null;
   createPendingAction.mockImplementation(async (input) => {
     parked = {
@@ -291,30 +299,55 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   });
 });
 
-describe('TagTemplatesList - the per-row Delete (D7)', () => {
-  it('parks the single-record action for that row, with no dialog', async () => {
+describe('TagTemplatesList - the per-row Delete asks first (TAG-TEMPLATE-DELETE-CONFIRM)', () => {
+  it('opens a confirm naming the template and what uses it, and sends nothing yet', async () => {
     await renderList();
 
     fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
 
-    await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
-    const body = parkedBody();
-    expect(body.actionKey).toBe('tag_template.delete');
-    expect(body.entityType).toBe('tag_template');
-    expect(body.entityId).toBe('tmpl-1');
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    const dialog = await screen.findByRole('dialog');
+    expect(getTemplateUsage).toHaveBeenCalledWith('tmpl-1');
+    await waitFor(() =>
+      expect(dialog.textContent).toContain('2 products, 1 combo and 3 requests'),
+    );
+    expect(dialog.textContent).toContain('Toilet tag');
+    expect(deleteTemplate).not.toHaveBeenCalled();
+    expect(createPendingAction).not.toHaveBeenCalled();
   });
 
-  it('names the template in its countdown, and dims only that row', async () => {
+  it('says it could not check, never "not used", when the usage call fails', async () => {
+    getTemplateUsage.mockRejectedValue(new Error('network'));
     await renderList();
 
     fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
 
-    await waitFor(() => expect(raisedToasts).toHaveLength(1));
-    expect(raisedToasts[0]).toEqual({ verb: 'Deleting', subject: 'Toilet tag' });
-    await waitFor(() =>
-      expect(document.querySelectorAll('tbody tr[data-pending="true"]')).toHaveLength(1),
-    );
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog.textContent).toContain('could not check what uses it'));
+    expect(dialog.textContent).not.toContain('not used by');
+  });
+
+  it('Cancel closes the confirm and deletes nothing', async () => {
+    await renderList();
+
+    fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(deleteTemplate).not.toHaveBeenCalled();
+    expect(createPendingAction).not.toHaveBeenCalled();
+  });
+
+  it('Delete in the confirm deletes that template and reloads the list', async () => {
+    await renderList();
+    listTemplates.mockClear();
+
+    fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteTemplate).toHaveBeenCalledWith('tmpl-1'));
+    await waitFor(() => expect(listTemplates).toHaveBeenCalled());
+    expect(createPendingAction).not.toHaveBeenCalled();
   });
 });

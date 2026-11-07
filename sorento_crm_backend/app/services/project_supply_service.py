@@ -119,6 +119,7 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification, ReorderLevel, SupplierPerformance
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 from app.utils.multi_value import multi_values
 from app.services.scm import ladder_steps, priority, spo_supply
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
@@ -3406,37 +3407,57 @@ class ProjectSupplyService:
         """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
         company, spo_number, placed, received)` for every live order-inquiry SPO placement
         on a line holding one of `refs`. The SPO row must be for the line's own product and
-        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
-        query = (
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN).
+
+        Statement shape matters: the one-join form let the planner drive from `spo_allocations`
+        by product (estimated 11 rows a loop, actual 1,302; 1.45M loops), 2.4-5.4 s on the prod
+        clone. The SO lines are read first in a MATERIALIZED CTE, then their live inquiry rows,
+        links and the SPO rows by id: 15-400 ms, the same rows. An index on
+        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s).
+
+        The CTE gets no company-scope criteria from do_orm_execute on the core lines (the old
+        statement did); rows stay identical because the SPO join pairs company with the line's
+        company and the scoped SPO read filters the rest."""
+        lines = (
             self.db.query(
-                SalesOrderLine.source_ref,
-                SalesOrderLine.product_id,
-                SalesOrderLine.company_id,
-                SPOAllocation.spo_number,
-                OrderInquiryLink.qty,
-                SPOAllocation.quantity_received,
+                SalesOrderLine.source_ref.label("source_ref"),
+                SalesOrderLine.product_id.label("product_id"),
+                SalesOrderLine.company_id.label("company_id"),
+                ProjectSalesOrderLine.id.label("so_line_id"),
             )
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
             )
-            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+            .filter(
+                SalesOrderLine.source_ref.in_(list(refs)),
+                SalesOrderLine.product_id.in_(list(product_ids)),
+            )
+        )
+        if company_id is not None:
+            lines = lines.filter(SalesOrderLine.company_id == company_id)
+        lines = lines.cte("oi_placement_lines").prefix_with("MATERIALIZED")
+        return (
+            self.db.query(
+                lines.c.source_ref,
+                lines.c.product_id,
+                lines.c.company_id,
+                SPOAllocation.spo_number,
+                OrderInquiryLink.qty,
+                SPOAllocation.quantity_received,
+            )
+            .select_from(lines)
+            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == lines.c.so_line_id)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
             .join(
                 SPOAllocation,
                 (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-                & (SPOAllocation.product_id == SalesOrderLine.product_id)
-                & (SPOAllocation.company_id == SalesOrderLine.company_id),
+                & (SPOAllocation.product_id == lines.c.product_id)
+                & (SPOAllocation.company_id == lines.c.company_id),
             )
-            .filter(
-                SalesOrderLine.source_ref.in_(list(refs)),
-                SalesOrderLine.product_id.in_(list(product_ids)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
+            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
         )
-        if company_id is not None:
-            query = query.filter(SalesOrderLine.company_id == company_id)
-        return query.all()
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]
@@ -10555,17 +10576,19 @@ class ProjectSupplyService:
         if not pids or not wids:
             return {}
 
-        # The line's position inside its own document, in the order `PurchaseOrder.lines`
-        # uses - so the number on screen is the number the document detail shows.
+        # AutoCount's own line number (`line_no`, its Seq) - the number staff read on the PO in
+        # AutoCount (AC-LINK-CRM-UI) - else the line's position inside its own document, in the
+        # order `PurchaseOrder.lines` uses, for a line not synced since the column landed.
         numbered = (
             self.db.query(
                 PurchaseOrderLine.id.label("line_id"),
-                func.row_number()
-                .over(
-                    partition_by=PurchaseOrderLine.purchase_order_id,
-                    order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
-                )
-                .label("line_no"),
+                func.coalesce(
+                    PurchaseOrderLine.line_no,
+                    func.row_number().over(
+                        partition_by=PurchaseOrderLine.purchase_order_id,
+                        order_by=(PurchaseOrderLine.created_at, PurchaseOrderLine.id),
+                    ),
+                ).label("line_no"),
             )
             .subquery()
         )
@@ -11830,7 +11853,11 @@ class ProjectSupplyService:
             ProjectSalesOrder.project_id,
             SalesOrder.id.label("sales_order_id"),
             SalesOrder.so_number,
-            Customer.customer_name,
+            # OI-UX-FILTER-SNAPSHOT: the SO list's own customer (debtor name, else master).
+            func.coalesce(
+                func.nullif(func.trim(SalesOrder.debtor_name), ""), Customer.customer_name
+            ).label("customer_name"),
+            SalesOrder.project_label.label("project_label"),
             SalesAgent.sales_agent.label("agent_code"),
             SalesAgent.person_label.label("agent_label"),
             User.name.label("decided_by_name"),
@@ -11854,6 +11881,8 @@ class ProjectSupplyService:
             base = base.filter(
                 SalesOrder.so_number.ilike(needle)
                 | Customer.customer_name.ilike(needle)
+                | SalesOrder.debtor_name.ilike(needle)
+                | SalesOrder.project_label.ilike(needle)
                 | SalesAgent.sales_agent.ilike(needle)
             )
 
@@ -11873,6 +11902,7 @@ class ProjectSupplyService:
                 sales_order_id=sales_order_id,
                 so_number=so_number,
                 customer_name=customer_name,
+                project_label=project_label,
                 agent_code=row_agent_code,
                 agent_label=agent_label,
                 decided_by_name=decided_by_name,
@@ -11883,6 +11913,7 @@ class ProjectSupplyService:
                 sales_order_id,
                 so_number,
                 customer_name,
+                project_label,
                 row_agent_code,
                 agent_label,
                 decided_by_name,
@@ -11893,7 +11924,10 @@ class ProjectSupplyService:
     def _plan_sort_column(self, sort: Optional[str]) -> Any:
         columns = {
             "so_number": SalesOrder.so_number,
-            "customer_name": Customer.customer_name,
+            "customer_name": func.coalesce(
+                func.nullif(func.trim(SalesOrder.debtor_name), ""), Customer.customer_name
+            ),
+            "project_label": SalesOrder.project_label,
             "agent_code": SalesAgent.sales_agent,
             "revision_no": SOSupplyDecision.revision_no,
             "state": SOSupplyDecision.state,
@@ -11909,6 +11943,7 @@ class ProjectSupplyService:
         sales_order_id: Optional[str],
         so_number: Optional[str],
         customer_name: Optional[str],
+        project_label: Optional[str],
         agent_code: Optional[str],
         agent_label: Optional[str],
         decided_by_name: Optional[str],
@@ -11918,7 +11953,8 @@ class ProjectSupplyService:
             "sales_order_id": str(sales_order_id) if sales_order_id else None,
             "project_id": str(project_id) if project_id else None,
             "so_number": so_number,
-            "customer_name": customer_name,
+            "customer_name": (customer_name or "").strip() or None,
+            "project_label": (project_label or "").strip() or None,
             "agent_code": agent_code,
             "agent_label": agent_label,
             "revision_no": decision.revision_no,
@@ -12233,7 +12269,7 @@ class ProjectSupplyService:
         from app.services.project_order_inquiry_service import (
             _HANDOVER_PENDING_KEY,
             _build_handover_context,
-            _handover_sort_key,
+            _handover_sorted,
         )
 
         queued = [
@@ -12248,7 +12284,7 @@ class ProjectSupplyService:
             return []
         context, _source = built
         lines = (context.get("handover") or context).get("lines") or []
-        ordered = sorted(queued, key=_handover_sort_key)
+        ordered = _handover_sorted(queued)
         return [
             {
                 "so_line_id": str(item.get("so_line_id") or ""),
@@ -12337,6 +12373,7 @@ class ProjectSupplyService:
             for row in self.db.query(OrderInquiryRow).filter(row_scope).all()
             if before_rows.get(str(row.id)) != _preview_row_facts(row)
         ]
+        needed_by = resolve_oi_date(self.db, changed_rows)
         inquiry_rows = [
             {
                 "line_no": line_no_of.get(str(row.so_line_id or "")),
@@ -12345,7 +12382,7 @@ class ProjectSupplyService:
                 "verb": row.verb,
                 "is_new": str(row.id) not in before_rows,
                 "qty": row.qty,
-                "delivery_date": row.delivery_date,
+                "delivery_date": needed_by[str(row.id)].date,
                 "stock_location": row.stock_location,
                 "note": row.note,
                 "state": row.state,

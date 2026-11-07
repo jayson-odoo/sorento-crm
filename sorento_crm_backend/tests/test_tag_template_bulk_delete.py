@@ -153,7 +153,9 @@ def test_bulk_delete_removes_every_row_in_scope(api):
 
     assert out == {"deleted": 2}
     db.expire_all()
-    assert db.query(TagTemplate).filter(TagTemplate.id.in_([a, b])).count() == 0
+    # Archived, not removed (TAG-TEMPLATE-DELETE-CONFIRM): both rows stay, both stamped.
+    assert db.query(TagTemplate).filter(TagTemplate.id.in_([a, b]), TagTemplate.archived_at.is_(None)).count() == 0
+    assert db.query(TagTemplate).filter(TagTemplate.id.in_([a, b])).count() == 2
 
 
 def test_a_missing_id_refuses_the_whole_batch(api):
@@ -273,7 +275,7 @@ def test_happy_path_parks_then_deletes_on_window_lapse(api):
     assert current.status_code == 200, current.text
     assert current.json()["last_outcome"]["status"] == "committed"
     db.expire_all()
-    assert db.query(TagTemplate).filter(TagTemplate.id.in_([a, b])).count() == 0
+    assert db.query(TagTemplate).filter(TagTemplate.id.in_([a, b]), TagTemplate.archived_at.is_(None)).count() == 0
 
 
 def test_a_foreign_id_in_the_parked_batch_fails_the_whole_batch_at_commit(api):

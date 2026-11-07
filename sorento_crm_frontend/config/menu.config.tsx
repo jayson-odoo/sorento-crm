@@ -603,6 +603,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'master_data.products.view',
           },
           {
+            title: 'Accessories',
+            path: '/master-data-management/accessories',
+            permission: 'master_data.products.view',
+          },
+          {
             title: 'Flyer Spec Proposals',
             path: '/master-data-management/flyer-spec-proposals',
             permission: 'master_data.products.edit',
@@ -1039,6 +1044,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'API Call Log',
             path: '/system-management/api-call-logs',
             permission: 'system_management.api_call_log.view',
+          },
+          {
+            title: 'Client Errors',
+            path: '/system-management/client-errors',
+            permission: 'system_management.client_error.view',
           },
         ],
       },
@@ -2011,6 +2021,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       permission: 'master_data.products.view',
     },
     {
+      title: 'Accessories',
+      path: '/master-data-management/accessories',
+      permission: 'master_data.products.view',
+    },
+    {
       title: 'Flyer Spec Proposals',
       path: '/master-data-management/flyer-spec-proposals',
       permission: 'master_data.products.edit',
@@ -2543,6 +2558,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'API Call Log',
         path: '/system-management/api-call-logs',
         permission: 'system_management.api_call_log.view',
+      },
+      {
+        title: 'Client Errors',
+        path: '/system-management/client-errors',
+        permission: 'system_management.client_error.view',
       },
       {
         title: 'Email Event Configs',

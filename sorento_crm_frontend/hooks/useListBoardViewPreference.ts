@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { localStore } from '@/lib/storage';
 
 export type ListBoardViewMode = 'list' | 'board';
 
@@ -12,7 +13,7 @@ export function useListBoardViewPreference(storageKey: string, defaultMode: List
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(PREFIX + storageKey);
+      const raw = localStore.getItem(PREFIX + storageKey);
       if (raw === 'list' || raw === 'board') setModeState(raw);
     } catch {
       /* ignore */
@@ -24,7 +25,7 @@ export function useListBoardViewPreference(storageKey: string, defaultMode: List
     (next: ListBoardViewMode) => {
       setModeState(next);
       try {
-        localStorage.setItem(PREFIX + storageKey, next);
+        localStore.setItem(PREFIX + storageKey, next);
       } catch {
         /* ignore */
       }

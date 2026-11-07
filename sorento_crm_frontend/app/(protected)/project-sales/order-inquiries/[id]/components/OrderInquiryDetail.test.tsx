@@ -469,7 +469,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     expect([...sent].sort()).toEqual(['row-live', 'row-used']);
   });
 
-  it('shape b: a line with only a used row - it ticks, and Confirm (1) sends that row', async () => {
+  it('shape b re-pinned (OI-RESERVE-USED-ROW, owner 4 Nov): a line with only a used row is not rendered, so nothing ticks', async () => {
     vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
       lineRow({
         id: 'row-used',
@@ -480,41 +480,7 @@ describe('Review S2: a line whose only waiting row is used confirms from the lin
     ]);
     renderDetail('oi-1');
     await screen.findByRole('button', { name: 'Confirm' });
-
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm (1)' }));
-
-    await waitFor(() => expect(acknowledgeRowsSpy).toHaveBeenCalledTimes(1));
-    expect((acknowledgeRowsSpy.mock.calls[0] as unknown[])[0]).toEqual([
-      'row-used',
-    ]);
-    expect(acknowledgeFilterSpy).not.toHaveBeenCalled();
-  });
-
-  it('shape b: a ticked used-only line never widens Auto link to the whole OI', async () => {
-    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
-      lineRow({
-        id: 'row-used',
-        state: 'placed',
-        redirected_to_pool: true,
-        ack_state: 'changed',
-      }),
-    ]);
-    renderDetail('oi-1');
-    await screen.findByRole('button', { name: 'Confirm' });
-    fireEvent.click(await screen.findByLabelText('Select ZZT-USED'));
-    await screen.findByRole('button', { name: 'Confirm (1)' });
-
-    fireEvent.pointerDown(
-      screen.getByRole('button', { name: 'Order inquiry options' }),
-      {
-        button: 0,
-      },
-    );
-    fireEvent.click(
-      await screen.findByRole('menuitem', { name: /auto link/i }),
-    );
-    expect(autoPlaceSpy).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Select ZZT-USED')).not.toBeInTheDocument();
   });
 });
 
@@ -767,5 +733,22 @@ describe('Send to purchasing from the detail page (OI-RESEND-PURCHASING)', () =>
     expect(
       await screen.findByRole('dialog', { name: 'Send to purchasing' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('owner hand test (5 Nov 2026): the sales order is named in the header card', () => {
+  it('shows the SO number beside "Raised by", linking to the sales order', async () => {
+    renderDetail('oi-1');
+    const link = await screen.findByTestId('oi-header-so-link');
+    expect(link).toHaveTextContent('SO123456');
+    expect(link).toHaveAttribute('href', '/scm/sales-orders/so-1');
+  });
+
+  it('prints the SO number as plain text when the sales order has no id to link to', async () => {
+    mockGetOrderInquiryHeader.mockResolvedValue({ ...HEADER, sales_order_id: undefined });
+    renderDetail('oi-1');
+    const plain = await screen.findByTestId('oi-header-so');
+    expect(plain).toHaveTextContent('SO123456');
+    expect(screen.queryByTestId('oi-header-so-link')).toBeNull();
   });
 });

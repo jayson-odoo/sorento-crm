@@ -56,8 +56,16 @@ REVISABLE_PORTAL_FORM_TYPES = tuple(
         "project_registration",
         "customer_asks",
         "conversation",
+        # PRICETAG-SELF-APPROVAL (owner Q3, 2 Nov): price tags have no cap and are
+        # always revisable by the salesperson, so the row would configure nothing.
+        # Its stored row (ptag_0006) is left in place and hidden below.
+        "price_tag_request",
     )
 )
+
+# Rows a list must not show although they exist: a type whose revisions this
+# settings page no longer governs.
+_HIDDEN_CONFIG_TYPES = frozenset({"price_tag_request"})
 
 
 class PortalRevisionConfigResponse(BaseModel):
@@ -154,7 +162,9 @@ def list_portal_revision_configs(
     # A type that is no longer a portal submission type still shows, so a stale row
     # is visible (and editable back to disabled) rather than silently orphaned.
     items.extend(
-        _serialize(row) for kind, row in rows.items() if kind not in REVISABLE_PORTAL_FORM_TYPES
+        _serialize(row)
+        for kind, row in rows.items()
+        if kind not in REVISABLE_PORTAL_FORM_TYPES and kind not in _HIDDEN_CONFIG_TYPES
     )
     return {"items": items}
 

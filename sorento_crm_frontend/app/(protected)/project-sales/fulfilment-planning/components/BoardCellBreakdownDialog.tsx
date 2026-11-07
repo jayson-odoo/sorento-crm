@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import Link from 'next/link';
 import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Split, X } from 'lucide-react';
@@ -962,6 +963,9 @@ export function BoardCellBreakdownDialog({
                 <OrderInquiryRejectedBadge
                   refusal={inquiry}
                   testId={`breakdown-oi-rejected-${row.original.key}`}
+                  // Review N4: the 190px cell keeps the OI number; the reason is in the
+                  // title and the lightbox.
+                  showReason={false}
                 />
               ) : (
                 <OrderInquiryStatePill state={inquiry.state} />
@@ -1258,6 +1262,18 @@ export function BoardCellBreakdownDialog({
                             },
                             documentHref,
                           )}
+                          {source.donor_so_number &&
+                          soCustomerProjectLabel(
+                            source.donor_customer_name,
+                            source.donor_project_label,
+                          ) ? (
+                            <span data-testid="suggestion-donor-party">
+                              {` (${soCustomerProjectLabel(
+                                source.donor_customer_name,
+                                source.donor_project_label,
+                              )})`}
+                            </span>
+                          ) : null}
                         </p>
                       );
                     })}
@@ -1640,6 +1656,12 @@ export function sourceLabel(
  * later ORDER's quantity, and gating on the one v2 rung printed the LOCATION for every one
  * of them - so the row said "from MWH-IB" where the whole point is whose order it was.
  */
+/** " (CUSTOMER / project)" of the donor order, or nothing when the server named neither. */
+function donorPartyText(source: BoardContribution['sources'][number]): string {
+  const party = soCustomerProjectLabel(source.donor_customer_name, source.donor_project_label);
+  return party ? ` (${party})` : '';
+}
+
 /** Exported for the same reason `sourceLabel` is - see its comment. */
 export function sourceAt(source: BoardContribution['sources'][number]): string {
   // LADDER v7.1 STEP 3 (S4, AC-S4-5): a DOCUMENT, so the row names the document and the day
@@ -1656,7 +1678,7 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
           source.donor_line_no !== null && source.donor_line_no !== undefined
             ? ` line ${source.donor_line_no}`
             : ''
-        }`
+        }${donorPartyText(source)}`
       : '';
     return ` ${source.supply_document}${arriving}${from}`;
   }
@@ -1665,7 +1687,7 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
       source.donor_line_no !== null && source.donor_line_no !== undefined
         ? ` line ${source.donor_line_no}`
         : '';
-    return ` from ${source.donor_so_number}${line}`;
+    return ` from ${source.donor_so_number}${line}${donorPartyText(source)}`;
   }
   if (!source.location) return '';
   return source.kind === 'borrow'

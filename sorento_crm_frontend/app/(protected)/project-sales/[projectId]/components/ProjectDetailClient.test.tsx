@@ -122,6 +122,8 @@ vi.mock('../../_shared/hooks/useProjects', () => ({
   },
   useProject: () => ({ data: projectFixture, isLoading: false, isError: false }),
   useChangeProjectStatus: () => ({ mutate: changeStatus, isPending: false }),
+  useSetProjectOutcome: () => ({ mutate: vi.fn(), isPending: false }),
+  useQuotationLossReasons: () => ({ data: [{ value: 'price', label: 'Price' }] }),
   useDeleteProject: () => ({ mutateAsync: deleteProject }),
   useUpdateProject: () => ({ mutate: vi.fn(), mutateAsync: updateProject, isPending: false }),
   useCollaborators: () => ({ data: [], isLoading: false }),
@@ -263,8 +265,12 @@ describe('the project header', () => {
     renderDetail();
 
     expect(screen.getByText('Quoted')).toBeInTheDocument();
-    // The stage dropdown is gone: SearchableSelect exposes role=combobox.
-    expect(screen.queryByRole('combobox')).toBeNull();
+    // The stage dropdown is gone: SearchableSelect exposes role=combobox. The only combobox a
+    // manager sees is the Critical card's Discount approver (PS-QUOTE-RULES), which sets who
+    // approves discounts, not the stage.
+    expect(
+      screen.queryAllByRole('combobox').filter((el) => el.id !== 'discount-approver'),
+    ).toHaveLength(0);
   });
 
   it('carries exactly one action, with everything else behind the overflow', () => {
@@ -355,10 +361,9 @@ describe('the project header', () => {
     const lost = await screen.findByRole('menuitem', { name: 'Mark lost' });
     fireEvent.click(lost);
 
-    expect(changeStatus).toHaveBeenCalledWith(
-      { projectId: 'p1', toStatusId: 's-lost' },
-      expect.anything(),
-    );
+    // PROJECT-OUTCOME-SINGLE FE1: Mark lost asks for a reason first; nothing moves yet.
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(changeStatus).not.toHaveBeenCalled();
   });
 
   it('offers no move at all from a final rung, rather than a button the server rejects', () => {

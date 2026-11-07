@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.services.scm.front_planning_engine import RESERVE_BUFFER_DAYS
+from tests._borrow_mode import borrow_from_order_on
 from app.services.scm.supply_assignment import month_key
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
@@ -51,8 +52,11 @@ TODAY = date.today()
 DEFAULT_WINDOW = TODAY + timedelta(days=90 + RESERVE_BUFFER_DAYS)
 
 
-def _client(scm_app, *permissions):
-    """`test_stock_debt_routes._client` with several permissions on the one role."""
+def _client(scm_app, *permissions, borrow_from_order: bool = True):
+    """`test_stock_debt_routes._client` with several permissions on the one role.
+
+    OI-RESERVE-USED-ROW (owner, 4 Nov 2026): the view lends only while "Borrow from another
+    order" is on, so every lending test here describes the ON state and says so."""
     app, db, gcu, gcuak = scm_app
     ensure_reference_data(db)
     uid = seed_user(db, None)
@@ -81,6 +85,8 @@ def _client(scm_app, *permissions):
 
     db.add(UserRoleAssignment(user_id=uid, role_id=role_id))
     db.flush()
+    if borrow_from_order:
+        borrow_from_order_on(db)
     as_user(app, gcu, gcuak, uid)
     return app, db, uid
 
@@ -232,6 +238,32 @@ def test_a_landed_pin_beyond_the_window_lends_to_the_nearer_line(scm_app):
         ("SO396071", 32), ("SO381065", 56),
     }
     assert floor["free_qty"] == 0
+
+
+def test_with_borrow_from_another_order_off_no_line_lends(scm_app):
+    """OI-RESERVE-USED-ROW (owner, 4 Nov 2026, answer (a)): the Stock Debt view follows the
+    "Borrow from another order" switch (`system_settings.borrow_from_order_enabled`). Off, the
+    default: the far line keeps all 88 of its landed goods pinned, the near line reads short 32,
+    and there is no "Lent to" and no `order_back`. The case is the ON test's above."""
+    app, db, _uid = _client(scm_app, VIEW, borrow_from_order=False)
+    far_due = DEFAULT_WINDOW + timedelta(days=60)
+    world = _owner_case(db, far_due=far_due)
+    product = world["product"]
+
+    with TestClient(app) as c:
+        near_cell = _cell(c, product, month_key(TODAY + timedelta(days=20)))
+        far_cell = _cell(c, product, month_key(far_due))
+
+    near = _by_so(near_cell, "SO396071")
+    assert near["status"] == "short"
+    assert near["short_qty"] == 32
+    assert all(entry.get("lent_from_so_number") is None for entry in near["assigned_from"])
+
+    far = _by_so(far_cell, "SO381065")
+    assert far["status"] == "pinned"
+    assert far["lent_qty"] == 0
+    assert far["assigned_qty"] == 88
+    assert [entry["kind"] for entry in far["assigned_from"]] == ["on_hand"]
 
 
 def test_a_landed_pin_inside_the_window_stays_pinned(scm_app):

@@ -35,7 +35,7 @@ KEY = {"X-API-Key": "k"}
 PERIOD = {"date_from": "2026-09-01", "date_to": "2026-09-30"}
 GRANT = "chatbot.analytics"
 DEALER_MESSAGE = "That breakdown is not available for your account."
-NO_ASKS = "No asks in that period. Chat data starts 5 Sep 2026."
+NO_ASKS = "No asks in that period. Chat data starts 05/09/2026."
 
 
 def _staff(db, keys=(GRANT,)):

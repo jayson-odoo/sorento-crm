@@ -23,6 +23,7 @@ from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.services import document_relations as relations
 from app.services.error_handler import AppException
+from app.services.scm.so_party import so_parties, with_party
 from app.services.uuid_path_param import validate_uuid_path
 
 #: Gates every outstanding figure on this surface. The owner chose no separate slug (card Q2);
@@ -231,7 +232,15 @@ def get_document_or_404(db: Session, document_id: str) -> BillingDocument:
 
 def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str, Any]:
     lines = list(doc.lines)  # ordered by line_no
-    line_ids = [line.sales_order_line_id for line in lines if line.sales_order_line_id]
+    # DOC-RELATIONS: sales orders follow the SO view slug, on the lines as in the header list
+    # below (security review, OI-UX-FILTER-SNAPSHOT): a finance-only viewer gets no order id,
+    # customer or project from a line either.
+    can_view_orders = relations.can_view(db, user_id, relations.SALES_ORDER)
+    line_ids = (
+        [line.sales_order_line_id for line in lines if line.sales_order_line_id]
+        if can_view_orders
+        else []
+    )
     orders_by_line: dict[str, dict[str, str]] = {}
     if line_ids:
         for line_id, order_id, so_number in (
@@ -240,6 +249,10 @@ def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str
             .filter(SalesOrderLine.id.in_(line_ids))
         ):
             orders_by_line[str(line_id)] = {"id": str(order_id), "doc_no": so_number}
+        # OI-UX-FILTER-SNAPSHOT: a sales order named here also names its customer and project.
+        order_parties = so_parties(db, ids=[o["id"] for o in orders_by_line.values()])
+        for order in orders_by_line.values():
+            with_party(order, order_parties, order["id"])
     product_ids = {line.product_id for line in lines if line.product_id}
     product_names = {}
     if product_ids:
@@ -262,9 +275,12 @@ def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str
     linked = relations.relations_for_billing_document(db, doc)
     sales_orders = (
         [{"id": o["id"], "doc_no": o["doc_no"]} for o in linked["sales_orders"]]
-        if relations.can_view(db, user_id, relations.SALES_ORDER)
+        if can_view_orders
         else []
     )
+    header_parties = so_parties(db, ids=[o["id"] for o in sales_orders])
+    for order in sales_orders:
+        with_party(order, header_parties, order["id"])
     sales_orders.sort(key=lambda o: o["doc_no"])
     delivery_orders = (
         [

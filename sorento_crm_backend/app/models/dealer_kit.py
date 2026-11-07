@@ -722,6 +722,11 @@ class TagTemplate(Base, CompanyScopedMixin):
     __tablename__ = "tag_template"
     __table_args__ = (
         Index("ix_dealer_kit_tag_template_family", "family"),
+        # PRICETAG-COMBO-FORMAT: hand-picked; NULL = unset (offered on LP and SP lines).
+        CheckConstraint(
+            "price_type IN ('list','selling','both')",
+            name="ck_dealer_kit_tag_template_price_type",
+        ),
         {"schema": SCHEMA},
     )
 
@@ -730,6 +735,7 @@ class TagTemplate(Base, CompanyScopedMixin):
     family = Column(String(50), nullable=False)
     doc = Column(JSONB, nullable=False)
     print_size = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    price_type = Column(String(16), nullable=True)
     published_version_id = Column(
         UUID(as_uuid=False),
         ForeignKey(
@@ -749,6 +755,13 @@ class TagTemplate(Base, CompanyScopedMixin):
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
+    # TAG-TEMPLATE-DELETE-CONFIRM: Delete stamps this instead of removing the row, so versions,
+    # product/combo links and request lines survive and a restore is `archived_at = NULL`.
+    # Archived templates are hidden from every list and picker.
+    archived_at = Column(DateTime(timezone=False), nullable=True)
+    # TAG-TEMPLATE-DUPLICATE item 6: the list's shared manual (drag) order, its default order.
+    # Numbered within the company; NULL sorts last (created_at breaks the tie).
+    sort_order = Column(Integer, nullable=True)
 
     published_version = relationship(
         "TagTemplateVersion", foreign_keys=[published_version_id]
@@ -815,6 +828,19 @@ class ProductTagTemplate(Base):
             "product_id", "template_id", name="uq_dealer_kit_product_tag_template"
         ),
         Index("ix_dealer_kit_product_tag_template_template_id", "template_id"),
+        # PRICETAG-COMBO-FORMAT: at most one default LP and one default SP link per product.
+        Index(
+            "uq_dealer_kit_product_tag_template_default_list",
+            "product_id",
+            unique=True,
+            postgresql_where=text("default_list"),
+        ),
+        Index(
+            "uq_dealer_kit_product_tag_template_default_selling",
+            "product_id",
+            unique=True,
+            postgresql_where=text("default_selling"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -829,7 +855,51 @@ class ProductTagTemplate(Base):
         ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # The link preselected on an LP / SP line. A lone fitting link is implicitly the default.
+    default_list = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    default_selling = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     # String, not UUID - same reason as ``TagTemplateVersion.created_by``.
+    created_by = Column(String, nullable=True)
+    created_at = _created_at()
+
+
+class ComboTagTemplate(Base):
+    """A tag template a combo may print with (PRICETAG-LPSP), same shape as
+    ``ProductTagTemplate``. Not company-scoped: reachable through its combo (scoped via
+    the combo's host product) and its template. CASCADE on both ends."""
+
+    __tablename__ = "combo_tag_template"
+    __table_args__ = (
+        UniqueConstraint("combo_id", "template_id", name="uq_dealer_kit_combo_tag_template"),
+        Index("ix_dealer_kit_combo_tag_template_template_id", "template_id"),
+        Index(
+            "uq_dealer_kit_combo_tag_template_default_list",
+            "combo_id",
+            unique=True,
+            postgresql_where=text("default_list"),
+        ),
+        Index(
+            "uq_dealer_kit_combo_tag_template_default_selling",
+            "combo_id",
+            unique=True,
+            postgresql_where=text("default_selling"),
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    combo_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_combos.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    default_list = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    default_selling = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_by = Column(String, nullable=True)
     created_at = _created_at()
 

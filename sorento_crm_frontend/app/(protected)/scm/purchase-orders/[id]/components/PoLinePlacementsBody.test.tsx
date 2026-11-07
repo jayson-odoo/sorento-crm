@@ -88,6 +88,31 @@ describe('PoLinePlacementsBody', () => {
     expect(within(row).getByText('40')).toBeInTheDocument();
   });
 
+  it('names the dedicated order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          dedicated_to: [
+            {
+              so_number: 'SO391853',
+              customer_name: 'Maju Debtor',
+              project_label: 'Tuju Residences',
+              reserved: 40,
+              unplaced: 40,
+              source: 'po_upload',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    const row = screen.getByText('SO391853').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Maju Debtor')).toBeInTheDocument();
+    expect(within(row).getByText('Tuju Residences')).toBeInTheDocument();
+  });
+
   it('never renders a Needed at header', () => {
     renderWithClient(<PoLinePlacementsBody allocation={LINE} />);
 
@@ -123,6 +148,8 @@ describe('PoLinePlacementsBody', () => {
               inquiry_no: 'OI-000001',
               so_number: 'SO416191',
               customer: 'YOTU BUILDER SDN BHD',
+              customer_name: 'YOTU BUILDER SDN BHD',
+              project_label: null,
               agent: 'CONTACT N',
               qty: 6,
               needed_at: 'BRW',
@@ -138,5 +165,100 @@ describe('PoLinePlacementsBody', () => {
     expect(screen.getByText('YOTU BUILDER SDN BHD')).toBeInTheDocument();
     expect(screen.getByText('Location differs')).toBeInTheDocument();
     expect(screen.queryByText(/line-1/)).toBeNull();
+  });
+
+  it('never prints an inquiry\'s project title as its customer (OI-UX-FILTER-SNAPSHOT)', () => {
+    // No issuing-party customer and no synced sales order: the combined `customer` label is
+    // the project title alone, which already sits under Project.
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          dedicated_to: [],
+          placements: [
+            {
+              inquiry_no: 'OI-000002',
+              so_number: 'ZZT-PSO-1',
+              customer: 'ZZT TOWER',
+              customer_name: null,
+              project_label: 'ZZT TOWER',
+              agent: null,
+              qty: 4,
+              needed_at: null,
+              location_differs: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('OI-000002')).toBeInTheDocument();
+    expect(screen.getAllByText('ZZT TOWER')).toHaveLength(1);
+  });
+
+  // PO-LINK-HISTORY (card 5): who linked an order-inquiry row and when; a dash elsewhere.
+  const inquiry = (extra: Record<string, unknown>) => ({
+    inquiry_no: 'OI-000003',
+    so_number: 'SO416191',
+    customer: null,
+    customer_name: null,
+    project_label: null,
+    agent: null,
+    qty: 6,
+    needed_at: null,
+    location_differs: false,
+    ...extra,
+  });
+
+  it('fits the dialog at 1280: the columns sum to no more than its content width', () => {
+    // 95vw at 1280 less the body's 2 x 24px padding is ~1168px; every column has a fixed size.
+    renderWithClient(<PoLinePlacementsBody allocation={LINE} />);
+
+    const widths = screen
+      .getAllByRole('columnheader')
+      .map((h) => parseFloat((h as HTMLElement).style.width || '0'));
+    expect(widths.every((w) => w > 0)).toBe(true);
+    expect(widths.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1160);
+  });
+
+  it('names who linked an inquiry row and when', () => {
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          placements: [
+            ...LINE.placements,
+            // Naive UTC: 06:05 UTC is 2:05 pm in Malaysia.
+            inquiry({ linked_at: '2026-09-04T06:05:00', linked_by_name: 'Aisyah', auto: false }),
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Linked' })).toBeInTheDocument();
+    const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Aisyah')).toBeInTheDocument();
+    expect(within(row).getByText('04/09/2026, 2:05 pm')).toBeInTheDocument();
+    // The SPO row and the dedication carry no link of this kind.
+    const spoRow = screen.getByText('CRM-SPO-2026/08-0007').closest('tr') as HTMLElement;
+    expect(within(spoRow).queryByText(/04\/09\/2026/)).toBeNull();
+  });
+
+  it('says Auto for a link the cascade made', () => {
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          dedicated_to: [],
+          placements: [
+            inquiry({ linked_at: '2026-09-04T06:05:00', linked_by_name: null, auto: true }),
+          ],
+        }}
+      />,
+    );
+
+    const row = screen.getByText('OI-000003').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Auto')).toBeInTheDocument();
+    expect(within(row).getByText('04/09/2026, 2:05 pm')).toBeInTheDocument();
   });
 });

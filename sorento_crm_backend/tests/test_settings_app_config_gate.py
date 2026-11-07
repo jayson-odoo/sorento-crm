@@ -63,6 +63,13 @@ EXPECTED_FIELDS = {
     # filling it do not hold `user_management.settings.view`. One boolean, not
     # sensitive. (The quotation switch was removed 16 Oct.)
     "sample_request_require_project",
+    # AC-LINK-CRM-UI (owner, 5 Nov): the Stock Debt drill hides its PO actions while the
+    # "AutoCount links from Stock Debt" switch is off, and the purchasing user who links holds
+    # no `user_management.settings.view`. One boolean, not sensitive.
+    "stock_debt_po_link_enabled",
+    # PS-QUOTE-MATRIX: the column-removal countdown reads the deferred-action window; a
+    # number of seconds is not sensitive.
+    "deferred_delete_seconds",
 }
 
 # Named individually rather than derived, so the test reads as the list of things
@@ -209,6 +216,10 @@ def test_app_config_open_to_a_caller_with_zero_permissions(api, db):
         "oi_reserve_default_pool_warehouse_id": None,
         # SR-CORE: the project switch ships OFF (soft transition).
         "sample_request_require_project": False,
+        # AC-LINK-CRM-UI: ships OFF.
+        "stock_debt_po_link_enabled": False,
+        # The column default (10), the same value the admin GET returns.
+        "deferred_delete_seconds": 10,
     }
 
 
@@ -237,6 +248,18 @@ def test_ac_sr_20_app_config_has_no_quotation_switch(api, db):
     assert "sample_request_require_quotation" not in body
 
 
+def test_app_config_carries_the_deferred_delete_window_the_admin_get_returns(api, db):
+    client, allow = api
+    _seed_settings(db)
+    from app.models.user import SystemSetting
+
+    db.query(SystemSetting).first().deferred_delete_seconds = 25
+    db.commit()
+    assert client.get(APP_CONFIG_ENDPOINT).json()["deferred_delete_seconds"] == 25
+    allow.add(PERMISSION)
+    assert client.get(SETTINGS_ENDPOINT).json()["settings"]["deferred_delete_seconds"] == 25
+
+
 def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
     client, _allow = api
     from app.models.user import SystemSetting
@@ -256,6 +279,8 @@ def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
     # SR-CORE: a missing row reads the switches OFF, the same as their column default,
     # so a fresh install never demands a project.
     expected["sample_request_require_project"] = False
+    expected["stock_debt_po_link_enabled"] = False
+    expected["deferred_delete_seconds"] = 10
     assert resp.json() == expected
 
 

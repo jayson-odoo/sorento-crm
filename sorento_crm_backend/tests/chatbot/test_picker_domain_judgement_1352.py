@@ -370,7 +370,7 @@ def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, mon
         attributes=grants,
     )
     reply = (result.reply or {}).get("text") or ""
-    assert captured == [] and "Undelivered orders or pending delivery?" in reply, (captured, reply)
+    assert captured == [] and "Sales order or delivery order?" in reply, (captured, reply)
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,
@@ -412,7 +412,7 @@ def test_c_outstanding_customer_pick_then_the_document_question(session_factory,
         attributes=["sales_orders.outstanding"],
     )
     reply = (result.reply or {}).get("text") or ""
-    assert captured == [] and "Undelivered orders or pending delivery?" in reply, (captured, reply)
+    assert captured == [] and "Sales order or delivery order?" in reply, (captured, reply)
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,

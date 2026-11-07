@@ -979,6 +979,10 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     from_po_line_ref = Column(String(255), nullable=True)
     #: The source purchase order's own document number, alongside the ref.
     from_po_number = Column(String(100), nullable=True)
+    #: AC-LINK-CRM-UI: AutoCount's own line number (`Seq`, the canonical `line_number`), the
+    #: number staff read on the PO in AutoCount. Null until the line is next synced; readers
+    #: fall back to the line's position in the document.
+    line_no = Column(Integer, nullable=True)
     # The cross-book case of a sales-order line reference - the sales order
     # lives in ANOTHER AutoCount database, so its key cannot resolve here.
     # Recorded raw, verbatim from the payload's `from_so_external` object -

@@ -71,6 +71,8 @@ class UserRead:
     combine: Callable[[ToolResult, ToolResult], ToolResult] | None = None
     #: True = for the linked user themself: not offered, and refused, when another operator is acting.
     linked_only: bool = False
+    #: (db, ctx) -> may this turn use it at all, beyond the slug; None = always. Checked when offering and running.
+    available: Callable[[Any, Any], bool] | None = None
 
 
 def holds(db, user_id: str, permission: str | tuple[str, ...]) -> bool:
@@ -477,6 +479,7 @@ def permitted_user_reads(db, ctx) -> list[UserRead]:
         r for r in USER_READS.values()
         if not panel_closed(r.name) and holds_ctx(db, ctx, r.user_permission)
         and not (r.linked_only and len(people(ctx)) > 1)
+        and (r.available is None or r.available(db, ctx))
     ]
 
 
@@ -488,6 +491,7 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     if (
         panel_closed(name) or not holds_ctx(db, ctx, read.user_permission)
         or (read.linked_only and len(people(ctx)) > 1)
+        or (read.available is not None and not read.available(db, ctx))
     ):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not isinstance(args, dict):
@@ -2671,3 +2675,9 @@ WRITES[CREATE_TICKET] = WriteDef(
         "Say this is a proposal and that confirming creates a draft ticket."
     ),
 )
+
+
+# ------------------------------------------------------------------ AI-QUERY-CORE: the general read
+
+# Registers `crm_query` and `crm_describe` in USER_READS; imported last because it builds on this module.
+from app.services.chatbot.agent import query_tools  # noqa: E402,F401

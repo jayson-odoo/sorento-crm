@@ -202,7 +202,7 @@ function header(over: Record<string, unknown> = {}) {
       show_aux: true,
     },
     filters_label:
-      'Book Project · All locations · Delivery 01/01/2023 to 31/05/2027 · Only in debt · Stock and PO columns',
+      'Book Project · All locations · Delivery 01/01/2023 - 31/05/2027 · Only in debt · Stock and PO columns',
     months: ['2026-10', '2027-01'],
     tba_month: '2030-01',
     totals: {
@@ -354,7 +354,7 @@ describe('AC-F3 header and meta', () => {
     expect(page).toHaveTextContent('11:53');
     expect(page).toHaveTextContent('Jayson Foundryx');
     expect(page).toHaveTextContent('Project');
-    expect(page).toHaveTextContent('01/01/2023 to 31/05/2027');
+    expect(page).toHaveTextContent('01/01/2023 - 31/05/2027');
     expect(page).toHaveTextContent(/Only in debt/i);
     expect(page).toHaveTextContent('550 products');
     expect(page).toHaveTextContent('5 decided');

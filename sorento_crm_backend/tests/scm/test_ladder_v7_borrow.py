@@ -843,7 +843,7 @@ def test_the_step_two_refusal_names_the_window_date():
         window = date.today() + timedelta(days=WINDOW_DAY)
 
     assert step["answer"] == "no"
-    assert f"{window.day} " in step["why"], step["why"]
+    assert window.strftime("%d/%m/%Y") in step["why"], step["why"]
     assert str(window.year) in step["why"], step["why"]
 
 

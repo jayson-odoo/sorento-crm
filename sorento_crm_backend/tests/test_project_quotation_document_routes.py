@@ -47,6 +47,11 @@ from app.services import project_seed_service
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-qdocroute"
 
 # The quotation router mounts under the project-sales module prefix, so the paths the
@@ -385,7 +390,7 @@ def test_a_document_reads_back_with_its_number_recipient_and_a_total_that_ignore
     client, db, _company_id, user_id, project, party = api
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
     db.commit()
 
     document = _create_document(
@@ -716,7 +721,7 @@ def test_reissuing_stamps_a_then_b_which_is_what_the_customer_quotes_back(api):
     client, db, _company_id, user_id, project, _party = api
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
     db.commit()
 
     root = f"{BASE}/projects/{project.id}/quotation-documents"
@@ -783,7 +788,7 @@ def test_the_customers_answer_reaches_the_wire_on_the_document_and_in_the_list(a
     client, db, _company_id, _user_id, project, _party = api
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
     db.commit()
 
     root = f"{BASE}/projects/{project.id}/quotation-documents"
@@ -860,7 +865,7 @@ def test_the_line_endpoint_refuses_to_edit_a_version_the_customer_already_holds(
     client, db, _company_id, _user_id, project, _party = api
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
     db.commit()
 
     root = f"{BASE}/projects/{project.id}/quotation-documents"
@@ -901,7 +906,7 @@ def _issue_one(client, db, project, *, price: str = PRICED_RATE, qty: str = "4")
     """A signed, issued document with one priced line. Returns ``(root, document, issue)``."""
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, FIXTURE_LIST_PRICE)
     db.commit()
 
     root = f"{BASE}/projects/{project.id}/quotation-documents"

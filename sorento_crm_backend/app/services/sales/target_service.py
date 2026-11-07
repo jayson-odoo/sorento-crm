@@ -1735,6 +1735,8 @@ def list_all_targets(
 def counts_label(db: Session, basis: str, company_id: str) -> str:
     if basis == "ordered":
         return "Ordered"
+    if basis == "invoiced":
+        return "Invoiced"
     return "Delivered (by DO date)" if ach.any_do_linked(db, company_id) else "Delivered"
 
 
@@ -1754,10 +1756,18 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
     accounts = _accounts_by_target(db, [target.id])[target.id] if target.subject_kind == "dealer" else []
     replaced = _replacing_reached(db, target, periods)
 
+    labels = [(c.id, account_label(c)) for c in accounts]
+
     def period_out(p: SalesTargetPeriod) -> dict:
         payout = period_payout(target, p, engine_tiers, tier_starts, by_account.get(p.id, {}), ratios)
         if replaced.get(p.id):
             payout = _ZERO_PAYOUT
+        ladder = tier_ladder(engine_tiers, tier_starts, p, target, ratios, labels)
+        reached_rung = (
+            ladder[payout.tier_reached - 1]
+            if payout.tier_reached and payout.tier_reached <= len(ladder)
+            else None
+        )
         ratio = ratio_on(ratios, p.period_end) if target.threshold_unit == "points" else None
         value = achieved.get(p.id, Decimal("0"))
         # A points figure is shown in RM at the period's ratio, so it compares with sales.
@@ -1777,6 +1787,10 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
                 for line in payout.lines
             ],
             "tier_reached": payout.tier_reached,
+            # The reached main tier's rate(s), one per account on per-account rates
+            # (TARGET-COMMISSION-VIEW); empty below the first tier.
+            "tier_rates": reached_rung["rates"] if reached_rung else [],
+            "tier_ladder": ladder,
             "point_ratio": _num(ratio),
             "ratio_missing": payout.ratio_missing,
             "accounts": [
@@ -1844,6 +1858,9 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         children_out.sort(key=lambda c: c["label"])
         without_figure.sort(key=lambda m: m["label"])
 
+    periods_out = [period_out(p) for p in periods]
+    commission_to_date, commission_current = _earned(target, periods_out, on)
+
     return {
         "id": target.id,
         "target_no": target.target_no,
@@ -1868,7 +1885,9 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
             {"id": item_id, "kind": kind, "label": label}
             for item_id, kind, label in _scope_labels(db, [target.id])[target.id]
         ],
-        "periods": [period_out(p) for p in periods],
+        "periods": periods_out,
+        "commission_to_date": commission_to_date,
+        "commission_current": commission_current,
         "children": children_out,
         "members_without_figure": without_figure,
         "child_count": child_count,
@@ -1906,6 +1925,105 @@ def target_detail(db: Session, target: SalesTarget, *, on: Optional[date] = None
         "created_at": target.created_at,
         "updated_at": target.updated_at,
     }
+
+
+def _earned(target: SalesTarget, periods_out: List[dict], on: date) -> Tuple[Optional[float], Optional[float]]:
+    """`(earned to date, current period so far)`: commission + bonus of the periods that ended
+    before `on`, and of the period containing `on` (owner Q4, 4 Nov: the current period can
+    still change, so it is shown apart). Both None on a target with no commission."""
+    if (target.commission_method or "none") == "none":
+        return None, None
+
+    def paid(p: dict) -> Decimal:
+        return Decimal(str(p["commission_earned"] or 0)) + Decimal(str(p["bonus_earned"] or 0))
+
+    ended = sum((paid(p) for p in periods_out if p["period_end"] < on), Decimal("0"))
+    current = sum((paid(p) for p in periods_out if p["period_start"] <= on <= p["period_end"]), Decimal("0"))
+    return float(ended), float(current)
+
+
+def commission_statements(db: Session, targets: List[SalesTarget], *, on: Optional[date] = None) -> List[dict]:
+    """The commission statement of each target (TARGET-COMMISSION-VIEW): the target page's own
+    figures (`target_detail`, one computation with the screen) plus, per period, the documents
+    behind "Achieved" and the tier table used.
+
+    A document's amount is what its lines added to that period under the target's basis, read
+    from the achievement statement itself (`achievement_service.achieved_by_period_and_line`),
+    so a period's documents add up to its Achieved to the cent. Ordered and Delivered count
+    sales orders: one row per sales order, dated by the order (on Delivered the DO date decides
+    the period, the amount is the part delivered in it). Invoiced counts billing documents: one
+    row per invoice, cash sale, debit note or credit note (negative), on its own date."""
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    on = on or _today()
+    out: List[dict] = []
+    for target in targets:
+        detail = target_detail(db, target, on=on)
+        periods = _periods(db, target.id)
+        lines = ach.achieved_by_period_and_line(
+            db, _specs(db, target.company_id, [(target, p) for p in periods]), target.company_id
+        )
+        ids = {line_id for by_line in lines.values() for _cust, line_id in by_line}
+        # Each counted id -> (document key, doc no., date, customer id, code kept as sent).
+        doc_of: Dict[str, tuple] = {}
+        if ids and target.basis == "invoiced":
+            # Invoiced: the id is the billing document itself (TARGET-INVOICED).
+            from app.models.finance import BillingDocument
+
+            for d in db.query(BillingDocument).filter(BillingDocument.id.in_(ids)):
+                doc_of[str(d.id)] = (str(d.id), d.doc_no, d.doc_date, d.customer_id, d.debtor_code)
+        elif ids:
+            # Ordered / Delivered: the id is a sales order line; one row per sales order.
+            for sol_id, order in (
+                db.query(SalesOrderLine.id, SalesOrder)
+                .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+                .filter(SalesOrderLine.id.in_(ids))
+            ):
+                doc_of[str(sol_id)] = (
+                    order.id, order.so_number, order.order_date, order.customer_id, order.debtor_code
+                )
+        customer_ids = {d[3] for d in doc_of.values() if d[3]}
+        codes = (
+            {c.id: c.customer_code for c in db.query(Customer).filter(Customer.id.in_(customer_ids))}
+            if customer_ids
+            else {}
+        )
+        for row in detail["periods"]:
+            docs: Dict[str, dict] = {}
+            for (_cust, line_id), amount in lines.get(row["id"], {}).items():
+                found = doc_of.get(line_id)
+                if found is None:
+                    continue
+                key, doc_no, doc_date, customer_id, debtor_code = found
+                doc = docs.setdefault(
+                    key,
+                    {
+                        "doc_no": doc_no,
+                        "doc_date": doc_date,
+                        "account_code": codes.get(customer_id) or debtor_code or "",
+                        "amount": Decimal("0"),
+                    },
+                )
+                doc["amount"] += amount
+            row["documents"] = [
+                {**d, "amount": float(d["amount"])}
+                for d in sorted(docs.values(), key=lambda d: (d["doc_date"], d["doc_no"]))
+                if d["amount"]
+            ]
+            row["tier_table"] = [
+                {
+                    "tier": rung["tier"],
+                    "from_pct": _num(rung["from_pct"]),
+                    "threshold_rm": _r2(rung["threshold_rm"]),
+                    "rates": rung["rates"],
+                    "additional_rates": rung["additional_rates"],
+                    # Main tiers run in threshold order, so every tier up to the one reached is.
+                    "reached": row["tier_reached"] is not None and rung["tier"] <= row["tier_reached"],
+                }
+                for rung in row["tier_ladder"]
+            ]
+        out.append(detail)
+    return out
 
 
 def _replaced_by_out(db: Session, target: SalesTarget) -> Optional[dict]:
@@ -2271,7 +2389,9 @@ def period_progress(
                 "is_current": is_current,
                 "metric": target.metric,
                 "threshold_unit": unit,
-                "provisional": target.subject_kind == "dealer",
+                # The SO figure stood in for billing (dealer plan Q3): an Invoiced target counts
+                # the billing documents themselves, net of tax, so it is never provisional.
+                "provisional": target.subject_kind == "dealer" and target.basis != "invoiced",
                 "accounts": [{"code": c.customer_code, "label": account_label(c)} for c in dealer_accounts],
                 "target_value": _r2(figure),
                 "target_points": _r2(period.target_value) if unit == "points" else None,

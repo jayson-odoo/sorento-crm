@@ -186,6 +186,7 @@ from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
 from app.services.identifier_resolver import is_uuid, resolve_identifier
+from app.services.tag_description import clean_description
 
 
 # Lifted out of `bulk_import_products` (PLAN-autocount-pull-review.md, P11) so the
@@ -1162,6 +1163,10 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        if data.get("price_tag_description") is not None:
+            data["price_tag_description"] = clean_description(
+                data["price_tag_description"], "Price tag description"
+            )
         if data.get("item_class_id"):
             from app.models.base import get_company_scope
             from app.services.company_scope import resolve_write_company_id
@@ -1213,6 +1218,10 @@ class ProductService:
         product = self.get_product(product_id)
         
         update_data = product_data.model_dump(exclude_unset=True)
+        if update_data.get("price_tag_description") is not None:
+            update_data["price_tag_description"] = clean_description(
+                update_data["price_tag_description"], "Price tag description"
+            )
         if update_data.get("item_class_id"):
             self._assert_item_class(update_data["item_class_id"], product.company_id)
         if update_data:
@@ -1290,6 +1299,7 @@ class ProductService:
         self._reject_if_companion_rule_dependency(product_id)
         self._reject_if_new_product_application_link(product_id)
         self._reject_if_on_quotation(product_id)
+        self._reject_if_listed_as_free_item(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1321,6 +1331,35 @@ class ProductService:
             raise handle_conflict(
                 f"This product was opened for new product application {row[0]}. "
                 "Undo that line first."
+            )
+
+    def _reject_if_listed_as_free_item(self, product_id: str) -> None:
+        """PRICETAG-ACCESSORIES: a product listed as another product's or a combo's free item holds
+        it (RESTRICT). Answer with a 409 naming the holder by code instead of the bare
+        IntegrityError's 500."""
+        from app.models.accessory import ProductAccessory, ProductComboAccessory
+        from app.models.product_combo import ProductCombo
+
+        holder = (
+            self.db.query(Product.product_code)
+            .join(ProductAccessory, ProductAccessory.product_id == Product.id)
+            .filter(ProductAccessory.item_product_id == product_id)
+            .first()
+        )
+        if holder is not None:
+            raise handle_conflict(
+                f"This product is listed as an accessory of {holder[0]}. Remove it there first."
+            )
+        combo = (
+            self.db.query(Product.product_code, ProductCombo.name)
+            .join(ProductCombo, ProductCombo.host_product_id == Product.id)
+            .join(ProductComboAccessory, ProductComboAccessory.combo_id == ProductCombo.id)
+            .filter(ProductComboAccessory.item_product_id == product_id)
+            .first()
+        )
+        if combo is not None:
+            raise handle_conflict(
+                f'This product is a free item of combo "{combo[1]}" on {combo[0]}. Remove it there first.'
             )
 
     def _reject_if_on_quotation(self, product_id) -> None:
@@ -3347,8 +3386,13 @@ class ProductAttachmentService:
         product_attachment_data: ProductAttachmentCreate,
         created_by: Optional[str] = None,
         company_id: Optional[str] = None,
+        before_commit=None,
     ):
         """Create or refresh a product attachment relationship.
+
+        `before_commit(row)` runs on a NEW link only, after the flush and before the commit, so
+        a caller's audit row lands in the same transaction as the link (HOTFIX-ATTACH-AUDIT: a
+        failed audit insert must not leave a committed link behind a 500).
 
         TCK-2026-000020: external n8n intake re-posts the same (product_id,
         attachment_id) when an attachment is replaced. Switch from hard
@@ -3415,6 +3459,8 @@ class ProductAttachmentService:
         # back, and a refused choice (a PDF) must leave no link behind.
         self.db.flush()
         self._apply_brochure_choice(product_attachment, chosen)
+        if before_commit is not None:
+            before_commit(product_attachment)
         self.db.commit()
         self.db.refresh(product_attachment)
         self._notify_if_drawing(product_attachment)

@@ -44,7 +44,7 @@ function asPeriod(value: ReportParamValue | undefined, fallback: ReportPeriod): 
 /** This year where the users are, which is the year the report opens on. */
 function malaysiaYear(): number {
   return Number(
-    new Intl.DateTimeFormat('en-GB', {
+    new Intl.DateTimeFormat('en-GB', { // date-format-ok: extracts the current year number for a default filter, not shown
       timeZone: 'Asia/Kuala_Lumpur',
       year: 'numeric',
     }).format(new Date()),

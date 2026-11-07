@@ -337,13 +337,13 @@ def test_review_s1_moves_on_the_day_the_current_row_began_suggests_a_date_that_w
     )
     assert res.status_code == 422, res.text
     assert "on or after the Moves on date" in res.text
-    suggested = re.search(r"pick (\d{4}-\d{2}-\d{2}) or later", res.text)
+    suggested = re.search(r"pick (\d{2}/\d{2}/\d{4}) or later", res.text)
     assert suggested is not None, res.text
-    assert suggested.group(1) == "2026-10-16"
+    assert suggested.group(1) == "16/10/2026"
 
     retry = client.put(
         f"{BASE}/{west['id']}/members",
-        json={"sales_agent_ids": [kim.id], "moves_on": suggested.group(1)},
+        json={"sales_agent_ids": [kim.id], "moves_on": "2026-10-16"},
     )
     assert retry.status_code == 200, retry.text
     rows = {r.sales_team_id: r for r in _membership_rows(db, kim.id)}

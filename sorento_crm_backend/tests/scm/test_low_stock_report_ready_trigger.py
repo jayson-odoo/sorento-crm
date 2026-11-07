@@ -84,7 +84,7 @@ def test_daily_run_dispatches_low_stock_report_ready(db, monkeypatch):
     assert report["low"] == 1
     assert report["rows"] == 2
     assert report["as_of"] == "2026-09-10"
-    assert report["date_label"] == "10 Sep 2026"
+    assert report["date_label"] == "10/09/2026"
 
 
 def _fail_the_run(monkeypatch, db, run_id):
@@ -251,7 +251,7 @@ def test_automation_on_the_trigger_emails_its_own_recipients_the_link(db, monkey
     sent = (
         db.query(Notification)
         .filter(Notification.type == "automation_email")
-        .filter(Notification.title == "Low stock report 10 Sep 2026: 1 low")
+        .filter(Notification.title == "Low stock report 10/09/2026: 1 low")
         .all()
     )
     assert len(sent) == 1, [n.title for n in sent]

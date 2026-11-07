@@ -39,7 +39,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
+from app.services.accessory_service import AccessoryService
 from app.services.error_handler import AppException, handle_not_found
+from app.services.tag_description import clean_description
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -74,6 +76,9 @@ def _validated_image_ext(filename: str) -> str:
             message=f"{filename} is not an image (jpg, jpeg, png or webp).",
         )
     return ext
+
+
+_clean_description = clean_description
 
 
 def _dimensions(product: Optional[Product]) -> Optional[str]:
@@ -127,7 +132,12 @@ def _serialize_image(db: Session, combo: ProductCombo) -> Optional[Dict[str, Any
     )
     if not url:
         return None
-    return {"attachment_id": attachment.id, "url": url}
+    return {
+        "attachment_id": attachment.id,
+        "url": url,
+        "file_name": attachment.original_filename,
+        "mime_type": attachment.mime_type,
+    }
 
 
 def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
@@ -137,11 +147,12 @@ def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
         "name": combo.name,
         "sort_order": combo.sort_order,
         "description": combo.description,
-        "free_items": combo.free_items,
         "list_price": combo.list_price,
         "sell_price": combo.sell_price,
         "parts": [_serialize_part(part) for part in combo.parts],
         "image": _serialize_image(db, combo),
+        # PRICETAG-ACCESSORIES: the combo's own list, the one source the old free text became.
+        "accessories": AccessoryService(db).combo_list_rows(combo.id),
         "created_at": combo.created_at,
         "updated_at": combo.updated_at,
     }
@@ -201,8 +212,16 @@ class ProductComboService:
 
     # ----------------------------------------------------------------- combos
 
-    def create(self, host_product_id: str, name: str, *, created_by: Optional[str]) -> Dict[str, Any]:
+    def create(
+        self,
+        host_product_id: str,
+        name: str,
+        *,
+        created_by: Optional[str],
+        description: Optional[str] = None,
+    ) -> Dict[str, Any]:
         self._host_or_404(host_product_id)
+        cleaned_description = _clean_description(description)
         cleaned = (name or "").strip()
         if not cleaned:
             raise AppException(status_code=422, message="A combo needs a name")
@@ -234,6 +253,7 @@ class ProductComboService:
             host_product_id=host_product_id,
             name=cleaned,
             sort_order=next_order,
+            description=cleaned_description,
             created_by=created_by,
         )
         self.db.add(combo)
@@ -265,9 +285,8 @@ class ProductComboService:
         if payload.get("sort_order") is not None:
             combo.sort_order = int(payload["sort_order"])
         # Omitted = left alone; an explicit null clears (the payload is exclude_unset).
-        for field in ("description", "free_items"):
-            if field in payload:
-                setattr(combo, field, (payload[field] or "").strip() or None)
+        if "description" in payload:
+            combo.description = _clean_description(payload["description"])
         for field in ("list_price", "sell_price"):
             if field in payload:
                 setattr(combo, field, payload[field])

@@ -3,7 +3,8 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BookImage, FileText, ListOrdered, Mail, PenLine, ScrollText } from 'lucide-react';
+import { BookImage, FileText, Mail, MessageSquareText, PenLine, ScrollText } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 /**
@@ -17,9 +18,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
  * Each trigger is a real link rather than a button that pushes. Same navigation, but it can also
  * be opened in a new tab and read by a screen reader as somewhere to go.
  *
- * Header first, then Lines (#1341). The owner: "i need this to be under 'Header' tab to align with
- * our system design", and "Lines" written over the old Scopes label. Same Header / Lines pair and
- * icons as the SPO document page; the data model still says scope.
+ * Header first (#1341). The owner: "i need this to be under 'Header' tab to align with our system
+ * design". No Lines tab (PROPOSAL-HEADER-LAYOUT, 5 Nov 2026): the lines sit on the Header tab,
+ * under the letterhead; the old /lines route redirects there.
  */
 type TabDefinition = {
   key: string;
@@ -32,10 +33,11 @@ export function quotationDocumentTabs(projectId: string, documentId: string): Ta
   const base = `/project-sales/${projectId}/quotation-documents/${documentId}`;
   return [
     { key: 'header', title: 'Header', icon: FileText, path: base },
-    { key: 'lines', title: 'Lines', icon: ListOrdered, path: `${base}/lines` },
     { key: 'cover-letter', title: 'Cover letter', icon: Mail, path: `${base}/cover-letter` },
     { key: 'terms', title: 'Terms', icon: ScrollText, path: `${base}/terms` },
     { key: 'signatures', title: 'Signatures', icon: PenLine, path: `${base}/signatures` },
+    // PS-QUOTE-MATRIX R20: the customer's notes from the sign link, ticked off once handled.
+    { key: 'feedback', title: 'Customer feedback', icon: MessageSquareText, path: `${base}/feedback` },
     // PS-SPEC-SHEET: the project catalogue printed from an issued revision.
     { key: 'spec-sheet', title: 'Spec sheet', icon: BookImage, path: `${base}/spec-sheet` },
   ];
@@ -60,9 +62,12 @@ export function quotationSiblingHref(
 export function QuotationDocumentTabs({
   projectId,
   documentId,
+  openFeedback = 0,
 }: {
   projectId: string;
   documentId: string;
+  /** Open customer feedback notes: the Customer feedback tab's badge. */
+  openFeedback?: number;
 }) {
   const pathname = usePathname();
   const tabs = React.useMemo(
@@ -87,6 +92,17 @@ export function QuotationDocumentTabs({
               <Link href={path}>
                 <Icon className="size-4" aria-hidden />
                 <span>{title}</span>
+                {key === 'feedback' && openFeedback > 0 && (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="sm"
+                    aria-label={`${openFeedback} open`}
+                    data-testid="quotation-feedback-badge"
+                  >
+                    {openFeedback}
+                  </Badge>
+                )}
               </Link>
             </TabsTrigger>
           ))}

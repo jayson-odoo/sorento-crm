@@ -52,6 +52,8 @@ class SupplyComponent(BaseModel):
     #: The donor sales order for a `group_borrow` component (section E.4): its number,
     #: line and agent, so the sheet can name who it came from. `None` on every other kind.
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     #: The donor shares this line's own sales agent - "she can authorise CS to move stock
@@ -133,6 +135,8 @@ class BorrowCandidate(BaseModel):
     #: The donor sales-order line this row names, for `group_borrow` (section E.4): its
     #: number, line, and the agent who owns it.
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     #: Addressing only, never rendered: `donor_core_line_id` re-identifies the donor's own
@@ -199,6 +203,8 @@ class SupplyLadderOption(BaseModel):
     days_late: Optional[int] = None
     #: Set on the borrow steps only - `use` draws the free pile and `buy` orders new stock.
     debt_so_number: Optional[str] = None
+    debt_customer_name: Optional[str] = None
+    debt_project_label: Optional[str] = None
     debt_month: Optional[str] = None
     chosen: bool = False
 
@@ -357,6 +363,8 @@ class ConfirmBorrowComponent(BaseModel):
     #: Round-tripped from the proposal/donor row so the order-back note can be built
     #: without a second lookup (`_borrow_shortfalls`). Display only; never validated.
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
@@ -573,6 +581,7 @@ class PlanRow(BaseModel):
     project_id: Optional[str] = None
     so_number: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     agent_code: Optional[str] = None
     agent_label: Optional[str] = None
     revision_no: int

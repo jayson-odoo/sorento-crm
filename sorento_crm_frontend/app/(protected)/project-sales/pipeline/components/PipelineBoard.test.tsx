@@ -146,7 +146,7 @@ describe('PipelineBoard', () => {
         onMove={vi.fn()}
       />,
     );
-    expect(screen.getByText('01 Jul 2026')).toBeInTheDocument();
+    expect(screen.getByText('01/07/2026')).toBeInTheDocument();
     expect(screen.getByTitle(/Next action .* overdue/i)).toBeInTheDocument();
   });
 
@@ -194,5 +194,17 @@ describe('PipelineBoard', () => {
     );
     const identified = screen.getByRole('heading', { name: 'Identified' }).closest('section');
     expect(within(identified as HTMLElement).getByText('2')).toBeInTheDocument();
+  });
+
+  it('card code and title do not underline on hover; the card tints like a grid row (PROJECTS-BOARD-VIEW-PREF)', () => {
+    render(<PipelineBoard statuses={[status()]} projects={[project()]} onMove={vi.fn()} />);
+    const link = screen.getByRole('link', { name: /Setia Alam Phase 3B/ });
+    expect(link).toHaveAttribute('href', '/project-sales/p1');
+    expect(link.className).not.toMatch(/underline/);
+    for (const el of link.querySelectorAll('*')) expect(el.className).not.toMatch(/underline/);
+    // The full title stays on hover.
+    expect(screen.getByTitle('Setia Alam Phase 3B')).toBeInTheDocument();
+    // Same hover the grid row uses (components/ui/data-grid-table.tsx).
+    expect(link.closest('li')?.className).toMatch(/hover:bg-muted\/40/);
   });
 });

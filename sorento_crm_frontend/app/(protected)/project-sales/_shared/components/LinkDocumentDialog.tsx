@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import {
   type ColumnDef,
@@ -499,7 +500,17 @@ function candidateColumns({
                   data-testid={`po-candidate-dedicated-${key}`}
                   className="inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
                 >
-                  {`Dedicated to SO ${candidate.dedicated_to}`}
+                  {`Dedicated to SO ${candidate.dedicated_to}${
+                    soCustomerProjectLabel(
+                      candidate.dedicated_customer_name,
+                      candidate.dedicated_project_label,
+                    )
+                      ? ` (${soCustomerProjectLabel(
+                          candidate.dedicated_customer_name,
+                          candidate.dedicated_project_label,
+                        )})`
+                      : ''
+                  }`}
                 </span>
               )}
               {unattributed && (
@@ -677,6 +688,8 @@ function CandidateExpandPanel({ candidate }: { candidate: OrderInquiryPoCandidat
               <thead>
                 <tr className="text-muted-foreground">
                   <th className="px-2 py-1 text-start font-medium">SO number</th>
+                  <th className="px-2 py-1 text-start font-medium">Customer</th>
+                  <th className="px-2 py-1 text-start font-medium">Project</th>
                   <th className="px-2 py-1 text-start font-medium">Item code</th>
                   <th className="px-2 py-1 text-end font-medium">Qty</th>
                   <th className="px-2 py-1 text-start font-medium">Linked on</th>
@@ -686,6 +699,12 @@ function CandidateExpandPanel({ candidate }: { candidate: OrderInquiryPoCandidat
                 {candidate.claims.map((claim, index) => (
                   <tr key={`${claim.so_number ?? ''}-${index}`} className="border-t border-border/60">
                     <td className="px-2 py-1">{claim.so_number ?? '-'}</td>
+                    <td className="max-w-48 truncate px-2 py-1" title={claim.customer_name ?? undefined}>
+                      {claim.customer_name ?? '-'}
+                    </td>
+                    <td className="max-w-48 truncate px-2 py-1" title={claim.project_label ?? undefined}>
+                      {claim.project_label ?? '-'}
+                    </td>
                     <td className="px-2 py-1">{claim.item_code ?? '-'}</td>
                     <td className="px-2 py-1 text-end tabular-nums">
                       {formatInquiryQty(claim.qty)}

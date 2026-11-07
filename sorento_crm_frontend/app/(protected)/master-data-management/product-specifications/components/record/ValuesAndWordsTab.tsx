@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ColumnDef, getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
-import { MoreHorizontal, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -15,6 +16,10 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AssetPickerDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/AssetPickerDialog';
+import { ICON_LIBRARY_QUERY_KEY, useIconLibraryQuery } from '../../hooks/useIconLibraryQuery';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
 import { SPEC_REGISTRY_QUERY_KEY } from '../../hooks/useSpecRegistryQuery';
@@ -39,6 +44,8 @@ const normaliseValue = (raw: string) => raw.trim().toLowerCase().replace(/\s+/g,
 // logged (`data-grid.stable-data.inventory.test.ts`'s own finding, M5 run 2).
 const EMPTY_STRING_ARRAY: string[] = [];
 const EMPTY_LABELS: Record<string, string> = {};
+const EMPTY_ICONS: Record<string, string[]> = {};
+const NO_ICON_IDS: string[] = [];
 
 export interface ValuesAndWordsTabProps {
   row: SpecRegistryKey;
@@ -89,6 +96,30 @@ export function ValuesAndWordsTab({
   const [newChoice, setNewChoice] = useState('');
   const [removingValue, setRemovingValue] = useState<string | null>(null);
 
+  // Feature icons (owner ruling 5 Nov 20:35): each choice carries its own ordered Dealer Kit
+  // icons. Changing them needs the Dealer Kit library (`dealer_kit.library.manage`, the gate on
+  // the asset list and the picker); without it the names still read, from the registry row.
+  const canManageIcons = useHasPermission('dealer_kit.library.manage');
+  const { isLoading: permissionsLoading } = usePermissions();
+  const { data: iconLibrary, isLoading: iconLibraryLoading } = useIconLibraryQuery(canManageIcons);
+  // Until both are known the cell cannot tell "no icons" from "not loaded yet" (crew pass).
+  const iconsLoading = permissionsLoading || (canManageIcons && iconLibraryLoading);
+  const [iconPickerFor, setIconPickerFor] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  // An icon uploaded inside the picker is not in the list the cell names icons from until it
+  // is read again (review S2).
+  const refreshIconLibrary = () => {
+    void queryClient.invalidateQueries({ queryKey: ICON_LIBRARY_QUERY_KEY });
+  };
+  const iconAssets = useMemo(() => {
+    const map = new Map<string, { name: string; thumb: string | null }>();
+    for (const [id, name] of Object.entries(row.value_icon_names ?? {})) map.set(id, { name, thumb: null });
+    for (const asset of iconLibrary ?? []) {
+      map.set(asset.id, { name: asset.name, thumb: asset.thumb_url ?? asset.url ?? null });
+    }
+    return map;
+  }, [row.value_icon_names, iconLibrary]);
+
   // The counts a choice's "Products" column shows - the same aggregate the
   // Products tab already fetches, asked for zero rows: this tab needs the
   // by-value counts, not the product list itself.
@@ -115,6 +146,8 @@ export function ValuesAndWordsTab({
       delete nextDroppedWords[value];
       const nextValueLabels = { ...d.valueLabels };
       delete nextValueLabels[value];
+      const nextValueIcons = { ...d.valueIcons };
+      delete nextValueIcons[value];
       const builtIn = seedValuesFor(row).includes(value);
       return {
         ...d,
@@ -125,6 +158,7 @@ export function ValuesAndWordsTab({
         words: nextWords,
         droppedWords: nextDroppedWords,
         valueLabels: nextValueLabels,
+        valueIcons: nextValueIcons,
       };
     });
 
@@ -166,6 +200,20 @@ export function ValuesAndWordsTab({
   const liveValues = draft ? draft.liveValues : row.allowed_values;
   const droppedValues = draft ? draft.droppedValues : row.suppressed_values ?? EMPTY_STRING_ARRAY;
   const valueLabels = draft ? draft.valueLabels : row.value_labels ?? EMPTY_LABELS;
+  const valueIcons = draft ? draft.valueIcons : row.value_icons ?? EMPTY_ICONS;
+  const editIcons = mode === 'edit' && canManageIcons;
+
+  /** Rewrite one choice's icon list in the open draft (reassigned, never mutated). */
+  const setIcons = (value: string, next: (ids: string[]) => string[]) =>
+    setDraft((d) => ({ ...d, valueIcons: { ...d.valueIcons, [value]: next(d.valueIcons[value] ?? []) } }));
+  const moveIcon = (value: string, index: number, delta: number) =>
+    setIcons(value, (ids) => {
+      const out = [...ids];
+      const target = index + delta;
+      if (target < 0 || target >= out.length) return ids;
+      [out[index], out[target]] = [out[target], out[index]];
+      return out;
+    });
 
   // Genuinely COMPUTED (not just a property read), so it needs its own memo - the
   // fallback constants above only fix the property-read branches.
@@ -347,7 +395,95 @@ export function ValuesAndWordsTab({
       minSize: 80,
     };
 
-    if (!canEdit) return [choiceColumn, wordsColumn, productsColumn];
+    const iconsColumn: ColumnDef<ChoiceRow> = {
+      id: 'icons',
+      enableSorting: false,
+      header: ({ column }) => <DataGridColumnHeader title="Icons" column={column} />,
+      cell: ({ row: r }) => {
+        const value = r.original.value;
+        const label = displayName(value);
+        const ids = valueIcons[value] ?? NO_ICON_IDS;
+        if (iconsLoading) {
+          return (
+            <div data-testid={`value-icons-${value}`}>
+              <Skeleton data-testid="value-icons-loading" className="h-6 w-16" />
+            </div>
+          );
+        }
+        return (
+          <div data-testid={`value-icons-${value}`} className="flex min-w-0 flex-wrap items-center gap-1">
+            {ids.map((id, index) => {
+              const asset = iconAssets.get(id);
+              const name = asset?.name ?? 'Icon no longer in the library';
+              return (
+                <span key={id} className="inline-flex min-w-0 items-center gap-0.5 rounded border px-0.5">
+                  <span title={name} className="inline-flex min-w-0 items-center">
+                    {asset?.thumb ? (
+                      <img src={asset.thumb} alt="" className="size-6 object-contain" />
+                    ) : (
+                      <span className="max-w-24 truncate text-xs">{name}</span>
+                    )}
+                  </span>
+                  {editIcons && index > 0 && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label={`Move ${name} earlier`}
+                      onClick={() => moveIcon(value, index, -1)}
+                    >
+                      <ChevronLeft className="size-3.5" />
+                    </Button>
+                  )}
+                  {editIcons && index < ids.length - 1 && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label={`Move ${name} later`}
+                      onClick={() => moveIcon(value, index, 1)}
+                    >
+                      <ChevronRight className="size-3.5" />
+                    </Button>
+                  )}
+                  {editIcons && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="size-7"
+                      aria-label={`Remove ${name}`}
+                      onClick={() => setIcons(value, (list) => list.filter((other) => other !== id))}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  )}
+                </span>
+              );
+            })}
+            {ids.length === 0 && !editIcons && <span className="text-muted-foreground">No icons</span>}
+            {editIcons && (
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="size-6"
+                aria-label={`Choose icons for ${label}`}
+                onClick={() => setIconPickerFor(value)}
+              >
+                <Plus className="size-3.5" />
+              </Button>
+            )}
+          </div>
+        );
+      },
+      size: 200,
+      minSize: 120,
+    };
+
+    if (!canEdit) return [choiceColumn, wordsColumn, iconsColumn, productsColumn];
 
     const actionsColumn: ColumnDef<ChoiceRow> = {
       id: 'actions',
@@ -390,7 +526,7 @@ export function ValuesAndWordsTab({
       minSize: 60,
     };
 
-    return [choiceColumn, wordsColumn, productsColumn, actionsColumn];
+    return [choiceColumn, wordsColumn, iconsColumn, productsColumn, actionsColumn];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     canEdit,
@@ -404,6 +540,10 @@ export function ValuesAndWordsTab({
     words,
     valueLabels,
     countByValue,
+    valueIcons,
+    iconAssets,
+    editIcons,
+    iconsLoading,
     row.allowed_values,
     row.also_on,
     wordError,
@@ -515,6 +655,26 @@ export function ValuesAndWordsTab({
           <DataGridTable />
         </DataGrid>
       </div>
+      {/* The Dealer Kit icon library (the designer's own, kind = icon). Tiles toggle a selection
+          that opens on the choice's current icons; Done writes it to the draft in the order it
+          was made, Cancel / X / click-away discard it (SPEC-ICON-PICKER-UX). */}
+      <AssetPickerDialog
+        open={iconPickerFor !== null}
+        productImages={[]}
+        allowProductPhotos={false}
+        libraryKind="icon"
+        title={iconPickerFor ? `Icons for ${displayName(iconPickerFor)}` : 'Icons'}
+        selectedIds={iconPickerFor ? valueIcons[iconPickerFor] ?? NO_ICON_IDS : NO_ICON_IDS}
+        onCancel={() => {
+          setIconPickerFor(null);
+          refreshIconLibrary();
+        }}
+        onDone={(assetIds) => {
+          if (iconPickerFor) setIcons(iconPickerFor, () => assetIds);
+          setIconPickerFor(null);
+          refreshIconLibrary();
+        }}
+      />
     </div>
   );
 }

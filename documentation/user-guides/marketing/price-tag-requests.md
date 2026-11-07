@@ -8,6 +8,18 @@ design that is already drawn.
 Open **[Dealer Kit → Room Designer → Price Tag Requests](/dealer-kit/price-tag-requests)** and click
 a row to open it.
 
+## Which requests are yours
+
+Salespeople approve their own price tags. A request they submit sits at **Design Ready** with
+nobody assigned and offers you nothing to do: that is the salesperson checking his own tag. A
+request reaches you only when he presses **Escalate to marketing**. It then arrives at **New** with
+his note in the change requests list, and is assigned automatically to the person set up for price
+tags in the form SLA settings, or waits for a **Claim** when nobody is set up. From there the steps
+below apply unchanged.
+
+If the salesperson edits a request you designed after it was approved, it goes back to him and
+leaves your queue.
+
 ## Steps
 
 1. On the list, use the status filter (**All statuses**, **New**, **Designing**, **Design Ready**,
@@ -58,26 +70,29 @@ talked about.
   checkbox - greyed until you type your own numbers; **Auto** clears them back to the worked-out
   fit. A grid too small for the tag is refused with a message and the worked-out fit is used
   instead. See [Arranging the sheet](#arranging-the-sheet).
-* On a combo tag, every layer that reads product data (the photo slot, code, name, specs, a price
+* On a combo tag, every layer that reads product data (a picture, a code, a name, specs, a price
   badge, a barcode, or a text layer with a product or spec token) offers a **Product** select in the
-  Inspector. It lists the parent product first, then every product in the line's whole combo,
-  grouped by role (for example *Kitchen Tap*) - not only the candidate this particular tag resolved
-  to, so one tag can bind its slots to every variation and show all of them at once. The candidate
-  this tag itself chose is marked **(this tag)**. Leave a layer on the parent (the default) for most
-  layers - a single-product tag shows no **Product** select at all, since there's nothing to choose
-  between. A price badge's select carries one extra first entry, **Tag total**, the parent plus this
-  tag's own resolved parts added together - the default, and what a price badge has always shown,
-  unchanged even when other slots on the same tag point at a different candidate. A layer pointed at
-  a product has its name suffixed with that product's code in the **LAYERS** panel, so a scan of the
-  list tells you which product each layer draws. Copying a design onto another tag with **Apply to
-  all** falls a part-pointed layer back to the parent when the target has fewer parts, and names the
-  layer in a toast.
+  Inspector. It lists positions in the combo, not individual products: **Main product**, **Fixed
+  part 1**, **Fixed part 2**, one entry per pick in each choice group (for example **Kitchen tap,
+  pick 2**), and **Upgrade 1**. With a combo previewed, each entry shows that combo's own name and
+  code (for example *Kitchen tap, pick 2: SRTKT1863SS*); with none, the group reads **Choice group
+  1, pick 2**. A single-product tag shows no **Product** select, since there is nothing to choose
+  between. A price badge's select has one extra first entry, **Tag total**. Each position prints its
+  own picture, code, description and list price. A position the line has not filled prints an empty
+  tile, never the main product. Copying a design onto another tag with **Apply to all** falls a layer
+  back to the main product when the target lacks that position, and names the layer in a toast. See
+  [Design a combo template](price-tag-packages.md#design-a-combo-template).
 * The merge field `{{product.price_tag_description}}` prints the product's own **Price tag
   description** field - itself a TEMPLATE, not plain text, so it can carry its own `{{product.*}}`
   and `{{spec.*}}` tokens (for example `{{product.name}} in {{spec.material}}`), rendered against
   that same product's own data before it reaches the tag; an empty field prints nothing. It sits in
   the Insert list under **Product**, right after **Spec lines**. See
   [Manage products](../product/manage-products.md) for where the field lives on the product.
+* Two fields bind a text box to the line's price, so one template serves both price types: **Price
+  (LP or SP)** prints the line's selling price on an SP line and its list price on an LP line, and
+  **Price label** prints the words *LP* or *SP* to match. Templates that use only the list price or
+  only the selling price keep printing exactly as before. Use the new pair when you want a single
+  template to work for both.
 * A spec merge field such as `{{spec.dim_length}}` now prints the number on its own, with no unit -
   type the unit into the layer text yourself, for example `L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm`.
 * On a layer whose **Content** holds a merge field, the Inspector shows the rendered text under the
@@ -117,10 +132,12 @@ turn to force a specific layout.
 ## Changing a line's price
 
 The salesperson's own **Promotion** pick or typed price can be wrong, or a promotion can move, by
-the time you look at a request. Open the request and go to the **Lines** tab: in **Selling price**
-mode, every product line carries its own **Promotion** select and **Selling price** cell, the same
+the time you look at a request. Open the request and go to the **Lines** tab: every product line
+carries its own price type (LP or SP), set by the salesperson from the request's **Preferred
+Default**, and an SP line carries its own **Promotion** select and **Selling price** cell, the same
 rules as the portal form - pick from the promotions that cover the line, or type a price when none
-does. A change saves on its own, no separate save button.
+does (remove the line's promotion first to type one). The list price is never typed. A change
+saves on its own, no separate save button.
 
 Changing a line's price re-resolves its tags. If the tag was already pinned (the request has been
 claimed), the change shows up the same way any other product-data move does - see
@@ -246,7 +263,11 @@ Each product can carry the tag templates it prints with. That decides what the s
 on the request form and which template a tag starts from in the designer.
 
 * **One template linked**: every request line for the product uses it on its own.
-* **Two or more**: the salesperson picks one on the line before submitting.
+* **Two or more**: the salesperson picks one on the line before submitting. Mark one as the
+  product's **Default template** and it is preselected on the line.
+* **A combo** can carry its own price tag templates, and its own default, set on the combo (see
+  [Catalogue packages on price tags](price-tag-packages.md#steps---record-a-package-on-a-product)). A
+  line on a combo with none falls back to the host product's templates.
 * **None**: the salesperson's Preview draws nothing for that product and names it, so it reaches
   you as an escalation; in the designer the tag still starts from the template whose family matches
   the product code. Link templates before salespeople start approving their own tags.
@@ -255,7 +276,8 @@ Only a **Live** (published) template counts. A linked template you unpublish sta
 not offered until you publish it again. Spec sheet templates are never offered here.
 
 **On one product**: open the product, **Overview** tab, card **Price tag templates**. Search and
-tick templates to link them; each one saves at once. Unticking one unlinks it after a short
+tick templates to link them; each one saves at once. With two or more linked, a **Default
+template** select picks the one a request line starts on. Unticking one unlinks it after a short
 countdown with **Cancel**. Without the Tag
 Templates manage permission the card lists the templates read-only.
 

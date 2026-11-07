@@ -1250,6 +1250,7 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b, 17 Sep rulings): the
                   {
                     inquiry_no: 'OI-000539', item_code: 'CB2805A-DIY',
                     so_number: 'SO420100', delivery_date: '2026-12-01', open_qty: '90',
+                    customer_name: 'Maju Debtor', project_label: 'Tower B',
                   },
                   {
                     inquiry_no: 'OI-000540', item_code: 'CB2805A-DIY',
@@ -1279,7 +1280,7 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b, 17 Sep rulings): the
     // never "Repoint to" anywhere in the lightbox.
     expect(
       within(lightbox).getByText(
-        'Reallocate to OI-000539 · SO420100 · needed 01/12/2026 · open 90',
+        'Reallocate to OI-000539 · SO420100 (Maju Debtor / Tower B) · needed 01/12/2026 · open 90',
       ),
     ).toBeInTheDocument();
     expect(

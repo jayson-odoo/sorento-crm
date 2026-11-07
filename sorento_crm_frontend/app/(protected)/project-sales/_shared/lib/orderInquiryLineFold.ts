@@ -66,9 +66,24 @@ function num(value: string | null | undefined): number {
   return Number(value ?? '0') || 0;
 }
 
+/** The ONE row visibility rule, twin of the backend's `oi_row_visibility.is_live_row`: not
+ *  cancelled and not used. Listed, counted and requestable only when live. */
 export function isLiveInquiryRow(row: OrderInquiryWorklistRow): boolean {
   return row.state !== 'cancelled' && !row.redirected_to_pool;
 }
+
+/**
+ * OI-RESERVE-ANY-ROW (owner, 5 Nov 2026): a row may be requested for reserve and reserved
+ * when it is live and not Done, whatever its verb. "Done" is the supply state `actioned`
+ * (`STATE_LABEL.actioned`); the states left are the ones links decide. Twin of the backend's
+ * `oi_row_visibility.is_reservable_row`.
+ */
+export function isReservableInquiryRow(row: OrderInquiryWorklistRow): boolean {
+  return isLiveInquiryRow(row) && NOT_DONE_STATES.includes(row.state);
+}
+
+/** The states a row's links decide (`INQUIRY_LINK_STATES`): a live row in one is not Done. */
+export const NOT_DONE_STATES = ['raised', 'partly_linked', 'placed'];
 
 /**
  * PR #1266 review S2 (G6 rationale: the header never sits Outstanding on a row nobody can
@@ -100,7 +115,9 @@ export function foldKeyOf(row: OrderInquiryWorklistRow): string {
 
 function pickPrimary(live: OrderInquiryWorklistRow[], all: OrderInquiryWorklistRow[]) {
   const buy = live.filter((row) => isInquiryBuyRow(row.verb));
-  const byReserve = [...buy].sort(
+  // OI-RESERVE-ANY-ROW: a reserve sits on any live row (a DELAY row included), so the
+  // reserve-bearing row of ANY verb addresses the line's pill and reserve actions.
+  const byReserve = [...live].sort(
     (a, b) => rank(RESERVE_URGENCY, a.reserve_state) - rank(RESERVE_URGENCY, b.reserve_state),
   );
   if (byReserve[0]?.reserve_state && RESERVE_URGENCY.includes(byReserve[0].reserve_state)) {
@@ -121,10 +138,11 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   const lineCancelled = rows.some((row) => row.line_cancelled);
 
   const asked = liveBuy.reduce((total, row) => total + num(row.qty), 0);
-  const taken = liveBuy.reduce(
-    (total, row) => total + num(row.linked_qty) + num(row.reserved_qty),
-    0,
-  );
+  // OI-RESERVE-ANY-ROW: a reserve on a live non-buy row (DELAY, ADVANCE, ...) is taken too;
+  // only a buy row carries document links of its own.
+  const taken =
+    liveBuy.reduce((total, row) => total + num(row.linked_qty), 0) +
+    liveRows.reduce((total, row) => total + num(row.reserved_qty), 0);
   const bundled = liveBuy.reduce((total, row) => total + num(row.bundled_qty), 0);
   // G7: a cancelled line's quantity is called off, not owed.
   const requested = lineCancelled ? 0 : asked;
@@ -141,9 +159,10 @@ function buildLine(key: string, rows: OrderInquiryWorklistRow[]): OrderInquiryLi
   // AC-ND-7 (review B1): a live buy row CS amended after purchasing took it on waits on
   // purchasing again, and the approved mockup reads that line "To confirm". Only an
   // explicit `changed`: every fresh row is born `awaiting`, and AC-ND-8's fresh 4 still
-  // reads To buy. Review S2: a waiting used row makes it To confirm too, whether the
-  // line's live rows are already confirmed or it has none at all.
-  else if (liveBuy.some((row) => row.ack_state === 'changed') || waitingUsedRows.length > 0) {
+  // reads To buy. OI-RESERVE-USED-ROW (owner, 4 Nov): only a LIVE row makes it To confirm,
+  // the rule the Documents counts and Lines filter read; a waiting used row is still swept
+  // by the line's Confirm (G6, server side) but no longer holds the line open.
+  else if (liveBuy.some((row) => row.ack_state === 'changed')) {
     state = 'to_confirm';
   } else if (liveRows.length === 0) state = 'nothing_to_buy';
   else state = pickPrimary(
@@ -189,7 +208,10 @@ export function foldInquiryLines(rows: OrderInquiryWorklistRow[]): OrderInquiryL
     else groups.set(key, [row]);
   }
   const lines = [...groups.entries()]
-    .filter(([, group]) => group.some((row) => row.state !== 'cancelled'))
+    // OI-RESERVE-USED-ROW (owner, 4 Nov): a line renders only with a LIVE row, the rule the
+    // Documents counts (`oi_row_visibility.py`) and Order Inquiries > Lines list by. A line
+    // left with only used or cancelled rows is History, not a line.
+    .filter(([, group]) => group.some(isLiveInquiryRow))
     .map(([key, group]) => buildLine(key, group));
   return lines
     .map((line, index) => ({ line, index }))
@@ -209,6 +231,34 @@ export function toLineRows(lines: OrderInquiryLine[]): OrderInquiryLineRow[] {
 
 export function lineOf(row: OrderInquiryLineRow): OrderInquiryLine {
   return row.line ?? buildLine(foldKeyOf(row), [row]);
+}
+
+/**
+ * OI-RESERVE-ANY-ROW (crew, 5 Nov): what one "Request CS to reserve" sends for the lines among
+ * `allRows` that carry a picked row. A line with reservable live buy rows sends those (the
+ * picked ones when any are, else all of them: a line split over several ORDER rows asks for
+ * each, as before). A line with none sends ONE row, so a DELAY beside another notice never
+ * asks twice: the picked one, else the line's primary. A line with nothing reservable sends
+ * its primary, so the caller's eligibility check can say why.
+ */
+export function reserveRowsOfLines(
+  allRows: OrderInquiryWorklistRow[],
+  isPicked: (row: OrderInquiryWorklistRow) => boolean,
+): OrderInquiryWorklistRow[] {
+  return foldInquiryLines(allRows)
+    .filter((line) => line.liveRows.some(isPicked))
+    .flatMap((line) => {
+      const open = line.liveRows.filter(isReservableInquiryRow);
+      const buy = open.filter((row) => isInquiryBuyRow(row.verb));
+      if (buy.length > 0) {
+        const picked = buy.filter(isPicked);
+        return picked.length > 0 ? picked : buy;
+      }
+      if (open.length > 0) {
+        return [open.find(isPicked) ?? (open.includes(line.primary) ? line.primary : open[0])];
+      }
+      return [line.primary].filter(isLiveInquiryRow);
+    });
 }
 
 /**

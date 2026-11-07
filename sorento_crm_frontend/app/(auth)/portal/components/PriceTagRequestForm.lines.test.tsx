@@ -36,6 +36,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
@@ -159,12 +162,9 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
     await addLine();
     const item = await screen.findByLabelText('Search a set or product...');
-    await waitFor(() =>
-      expect(
-        screen.getByText('ZZT Bathroom Furniture Set'),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.getByText('ZZT Kitchen Sink')).toBeInTheDocument();
+    // Owner, 4 Nov: each option leads with its code (the name is its second line).
+    await waitFor(() => expect(screen.getByText('ZZTSET-1')).toBeInTheDocument());
+    expect(screen.getByText('CBF-1234')).toBeInTheDocument();
     expect(item).toBeInTheDocument();
   });
 
@@ -174,6 +174,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     // requirement (AC-P10); picking the customer auto-opens Sales Order &
     // Lines (AC-P3).
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
@@ -182,7 +183,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     });
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
 
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -199,12 +200,13 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     render(<PriceTagRequestForm />);
     // Need by is optional since D-P2b - see the note above.
     await selectOption('Debtor', 'ZZTD01');
+    fireEvent.click(screen.getByRole('button', { name: /^Sales Order & Lines/ })); // O3: Price opens first
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.lines[0]).toMatchObject({
@@ -330,3 +332,20 @@ describe('PriceTagRequestForm - the debtor dropdown explains itself (D46a)', () 
     expect(screen.getByLabelText('Debtor')).toBeInTheDocument();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  if (!screen.queryByLabelText('What marketing needs to fix')) return;
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

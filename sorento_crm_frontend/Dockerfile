@@ -29,6 +29,13 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY=
 ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
+# The commit this bundle was built from (CLIENT-ERROR-REPORT). Browser crash reports
+# carry it, and the root error boundary keys its one-shot stale-chunk reload on it.
+# An image reused by tree hash keeps the sha of the commit that built it, which is
+# still the right answer: it names the bundle, not the release.
+ARG NEXT_PUBLIC_BUILD_SHA=
+ENV NEXT_PUBLIC_BUILD_SHA=$NEXT_PUBLIC_BUILD_SHA
+
 # Set Node.js options for faster builds
 # Increase memory and enable parallel garbage collection. 4096 MB: the
 # private-repo runners have ~7 GB of RAM in total, so the heap stays well

@@ -388,9 +388,20 @@ def _handler_api_call_log_prune(db, task):
     settings = db.query(SystemSetting).first()
     payload_days = int(getattr(settings, "api_call_log_payload_retention_days", 30) or 30) if settings else 30
     row_days = int(getattr(settings, "api_call_log_row_retention_days", 180) or 180) if settings else 180
-    return prune_api_call_log(
+    result = prune_api_call_log(
         db, payload_retention_days=payload_days, row_retention_days=row_days
     )
+    # Browser crash reports (CLIENT-ERROR-REPORT) ride this daily task rather than a
+    # scheduled task of their own: same kind of telemetry, one fixed 30-day window.
+    from app.services.client_error_report_service import prune_client_error_reports
+
+    try:
+        result["client_error_reports_deleted"] = int(prune_client_error_reports(db))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("client_error_report prune failed")
+    return result
 
 
 def _handler_import_job_rows_prune(db, task):
@@ -947,7 +958,10 @@ def start_scheduler():
     # docstring already promised this sweep; this is where it runs.
     scheduler.add_job(
         _spo_container_relink_sweep_tick,
-        trigger=IntervalTrigger(hours=24),
+        # Hourly since PACKING-LIST-RECALC: the safety net behind the per-change
+        # recompute (`app/services/scm/packing_list_recalc.py`), so a write that went
+        # around the ORM is stale for an hour at most, never until someone opens the page.
+        trigger=IntervalTrigger(hours=1),
         id="spo_container_relink_sweep",
         name="SPO container relink sweep",
         replace_existing=True,

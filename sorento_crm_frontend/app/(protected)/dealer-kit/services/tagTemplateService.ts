@@ -23,7 +23,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   TagSheetGrid,
   TagTemplate,
@@ -34,6 +34,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { printSizeOf } from '@/lib/dealer-kit/request-tags';
 import { isSpecSheetFamily } from '@/lib/dealer-kit/tag-template-types';
+import type { TemplatePriceType } from '@/lib/dealer-kit/template-price-type';
 
 const BASE = '/api/v1/dealer-kit/tag-templates';
 
@@ -41,12 +42,64 @@ const BASE = '/api/v1/dealer-kit/tag-templates';
 // Service functions
 // ---------------------------------------------------------------------------
 
-export async function listTemplates(): Promise<TagTemplate[]> {
-  const response = await apiFetch(BASE);
+export interface TemplateListFilter {
+  /** Multi-select, comma-joined (`list,unset`): list, selling, both, or `unset` = no price type
+   *  yet. */
+  price_type?: string;
+  /** Multi-select family codes, comma-joined. */
+  family?: string;
+  /** `live` and/or `draft`, comma-joined. */
+  status?: string;
+  /** Name search. */
+  query?: string;
+  /** A column id; omitted = the shared manual (drag) order. */
+  sort?: string;
+  dir?: 'asc' | 'desc';
+}
+
+/**
+ * The whole filtered, sorted list (it is small and unpaged on the server; the grid pages it).
+ * Sorting is the server's: every column, plus the manual order when no column is named.
+ */
+export async function listTemplates(filter: TemplateListFilter = {}): Promise<TagTemplate[]> {
+  const params = buildDataGridParams(
+    {
+      pageIndex: 0,
+      pageSize: 0,
+      sorting: filter.sort ? [{ id: filter.sort, desc: filter.dir === 'desc' }] : [],
+      searchQuery: filter.query ?? '',
+    },
+    { price_type: filter.price_type, family: filter.family, status: filter.status },
+  );
+  params.delete('page');
+  params.delete('limit');
+  const query = params.toString();
+  const response = await apiFetch(`${BASE}${query ? `?${query}` : ''}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load tag templates'));
   }
   return response.json();
+}
+
+/** Copy a template: a new DRAFT "<name> (copy)" right below the source (TAG-TEMPLATE-DUPLICATE). */
+export async function duplicateTemplate(id: string): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/duplicate`, { method: 'POST' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not duplicate the template'));
+  }
+  return response.json();
+}
+
+/** Save the dragged rows' new order (top to bottom). One order, shared by everyone. */
+export async function reorderTemplates(templateIds: string[]): Promise<void> {
+  const response = await apiFetch(`${BASE}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_ids: templateIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not save the order'));
+  }
 }
 
 export async function getTemplate(id: string): Promise<TagTemplate> {
@@ -61,6 +114,7 @@ export async function createTemplate(input: {
   name: string;
   family: TagTemplateFamily;
   print_size: { width_mm: number; height_mm: number };
+  price_type?: TemplatePriceType | null;
 }): Promise<TagTemplate> {
   const doc = {
     width_mm: input.print_size.width_mm,
@@ -77,10 +131,28 @@ export async function createTemplate(input: {
       // Derived from the SAME doc rather than `input.print_size` a second
       // time (S1), so the create path cannot ever state two different sizes.
       print_size: printSizeOf(doc),
+      price_type: input.price_type ?? null,
     }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to create template'));
+  }
+  return response.json();
+}
+
+/** Set (or clear, with null) the template's price type. A template fact, not a version fact: no
+ * republish. */
+export async function setTemplatePriceType(
+  id: string,
+  priceType: TemplatePriceType | null,
+): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_type: priceType }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the price type'));
   }
   return response.json();
 }
@@ -169,6 +241,32 @@ export async function publishTemplate(id: string, note?: string): Promise<TagTem
   return response.json();
 }
 
+/** What the delete confirm names: how many products, combos and requests use the template. */
+export interface TagTemplateUsage {
+  products: number;
+  combos: number;
+  requests: number;
+}
+
+export async function getTemplateUsage(id: string): Promise<TagTemplateUsage> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/usage`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load template usage'));
+  }
+  return response.json();
+}
+
+/**
+ * Delete (archive) a template. The server keeps the row, its versions and every
+ * product/combo/request link, so it can be restored (TAG-TEMPLATE-DELETE-CONFIRM).
+ */
+export async function deleteTemplate(id: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to delete template'));
+  }
+}
+
 /**
  * Move the live pointer to nothing (AC-S5-3). The draft and every version row
  * are untouched; the template can be published again at any time.
@@ -249,6 +347,26 @@ export async function createTemplateFromTag(
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to save this template'));
+  }
+  return response.json();
+}
+
+/**
+ * Rename a template or move it to another family (PRICETAG-DESIGNER-GAPS
+ * item 4). Template facts, not version facts: the draft doc, the versions and
+ * the live pointer are untouched, and no republish is needed.
+ */
+export async function updateTemplateSettings(
+  id: string,
+  settings: { name: string; family: TagTemplateFamily; price_type?: TemplatePriceType | null },
+): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save the template settings'));
   }
   return response.json();
 }

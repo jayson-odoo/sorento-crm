@@ -19,6 +19,14 @@ OPERATORS_BY_TYPE: Dict[str, List[str]] = {
     "list": ["contains_any", "contains_all", "not_contains"],
 }
 
+def operators_for(fact: FactDef) -> List[str]:
+    """The operators one fact allows: its type's, narrowed by its own `operators`."""
+    allowed = OPERATORS_BY_TYPE.get(fact.type, [])
+    if fact.operators:
+        return [op for op in allowed if op in fact.operators]
+    return list(allowed)
+
+
 _LIST_VALUE_OPERATORS = {"in", "not_in", "contains_any", "contains_all", "not_contains"}
 _NO_VALUE_OPERATORS = {"is_true", "is_false"}
 
@@ -71,7 +79,7 @@ def _validate_condition(
         return
 
     operator = node.get("operator")
-    allowed = OPERATORS_BY_TYPE.get(fact.type, [])
+    allowed = operators_for(fact)
     if operator not in allowed:
         problems.append(
             f"Operator '{operator}' is not valid for {fact.label} ({fact.type})."

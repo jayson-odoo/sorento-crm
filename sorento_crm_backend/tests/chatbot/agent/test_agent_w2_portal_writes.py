@@ -261,7 +261,7 @@ def test_ac7_a_valid_proposal_reads_in_words_and_writes_nothing(db):
 
     assert out.status == "proposed", out.message
     assert step["summary"] == (
-        f"Send a stock inquiry to the project sales team: {code} (ZZT {code}), 40 pcs, needed by 15 Dec 2026, "
+        f"Send a stock inquiry to the project sales team: {code} (ZZT {code}), 40 pcs, needed by 15/12/2026, "
         "project ZZT Tower, requested by you."
     )
     assert db.query(StockInquiry).filter(StockInquiry.contact_id == contact["pk"]).count() == 0

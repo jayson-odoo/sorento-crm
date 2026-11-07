@@ -3065,6 +3065,8 @@ describe('BoardCellBreakdownDialog: what purchasing has already been told', () =
     expect(within(row).getByText('OI-000123')).toBeInTheDocument();
     const badge = row.querySelector('[data-testid^="breakdown-oi-rejected-"]') as HTMLElement;
     expect(badge).not.toBeNull();
+    // SO-LINE-OI-STATUS-UNIFY: the narrow drill-down cell keeps the pill alone; the
+    // reason is in the title and the lightbox.
     expect(badge).toHaveTextContent(/^Rejected$/);
     expect(badge.getAttribute('title')).toMatch(/^Rejected by Joey on 13\/10\/2026, 4:32\s?pm: DISCON$/i);
     expect(within(row).queryByText('To buy')).toBeNull();
@@ -3638,6 +3640,22 @@ describe('sourceAt names the DONOR for every borrow that has one', () => {
     ).toBe(' from SO414285 line 4');
   });
 
+  it('adds the donor order\'s customer and project when the server names them (OI-UX-FILTER-SNAPSHOT)', () => {
+    expect(
+      sourceAt({
+        kind: 'borrow',
+        rung: 'order_borrow',
+        qty: '30',
+        location: 'MWH-IB',
+        reason: 'because',
+        donor_so_number: 'SO414285',
+        donor_line_no: 4,
+        donor_customer_name: 'Maju Debtor',
+        donor_project_label: 'Tuju Residences',
+      } as never),
+    ).toBe(' from SO414285 line 4 (Maju Debtor / Tuju Residences)');
+  });
+
   it('names the DOCUMENT and its arrival for a step-3 borrow (AC-S4-5)', () => {
     // Ladder v7.1 step 3 borrows a DOCUMENT, so the row reads the document and the day it
     // lands before it reads whose order gives it up: the arrival is the whole reason a
@@ -3773,6 +3791,23 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     const link = screen.getByTestId('suggestion-donor-link');
     expect(link.textContent).toBe('SO401624');
     expect(link.tagName).toBe('BUTTON');
+  });
+
+  it('OI-UX-FILTER-SNAPSHOT: the donor order\'s customer and project follow it in the sentence', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason: 'Borrow 30 on hand at pool BRW from SO401624, due 7 Jun 2027.',
+          donor_so_number: 'SO401624',
+          donor_customer_name: 'Maju Debtor',
+          donor_project_label: 'Tuju Residences',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('suggestion-donor-party').textContent).toBe(
+      ' (Maju Debtor / Tuju Residences)',
+    );
   });
 
   it('AC-3.2/3.9: the Donor toolbar button renders only when the suggestion names one', () => {
