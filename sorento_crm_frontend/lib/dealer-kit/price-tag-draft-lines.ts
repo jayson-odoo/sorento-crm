@@ -543,7 +543,7 @@ export function partsPayload(parts: DraftPart[]) {
  * longer touches (PRICETAG-DISCONTINUED-PICK, it prices nothing there). Null when none was dropped.
  */
 export function droppedPromotionNote(
-  sent: Array<{ promotion_id: string | null }>,
+  sent: Array<{ promotion_id?: string | null }>,
   saved: Array<{ promotion_id?: string | null; sort_order: number }> | undefined,
 ): string | null {
   if (!saved) return null;
