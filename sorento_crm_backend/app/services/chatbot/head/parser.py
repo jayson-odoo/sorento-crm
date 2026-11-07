@@ -1037,9 +1037,19 @@ REPORT_ASK_LISTS = (
 )
 
 
+#: REPORT-FILTER-ALL: the explicit "every value" of a `report_ask` filter slot (company and channel "ALL", a list
+#: ["ALL"]). A prompt text that writes `REPORT_ALL_WORD` defines it (`report_ask_defined_in` then holds "ALL"): the
+#: channel enum offers it and the report lane reads an empty slot as "not said" (`report_ask.from_object`).
+REPORT_ALL = "ALL"
+REPORT_ALL_WORD = '["ALL"]'
+
+
 def report_ask_defined_in(raw_template: Any) -> frozenset[str]:
-    """The keys of `REPORT_ASK_DEFINED` the prompt text defines: the text names the key as `"<key>":`."""
-    return frozenset(key for key in REPORT_ASK_DEFINED if f'"{key}":' in (raw_template or ""))
+    """The keys of `REPORT_ASK_DEFINED` the prompt text defines (the text names the key as `"<key>":`), plus
+    `REPORT_ALL` when the text writes `REPORT_ALL_WORD`."""
+    text = raw_template or ""
+    keys = {key for key in REPORT_ASK_DEFINED if f'"{key}":' in text}
+    return frozenset(keys | ({REPORT_ALL} if REPORT_ALL_WORD in text else set()))
 
 
 def report_ask_keys(defined: Any = ()) -> tuple[str, ...]:
@@ -1065,7 +1075,10 @@ def with_report_ask(schema: dict[str, Any], defined: Any = ()) -> dict[str, Any]
         "group_by": copy.deepcopy(props["group_by"]),
         "top_n": {"type": ["integer", "null"]},
         "measure": copy.deepcopy(props["measure"]),
-        "channel": {"type": ["string", "null"], "enum": [*SALES_CHANNELS, None]},
+        "channel": {
+            "type": ["string", "null"],
+            "enum": [*SALES_CHANNELS, *([REPORT_ALL] if REPORT_ALL in set(defined or ()) else []), None],
+        },
         "company": {"type": ["string", "null"]},
         **{key: copy.deepcopy(strings) for key in REPORT_ASK_LISTS},
     }

@@ -150,17 +150,27 @@ def _first_position(text: str, word: str) -> int:
     raise AssertionError(f"no numbered option naming {word!r} in {text!r}")
 
 
-def test_c6_1_a_both_table_word_that_is_a_company_offers_brand_account_type_and_company(rbot, world) -> None:
-    """C6-1(a): SORENTO is a brand, an account type and a held company: the question offers all three; picking the company
-    runs company Sorento with no SORENTO brand / account type and every other held slot."""
+def test_c6_1_a_both_table_word_that_is_a_company_asks_company_or_brand_and_never_the_account_type(rbot, world, monkeypatch) -> None:
+    """C6-1(a), as REPORT-FILTER-ALL round 4 changed it (crew gate R2, owner rule "a bare Sorento asks company or brand
+    once"): SORENTO is a brand, an account type and one of the contact's companies: the question is company or brand,
+    never a third account type reading; picking the company runs company Sorento with no SORENTO brand / account type
+    and every other held slot. The parse is v72's shape (production): the entity carries `said_as` null."""
+    import dataclasses
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    current = parser_mod.resolve_config
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda *a, **k: dataclasses.replace(current(*a, **k), said_as=True))
     sorento, _mocha = world
     _sorento_type(rbot)
     ra = _ra(brands=["SORENTO"], **OCT_ASK)
-    v = _v("sales_report", ra, _ent("sorento", "brand"), sales_channel="dealer", basis="invoiced", sales_basis="invoiced",
+    ent = _ent("sorento", "brand")
+    ent["said_as"] = None
+    v = _v("sales_report", ra, ent, sales_channel="dealer", basis="invoiced", sales_basis="invoiced",
            domain_in_message=True, **OCTF)
     text, calls = rbot.say(v, "sorento dealer sales oct invoiced")
     low = text.lower()
-    assert not _ran(calls) and "brand" in low and "account type" in low and "company" in low, f"C6-1: want brand, account type AND company offered, got {text!r}"
+    assert not _ran(calls) and "brand" in low and "company" in low and "account type" not in low, f"C6-1: want company or brand, got {text!r}"
     pos = _first_position(text, "company")
     follow = _v("sales_report", _ra(brands=["SORENTO"], **OCT_ASK), entity_op="reuse", continuation=True,
                 open_question_answer=_pick_of(pos), reference_positions=[pos])
@@ -228,15 +238,14 @@ def test_c6_2_b_invoiced_after_an_open_question_keeps_type_month_company_and_age
     """C6-2(b) (turn f26a5645, parser_raw copied): the brand-or-account-type question on SORENTO is open (basis held) and
     "invoiced" answers it with no entities, mode fill, picked []; the object dropped account_types and swapped month for
     sales_agent. The reply to "invoiced" is itself the run: CERAMIC + month + company Sorento + agent, SORENTO not applied."""
-    sorento, _m = world
-    _sorento_type(rbot)
+    sorento, _m = world  # the asked word is CABANA (a brand and a stored type, no company: REPORT-FILTER-ALL round 4)
     ra = _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"],
-             brand_or_account_type=["SORENTO"], **Y)
+             brand_or_account_type=["CABANA"], **Y)
     v = _v("sales_analysis", ra, _ent(AGENT_1, "sales_agent"), _ent("ceramic", "account_type", None, "account type"),
-           _ent("sorento", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
+           _ent("cabana", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
            domain_in_message=True, **YR)
-    text, calls = rbot.say(v, "agent a ceramic account type sorento by month 2026 invoiced")
-    assert not _ran(calls) and "brand, account type or company?" in text.lower(), f"setup: want the three-option question (Sorento is held), got {text!r} {calls}"
+    text, calls = rbot.say(v, "agent a ceramic account type cabana by month 2026 invoiced")
+    assert not _ran(calls) and "brand or account type?" in text.lower(), f"setup: want the brand or account type question, got {text!r} {calls}"
     # f26a5645 parser_raw: report_ask company "Sorento", group_by "sales_agent", account_types [], brand_or_account_type [],
     # entities [], open_question_answer fill / picked [], order_status sales_ranking, entity_op reuse, continuation true.
     ra2 = _ra(basis="invoiced", group_by="sales_agent", company=sorento, sales_agents=[AGENT_1], account_types=[], **Y)
@@ -250,7 +259,7 @@ def test_c6_2_b_invoiced_after_an_open_question_keeps_type_month_company_and_age
     assert args.get("account_types") == ["CERAMIC"], f"C6-2(b): CERAMIC dropped: {args}"
     assert args.get("group_by") == "month", f"C6-2(b): month swapped for {args.get('group_by')!r}"
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("sales_agent_ids"), args
-    assert not args.get("brand_ids") and "SORENTO" not in (args.get("account_types") or []), f"SORENTO applied: {args}"
+    assert not args.get("brand_ids") and "CABANA" not in (args.get("account_types") or []), f"CABANA applied: {args}"
 
 
 def test_c6_2_c_a_one_row_breakdown_over_a_filter_is_a_plain_total(rbot, world) -> None:
@@ -360,26 +369,29 @@ def test_b1_flag_on_all_companies_drops_the_held_company(rbot, world) -> None:
 
 
 @pytest.mark.parametrize("code", [None, "SORENTO"], ids=["no-code", "bound-code"])
-def test_s2_only_company_sorento_with_sorento_held_offers_brand_account_type_and_company(rbot, world, code) -> None:
-    """S2 (SC-19 has no exception for the held company; C6-1): company Sorento HELD, 'only company sorento' read as brands
-    [SORENTO] with the object's company null -> the question offers brand, account type AND company; picking company runs
-    company Sorento with no SORENTO brand / account type."""
+def test_s2_only_company_sorento_with_sorento_held_is_the_company_with_no_question(rbot, world, code, monkeypatch) -> None:
+    """S2, as REPORT-FILTER-ALL round 4 changed it (owner rule: a company's name is asked company or brand, never a third
+    account type reading): company Sorento HELD, "only company sorento" as the said_as prompt parses it (the entity says
+    company) -> company Sorento with no SORENTO brand / account type, and no question."""
+    import dataclasses
+
+    from app.services.chatbot.head import parser as parser_mod
+
+    current = parser_mod.resolve_config
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda *a, **k: dataclasses.replace(current(*a, **k), said_as=True))
     sorento, _mocha = world
     _sorento_type(rbot)
     t1 = _v("sales_report", _ra(company=sorento, **OCT_ASK), sales_channel="dealer", basis="invoiced", sales_basis="invoiced",
             sales_company=sorento, domain_in_message=True, **OCTF)
     text, calls = rbot.say(t1, "sorento dealer sales oct invoiced")
     assert _ran(calls), f"setup: {text!r}"
-    ra = _ra(company=None, brands=["SORENTO"], **OCT_ASK)
-    v = _v("sales_report", ra, _ent("sorento", "brand", code), entity_op="replace_combine", continuation=True)
+    ent = _ent("sorento", "brand", code)
+    ent["said_as"] = "company"
+    v = _v("sales_report", _ra(company=sorento, brands=["SORENTO"], **OCT_ASK), ent, entity_op="replace_combine",
+           continuation=True, sales_company=sorento)
     text, calls = rbot.say(v, "only company sorento")
-    assert not _ran(calls) and THREE in text.lower(), f"S2: want the three-option question, got {text!r} {calls}"
-    pos = _first_position(text, "company")
-    follow = _v("sales_report", _ra(company=None, brands=["SORENTO"], **OCT_ASK), entity_op="reuse", continuation=True,
-                open_question_answer=_pick_of(pos), reference_positions=[pos])
-    text, calls = rbot.say(follow, "company")
     ran = _ran(calls)
-    assert ran, f"S2: the company pick did not run: {text!r}"
+    assert ran and "account type" not in text.lower(), f"S2: {text!r} {calls}"
     assert ran[0].get("company") == DEFAULT_COMPANY_ID and not ran[0].get("brand_ids") and not ran[0].get("account_types"), ran[0]
 
 
