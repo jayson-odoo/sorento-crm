@@ -1232,3 +1232,96 @@ def test_ha_primary_release_is_the_normal_release(box):
     assert any("--force-recreate" in l and "worker" in l for l in calls), calls
     ups = [l for l in (box["stub"] / "skip.log").read_text().splitlines() if l.startswith("compose") and " up " in l]
     assert ups and not any(l.endswith("SKIP_MIGRATIONS=1") for l in ups), ups
+
+
+# --- HA-CF-FAILOVER 7 Nov: node B's replica is a standalone container, not a compose service ---
+# Plan: documentation/plans/infra/PLAN-ha-b-replica-sync-07nov.md section 10. DB_CONTAINER in
+# .deploy.env names it; every Postgres call then goes to `docker exec <name>` and the compose db
+# service is never touched.
+
+
+def _container_box(box, in_recovery: str, name: str = "sorento_crm_replica"):
+    _plain_role_box(box, in_recovery)
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'if args[0] == "compose":\n',
+        'if args[0] == "exec":\n'
+        '    _a = [x for x in args[1:] if x != "-i"]\n'
+        '    args = ["compose", "exec", "-T"] + _a\n'
+        'elif args[0] == "ps" and any(x.startswith("name=") for x in args):\n'
+        '    print(rd("db_cid", "cid-db").strip()); sys.exit(0)\n'
+        'if args[0] == "compose":\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    (box["root"] / ".deploy.env").write_text(f"DB_CONTAINER={name}\nDEPLOY_DB_NAME=sorento_app\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+
+
+def _db_calls(calls):
+    return [l for l in calls if "psql" in l or "pg_dump" in l or "pg_restore" in l or l.startswith("ps ")
+            or (l.startswith("compose") and (" ps " in l and l.rstrip().endswith(" db")))]
+
+
+def test_db_container_role_uses_docker_exec_on_that_container(box):
+    _container_box(box, "t\n")
+    r = _run(box, args=("--role",), IMAGE_TAG="")
+    assert r.returncode == 0 and r.stdout.strip() == "standby", r.stdout + r.stderr
+    q = [l for l in _calls(box) if "pg_is_in_recovery" in l]
+    assert q and all(l.startswith("exec ") and " sorento_crm_replica " in l for l in q), q
+
+
+def test_db_container_standby_release_never_touches_the_compose_db(box):
+    _container_box(box, "t\n")
+    _at_head(box)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert "Node role: standby" in r.stdout
+    assert not any(l.startswith("compose") and (" exec " in l or l.rstrip().endswith(" db")) for l in calls), calls
+    assert any(l.startswith("exec ") and "version_num" in l and " sorento_crm_replica " in l for l in calls), calls
+    assert any(l.startswith("ps ") and "name=^sorento_crm_replica$" in l for l in calls), calls
+    assert not any("pg_dump" in l for l in calls), calls
+    assert not any("--force-recreate" in l and "worker" in l for l in calls), calls
+    assert _started_new_colour(calls) and _swapped(calls)
+
+
+def test_db_container_missing_fails_before_anything_changes(box):
+    _container_box(box, "t\n")
+    _at_head(box)
+    (box["stub"] / "db_cid").write_text("")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "sorento_crm_replica" in r.stdout and "not found" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+@pytest.mark.parametrize("name", ["bad name", "x;rm -rf /", "../db", "-x"])
+def test_db_container_name_is_validated(box, name):
+    _container_box(box, "t\n", name=name.replace(" ", "\\ "))
+    (box["root"] / ".deploy.env").write_text(f"DB_CONTAINER='{name}'\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "DB_CONTAINER" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_db_container_is_refused_in_ha_compose_mode(box):
+    _role_box(box, "t\n")
+    (box["root"] / ".deploy.env").write_text("COMPOSE_FILE=docker-compose.yml:compose.ha.yml\nDB_CONTAINER=sorento_crm_replica\n")
+    (box["root"] / ".deploy.env").chmod(0o600)
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode != 0
+    assert "DB_CONTAINER" in r.stdout, r.stdout
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_without_db_container_the_compose_db_is_used_as_before(box):
+    _plain_role_box(box, "f\n")
+    _at_head(box, image="rev3", db="rev2")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    assert not any(l.startswith("exec ") or l.startswith("ps ") for l in calls), calls
+    assert any(l.startswith("compose") and " exec " in l and "pg_dump" in l for l in calls), calls
