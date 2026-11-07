@@ -8,7 +8,11 @@
  */
 
 import { useCallback, useId, useMemo } from 'react';
-import type { AccessoriesLayerProps, FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  AccessoriesLayerProps,
+  CardElement,
+  FeatureIconsLayerProps,
+} from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
 import {
   accessoryBoxLayout,
@@ -24,6 +28,7 @@ import {
   Braces,
   Copy,
   Eye,
+  EyeOff,
   FlipHorizontal2,
   FlipVertical2,
   Italic,
@@ -269,6 +274,16 @@ interface InspectorPanelProps {
   /** Accessories: how many entries the previewed tag lists for the selected layer, and how many
    *  text lines its cards take (`accessoryLineCount`). Absent with nothing previewed. */
   accessoryFit?: { count: number; lines: number };
+  /** PRICETAG-ACCESSORY-DESIGNER: enter card / footer editing mode on an accessories box. */
+  onEditAccessoryCard?: (layerId: string) => void;
+  onEditAccessoryFooter?: (layerId: string) => void;
+  /** Open the "Save as accessories template" dialog. */
+  onSaveAccessoryTemplate?: (layerId: string) => void;
+  /** The linked template's facts, shown when the box has a `presetId`. */
+  accessoryTemplate?: { name: string; usedIn: number } | null;
+  /** The box being edited and the element selected in it; the element inspector replaces the box one. */
+  accessoryEdit?: { layerId: string; target: 'card' | 'footer'; elementId: string | null } | null;
+  onUpdateAccessoryElement?: (elementId: string, patch: Partial<CardElement>) => void;
 }
 
 export function InspectorPanel({
@@ -301,6 +316,12 @@ export function InspectorPanel({
   onManageIcons,
   featureIconCount,
   accessoryFit,
+  onEditAccessoryCard,
+  onEditAccessoryFooter,
+  onSaveAccessoryTemplate,
+  accessoryTemplate,
+  accessoryEdit,
+  onUpdateAccessoryElement,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -391,6 +412,21 @@ export function InspectorPanel({
         </span>
       </div>
       <ScrollArea className="flex-1">
+        {layer.props.kind === 'accessories' &&
+        accessoryEdit &&
+        accessoryEdit.layerId === layer.id &&
+        accessoryEdit.elementId ? (
+          <div className="flex flex-col gap-4 p-3">
+            <AccessoryElementInspector
+              props={layer.props}
+              edit={accessoryEdit}
+              usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
+              onUpdate={(id, patch) => onUpdateAccessoryElement?.(id, patch)}
+            />
+          </div>
+        ) : (
         <div className="flex flex-col gap-4 p-3">
           {/* -- Position & size -- */}
           <section>
@@ -606,6 +642,12 @@ export function InspectorPanel({
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onEditCard={onEditAccessoryCard ? () => onEditAccessoryCard(layer.id) : undefined}
+              onEditFooter={onEditAccessoryFooter ? () => onEditAccessoryFooter(layer.id) : undefined}
+              onSaveTemplate={
+                onSaveAccessoryTemplate ? () => onSaveAccessoryTemplate(layer.id) : undefined
+              }
+              template={accessoryTemplate ?? null}
             />
           )}
           {layer.props.kind === 'barcode' && (
@@ -618,6 +660,7 @@ export function InspectorPanel({
             />
           )}
         </div>
+        )}
       </ScrollArea>
     </div>
   );
@@ -1944,8 +1987,16 @@ function AccessoriesInspector({
   fontOptions,
   onUploadFont,
   onChange,
+  onEditCard,
+  onEditFooter,
+  onSaveTemplate,
+  template,
 }: {
   props: AccessoriesLayerProps;
+  onEditCard?: () => void;
+  onEditFooter?: () => void;
+  onSaveTemplate?: () => void;
+  template: { name: string; usedIn: number } | null;
   fit?: { count: number; lines: number };
   boxWidth_mm: number;
   boxHeight_mm: number;
@@ -2016,6 +2067,44 @@ function AccessoriesInspector({
       <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Accessories
       </h4>
+
+      {/* Card design */}
+      {(onEditCard || onEditFooter) && (
+        <div className="grid grid-cols-2 gap-2">
+          {onEditCard && (
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onEditCard}>
+              Edit card
+            </Button>
+          )}
+          {onEditFooter && (
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onEditFooter}>
+              Edit footer
+            </Button>
+          )}
+        </div>
+      )}
+      {props.presetId && template && (
+        <div className="flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2 text-xs">
+          <p>
+            Linked: {template.name} (used in {template.usedIn} tag template
+            {template.usedIn === 1 ? '' : 's'})
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 self-start text-xs"
+            onClick={() => onChange({ presetId: null })}
+          >
+            Detach
+          </Button>
+        </div>
+      )}
+      {onSaveTemplate && (
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onSaveTemplate}>
+          Save as accessories template
+        </Button>
+      )}
 
       {/* Layout */}
       <div className="flex flex-col gap-1">
@@ -2090,6 +2179,18 @@ function AccessoriesInspector({
           usedColours={usedColours}
         />
       </div>
+
+      <p className="text-xs text-muted-foreground">Shrink to fit, smallest 70%</p>
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={Boolean(props.footer?.show)}
+          onCheckedChange={(v) =>
+            onChange({ footer: { height_mm: 6, elements: [], ...props.footer, show: !!v } })
+          }
+          aria-label="Footer note"
+        />
+        Footer note
+      </label>
 
       {/* Frame */}
       <label className="flex items-center gap-1.5 text-xs">
@@ -2290,4 +2391,277 @@ function FeatureIconsInspector({
       )}
     </section>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Card / footer element inspector (PRICETAG-ACCESSORY-DESIGNER)
+// ---------------------------------------------------------------------------
+
+const TEXT_FIELD_OPTIONS = [
+  { value: 'name', label: 'Name' },
+  { value: 'code', label: 'Code' },
+  { value: 'spec', label: 'Spec lines' },
+  { value: 'remark', label: 'Remark' },
+  { value: 'price', label: 'Price' },
+];
+
+const CARD_SHAPE_OPTIONS = SHAPE_TYPE_OPTIONS.filter((option) => option.value !== 'polygon');
+
+function AccessoryElementInspector({
+  props,
+  edit,
+  usedColours,
+  fontOptions,
+  onUploadFont,
+  onUpdate,
+}: {
+  props: AccessoriesLayerProps;
+  edit: { target: 'card' | 'footer'; elementId: string | null };
+  usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
+  onUpdate: (elementId: string, patch: Partial<CardElement>) => void;
+}) {
+  const elements = edit.target === 'card' ? props.card?.elements : props.footer?.elements;
+  const element = elements?.find((candidate) => candidate.id === edit.elementId);
+  const textId = useId();
+  if (!element) return null;
+  const patch = (changes: Partial<CardElement>) => onUpdate(element.id, changes);
+  const inCard = edit.target === 'card';
+  const title =
+    element.kind === 'colour_dots'
+      ? 'Colour dots'
+      : element.kind === 'picture'
+        ? 'Picture'
+        : element.kind === 'shape'
+          ? 'Shape'
+          : 'Text';
+  const showsOptions =
+    element.kind === 'picture'
+      ? [{ value: 'picture', label: 'Picture' }]
+      : element.kind === 'colour_dots'
+        ? [{ value: 'colours', label: 'Colours' }]
+        : TEXT_FIELD_OPTIONS;
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h4>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0"
+          aria-label={element.hidden ? 'Show element' : 'Hide element'}
+          onClick={() => patch({ hidden: !element.hidden })}
+        >
+          {element.hidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+        </Button>
+      </div>
+
+      {inCard && element.kind !== 'shape' && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Shows</Label>
+          <SearchableSelect
+            aria-label="Shows"
+            value={element.field ?? ''}
+            options={showsOptions}
+            clearable={element.kind === 'text'}
+            placeholder="Fixed text"
+            onChange={(value: string) =>
+              patch({ field: (value || null) as CardElement['field'] })
+            }
+          />
+        </div>
+      )}
+
+      {element.kind === 'text' && !element.field && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={textId} className="text-xs text-muted-foreground">
+            Text
+          </Label>
+          <Input
+            id={textId}
+            className="h-7 px-2 text-xs"
+            value={element.text ?? ''}
+            onChange={(e) => patch({ text: e.target.value })}
+          />
+        </div>
+      )}
+
+      {element.kind === 'text' && (
+        <TypographyControls
+          singleLine
+          values={{
+            fontFamily: element.fontFamily ?? '',
+            fontSize: element.fontSize ?? 6,
+            fontWeight: element.fontWeight ?? 400,
+            italic: element.italic ?? false,
+            underline: element.underline ?? false,
+            strikethrough: false,
+            align: element.align ?? 'left',
+            lineHeight: null,
+            letterSpacing: 0,
+            padding: ZERO_PADDING,
+          }}
+          onChange={(changes) => {
+            const { fontFamily, fontSize, fontWeight, italic, underline, align } = changes;
+            patch(
+              Object.fromEntries(
+                Object.entries({
+                  fontFamily: fontFamily === undefined ? undefined : fontFamily || null,
+                  fontSize,
+                  fontWeight,
+                  italic,
+                  underline,
+                  align,
+                }).filter(([, value]) => value !== undefined),
+              ) as Partial<CardElement>,
+            );
+          }}
+          colour={element.color ?? '#111827'}
+          onColourChange={(value) => patch({ color: value })}
+          usedColours={usedColours}
+          fontOptions={fontOptions}
+          onUploadFont={onUploadFont}
+        />
+      )}
+
+      {element.kind === 'picture' && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Fit</Label>
+          <SearchableSelect
+            aria-label="Picture fit"
+            value={element.fit ?? 'contain'}
+            options={[
+              { value: 'contain', label: 'Contain' },
+              { value: 'cover', label: 'Cover' },
+            ]}
+            onChange={(value: string) => patch({ fit: value as 'contain' | 'cover' })}
+          />
+        </div>
+      )}
+
+      {element.kind === 'colour_dots' && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <AccessoryNumberField
+              label="Dot size (mm)"
+              value={element.dotSize_mm ?? null}
+              onChange={(value) => patch({ dotSize_mm: value })}
+              step={0.1}
+              min={0.5}
+              max={50}
+            />
+            <AccessoryNumberField
+              label="Gap (mm)"
+              value={element.dotGap_mm ?? 0.8}
+              onChange={(value) => patch({ dotGap_mm: value })}
+              step={0.1}
+              min={0}
+              max={50}
+            />
+          </div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={element.dotDirection ?? 'row'}
+            onValueChange={(next: string) => {
+              if (next) patch({ dotDirection: next as 'row' | 'column' });
+            }}
+          >
+            <ToggleGroupItem value="row" className="flex-1 text-xs">
+              Row
+            </ToggleGroupItem>
+            <ToggleGroupItem value="column" className="flex-1 text-xs">
+              Column
+            </ToggleGroupItem>
+          </ToggleGroup>
+          <ColorPicker
+            label="Outline"
+            value={element.dotOutline ?? '#9ca3af'}
+            onChange={(value) => patch({ dotOutline: value })}
+            usedColours={usedColours}
+          />
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Picked colours</Label>
+            <Input
+              className="h-7 px-2 text-xs"
+              placeholder="#1f2937, #9ca3af"
+              value={(element.colours ?? []).join(', ')}
+              onChange={(e) => {
+                const picked = e.target.value
+                  .split(/[\s,]+/)
+                  .filter((value) => /^#[0-9a-fA-F]{6}$/.test(value));
+                patch({ colours: picked.length > 0 ? picked : null });
+              }}
+            />
+          </div>
+        </>
+      )}
+
+      {element.kind === 'shape' && (
+        <>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">Shape</Label>
+            <SearchableSelect
+              aria-label="Shape type"
+              value={element.shape ?? 'rect'}
+              options={CARD_SHAPE_OPTIONS}
+              onChange={(value: string) => patch({ shape: value as CardElement['shape'] })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <ColorPicker
+              label="Fill"
+              value={element.fill ?? '#e5e7eb'}
+              onChange={(value) => patch({ fill: value })}
+              usedColours={usedColours}
+            />
+            <ColorPicker
+              label="Stroke"
+              value={element.stroke || '#9ca3af'}
+              onChange={(value) => patch({ stroke: value })}
+              usedColours={usedColours}
+            />
+            <AccessoryNumberField
+              label="Stroke width (mm)"
+              value={element.strokeWidth_mm ?? 0.2}
+              onChange={(value) => patch({ strokeWidth_mm: value })}
+              step={0.1}
+              min={0}
+              max={5}
+            />
+            <AccessoryNumberField
+              label="Corner radius (mm)"
+              value={element.cornerRadius_mm ?? 1}
+              onChange={(value) => patch({ cornerRadius_mm: value })}
+              step={0.5}
+              min={0}
+              max={50}
+            />
+          </div>
+        </>
+      )}
+
+      <div className="grid grid-cols-2 gap-2">
+        <AccessoryNumberField label="X (mm)" value={element.x_mm} onChange={(value) => patch({ x_mm: value })} step={0.25} />
+        <AccessoryNumberField label="Y (mm)" value={element.y_mm} onChange={(value) => patch({ y_mm: value })} step={0.25} />
+        <AccessoryNumberField label="W (mm)" value={element.width_mm} onChange={(value) => patch({ width_mm: value })} step={0.25} min={0.5} />
+        <AccessoryNumberField label="H (mm)" value={element.height_mm} onChange={(value) => patch({ height_mm: value })} step={0.25} min={0.2} />
+      </div>
+    </section>
+  );
+}
+
+function AccessoryNumberField(props: {
+  label: string;
+  value: number | null;
+  onChange: (v: number) => void;
+  step?: number;
+  min?: number;
+  max?: number;
+}) {
+  return <NumberInput {...props} />;
 }

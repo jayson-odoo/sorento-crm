@@ -10,10 +10,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import { richPlainText } from '@/lib/dealer-kit/rich-text';
 import { Label } from '@/components/ui/label';
 import { useCreateAccessory, useUpdateAccessory } from '../hooks/useAccessories';
-import { AccessoryPictureControl } from './AccessoryPictureControl';
-import type { Accessory } from '../types/accessory.types';
+import { AccessoryPicturesField } from './AccessoryPicturesField';
+import type { Accessory, AccessoryPicture } from '../types/accessory.types';
+
+/** A rich value with no visible text is no value. */
+const orNull = (html: string): string | null => (richPlainText(html).trim() === '' ? null : html);
 
 /** Create (no `accessory`) or edit (row click). A picture needs the record, so it shows on edit. */
 export default function AccessoryFormDialog({
@@ -29,7 +34,8 @@ export default function AccessoryFormDialog({
 }) {
   const [name, setName] = useState('');
   const [spec, setSpec] = useState('');
-  const [image, setImage] = useState<Accessory['image']>(null);
+  const [remark, setRemark] = useState('');
+  const [pictures, setPictures] = useState<AccessoryPicture[]>([]);
   const create = useCreateAccessory();
   const update = useUpdateAccessory();
 
@@ -37,7 +43,8 @@ export default function AccessoryFormDialog({
     if (!open) return;
     setName(accessory?.name ?? '');
     setSpec(accessory?.spec ?? '');
-    setImage(accessory?.image ?? null);
+    setRemark(accessory?.remark ?? '');
+    setPictures(accessory?.images ?? []);
   }, [open, accessory]);
 
   const trimmed = name.trim();
@@ -46,7 +53,7 @@ export default function AccessoryFormDialog({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!trimmed) return;
-    const write = { name: trimmed, spec: spec.trim() === '' ? null : spec.trim() };
+    const write = { name: trimmed, spec: orNull(spec), remark: orNull(remark) };
     try {
       if (accessory) await update.mutateAsync({ id: accessory.id, write });
       else await create.mutateAsync(write);
@@ -58,7 +65,7 @@ export default function AccessoryFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{accessory ? 'Edit accessory' : 'Add accessory'}</DialogTitle>
         </DialogHeader>
@@ -74,20 +81,33 @@ export default function AccessoryFormDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="accessory-spec">Spec</Label>
-            <Input
-              id="accessory-spec"
+            <Label id="accessory-spec-label">Spec lines</Label>
+            <RichTextEditor
               value={spec}
-              maxLength={1000}
-              disabled={!canEdit}
-              onChange={(e) => setSpec(e.target.value)}
+              onChange={setSpec}
+              editable={canEdit}
+              toolbar="inline"
+              minHeight={80}
+              aria-labelledby="accessory-spec-label"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label id="accessory-remark-label">Remark</Label>
+            <RichTextEditor
+              value={remark}
+              onChange={setRemark}
+              editable={canEdit}
+              toolbar="inline"
+              minHeight={60}
+              aria-labelledby="accessory-remark-label"
             />
           </div>
           {accessory ? (
-            <AccessoryPictureControl
-              accessory={{ ...accessory, image }}
+            <AccessoryPicturesField
+              accessoryId={accessory.id}
+              pictures={pictures}
               canEdit={canEdit}
-              onChanged={setImage}
+              onChanged={setPictures}
             />
           ) : null}
           {canEdit ? (

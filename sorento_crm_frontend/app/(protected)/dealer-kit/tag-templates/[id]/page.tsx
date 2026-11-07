@@ -96,6 +96,7 @@ import { TagSizeControl } from '../../components/TagSizeControl';
 import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
+import { linkedBoxDesigns } from '@/lib/dealer-kit/accessory-card';
 import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
@@ -183,6 +184,7 @@ function TagTemplateEditor() {
         if (!cancelled) {
           setTemplate(t);
           setDraftLayers(t.doc.layers);
+          rebaseLinks(t.doc.layers);
         }
       })
       .catch((err) => {
@@ -202,6 +204,15 @@ function TagTemplateEditor() {
   // callback stays stable and does not restart the debounce on every save that
   // lands (`setTemplate` below is its own re-render). Same reason the effect
   // further down keeps it out of its dependency array.
+  // Live link (PRICETAG-ACCESSORY-DESIGNER): after a save lands, every linked accessories box whose
+  // design moved since it was loaded is written to its saved template, which rewrites the other
+  // tag templates that follow it. The baseline is each linked design as loaded (or last pushed).
+  const linkBaselineRef = useRef<Map<string, string>>(new Map());
+  const rebaseLinks = useCallback((layers: TagLayer[]) => {
+    linkBaselineRef.current = new Map(
+      Array.from(linkedBoxDesigns(layers), ([id, linked]) => [id, linked.key] as [string, string]),
+    );
+  }, []);
   const templateRef = useRef<TagTemplate | null>(null);
   useEffect(() => {
     templateRef.current = template;
@@ -227,6 +238,17 @@ function TagTemplateEditor() {
         { keepalive: teardownRef.current },
       );
       setTemplate(updated);
+      for (const [id, linked] of linkedBoxDesigns(layers)) {
+        if (linkBaselineRef.current.get(id) === linked.key) continue;
+        try {
+          // Loaded on first use: most templates carry no linked box.
+          const { updateAccessoryTemplate } = await import('../../services/accessoryTemplateService');
+          await updateAccessoryTemplate(id, { design: linked.design });
+          linkBaselineRef.current.set(id, linked.key);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : 'Could not update the accessories template');
+        }
+      }
     }, []),
   );
 
@@ -444,6 +466,7 @@ function TagTemplateEditor() {
         const updated = await restoreTemplateVersion(template.id, versionId);
         setTemplate(updated);
         setDraftLayers(updated.doc.layers);
+        rebaseLinks(updated.doc.layers);
         setEditorGeneration((n) => n + 1);
         setViewing(null);
         toast.success('Draft restored', {
@@ -454,6 +477,7 @@ function TagTemplateEditor() {
                 const reverted = await updateTemplate(template.id, priorDraft);
                 setTemplate(reverted);
                 setDraftLayers(reverted.doc.layers);
+                rebaseLinks(reverted.doc.layers);
                 setEditorGeneration((n) => n + 1);
                 toast.success('Restore undone');
               } catch (err) {

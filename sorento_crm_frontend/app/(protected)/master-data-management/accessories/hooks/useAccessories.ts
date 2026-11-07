@@ -3,13 +3,18 @@ import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
+  addAccessoryPicture,
   createAccessory,
   deleteAccessoryImage,
+  deleteAccessoryPicture,
   getAccessories,
   listOwnerAccessories,
+  orderAccessoryPictures,
+  patchAccessoryPicture,
   replaceOwnerAccessories,
   updateAccessory,
   uploadAccessoryImage,
+  type PictureColour,
 } from '../services/accessoryService';
 import { entryRef } from '../types/accessory.types';
 import type {
@@ -80,6 +85,45 @@ export function useAccessoryImage() {
     uploadMutateAsync: upload.mutateAsync,
     deleteMutateAsync: remove.mutateAsync,
     busy: upload.isPending || remove.isPending,
+  };
+}
+
+/** Several coloured pictures per accessory: add, recolour, remove, reorder. */
+export function useAccessoryPictures() {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
+    queryClient.invalidateQueries({ queryKey: ['owner-accessories'] });
+  };
+  const fail = (fallback: string) => (error: Error) => toast.error(error.message || fallback);
+  const add = useMutation({
+    mutationFn: ({ id, file, colour }: { id: string; file: File; colour?: Partial<PictureColour> }) =>
+      addAccessoryPicture(id, file, colour),
+    onSuccess: refresh,
+    onError: fail('Failed to upload the picture'),
+  });
+  const patch = useMutation({
+    mutationFn: ({ id, imageId, colour }: { id: string; imageId: string; colour: Partial<PictureColour> }) =>
+      patchAccessoryPicture(id, imageId, colour),
+    onSuccess: refresh,
+    onError: fail('Failed to save the colour'),
+  });
+  const remove = useMutation({
+    mutationFn: ({ id, imageId }: { id: string; imageId: string }) => deleteAccessoryPicture(id, imageId),
+    onSuccess: refresh,
+    onError: fail('Failed to remove the picture'),
+  });
+  const order = useMutation({
+    mutationFn: ({ id, ids }: { id: string; ids: string[] }) => orderAccessoryPictures(id, ids),
+    onSuccess: refresh,
+    onError: fail('Failed to reorder the pictures'),
+  });
+  return {
+    addMutateAsync: add.mutateAsync,
+    patchMutateAsync: patch.mutateAsync,
+    removeMutateAsync: remove.mutateAsync,
+    orderMutateAsync: order.mutateAsync,
+    busy: add.isPending || patch.isPending || remove.isPending || order.isPending,
   };
 }
 

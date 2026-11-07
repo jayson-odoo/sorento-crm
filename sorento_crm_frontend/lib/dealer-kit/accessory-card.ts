@@ -488,3 +488,104 @@ export function applyAccessoryDesign(
   if (presetId) next.presetId = presetId;
   return next as unknown as AccessoriesLayerProps;
 }
+
+/** Two full sample accessories (every field filled) for styling a card in the designer, so every
+ *  element shows whatever the preview data holds. */
+export function accessoryDesignSamples(): TagAccessory[] {
+  const colours = [
+    { name: 'Black', hex: '#1f2937' },
+    { name: 'Grey', hex: '#9ca3af' },
+  ];
+  return [1, 2].map((n) => ({
+    kind: 'accessory' as const,
+    id: `design-sample-${n}`,
+    name: 'Accessory name',
+    spec: 'Spec line',
+    remark: 'Remark',
+    code: 'CODE',
+    list_price: 68,
+    image: null,
+    images: [],
+    colours,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Designer helpers
+// ---------------------------------------------------------------------------
+
+export type CardEditTarget = 'card' | 'footer';
+
+/** A new element of `kind`, centred in `area` (card or footer, millimetres). A card text reads the
+ *  name; a footer text is a fixed note (nothing per accessory to read there). */
+export function newCardElement(
+  kind: CardElement['kind'],
+  target: CardEditTarget,
+  area: { w: number; h: number },
+  id: string,
+): CardElement {
+  const size = (() => {
+    switch (kind) {
+      case 'picture':
+        return { w: 12, h: 12 };
+      case 'colour_dots':
+        return { w: 12, h: 3 };
+      case 'shape':
+        return { w: 10, h: 4 };
+      default:
+        return { w: 20, h: 4 };
+    }
+  })();
+  const w = Math.min(size.w, area.w);
+  const h = Math.min(size.h, area.h);
+  const base: CardElement = {
+    id,
+    kind,
+    x_mm: Math.round(((area.w - w) / 2) * 100) / 100,
+    y_mm: Math.round(((area.h - h) / 2) * 100) / 100,
+    width_mm: w,
+    height_mm: h,
+  };
+  switch (kind) {
+    case 'picture':
+      return { ...base, field: 'picture', fit: 'contain' };
+    case 'colour_dots':
+      return { ...base, field: 'colours', dotDirection: 'row' };
+    case 'shape':
+      return { ...base, shape: 'rounded_rect', fill: '#e5e7eb', stroke: '', cornerRadius_mm: 1 };
+    default:
+      return target === 'footer'
+        ? { ...base, field: null, text: 'Note', fontSize: 5, fontWeight: 400, align: 'left' }
+        : { ...base, field: 'name', fontSize: 6, fontWeight: 400, align: 'left' };
+  }
+}
+
+/** Order-independent JSON, to compare two designs. */
+export function designKey(design: unknown): string {
+  const sort = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(sort);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, item]) => [key, sort(item)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(sort(design));
+}
+
+/** The design each linked box carries, by preset id (first box wins), with its comparison key. */
+export function linkedBoxDesigns(
+  layers: readonly { props: { kind: string } }[] | null | undefined,
+): Map<string, { design: AccessoryDesign; key: string }> {
+  const out = new Map<string, { design: AccessoryDesign; key: string }>();
+  for (const layer of layers ?? []) {
+    const props = layer?.props as unknown as AccessoriesLayerProps | undefined;
+    if (!props || props.kind !== 'accessories' || !props.presetId || out.has(props.presetId)) continue;
+    const design = accessoryDesign(props);
+    out.set(props.presetId, { design, key: designKey(design) });
+  }
+  return out;
+}

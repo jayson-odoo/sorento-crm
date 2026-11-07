@@ -430,6 +430,7 @@ function LayerContent({
           scale={scale}
           props={props}
           accessories={display?.accessories}
+          editing={display?.accessoryEditing}
         />
       );
 
@@ -1172,6 +1173,7 @@ function AccessoriesContent({
   scale,
   props,
   accessories,
+  editing,
 }: {
   w: number;
   h: number;
@@ -1180,6 +1182,7 @@ function AccessoriesContent({
   scale: number;
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
+  editing?: boolean;
 }) {
   // A box with a designed card takes its own path; one without keeps the legacy cards below.
   if (props.card) {
@@ -1192,6 +1195,7 @@ function AccessoriesContent({
         scale={scale}
         props={props}
         accessories={accessories}
+        editing={editing}
       />
     );
   }
@@ -1361,6 +1365,7 @@ function DesignedAccessoriesContent({
   scale,
   props,
   accessories,
+  editing,
 }: {
   w: number;
   h: number;
@@ -1369,6 +1374,7 @@ function DesignedAccessoriesContent({
   scale: number;
   props: AccessoriesLayerProps;
   accessories: TagAccessory[] | undefined;
+  editing?: boolean;
 }) {
   const items = accessories ?? sampleAccessories();
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
@@ -1434,7 +1440,13 @@ function DesignedAccessoriesContent({
       {box.cards.map((card, i) => {
         const item = items[i];
         return (
-          <Group key={`${item.id}-${i}`} x={px(card.x_mm)} y={px(card.y_mm)}>
+          <Group
+            key={`${item.id}-${i}`}
+            x={px(card.x_mm)}
+            y={px(card.y_mm)}
+            // While a card is edited the first one is the editable frame; the rest follow, faded.
+            opacity={editing && i > 0 ? 0.45 : 1}
+          >
             <Rect
               width={px(card.width_mm)}
               height={px(card.height_mm)}

@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef } from 'react';
-import { GripVertical, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { GripVertical, Pencil, X } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
@@ -20,6 +20,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
@@ -35,7 +36,13 @@ import {
   useOwnerAccessories,
   useReplaceOwnerAccessories,
 } from '../../../accessories/hooks/useAccessories';
-import { entryKey, type AccessoryEntry, type AccessoryOwnerKind } from '../../../accessories/types/accessory.types';
+import {
+  entryKey,
+  hasOverrides,
+  type AccessoryEntry,
+  type AccessoryOwnerKind,
+} from '../../../accessories/types/accessory.types';
+import { AccessoryEntryDialog } from './AccessoryEntryDialog';
 
 function AccessoryThumb({ accessory }: { accessory: AccessoryEntry }) {
   return accessory.image ? (
@@ -60,6 +67,11 @@ function AccessoryText({ accessory }: { accessory: AccessoryEntry }) {
           <span className="font-semibold">{accessory.code} </span>
         ) : null}
         <span className={accessory.kind === 'product' ? '' : 'font-medium'}>{accessory.name}</span>
+        {hasOverrides(accessory) ? (
+          <Badge variant="secondary" size="sm" className="ml-1.5 align-middle">
+            Own text
+          </Badge>
+        ) : null}
       </p>
       {accessory.kind === 'product' && accessory.list_price != null ? (
         <p className="truncate text-xs text-muted-foreground">
@@ -80,9 +92,11 @@ const PRODUCT_PAGE_SIZE = 50;
 function SortableRow({
   accessory,
   onRemove,
+  onEdit,
 }: {
   accessory: AccessoryEntry;
   onRemove: () => void;
+  onEdit: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: entryKey(accessory),
@@ -104,6 +118,16 @@ function SortableRow({
       </button>
       <AccessoryThumb accessory={accessory} />
       <AccessoryText accessory={accessory} />
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="shrink-0"
+        aria-label="Edit for this list"
+        onClick={onEdit}
+      >
+        <Pencil className="size-4" />
+      </Button>
       <Button
         type="button"
         variant="ghost"
@@ -144,6 +168,7 @@ export function AccessoryListField({
   const create = useCreateAccessory();
   const items = data ?? [];
   const known = useRef(new Map<string, AccessoryEntry>());
+  const [editing, setEditing] = useState<AccessoryEntry | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -244,6 +269,7 @@ export function AccessoryListField({
                     key={entryKey(accessory)}
                     accessory={accessory}
                     onRemove={() => write(items.filter((a) => entryKey(a) !== entryKey(accessory)))}
+                    onEdit={() => setEditing(accessory)}
                   />
                 ))}
               </ul>
@@ -260,6 +286,15 @@ export function AccessoryListField({
           </ul>
         )
       ) : null}
+      <AccessoryEntryDialog
+        entry={editing}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSave={(overrides) => {
+          if (!editing) return;
+          write(items.map((a) => (entryKey(a) === entryKey(editing) ? { ...a, entry: overrides } : a)));
+          setEditing(null);
+        }}
+      />
       {canEdit ? (
         <SearchableSelect
           value=""

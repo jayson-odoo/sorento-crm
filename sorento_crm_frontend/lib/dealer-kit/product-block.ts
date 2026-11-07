@@ -1305,6 +1305,8 @@ export interface TagLayerDisplay {
   icons?: { id: string; url: string }[];
   /** PRICETAG-ACCESSORIES: the bound list (`accessoriesOf`); absent = nothing bound (samples). */
   accessories?: TagAccessory[];
+  /** PRICETAG-ACCESSORY-DESIGNER: the box's card is being edited; the cards after the first fade. */
+  accessoryEditing?: boolean;
 }
 
 /**
