@@ -23,16 +23,19 @@ def _owner(t, key):
     return f"{t[key].sales_agent} - Agent {key.upper()}"
 
 
-def test_S1_payout_per_agent_one_row_per_agent_then_the_dealer_with_totals(targets):
-    """AGENT-COMMISSION-ALL (owner 8 Nov): a dealer is its own row, named as the Dealers tab names it."""
+def test_S1_payout_per_agent_and_dealer_this_year_ranked_with_totals(targets):
+    """AGENT-COMMISSION-ALL (owner 8 Nov): a dealer is its own row; crew live x3: no period named is this year and
+    rows rank by payout, highest first."""
     db, _c, t = targets
     out = run(db, {"entity": ENTITY})
-    assert [r["label"] for r in out["rows"]] == [_owner(t, "a"), _owner(t, "b"), "ZZT DEALER W2"]
-    a = out["rows"][0]
-    assert a["targets"] == 1 and a["target_value"] == 10000.0 and a["achieved_value"] == 9000.0
-    assert a["achieved_pct"] == 90.0 and a["payout"] == 180.0
-    assert out["totals"] == {"targets": 3, "payout": 360.0}
-    assert out["scope_note"] == "Periods containing today (20/10/2026)."
+    assert [r["label"] for r in out["rows"]] == ["ZZT DEALER W2", _owner(t, "a"), _owner(t, "b")]
+    a = out["rows"][1]
+    assert a["targets"] == 1 and a["target_value"] == 60000.0 and a["achieved_value"] == 21000.0
+    assert a["achieved_pct"] == 35.0 and a["payout"] == 540.0
+    assert out["totals"] == {"targets": 3, "payout": 3500.0 + 540.0 + 180.0}
+    assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
+    # The dealer target has no figure (0): its sales stay out of target and achieved, its payout counts.
+    assert out["scope_note"] == f"No period named: this year. Left out of target and achieved (a target of 0): {t['dealer']['target_no']}."
 
 
 def test_S1b_a_wider_window_is_still_one_row_per_agent(targets):
