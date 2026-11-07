@@ -20,6 +20,12 @@ export interface TierAccountRate {
   rate: number;
 }
 
+/** A tier's Additional: `pct` on top of its rate, or a fixed `amount` in RM. */
+export interface TierAdditional {
+  kind: 'pct' | 'amount';
+  value: number;
+}
+
 export interface CommissionTier {
   /** `pct` targets: the achievement % the tier starts at. */
   from_pct?: number | null;
@@ -27,9 +33,12 @@ export interface CommissionTier {
   threshold?: number | null;
   /** Amount target: % of the achieved amount. Quantity target: RM per unit. Null with rates per account. */
   rate: number | null;
-  /** RM paid once per period when the tier is reached. */
+  /** The tier's RM Additional: paid once per period when this is the tier reached. */
   bonus_amount: number | null;
-  /** A "+ Additional" line, paid on top of the main tier (they stack). */
+  /** The tier's % Additional (RM per unit on a quantity target), on top of the rate when this is
+   * the tier reached, on the same accounts. A tier has a % or an RM Additional, not both. */
+  additional_rate?: number | null;
+  /** A legacy "+ Additional" line, paid on top of the main tier (they stack) until folded. */
   is_additional?: boolean;
   /** Tiers per period: the start of the period this tier belongs to. */
   period_start?: string | null;
@@ -132,6 +141,8 @@ export interface SalesTargetPeriod {
   tier_reached?: number | null;
   /** The reached main tier's rate(s): one label-less entry, or one per account. */
   tier_rates?: TierRateEntry[];
+  /** The reached tier's Additional; null when it has none. */
+  tier_additional?: TierAdditional | null;
   /** Points targets: RM per point in force on the period's last day. */
   point_ratio?: number | null;
   ratio_missing?: boolean;
