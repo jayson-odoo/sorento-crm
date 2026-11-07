@@ -3692,16 +3692,16 @@ def from_object(
     return out
 
 
-#: WR-10: the `broaden_axis` values whose widen widens the held lists too: every axis ("all", or none named) and a
-#: product filter's own kind; a customer, sales agent or date widen keeps them.
+#: WR-10: the `broaden_axis` values whose `broaden_to` "all" widens the held lists too: every axis ("all", or none
+#: named) and a product filter's own kind; a customer, sales agent or date widen keeps them.
 _LIST_WIDEN_AXES = frozenset({"", "all", "brand", "category", "account_type"})
 
 
 def _widens(verdict: dict[str, Any]) -> bool:
-    """Does this parse widen the held lists: `entity_op` "clear", or `broaden_to` "all", on an axis of
-    `_LIST_WIDEN_AXES` (WR-1..3, WR-10, WR-12). Parser fields only."""
+    """Does this parse widen the held lists: `entity_op` "clear" on any axis (WR-12, WR-12b), or `broaden_to` "all" on
+    an axis of `_LIST_WIDEN_AXES` (WR-1..3, WR-10). Parser fields only."""
     axis = jsc.js_string(verdict.get("broaden_axis") or "").strip().lower()
-    return (verdict.get("entity_op") == "clear" or verdict.get("broaden_to") == "all") and axis in _LIST_WIDEN_AXES
+    return verdict.get("entity_op") == "clear" or (verdict.get("broaden_to") == "all" and axis in _LIST_WIDEN_AXES)
 
 
 def _carry(
@@ -3728,7 +3728,7 @@ def _carry(
     # R-P3-09: the kinds the parse widens, read as each kind's own hint (brand and account type clear together).
     widened = widened_kinds(verdict)
     widens = _widens(verdict)
-    cleared = widens and verdict.get("entity_op") == "clear"
+    cleared = verdict.get("entity_op") == "clear"
     for keys, hints in _CARRY_KINDS:
         if (cleared if "company" in keys else widens) or named & hints or hints & widened or any(ask.get(k) for k in keys):
             continue

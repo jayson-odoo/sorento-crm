@@ -35,9 +35,10 @@ Repro traces: crew/state/handtest/2156/prod-v72-repro/ (copy at 30bbcc6a7c, v202
 - Layer: backend only, staff chatbot report-ask lane (`app/services/chatbot/lanes/business/report_ask.py`), the new
   report-ask object path behind `REPORT_ASK_LINE`. No route, schema, MCP or FE change.
 - Mechanism:
-  - Fix 1 (carry): when the parse itself widens the lists (`entity_op` "clear", or `broaden_to` "all" on the axis
-    "all", none, or a product-filter kind: brand, category, account type; review round 1, WR-10), a list the object
-    emptied is not carried back from the held report; a customer, sales agent or date widen keeps the held lists.
+  - Fix 1 (carry): when the parse itself widens the lists (`entity_op` "clear" on any axis, WR-12b; or `broaden_to`
+    "all" on the axis "all", none, or a product-filter kind: brand, category, account type; review round 1, WR-10), a
+    list the object emptied is not carried back from the held report; a customer, sales agent or date `broaden_to`
+    widen keeps the held lists.
     `topic_reset` carries nothing already. The object is the report after this message. Parser fields only; when the
     parse marks no widen, `_carry` is unchanged (C6-2's protection against an object that dropped a held list stays).
     The company is dropped only on `entity_op` "clear" (WR-4); one kind's widen ("all sale agents") keeps the held
