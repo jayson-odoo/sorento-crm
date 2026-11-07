@@ -2861,3 +2861,24 @@ def test_the_supplier_side_po_read_waits_on_any_order_party_or_report_owned_word
     own = {"raw": "Sorento", "hint": "supplier", "current_message": True}
     assert _supplier_side_po_ask({**base, "entities": [own]})
     assert not _supplier_side_po_ask({**base, "entities": [own]}, frozenset({"sorento"}))
+
+
+@pytest.mark.parametrize(
+    "intent,document",
+    [("check_po", []), ("check_order", ["PO"]), ("check_po", ["PO"])],
+)
+def test_a3_alone_reads_a_supplier_side_po_ask_on_the_order_domain_as_purchase_orders(intent, document):
+    """Crew round 3 (#2120): live never exercised A3 (the parser already read purchase_order), so it is proved here on
+    its own. The parser's own fields only: domain_hint order, party_side supplier, a PO intent or document, and no
+    party word at all (so no supplier entity, and the old supplier swap cannot fire)."""
+    from app.services.chatbot.engine import _supplier_side
+
+    verdict = {
+        "domain_hint": "order", "intent_hint": intent, "document": document, "order_status": "outstanding",
+        "party_side": "supplier", "entities": [],
+    }
+    out = _supplier_side(verdict, None, None, SimpleNamespaceTrace())
+    assert out["domain_hint"] == "purchase_order" and out["intent_hint"] == "check_po", out
+    assert out.get("sales_side_status") == "outstanding", out
+    for other in ({**verdict, "party_side": "customer"}, {**verdict, "party_side": None}, {**verdict, "intent_hint": "check_order", "document": []}):
+        assert _supplier_side(other, None, None, SimpleNamespaceTrace())["domain_hint"] == "order", other
