@@ -1721,7 +1721,8 @@ export function TagCanvasEditor({
   const accessoryTemplateOf = useCallback(
     (layer: TagLayer | null | undefined) => {
       if (!layer || layer.props.kind !== 'accessories' || !layer.props.presetId) return null;
-      const found = accessoryTemplates.find((t) => t.id === layer.props.presetId);
+      const presetId = layer.props.presetId;
+      const found = accessoryTemplates.find((t) => t.id === presetId);
       return found ? { name: found.name, usedIn: found.used_in } : null;
     },
     [accessoryTemplates],

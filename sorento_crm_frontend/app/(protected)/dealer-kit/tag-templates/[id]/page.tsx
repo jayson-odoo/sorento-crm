@@ -492,7 +492,7 @@ function TagTemplateEditor() {
         setRestoringVersionId(null);
       }
     },
-    [template, draftLayers],
+    [template, draftLayers, rebaseLinks],
   );
 
   if (isLoading) {
