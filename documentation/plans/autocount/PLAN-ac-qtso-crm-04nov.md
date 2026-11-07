@@ -1,6 +1,6 @@
 # PLAN: AutoCount write-back phase 2 (CRM side): quotation + sales order create / update / cancel from project sales
 
-Lane: AC-QTSO-CRM. Status: Review (fix round 1).
+Lane: AC-QTSO-CRM. Status: Review (round 7: B5 / B10 / F12 done, reviewer READY).
 Track: full pipeline (writes to an external system, new admin switch, security review required).
 
 ## Owner rulings carried in
@@ -9,6 +9,9 @@ Track: full pipeline (writes to an external system, new admin switch, security r
 - CRM decides intent; the Shared Service (SS) owns the AutoCount steps. Writes only reach the db3 test book until sign-off (SS guard).
 - Never delete an AutoCount document; cancel instead. Anything needing the SS delete door is greyed "Waiting for AutoCount".
 - Ships inert: an admin switch, default OFF, hides every write action and the API refuses.
+- UOM (owner, 7 Nov): the project line's UOM is only a label. Every QT/SO line sends the item's AutoCount base UOM
+  (`products.base_uom_id` -> `units_of_measure.uom_code`) with the quantity as is; no refusal path, no conversion. A product
+  with no base UOM keeps the line's UOM. Pinned by `tests/test_project_autocount_uom.py`.
 
 ## Behaviour card
 
@@ -88,7 +91,7 @@ Create header (`header{}`):
 | remark1 | CRM ref: SO `provisional_ref` (PSO-...), QT `document_no (Rn)`, so the next pull can adopt the document |
 | docNo | not sent; AutoCount numbers it |
 
-Create lines (`lines[]`): itemCode = product code; uom; qty (> 0); unitPrice (>= 0); location (required) = SO line
+Create lines (`lines[]`): itemCode = product code; uom = the item's AutoCount base UOM (owner, 7 Nov); qty (> 0); unitPrice (>= 0); location (required) = SO line
 `stock_location`, else `derived_stock_location` (`project_so_draft_service.py:3323`), else refused in the CRM "No location on line N";
 description; deliveryDate (SO); discount blank. SO line made from a quotation line that is already in AutoCount: send
 `fromQuotation{docNo, dtlKey}`; AutoCount then copies price and location from it (warning QT_ROW_VALUES_INHERITED, shown amber).
