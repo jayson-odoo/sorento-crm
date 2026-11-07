@@ -947,6 +947,47 @@ def _location_moved_from(
     return was if was and now_location and was != now_location else None
 
 
+def held_order_locations(db: Session, line_ids: Sequence[str]) -> Dict[str, str]:
+    """SPLIT-SHEET-LOCATION: per line, the ONE location purchasing's live orders for it sit at
+    (its ORDER / ORDER BACK rows, not redirected to the pool); a line whose orders sit at two
+    locations, or that has none, is left out. Read by a Confirm BEFORE it writes, because the
+    write restamps a raised row onto the line's own location."""
+    if not line_ids:
+        return {}
+    found: Dict[str, set] = {}
+    for line_id, code in db.query(OrderInquiryRow.so_line_id, OrderInquiryRow.stock_location).filter(
+        OrderInquiryRow.so_line_id.in_(list(line_ids)),
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+        OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+        OrderInquiryRow.redirected_to_pool.is_(False),
+    ):
+        if code:
+            found.setdefault(str(line_id), set()).add(code)
+    return {line_id: next(iter(codes)) for line_id, codes in found.items() if len(codes) == 1}
+
+
+def _held_location_moved_from(held: Optional[str], now: Mapping[str, Any]) -> Optional[str]:
+    """Where purchasing's order sits when the line's own location is now elsewhere, for a Buy
+    line confirmed for the first time (no snapshot to compare with); None otherwise."""
+    location = now.get("location") or None
+    if not held or not location or _buy_qty(now) <= _ZERO:
+        return None
+    return held if held != location else None
+
+
+def _say_moved(item: Dict[str, Any], was: str, now: Mapping[str, Any]) -> None:
+    """A queued row line told for a moved saved line: at the line's new location, with the
+    move in REMARK (the row itself keeps its location, owner Q3)."""
+    location = now.get("location") or None
+    entry = item.get("line") or {}
+    phrase = _new_location_remark(was)
+    entry["remark"] = f"{entry['remark']}, {phrase}" if entry.get("remark") else phrase
+    if location:
+        entry["location"] = location
+        item["stock_location"] = location
+    item["verb_keys"] = [*(item.get("verb_keys") or []), "CHANGE_LOCATION"]
+
+
 def _new_location_remark(was: str) -> str:
     """REMARK's words for a moved line: the new code already prints in LOCATION."""
     return f"NEW LOCATION (was {was})"
@@ -4911,6 +4952,7 @@ class ProjectOrderInquiryService:
         pso_id: str,
         saved: Sequence[Tuple[ProjectSalesOrderLine, Mapping[str, Any], Optional[Mapping[str, Any]]]],
         actor_user_id: Optional[str] = None,
+        held_locations: Optional[Mapping[str, str]] = None,
     ) -> None:
         """The purchasing email of one Confirm: ONE line per SAVED line whose decision is new
         or changed, saying what was decided (ORDERBACK-DELTA extension, owner 13 Oct 2026
@@ -4941,6 +4983,27 @@ class ProjectOrderInquiryService:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
             own = _own_remark(now)
+            held_from = (
+                _held_location_moved_from((held_locations or {}).get(str(line.id)), now)
+                if before is None and own is None
+                else None
+            )
+            if held_from:
+                # SPLIT-SHEET-LOCATION (crew browser pass, SO358013 line 224): a line's FIRST
+                # Confirm has no decision to compare locations with, but purchasing's own
+                # order sits at the old location. The move is said against it; the rows'
+                # own line (a settle, a rise) carries it, else the move alone is told.
+                if row_lines:
+                    for item in row_lines:
+                        item["told_for_saved_line"] = True
+                    _say_moved(row_lines[0], held_from, now)
+                    queue.extend(row_lines)
+                else:
+                    self._queue_saved_line(
+                        pso_id, line, now, {**now, "location": held_from},
+                        actor_user_id=actor_user_id,
+                    )
+                continue
             if own is not None and not unchanged and not (
                 purchasing_remark(now) or (before is not None and purchasing_remark(before))
             ):

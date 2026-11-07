@@ -170,3 +170,143 @@ def test_a_moved_line_that_also_grew_orders_the_rise_and_says_the_move(api, emai
     assert line[2] == new_wh.warehouse_code, line
     assert "ORDER 2" in line[3], line
     assert line[3].endswith(f"NEW LOCATION (was {old})"), line
+
+
+# --------------------------------------------------------------------------- #
+# Crew browser pass (7 Nov, SO358013 line 224): the move raises a pending
+# `location_changed` row and the board Confirm carries that batch.
+# --------------------------------------------------------------------------- #
+
+
+def _raise_move_row(world, order, project_line, old_code, new_wh):
+    """The change row a manual SO edit / AutoCount push raises (real diff, line_id pair)."""
+    from app.models.order import SalesOrder
+    from app.services import planning_change_service
+    from app.services.scm.outstanding_diff import Line, diff_lines
+
+    core = _core_line_of(world, project_line)
+    so = world.db.get(SalesOrder, core.sales_order_id)
+
+    def side(code):
+        return Line(doc_number=so.so_number, item_code=world.product.product_code,
+                    location=code, qty=float(core.qty_ordered),
+                    required_date=core.required_date, row_ref=str(core.id),
+                    line_id=str(core.id))
+
+    core.warehouse_id = new_wh.id
+    diff = diff_lines([side(old_code)], [side(new_wh.warehouse_code)])
+    batch = planning_change_service.build_batch(
+        world.db, diff,
+        applied_line_ids={id(c): str(core.id) for c in diff.changes},
+        order_ids={so.so_number: str(so.id)},
+        actor=world.actor, import_job_id=None, file_name=None,
+    )
+    world.db.commit()
+    assert batch is not None, "premise: the move raised a change row"
+    return batch
+
+
+def test_the_board_confirm_carrying_the_move_row_tells_new_location(api, emails):
+    from .test_planning_change_apply_on_board import _confirm
+
+    client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    emails.clear()
+
+    new_wh = _sibling(world)
+    batch = _raise_move_row(world, order, line_a, old, new_wh)
+    response = _confirm(client, order.id, [_line_payload(line_a.id, buy_qty="10")],
+                        batch_id=str(batch.id))
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    assert len(emails) == 1, emails
+    assert _lines(emails[0]) == [
+        (world.product.product_code, "10", new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
+    ], _lines(emails[0])
+
+
+def test_the_scm_sales_order_edit_then_board_confirm_tells_new_location(api, emails):
+    """Crew browser pass, exactly: SCM Sales Order edit moves the line's location, the board
+    shows the change, CS re-decides the same Buy and presses Confirm with the batch."""
+    from app.models.order import SalesOrder
+    from app.models.planning_change import PlanningChangeRow
+    from app.schemas.scm_orders import SalesOrderUpdate
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    from .test_planning_change_apply_on_board import _confirm
+
+    client, world = api
+    order, line_a, _line_b = _order(api)
+    old = world.own_wh.warehouse_code
+    _post(api, order, [_line_payload(line_a.id, buy_qty="10")])
+    emails.clear()
+
+    new_wh = _sibling(world)
+    core = _core_line_of(world, line_a)
+    so = world.db.get(SalesOrder, core.sales_order_id)
+    SalesOrderService(world.db).update(
+        so.id,
+        SalesOrderUpdate(lines=[
+            {
+                "id": c.id, "sku": world.product.product_code,
+                "qty_ordered": float(c.qty_ordered),
+                "required_date": c.required_date.isoformat(),
+                "warehouse_code": (
+                    new_wh.warehouse_code if c.id == core.id else old
+                ),
+            }
+            for c in (core, _core_line_of(world, _line_b))
+        ]),
+        user_id=world.actor,
+    )
+    world.db.commit()
+    (row,) = (
+        world.db.query(PlanningChangeRow)
+        .filter_by(project_line_id=str(line_a.id), applied_state="pending")
+        .all()
+    )
+    assert row.kind == "location_changed", row.kind
+
+    response = _confirm(client, order.id, [_line_payload(line_a.id, buy_qty="10")],
+                        batch_id=str(row.batch_id))
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    assert len(emails) == 1, emails
+    assert _lines(emails[0]) == [
+        (world.product.product_code, "10", new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
+    ], _lines(emails[0])
+
+
+def test_a_first_confirm_of_a_moved_line_with_an_imported_order_says_where_it_was(api, emails):
+    """Crew browser pass (SO358013 line 224 CB2828-DIY): the line had no confirmed decision
+    yet (the Confirm wrote revision 1), only the raised ORDER row a sheet import left at
+    BRW-BB. AutoCount (an SCM edit) moved the line to BRW-IB, CS decided the same Buy 104
+    and confirmed: purchasing's order sits at the old location, so the email says the move
+    against where their order is. The row keeps its id, state, verb and qty (Q3: no cancel,
+    no fresh order); a still-raised row follows the line's location as it already did."""
+    from .test_oi_handover_purchasing_focus import _imported_raised_order
+
+    _client, world = api
+    order, line = _imported_raised_order(api)
+    old = world.own_wh.warehouse_code
+    (held,) = _rows(world, line)
+    held.stock_location = old
+    world.db.commit()
+    before = (str(held.id), held.state, held.verb, held.qty)
+    emails.clear()
+
+    new_wh = _sibling(world)
+    _move(world, line, new_wh)
+    _post(api, order, [_line_payload(line.id, buy_qty="10")])
+
+    assert len(emails) == 1, emails
+    assert _lines(emails[0]) == [
+        (world.product.product_code, "10", new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
+    ], _lines(emails[0])
+    world.db.expire_all()
+    (after,) = _rows(world, line)
+    assert (str(after.id), after.state, after.verb, after.qty) == before
