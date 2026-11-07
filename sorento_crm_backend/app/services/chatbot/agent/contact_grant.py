@@ -142,6 +142,10 @@ def plan(db, user: dict, args: dict) -> dict:
         raise _refuse(f"\"{_clean(args.get('phone'))}\" is not a Malaysian mobile phone number.")
     name = _clean(args.get("name"))[:255]
     role = args.get("role")
+    if role not in ("owner", "employee"):
+        # The model reads the access word; a word that is neither role is never forced into one (owner card Q3).
+        said = _clean(args.get("access_as_written"))[:60] or "not given"
+        raise _refuse(f"Unknown access: {said}.")
     companies = list(dict.fromkeys(_clean(c).upper() for c in args.get("companies") or []))
     unknown = [c for c in companies if c not in sheet.TEMPLATE["companies"].values()]
     if unknown or not companies:
@@ -341,8 +345,15 @@ writes.WRITES[GRANT] = writes.WriteDef(
                     "phone": {"type": "string", "description": "The phone number exactly as in the table."},
                     "name": {"type": "string", "description": "The person's name from the table."},
                     "role": {
-                        "type": "string", "enum": ["owner", "employee"],
-                        "description": "owner = Business owner / Owner / Pemilik / Tauke; employee = Employee / Staff / Pekerja.",
+                        "type": "string", "enum": ["owner", "employee", "unknown"],
+                        "description": (
+                            "owner = the row says the person owns the business (Business owner, Owner, Pemilik, "
+                            "Tauke); employee = the row says they are an employee (Employee, Staff, Pekerja). Any "
+                            "other access word, or none: unknown (the row is then skipped, never guessed)."
+                        ),
+                    },
+                    "access_as_written": {
+                        "type": "string", "description": "The row's access cell exactly as written in the table.",
                     },
                     "companies": {
                         "type": "array", "items": {"type": "string"}, "maxItems": 2,

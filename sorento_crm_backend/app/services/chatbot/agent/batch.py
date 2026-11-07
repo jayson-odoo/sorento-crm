@@ -120,6 +120,8 @@ def propose(
     data = {
         "proposed": [{"row": s["row"], "summary": s["summary"]} for s in new_steps],
         "skipped": [{"row": s["row"], "reason": s["reason"]} for s in skipped],
+        # The counts the reply may say, so the number check finds them in this result.
+        "rows_total": len(rows), "rows_proposed": len(new_steps), "rows_skipped": len(skipped),
     }
     if not new_steps:
         return ToolResult("invalid", data=data, message="No row can be changed; tell the user why, row by row.")

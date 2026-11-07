@@ -525,7 +525,8 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     # of returned rows. The figures' citations are informational.
     backed: set[str] = set()
     for entry in ledger.values():
-        if entry["status"] == "ok":
+        # A batch result is built by code from the pasted rows (its row numbers and counts), whatever its status.
+        if entry["status"] == "ok" or (entry.get("name") == batch.BATCH and isinstance(entry.get("data"), dict)):
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
