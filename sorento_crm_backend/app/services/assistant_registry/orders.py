@@ -117,6 +117,7 @@ register(
         screen_path="/order-management/orders/{id}",
         pages=("/order-management",),
         routes=("GET /api/v1/order-management/orders/",),
+        date_field="order_date",
         hint="delivery orders (DO), NOT sales: only when DOs or delivered orders are asked; period = order_date",
         scope=_screen_rules,
     ),

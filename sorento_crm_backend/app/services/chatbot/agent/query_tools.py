@@ -259,15 +259,20 @@ QUERY_SCHEMA = {
             "is_null is_not_null. group_by: [field or {field, bucket: day|week|month|quarter|year}]. "
             "aggregates: [{fn: count|count_distinct|sum|avg|min|max, field}]. sort: [{field, dir}] (a group "
             f"sorts by its key or an aggregate alias such as sum_total_amount). At most {MAX_ROWS} rows or "
-            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy; a "
-            "date filter may name its window: {field: doc_date, op: eq, value: last_month} (this_month, "
-            "this_quarter, last_year, 2026-10, Q3 2026). An agent named: agent eq <code or name>.\n"
+            f"{MAX_GROUPS} groups; total and truncated say if there are more. Dates are Malaysian and dd/mm/yyyy. "
+            "A person or agent named by the user: pass it as `agent` exactly as said (no crm_resolve, no ids). "
+            "A time window: `period` (no crm_describe needed); a date filter may also name its window.\n"
             "Entities:\n" + entity_index()
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "entity": _TEXT,
+                "agent": {"type": "string", "description": "Sales agent code or name as the user said it; matched "
+                          "exactly first, inside the tool."},
+                "period": {"anyOf": [_TEXT, {"type": "array", "items": _TEXT}], "description": "last_month, "
+                           "this_month, this_quarter, last_quarter, this_year, 2026-10, Q3 2026, 2026, or [from, to] "
+                           "where to may be today (since July = [2026-07, today])."},
                 "fields": {"type": "array", "items": _TEXT},
                 "filters": {"type": "array", "items": {
                     "type": "object",
@@ -336,11 +341,19 @@ def shape_reply(text: str, ledger: dict | None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
-    # A code-rendered table (`as_card`): the model's first line, then the turn's LAST table verbatim (a later
-    # query corrected an earlier one), as `report_state.with_cards` does for the report card.
-    cards = [e.get("display") for e in (ledger or {}).values() if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display")]
-    if cards:
-        card = cards[-1]
+    # A code-rendered table (`as_card`): the model's first line, then the tables verbatim, as
+    # `report_state.with_cards` does for the report card. One table per entity, in the order first asked: a later
+    # query on the same entity corrected the earlier one, so the last stands; a query on another entity is a table of
+    # its own, which never replaces the first (crew live x3 on 3c6924bf: "who is below
+    # target" lost its target table and its "Not reached = ..." note to a later payout query).
+    per_entity: dict[str, str] = {}
+    for e in (ledger or {}).values():
+        if e.get("name") == QUERY and e.get("status") == "ok" and e.get("display"):
+            entity = str((e.get("data") or {}).get("entity") or (e.get("args") or {}).get("entity") or "")
+            per_entity[entity] = e["display"]
+    if per_entity:
+        cards = list(per_entity.values())
+        card = "\n\n".join(cards)
         if card not in text:
             line = next((part.strip() for part in text.splitlines() if part.strip()), "")
             text = f"{line[:MAX_LINE_CHARS]}\n\n{card}".strip() if line else card

@@ -91,18 +91,50 @@ MAX_QUERY_CALLS = 3
 REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
 
 
+#: Kept beside the registry tools after a round that only named a sales agent: the report takes agent ids.
+AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
+
+
 def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict]) -> list[dict]:
     """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
     the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
     other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
-    registry calls were all refused, leaves the schemas as they are."""
+    registry calls were all refused, leaves the schemas as they are.
+
+    Crew live x3 on 3c6924bf: the model resolved the agent's name with crm_resolve first, a round that resent every
+    schema (~20k). A round whose crm_resolve calls found only sales agents narrows the same way (plus the report,
+    which takes the agent's id): what follows is a figure for that agent."""
     names = {str(c.get("name") or "") for c in calls}
-    if not names or not names <= REGISTRY_ROUND_TOOLS:
+    if not names:
         return schemas
     answered = done[-len(calls):] if calls else []
+    if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
+        resolved = [c for c in answered if c.get("name") == "crm_resolve"]
+        if resolved and all(c.get("status") == "ok" and c.get("agents_only") for c in resolved):
+            return [s for s in schemas if s.get("function", {}).get("name") in AFTER_AGENT_RESOLVE]
+        return schemas
+    if not names <= REGISTRY_ROUND_TOOLS:
+        return schemas
     if not any(c.get("name") in QUERY_TOOLS and c.get("status") == "ok" for c in answered):
         return schemas
     return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
+
+
+def found_agents(data) -> list[str]:
+    """The sales agents a `crm_resolve` result found, as "CODE - Name", when it found sales agents and nothing
+    else; [] otherwise."""
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        return []
+    labels = []
+    for row in results:
+        matches = row.get("matches") if isinstance(row, dict) else None
+        if row.get("status") != "found" or not matches or any(m.get("kind") != "sales_agent" for m in matches):
+            return []
+        for m in matches:
+            code, name = str(m.get("code") or "").strip(), str(m.get("name") or "").strip()
+            labels.append(f"{code} - {name}" if code and name else code or name)
+    return [label for label in labels if label]
 
 
 @dataclass
@@ -1547,6 +1579,12 @@ def _run(
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
                         catalog=catalog, timeout=float(seconds), seen_ids=seen_ids, denied_domains=denied_domains,
                     )
+                agents = found_agents(out.data) if name == "crm_resolve" and out.status == "ok" else []
+                if agents and any(sc.get("function", {}).get("name") == "crm_query" for sc in schemas):
+                    out.message = (
+                        "crm_query takes the agent by name, no id needed: "
+                        + "; ".join(f"agent={label!r}" for label in agents) + "."
+                    )
                 ms = int((clock() - started) * 1000)
                 payload = out.to_json(call_id)
                 if out.status in ("ok", "empty"):
@@ -1560,7 +1598,7 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
+                run.tool_calls.append({"name": name, "status": out.status, "ms": ms, "agents_only": bool(agents)})
                 if basis and out.status == "ok" and not turn_basis:
                     turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})

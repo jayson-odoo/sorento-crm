@@ -40,7 +40,7 @@ OPS = (
 )
 BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
-SPEC_KEYS = ("entity", "fields", "filters", "group_by", "aggregates", "sort", "limit")
+SPEC_KEYS = ("entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit")
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
 _DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
@@ -641,6 +641,7 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    spec = shorthands(entity, spec)
     if entity.compute is not None:
         from app.services.assistant_registry.computed import run_computed
 
@@ -683,6 +684,43 @@ def _display_date(value: Any, kind: str) -> str:
     if isinstance(iso, str) and _DATE_ONLY.match(iso):
         return dt.date.fromisoformat(iso).strftime("%d/%m/%Y")
     return str(value)
+
+
+def shorthands(entity: EntityDef, spec: dict) -> dict:
+    """`agent` and `period` as their filters (crew live x3 on 3c6924bf: the model resolved the agent's name with
+    crm_resolve first and read crm_describe for the window, one or two extra model calls of ~20k tokens each).
+
+    `agent`: the agent as the user named it, on the entity's agent field (`FieldDef.agent_id`), matched exactly
+    first (`match_agents`, `computed._exact_agents`), so no id and no resolve round. `period`: a window name
+    (last_month, this_quarter, 2026-10, Q3 2026, 2026) or [from, to] (either end may be a name or "today"), on the
+    entity's own date (`window_field`, else `date_field`)."""
+    if "agent" not in spec and "period" not in spec:
+        return spec
+    spec = dict(spec)
+    filters = list(_list(spec, "filters", MAX_FILTERS))
+    agent = spec.pop("agent", None)
+    if agent is not None:
+        field = next((key for key, f in entity.fields.items() if f.agent_id), None)
+        if field is None:
+            raise QueryRefused("invalid", f"`agent` does not apply to {entity.label.lower()}; use filters.")
+        if not isinstance(agent, str) or not agent.strip():
+            raise QueryRefused("invalid", "`agent` is the agent's code or name as text.")
+        filters.append({"field": field, "op": "contains", "value": agent.strip()})
+    period = spec.pop("period", None)
+    if period is not None:
+        field = entity.window_field or entity.date_field
+        if field is None:
+            raise QueryRefused("invalid", f"`period` does not apply to {entity.label.lower()}; use filters.")
+        if isinstance(period, list) and len(period) == 2:
+            filters.append({"field": field, "op": "between", "value": period})
+        elif isinstance(period, (str, int)) and not isinstance(period, bool):
+            filters.append({"field": field, "op": "eq", "value": period})
+        else:
+            raise QueryRefused("invalid", "`period` is a window name (last_month, 2026-10, Q3 2026) or [from, to].")
+    if len(filters) > MAX_FILTERS:
+        raise QueryRefused("invalid", f"`filters` takes at most {MAX_FILTERS} items.")
+    spec["filters"] = filters
+    return spec
 
 
 def _named_dates(paths: _Paths, item: Any, today: dt.date) -> Any:

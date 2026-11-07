@@ -1,6 +1,6 @@
 # PLAN: AI-TOOLS-WAVE2 (sales modules in the assistant registry)
 
-Status: Review (round 8: crew pass on ffdd7f87; payout per agent and below target passed there, sales basis, one-agent payout window and one agent's customers fixed here). Track: full (RBAC, one
+Status: Review (round 9: crew live x3 on 3c6924bf answered 21/21 right; the token budget failed on extra resolve / describe rounds, fixed here). Track: full (RBAC, one
 additive migration).
 Lane AI-TOOLS-WAVE2, PR #2210.
 
@@ -240,6 +240,25 @@ Root causes, all decided in code (no prompt tuning beyond one line):
   AutoCount agent code never resolved to a master drops out of that agent's figure (it is in no agent's figure on
   the sales reports either). An asked comparison ("invoiced vs delivered") is refused by the one-basis rule and the
   model offers the other basis in one line: an owner call, not changed here.
+
+## Crew live x3 on 3c6924bf (round 9, 7 Nov)
+
+Answers 21/21 right and stable on gemini-3.6-flash; the budget failed (Q3, Q5, Q6 ~50k on 3 calls, Q7 56-71k on 4 to
+6, Q4 run 3 41k on 4). Causes and fixes, in code:
+
+- The model resolved the agent's name with `crm_resolve` first (+1 call, ~+20k: a round resends every schema).
+  `crm_query` now takes `agent` (the code or name as the user said it) and resolves it inside: the entity's agent
+  field (`FieldDef.agent_id`), exact first (`query.shorthands`). The schema property says no crm_resolve and no ids.
+  Backstop when the model resolves anyway: a `crm_resolve` result that found only sales agents tells it "crm_query
+  takes the agent by name: agent='CODE - Name'", and the next rounds carry only the registry tools, `answer`, `plan`
+  and `crm_report_ask` (which takes agent ids) (`loop.narrow_after_query`, `found_agents`).
+- "Since July" read `crm_describe` and re-queried. `crm_query` takes `period`: a window name or [from, to] with
+  "today" allowed, on the entity's own date (`window_field` on the computed target entities, `date_field` on
+  billing documents, delivery orders and sales orders); refused where it does not apply.
+- Q4 run 3 lost "Not reached = ..." and showed a payout table: a later query on another entity replaced the turn's
+  table (the reply kept only the last card). Now one table per entity in the order asked: a same-entity re-query
+  still replaces its own table, another entity's table is added below, never in place of the answer's.
+- Cost: about +100 tokens per call for the two arguments (chars/4 estimate; no tokenizer call, OpenAI is out).
 
 ## Token measurement (task item 5)
 

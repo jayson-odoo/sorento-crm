@@ -77,6 +77,8 @@ class EntityDef:
     #: A computed entity's date-window field: a filter on it picks which periods `compute` reads (overlap), it is
     #: not a row filter. Without one the window is today, and the result's scope note says so.
     window_field: str | None = None
+    #: The date `crm_query`'s `period` argument filters on (a SQL entity; a computed one uses `window_field`).
+    date_field: str | None = None
     #: Figures that cover every brand and cannot be cut to a brand-scoped contact's brands (invoice totals, a
     #: target's achievement): refused while the session carries a brand scope (a linked user's WhatsApp turn).
     brand_blind: bool = False

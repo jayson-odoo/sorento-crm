@@ -47,6 +47,7 @@ register(
         # Counts and rankings of orders are the sales report's (ordered basis): its gate (crew pass, 5 Nov).
         aggregate_permission=SALES_REPORT,
         list_fields=("order_date", "status", "agent.code"),
+        date_field="order_date",
         hint="sales orders (no amounts; sales are billing_document)",
     ),
 )
