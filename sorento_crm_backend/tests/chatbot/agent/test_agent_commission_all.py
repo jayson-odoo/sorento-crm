@@ -419,3 +419,52 @@ def test_L4b_an_unbacked_not_found_claim_is_worded_plainly():
     text, _ = loop.final_reply({"text": "No payout for X."}, [], ["X"], ledger={})
     assert "could not confirm that nothing exists" not in text
     assert text.startswith("I did not search for X, so I cannot say it does not exist.")
+
+
+# ------------------------------------------------------------------ review round 2
+
+
+@pytest.mark.parametrize("claim, args", [
+    # "dealer" is an owner_kind value, never a searched name.
+    ("payout for dealer Hanlim", {"entity": ENTITY, "agent": "fullshun",
+                                  "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]}),
+    # Empty because of the payout filter: fullshun may well exist.
+    ("fullshun", {"entity": ENTITY, "agent": "fullshun", "filters": [{"field": "payout", "op": "gt", "value": 999999}]}),
+    # A status value is not a name.
+    ("pending orders for Hanlim", {"entity": "order", "filters": [{"field": "status", "op": "eq", "value": "pending"}]}),
+])
+def test_R4_an_empty_crm_query_backs_only_the_name_it_searched_with_no_other_narrowing(claim, args):
+    from app.services.chatbot.agent import loop
+
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": args,
+                     "data": {"entity": args["entity"], "rows": [], "total": 0}}}
+    assert loop._not_found_backed(claim, "q1", ledger, set()) is False
+
+
+def test_R4b_a_name_filter_and_a_window_still_back_it():
+    from app.services.chatbot.agent import loop
+
+    args = {"entity": ENTITY, "period": "2026", "filters": [
+        {"field": "owner", "op": "contains", "value": "fullshun"},
+        {"field": "period", "op": "between", "value": ["01/01/2026", "31/12/2026"]}]}
+    ledger = {"q1": {"name": "crm_query", "status": "ok", "args": args, "data": {"entity": ENTITY, "rows": [], "total": 0}}}
+    assert loop._not_found_backed("fullshun", "q1", ledger, set()) is True
+
+
+def test_R5_too_many_periods_this_year_falls_back_to_the_current_periods(targets, monkeypatch):
+    from app.services.assistant_registry import ENTITIES
+    from app.services.assistant_registry.query import QueryRefused
+
+    db, _c, _t = targets
+    entity = ENTITIES[ENTITY]
+    real = entity.compute
+
+    def capped(db, user_id, own_only, date_from, date_to, *, limit):
+        if date_from != date_to:
+            raise QueryRefused("timeout", "More than 2000 target periods in that window; narrow it.")
+        return real(db, user_id, own_only, date_from, date_to, limit=limit)
+
+    monkeypatch.setitem(ENTITIES, ENTITY, type(entity)(**{**entity.__dict__, "compute": capped}))
+    out = run(db, {"entity": ENTITY, "fields": ["payout"]})
+    assert out["rows"] and out["period_display"] is None
+    assert "too many periods this year" in out["scope_note"] and "containing today" in out["scope_note"]

@@ -304,7 +304,8 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     asked = _list(spec, "filters", MAX_FILTERS)
     date_from, date_to, rest, period = _window(entity, asked)
     notes = []
-    if period is None and entity.default_window and entity.window_field:
+    defaulted = period is None and bool(entity.default_window and entity.window_field)
+    if defaulted:
         # No period named: the entity's own default window, said (crew live x3: a payout answered for today only).
         default = {"field": entity.window_field, "op": "eq", "value": entity.default_window}
         date_from, date_to, rest, period = _window(entity, [*asked, default])
@@ -335,7 +336,19 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
 
     # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
     # BEFORE computing (a count first).
-    computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+    try:
+        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+    except QueryRefused as exc:
+        if exc.code != "timeout" or not defaulted:
+            raise
+        # The default window is too wide for this company: the periods containing today instead, said (review
+        # round 2: the user never named a window to narrow).
+        date_from = date_to = _today()
+        period = None
+        notes = [n for n in notes if not n.startswith("No period named")]
+        notes.insert(0, f"No period named and too many periods this year: the periods containing today "
+                        f"({_display_date(date_from.isoformat(), 'date')}).")
+        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
     tests, named_agents = _exact_agents(entity, rest, tests, computed)
     if named_agents:
         notes.insert(0, named_agents)

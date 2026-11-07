@@ -617,12 +617,8 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         data = entry["data"]
         if data.get("rows") != [] or data.get("total"):
             return False
-        args = entry.get("args") or {}
-        terms = [args.get("agent")] + [
-            f.get("value") for f in args.get("filters") or []
-            if isinstance(f, dict) and f.get("op") in ("eq", "contains", "starts_with")
-        ]
-        return any(
+        terms = _searched_names(entry.get("args") or {})
+        return terms is not None and any(
             isinstance(t, str) and (term := _fold_text(t)) and (
                 term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
             )
@@ -632,6 +628,31 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
     return False
+
+
+def _searched_names(args: dict) -> list | None:
+    """The names an empty crm_query searched for: its `agent` and its text filters on the entity's name or agent
+    fields. None when anything else narrowed it (a status, a kind, an amount: empty then says nothing about the
+    name), a date window aside (review round 2 on d8a47c7b)."""
+    from app.services.assistant_registry import ENTITIES
+
+    entity = ENTITIES.get(str(args.get("entity")))
+    if entity is None:
+        return None
+    names = [args.get("agent")]
+    for f in args.get("filters") or []:
+        if not isinstance(f, dict):
+            return None
+        field = entity.fields.get(str(f.get("field")))
+        if field is not None and field.kind == "date" or f.get("field") == entity.window_field:
+            continue
+        if field is not None and (f.get("field") in entity.name_by or field.agent_id) and f.get("op") in (
+            "eq", "contains", "starts_with"
+        ):
+            names.append(f.get("value"))
+            continue
+        return None
+    return names
 
 
 def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
