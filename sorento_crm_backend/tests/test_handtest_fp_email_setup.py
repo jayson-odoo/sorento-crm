@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -67,9 +67,19 @@ def _automations(db) -> dict:
     )
     db.add(template)
     db.flush()
-    inactive, active, dealer_only = (
-        _user(db, active=False), _user(db, active=True), _user(db, active=True)
+    inactive, active, dealer_only, foreign = (
+        _user(db, active=False), _user(db, active=True), _user(db, active=True),
+        _user(db, active=True),
     )
+    # A row that is not the copy's, created first and naming an active user that no project
+    # row lets through (crew, 7 Nov: the result must not depend on which automations exist).
+    db.add(Automation(
+        name="ZZT foreign", trigger_type="order_inquiry_handover", enabled=True,
+        email_template_id=template.id, recipient_config=dict(ORIGINAL_RECIPIENTS),
+        conditions_json=_class_and_raiser("retail", [foreign]),
+        created_at=datetime.utcnow() - timedelta(days=1),
+    ))
+    db.flush()
     spec = {
         "project": ("order_inquiry_handover", True, _class_and_raiser("project", [inactive, active])),
         "dealer": ("order_inquiry_handover", True, _class_and_raiser("retail", [dealer_only])),
@@ -190,9 +200,21 @@ def test_apply_switches_on_the_project_and_undone_rows_mailing_only_the_test_add
 
 def test_apply_again_changes_nothing(built):
     env, calls, automations, report = built
+    # Between the runs a new, older project row appears naming somebody else: the re-run
+    # keeps the first run's raiser (saved in the state file) instead of re-picking.
+    newcomer = _user(env.db, active=True)
+    env.db.add(Automation(
+        name="ZZT newcomer", trigger_type="order_inquiry_handover", enabled=False,
+        email_template_id=automations["project"].email_template_id,
+        recipient_config=dict(ORIGINAL_RECIPIENTS),
+        conditions_json=_class_and_raiser("project", [newcomer]),
+        created_at=datetime.utcnow() - timedelta(days=2),
+    ))
+    env.db.commit()
 
     again = _as_the_script(env.db, lambda: script.apply(env.db))
 
+    assert again["raiser"] == report["raiser"] == automations["active_raiser"]
     assert again["remove"]["pushed_now"] is False
     assert again["remove"]["oi_row_states"] == ["raised"]
     assert _handover_calls(calls) == []
@@ -279,6 +301,9 @@ def test_a_second_row_that_would_also_fire_is_off_for_the_test_and_restored(
         email_template_id=automations["project"].email_template_id,
         recipient_config=dict(ORIGINAL_RECIPIENTS),
         conditions_json=_class_and_raiser("project", [automations["active_raiser"]]),
+        # Later than the copy's rows: inside the test's one outer transaction every row
+        # would otherwise share now(), and the "oldest row is chosen" rule would be a tie.
+        created_at=datetime.utcnow() + timedelta(minutes=5),
     )
     env.db.add(twin)
     env.db.commit()

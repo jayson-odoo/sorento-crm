@@ -319,6 +319,9 @@ def _state_file(db) -> Path:
 
 
 RAISED_BY_FACT = "order_inquiry.raisedBy"
+# The state file's key for the first `--apply`'s raiser: a re-run reuses it, so a re-run never
+# re-picks (the HT orders are already raised by that user).
+RAISER_KEY = "__raiser__"
 
 
 def _listed_raisers(tree: Any) -> list[str]:
@@ -379,17 +382,27 @@ def _choose_raiser(db, rows: list, raiser_email: Optional[str]) -> Optional[str]
             User.id.in_(listed), User.status == "ACTIVE", User.is_trashed.is_(False)
         )
     }
+    from app.services.automation_service import AutomationService
+
+    service = AutomationService(db)
+
+    def lets_through(user_id: str) -> bool:
+        # Only a user some handover row passes for a PROJECT order: a row for another class
+        # (a dealer row's raisers) never routes the hand-test orders, whichever row came first.
+        context = {"sales_order_class": "project", "raised_by": user_id}
+        return bool(service.passing_rows(TRIGGERS[0], context, rows))
+
+    candidates = [u for u in listed if u in active and lets_through(u)]
     for wanted in (raiser_email, _e2e_email()):
         if wanted:
-            for user_id in listed:
-                if active.get(user_id) == wanted.lower():
+            for user_id in candidates:
+                if active[user_id] == wanted.lower():
                     return user_id
-    for user_id in listed:
-        if user_id in active:
-            return user_id
+    if candidates:
+        return candidates[0]
     raise SystemExit(
         "the handover automations route by order_inquiry.raisedBy, but none of the users "
-        "they name is an active user"
+        "they name is an active user a row lets through for a project order"
     )
 
 
@@ -461,6 +474,7 @@ def _restore(db) -> int:
     if not path.exists():
         return 0
     saved = json.loads(path.read_text())
+    saved.pop(RAISER_KEY, None)
     for automation_id, original in saved.items():
         row = db.get(Automation, automation_id)
         if row is not None:
@@ -573,10 +587,21 @@ def apply(
     from app.models.base import company_scope
     from app.models.user import User
 
-    handover_rows = (
-        db.query(Automation).filter(Automation.trigger_type == TRIGGERS[0]).all()
-    )
-    raiser = _choose_raiser(db, handover_rows, raiser_email)
+    path = _state_file(db)
+    saved = json.loads(path.read_text()) if path.exists() else {}
+    if RAISER_KEY in saved:
+        raiser = saved[RAISER_KEY]
+    else:
+        handover_rows = (
+            db.query(Automation)
+            .filter(Automation.trigger_type == TRIGGERS[0])
+            .order_by(Automation.created_at.asc(), Automation.id.asc())
+            .all()
+        )
+        raiser = _choose_raiser(db, handover_rows, raiser_email)
+        saved[RAISER_KEY] = raiser
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(saved, indent=2))
     raiser_shown = (
         db.query(User.email).filter(User.id == raiser).scalar() if raiser else "no one in particular"
     )
