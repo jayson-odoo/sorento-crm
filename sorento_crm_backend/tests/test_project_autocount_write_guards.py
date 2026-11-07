@@ -295,7 +295,9 @@ def test_a_done_quotation_cancel_is_recorded(qt_api, fake_ss):
     [
         ("2026-10-01T09:30:00", "01/10/2026"),
         ("2026-10-01T16:30:00Z", "02/10/2026"),   # 16:30Z is 00:30 the next day in Malaysia
-        ("2026-10-01T16:30:00", "02/10/2026"),    # no zone: read as UTC
+        # F12 / ruling V1: AutoCount stamps carry no zone and are Malaysia local time.
+        ("2026-10-01T16:30:00", "01/10/2026"),
+        ("2026-11-06T18:04:00", "06/11/2026"),    # AC-E2E-DB3: read as UTC this showed 07/11
         ("2026-10-01T16:30:00+08:00", "01/10/2026"),
     ],
 )

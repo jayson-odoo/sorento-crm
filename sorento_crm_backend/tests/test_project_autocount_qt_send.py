@@ -284,18 +284,50 @@ def test_a_later_accepted_issue_updates_the_document_already_in_autocount(api, f
     assert world.document.autocount_last_modified == "2026-11-06T09:00:00"
 
 
-def test_a_stale_quotation_update_says_open_compare_first(api, fake_ss):
+def test_a_stale_quotation_update_keeps_autocounts_stamp_for_the_next_press(api, fake_ss):
+    """B10: the document read just before the PATCH carries AutoCount's own LastModified; a
+    DOC_STALE keeps it, so the next press is not refused for good."""
     client, db, world = api
     _mark_sent(db, world)
-    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    issue2 = add_issue(
+        db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True
+    )
     db.commit()
-    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world))
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world, last_modified="2026-11-06T18:04:00"))
     fake_ss.answers[("PATCH", QT_DOC_PATH)] = (409, refused_body("DOC_STALE", "changed"))
 
     body = client.post(_url(world)).json()
 
     assert body["outcome"] == "refused"
-    assert body["message"] == "Changed in AutoCount since 21/10/2026, open Compare first."
+    assert body["message"] == (
+        "Changed in AutoCount since 21/10/2026. Nothing was changed; "
+        "check it in AutoCount, then press Update again."
+    )
+    assert len(fake_ss.to("GET", QT_DOC_PATH)) == 1, "the read before the PATCH is reused"
+    db.refresh(world.document)
+    assert world.document.autocount_last_modified == "2026-11-06T18:04:00"
+    assert world.document.autocount_edit_issue_id != issue2.id
+
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (200, _created(world, last_modified="2026-11-07T09:00:00"))
+    second = client.post(_url(world)).json()
+
+    assert second["outcome"] == "done", second
+    patches = fake_ss.to("PATCH", QT_DOC_PATH)
+    assert fake_ss.body(patches[-1])["expectedLastModified"] == "2026-11-06T18:04:00"
+    db.refresh(world.document)
+    assert world.document.autocount_last_modified == "2026-11-07T09:00:00"
+
+
+def test_a_quotation_refusal_other_than_doc_stale_keeps_the_stored_stamp(api, fake_ss):
+    client, db, world = api
+    _mark_sent(db, world)
+    add_issue(db, world.company_id, world.document, world.scope, world.version, issue_no=2, accepted=True)
+    db.commit()
+    fake_ss.answers[("GET", QT_DOC_PATH)] = (200, _created(world, last_modified="2026-11-06T18:04:00"))
+    fake_ss.answers[("PATCH", QT_DOC_PATH)] = (409, refused_body("FIELD_REQUIRED", "x"))
+
+    assert client.post(_url(world)).json()["outcome"] == "refused"
+
     db.refresh(world.document)
     assert world.document.autocount_last_modified == "2026-10-21T08:00:00"
 

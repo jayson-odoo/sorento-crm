@@ -415,17 +415,82 @@ def test_a_non_numeric_core_key_is_not_in_autocount(api, fake_ss):
 # --------------------------------------------------------------------------- U12: DOC_STALE
 
 
+STALE_MESSAGE = (
+    "Changed in AutoCount since 01/10/2026. Nothing was changed; "
+    "check it in AutoCount, then press Update again."
+)
+EDITED_IN_AUTOCOUNT = "2026-11-06T18:04:00"
+
+
 def test_doc_stale_says_changed_in_autocount_since_the_stored_date_and_changes_nothing(api, fake_ss):
+    """B10: the refusal reads the document back and keeps AutoCount's own LastModified, so the
+    order is not stuck on DOC_STALE for good; nothing else on the order moves."""
     client, db, world = api
     amendment, _line3 = _setup_mixed(db, world)
     _answer_edits(fake_ss, patch=(409, refused_body("DOC_STALE", "document changed since expectedLastModified")))
+    fake_ss.answers[("GET", DOC_PATH)] = (
+        200, done_body(details=[], last_modified=EDITED_IN_AUTOCOUNT)
+    )
 
     response = client.post(_url(amendment))
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["outcome"] == "refused"
-    assert body["message"] == "Changed in AutoCount since 01/10/2026, open Compare first."
+    assert body["message"] == STALE_MESSAGE
+    assert len(fake_ss.to("GET", DOC_PATH)) == 1, "read back once, after the refusal"
+    db.refresh(world.order)
+    db.refresh(amendment)
+    assert world.order.autocount_last_modified == EDITED_IN_AUTOCOUNT
+    assert amendment.autocount_edit_sent_at is None
+
+
+def test_after_doc_stale_the_next_press_sends_autocounts_own_last_modified(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss, patch=(409, refused_body("DOC_STALE", "changed")))
+    fake_ss.answers[("GET", DOC_PATH)] = (
+        200, done_body(details=[], last_modified=EDITED_IN_AUTOCOUNT)
+    )
+    assert client.post(_url(amendment)).json()["outcome"] == "refused"
+
+    _answer_edits(fake_ss)
+    second = client.post(_url(amendment)).json()
+
+    assert second["outcome"] == "done", second
+    patches = fake_ss.to("PATCH", DOC_PATH)
+    assert len(patches) == 2
+    assert fake_ss.body(patches[0])["expectedLastModified"] == LAST_MODIFIED
+    assert fake_ss.body(patches[1])["expectedLastModified"] == EDITED_IN_AUTOCOUNT
+    db.refresh(world.order)
+    assert world.order.autocount_last_modified == "2026-11-05T11:00:00"
+
+
+def test_doc_stale_with_the_read_back_failing_keeps_the_stored_stamp(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss, patch=(409, refused_body("DOC_STALE", "changed")))
+    fake_ss.answers[("GET", DOC_PATH)] = (503, {"detail": "down"})
+
+    body = client.post(_url(amendment)).json()
+
+    assert body["outcome"] == "refused"
+    assert body["message"] == STALE_MESSAGE
+    db.refresh(world.order)
+    assert world.order.autocount_last_modified == LAST_MODIFIED
+
+
+def test_a_refusal_other_than_doc_stale_does_not_read_or_move_the_stamp(api, fake_ss):
+    client, db, world = api
+    amendment, _line3 = _setup_mixed(db, world)
+    _answer_edits(fake_ss, patch=(409, refused_body("QTY_BELOW_TRANSFERRED", "below")))
+    fake_ss.answers[("GET", DOC_PATH)] = (
+        200, done_body(details=[], last_modified=EDITED_IN_AUTOCOUNT)
+    )
+
+    assert client.post(_url(amendment)).json()["outcome"] == "refused"
+
+    assert fake_ss.to("GET", DOC_PATH) == []
     db.refresh(world.order)
     assert world.order.autocount_last_modified == LAST_MODIFIED
 
