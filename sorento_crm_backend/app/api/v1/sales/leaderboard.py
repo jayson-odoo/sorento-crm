@@ -29,26 +29,35 @@ def _invalid(message: str) -> AppException:
 
 @router.get("/leaderboard")
 def get_leaderboard(
-    date_from: date = Query(...),
-    date_to: date = Query(...),
-    company: Optional[str] = Query(None),
+    basis: str = Query("invoiced"),
+    by: str = Query("person"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    company: Optional[list[str]] = Query(None),
     brand: Optional[list[str]] = Query(None),
     category: Optional[list[str]] = Query(None),
+    channel: Optional[list[str]] = Query(None),
+    person: Optional[list[str]] = Query(None),
+    customer: Optional[list[str]] = Query(None),
+    product: Optional[list[str]] = Query(None),
     previous_from: Optional[date] = Query(None),
     previous_to: Optional[date] = Query(None),
+    sort: str = Query("rank"),
+    dir: str = Query("asc"),
     user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    if date_to < date_from:
+    if date_from is not None and date_to is not None and date_to < date_from:
         raise _invalid("date_to must not be before date_from")
     if (previous_from is None) != (previous_to is None):
         raise _invalid("previous_from and previous_to go together")
     if previous_from is not None and previous_to < previous_from:
         raise _invalid("previous_to must not be before previous_from")
     return leaderboard_service.build(
-        db, str(user["id"]), date_from, date_to, company=company or None,
-        brands=multi_values(brand), categories=multi_values(category),
-        previous_from=previous_from, previous_to=previous_to,
+        db, user, date_from, date_to, basis=basis, by=by, companies=multi_values(company),
+        brands=multi_values(brand), categories=multi_values(category), channels=multi_values(channel),
+        persons=[p for p in person or [] if p], customers=multi_values(customer), products=multi_values(product),
+        previous_from=previous_from, previous_to=previous_to, sort=sort, direction=dir,
     )
 
 
@@ -67,4 +76,6 @@ def get_leaderboard_options(
         "companies": [{"value": str(i), "label": code} for i, code in companies],
         "brands": [{"value": v, "label": label} for v, label in ap.brand_options(db)],
         "categories": [{"value": v, "label": label} for v, label in ap.category_options(db)],
+        "channels": leaderboard_service.channel_options(),
+        "can": leaderboard_service.can_by_basis(db, user),
     }
