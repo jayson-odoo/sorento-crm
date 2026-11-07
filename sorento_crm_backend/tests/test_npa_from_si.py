@@ -303,3 +303,21 @@ def test_the_summary_lists_each_created_code_with_its_current_codes(world):
     assert code["product_code"] == "ZZT-KS2497"
     assert code["current_codes"] == ["ZZT-KS2433"]
     assert code["created_at"]
+
+
+def test_prefill_carries_the_picked_codes_labels(world):
+    exact = _inquiry(world.db, product_code="ZZT-KS2433")
+    body = world.api.as_(world.sales).get(f"{NPA}/prefill", params={"stock_inquiry_id": exact.id}).json()
+    [p] = body["lines"][0]["current_products"]
+    assert (p["id"], p["product_code"]) == (world.product.id, "ZZT-KS2433")
+
+
+def test_the_detail_carries_its_stock_inquiry_for_the_tab(world):
+    d = _draft(world, [])
+    si = _get(world, d["id"])["stock_inquiry"]
+    assert si["id"] == world.inquiry.id
+    assert si["inquiry_number"] == world.inquiry.inquiry_number
+    assert si["status"] == "responded"
+    assert si["purchasing_response"] == world.inquiry.purchasing_response
+    no_si = world.api.as_(world.sales).post(NPA, json={"lines": [_line(world)]}).json()
+    assert _get(world, no_si["id"])["stock_inquiry"] is None

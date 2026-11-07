@@ -721,6 +721,7 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
     the customer stays typed text, the code field stays one line however many codes it
     holds."""
     inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
+    current = _exact_current_code(db, inquiry.product_code)
     return {
         "stock_inquiry_id": str(inquiry.id),
         "stock_inquiry_number": inquiry.inquiry_number,
@@ -734,10 +735,25 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
                 "proposed_code": _clean(inquiry.product_code),
                 "description": _clean(inquiry.item_description),
                 "expected_qty": _parse_qty(inquiry.quantity),
-                "current_product_ids": _exact_current_code(db, inquiry.product_code),
+                "current_product_ids": current,
+                "current_products": _products_out(db, current),
             }
         ],
     }
+
+
+def _products_out(db: Session, ids: List[str]) -> List[Dict[str, Any]]:
+    rows = {
+        str(r[0]): r
+        for r in db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .filter(Product.id.in_(ids or [None]))
+        .all()
+    }
+    return [
+        {"id": r[0], "product_code": r[1], "product_name": r[2], "is_active": r[3]}
+        for r in (rows.get(str(i)) for i in ids)
+        if r is not None
+    ]
 
 
 def _exact_current_code(db: Session, code_text: Optional[str]) -> List[str]:
@@ -1266,7 +1282,14 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         else None
     )
     inquiry = (
-        db.query(StockInquiry.inquiry_number, StockInquiry.product_code)
+        db.query(
+            StockInquiry.inquiry_number,
+            StockInquiry.product_code,
+            StockInquiry.status,
+            StockInquiry.item_description,
+            StockInquiry.purchasing_response,
+            StockInquiry.quantity,
+        )
         .filter(StockInquiry.id == app.stock_inquiry_id)
         .first()
         if app.stock_inquiry_id
@@ -1315,6 +1338,20 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
     out = {
         **summary,
         "stock_inquiry_product_code": inquiry[1] if inquiry else None,
+        # NPA-FROM-SI rule 7: the application's "Stock inquiry" tab (the one inquiry it links).
+        "stock_inquiry": (
+            {
+                "id": app.stock_inquiry_id,
+                "inquiry_number": inquiry[0],
+                "product_code": inquiry[1],
+                "status": inquiry[2],
+                "item_description": inquiry[3],
+                "purchasing_response": inquiry[4],
+                "quantity": inquiry[5],
+            }
+            if inquiry
+            else None
+        ),
         "customer_id": app.customer_id,
         "customer_code": customer[0] if customer else None,
         "remark": app.remark,
