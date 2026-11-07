@@ -69,7 +69,16 @@ vi.mock('../components/TagCanvasEditor', () => ({
         >
           Edit the box
         </button>
-        <button onClick={() => onLayersChange?.([...doc.layers])}>Touch</button>
+        <button
+          onClick={() =>
+            onLayersChange?.([
+              ...doc.layers,
+              { id: 'box1', type: 'accessories', props: { kind: 'accessories', direction: 'vertical', headerText: 'STALE', presetId: 'p1' } },
+            ])
+          }
+        >
+          Paste a linked box
+        </button>
       </div>
     );
   },
@@ -95,9 +104,10 @@ function fixture(layers: Layer[]) {
   } as never;
 }
 
-async function autosave() {
+async function editThenAutosave(label: string) {
   vi.useFakeTimers();
   try {
+    fireEvent.click(screen.getByText(label));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1100);
     });
@@ -118,8 +128,7 @@ describe('live link on autosave', () => {
     link.fetch.mockResolvedValue(serverRecord('OLD'));
     render(<TagTemplateEditorPage />);
     await screen.findByTestId('canvas-editor');
-    fireEvent.click(screen.getByText('Edit the box'));
-    await autosave();
+    await editThenAutosave('Edit the box');
     expect(link.push).toHaveBeenCalledWith({
       id: 'p1',
       input: { design: expect.objectContaining({ headerText: 'EDITED' }) },
@@ -127,21 +136,30 @@ describe('live link on autosave', () => {
   });
 
   it('a box with no baseline follows the server and is never pushed', async () => {
-    // Loaded WITHOUT a link, then a linked box appears (inserted from a stale menu, pasted from another tab).
+    // Loaded with no linked box; one then appears (inserted from a stale menu, pasted from another tab).
     vi.mocked(getTemplate).mockResolvedValue(fixture([]));
     vi.mocked(updateTemplate).mockResolvedValue(fixture([]));
     link.fetch.mockResolvedValue(serverRecord('SERVER'));
-    const { rerender } = render(<TagTemplateEditorPage />);
+    render(<TagTemplateEditorPage />);
     await screen.findByTestId('canvas-editor');
-    // The mocked canvas reports layers back through the page; feed it a stale linked box.
-    const stale = box('STALE');
-    vi.mocked(updateTemplate).mockImplementation(async (_id, doc) => ({ ...fixture([]), doc } as never));
-    const canvas = screen.getByTestId('canvas-editor');
-    expect(canvas).toBeInTheDocument();
-    // Report the pasted box through the page's own change stream.
-    const reporter = (window as unknown as { __report?: (l: Layer[]) => void }).__report;
-    void reporter;
-    rerender(<TagTemplateEditorPage />);
-    void stale;
+    await editThenAutosave('Paste a linked box');
+    expect(link.push).not.toHaveBeenCalled();
+    expect(link.patches).toHaveBeenCalledTimes(1);
+    const [patches] = link.patches.mock.calls[0] as unknown as [{ layerId: string; props: { headerText: string } }[]];
+    expect(patches[0].layerId).toBe('box1');
+    expect(patches[0].props.headerText).toBe('SERVER');
+  });
+
+  it('a deleted template detaches the box on the live canvas, keeping its design', async () => {
+    vi.mocked(getTemplate).mockResolvedValue(fixture([box('OLD')]));
+    vi.mocked(updateTemplate).mockResolvedValue(fixture([box('OLD')]));
+    link.fetch.mockResolvedValue(null);
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+    await editThenAutosave('Edit the box');
+    expect(link.push).not.toHaveBeenCalled();
+    const [patches] = link.patches.mock.calls[0] as unknown as [{ props: { presetId: unknown; headerText: string } }[]];
+    expect(patches[0].props.presetId).toBeNull();
+    expect(patches[0].props.headerText).toBe('EDITED');
   });
 });
