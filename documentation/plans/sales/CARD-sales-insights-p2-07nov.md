@@ -108,6 +108,55 @@ by reusing the reporting tooling we already have.
 - **Brand view.** SORENTO RM 8,880,157.22; "(no brand)" RM 4,328,777.30 (ACCOUNT items and unbranded lines); BRAVAT Sep
   was negative, so its change is blank (the #2227 rule).
 
+## Owner asks after the mockup (7 Nov, Lavish)
+
+Verbatim: "Customter need to show name, and I beed channel like dealer and project filter and view also" and "Also
+need look into delivered, ordered, outstanding just like our sales report also". Taken as direction (not questions);
+the figures for both come from evidence round 3 (`evidence/sales-insights-p2-round3-dev.sql`: the engine's own
+statements compiled from the code, so they are what the screens show).
+
+**Customer name.** Every customer row shows the NAME, the code underneath. The engine already groups customers by
+name (`datasets/billing_document_lines.py:163` invoiced, `datasets/sales_order_lines_ask.py:150` order bases) and
+carries the ids behind each row (`ask._row_keys`); the code is a lookup by those ids. Two customers with one name in
+two companies stay one row with both codes (the engine's grouping, as Sales & outstanding).
+
+**Channel (the existing sales type, reused, no new field).**
+- Invoiced: `inv.sales_type()` (`services/sales/invoiced_sales.py:306`): Set apart first, else the class of the
+  invoice's traced sales orders (Dealer / Project team / Other / Mixed / Sales order type not set / No sales order),
+  values and labels `SALES_TYPES` (:57), per-document LATERAL `document_sales_type()` (:330); dataset column
+  `channel` (`datasets/billing_document_lines.py:69,171`), filter `channel_condition` (:79, param :249).
+- Delivered / Ordered / Undelivered: the sales order's `demand_class` (`datasets/sales_order_lines_ask.py:165`
+  column, :121 filter): Dealer / Project team / Other.
+- The same `channel` is "Sales type" on Sales by debtor type (`definitions/sales_by_debtor_type.py:98`). Debtor /
+  account type (`customers.autocount_debtor_type`) is a different field and stays a Sales & outstanding filter.
+- Both a **filter** (Channel, multi-select, clearable) and a **View by** tab. `run_ask` already has `channel` as
+  dimension and filter (`ask.py:36-37`). One fix: `_params` maps filter values through `_CHANNEL_CLASS`
+  (`ask.py:290`, `sales_report_delivered.py:54`: dealer / project only), so Other / Set apart / No sales order would
+  raise; the lane passes invoiced values through `inv.normalise_sales_types` (422 on an unknown word).
+
+**Basis switch (Invoiced / Delivered / Ordered / Undelivered orders), one engine.** The four Sales & outstanding tabs
+(`SalesAndOutstandingView.tsx:17-29`), each `run_ask(basis=...)` (`ask.py:54-99`), so the board, the report and the
+assistant agree on every basis. Rank, View by, drill and Open as report (to the matching tab) work on each.
+- Needed: the `sales_person` dimension and filter on the three order bases (today invoiced only): one column per
+  definition over `SalesAgent.person_label` (the order bases already join `sales_agents`,
+  `sales_order_lines_ask.py:46`). Customers / Products count measures already exist there.
+- Dates as the report: order bases read the line's required date, else the order date; Delivered counts confirmed
+  DO quantity capped at the ordered quantity (the existing rules, `datasets/sales_order_lines_ask.py:139` `_figures`).
+- **Undelivered orders is a snapshot**: what is open now. Default = every open line whatever its date (the report's
+  no-period reading, `ask.OPEN_BASES`, `report_ask.py:327`); the period chips narrow it to lines due in the period;
+  "vs last period" is blank (open orders have no earlier state to compare).
+- Pending delivery and Unpaid invoices (the other two report tabs) are not on the board: Unpaid has no product /
+  brand / category / channel (`ask.py:86-87`), Pending delivery is per delivery order. Trigger: owner asks.
+- Top selling items is invoiced only, so "Open in Top selling items" shows on Invoiced only.
+- Target: like for like gets likelier: FANNY's targets are ORDERED, so on the Ordered basis their period and basis
+  match (still RM 0.00 today).
+
+**Permissions per basis** (the existing gates, nothing widened): Invoiced needs `sales.reports.view`
+(`invoiced_sales.py:369`); Delivered / Ordered / Undelivered need `order_management.orders.view` (the Sales &
+outstanding tabs' own gates, `SalesAndOutstandingView.tsx:11-14`). The Sales person view on any basis stays visible
+to `sales.leaderboard.view` holders (the #2227 ruling); every other view, and drilling into another person, needs the
+basis slug (Q2). A basis the user may not read is absent from the switch.
+
 ## Questions (max 5)
 
 1. Top selling: (a) link both ways, board Product view <-> Top selling items report / (b) merge: Top selling menu
