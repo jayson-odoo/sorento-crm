@@ -423,9 +423,12 @@ class SalesTargetTierIn(BaseModel):
     threshold: Optional[float] = Field(None, ge=0, le=9999999999999)
     #: Amount target: % of the achieved amount. Quantity target: RM per unit.
     rate: float = Field(0, ge=0, le=99999)
-    #: RM paid once per period when the tier is reached.
+    #: The tier's RM Additional: paid once per period when this is the tier reached.
     bonus_amount: Optional[float] = Field(None, ge=0)
-    #: A "+ Additional" line, paid on top of the main tier (they stack).
+    #: The tier's % Additional (RM per unit on a quantity target), on top of `rate` when this is
+    #: the tier reached, on the same accounts. A tier has a % or an RM Additional, not both.
+    additional_rate: Optional[float] = Field(None, ge=0, le=99999)
+    #: Legacy "+ Additional" row, paid on top of the main tier (they stack) until folded.
     is_additional: bool = False
     #: `tiers_per_period` targets: the start of the period this tier belongs to.
     period_start: Optional[DateType] = None
@@ -677,6 +680,12 @@ class SalesTargetRateEntry(BaseModel):
     rate: Optional[float] = None
 
 
+class SalesTargetTierAdditional(BaseModel):
+    #: `pct` (on top of the rate) or `amount` (fixed RM, the tier's Bonus).
+    kind: str
+    value: float
+
+
 class SalesTargetPeriodOut(BaseModel):
     id: str
     period_start: DateType
@@ -695,6 +704,8 @@ class SalesTargetPeriodOut(BaseModel):
     #: The reached main tier's rate(s): one label-less entry, or one per account on per-account
     #: rates (TARGET-COMMISSION-VIEW). Empty below the first tier.
     tier_rates: List[SalesTargetRateEntry] = Field(default_factory=list)
+    #: The reached tier's Additional, `{kind: pct|amount, value}`; null when it has none.
+    tier_additional: Optional[SalesTargetTierAdditional] = None
     #: Points targets: the RM per point in force on the period's last day.
     point_ratio: Optional[float] = None
     ratio_missing: bool = False
@@ -721,6 +732,7 @@ class SalesTargetTierOut(BaseModel):
     threshold: Optional[float] = None
     rate: Optional[float] = None
     bonus_amount: Optional[float] = None
+    additional_rate: Optional[float] = None
     is_additional: bool = False
     period_start: Optional[DateType] = None
     account_rates: Optional[List[SalesTargetTierRateOut]] = None

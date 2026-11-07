@@ -1,0 +1,42 @@
+# Tests that run ONLY in the nightly full sweep, never in a release delta or a lane's
+# crew-tests (CI-PARALLEL-ACTIONS, owner 5 Nov 2026: "reorder planning are not really in use").
+#
+# The ONE list. Read by:
+#   - scripts/release_delta_select.py (release delta, local or .github/workflows/tests-sharded.yml
+#     mode=delta): never selected, even on a full-suite fallback;
+#   - scripts/crew-tests.sh (a lane's pre-crew-done run): dropped from the selection.
+# The nightly full sweep (tests-sharded.yml mode=full, scripts/nightly-sweep.sh) runs everything.
+#
+# Today: the SCM M3 reorder planning tests (reorder engine / levels / runs / re-plan, the
+# app/services/scm/reorder_*.py and app/api/v1/scm/reorder_{levels,runs}.py surface). Order
+# promising (front_planning_engine), coverage and the fulfilment board stay in every run. The
+# migration tests stay too: they run whenever alembic/ or app/models/ changes.
+# One backend-relative path per line; '#' starts a comment.
+tests/scm/test_m3_engine.py
+tests/scm/test_m3_resolver.py
+tests/scm/test_m3_run.py
+tests/scm/test_reorder_committed_universe.py
+tests/scm/test_reorder_engine_project_bin_netting.py
+tests/scm/test_reorder_level_basis.py
+tests/scm/test_reorder_level_formula.py
+tests/scm/test_reorder_level_import.py
+tests/scm/test_reorder_level_import_routes.py
+tests/scm/test_reorder_level_qty.py
+tests/scm/test_reorder_level_retail_only.py
+tests/scm/test_reorder_level_run.py
+tests/scm/test_reorder_nets_po_ordered.py
+tests/scm/test_reorder_one_formula.py
+tests/scm/test_reorder_per_product.py
+tests/scm/test_reorder_plan_admit_discontinued.py
+tests/scm/test_reorder_plan_all_picked_orders.py
+tests/scm/test_reorder_plan_oi_need_in_full.py
+tests/scm/test_reorder_plan_project_only.py
+tests/scm/test_reorder_replan.py
+tests/scm/test_reorder_replan_routes.py
+tests/scm/test_reorder_run_listing.py
+tests/scm/test_reorder_run_product_scope.py
+tests/scm/test_reorder_run_scope_isolation.py
+tests/scm/test_reorder_window_start.py
+tests/scm/test_s3_reorder_perf_quickwins.py
+tests/scm/test_scheduled_reorder_run_scope.py
+tests/test_reorder_plan_demand_scope.py

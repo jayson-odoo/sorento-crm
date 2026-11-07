@@ -417,6 +417,12 @@ Warnings vocabulary added: `category_created`, `uom_created`, `brand_created`,
 `supplier_ambiguous`. `retryable` no longer answers a missing product ref (the line is dropped
 instead, counted under `lines.dropped`).
 
+Warnings vocabulary added (INGEST-DROP-WARN-CRM, 4 Nov 2026): `line_product_unresolved`, a
+PREFIX. Each dropped document line adds one entry
+`line_product_unresolved:doc=<so/po number>:line_ref=<line source_ref>:line_no=<Seq>:product_code=<code>`
+(blank values stay blank), in the verdict and in the `ingest.record` log line. `lines.dropped`
+is unchanged. Plan: `PLAN-ingest-drop-warn-crm-04nov.md`.
+
 Retirement (AC-P4-1), same slice: the SO/PO history importers (`so_history_service.py`,
 `po_history_service.py`, the `/purchase-history/*` and `/sales-history/*` routes, the RQ tasks
 `process_sales_history_import` / `process_po_history_import`) were deleted outright. Closed
@@ -530,6 +536,15 @@ links its document by `against_source_ref`, else by `against_doc_no` when exactl
 cash sale or debit note in the company carries that number; the number is kept either way, and
 when that document lands later its ingest fills the link. `from_line_ref` links the line to the
 anchor's sales order line whose `source_ref` it is; the three `from_*` values are kept as sent.
+
+**v2.13, item packages (SS-PACKAGE-LINES, ss PR #226; CRM PR #2230).** A line may carry
+`parent_line_ref`: on an AutoCount item-package CHILD line, the parent line's `source_ref`
+(`{database}:IV:{DocKey}:{ParentDtlKey}`); null on the parent and on a plain line. `line_type` is
+AutoCount's raw `DtlType` as sent (null for now). Both are optional, stored as sent and echoed on
+read; the shared service sends them only once the contract answers `>= 2.13`. A parent named by
+at least one child is left out of line-based sales sums only when its children's `net_amount`
+adds up to its own exactly (MCH, where the first child repeats the package's money); where the
+children carry no money (SRT) the parent stays the sale. The line is still stored and shown.
 
 **Verdicts.** `created`, `updated`, `failed`, and new in 2.6 `unchanged`: the push is identical to
 what is stored, or older than it by `source_modified_at` (warning `stale_ignored`); nothing is

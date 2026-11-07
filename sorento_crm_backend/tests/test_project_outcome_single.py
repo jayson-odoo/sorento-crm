@@ -84,7 +84,7 @@ def _project(db, company_id: str, owner: str, *, status_key: str | None = None) 
         company_id=company_id,
         actor_user_id=owner,
         developer_party_id=None,
-        title=f"{MARKER} Tower {_uid()[:8]}",
+        title=f"{MARKER} Tower {_uid()[:12]}",
     )
     if status_key:
         project.status_id = _status_id(db, status_key)

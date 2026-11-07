@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -220,6 +221,15 @@ class BillingDocumentLine(CompanyScopedMixin, Base):
     from_line_ref = Column(String(255), nullable=True)
     # AutoCount DtlKey.
     source_ref = Column(String(255), nullable=False)
+    # An AutoCount subtotal line (blank item, amount = the lines above) or a blank-item copy of a
+    # real line: shown, never summed as a sale. Decided by the ingest
+    # (`app/services/finance/billing_subtotal_lines.py`).
+    is_subtotal = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    is_duplicate = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # As sent (contract v2.13): the package parent line's `source_ref` on a child line, and
+    # AutoCount's raw `DtlType`.
+    parent_line_ref = Column(String(255), nullable=True)
+    line_type = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

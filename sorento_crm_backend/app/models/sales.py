@@ -529,10 +529,12 @@ class SalesTargetCommissionTier(CompanyScopedMixin, Base):
     `threshold` (RM, units or points, the target's `threshold_unit`). `rate` is a % of the
     achieved amount on an amount target, RM per unit on a quantity target, paid on every counted
     account unless the tier has `target_tier_rates` (then only those accounts, each at its own
-    rate). `is_additional`: a "+ Additional" line, paid on top of the main tier when its own
-    threshold is reached. `period_start`: the period it belongs to on a `tiers_per_period`
-    target (a start date, not a period id, so a date edit that keeps the start keeps its tiers).
-    `bonus_amount` is paid once per period when the tier is reached. Computed per period by
+    rate). `additional_rate` / `bonus_amount`: the tier's % / RM Additional, paid only when this
+    is the tier reached. `is_additional`: a legacy "+ Additional" line, paid on top of the main
+    tier when its own threshold is reached (folded onto its tier by
+    `scripts/fold_tier_additionals.py`). `period_start`: the period it belongs to on a
+    `tiers_per_period` target (a start date, not a period id, so a date edit that keeps the start
+    keeps its tiers). Computed per period by
     `commission_service`, never stored.
     """
 
@@ -549,6 +551,9 @@ class SalesTargetCommissionTier(CompanyScopedMixin, Base):
     threshold = Column(Numeric(15, 2), nullable=True)
     rate = Column(Numeric(9, 4), nullable=False, default=0, server_default=text("0"))
     bonus_amount = Column(Numeric(15, 2), nullable=True)
+    #: The tier's % Additional, paid on top of `rate` when this is the tier reached
+    #: (`sales_0007_tier_additional`); `bonus_amount` is its RM Additional.
+    additional_rate = Column(Numeric(9, 4), nullable=True)
     is_additional = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     period_start = Column(Date, nullable=True)
 
@@ -565,6 +570,10 @@ class SalesTargetCommissionTier(CompanyScopedMixin, Base):
             name="ck_sales_target_commission_tiers_one_threshold",
         ),
         CheckConstraint("rate >= 0", name="ck_sales_target_commission_tiers_rate"),
+        CheckConstraint(
+            "additional_rate IS NULL OR additional_rate >= 0",
+            name="ck_sales_target_commission_tiers_additional_rate",
+        ),
         CheckConstraint(
             "bonus_amount IS NULL OR bonus_amount >= 0",
             name="ck_sales_target_commission_tiers_bonus",

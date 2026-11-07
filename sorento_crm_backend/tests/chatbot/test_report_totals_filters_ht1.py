@@ -310,15 +310,16 @@ def test_g4_tf28_company_sorento_over_the_held_brand_list_is_company_only_for_ev
 
 
 @pytest.mark.usefixtures("said_as_on")
-def test_g4_tf29_brand_only_runs_the_brand_with_no_company_filter(rbot, world) -> None:
-    """tf-29: fresh "Sorento brand only Sep 2026 delivered": company AND brands, said_as brand, kind_said brand."""
+def test_g4_tf29_an_object_company_beside_said_as_brand_is_applied_as_written(rbot, world) -> None:
+    """tf-29's parse of "Sorento brand only Sep 2026 delivered": company AND brands, said_as brand, kind_said brand.
+    REPORT-FILTER-ALL round 6 (crew re-check step 14a: the display must follow the parse): the object is final, so an object company of the name beside said_as brand now runs too; "brand only" is brand only when the parse leaves the company null (HT1-3, the one-name bullet)."""
     sorento, _m = world
     v = _g4(sorento, _g4_ent("Sorento", "brand", "brand"), frame="total", basis="delivered", group_by=None,
             status="sales_analysis")
     text, calls = rbot.say(v, "Sorento brand only Sep 2026 delivered")
     _no_question(rbot, text)
     args = _args(calls)
-    assert args.get("brand_ids") and "company" not in args, f"tf-29: {args}"
+    assert args.get("brand_ids") and args.get("company") == DEFAULT_COMPANY_ID, f"tf-29: {args}"
 
 
 @pytest.mark.usefixtures("said_as_on")
@@ -354,17 +355,18 @@ def _fresh(ent: dict[str, Any], *, company: Any, brands: list[str], message: str
 
 
 @pytest.mark.usefixtures("said_as_on")
-def test_f2_said_as_brand_beats_a_same_name_company_when_the_entity_has_no_canonical_code(rbot, world) -> None:
+def test_f2_said_as_brand_with_an_object_company_runs_both_when_the_entity_has_no_canonical_code(rbot, world) -> None:
     """F2: fresh, object company "Sorento" + brands [SORENTO]; the entity has canonical_code null, kind_said brand, said_as
-    brand. said_as present and non-null decides: Brand only, no company filter, no question (ON-17's company reading applies
-    only when said_as is null or absent)."""
+    brand. said_as present and non-null decides the NAME's slot (the brand, no question; ON-17's company reading applies
+    only when said_as is null or absent); the object's own company slot is applied as written (REPORT-FILTER-ALL round 6,
+    the object is final)."""
     sorento, _m = world
     ent = _ent("Sorento", "brand", None, "brand")
     ent["said_as"] = "brand"
     text, calls = rbot.say(_fresh(ent, company=sorento, brands=["SORENTO"], message=""), "Sorento brand only Sep 2026 delivered")
     _no_question(rbot, text)
     args = _args(calls)
-    assert args.get("brand_ids") and "company" not in args, f"F2: {args}"
+    assert args.get("brand_ids") and args.get("company") == DEFAULT_COMPANY_ID, f"F2 (object final): {args}"
 
 
 def test_f3_the_committed_totals_filters_gold_file_loads_whole() -> None:
@@ -437,15 +439,15 @@ def test_r3_lock_cp5_said_as_brand_over_the_held_same_name_company_keeps_the_com
 @pytest.mark.usefixtures("said_as_on")
 def test_r3_lock_said_as_brand_decides_before_the_c6_1_company_reading_with_kind_said_null(rbot, world) -> None:
     """Lock 2: F2's shape with kind_said null. Depends on the said_as branch sitting ahead of the C6-1 `loose` company reading
-    in `_word_kinds` (report_ask.py:3422 before :3426-3432): reordered, the null kind_said + same-name company reads as the
-    company and the brand is lost."""
+    in `_word_kinds`: reordered, the null kind_said + same-name company reads as the company and the brand is lost. The
+    object's company stays as written (REPORT-FILTER-ALL round 6)."""
     sorento, _m = world
     ent = _ent("Sorento", "brand", None, None)
     ent["said_as"] = "brand"
     text, calls = rbot.say(_fresh(ent, company=sorento, brands=["SORENTO"], message=""), "Sorento brand only Sep 2026 delivered")
     _no_question(rbot, text)
     args = _args(calls)
-    assert args.get("brand_ids") and "company" not in args, f"R3-2: {args}"
+    assert args.get("brand_ids") and args.get("company") == DEFAULT_COMPANY_ID, f"R3-2 (said_as brand keeps the brand; the object company stays): {args}"
 
 
 @pytest.mark.usefixtures("said_as_on")
@@ -464,10 +466,9 @@ def test_r3_said_as_decides_the_slot_only_for_a_company_name_a_brand_that_is_no_
 
 
 @pytest.mark.usefixtures("said_as_on")
-def test_r3_a_held_company_carries_the_same_with_a_same_name_object_company_as_with_a_null_one(rbot, world) -> None:
-    """Owner Q3, an equivalence: from the same held Mocha report, "Sorento brand only" with the object's company "Sorento" +
-    brands [SORENTO] + said_as brand answers exactly as the same object with company null (route args and reply text), and
-    the held company Mocha carried (the reply is not an every-company run)."""
+def test_r3_a_held_company_carries_when_the_object_leaves_it_null_and_an_object_company_is_applied(rbot, world) -> None:
+    """Owner Q3: from a held Mocha report, "Sorento brand only" with the object's company null carries Mocha (not an
+    every-company run). REPORT-FILTER-ALL round 6 (crew re-check step 14a: the display must follow the parse): the object is final, so an object company of the name beside said_as brand now runs too; "brand only" is brand only when the parse leaves the company null (HT1-3, the one-name bullet)."""
     import copy
 
     sorento, mocha = world
@@ -477,7 +478,9 @@ def test_r3_a_held_company_carries_the_same_with_a_same_name_object_company_as_w
     rbot.console.session_vars = copy.deepcopy(held)  # a second thread holding the same Mocha report
     text_b, calls_b = rbot.say(_t4("brand", company=sorento), "Sorento brand only")
     assert mocha in text_a or (_ran(calls_a) and _args(calls_a).get("company") == MOCHA_ID), f"R3-4 A did not carry Mocha: {text_a!r}"
-    assert _ran(calls_b) == _ran(calls_a) and text_b == text_a, f"R3-4: A {_ran(calls_a)} {text_a!r} / B {_ran(calls_b)} {text_b!r}"
+    assert _ran(calls_b) and _args(calls_b).get("company") == DEFAULT_COMPANY_ID and _args(calls_b).get("brand_ids"), (
+        f"R3-4 B (object company Sorento): {_ran(calls_b)} {text_b!r}"
+    )
 
 
 # ------------------------------------------------------------------------------------------ HT1-13..16 said_as_text

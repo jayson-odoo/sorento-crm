@@ -942,7 +942,7 @@ def _seed_request(session_factory, number: str, *, kind="purchase_request", cont
 
 
 def _pr_number() -> str:
-    return f"ZZT-PR-{unique_code()[:6].upper()}"
+    return unique_code("PR").upper()
 
 
 def _leaks(reply: str) -> list[str]:

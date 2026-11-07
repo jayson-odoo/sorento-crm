@@ -14,18 +14,20 @@ For each image attachment whose stored bytes decode to a CMYK/YCCK color space,
 the script:
     1. downloads the bytes from the row's storage provider (s3 or r2)
     2. transcodes CMYK/YCCK -> RGB JPEG (via image_normalizer.ensure_rgb_image)
-    3. re-uploads to the SAME key on the SAME provider (overwrite in place)
-    4. updates file_size_bytes + mime_type in the DB
+    3. uploads the RGB bytes under a NEW content-derived key on the SAME provider, with fresh
+       thumb + medium renditions (never in place: renditions are cached as immutable, IMAGE-UNIFY)
+    4. points the row at the new key (file_path, thumbnail_path, file_hash, size, mime)
+    5. queues the delete of the CMYK original and its renditions on the worker
 
 Idempotent: a row already in an accepted color space is skipped, so re-runs are
-safe and only touch rows that still need fixing. The storage key and filenames
-are left unchanged (CMYK source is always JPEG, so the extension already fits),
-so n8n linkages, signed URLs, and display names stay stable. No n8n webhook is
+safe and only touch rows that still need fixing. Display names are unchanged and
+the row id keeps every linkage; the stored URL changes. No n8n webhook is
 re-triggered - this is a byte-level fix, not a content change.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -40,7 +42,16 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.resources import Attachment
 from app.services.image_normalizer import ensure_rgb_image, needs_rgb_conversion
-from app.services.storage_router import extract_key, get_backend, normalize_provider
+from app.services.image_thumbnailer import store_renditions
+from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
+from app.services.storage_router import (
+    cdn_base_url,
+    extract_key,
+    get_backend,
+    normalize_provider,
+    replace_storage_key,
+    sanitize_storage_filename,
+)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -107,16 +118,32 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
     if dry_run:
         return "converted"
 
+    # Never overwrite in place: renditions are cached as immutable (IMAGE-UNIFY), so the RGB copy
+    # goes under a new content-derived key with fresh renditions, and the row points at it. The
+    # CMYK original stays for a cleanup job.
+    new_key = replace_storage_key(
+        row.entity_type or "general",
+        str(row.id),
+        sanitize_storage_filename(row.original_filename) or key.rsplit("/", 1)[-1],
+        hashlib.sha256(new_content).hexdigest(),
+    )
     try:
-        backend.upload_file(file_content=new_content, file_path=key, content_type="image/jpeg")
+        backend.upload_file(file_content=new_content, file_path=new_key, content_type="image/jpeg")
     except Exception as exc:  # noqa: BLE001
-        logger.error("attachment %s re-upload failed (%s/%s): %s", row.id, provider, key, exc)
+        logger.error("attachment %s re-upload failed (%s/%s): %s", row.id, provider, new_key, exc)
         return "error"
+    thumb = store_renditions(backend, provider, new_key, new_content, "image/jpeg")
 
+    old_file_path = row.file_path
+    row.file_path = cdn_base_url(provider, new_key)
+    row.thumbnail_path = thumb
+    row.file_hash = hashlib.sha256(new_content).hexdigest()
     row.file_size_bytes = len(new_content)
     row.mime_type = new_mime or "image/jpeg"
     db.add(row)
     db.commit()
+    # The CMYK original and its renditions go too, in the worker (#2133 ruling (a)).
+    enqueue_replaced_original_cleanup(provider, old_file_path, new_key, db=db, attachment_id=row.id)
     return "converted"
 
 
