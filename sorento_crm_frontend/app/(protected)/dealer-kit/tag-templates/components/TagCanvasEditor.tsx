@@ -245,6 +245,7 @@ import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
 import { useAccessoryDropToast, useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { FeatureIconDropWarning } from '@/components/dealer-kit/FeatureIconDropWarning';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
 import {
   ACCESSORY_DEFAULT_BOX_MM,
@@ -4816,6 +4817,19 @@ export function TagCanvasEditor({
             />
           </div>
         </div>
+      )}
+
+      {/* PRICETAG-ACC-LABELS (owner 7 Nov): the same standing warning the request preview shows,
+          while the previewed data has more icons or accessories than a box draws. Template editor
+          only: the request designer draws its own above the canvas. */}
+      {!boundData && !embedded && (
+        <FeatureIconDropWarning
+          drops={featureIconFits.dropped > 0 ? [{ tagLabel: '', dropped: featureIconFits.dropped }] : []}
+          accessoryDrops={
+            accessoryFits.dropped > 0 ? [{ tagLabel: '', dropped: accessoryFits.dropped }] : []
+          }
+          className="mx-3 my-1 w-auto shrink-0"
+        />
       )}
 
       <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
