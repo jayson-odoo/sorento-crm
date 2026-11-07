@@ -294,7 +294,8 @@ def build(
     if products:
         filters["product"] = products
     if own_agents is not None:
-        filters["sales_agent"] = own_agents or [ask.NO_AGENT_KEY]
+        # An empty list is zero rows (run_ask answers an empty filter with nothing), never "no agent".
+        filters["sales_agent"] = list(own_agents)
 
     run_from, run_to = (date_from, date_to) if date_from else (_OPEN_FROM, _OPEN_TO)
     if open_basis:
