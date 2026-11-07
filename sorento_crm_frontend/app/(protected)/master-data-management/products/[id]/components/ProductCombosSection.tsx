@@ -569,7 +569,7 @@ function ComboBlock({
             />
           </div>
           <div className="sm:col-span-2">
-            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit />
           </div>
         </div>
       ) : (
@@ -581,7 +581,7 @@ function ComboBlock({
             <RichTextView value={combo.description} />
           </div>
           <div className="sm:col-span-2">
-            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Free items" canEdit={false} />
+            <AccessoryListField kind="combo" ownerId={combo.id} ownerHostId={combo.host_product_id} label="Accessories included" canEdit={false} />
           </div>
         </div>
       )}

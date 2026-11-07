@@ -73,6 +73,16 @@ def _no_options(db: Any) -> List[Any]:
     return []
 
 
+def company_options(db: Any) -> List[Any]:
+    from app.services.reports.datasets.sales_order_lines import company_options as options
+
+    return options(db)
+
+
+def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return SalesOrder.company_id.in_(values)
+
+
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return SalesOrder.customer_id.in_(values)
 
@@ -108,6 +118,16 @@ def sales_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return _agent_in(SalesOrder.sales_agent_id, values)
 
 
+def _person():
+    """The person behind a sales order's agent (`person_label`), else the agent's own code, else `NO_AGENT`; the
+    invoiced basis's `inv.person_label()` on this grain (SALES-INSIGHTS-P2)."""
+    return sa.func.coalesce(sa.func.nullif(sa.func.btrim(SalesAgent.person_label), ""), SalesAgent.sales_agent, NO_AGENT)
+
+
+def sales_person_condition(ctx: Any, values: List[str]) -> Optional[Any]:
+    return _person().in_(values)
+
+
 def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     """The customer CARD link (REPORT-DRILLDOWN, owner 8 Oct 2026): lines of customers whose
     assigned agent (`customers.sales_agent_id`) is one of the values, whoever sold the order."""
@@ -118,9 +138,13 @@ def location_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     return SalesOrderLine.warehouse_id.in_(values)
 
 
+#: The leaderboard's "Open as report" seed names the sales type (`dealer`); the dataset holds the demand class.
+_CLASS_OF = {"dealer": "retail"}
+
+
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     """Values are demand classes (`retail` / `project`), as `SalesOrder.demand_class` holds them."""
-    return SalesOrder.demand_class.in_(values)
+    return SalesOrder.demand_class.in_([_CLASS_OF.get(v, v) for v in values])
 
 
 # ------------------------------------------------------------------------ catalog
@@ -159,6 +183,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
             lambda c: sa.func.coalesce(SalesAgent.sales_agent, NO_AGENT),
             size=140,
         ),
+        reg.Column("sales_person", "Sales person", "text", "dimension", lambda c: _person(), size=140),
         reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
         reg.Column("location", "Location", "text", "dimension", lambda c: Warehouse.warehouse_code, size=120),
         reg.Column(
@@ -208,6 +233,8 @@ def _definition(basis: str) -> reg.ReportDefinition:
         date_bases=(reg.DateBasis("order_date", "Line date", _bucket_expr()),),
         base=_base_for(basis),
         company_column=SalesOrder.company_id,
+        company_param="company",
+        company_multi=True,
         product_id_column=SalesOrderLine.product_id,
     )
     definition = reg.ReportDefinition(
@@ -222,12 +249,14 @@ def _definition(basis: str) -> reg.ReportDefinition:
                 # An open basis counts every date when no period is named, as the chatbot does.
                 default=reg.all_dates_period if basis == "outstanding" else reg.current_year_period,
             ),
+            reg.SelectParam("company", "Company", True, (), company_options, company_condition),
             reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
             reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition),
             reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
             reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
             reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
             reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
+            reg.SelectParam("sales_person", "Sales person", True, (), ap.person_options, sales_person_condition),
             reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
             reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
             reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
