@@ -7,14 +7,14 @@ agents, with their commission, on the Sales targets screen and in the assistant 
 Downgrade keeps the permission row (the sales_0003 precedent: a role may hold it by then).
 
 Revision ID: sales_0007_targets_view_own
-Revises: dkfi_0001_spec_value_icons
+Revises: ptag_0016_accessories
 Create Date: 2026-11-05
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "sales_0007_targets_view_own"
-down_revision = "dkfi_0001_spec_value_icons"
+down_revision = "ptag_0016_accessories"
 branch_labels = None
 depends_on = None
 
