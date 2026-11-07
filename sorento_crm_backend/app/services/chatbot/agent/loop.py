@@ -588,6 +588,11 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
     if not entry:
         return False
     low = _fold_text(what)
+    if entry["name"] == batch.BATCH and isinstance(entry.get("data"), dict):
+        # A row the batch skipped for an unknown customer name backs "not found" for that written name.
+        return bool(low) and any(
+            f'"{low}"' in _fold_text(str(s.get("reason") or "")) for s in entry["data"].get("skipped") or []
+        )
     if entry["name"] == RESOLVE and entry["status"] == "ok" and isinstance(entry["data"], dict):
         for r in entry["data"].get("results") or []:
             term = _fold_text(str(r.get("term") or ""))
@@ -1298,6 +1303,7 @@ def _run(
     steps: list[dict] = []
     # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
     batch_skipped: list[dict] = []
+    batch_waiting: list[dict] = []
     confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
@@ -1612,7 +1618,7 @@ def _run(
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name == batch.BATCH:
-                    out = batch.propose(db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped)
+                    out = batch.propose(db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped, waiting_out=batch_waiting)
                     if out.status == "proposed":
                         out.data = {**out.data, "action_id": action_id}
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
@@ -1807,6 +1813,9 @@ def _run(
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
+    if status != "failed" and not steps and (batch_skipped or batch_waiting):
+        # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
+        reply = f"{reply}\n\n{batch.preview_block([], batch_skipped, batch_waiting)}"
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
         try:
@@ -1816,7 +1825,7 @@ def _run(
             lines = actions.proposal_lines(stored)
             pending = actions.pending_dict(stored)
             if all(s.get("batch") for s in stored.steps or []):
-                reply = f"{reply}\n\n{batch.preview_block(stored.steps, batch_skipped)}"
+                reply = f"{reply}\n\n{batch.preview_block(stored.steps, batch_skipped, batch_waiting)}"
             else:
                 reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
