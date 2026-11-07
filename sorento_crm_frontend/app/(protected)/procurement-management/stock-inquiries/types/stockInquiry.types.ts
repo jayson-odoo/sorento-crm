@@ -50,6 +50,10 @@ export interface StockInquiry {
   revision_no?: number | null;
   /** When the latest revision landed (naive UTC). */
   last_revised_at?: string | null;
+  /** Purchasing asks the salesperson to create a New Product Application (NPA-FROM-SI). */
+  npa_requested?: boolean | null;
+  npa_requested_at?: string | null;
+  npa_requested_by_name?: string | null;
   /**
    * Whether the backend will accept a `purchasing_response` write at this
    * record's current status (UAC O1). Server-owned: the allowed statuses live in
@@ -105,6 +109,8 @@ export interface StockInquiryFormData {
   remark?: string;
   additional_remark?: string;
   purchasing_response?: string;
+  /** A response write: the ticked box on Edit purchasing response. */
+  npa_requested?: boolean;
   contact_id?: string;
   space_id?: string;
 }

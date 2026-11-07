@@ -9,9 +9,11 @@ import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
   type NewProductApplicationFeedbackWrite,
+  type NewProductApplicationLineage,
   type NewProductApplicationPage,
   type NewProductApplicationPrefill,
   type NewProductApplicationProductHit,
+  type NewProductApplicationSuggestion,
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
 } from '@/types/newProductApplication';
@@ -192,6 +194,30 @@ export async function searchNewProductApplicationProducts(
     res,
     'Failed to search products',
   );
+}
+
+/** Codes already created from exactly this set of current codes (newest first, at most 3). */
+export async function getNewProductApplicationReuseSuggestions(
+  productIds: string[],
+): Promise<NewProductApplicationSuggestion[]> {
+  if (productIds.length === 0) return [];
+  const res = await apiFetch(
+    `${BASE}/reuse-suggestions?product_ids=${encodeURIComponent(productIds.join(','))}`,
+  );
+  return read<NewProductApplicationSuggestion[]>(
+    res,
+    'Failed to load earlier codes',
+  );
+}
+
+/** A product's lineage: what it was created from and what was made from it. */
+export async function getProductLineage(
+  productId: string,
+): Promise<NewProductApplicationLineage> {
+  const res = await apiFetch(
+    `${BASE}/lineage?product_id=${encodeURIComponent(productId)}`,
+  );
+  return read<NewProductApplicationLineage>(res, 'Failed to load the lineage');
 }
 
 /** PURCHASING FEEDBACK: lead time and one cost per product (open_code, Approved or Completed). */

@@ -34,6 +34,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
+import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   NewProductApplicationLines,
   type LookupFetcher,
@@ -48,6 +50,7 @@ import {
   stockInquiryLabel,
   type FormState,
 } from '@/lib/new-product-application-form';
+import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
@@ -170,6 +173,21 @@ export default function NewProductApplicationForm({
       ),
     [client],
   );
+  const products = useCallback(
+    async (q: string): Promise<SearchableMultiSelectOption[]> =>
+      (await service().searchNewProductApplicationProducts(q)).map((h) => ({
+        value: h.id,
+        label: h.product_code,
+        description: h.product_name,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client],
+  );
+  const reuse = useCallback(
+    (ids: string[]) => service().getNewProductApplicationReuseSuggestions(ids),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [client],
+  );
   const [application, setApplication] =
     useState<NewProductApplicationDetail | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
@@ -185,6 +203,7 @@ export default function NewProductApplicationForm({
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [asking, setAsking] = useState<'revise' | 'cancel' | null>(null);
+  const [tab, setTab] = useState('details');
 
   const backPath = paths
     ? paths.home('new_product_application')
@@ -502,6 +521,19 @@ export default function NewProductApplicationForm({
         </p>
       )}
 
+      {application && (
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {application && tab === 'stock_inquiry' ? (
+        <NewProductApplicationStockInquiry inquiry={application.stock_inquiry} />
+      ) : (
+        <>
       <Card className="border-2 shadow-sm">
         <CardContent className="pt-6 pb-8 px-5 sm:px-10">
           <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -582,6 +614,8 @@ export default function NewProductApplicationForm({
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
               brands={brands}
+              products={products}
+              reuse={reuse}
               errors={errors}
               readOnly={readOnly}
               showCost={Boolean(application)}
@@ -664,6 +698,8 @@ export default function NewProductApplicationForm({
             {submitVerb(status)}
           </Button>
         </div>
+      )}
+        </>
       )}
 
       {asking === 'revise' && (

@@ -38,6 +38,13 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
+import {
+  InquiryApplicationsList,
+  NewProductApplicationBanners,
+} from '@/components/common/NewProductApplicationBanners';
 import {
   exportStockInquiryToExcel,
   exportStockInquiryWithRevisionsToExcel,
@@ -175,6 +182,12 @@ function StaffStockInquiryDetail({
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
+  // The reply dialog's "Salesperson must create a New Product Application" box.
+  const [editNpaRequested, setEditNpaRequested] = useState(false);
+  const [tab, setTab] = useUrlTab({
+    tabs: ['details', 'applications'] as const,
+    defaultTab: 'details',
+  });
   const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -306,8 +319,15 @@ function StaffStockInquiryDetail({
 
   /** Persists the purchasing response when `skipSaveShort` is false, then sends it via Respond.io */
   const sendPurchasingUpdateAndReplyViaRespond = useCallback(
-    async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
+    async (
+      purchasingResponseText: string,
+      options?: { skipSaveShort?: boolean; npaRequested?: boolean },
+    ) => {
       const { body } = await buildPurchasingRespondMessage(purchasingResponseText);
+      const npaField =
+        options?.npaRequested === undefined
+          ? {}
+          : { npa_requested: options.npaRequested };
       if (!body) {
         toast.error('Enter a purchasing response before sending.');
         return;
@@ -315,12 +335,12 @@ function StaffStockInquiryDetail({
       if (!options?.skipSaveShort) {
         await updateInquiryMutation.mutateAsync({
           id: inquiryId,
-          data: { purchasing_response: body },
+          data: { purchasing_response: body, ...npaField },
         });
       }
       await updateAndReplyMutation.mutateAsync({
         id: inquiryId,
-        data: { purchasing_response: body },
+        data: { purchasing_response: body, ...npaField },
       });
     },
     [
@@ -685,6 +705,7 @@ function StaffStockInquiryDetail({
                 size="sm"
                 onClick={() => {
                   setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                  setEditNpaRequested(Boolean(inquiry.npa_requested));
                   setEditPurchasingResponseOpen(true);
                 }}
                 data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"
@@ -992,6 +1013,16 @@ function StaffStockInquiryDetail({
               className="resize-none"
             />
           </div>
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="edit-npa-requested"
+              checked={editNpaRequested}
+              onCheckedChange={(v) => setEditNpaRequested(v === true)}
+            />
+            <Label htmlFor="edit-npa-requested">
+              Salesperson must create a New Product Application
+            </Label>
+          </div>
           <div className="space-y-2">
             <Label>Attachments</Label>
             <ResponseAttachmentDropzone
@@ -1025,7 +1056,10 @@ function StaffStockInquiryDetail({
                 try {
                   await updateInquiryMutation.mutateAsync({
                     id: inquiryId,
-                    data: { purchasing_response: editPurchasingResponseValue.trim() },
+                    data: {
+                      purchasing_response: editPurchasingResponseValue.trim(),
+                      npa_requested: editNpaRequested,
+                    },
                   });
                   setEditPurchasingResponseOpen(false);
                 } catch {
@@ -1059,7 +1093,9 @@ function StaffStockInquiryDetail({
                     if (!uploaded) return;
                     setOpeningReplySheet(true);
                     try {
-                      await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue);
+                      await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue, {
+                        npaRequested: editNpaRequested,
+                      });
                       setEditPurchasingResponseOpen(false);
                     } catch {
                       // toast from mutation
@@ -1122,7 +1158,37 @@ function StaffStockInquiryDetail({
         }
       />
 
+      <NewProductApplicationBanners
+        requested={inquiry.npa_requested}
+        applications={applications ?? []}
+        audience="staff"
+      />
 
+      {canSeeApplications && (
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="applications">
+              New product applications ({(applications ?? []).length})
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
+      {canSeeApplications && tab === 'applications' ? (
+        <InquiryApplicationsList
+          applications={applications ?? []}
+          renderNumber={(a) => (
+            <Link
+              href={`/procurement-management/new-product-applications/${a.id}`}
+              className="text-primary hover:underline"
+            >
+              {a.application_no}
+            </Link>
+          )}
+        />
+      ) : (
+      <>
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
           <InquiryReadValue empty=" - ">
@@ -1201,6 +1267,7 @@ function StaffStockInquiryDetail({
                   className="shrink-0"
                   onClick={() => {
                     setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                  setEditNpaRequested(Boolean(inquiry.npa_requested));
                     setEditPurchasingResponseOpen(true);
                   }}
                   aria-label="Edit purchasing response"
@@ -1212,32 +1279,6 @@ function StaffStockInquiryDetail({
             </div>
           </div>
         </InquiryFormTableRow>
-        {canSeeApplications && (
-          <InquiryFormTableRow label="New product applications" labelClassName="items-start pt-3">
-            {applications && applications.length > 0 ? (
-              <ul className="space-y-1.5 py-2 text-sm">
-                {applications.map((a) => (
-                  <li key={a.id} className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/procurement-management/new-product-applications/${a.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {a.application_no}
-                    </Link>
-                    <span className={`${STATUS_PILL_BASE} ${statusPillClass(a.status)}`}>
-                      {a.status_label}
-                    </span>
-                    {a.opened_codes.length > 0 && (
-                      <span className="break-words">{a.opened_codes.join(', ')}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <InquiryReadValue>None yet</InquiryReadValue>
-            )}
-          </InquiryFormTableRow>
-        )}
         {(inquiry.last_responded_at || inquiry.last_responded_by) && (
           <>
             <InquiryFormTableRow label="Last responded by">
@@ -1342,6 +1383,8 @@ function StaffStockInquiryDetail({
           because the revise banner above quotes the newest entry. */}
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
+      </>
+      )}
     </div>
   );
 }

@@ -29,6 +29,8 @@ export interface NewProductApplicationLineWrite {
   brand_id?: string | null;
   /** Numbers travel as strings or numbers; null clears, never 0. */
   expected_qty?: string | number | null;
+  /** The CURRENT codes (NPA-FROM-SI): left out keeps the saved codes, [] clears. */
+  current_product_ids?: string[];
 }
 
 /** The write payload, staff and portal alike. `needed_by` is YYYY-MM-DD. */
@@ -42,9 +44,47 @@ export interface NewProductApplicationWrite {
   lines?: NewProductApplicationLineWrite[];
 }
 
+/** One current code on a line. */
+export interface NewProductApplicationCurrentProduct {
+  id: string;
+  product_code: string;
+  product_name?: string | null;
+  is_active?: boolean;
+}
+
+/** The prefill's line: Write-shaped, plus the picked current codes the inquiry's code text matched. */
+export interface NewProductApplicationPrefillLine extends NewProductApplicationLineWrite {
+  current_products?: NewProductApplicationCurrentProduct[];
+}
+
 /** GET /prefill: a Write-shaped body copied as text, plus the inquiry's number. */
-export interface NewProductApplicationPrefill extends NewProductApplicationWrite {
+export interface NewProductApplicationPrefill extends Omit<
+  NewProductApplicationWrite,
+  'lines'
+> {
   stock_inquiry_number: string | null;
+  lines?: NewProductApplicationPrefillLine[];
+}
+
+/** A code already created from exactly the same current codes (information only). */
+export interface NewProductApplicationSuggestion {
+  product_id: string;
+  product_code: string;
+  product_name: string | null;
+  is_active: boolean;
+  /** The earlier line's PRODUCT TYPE text. */
+  description: string | null;
+  created_at: string | null;
+  /** Staff only: the portal drops both. */
+  application_id?: string | null;
+  application_no?: string | null;
+}
+
+/** A code made through an application, on the summary and the stock inquiry lists. */
+export interface NewProductApplicationCreatedCode {
+  product_code: string;
+  current_codes: string[];
+  created_at: string | null;
 }
 
 export interface NewProductApplicationSummary {
@@ -63,6 +103,7 @@ export interface NewProductApplicationSummary {
   lines_total: number;
   lines_done: number;
   opened_codes: string[];
+  created_codes?: NewProductApplicationCreatedCode[];
   needed_by: string | null;
   submitted_at: string | null;
   created_at: string | null;
@@ -101,6 +142,19 @@ export interface NewProductApplicationLine extends NewProductApplicationLineWrit
   resolved_by: string | null;
   resolved_by_name: string | null;
   resolved_at: string | null;
+  current_products?: NewProductApplicationCurrentProduct[];
+  suggestions?: NewProductApplicationSuggestion[];
+}
+
+/** The stock inquiry an application was raised from (detail only). */
+export interface NewProductApplicationStockInquiry {
+  id: string;
+  inquiry_number: string | null;
+  product_code: string | null;
+  status: string | null;
+  item_description: string | null;
+  purchasing_response: string | null;
+  quantity: string | number | null;
 }
 
 export interface NewProductApplicationDetail extends NewProductApplicationSummary {
@@ -123,6 +177,7 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   completed_at: string | null;
   updated_at: string | null;
   lines: NewProductApplicationLine[];
+  stock_inquiry?: NewProductApplicationStockInquiry | null;
 }
 
 export interface NewProductApplicationPage {
@@ -144,6 +199,28 @@ export interface NewProductApplicationProductHit {
   product_code: string;
   product_name: string;
   brand_name: string | null;
+}
+
+/** One row of a product's lineage (GET /lineage). The last three are for NPA view-all only. */
+export interface NewProductApplicationLineageRow {
+  line_id: string;
+  application_no: string | null;
+  product_id: string;
+  product_code: string;
+  product_name: string | null;
+  is_active: boolean;
+  current_products: NewProductApplicationCurrentProduct[];
+  description: string | null;
+  expected_qty: string | number | null;
+  created_at: string | null;
+  application_id?: string | null;
+  customer_name?: string | null;
+  project_name?: string | null;
+}
+
+export interface NewProductApplicationLineage {
+  created_from: NewProductApplicationLineageRow[];
+  made_from_this: NewProductApplicationLineageRow[];
 }
 
 /** A refusal that names a field arrives as `{message, code, details: {field}}`. */

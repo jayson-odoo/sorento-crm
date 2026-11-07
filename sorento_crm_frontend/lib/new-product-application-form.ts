@@ -8,6 +8,7 @@ import type {
   NewProductApplicationDetail,
   NewProductApplicationLine,
   NewProductApplicationPrefill,
+  NewProductApplicationSuggestion,
   NewProductApplicationWrite,
 } from '@/types/newProductApplication';
 import { numberFieldError } from '@/lib/number-field';
@@ -17,7 +18,16 @@ export interface DraftLine {
   key: string;
   /** Set once the product is saved: it travels with the write so the server keeps it. */
   id?: string;
+  /** The old free text; it leaves the form and is never part of the write body. */
   proposed_code: string;
+  /** The CURRENT catalogue codes this line is based on, in picked order; none = a brand-new item. */
+  current_products: { id: string; product_code: string }[];
+  /** What the inquiry's code field said when it was not one catalogue code; shown read-only. */
+  inquiry_code_hint: string;
+  /** Earlier codes made from exactly these current codes, read with the line. */
+  suggestions: NewProductApplicationSuggestion[];
+  /** The current-code ids (comma list) `suggestions` answers; a different pick asks again. */
+  suggestions_for: string;
   /** PRODUCT TYPE, the only required field. */
   description: string;
   dimension: string;
@@ -64,6 +74,10 @@ export const nextKey = () => `npa-line-${(lineSeq += 1)}`;
 export const blankLine = (): DraftLine => ({
   key: nextKey(),
   proposed_code: '',
+  current_products: [],
+  inquiry_code_hint: '',
+  suggestions: [],
+  suggestions_for: '',
   description: '',
   dimension: '',
   material: '',
@@ -86,11 +100,22 @@ const clean = (v: string): string | null => (v.trim() ? v.trim() : null);
 const figure = (v: string | number | null | undefined) =>
   v === null || v === undefined ? '' : String(v);
 
+/** The ids of a pick as one comparable key. */
+export const currentIdsKey = (ids: string[]) => ids.join(',');
+
 function lineFromDetail(l: NewProductApplicationLine): DraftLine {
+  const current = (l.current_products ?? []).map((p) => ({
+    id: p.id,
+    product_code: p.product_code,
+  }));
   return {
     key: nextKey(),
     id: l.id,
     proposed_code: text(l.proposed_code),
+    current_products: current,
+    inquiry_code_hint: '',
+    suggestions: l.suggestions ?? [],
+    suggestions_for: currentIdsKey(current.map((p) => p.id)),
     description: text(l.description),
     dimension: text(l.dimension),
     material: text(l.material),
@@ -115,13 +140,20 @@ export function stateFromDetail(d: NewProductApplicationDetail): FormState {
     needed_by: text(d.needed_by),
     remark: text(d.remark),
     lead_time: text(d.lead_time),
-    lines: (d.lines ?? []).map(lineFromDetail),
+    lines: (d.lines ?? []).map((l) => {
+      const line = lineFromDetail(l);
+      // An old line typed its code as text: keep it visible when it came from an inquiry.
+      return d.stock_inquiry_id && !line.current_products.length
+        ? { ...line, inquiry_code_hint: line.proposed_code.trim() }
+        : line;
+    }),
   };
 }
 
 /**
- * The pre-fill copies TEXT only: the customer stays typed text with no debtor, and line 1
- * carries the inquiry's code field as written. Nothing is matched or split.
+ * The pre-fill copies the inquiry's text; the customer stays typed text with no debtor. Line 1
+ * starts with the current code the server matched (exactly one catalogue code), otherwise empty
+ * with the inquiry's code text shown read-only. Nothing is split or guessed here.
  */
 export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
   const first = p.lines?.[0];
@@ -140,6 +172,13 @@ export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
       {
         ...blankLine(),
         proposed_code: text(first?.proposed_code),
+        current_products: (first?.current_products ?? []).map((p) => ({
+          id: p.id,
+          product_code: p.product_code,
+        })),
+        inquiry_code_hint: first?.current_products?.length
+          ? ''
+          : text(first?.proposed_code).trim(),
         description: text(first?.description),
         expected_qty: figure(first?.expected_qty),
       },
@@ -157,7 +196,8 @@ export function payloadFromState(s: FormState): NewProductApplicationWrite {
     remark: clean(s.remark),
     lines: s.lines.map((l) => ({
       ...(l.id ? { id: l.id } : {}),
-      proposed_code: clean(l.proposed_code),
+      // proposed_code is never sent: the server keeps the stored text.
+      current_product_ids: l.current_products.map((p) => p.id),
       description: clean(l.description),
       dimension: clean(l.dimension),
       material: clean(l.material),

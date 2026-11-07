@@ -10,7 +10,10 @@ import { toast } from '@/lib/toast';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import type { LookupFetcher } from '@/components/common/NewProductApplicationLines';
+import type {
+  LookupFetcher,
+  ProductFetcher,
+} from '@/components/common/NewProductApplicationLines';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import type {
   NewProductApplicationFeedbackWrite,
@@ -23,7 +26,10 @@ import {
   createNewProductApplication,
   getNewProductApplication,
   getNewProductApplicationPrefill,
+  getNewProductApplicationReuseSuggestions,
   getNewProductApplications,
+  getProductLineage,
+  searchNewProductApplicationProducts,
   getStockInquiryApplications,
   linkNewProductApplicationLine,
   rejectNewProductApplication,
@@ -149,6 +155,27 @@ export function useStockInquiryApplicationsQuery(
   });
 }
 
+/** Catalogue codes for the Product code cell: value = product id, label = code. */
+export const staffProductOptions: ProductFetcher = async (q) =>
+  (await searchNewProductApplicationProducts(q)).map((h) => ({
+    value: h.id,
+    label: h.product_code,
+    description: h.product_name,
+  }));
+
+/** A product's lineage (the product page tab); `enabled` is false outside view mode. */
+export function useProductLineageQuery(
+  productId: string | null,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['new-product-applications', 'lineage', productId],
+    queryFn: () => getProductLineage(productId as string),
+    enabled: enabled && !!productId,
+    retry: false,
+  });
+}
+
 const matches = (label: string, q: string) =>
   label.toLowerCase().includes(q.trim().toLowerCase());
 
@@ -156,7 +183,11 @@ const matches = (label: string, q: string) =>
  * The one select of the paper sheet: brand, from the master-data select hook (read once,
  * filtered here). The portal passes its own lookup to the same sheet.
  */
-export function useNewProductApplicationLookups(): { brands: LookupFetcher } {
+export function useNewProductApplicationLookups(): {
+  brands: LookupFetcher;
+  products: ProductFetcher;
+  reuse: typeof getNewProductApplicationReuseSuggestions;
+} {
   const brands = useBrandSelectQuery();
   // The fetcher stays the same function between renders, so an open dropdown is not
   // refetched each time the query settles; it reads what the hook last returned.
@@ -172,6 +203,8 @@ export function useNewProductApplicationLookups(): { brands: LookupFetcher } {
         latest.current.filter(
           (o) => !q.trim() || matches(`${o.label} ${o.code ?? ''}`, q),
         ),
+      products: staffProductOptions,
+      reuse: getNewProductApplicationReuseSuggestions,
     }),
     [],
   );

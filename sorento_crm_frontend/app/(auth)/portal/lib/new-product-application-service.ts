@@ -16,6 +16,8 @@ import {
   NewProductApplicationError,
   type NewProductApplicationDetail,
   type NewProductApplicationPrefill,
+  type NewProductApplicationProductHit,
+  type NewProductApplicationSuggestion,
   type NewProductApplicationSummary,
   type NewProductApplicationWrite,
 } from '@/types/newProductApplication';
@@ -86,6 +88,31 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
     return unwrap<NewProductApplicationPrefill>(
       res,
       'Failed to load the stock inquiry',
+    );
+  }
+
+  /** Catalogue codes of the contact's company, for the Product code cell. */
+  async function searchNewProductApplicationProducts(
+    q: string,
+  ): Promise<NewProductApplicationProductHit[]> {
+    if (!q.trim()) return [];
+    const res = await fetcher(`${OWN}/products?q=${encodeURIComponent(q)}`);
+    return unwrap<NewProductApplicationProductHit[]>(
+      res,
+      'Failed to search products',
+    );
+  }
+
+  async function getNewProductApplicationReuseSuggestions(
+    productIds: string[],
+  ): Promise<NewProductApplicationSuggestion[]> {
+    if (productIds.length === 0) return [];
+    const res = await fetcher(
+      `${OWN}/reuse-suggestions?product_ids=${encodeURIComponent(productIds.join(','))}`,
+    );
+    return unwrap<NewProductApplicationSuggestion[]>(
+      res,
+      'Failed to load earlier codes',
     );
   }
 
@@ -226,6 +253,8 @@ export function makeNewProductApplicationService(fetcher: typeof portalFetch) {
   return {
     listMyRespondedInquiries,
     getNewProductApplicationPrefill,
+    searchNewProductApplicationProducts,
+    getNewProductApplicationReuseSuggestions,
     lookupNewProductApplication,
     lookupNewProductApplicationCustomers,
     listNewProductApplications,
@@ -247,6 +276,8 @@ export type NewProductApplicationService = ReturnType<
 export const {
   listMyRespondedInquiries,
   getNewProductApplicationPrefill,
+  searchNewProductApplicationProducts,
+  getNewProductApplicationReuseSuggestions,
   lookupNewProductApplication,
   lookupNewProductApplicationCustomers,
   listNewProductApplications,

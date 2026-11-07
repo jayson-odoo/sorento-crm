@@ -26,6 +26,9 @@ import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import { NewProductApplicationLines } from '@/components/common/NewProductApplicationLines';
+import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
@@ -56,8 +59,11 @@ import {
   searchNewProductApplicationProducts,
 } from '../services/newProductApplicationService';
 
-// The sheet is read-only here, so no brand is ever searched.
+// The sheet is read-only here, so no brand or product is ever searched.
 const NO_BRANDS = async () => [];
+const NO_PRODUCTS = async () => [];
+
+const DETAIL_TABS = ['details', 'stock_inquiry'] as const;
 
 const BASE_PATH = '/procurement-management/new-product-applications';
 
@@ -148,6 +154,11 @@ function OpenedAs({
   onUndo: (lineId: string) => void;
 }) {
   const [searching, setSearching] = useState(false);
+  // A code purchasing chose with "Use": it fills the picker, and Link is still pressed by a person.
+  const [pending, setPending] = useState<{ id: string; code: string } | null>(
+    null,
+  );
+  const earlier = line.suggestions?.[0];
   // The search text the server last answered with nothing for; the empty message names it.
   const [missed, setMissed] = useState('');
 
@@ -232,12 +243,37 @@ function OpenedAs({
 
   return (
     <div className="min-w-0 space-y-2">
+      {earlier && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="min-w-0 break-words">
+            Created before: <b>{earlier.product_code}</b>
+            {earlier.application_no ? ` (${earlier.application_no})` : ''}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              setPending({
+                id: earlier.product_id,
+                code: earlier.product_code,
+              });
+              setSearching(true);
+            }}
+          >
+            Use {earlier.product_code}
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5">
         <Button
           size="sm"
           variant={searching ? 'outline' : 'primary'}
           disabled={busy}
-          onClick={() => setSearching((on) => !on)}
+          onClick={() => {
+            setPending(null);
+            setSearching((on) => !on);
+          }}
         >
           Link product
         </Button>
@@ -254,7 +290,8 @@ function OpenedAs({
         <>
           <AsyncCombobox<NewProductApplicationProductHit>
             ariaLabel={`Product for line ${line.line_no}`}
-            value=""
+            value={pending?.id ?? ''}
+            displayValue={pending?.code}
             allowFreeText={false}
             fetchOptions={fetchProducts}
             optionValue={(o) => o.id}
@@ -265,9 +302,23 @@ function OpenedAs({
               if (!item) return;
               setMissed('');
               setSearching(false);
+              setPending(null);
               onLink(line.id, v);
             }}
           />
+          {pending && (
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                setSearching(false);
+                onLink(line.id, pending.id);
+                setPending(null);
+              }}
+            >
+              Link
+            </Button>
+          )}
           {missed && (
             <p className="text-sm text-muted-foreground">
               {missed} is not in the product list yet. It appears after
@@ -339,6 +390,7 @@ function StaffNewProductApplicationDetail({
   );
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
+  const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
   // Purchasing's edits to LEADTIME and COST before Save feedback; null shows the saved values.
   const [draft, setDraft] = useState<{
     lead_time: string;
@@ -659,136 +711,157 @@ function StaffNewProductApplicationDetail({
         />
       )}
 
-      <Card className="border-2 shadow-sm">
-        <CardContent className="px-5 pb-8 pt-6 sm:px-10">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">New Product Application</Badge>
-            <span
-              className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
-            >
-              {r.status_label}
-            </span>
-          </div>
-          {(r.revise_reason || r.cancel_reason) && (
-            <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
-              {r.revise_reason && (
-                <p>
-                  <span className="text-muted-foreground">
-                    Revised because:{' '}
-                  </span>
-                  {r.revise_reason}
-                </p>
-              )}
-              {r.cancel_reason && (
-                <p>
-                  <span className="text-muted-foreground">Cancel reason: </span>
-                  {r.cancel_reason}
-                </p>
-              )}
-            </div>
-          )}
-          {sheetState && (
-            <>
-              <NewProductApplicationHeader
-                value={sheetState}
-                onChange={(next) =>
-                  setDraft((prev) => ({
-                    lead_time: next.lead_time,
-                    costs: prev?.costs ?? {},
-                  }))
-                }
-                readOnly
-                applicationNo={r.application_no}
-                createdAt={r.created_at}
-                salesPerson={r.applicant_name}
-                feedback={{
-                  editable: canFeedback,
-                  onSave: () => void saveFeedback(),
-                  saving: feedback.isPending,
-                }}
-                stockInquiryField={
-                  r.stock_inquiry_id && r.stock_inquiry_number ? (
-                    <Link
-                      href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
-                      className="text-primary hover:underline"
-                    >
-                      {r.stock_inquiry_number}
-                    </Link>
-                  ) : (
-                    'None'
-                  )
-                }
-                customerField={
-                  <span className="flex flex-wrap items-center gap-2">
-                    {[r.customer_code, r.customer_name]
-                      .filter(Boolean)
-                      .join(' - ') || 'None'}
-                    {!r.customer_code && r.customer_name && (
-                      <Badge variant="secondary">No debtor code</Badge>
-                    )}
-                  </span>
-                }
-              />
-              <div className="mt-6">
-                <NewProductApplicationLines
-                  lines={sheetState.lines}
-                  onChange={(next) =>
-                    setDraft((prev) => ({
-                      lead_time: prev?.lead_time ?? sheetState.lead_time,
-                      costs: Object.fromEntries(
-                        next.map((l) => [l.id ?? '', l.cost_price]),
-                      ),
-                    }))
-                  }
-                  brands={NO_BRANDS}
-                  readOnly
-                  showCost
-                  costEditable={canFeedback}
-                  renderOpenedAs={(draftLine) => {
-                    const l = r.lines.find((x) => x.id === draftLine.id);
-                    if (!l) return null;
-                    return (
-                      <div className="min-w-0 space-y-1.5">
-                        <OpenedAs
-                          line={l}
-                          applicationStatus={r.status}
-                          canOpen={canOpen}
-                          busy={busy}
-                          onLink={(lineId, productId) =>
-                            link.mutate({ id: r.id, lineId, productId })
-                          }
-                          onClose={(lineId) =>
-                            setAsking({ kind: 'close', lineId })
-                          }
-                          onUndo={(lineId) => undo.mutate({ id: r.id, lineId })}
-                        />
-                        {l.opened_product_id && (
-                          <p className="text-xs text-muted-foreground">
-                            From AutoCount: {fromAutoCount(l) || '-'}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  }}
-                />
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="details">Details</TabsTrigger>
+          <TabsTrigger value="stock_inquiry">Stock inquiry</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <NewProductApplicationAttachments
-        applicationId={r.id}
-        attachments={r.attachments ?? []}
-        editable={ownerActs && editable && r.source !== 'portal'}
-      />
-
-      {canViewRecord && (
-        <AuditTrail
-          entityType="new_product_application"
-          entityId={applicationId}
-          title="Audit Trail"
+      {tab === 'stock_inquiry' ? (
+        <NewProductApplicationStockInquiry
+          inquiry={r.stock_inquiry}
+          href={(id) => `/procurement-management/stock-inquiries/${id}`}
         />
+      ) : (
+        <>
+          <Card className="border-2 shadow-sm">
+            <CardContent className="px-5 pb-8 pt-6 sm:px-10">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge variant="secondary">New Product Application</Badge>
+                <span
+                  className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}
+                >
+                  {r.status_label}
+                </span>
+              </div>
+              {(r.revise_reason || r.cancel_reason) && (
+                <div className="mb-4 space-y-1 text-sm [&_p]:break-words">
+                  {r.revise_reason && (
+                    <p>
+                      <span className="text-muted-foreground">
+                        Revised because:{' '}
+                      </span>
+                      {r.revise_reason}
+                    </p>
+                  )}
+                  {r.cancel_reason && (
+                    <p>
+                      <span className="text-muted-foreground">
+                        Cancel reason:{' '}
+                      </span>
+                      {r.cancel_reason}
+                    </p>
+                  )}
+                </div>
+              )}
+              {sheetState && (
+                <>
+                  <NewProductApplicationHeader
+                    value={sheetState}
+                    onChange={(next) =>
+                      setDraft((prev) => ({
+                        lead_time: next.lead_time,
+                        costs: prev?.costs ?? {},
+                      }))
+                    }
+                    readOnly
+                    applicationNo={r.application_no}
+                    createdAt={r.created_at}
+                    salesPerson={r.applicant_name}
+                    feedback={{
+                      editable: canFeedback,
+                      onSave: () => void saveFeedback(),
+                      saving: feedback.isPending,
+                    }}
+                    stockInquiryField={
+                      r.stock_inquiry_id && r.stock_inquiry_number ? (
+                        <Link
+                          href={`/procurement-management/stock-inquiries/${r.stock_inquiry_id}`}
+                          className="text-primary hover:underline"
+                        >
+                          {r.stock_inquiry_number}
+                        </Link>
+                      ) : (
+                        'None'
+                      )
+                    }
+                    customerField={
+                      <span className="flex flex-wrap items-center gap-2">
+                        {[r.customer_code, r.customer_name]
+                          .filter(Boolean)
+                          .join(' - ') || 'None'}
+                        {!r.customer_code && r.customer_name && (
+                          <Badge variant="secondary">No debtor code</Badge>
+                        )}
+                      </span>
+                    }
+                  />
+                  <div className="mt-6">
+                    <NewProductApplicationLines
+                      lines={sheetState.lines}
+                      onChange={(next) =>
+                        setDraft((prev) => ({
+                          lead_time: prev?.lead_time ?? sheetState.lead_time,
+                          costs: Object.fromEntries(
+                            next.map((l) => [l.id ?? '', l.cost_price]),
+                          ),
+                        }))
+                      }
+                      brands={NO_BRANDS}
+                      products={NO_PRODUCTS}
+                      readOnly
+                      showCost
+                      costEditable={canFeedback}
+                      renderOpenedAs={(draftLine) => {
+                        const l = r.lines.find((x) => x.id === draftLine.id);
+                        if (!l) return null;
+                        return (
+                          <div className="min-w-0 space-y-1.5">
+                            <OpenedAs
+                              line={l}
+                              applicationStatus={r.status}
+                              canOpen={canOpen}
+                              busy={busy}
+                              onLink={(lineId, productId) =>
+                                link.mutate({ id: r.id, lineId, productId })
+                              }
+                              onClose={(lineId) =>
+                                setAsking({ kind: 'close', lineId })
+                              }
+                              onUndo={(lineId) =>
+                                undo.mutate({ id: r.id, lineId })
+                              }
+                            />
+                            {l.opened_product_id && (
+                              <p className="text-xs text-muted-foreground">
+                                From AutoCount: {fromAutoCount(l) || '-'}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      }}
+                    />
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <NewProductApplicationAttachments
+            applicationId={r.id}
+            attachments={r.attachments ?? []}
+            editable={ownerActs && editable && r.source !== 'portal'}
+          />
+
+          {canViewRecord && (
+            <AuditTrail
+              entityType="new_product_application"
+              entityId={applicationId}
+              title="Audit Trail"
+            />
+          )}
+        </>
       )}
 
       {dialog}
