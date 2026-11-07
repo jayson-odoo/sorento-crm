@@ -2592,3 +2592,98 @@ def test_a_customer_group_never_merges_two_suppliers_of_different_names():
         )
     assert outcome.ask_kind == "supplier_pick", outcome
     assert sorted(o["label"] for o in outcome.ask_options) == ["ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD"], outcome
+
+
+# --------------------------------------------------------------------------- #
+# SUPPLIER-PARTY-SIDE crew live re-run at 8b26ef80 (7 Nov 2026, dev copy sorento_prod_1104, parser v74 md5 d29c1983,
+# gemini-3.5-flash-lite, 3 runs each): HANLIM is 7 customer ledgers and 2 supplier records. With party_side supplier and
+# the word hinted customer, `apply.reconciled` was empty on all 6 PO turns: the untyped party read placed no single row,
+# so nothing bound a supplier. Run 1 (span typed supplier) answered "Could not find purchase order for customer hanlim";
+# runs 2 and 3 read the whole PO book with no supplier filter. The parser objects below are the live ones.
+# --------------------------------------------------------------------------- #
+
+HANLIM_LEDGERS = (
+    HANLIM_TRADING, f"{HANLIM_TRADING} [A/C II]", "HANLIM ENTERPRISE", "HANLIM HARDWARE SDN BHD", "HANLIM (JB) SDN BHD",
+    "HANLIM BUILDERS", "HANLIM TILES",
+)
+_LIVE_PO = dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"])
+_LIVE_OUTSTANDING_PO = dict(domain_hint="order", intent_hint="check_po", order_status="outstanding", document=["PO"])
+
+
+def _live_hanlim_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["ledgers"] = [_seed_customer(session_factory, name) for name in HANLIM_LEDGERS]
+    ids["hl_sup_a"] = _seed_named(session_factory, HANLIM_TRADING, "403-H007")
+    ids["hl_sup_b"] = _seed_named(session_factory, HANLIM_TRADING, "400-H018")
+    return ids
+
+
+def _live_turn(session_factory, monkeypatch, text: str, word: str, span_type: str | None, **parse):
+    qf = _parser_output(
+        entities=[{"raw": word, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        **parse,
+    )
+    near = {word, *(n.casefold() for n in HANLIM_LEDGERS)}
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span(word, span_type), near,
+        qf=qf, attributes=OWNER_GRANTS, party_side=True,
+    )
+
+
+@pytest.mark.parametrize("span_type", ["customer", None, "supplier"])
+@pytest.mark.parametrize(
+    "text,parse",
+    [
+        ("PO for hanlim", _LIVE_PO),
+        ("outstanding PO hanlim", _LIVE_OUTSTANDING_PO),  # live r1 / r3
+        ("outstanding PO hanlim", {**_LIVE_PO, "order_status": "outstanding"}),  # live r2
+    ],
+)
+def test_the_supplier_side_binds_the_supplier_over_many_customer_ledgers(
+    session_factory, monkeypatch, text, parse, span_type
+):
+    ids = _live_hanlim_world(session_factory)
+    reply, captured, _seen = _live_turn(
+        session_factory, monkeypatch, text, "hanlim", span_type, party_side="supplier", **parse
+    )
+    assert "Which one do you mean?" not in reply and "for customer" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and sorted(calls[0].get("supplier_ids") or []) == sorted([ids["hl_sup_a"], ids["hl_sup_b"]]), (
+        reply, captured,
+    )
+    assert not [n for n, a in captured if a.get("customer_ids")], captured
+
+
+@pytest.mark.parametrize("said", ["supplier", "unclear", None])
+@pytest.mark.parametrize("parse", [_LIVE_PO, {**_LIVE_PO, "order_status": "outstanding"}])
+def test_the_po_book_never_lists_without_a_supplier_for_a_named_party(session_factory, monkeypatch, parse, said):
+    """Crew rule B (7 Nov, live runs 2 and 3 read the whole PO book): with a party named, the PO tool never runs
+    without supplier_ids. A word only a customer row places is "couldn't find a supplier", never the whole book."""
+    ids = _live_hanlim_world(session_factory)
+    only_customer = _seed_customer(session_factory, "ZZT QQCUST SDN BHD")
+    reply, captured, _seen = _live_turn(
+        session_factory, monkeypatch, "PO for qqcust", "qqcust", "customer", party_side=said, **parse
+    )
+    assert not [a for a in _po_calls(captured) if not a.get("supplier_ids")], (reply, captured)
+    if said == "supplier":
+        assert "couldn't find a supplier" in reply.lower() and "qqcust" in reply, reply
+    assert only_customer not in str(captured) and ids["hl_sup_a"] not in str(captured), captured
+
+
+def test_a_named_party_scopes_the_po_book_alone():
+    """Crew rule B: a customer-hinted party of this message, and no supplier, scopes the PO book (only): an unfiltered
+    PO list is refused with "couldn't find a supplier"; the customer's own lists run as before."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.engine import _supplier_scope
+
+    verdict = {"entities": [{"raw": "hanlim", "hint": "customer", "current_message": True}]}
+    state = SimpleNamespace(pending=None, focus=SimpleNamespace(extra={}))
+    scope = _supplier_scope(state, state, verdict, ["purchase_order"], True)
+    assert scope is not None and scope["tools"] == [PO_TOOL] and '"hanlim"' in scope["line"], scope
+    trigger = {"tool": PO_TOOL, "entities": [], "contact_id": "c-1", "semantic_input": {"supplier_scope": scope}}
+    with pytest.raises(fetch_mod.SupplierScopeViolation):
+        fetch_mod.entity_ids_transformer(trigger, space_id=None)
+    fetch_mod.entity_ids_transformer({**trigger, "tool": "crm_outstanding_report"}, space_id=None)  # customer side runs
+    assert _supplier_scope(state, state, {"entities": []}, ["purchase_order"], True) is None
+    assert _supplier_scope(state, state, verdict, ["purchase_order"], False) is None

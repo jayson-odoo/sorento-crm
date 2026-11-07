@@ -174,6 +174,11 @@ def apply_reconciliation(
         sided = side in _PARTY_KINDS and set(_PARTY_KINDS) <= set(matched)
         if sided:
             matched = [k for k in matched if k not in _PARTY_KINDS or k == side]
+        if side in _PARTY_KINDS and hint_kind == side and matched == [k for k in _PARTY_KINDS if k != side]:
+            # SUPPLIER-PARTY-SIDE (crew live re-run, 7 Nov): a word on the side the parser read is never retyped to the
+            # other side because only that side's rows matched it ("PO for <a customer>" is no supplier, never a customer).
+            result.entities.append(e)
+            continue
         # Any hinted kind with an exact whole-token hit wins outright (owner run 1020 class b).
         if (
             len(matched) > 1
