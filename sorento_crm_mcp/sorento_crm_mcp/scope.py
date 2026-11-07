@@ -32,6 +32,9 @@ STAFF_VALUE = "staff"
 # as CRM_STAFF_HEADER (`forwarded_staff_id`).
 STAFF_USER_HEADER = "x-mcp-staff-user"
 CRM_STAFF_HEADER = "X-Staff-User"
+#: The backend's proof that it answers this staff member (backend `staff_proof`), relayed verbatim; the CRM checks it.
+STAFF_PROOF_HEADER = "x-mcp-staff-proof"
+CRM_STAFF_PROOF_HEADER = "X-Staff-Proof"
 
 # True while a compiled catalog READ tool is talking to the CRM. Everything else leaves it False, so
 # a hand-written tool (the writes in `record_actions.py`, `ideation.py`) never carries the identity.
@@ -86,6 +89,18 @@ def forwarded_staff_id() -> str | None:
     if headers is None or str(headers.get(STAFF_HEADER) or "").strip().lower() != STAFF_VALUE:
         return None
     return _staff_user_id(headers) or None
+
+
+def forwarded_staff_proof() -> str | None:
+    """The staff proof `CRMClient.request` relays as `X-Staff-Proof`, on exactly the requests that forward
+    `X-Staff-User` (`forwarded_staff_id`). The MCP server cannot read or mint it; the CRM verifies it."""
+    if forwarded_staff_id() is None:
+        return None
+    from mcp.server.lowlevel.server import request_ctx
+
+    headers = getattr(getattr(request_ctx.get(None), "request", None), "headers", None)
+    proof = str(headers.get(STAFF_PROOF_HEADER) or "").strip() if headers is not None else ""
+    return proof[:200] or None
 
 
 def _present(value: Any) -> bool:
