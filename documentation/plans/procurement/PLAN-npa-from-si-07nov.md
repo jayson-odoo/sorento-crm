@@ -78,6 +78,6 @@ hint, suggestion row text per surface, "Use <code>" fills the link picker withou
 - Crew B (a): SI attachments on the NPA are OUT of scope, follow-up lane (link-only copy, own security pass).
 - Crew C (a): the per-row link / close / undo routes stay; pre-v3 applications show their per-row result read-only
   (staff keep Undo); removal follows a production count.
-- A (Excel BRAND row) is with the owner; built as (a): the row stays, empty on new applications.
+- A (Excel BRAND row): owner (a) "NPA can keep": the row stays, empty on new applications, filled on older ones.
 - Exemption: the two embedded read-only lists (SI "New product applications", product Lineage) are plain bordered
   tables like `SampleRequestLines`, not DataGrids (a few rows, no search / sort / pagination).
