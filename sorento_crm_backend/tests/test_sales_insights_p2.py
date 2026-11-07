@@ -405,12 +405,10 @@ def test_p5_2_the_invoiced_rows_picker_shows_sales_person_but_top_selling_items_
 
 @pytest.mark.parametrize("basis", ("delivered", "ordered", "outstanding"))
 def test_p5_2_sales_person_groups_the_order_bases_with_no_agent_as_its_own_row(db, basis):
-    from app.services.reports import ask
-
     world = _world(db)
     rows = _by_name(_asked(db, basis, "sales_person", window=_span_of(basis)))
     assert rows[world.alpha] == {"delivered": D("1000"), "ordered": D("1400"), "outstanding": D("490")}[basis]
-    assert (ask.NO_AGENT_KEY and inv.NO_AGENT in rows) is (basis != "outstanding")
+    assert (inv.NO_AGENT in rows) is (basis != "outstanding")
     if basis == "ordered":
         assert rows[world.x1_label] == D("200") and rows[world.gamma] == D("420")
 
