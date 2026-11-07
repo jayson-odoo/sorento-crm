@@ -8,16 +8,49 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m)}-${pad(d)}`;
 const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
-/** date_from / date_to (YYYY-MM-DD) for a chip, with "today" taken in Asia/Kuala_Lumpur. */
+/**
+ * date_from / date_to (YYYY-MM-DD) for a chip, with "today" taken in Asia/Kuala_Lumpur, and the
+ * window the change is read against (this month: the same days of last month; last month: the
+ * month before; this quarter: the same days of the previous quarter; YTD: the same dates last year).
+ */
 export function periodRange(kind: Exclude<PeriodKind, 'custom'>, now: Date = new Date()) {
   const [y, m, d] = getMalaysiaDateKey(now).split('-').map(Number);
   const today = iso(y, m, d);
-  if (kind === 'this_month') return { from: iso(y, m, 1), to: today };
-  if (kind === 'ytd') return { from: iso(y, 1, 1), to: today };
-  if (kind === 'this_quarter') return { from: iso(y, Math.floor((m - 1) / 3) * 3 + 1, 1), to: today };
-  const py = m === 1 ? y - 1 : y;
-  const pm = m === 1 ? 12 : m - 1;
-  return { from: iso(py, pm, 1), to: iso(py, pm, lastDay(py, pm)) };
+  /** The month `back` months before (y, mo), as [year, month]. */
+  const monthBack = (yy: number, mo: number, back: number): [number, number] => {
+    const index = yy * 12 + (mo - 1) - back;
+    return [Math.floor(index / 12), (index % 12) + 1];
+  };
+  const sameDay = (yy: number, mo: number, back: number) => {
+    const [py, pm] = monthBack(yy, mo, back);
+    return iso(py, pm, Math.min(d, lastDay(py, pm)));
+  };
+
+  if (kind === 'this_month') {
+    const [py, pm] = monthBack(y, m, 1);
+    return { from: iso(y, m, 1), to: today, previousFrom: iso(py, pm, 1), previousTo: sameDay(y, m, 1) };
+  }
+  if (kind === 'ytd') {
+    return {
+      from: iso(y, 1, 1),
+      to: today,
+      previousFrom: iso(y - 1, 1, 1),
+      previousTo: iso(y - 1, m, Math.min(d, lastDay(y - 1, m))),
+    };
+  }
+  if (kind === 'this_quarter') {
+    const startMonth = Math.floor((m - 1) / 3) * 3 + 1;
+    const [py, pm] = monthBack(y, startMonth, 3);
+    return { from: iso(y, startMonth, 1), to: today, previousFrom: iso(py, pm, 1), previousTo: sameDay(y, m, 3) };
+  }
+  const [py, pm] = monthBack(y, m, 1);
+  const [qy, qm] = monthBack(y, m, 2);
+  return {
+    from: iso(py, pm, 1),
+    to: iso(py, pm, lastDay(py, pm)),
+    previousFrom: iso(qy, qm, 1),
+    previousTo: iso(qy, qm, lastDay(qy, qm)),
+  };
 }
 
 const nf = new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

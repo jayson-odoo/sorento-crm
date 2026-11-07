@@ -53,7 +53,8 @@ export default function LeaderboardView() {
   const [brand, setBrand] = useState<string[]>([]);
   const [category, setCategory] = useState<string[]>([]);
 
-  const range = useMemo(
+  // Custom sends no previous window: the backend reads the same number of days just before.
+  const range = useMemo<{ from: string; to: string; previousFrom?: string; previousTo?: string }>(
     () => (period === 'custom' ? custom : periodRange(period)),
     [period, custom],
   );
@@ -64,6 +65,8 @@ export default function LeaderboardView() {
     {
       date_from: range.from,
       date_to: range.to,
+      previous_from: range.previousFrom,
+      previous_to: range.previousTo,
       company: company || undefined,
       brand,
       category,
