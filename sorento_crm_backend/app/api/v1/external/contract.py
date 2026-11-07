@@ -61,6 +61,7 @@ from app.services.master_ref_resolver import (
     WARN_AGENT_CREATED,
     WARN_CUSTOMER_CREATED,
     WARN_CUSTOMER_UNRESOLVED,
+    WARN_LINE_PRODUCT_UNRESOLVED,
     WARN_REF_MISMATCH,
     WARN_SUPPLIER_AMBIGUOUS,
     WARN_SUPPLIER_CREATED,
@@ -327,7 +328,8 @@ STATUS_OPTIONAL: dict[str, bool] = {
 # replaced with the AutoCount line-set, so an ESB reading a verdict can tell a
 # supersede apart from a plain create; `deprecated_field` is retired code
 # (D15 end state) kept here so a pre-2.1 integration checking for it by name
-# still finds it documented.
+# still finds it documented. `line_product_unresolved` is a PREFIX: each
+# dropped line's entry carries `:doc=..:line_ref=..:line_no=..:product_code=..`.
 WARNINGS: list[str] = sorted(
     {
         WARN_CUSTOMER_CREATED,
@@ -338,6 +340,7 @@ WARNINGS: list[str] = sorted(
         WARN_REF_MISMATCH,
         WARN_UNCLASSIFIED_DEMAND,
         WARN_SUPPLIER_AMBIGUOUS,
+        WARN_LINE_PRODUCT_UNRESOLVED,
         WARN_CONTAINER_UNRESOLVED,
         WARN_RECEIVED_LOCKED,
         WARN_WAREHOUSE_INACTIVE,
