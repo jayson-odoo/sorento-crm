@@ -302,18 +302,17 @@ describe('linePickProblems', () => {
     ]);
   });
 
-  it('a discontinued pick blocks, named by its code', () => {
+  // PRICETAG-DISCONTINUED-PICK (owner, 7 Nov): a discontinued option is a valid choice.
+  it('a discontinued multi pick does not block', () => {
     const combo = {
       ...S1_COMBO,
       parts: S1_COMBO.parts.map((p) => (p.code === OPTIONS[2] ? { ...p, is_discontinued: true } : p)),
     };
     const l = line({ combos: [combo] });
-    expect(api.linePickProblems([l], {})).toEqual([
-      'SRTKT1871SS is discontinued.',
-    ]);
+    expect(api.linePickProblems([l], {})).toEqual([]);
   });
 
-  it('a discontinued single pick and a discontinued fixed part block too', () => {
+  it('a discontinued single pick does not block; a discontinued fixed part still does', () => {
     const combo = {
       ...S1_COMBO,
       parts: [
@@ -324,10 +323,7 @@ describe('linePickProblems', () => {
     const single = { key: 's', product_id: id(OPTIONS[0]), code: OPTIONS[0], name: OPTIONS[0], role: 'Kitchen tap', candidates };
     const fixed = { key: 'f', product_id: 'fx', code: 'SRTMCB8083-BL', name: 'Mirror', role: null, candidates: [] };
     const l = line({ combos: [combo], tag_template_id: 't1', parts: [fixed, single] });
-    expect(api.linePickProblems([l], {})).toEqual([
-      'SRTMCB8083-BL is discontinued.',
-      'SRTKT1862SS is discontinued.',
-    ]);
+    expect(api.linePickProblems([l], {})).toEqual(['SRTMCB8083-BL is discontinued.']);
   });
 
   it('an LP combo line with no combo list price blocks', () => {
