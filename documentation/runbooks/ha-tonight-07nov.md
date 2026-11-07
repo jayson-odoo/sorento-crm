@@ -604,7 +604,7 @@ current ones (crew review 8 Nov applied); they supersede PR #2166 comment 671119
 **Why (owner diff, 8 Nov):** prod's compose puts LITERAL `DATABASE_URL` (`@pgbouncer:5432`) and
 `DIRECT_URL` (`@db:5432`) in the `x-backend-env` anchor, which beats `.env`. B's old compose pointed
 B's app at A's PUBLIC database and Redis, and had no db, pgbouncer, redis or worker services.
-`infra/scripts/compose-ha-urls.py` rewrites the two literals to `'${HA_DATABASE_URL:-<literal>}'` /
+`infra/scripts/compose-ha-urls.py` rewrites the literals (`DATABASE_URL`, `DIRECT_URL`, `ANALYTICS_RO_DATABASE_URL` if set) to `'${HA_DATABASE_URL:-<literal>}'` /
 `'${HA_DIRECT_URL:-<literal>}'`. Only B sets `HA_*` (written by `infra/scripts/ha-env-for-replica.py`,
 host swapped to `sorento_crm_replica:5432`), so A resolves byte-identical values (proved with
 `infra/scripts/compose-env-hash.py --all` before/after: every key of every service, plus each whole
@@ -635,13 +635,18 @@ for h in <A_PUBLIC_IP> <B_PUBLIC_IP>; do scp /tmp/compose-ha-urls.py /tmp/ha-env
 
 ```bash
 cd /opt/sorento-crm2
-P='docker compose --profile blue --profile green --profile promoted config --format json'
+cfg() { docker compose --profile '*' config --format json; }     # every service, every profile
 cp -p docker-compose.yml docker-compose.yml.bak-08nov
-$P | python3 -I /root/compose-env-hash.py --all > /root/env-before.txt && wc -l < /root/env-before.txt
+cfg | python3 -I /root/compose-env-hash.py --all > /root/env-before.txt && wc -l < /root/env-before.txt
 python3 -I /root/compose-ha-urls.py docker-compose.yml          # "changed lines: N", N >= 2; a STOP leaves the file untouched
-$P | python3 -I /root/compose-env-hash.py --all | diff /root/env-before.txt - && echo A-UNCHANGED
+cfg | python3 -I /root/compose-env-hash.py --all | diff /root/env-before.txt - && echo A-UNCHANGED
 grep -c '^HA_' .env                                              # 0: HA_ must NEVER be set on A
-chmod 600 docker-compose.yml docker-compose.yml.bak-08nov .env
+# Permissions: stat first; the deploy user must keep READ access (every release runs compose as it).
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] && stat -c "%U:%G %a %n" "$f"; done
+DU=<DEPLOY_USER>; DG=<DEPLOY_GROUP>    # DEPLOY_USER = the GitHub secret SSH_USER
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] || continue
+  if [ "$(stat -c %U "$f")" = "$DU" ]; then chmod 600 "$f"; else chgrp "$DG" "$f" && chmod 640 "$f"; fi; done
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] && stat -c "%U:%G %a %n" "$f"; done
 ```
 
 Expected: a line count above 0, `changed lines: 2` or more, `A-UNCHANGED`, `0`. `--all` hashes
@@ -656,8 +661,23 @@ top-level section, so ANY change in what A resolves shows as a diff. No `A-UNCHA
 ssh root@<B_PUBLIC_IP> 'cp -p /opt/sorento-crm2/docker-compose.yml /opt/sorento-crm2/docker-compose.yml.bak-08nov' &&
 ssh root@<A_PUBLIC_IP> 'cat /opt/sorento-crm2/docker-compose.yml' | ssh root@<B_PUBLIC_IP> 'cat > /opt/sorento-crm2/docker-compose.yml' &&
 ssh root@<A_PUBLIC_IP> 'sha256sum /opt/sorento-crm2/docker-compose.yml' &&
-ssh root@<B_PUBLIC_IP> 'cd /opt/sorento-crm2 && sha256sum docker-compose.yml && chmod 600 docker-compose.yml docker-compose.yml.bak-08nov .env'
+ssh root@<B_PUBLIC_IP> 'cd /opt/sorento-crm2 && sha256sum docker-compose.yml'
 ```
+
+Then on B (`cd /opt/sorento-crm2`), the same permissions block as at the end of S5.1b:
+
+```bash
+cd /opt/sorento-crm2
+# Permissions: stat first; the deploy user must keep READ access (every release runs compose as it).
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] && stat -c "%U:%G %a %n" "$f"; done
+DU=<DEPLOY_USER>; DG=<DEPLOY_GROUP>    # DEPLOY_USER = the GitHub secret SSH_USER
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] || continue
+  if [ "$(stat -c %U "$f")" = "$DU" ]; then chmod 600 "$f"; else chgrp "$DG" "$f" && chmod 640 "$f"; fi; done
+for f in docker-compose.yml docker-compose.yml.bak-08nov .env .env.bak-08nov; do [ -e "$f" ] && stat -c "%U:%G %a %n" "$f"; done
+```
+
+Expected (A and B): every file ends `600` owned by the deploy user, or `640` with group
+`<DEPLOY_GROUP>`; never readable by others. Check: `sudo -u <DEPLOY_USER> docker compose config -q && echo DEPLOY-READ-OK`.
 
 Expected: identical hashes. Rollback: `ssh root@<B_PUBLIC_IP> 'cp -p /opt/sorento-crm2/docker-compose.yml.bak-08nov /opt/sorento-crm2/docker-compose.yml'`.
 
@@ -665,7 +685,7 @@ Expected: identical hashes. Rollback: `ssh root@<B_PUBLIC_IP> 'cp -p /opt/sorent
 for every CRM service, as hashes (the secrets are not plain `KEY=` lines in `.env` on A, 8 Nov):
 
 ```bash
-P='cd /opt/sorento-crm2 && docker compose --profile blue --profile green --profile promoted config --format json | python3 -I /root/compose-env-hash.py'
+P='cd /opt/sorento-crm2 && docker compose --profile "*" config --format json | python3 -I /root/compose-env-hash.py'
 diff <(ssh root@<A_PUBLIC_IP> "$P") <(ssh root@<B_PUBLIC_IP> "$P") && echo ENV-IDENTICAL
 ssh root@<A_PUBLIC_IP> "$P" | grep -E ' (JWT_SECRET|FIELD_ENCRYPTION_KEY|NEXTAUTH_SECRET|AUTH_SECRET|EXTERNAL_API_KEY) '
 ```
@@ -714,33 +734,33 @@ lines (they pointed at A), then append the generated lines (a `$` in the passwor
 from compose's `$$`):
 
 ```bash
-cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov && chmod 600 .env .env.bak-08nov
+cd /opt/sorento-crm2 && cp -p .env .env.bak-08nov      # cp -p keeps owner and mode; re-run the S5.1c permissions block after this step
 sed -i -E 's/^(DATABASE_URL|DIRECT_URL|REDIS_URL)=/#&/' .env
 grep -c '^HA_' .env      # 0
-docker compose --profile blue --profile green config --format json | python3 -I /root/ha-env-for-replica.py >> .env
+docker compose --profile '*' config --format json | python3 -I /root/ha-env-for-replica.py >> .env
 ```
 
 **S5.3 check (B, read-only; prints key paths and masked hosts, never a password):**
 
 ```bash
 cd /opt/sorento-crm2
-P='docker compose --profile blue --profile green --profile promoted config --format json'
-$P | python3 -I -c 'import json,sys,re
+cfg() { docker compose --profile '*' config --format json; }
+cfg | python3 -I -c 'import json,sys,re
 c=json.load(sys.stdin)
 for s in sorted(c["services"]):
     e=c["services"][s].get("environment") or {}
     if isinstance(e,list): e=dict(x.split("=",1) for x in e if "=" in x)
     for k in ("DATABASE_URL","DIRECT_URL","REDIS_URL","ENABLE_SCHEDULER"):
         if k in e: print(s,k,re.sub(r"//[^@/]*@","//***@",str(e[k])))'
-$P | python3 -I /root/compose-find-keys.py '@pgbouncer' '@db:' '<A_PUBLIC_IP>' '<CRM_HOST>'
+cfg | python3 -I /root/compose-find-keys.py '@pgbouncer' '@db:' '@db/' '<A_PUBLIC_IP>' '<CRM_HOST>'
 grep -n -e '<A_PUBLIC_IP>' -e '<CRM_HOST>' .env | cut -d= -f1
 ```
 
 Expected: every `DATABASE_URL` / `DIRECT_URL` is `postgresql://***@sorento_crm_replica:5432/<db>`;
 every `REDIS_URL` `redis://redis:6379/0`; `ENABLE_SCHEDULER true` only on `worker`.
-`compose-find-keys.py` prints `HITS: 0` for `@pgbouncer`, `@db:` and A's address; a hit names the
-key (for example `ANALYTICS_RO_DATABASE_URL`, `app/config.py:225`, still reaching A's pgbouncer):
-STOP and post the key path. A hit for `<CRM_HOST>` is fine only on keys that are meant to be the
+`compose-find-keys.py` prints `HITS: 0` for `@pgbouncer`, `@db:`, `@db/` and A's address
+(`ANALYTICS_RO_DATABASE_URL`, `app/config.py:225`, is rewritten and swapped like the other two
+URLs when the compose sets it); any hit names the key: STOP and post the key path. A hit for `<CRM_HOST>` is fine only on keys that are meant to be the
 public URL (e.g. `NEXTAUTH_URL`, `FRONTEND_BASE_URL`): post the list, crew confirms. The `.env` grep
 prints only the commented `#DATABASE_URL` / `#DIRECT_URL` / `#REDIS_URL` (or nothing).
 Never set `HA_*` on A. Rollback: `cp -p .env.bak-08nov .env && cp -p docker-compose.yml.bak-08nov docker-compose.yml`.

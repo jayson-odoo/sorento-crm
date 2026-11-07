@@ -51,6 +51,8 @@ def run(script, args=(), stdin="", **kw):
      "  DATABASE_URL: '${HA_DATABASE_URL:-postgresql://u:p\"q@db:5432/d}'"),
     ("  DATABASE_URL: postgresql://u:p@db:5432/d # plain comment",
      "  DATABASE_URL: '${HA_DATABASE_URL:-postgresql://u:p@db:5432/d}' # plain comment"),
+    ("  ANALYTICS_RO_DATABASE_URL: postgresql://ro:p@pgbouncer:5432/d",
+     "  ANALYTICS_RO_DATABASE_URL: '${HA_ANALYTICS_RO_DATABASE_URL:-postgresql://ro:p@pgbouncer:5432/d}'"),
     ("      - DATABASE_URL=postgresql://u:p@pgbouncer:5432/d",
      "      - 'DATABASE_URL=${HA_DATABASE_URL:-postgresql://u:p@pgbouncer:5432/d}'"),
     ('      - "DIRECT_URL=postgresql://u:p@db:5432/d"   # quoted item',
@@ -63,7 +65,7 @@ def test_rewrite_handles_quotes_and_comments(line, want):
 
 @pytest.mark.parametrize("line", [
     "  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}",
-    "  ANALYTICS_RO_DATABASE_URL: postgresql://x@db:5432/d",
+    "  READ_DATABASE_URL_X: postgresql://x@db:5432/d",
     "  DATABASE_URL:",
     "  DATABASE_URL: # nothing",
     "  DATABASE_URL: '${HA_DATABASE_URL:-postgresql://u:p@db:5432/d}'",
@@ -221,3 +223,22 @@ def test_round_trip_a_unchanged_and_b_reads_the_replica(tmp_path):
     assert be["REDIS_URL"] == "redis://redis:6379/0"
     found = run("compose-find-keys", ["@pgbouncer", "@db:"], compose_json(b)).stdout
     assert "HITS: 0" in found, found
+
+
+def test_env_lines_swap_the_analytics_url_only_when_set(tmp_path):
+    base = {"DATABASE_URL": "postgresql://u:p@pgbouncer:5432/d", "DIRECT_URL": "postgresql://u:p@db:5432/d"}
+    for extra, want in (({}, False), ({"ANALYTICS_RO_DATABASE_URL": "postgresql://ro:q@pgbouncer:5432/d"}, True)):
+        out = tmp_path / "env"
+        with open(out, "w") as fh:
+            r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "ha-env-for-replica.py")],
+                               input=json.dumps({"services": {"backend_blue": {"environment": {**base, **extra}}}}),
+                               stdout=fh, stderr=subprocess.PIPE, text=True)
+        assert r.returncode == 0, r.stderr
+        text = out.read_text()
+        assert ("HA_ANALYTICS_RO_DATABASE_URL='postgresql://ro:q@sorento_crm_replica:5432/d'" in text) == want, text
+
+
+def test_find_keys_catches_a_url_without_a_port():
+    cfg = {"services": {"backend_blue": {"environment": {"X_URL": "postgresql://u:p@db/d"}}}}
+    r = run("compose-find-keys", ["@pgbouncer", "@db:", "@db/"], json.dumps(cfg))
+    assert "FOUND services.backend_blue.environment.X_URL" in r.stdout and "HITS: 1" in r.stdout

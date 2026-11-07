@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the literal DATABASE_URL / DIRECT_URL values in a compose file overridable per node
+"""Make the literal DATABASE_URL / DIRECT_URL / ANALYTICS_RO_DATABASE_URL values in a compose file overridable per node
 (HA-TONIGHT runbook S5.1b): `KEY: <literal>` becomes `KEY: '${HA_KEY:-<literal>}'` (list form
 `- KEY=<literal>` likewise). A node that does not set HA_DATABASE_URL / HA_DIRECT_URL resolves
 exactly the old value; node B sets them in its .env to reach its local replica.
@@ -16,7 +16,7 @@ compose-env-hash.py --all before/after: it must not change on a node without HA_
 import re
 import sys
 
-KEYS = ("DATABASE_URL", "DIRECT_URL")
+KEYS = ("DATABASE_URL", "DIRECT_URL", "ANALYTICS_RO_DATABASE_URL")
 MAP = re.compile(r"^(\s*)(%s)(\s*:\s*)(.*)$" % "|".join(KEYS))
 LST = re.compile(r"^(\s*)(-\s*)(['\"]?)(%s)=(.*)$" % "|".join(KEYS))
 
