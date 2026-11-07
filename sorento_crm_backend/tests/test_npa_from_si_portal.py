@@ -181,3 +181,20 @@ def test_portal_from_an_si_saves_without_product_rows_and_sees_the_typed_new_cod
     detail = _as(p, p.granted).get(f"{BASE}/{d['id']}").json()
     assert detail["new_product_code"] == "ZZT-NEW-1"
     assert detail["cost_price"] == "12.00"
+
+
+def test_portal_suggestion_never_carries_another_applications_remark(portal):
+    from app.models.new_product_application import NewProductApplication, NewProductApplicationSource
+
+    p = portal
+    with company_scope(p.db, frozenset({p.company_id})):
+        row = NewProductApplication(
+            status="completed", source="staff", stock_inquiry_id=p.theirs.id,
+            remark="for Hotel X, level 3 fit-out", new_code_text="ZZT-NEW-REM", new_code_at=datetime.utcnow(),
+        )
+        row.sources = [NewProductApplicationSource(id=uid(), product_id=p.product.id, position=1)]
+        p.db.add(row)
+        p.db.flush()
+    got = _as(p, p.granted).get(f"{NPA}/reuse-suggestions", params={"product_ids": p.product.id}).json()
+    assert [s["product_code"] for s in got] == ["ZZT-NEW-REM"]
+    assert "Hotel X" not in str(got)

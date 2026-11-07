@@ -607,3 +607,30 @@ def test_the_excel_of_an_application_from_an_si_reads_the_inquiry(world):
     assert rows["QTY:"] == 55
     assert rows["COST:"] == 210
     assert rows["LEADTIME:"] == "8 weeks"
+
+
+# ------------------------------------------------------------------ security round 3: another salesperson's REMARK
+
+
+def test_the_remark_why_is_for_npa_viewers_only(world, monkeypatch):
+    from app.api.v1.procurement import new_product_applications as route
+
+    d = _si_approved(world, [world.product.id], remark="for Hotel X, level 3 fit-out")
+    assert _respond(world, d["id"], outcome="new", new_code="ZZT-MIR-7070").status_code == 200
+    later = make_product(world.db, code="ZZT-MIR-7070")
+    # an NPA viewer sees the remark
+    full = world.api.as_(world.viewer).get(f"{NPA}/lineage", params={"product_id": later.id}).json()
+    assert full["created_from"][0]["description"] == "for Hotel X, level 3 fit-out"
+    # a product viewer gets the inquiry's product text instead, never the remark
+    monkeypatch.setattr(route, "permission_slugs", lambda db, uid: {route.PRODUCTS_VIEW})
+    row = world.api.as_(world.viewer).get(f"{NPA}/lineage", params={"product_id": later.id}).json()["created_from"][0]
+    assert "Hotel X" not in str(row)
+    assert row["description"] == world.inquiry.item_description
+
+
+def test_a_create_only_salesperson_does_not_see_another_salespersons_remark(world):
+    d = _si_approved(world, [world.product.id], remark="for Hotel X, level 3 fit-out")
+    assert _respond(world, d["id"], outcome="new", new_code="ZZT-MIR-7171").status_code == 200
+    got = _suggest(world, [world.product.id], user=world.sales_b)  # create only
+    assert "Hotel X" not in str(got)
+    assert got[0]["description"] == world.inquiry.item_description

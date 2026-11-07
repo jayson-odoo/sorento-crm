@@ -688,13 +688,16 @@ def undo_new_code(db: Session, app: NewProductApplication, *, actor: Actor) -> N
 OUTCOMES = ("link", "new", "not_opening")
 
 
-def _product_by_code(db: Session, code: Optional[str]) -> Optional[Product]:
-    """The company's product whose code is exactly ``code`` (trimmed, case folded): the code a
-    person typed, never a near one."""
+def _product_by_code(db: Session, code: Optional[str], company_id: Optional[str] = None) -> Optional[Product]:
+    """The product whose code is exactly ``code`` (trimmed, case folded) in the application's
+    company: the code a person typed, never a near one, never another company's."""
     text = (code or "").strip().upper()
     if not text:
         return None
-    rows = db.query(Product).filter(func.upper(Product.product_code) == text).limit(2).all()
+    query = db.query(Product).filter(func.upper(Product.product_code) == text)
+    if company_id:
+        query = query.filter(Product.company_id == company_id)
+    rows = query.limit(2).all()
     return rows[0] if len(rows) == 1 else None
 
 
@@ -735,7 +738,7 @@ def save_purchasing_response(
             text = _clean(data.get("new_code"))
             if not text:
                 raise _invalid("new_code", "Enter the new product code.")
-            existing = _product_by_code(db, text)
+            existing = _product_by_code(db, text, app.company_id)
             product_id = existing.id if existing is not None else None
             text = None if existing is not None else text
         elif outcome == "not_opening":
@@ -1001,11 +1004,24 @@ def _sources_by_app(db: Session, app_ids: List[Any]) -> Dict[str, List[Dict[str,
     return out
 
 
-def _why(app: NewProductApplication) -> Optional[str]:
-    """Why the code was asked for: the PRODUCT TYPE text of its products, in order; with no
-    product rows (raised from a stock inquiry), the REMARK."""
+def _inquiry_texts(db: Session, apps: Iterable[NewProductApplication]) -> Dict[str, Optional[str]]:
+    ids = {str(a.stock_inquiry_id) for a in apps if a.stock_inquiry_id and not a.lines}
+    if not ids:
+        return {}
+    rows = db.query(StockInquiry.id, StockInquiry.item_description).filter(StockInquiry.id.in_(ids)).all()
+    return {str(i): _clean(d) for i, d in rows}
+
+
+def _why(app: NewProductApplication, inquiry_texts: Dict[str, Optional[str]], *, full: bool) -> Optional[str]:
+    """Why the code was asked for: the PRODUCT TYPE text of its products, in order. With no product
+    rows (raised from a stock inquiry): the REMARK for NPA view-all holders only (`full`), since a
+    remark is another salesperson's free text that may name a customer or project (security review
+    round 3); everyone else gets the inquiry's item description (product text)."""
     texts = [l.description for l in app.lines if l.description]
-    return "; ".join(texts) or _clean(app.remark)
+    if texts:
+        return "; ".join(texts)
+    inquiry = inquiry_texts.get(str(app.stock_inquiry_id)) if app.stock_inquiry_id else None
+    return (_clean(app.remark) or inquiry) if full else inquiry
 
 
 def _new_product_join():
@@ -1014,6 +1030,7 @@ def _new_product_join():
     return or_(
         Product.id == NewProductApplication.new_product_id,
         (NewProductApplication.new_product_id.is_(None))
+        & (Product.company_id == NewProductApplication.company_id)
         & (func.upper(Product.product_code) == func.upper(func.trim(NewProductApplication.new_code_text))),
     )
 
@@ -1043,6 +1060,7 @@ def reuse_suggestions(
     *,
     exclude_application_id: Optional[str] = None,
     portal: bool = False,
+    full_why: bool = False,
 ) -> List[Dict[str, Any]]:
     """Card rule 6, owner rule: the codes created before from EXACTLY this set of current codes
     (order ignored), newest first. A suggestion only; nothing here links anything. The portal
@@ -1063,6 +1081,7 @@ def reuse_suggestions(
     if exclude_application_id:
         query = query.filter(NewProductApplication.id != str(exclude_application_id))
     rows = query.order_by(NewProductApplication.new_code_at.desc()).limit(MAX_SUGGESTIONS * 3).all()
+    inquiry_texts = _inquiry_texts(db, [r[0] for r in rows])
     out: List[Dict[str, Any]] = []
     seen = set()
     for app, pid, code, name, active in rows:
@@ -1075,7 +1094,7 @@ def reuse_suggestions(
             "product_code": code,
             "product_name": name,
             "is_active": active,
-            "description": _why(app),
+            "description": _why(app, inquiry_texts, full=full_why and not portal),
             "created_at": _iso(app.new_code_at),
         }
         if not portal:
@@ -1107,6 +1126,7 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
         .all()
     )
     sources = _sources_by_app(db, [r[0].id for r in (*created, *made)])
+    inquiry_texts = _inquiry_texts(db, [r[0] for r in (*created, *made)])
 
     def row(app, pid, code, name, active) -> Dict[str, Any]:
         qty = [l.expected_qty for l in app.lines if l.expected_qty is not None]
@@ -1117,7 +1137,7 @@ def lineage(db: Session, product_id: str, *, can_view_applications: bool) -> Dic
             "product_name": name,
             "is_active": active,
             "current_products": sources.get(str(app.id), []),
-            "description": _why(app),
+            "description": _why(app, inquiry_texts, full=can_view_applications),
             "created_at": _iso(app.new_code_at),
         }
         if can_view_applications:
@@ -1464,7 +1484,7 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         else None
     )
     if new_product is None and app.new_code_text:
-        typed = _product_by_code(db, app.new_code_text)
+        typed = _product_by_code(db, app.new_code_text, app.company_id)
         if typed is not None:
             new_product = (typed.id, typed.product_code, typed.product_name, typed.is_active)
     new_product_id = new_product[0] if new_product else None

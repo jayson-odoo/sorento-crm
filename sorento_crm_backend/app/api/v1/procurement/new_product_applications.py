@@ -115,8 +115,10 @@ def reuse_suggestions(
     ),
     db: Session = Depends(get_db),
 ):
-    """NPA-FROM-SI rule 6: codes created before from exactly these current codes (a suggestion)."""
-    return svc.reuse_suggestions(db, _id_list(product_ids))
+    """NPA-FROM-SI rule 6: codes created before from exactly these current codes (a suggestion).
+    The earlier application's remark only for NPA view-all holders (security review round 3)."""
+    actor = svc.actor_from_slugs(_user["id"], permission_slugs(db, _user["id"]))
+    return svc.reuse_suggestions(db, _id_list(product_ids), full_why=actor.can_view_all)
 
 
 @router.get("/lineage")
