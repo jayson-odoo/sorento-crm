@@ -115,4 +115,4 @@ export interface StockInquiryFormData {
   space_id?: string;
 }
 
-export interface StockInquiryDetail extends StockInquiry {}
+export type StockInquiryDetail = StockInquiry;

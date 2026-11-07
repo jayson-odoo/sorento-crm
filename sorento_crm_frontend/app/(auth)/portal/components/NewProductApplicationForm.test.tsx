@@ -6,7 +6,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { toast } from '@/lib/toast';
 import type {
   NewProductApplicationDetail,
   NewProductApplicationLine,
@@ -60,7 +59,6 @@ import {
   listMyRespondedInquiries,
   reviseNewProductApplication,
   submitNewProductApplication,
-  updateNewProductApplication,
   downloadNewProductApplicationExcel,
 } from '../lib/new-product-application-service';
 vi.mock('../lib/portal-client', async (importOriginal) => {
