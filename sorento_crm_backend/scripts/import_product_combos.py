@@ -77,7 +77,9 @@ from app.models.base import company_scope  # noqa: E402
 from app.models.company import Company  # noqa: E402
 from app.models.dealer_kit import TagTemplate  # noqa: E402
 from app.models.product import Product  # noqa: E402
+from app.models.accessory import ProductComboAccessory  # noqa: E402
 from app.models.product_combo import ProductCombo  # noqa: E402
+from app.services.accessory_service import AccessoryService  # noqa: E402
 from app.services.audit_service import register_audit_listeners  # noqa: E402
 from app.services.dealer_kit.pricing import _no_selling_price_product_ids  # noqa: E402
 from app.services.dealer_kit.product_tag_template_service import NON_PRICE_TAG_FAMILY_PREFIX  # noqa: E402
@@ -101,14 +103,38 @@ S_NEW, S_MATCHES, S_DIFFERS, S_UNSURE = "new", "matches", "differs", "unsure"
 # --------------------------------------------------------------------------- seed
 
 
-def free_items_text(items) -> str:
-    """`ZZTTAP1 Tap, Waste`: the code prefixes the label, a code-less item is its label alone."""
-    out = []
+def free_item_names(items) -> list[str]:
+    """`["ZZTTAP1 Tap", "Waste"]`: the code prefixes the label, a code-less item is its label alone.
+    Each becomes one accessory on the combo's list (PRICETAG-ACCESSORIES: the one source)."""
+    out: list[str] = []
     for item in items or []:
         text = f"{(item.get('code') or '').strip()} {(item.get('label') or '').strip()}".strip()
-        if text:
+        if text and text.lower() not in {name.lower() for name in out}:
             out.append(text)
-    return ", ".join(out)
+    return out
+
+
+def _free_product(db, code: str, company_id) -> Optional[Product]:
+    """The product a free item's code names, in the host's company; None for no code or no match."""
+    if not code:
+        return None
+    statement = db.query(Product).filter(func.upper(Product.product_code) == code.upper())
+    if company_id is not None:
+        statement = statement.filter(Product.company_id == company_id)
+    return statement.first()
+
+
+def _has_free_list(db, combo_id: str) -> bool:
+    """The combo already lists its free items: a load never overwrites a list someone set."""
+    return (
+        db.query(ProductComboAccessory.id).filter(ProductComboAccessory.combo_id == combo_id).first()
+        is not None
+    )
+
+
+def free_items_text(items) -> str:
+    """The names joined, as the report shows them."""
+    return ", ".join(free_item_names(items))
 
 
 def _money(value) -> Optional[Decimal]:
@@ -380,15 +406,16 @@ def process_entry(
             differences.append(f"selling price {_show(existing.sell_price)} -> {seed_sp}")
 
     description = (entry.get("combo_description") or "").strip()
-    free_items = free_items_text(entry.get("free_items"))
+    free_names = free_item_names(entry.get("free_items"))
     fill = {}
     if description and not (existing and (plain_text(existing.description) or "").strip()):
         fill["description"] = description
-    if free_items and not (existing and (existing.free_items or "").strip()):
-        fill["free_items"] = free_items
+    want_free = bool(free_names) and not (existing and _has_free_list(db, existing.id))
     want_photo = photo is not None and not (existing and existing.image_attachment_id)
     if existing is not None:
         differences += [f"{field.replace('_', ' ')} to fill" for field in fill]
+        if want_free:
+            differences.append("free items to fill")
         if want_photo:
             differences.append("cover to load")
     row["differences"] = "; ".join(differences)
@@ -419,6 +446,25 @@ def process_entry(
             update_fields["sell_price"] = None
         if update_fields:
             service.update(combo_id, update_fields)
+        if want_free:
+            accessories = AccessoryService(db)
+            combo_row = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+            in_combo = {host.id} | {part.part_product_id for part in (combo_row.parts if combo_row else [])}
+            items, seen = [], set()
+            for free in entry.get("free_items") or []:
+                text = f"{(free.get('code') or '').strip()} {(free.get('label') or '').strip()}".strip()
+                if not text:
+                    continue
+                # Owner, 6 Nov ~10:45: a free item with a catalogue code is that PRODUCT, read live.
+                product = _free_product(db, (free.get("code") or "").strip(), host.company_id)
+                if product is not None and product.id not in in_combo:
+                    key = ("product_id", product.id)
+                else:
+                    key = ("accessory_id", accessories.find_or_create(text, host.company_id).id)
+                if key not in seen:
+                    seen.add(key)
+                    items.append({key[0]: key[1]})
+            accessories.set_combo_list(combo_id, items)
         if prune:
             for product_id, part in have.items():
                 if product_id not in want and product_id not in held_back:

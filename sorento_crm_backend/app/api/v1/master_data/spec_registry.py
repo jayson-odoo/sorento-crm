@@ -247,7 +247,9 @@ def get_spec_registry(
             return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag_header})
 
         response.headers["ETag"] = etag_header
-        response.headers["Cache-Control"] = "private, max-age=60"
+        # Revalidated on every read (the ETag makes that a 304), never served from the
+        # browser's own copy: a refetch just after a save brought back the old icon order.
+        response.headers["Cache-Control"] = "private, no-cache"
         return payload
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -1064,10 +1066,11 @@ def update_spec_key(
         fields = payload.model_dump(exclude_unset=True)
         # A save that changes how this key is read re-reads its products before it
         # answers, and only one catalogue read runs at a time (security review S1). The
-        # slot is taken here, before anything is changed, so a refused save stores
-        # nothing; it is given back in `finally`.
-        if _READING_FIELDS & set(fields):
-            read_token = product_spec_preview.begin_catalogue_read(db)
+        # slot is taken below, once the fields are applied and only if the reading
+        # really moved, but before the commit, so a refused save stores nothing. A save
+        # that changes only what a price tag draws (icon order, value icons, labels)
+        # never waits on another key's re-read, even when the record page re-sends the
+        # rules unchanged (SPEC-ICON-PICKER-UX, owner on PROD 6 Nov).
         # A save that changes how this key is read re-reads the products it changes,
         # straight away (D10, AC-S1.16). Judged against the row as it was, before any
         # field below is applied (a suppressed value is applied early; review S-10).
@@ -1338,11 +1341,23 @@ def update_spec_key(
             _validate_reachable(row.data_type, merged_allowed_values(row), merged_synonyms(row))
 
         reading_after = _reading(row)
+        rereads = fingerprint_before is not None and _reading_changed(reading_before, reading_after)
+        if rereads:
+            try:
+                read_token = product_spec_preview.begin_catalogue_read(db, label=row.label)
+            except Exception:
+                db.rollback()
+                raise
+            # Taken again now the slot is held, from what is COMMITTED (a session of its
+            # own: this one's identity map already carries the edit). Another key's save
+            # may have landed since the first one, and `reread_after_save` judges whether
+            # the stored fingerprint was current against it (review S1).
+            fingerprint_before = _committed_fingerprint(db)
         db.commit()
         db.refresh(row)
 
         products_updated = 0
-        if fingerprint_before is not None and _reading_changed(reading_before, reading_after):
+        if rereads:
             products_updated = product_spec_rederive.reread_after_save_logged(
                 db, row.spec_key, fingerprint_before=fingerprint_before
             )
@@ -1358,14 +1373,36 @@ def update_spec_key(
 
 # The fields that change what a product reads: a rule, a scope, a cap, or a choice taken
 # away (a rule setting a suppressed value stops firing, `configured_rules`; review S-10).
+def _committed_fingerprint(db: Session) -> str:
+    """`rules_fingerprint` of the committed registry, read beside `db`'s unsaved edits."""
+    with Session(bind=db.get_bind(), autoflush=False) as fresh:
+        return product_spec_rederive.rules_fingerprint(fresh)
+
+
 _READING_FIELDS = {"derivation_rules", "applies_when", "max_value", "suppressed_values"}
 
 
 def _reading(row) -> tuple:
+    """How the row reads products, compared by MEANING: a rule is its cleaned builder.
+
+    Shipped rules carry bookkeeping a stored rule does not (`_seed`), so a key that read the
+    shipped rules and is now saved with those same rules stored (the record page re-sends what
+    it shows on the first save) reads exactly as before (crew pass on #2214).
+    """
     from app.services.product_spec_derivation import stored_or_shipped_rules
+    from app.services.product_spec_rules import builder_of, builder_identity, clean_builder
+
+    def meaning(rule):
+        builder = builder_of(rule)
+        if not builder:
+            return rule
+        try:
+            return builder_identity(clean_builder(builder))
+        except Exception:  # noqa: BLE001 - an odd legacy rule compares as it is stored
+            return builder_identity(builder)
 
     return (
-        stored_or_shipped_rules(row),
+        [meaning(rule) for rule in stored_or_shipped_rules(row)],
         dict(row.applies_when or {}),
         row.max_value,
         sorted(str(v) for v in (row.suppressed_values or [])),

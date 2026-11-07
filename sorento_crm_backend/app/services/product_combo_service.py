@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.product import Product, ProductAttachment
 from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.resources import Attachment, AttachmentType
+from app.services.accessory_service import AccessoryService
 from app.services.error_handler import AppException, handle_not_found
 from app.services.tag_description import clean_description
 from app.services.storage_router import (
@@ -146,11 +147,12 @@ def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
         "name": combo.name,
         "sort_order": combo.sort_order,
         "description": combo.description,
-        "free_items": combo.free_items,
         "list_price": combo.list_price,
         "sell_price": combo.sell_price,
         "parts": [_serialize_part(part) for part in combo.parts],
         "image": _serialize_image(db, combo),
+        # PRICETAG-ACCESSORIES: the combo's own list, the one source the old free text became.
+        "accessories": AccessoryService(db).combo_list_rows(combo.id),
         "created_at": combo.created_at,
         "updated_at": combo.updated_at,
     }
@@ -285,8 +287,6 @@ class ProductComboService:
         # Omitted = left alone; an explicit null clears (the payload is exclude_unset).
         if "description" in payload:
             combo.description = _clean_description(payload["description"])
-        if "free_items" in payload:
-            combo.free_items = (payload["free_items"] or "").strip() or None
         for field in ("list_price", "sell_price"):
             if field in payload:
                 setattr(combo, field, payload[field])

@@ -5,7 +5,7 @@
  *
  * Written test-FIRST: today the box shows the HTML and is editable.
  */
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -65,9 +65,19 @@ describe('Content box for a description-bound layer (R8)', () => {
     });
   }
 
-  it('R8: any other layer keeps an editable Content box with its own text', () => {
-    const box = contentBox(null);
-    expect(box.value).toBe('Hello');
-    expect(box.readOnly).toBe(false);
+  // DESIGNER-RICH-TEXT: any other layer's Content box is the editable rich editor (its own
+  // suite is InspectorPanel.richContentEditor.test.tsx).
+  it('R8: any other layer keeps an editable Content box with its own text', async () => {
+    const { container } = render(
+      <InspectorPanel layer={layer(null)} onUpdate={vi.fn()} onUpdateProps={vi.fn()} resolvedText={HTML} />,
+    );
+    expect(container.querySelector('textarea')).toBeNull();
+    const box = await waitFor(() => {
+      const el = container.querySelector<HTMLElement>('.ProseMirror');
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(box.textContent).toBe('Hello');
+    expect(box.getAttribute('contenteditable')).toBe('true');
   });
 });

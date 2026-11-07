@@ -1318,6 +1318,26 @@ class SpecKeyItem(BaseModel):
     unit: Optional[str] = None
 
 
+class TagAccessoryImage(BaseModel):
+    attachment_id: str
+    url: str
+
+
+class TagAccessory(BaseModel):
+    """PRICETAG-ACCESSORIES: one accessory as the tag's "Accessories" box draws it.
+    Declared on every tag shape below or `response_model` drops it without a word."""
+
+    #: `accessory` (library item) or `product` (a catalogue product listed as a free item, whose
+    #: `code`, description as `name`, photo and `list_price` are read live).
+    kind: str = "accessory"
+    id: str
+    name: str
+    spec: Optional[str] = None
+    image: Optional[TagAccessoryImage] = None
+    code: Optional[str] = None
+    list_price: Optional[float] = None
+
+
 class TagComboOption(BaseModel):
     product_id: str
     code: str
@@ -1348,6 +1368,8 @@ class TagCombo(BaseModel):
     name: str
     description: Optional[str] = None
     free_items: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: the combo's own list; `free_items` is its names joined.
+    accessories: list[TagAccessory] = []
     choices: list[TagComboChoice] = []
     upgrades: list[TagComboUpgrade] = []
 
@@ -1382,6 +1404,8 @@ class ProductTagData(BaseModel):
     #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
     combo: Optional[TagCombo] = None
     slots: Optional[TagSlots] = None
+    #: PRICETAG-ACCESSORIES: the product's own list (an Ala Carte tag prints it).
+    accessories: list[TagAccessory] = []
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1508,6 +1532,8 @@ class TagPartData(BaseModel):
     #: AC-S4-4: this part's OWN product's tag copy, not the host's - a
     #: subjectPart layer reads THIS, never the host's.
     price_tag_description: Optional[str] = None
+    #: PRICETAG-ACCESSORIES: this position's OWN product's accessory list.
+    accessories: list[TagAccessory] = []
     #: r10 S6: the choice group this row belongs to ("Kitchen Tap"), so the
     #: subject picker groups candidates under it. Absent on a fixed part.
     role: Optional[str] = None
@@ -1569,6 +1595,8 @@ class ResolvedLineData(BaseModel):
     sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
+    #: PRICETAG-ACCESSORIES: the combo's list on a combo line, else the product's.
+    accessories: list[TagAccessory] = []
     #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
     combo: Optional[TagCombo] = None
     slots: Optional[TagSlots] = None

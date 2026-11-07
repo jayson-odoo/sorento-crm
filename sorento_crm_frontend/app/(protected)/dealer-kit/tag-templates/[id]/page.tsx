@@ -39,6 +39,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { TemplateRecordPager } from '../components/TemplateRecordPager';
 import { toast } from '@/lib/toast';
 import {
   History,
@@ -106,7 +107,18 @@ const TagVersionViewer = dynamic(
   { ssr: false, loading: () => <Skeleton className="h-[400px] w-full" /> },
 );
 
+/**
+ * One editor per template id. Prev/next (item 2) changes only the id, and keying on it unmounts
+ * the editor of the template being left, which is the editor's own unsaved-changes guard: the
+ * unmount cleanup below flushes any pending autosave before the next template loads, so a step
+ * never carries one template's state onto another.
+ */
 export default function TagTemplateEditorPage() {
+  const params = useParams<{ id: string }>();
+  return <TagTemplateEditor key={params.id} />;
+}
+
+function TagTemplateEditor() {
   const params = useParams<{ id: string }>();
 
   const [template, setTemplate] = useState<TagTemplate | null>(null);
@@ -310,15 +322,23 @@ export default function TagTemplateEditorPage() {
     async (values: TemplateSettingsValues) => {
       const current = templateRef.current;
       if (!current) return;
-      if (values.name !== current.name || values.family !== current.family) {
+      const priceType = current.price_type ?? null;
+      if (
+        values.name !== current.name ||
+        values.family !== current.family ||
+        values.price_type !== priceType
+      ) {
         const updated = await updateTemplateSettings(current.id, {
           name: values.name,
           family: values.family,
+          price_type: values.price_type,
         });
-        // Only the two settings: the response's doc is the server's draft,
+        // Only the three settings: the response's doc is the server's draft,
         // which an armed autosave may be about to overwrite.
         setTemplate((prev) =>
-          prev ? { ...prev, name: updated.name, family: updated.family } : prev,
+          prev
+            ? { ...prev, name: updated.name, family: updated.family, price_type: updated.price_type }
+            : prev,
         );
       }
       if (values.width_mm !== current.doc.width_mm || values.height_mm !== current.doc.height_mm) {
@@ -552,6 +572,7 @@ export default function TagTemplateEditorPage() {
               // indicator, Publish and Back to templates still do not
               // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
+                <TemplateRecordPager id={template.id} />
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
@@ -665,6 +686,7 @@ export default function TagTemplateEditorPage() {
         initial={{
           name: template.name,
           family: template.family,
+          price_type: template.price_type ?? null,
           width_mm: template.doc.width_mm,
           height_mm: template.doc.height_mm,
         }}

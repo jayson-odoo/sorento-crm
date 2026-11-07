@@ -10,6 +10,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.accessory import AccessoryOut
+
 
 class ProductComboPartOut(BaseModel):
     id: str
@@ -41,10 +43,11 @@ class ProductComboOut(BaseModel):
     name: str
     sort_order: int
     description: Optional[str] = None
-    free_items: Optional[str] = None
     list_price: Optional[Decimal] = None
     sell_price: Optional[Decimal] = None
     parts: List[ProductComboPartOut] = []
+    #: PRICETAG-ACCESSORIES: the combo's own "Free items" list, in order (replaces the free text).
+    accessories: List[AccessoryOut] = []
     #: The combo's own cover picture (S5), null with none uploaded yet.
     image: Optional[ProductComboImageOut] = None
     created_at: datetime
@@ -83,7 +86,6 @@ class ProductComboUpdate(BaseModel):
     #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
     #: Sanitised and length-checked in the service (the limit applies to the stored value).
     description: Optional[str] = Field(default=None, max_length=RAW_DESCRIPTION_LIMIT)
-    free_items: Optional[str] = Field(default=None, max_length=2000)
     list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 

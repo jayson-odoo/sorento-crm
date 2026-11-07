@@ -22,7 +22,17 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { isRich, richPlainText } from '@/lib/dealer-kit/rich-text';
+import {
+  isMacContextClick,
+  isMacPlatform,
+  layersAt,
+  selectionForContextMenu,
+  shortcutLabel,
+  useIsMac,
+} from '@/lib/dealer-kit/canvas-input';
+import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
 import {
   useCallback,
   useEffect,
@@ -54,9 +64,9 @@ import {
   defaultBadgeProps,
   defaultBarcodeProps,
   defaultFeatureIconsProps,
+  defaultAccessoriesProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
-  buildAccessoriesStrip,
   buildAlternativesRow,
   buildProductBlock,
   buildSetBlock,
@@ -88,7 +98,6 @@ import {
   cloneLayers,
   descendantsOf,
   fitView,
-  hitLayerAt,
   layerOverflowsArtboard,
   marqueeHits,
   moveLayers,
@@ -235,8 +244,13 @@ import {
 import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
-import { useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { useAccessoryDropToast, useFeatureIconDropToast } from './useFeatureIconDropToast';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import {
+  ACCESSORY_DEFAULT_BOX_MM,
+  accessoryBoxLayout,
+  accessoryLineCount,
+} from '@/lib/dealer-kit/accessory-box';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -535,7 +549,6 @@ type PickerState =
   | { kind: 'add-set' }
   | { kind: 'rebind'; groupId: string; mode: PickMode }
   | { kind: 'alternatives' }
-  | { kind: 'accessories' }
   | { kind: 'preview'; groupId: string; mode: PickMode };
 
 /**
@@ -635,6 +648,8 @@ export function TagCanvasEditor({
   // renders, so it doubles as the required "getServerSnapshot"-free selector.
   const clipboard = useSyncExternalStore(subscribeTagClipboard, getTagClipboard);
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
+  /** macOS: menus write shortcuts with the command symbol. */
+  const mac = useIsMac();
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
   /** Feature icons: the icon library dialog, opened from the layer's inspector. */
@@ -1184,6 +1199,18 @@ export function TagCanvasEditor({
     });
   }, [addLayer, makeBaseLayer]);
 
+  // PRICETAG-ACCESSORIES: one data-driven box replaces the static accessories strip.
+  const handleAddAccessories = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer(
+        'accessories',
+        ACCESSORY_DEFAULT_BOX_MM.width_mm,
+        ACCESSORY_DEFAULT_BOX_MM.height_mm,
+      ),
+      props: defaultAccessoriesProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
   const closePicker = useCallback(() => {
@@ -1280,30 +1307,6 @@ export function TagCanvasEditor({
           }
           addLayers(
             buildAlternativesRow(products, {
-              newId: newLayerId,
-              x_mm: 5,
-              y_mm: Math.max(0, centerY),
-              z_index: maxZ,
-            }),
-          );
-        } else if (picker.kind === 'accessories') {
-          const items = [];
-          for (const id of ids) {
-            const product = await getProductTagData(id, promotionId ?? null);
-            const primary =
-              product.images.find((image) => image.is_primary) ?? product.images[0];
-            items.push({
-              caption: product.code,
-              source: primary
-                ? ({
-                    type: 'product_attachment' as const,
-                    attachmentId: primary.attachment_id,
-                  })
-                : null,
-            });
-          }
-          addLayers(
-            buildAccessoriesStrip(items, {
               newId: newLayerId,
               x_mm: 5,
               y_mm: Math.max(0, centerY),
@@ -2786,6 +2789,9 @@ export function TagCanvasEditor({
         return;
       }
       if (e.evt.button !== 0) return;
+      // macOS Ctrl+click is the system right-click: the context menu resolves its own target and
+      // must find the selection as it was (DESIGNER-RICH-TEXT owner bug).
+      if (isMacContextClick(e.evt, isMacPlatform())) return;
       // Crop mode (S8, AC-S8-3): `e.target` is the Konva node actually hit,
       // same as `isBackground` below reads it. The window and its 8 handles
       // start their OWN Konva drag on this same mousedown, so this only
@@ -2874,6 +2880,32 @@ export function TagCanvasEditor({
     [isBackground],
   );
 
+  /** The layer Konva's own hit test finds under the pointer, if it can say. */
+  const konvaLayerIdAt = useCallback(
+    (e: React.MouseEvent): string | null => {
+      const stage = stageRef.current as
+        | (Konva.Stage & { getIntersection?: Konva.Stage['getIntersection'] })
+        | null;
+      const content = stage?.getContent();
+      if (!stage?.getIntersection || !content) return null;
+      const rect = content.getBoundingClientRect();
+      let node = stage.getIntersection({ x: e.clientX - rect.left, y: e.clientY - rect.top }) as
+        | Konva.Node
+        | null;
+      const ids = new Set(layers.map((layer) => layer.id));
+      while (node) {
+        const id = node.id().replace(/-ghost$/, '');
+        if (ids.has(id)) {
+          const layer = layers.find((l) => l.id === id);
+          return layer && layer.visible && !layer.locked ? id : null;
+        }
+        node = node.getParent() as Konva.Node | null;
+      }
+      return null;
+    },
+    [layers],
+  );
+
   /**
    * Bound on the OUTER container div Radix's trigger wraps (S10, observed
    * bug), not on the Konva `<Stage>` itself.
@@ -2907,11 +2939,17 @@ export function TagCanvasEditor({
             return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
           })()
         : null;
-      const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
-      setMenuOnEmpty(!hitId);
-      if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
+      // Every layer box under the pointer, top first, and the layer Konva actually drew there:
+      // a frame drawn over the text (transparent inside) does not win a hit on the text below it.
+      const hits = point ? layersAt(layers, point.x_mm, point.y_mm, entered) : [];
+      const konvaId = konvaLayerIdAt(e);
+      const drawnHit = konvaId ? resolveTarget(konvaId) : null;
+      // A right-click on a layer that is already part of the selection keeps all of it.
+      setMenuOnEmpty(!drawnHit && hits.length === 0);
+      const next = selectionForContextMenu(selectedIds, hits, drawnHit);
+      if (next) setSelectedIds(next);
     },
-    [view, layers, entered, selectedIds],
+    [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
 
   // -- Undo / Redo -----------------------------------------------------------
@@ -3086,7 +3124,14 @@ export function TagCanvasEditor({
       // the inline editor specifically (N2): any OTHER input keeps the normal
       // `isInput` guard, so Cmd+B while typing a name in "Save as template"
       // types a B there instead of bolding the canvas underneath it.
-      const formatShortcutsAllowed = !isInput || Boolean(editingLayerId);
+      // A rich editor (the Inspector's Content box, the in-place canvas editor) owns its own
+      // Cmd+B / I / U: they format the selection there, never the whole layer (DESIGNER-RICH-TEXT).
+      // Either signal counts: the key's own target, or where focus sits.
+      const inRichEditor = Boolean(
+        (e.target as HTMLElement | null)?.closest?.('.ProseMirror') ||
+          (document.activeElement as HTMLElement | null)?.closest?.('.ProseMirror'),
+      );
+      const formatShortcutsAllowed = (!isInput || Boolean(editingLayerId)) && !inRichEditor;
       if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         applyTextFormat('bold');
@@ -3215,7 +3260,7 @@ export function TagCanvasEditor({
         e.preventDefault();
         duplicateSelectedLayers();
       }
-      if (e.key === 'g' && modifier) {
+      if ((e.key === 'g' || e.key === 'G') && modifier) {
         e.preventDefault();
         if (e.shiftKey) ungroupSelectedLayers();
         else groupSelectedLayers();
@@ -3530,6 +3575,24 @@ export function TagCanvasEditor({
   }, [layers, dataOf, assetUrls, library.featureIcons]);
   useFeatureIconDropToast(featureIconFits.dropped);
 
+  // PRICETAG-ACCESSORIES (A6): the same per-layer count and toast for accessories boxes. Only a
+  // box with data previewed counts; the sample cards an unbound box draws never warn.
+  const accessoryFits = useMemo(() => {
+    const fits = new Map<string, { count: number; lines: number }>();
+    let dropped = 0;
+    for (const layer of layers) {
+      if (layer.props.kind !== 'accessories' || layer.visible === false) continue;
+      const items = layerDisplay(layer, dataOf(layer), assetUrls, library.featureIcons)?.accessories;
+      if (!items) continue;
+      const fit = { count: items.length, lines: accessoryLineCount(items) };
+      fits.set(layer.id, fit);
+      dropped += accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines)
+        .dropped;
+    }
+    return { fits, dropped };
+  }, [layers, dataOf, assetUrls, library.featureIcons]);
+  useAccessoryDropToast(accessoryFits.dropped);
+
   /**
    * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
    * rather than `selectedData`, so the Layers panel's suffix still shows with
@@ -3617,6 +3680,13 @@ export function TagCanvasEditor({
     [layers, updateLayer, updateLayerProps],
   );
 
+  /** The Inspector's rich Content box, so Insert field lands at its caret. */
+  const contentEditorRef = useRef<Editor | null>(null);
+  const contentEditor = () => {
+    const editor = contentEditorRef.current;
+    return editor && !editor.isDestroyed ? editor : null;
+  };
+
   const writeSelectedContent = useCallback(
     (content: string) => {
       if (!selectedLayer) return;
@@ -3644,7 +3714,10 @@ export function TagCanvasEditor({
    *  page; here it opens read-only on its plain text and never writes to the layer. */
   const editingIsDescription =
     editingLayer?.slot_binding === 'combo_description' ||
-    editingLayer?.slot_binding === 'price_tag_description';
+    editingLayer?.slot_binding === 'price_tag_description' ||
+    // The spec sheet reader (embedded) keeps its plain typing-over box, which must never show or
+    // write over formatted content's markup: there it opens read-only on the words.
+    (Boolean(embedded) && isRich(editingContent));
 
   /**
    * A sole-token layer opens the inline editor on its RESOLVED value instead
@@ -4526,6 +4599,11 @@ export function TagCanvasEditor({
                   // The template editor shows a data field's value read-only; a spec sheet page
                   // types over it (that page only), starting from what it prints.
                   readOnly={editingIsDescription || (editingResolvedValue != null && !embedded)}
+                  // DESIGNER-RICH-TEXT: the designer edits the layer's own content as rich text in
+                  // place, the same model as the Inspector's Content box; a resolved value or a
+                  // description stays the plain box.
+                  // The spec sheet reader (embedded) keeps its plain typing-over box.
+                  rich={!embedded && !editingIsDescription && editingResolvedValue == null}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}
@@ -4550,7 +4628,7 @@ export function TagCanvasEditor({
                 >
                   <Scissors />
                   Cut
-                  <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('X', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem
                   onSelect={() => {
@@ -4560,17 +4638,17 @@ export function TagCanvasEditor({
                 >
                   <Copy />
                   Copy
-                  <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('C', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
                   <ClipboardPaste />
                   Paste
-                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={duplicateSelectedLayers}>
                   <Copy />
                   Duplicate
-                  <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('D', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 {canCropSelectedImage && (
                   <ContextMenuItem onSelect={enterCropMode}>
@@ -4612,7 +4690,7 @@ export function TagCanvasEditor({
                   >
                     <GroupIcon />
                     Group
-                    <ContextMenuShortcut>Ctrl+G</ContextMenuShortcut>
+                    <ContextMenuShortcut>{shortcutLabel('G', mac)}</ContextMenuShortcut>
                   </ContextMenuItem>
                 )}
                 {canEnterGroup && (
@@ -4653,23 +4731,23 @@ export function TagCanvasEditor({
                 <ContextMenuItem onSelect={handlePaste} disabled={!clipboard}>
                   <ClipboardPaste />
                   Paste
-                  <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('V', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={selectAll}>
                   <SquareDashed />
                   Select All
-                  <ContextMenuShortcut>Ctrl+A</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('A', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem onSelect={handleFit}>
                   <Expand />
                   Fit to View
-                  <ContextMenuShortcut>Ctrl+0</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('0', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
                 <ContextMenuItem onSelect={handleZoomReset}>
                   <Percent />
                   Zoom 100%
-                  <ContextMenuShortcut>Ctrl+1</ContextMenuShortcut>
+                  <ContextMenuShortcut>{shortcutLabel('1', mac)}</ContextMenuShortcut>
                 </ContextMenuItem>
               </>
             )}
@@ -4699,7 +4777,7 @@ export function TagCanvasEditor({
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
+        onAddAccessories={specSheet ? undefined : handleAddAccessories}
         onUndo={handleUndo}
         onRedo={handleRedo}
         canUndo={history.canUndo}
@@ -4906,6 +4984,9 @@ export function TagCanvasEditor({
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
               onInsertField={() => setInsertFieldOpen(true)}
+              onContentEditorReady={(editor) => {
+                contentEditorRef.current = editor;
+              }}
               onChooseImage={handleChooseImage}
               onChooseBadge={handleChooseBadge}
               onRebind={handleRebind}
@@ -4928,6 +5009,7 @@ export function TagCanvasEditor({
               specKeys={library.specKeys}
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
+              accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -4962,7 +5044,7 @@ export function TagCanvasEditor({
                 ? picker.mode
                 : 'product'
         }
-        multiple={picker.kind === 'alternatives' || picker.kind === 'accessories'}
+        multiple={picker.kind === 'alternatives'}
         title={
           picker.kind === 'add-set'
             ? 'Add a product set'
@@ -4974,9 +5056,7 @@ export function TagCanvasEditor({
                   : 'Preview this block with'
                 : picker.kind === 'alternatives'
                   ? 'Add an alternatives row'
-                  : picker.kind === 'accessories'
-                    ? 'Add an accessories strip'
-                    : 'Add a product'
+                  : 'Add a product'
         }
         confirmLabel={
           picker.kind === 'rebind'
@@ -5022,7 +5102,9 @@ export function TagCanvasEditor({
 
       <InsertFieldDialog
         open={insertFieldOpen}
-        value={selectedContent}
+        // With the Content box open, the dialog hands back only the field and it goes in at that
+        // box's caret, inside whatever formatting is there (DESIGNER-RICH-TEXT).
+        value={insertFieldOpen && contentEditor() ? '' : selectedContent}
         data={selectedData ?? null}
         specKeys={library.specKeys}
         // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.
@@ -5030,7 +5112,9 @@ export function TagCanvasEditor({
         onCancel={() => setInsertFieldOpen(false)}
         onDone={(content) => {
           setInsertFieldOpen(false);
-          writeSelectedContent(content);
+          const editor = contentEditor();
+          if (editor) insertMergeFieldText(editor, content);
+          else writeSelectedContent(content);
         }}
       />
 

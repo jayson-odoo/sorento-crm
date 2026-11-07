@@ -8,8 +8,15 @@
  */
 
 import { useCallback, useId, useMemo } from 'react';
-import type { FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type { AccessoriesLayerProps, FeatureIconsLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import {
+  accessoryBoxLayout,
+  accessoryHeaderStyle,
+  accessoryLineStyle,
+  itemLayoutOf,
+  type AccessoryLineStyle,
+} from '@/lib/dealer-kit/accessory-box';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -59,7 +66,10 @@ import { comboPositions } from '@/lib/dealer-kit/combo-slots';
 import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from '@/components/common/ColorPicker';
-import { richPlainText } from '@/lib/dealer-kit/rich-text';
+import { richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
+import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import type { Editor } from '@tiptap/react';
 
 // ---------------------------------------------------------------------------
 // Slot binding options
@@ -218,6 +228,8 @@ interface InspectorPanelProps {
   onUploadFont?: () => void;
   /** Open the merge-field catalogue for this text layer (D59). */
   onInsertField?: () => void;
+  /** The Content box's editor, so Insert field lands at its caret (check `isDestroyed`). */
+  onContentEditorReady?: (editor: Editor) => void;
   /** Point this group's block at a different product or set. */
   onRebind?: (groupId: string) => void;
   /** Clear every text override inside this group. */
@@ -253,6 +265,9 @@ interface InspectorPanelProps {
   onManageIcons?: () => void;
   /** Feature icons: how many icons the previewed product reads for the selected layer. */
   featureIconCount?: number;
+  /** Accessories: how many entries the previewed tag lists for the selected layer, and how many
+   *  text lines its cards take (`accessoryLineCount`). Absent with nothing previewed. */
+  accessoryFit?: { count: number; lines: number };
 }
 
 export function InspectorPanel({
@@ -265,6 +280,7 @@ export function InspectorPanel({
   fontOptions,
   onUploadFont,
   onInsertField,
+  onContentEditorReady,
   onChooseImage,
   onChooseBadge,
   onRebind,
@@ -283,6 +299,7 @@ export function InspectorPanel({
   specKeys,
   onManageIcons,
   featureIconCount,
+  accessoryFit,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -340,9 +357,11 @@ export function InspectorPanel({
     layer.props.kind === 'barcode' ||
     layer.props.kind === 'text' ||
     layer.props.kind === 'image' ||
-    layer.props.kind === 'feature_icons';
+    layer.props.kind === 'feature_icons' ||
+    layer.props.kind === 'accessories';
   const readsProductData =
     layer.props.kind === 'feature_icons' ||
+    layer.props.kind === 'accessories' ||
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
@@ -533,6 +552,7 @@ export function InspectorPanel({
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
               onInsertField={onInsertField}
+              onContentEditorReady={onContentEditorReady}
               usedColours={usedColours}
             />
           )}
@@ -575,6 +595,18 @@ export function InspectorPanel({
               onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
             />
           )}
+          {layer.props.kind === 'accessories' && (
+            <AccessoriesInspector
+              props={layer.props}
+              fit={accessoryFit}
+              boxWidth_mm={layer.width_mm}
+              boxHeight_mm={layer.height_mm}
+              usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+            />
+          )}
           {layer.props.kind === 'barcode' && (
             <BarcodeInspector
               layer={layer}
@@ -605,6 +637,7 @@ function TextInspector({
   fontOptions,
   onUploadFont,
   onInsertField,
+  onContentEditorReady,
   usedColours,
 }: {
   layer: TagLayer;
@@ -615,6 +648,8 @@ function TextInspector({
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
   onInsertField?: () => void;
+  /** The Content box's editor, so Insert field lands at its caret (check `isDestroyed`). */
+  onContentEditorReady?: (editor: Editor) => void;
   usedColours: string[];
 }) {
   // A slot-bound layer is edited through `text_override`, never through
@@ -636,7 +671,12 @@ function TextInspector({
       ? layer.text_override ?? resolvedText ?? props.text
       : props.text;
 
+  const contentLabelId = useId();
+
   const handleContent = (value: string) => {
+    // Nothing changed (the box re-reporting what it was given): writing it would turn a bound
+    // layer's live value into a typed override (review B1).
+    if (value === shown) return;
     if (bound) onUpdate({ text_override: value });
     else onChange({ ...props, text: value });
   };
@@ -649,7 +689,9 @@ function TextInspector({
       <div className="flex flex-col gap-2">
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Content</Label>
+            <Label id={contentLabelId} className="text-xs text-muted-foreground">
+              Content
+            </Label>
             <div className="flex items-center gap-1">
               {overridden && (
                 <Button
@@ -677,12 +719,29 @@ function TextInspector({
               )}
             </div>
           </div>
-          <textarea
-            className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
-            value={shown}
-            readOnly={descriptionBound}
-            onChange={(e) => handleContent(e.target.value)}
-          />
+          {descriptionBound ? (
+            <textarea
+              aria-labelledby={contentLabelId}
+              className="min-h-[60px] w-full rounded-md border bg-background px-2 py-1 text-xs"
+              value={shown}
+              readOnly
+            />
+          ) : (
+            // DESIGNER-RICH-TEXT: bold / italic / underline / strike / colour per selection; the
+            // layer's font, size, weight and colour stay the default for unmarked text. Content
+            // with no formatting is stored as plain text, as before (`contentFromEditorHtml`).
+            <RichTextEditor
+              key={layer.id}
+              toolbar="inline"
+              mergeFields
+              minHeight={60}
+              className="text-xs [&_.ProseMirror]:px-2 [&_.ProseMirror]:py-1 [&_.ProseMirror_p]:my-0"
+              value={toEditorHtml(shown)}
+              onChange={(html) => handleContent(contentFromEditorHtml(html))}
+              onEditorReady={onContentEditorReady}
+              aria-labelledby={contentLabelId}
+            />
+          )}
           {overridden && !dynamic && (
             <span className="flex items-center gap-1 text-2xs text-amber-600">
               <Link2Off className="size-3" />
@@ -852,6 +911,7 @@ function TypographyControls({
   onUploadFont,
   margin,
   onMarginChange,
+  singleLine = false,
 }: {
   values: TypographyValues;
   onChange: (changes: TypographyChanges) => void;
@@ -868,6 +928,8 @@ function TypographyControls({
    */
   margin?: LayerPadding;
   onMarginChange?: (margin: LayerPadding) => void;
+  /** One line of data text (an accessory's header, name or spec): no line height, no padding. */
+  singleLine?: boolean;
 }) {
   return (
     <>
@@ -978,13 +1040,15 @@ function TypographyControls({
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <NumberInput
-          label="Line Height"
-          value={values.lineHeight}
-          onChange={(v) => onChange({ lineHeight: v })}
-          step={0.1}
-          min={0.5}
-        />
+        {!singleLine && (
+          <NumberInput
+            label="Line Height"
+            value={values.lineHeight}
+            onChange={(v) => onChange({ lineHeight: v })}
+            step={0.1}
+            min={0.5}
+          />
+        )}
         <NumberInput
           label="Letter Spacing"
           value={values.letterSpacing}
@@ -998,13 +1062,15 @@ function TypographyControls({
           <SidesInput value={margin} onChange={onMarginChange} />
         </div>
       )}
-      <div className="flex flex-col gap-1">
-        <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
-        <SidesInput
-          value={values.padding}
-          onChange={(padding) => onChange({ padding })}
-        />
-      </div>
+      {!singleLine && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
+          <SidesInput
+            value={values.padding}
+            onChange={(padding) => onChange({ padding })}
+          />
+        </div>
+      )}
     </>
   );
 }
@@ -1579,6 +1645,13 @@ function SubjectInspector({
   onChange: (changes: Partial<TagLayerProps>) => void;
 }) {
   const isPriceBadge = props.kind === 'price_badge';
+  // A price badge defaults to the Tag total; an accessories box to the TAG's own list (the
+  // combo's on a combo tag, card rule A3). Either way "no subject" is its own first option.
+  const defaultLabel = isPriceBadge
+    ? 'Tag total'
+    : props.kind === 'accessories'
+      ? "This tag's list"
+      : null;
   // Two inspectors can be mounted at once (a template editor beside the
   // request designer), and a hard-coded id makes the second `<label>` point
   // at the first one's select.
@@ -1596,7 +1669,7 @@ function SubjectInspector({
   const grouped = (parts ?? []).some((part) => Boolean(part.role));
   const options: SearchableSelectOption[] = parts
     ? [
-        ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
+        ...(defaultLabel ? [{ value: 'default', label: defaultLabel }] : []),
         { value: '-1', label: parentCode || 'Parent' },
         ...parts.map((part, index) => ({
           value: String(index),
@@ -1609,11 +1682,11 @@ function SubjectInspector({
         ...(!subjectSlot && subjectPart !== undefined
           ? [{ value: String(subjectPart), label: `Part ${subjectPart + 1}` }]
           : []),
-        ...slotOptions(slots, isPriceBadge),
+        ...slotOptions(slots, defaultLabel),
       ];
   const value = parts
     ? subjectPart === undefined
-      ? isPriceBadge
+      ? defaultLabel
         ? 'default'
         : '-1'
       : String(subjectPart)
@@ -1621,7 +1694,7 @@ function SubjectInspector({
       ? slotValue(subjectSlot)
       : subjectPart !== undefined
         ? String(subjectPart)
-        : isPriceBadge
+        : defaultLabel
           ? 'default'
           : 'slot:main';
   return (
@@ -1679,7 +1752,10 @@ function parseSlotValue(value: string): SubjectSlot | undefined {
 }
 
 /** The positions a layer may read: the previewed combo's own, else the generic set. */
-function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean): SearchableSelectOption[] {
+function slotOptions(
+  slots: TagSlots | null | undefined,
+  defaultLabel: string | null,
+): SearchableSelectOption[] {
   const out: SearchableSelectOption[] = [];
   const add = (slot: SubjectSlot, code?: string, group?: string) =>
     out.push({
@@ -1688,7 +1764,7 @@ function slotOptions(slots: TagSlots | null | undefined, isPriceBadge: boolean):
       ...(code ? { description: code } : {}),
       ...(group ? { group } : {}),
     });
-  if (isPriceBadge) out.push({ value: 'default', label: 'Tag total' });
+  if (defaultLabel) out.push({ value: 'default', label: defaultLabel });
   add({ kind: 'main' });
   for (const position of comboPositions(slots)) add(position.slot, position.code, position.group);
   return out;
@@ -1851,6 +1927,294 @@ const FEATURE_ICON_ALIGNS: { value: FeatureIconsLayerProps['align']; label: stri
  * icons is the spec registry's (each spec's Icon order), never the layer's. Every write carries
  * the whole props object, so a change never drops the subject.
  */
+/**
+ * PRICETAG-ACCESSORIES: the box's own look, every part of it set per box (owner hand test,
+ * 6 Nov ~15:00: "too rigid, too hard coded"). Item layout (picture above or left of the text),
+ * frame on/off, header shown/hidden/on the border, the "+" badge on/off, and the header, name and
+ * spec text set with the SAME TypographyControls a text layer uses. Warns when the previewed list
+ * does not fit (A6).
+ */
+function AccessoriesInspector({
+  props,
+  fit,
+  boxWidth_mm,
+  boxHeight_mm,
+  usedColours,
+  fontOptions,
+  onUploadFont,
+  onChange,
+}: {
+  props: AccessoriesLayerProps;
+  fit?: { count: number; lines: number };
+  boxWidth_mm: number;
+  boxHeight_mm: number;
+  usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
+  onChange: (changes: Partial<AccessoriesLayerProps>) => void;
+}) {
+  const headerId = useId();
+  const dropped = fit
+    ? accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
+    : 0;
+  const showHeader = props.showHeader !== false;
+  const showFrame = props.showFrame !== false;
+  const itemLayout = itemLayoutOf(props);
+
+  /** One text role's TypographyControls: size and colour live on their own props. */
+  const textRole = (
+    title: string,
+    styleKey: 'headerStyle' | 'nameStyle' | 'specStyle',
+    sizeKey: 'headerFontSize' | 'nameFontSize' | 'specFontSize',
+    resolved: AccessoryLineStyle,
+    onColour: (value: string) => void,
+  ) => (
+    <section className="flex flex-col gap-2">
+      <h5 className="text-2xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h5>
+      <TypographyControls
+        singleLine
+        values={{
+          fontFamily: resolved.fontFamily ?? '',
+          fontSize: props[sizeKey],
+          fontWeight: resolved.fontWeight,
+          italic: resolved.italic,
+          underline: resolved.underline,
+          strikethrough: resolved.strikethrough,
+          align: resolved.align,
+          lineHeight: null,
+          letterSpacing: resolved.letterSpacing,
+          padding: ZERO_PADDING,
+        }}
+        onChange={(changes) => {
+          // Line height and padding are not offered (singleLine); size lives on its own prop.
+          const { fontSize, fontFamily, fontWeight, italic, underline, strikethrough, align, letterSpacing } =
+            changes;
+          const style = Object.fromEntries(
+            Object.entries({ fontFamily, fontWeight, italic, underline, strikethrough, align, letterSpacing })
+              .filter(([, value]) => value !== undefined),
+          );
+          const next: Partial<AccessoriesLayerProps> = {
+            [styleKey]: { ...(props[styleKey] ?? {}), ...style },
+          };
+          if (fontSize !== undefined) next[sizeKey] = fontSize;
+          onChange(next);
+        }}
+        colour={resolved.color}
+        onColourChange={onColour}
+        usedColours={usedColours}
+        fontOptions={fontOptions}
+        onUploadFont={onUploadFont}
+      />
+    </section>
+  );
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h4 className="text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Accessories
+      </h4>
+
+      {/* Layout */}
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Direction</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={props.direction}
+          onValueChange={(next: string) => {
+            if (next) onChange({ direction: next as AccessoriesLayerProps['direction'] });
+          }}
+        >
+          <ToggleGroupItem value="vertical" className="flex-1 text-xs">
+            Vertical
+          </ToggleGroupItem>
+          <ToggleGroupItem value="horizontal" className="flex-1 text-xs">
+            Horizontal
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Item layout</Label>
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={itemLayout}
+          onValueChange={(next: string) => {
+            if (next) onChange({ itemLayout: next as 'stacked' | 'side' });
+          }}
+        >
+          <ToggleGroupItem value="stacked" className="flex-1 text-xs">
+            Picture above text
+          </ToggleGroupItem>
+          <ToggleGroupItem value="side" className="flex-1 text-xs">
+            Picture left of text
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="Picture size (mm)"
+          value={props.imageSize_mm}
+          onChange={(v) => onChange({ imageSize_mm: v })}
+          step={0.5}
+          min={0}
+          max={100}
+        />
+        <NumberInput
+          label="Gap (mm)"
+          value={props.gap_mm}
+          onChange={(v) => onChange({ gap_mm: v })}
+          step={0.5}
+          min={0}
+          max={50}
+        />
+        {props.direction === 'horizontal' && (
+          <NumberInput
+            label="Card width (mm)"
+            value={props.cardWidth_mm}
+            onChange={(v) => onChange({ cardWidth_mm: v })}
+            step={0.5}
+            min={5}
+            max={300}
+          />
+        )}
+        <ColorPicker
+          label="Card fill"
+          value={props.cardFill}
+          onChange={(v) => onChange({ cardFill: v })}
+          usedColours={usedColours}
+        />
+      </div>
+
+      {/* Frame */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={showFrame}
+          onCheckedChange={(v) => onChange({ showFrame: !!v })}
+          aria-label="Show frame"
+        />
+        Show frame
+      </label>
+      {showFrame && (
+        <div className="grid grid-cols-2 gap-2">
+          <ColorPicker
+            label="Box fill"
+            value={props.fill}
+            onChange={(v) => onChange({ fill: v })}
+            usedColours={usedColours}
+          />
+          <ColorPicker
+            label="Border colour"
+            value={props.stroke}
+            onChange={(v) => onChange({ stroke: v })}
+            usedColours={usedColours}
+          />
+          <NumberInput
+            label="Border (mm)"
+            value={props.strokeWidth_mm}
+            onChange={(v) => onChange({ strokeWidth_mm: v })}
+            step={0.1}
+            min={0}
+            max={5}
+          />
+          <NumberInput
+            label="Corner radius (mm)"
+            value={props.cornerRadius_mm}
+            onChange={(v) => onChange({ cornerRadius_mm: v })}
+            step={0.5}
+            min={0}
+            max={50}
+          />
+        </div>
+      )}
+
+      {/* Header */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={showHeader}
+          onCheckedChange={(v) => onChange({ showHeader: !!v })}
+          aria-label="Show header"
+        />
+        Show header
+      </label>
+      {showHeader && (
+        <>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={headerId} className="text-xs text-muted-foreground">
+              Header text
+            </Label>
+            <Input
+              id={headerId}
+              className="h-7 px-2 text-xs"
+              value={props.headerText}
+              maxLength={60}
+              onChange={(e) => onChange({ headerText: e.target.value })}
+            />
+          </div>
+          {showFrame && (
+            <label className="flex items-center gap-1.5 text-xs">
+              <Checkbox
+                checked={Boolean(props.headerOnBorder)}
+                onCheckedChange={(v) => onChange({ headerOnBorder: !!v })}
+                aria-label="Header on the border"
+              />
+              Header on the border
+            </label>
+          )}
+          {showFrame && props.headerOnBorder && (
+            <ColorPicker
+              label="Behind the header"
+              value={props.headerBackground || '#ffffff'}
+              onChange={(v) => onChange({ headerBackground: v })}
+              usedColours={usedColours}
+            />
+          )}
+          {textRole('Header text style', 'headerStyle', 'headerFontSize', accessoryHeaderStyle(props), (v) =>
+            onChange({ headerColor: v }),
+          )}
+        </>
+      )}
+
+      {/* Name and spec */}
+      {textRole('Name text', 'nameStyle', 'nameFontSize', accessoryLineStyle(props, 0), (v) =>
+        onChange({ nameStyle: { ...(props.nameStyle ?? {}), color: v } }),
+      )}
+      {textRole('Spec text', 'specStyle', 'specFontSize', accessoryLineStyle(props, 1), (v) =>
+        onChange({ specStyle: { ...(props.specStyle ?? {}), color: v } }),
+      )}
+
+      {/* Badge */}
+      <label className="flex items-center gap-1.5 text-xs">
+        <Checkbox
+          checked={props.showBadge}
+          onCheckedChange={(v) => onChange({ showBadge: !!v })}
+          aria-label="Show the plus badge"
+        />
+        Show &quot;+&quot; badge
+      </label>
+      {props.showBadge && (
+        <ColorPicker
+          label="Badge colour"
+          value={props.badgeColor}
+          onChange={(v) => onChange({ badgeColor: v })}
+          usedColours={usedColours}
+        />
+      )}
+
+      {dropped > 0 && fit && (
+        <Alert variant="warning" size="sm" role="status">
+          <AlertDescription>
+            {dropped} of {fit.count} accessories do not fit this box. Make the box bigger or the cards
+            smaller.
+          </AlertDescription>
+        </Alert>
+      )}
+    </section>
+  );
+}
+
 function FeatureIconsInspector({
   props,
   onManageIcons,

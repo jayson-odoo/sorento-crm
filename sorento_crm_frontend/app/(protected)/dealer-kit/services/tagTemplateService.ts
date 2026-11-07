@@ -23,7 +23,7 @@
  */
 
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   TagSheetGrid,
   TagTemplate,
@@ -43,17 +43,63 @@ const BASE = '/api/v1/dealer-kit/tag-templates';
 // ---------------------------------------------------------------------------
 
 export interface TemplateListFilter {
-  /** `unset` = templates with no price type yet. */
-  price_type?: TemplatePriceType | 'unset';
+  /** Multi-select, comma-joined (`list,unset`): list, selling, both, or `unset` = no price type
+   *  yet. */
+  price_type?: string;
+  /** Multi-select family codes, comma-joined. */
+  family?: string;
+  /** `live` and/or `draft`, comma-joined. */
+  status?: string;
+  /** Name search. */
+  query?: string;
+  /** A column id; omitted = the shared manual (drag) order. */
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }
 
+/**
+ * The whole filtered, sorted list (it is small and unpaged on the server; the grid pages it).
+ * Sorting is the server's: every column, plus the manual order when no column is named.
+ */
 export async function listTemplates(filter: TemplateListFilter = {}): Promise<TagTemplate[]> {
-  const query = filter.price_type ? `?price_type=${encodeURIComponent(filter.price_type)}` : '';
-  const response = await apiFetch(`${BASE}${query}`);
+  const params = buildDataGridParams(
+    {
+      pageIndex: 0,
+      pageSize: 0,
+      sorting: filter.sort ? [{ id: filter.sort, desc: filter.dir === 'desc' }] : [],
+      searchQuery: filter.query ?? '',
+    },
+    { price_type: filter.price_type, family: filter.family, status: filter.status },
+  );
+  params.delete('page');
+  params.delete('limit');
+  const query = params.toString();
+  const response = await apiFetch(`${BASE}${query ? `?${query}` : ''}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load tag templates'));
   }
   return response.json();
+}
+
+/** Copy a template: a new DRAFT "<name> (copy)" right below the source (TAG-TEMPLATE-DUPLICATE). */
+export async function duplicateTemplate(id: string): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}/duplicate`, { method: 'POST' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not duplicate the template'));
+  }
+  return response.json();
+}
+
+/** Save the dragged rows' new order (top to bottom). One order, shared by everyone. */
+export async function reorderTemplates(templateIds: string[]): Promise<void> {
+  const response = await apiFetch(`${BASE}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ template_ids: templateIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not save the order'));
+  }
 }
 
 export async function getTemplate(id: string): Promise<TagTemplate> {
@@ -312,7 +358,7 @@ export async function createTemplateFromTag(
  */
 export async function updateTemplateSettings(
   id: string,
-  settings: { name: string; family: TagTemplateFamily },
+  settings: { name: string; family: TagTemplateFamily; price_type?: TemplatePriceType | null },
 ): Promise<TagTemplate> {
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
