@@ -767,8 +767,19 @@ Adapter `ha-pg.sh`:
   0 only on HTTP 200.
 - Transport: `curl -fsS -m 5 --aws-sigv4 "aws:amz:auto:s3"` to
   `$R2_ENDPOINT/$R2_BUCKET/$SYNC_RECORD_KEY` (path style). The key pair comes from
-  `R2_CREDENTIALS_FILE` (mode 600, two lines `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=`, the same
-  values as WAL-G's) and reaches curl as a `-K -` config on stdin, so it never shows in `ps`.
+  `R2_CREDENTIALS_FILE` (root-only, mode 600, two lines `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=`)
+  and reaches curl as a `-K -` config on stdin, so it never shows in `ps`.
+  **Security review decision (7 Nov):** the record lives in its OWN bucket with its OWN token
+  (Object Read & Write on that bucket only), not WAL-G's key: `walg.env` is readable by the db
+  container and the deploy group, and anyone holding a write key could forge `sync` and defeat
+  the G4 guard. Impact stays bounded by S1's other conditions (peer Cloudflare-down and
+  unreachable for PROMOTE_AFTER, lag check), and a live primary rewrites the record every tick.
+  Before arming: from BOTH nodes `ha-pg.sh sync-record put async && ha-pg.sh sync-record get`
+  against the real bucket (sigv4 against real R2 is not covered by the fake S3 in the tests).
+- **Review round (7 Nov):** the `sync` record is written only after observe shows the standby's
+  `flush_lsn` (`write_lsn` for remote_write) at or past A's LSN at the moment the standby was
+  added (`sync_from_lsn` in state), and any failed action ends the tick, so a failed `set_sync`
+  or `promote` is never followed by a record write.
   `R2_ENDPOINT` must start with `https://` (or `http://127.0.0.1` for the drill/tests).
 - Missing R2 settings: `get` and `put` exit 2.
 
