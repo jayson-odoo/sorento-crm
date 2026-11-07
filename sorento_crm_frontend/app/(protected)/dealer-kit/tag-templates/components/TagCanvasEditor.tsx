@@ -245,6 +245,7 @@ import { KonvaTagLayer } from './KonvaTagLayer';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 import { useHtmlImage } from './useHtmlImage';
 import { useAccessoryDropToast, useFeatureIconDropToast } from './useFeatureIconDropToast';
+import { FeatureIconDropWarning } from '@/components/dealer-kit/FeatureIconDropWarning';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
 import {
   ACCESSORY_DEFAULT_BOX_MM,
@@ -4816,6 +4817,20 @@ export function TagCanvasEditor({
             />
           </div>
         </div>
+      )}
+
+      {/* PRICETAG-ACC-LABELS (owner 7 Nov): the same standing warning the request preview shows,
+          while a previewed product or combo has more accessories than a box draws. Only boxes
+          with previewed data count (never the sample cards), so it cannot show in the request
+          designer, which draws its own above the canvas. Feature icons keep their toast. */}
+      {!boundData && !embedded && (
+        <FeatureIconDropWarning
+          drops={[]}
+          accessoryDrops={
+            accessoryFits.dropped > 0 ? [{ tagLabel: '', dropped: accessoryFits.dropped }] : []
+          }
+          className="mx-3 my-1 w-auto shrink-0"
+        />
       )}
 
       <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">

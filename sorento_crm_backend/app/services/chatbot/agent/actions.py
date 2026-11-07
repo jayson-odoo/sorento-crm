@@ -223,7 +223,10 @@ def _reply(status: str, steps: list[dict]) -> str:
         lines.append(f"{n}. {s['summary']}{tail}{note}")
     head = {
         "executed": "Done. I made these changes:",
-        "partial": "I made some of the changes and stopped at a failure:",
+        "partial": (
+            "I made some of the changes; the rows marked failed were not changed:" if steps and all(s.get("batch") for s in steps)
+            else "I made some of the changes and stopped at a failure:"
+        ),
         "rejected": "Nothing was changed:",
     }[status]
     return head + "\n" + "\n".join(lines)
@@ -302,8 +305,14 @@ def confirm(
     decider = str(operator_user_id or action.user_id)
 
     steps = copy.deepcopy(action.steps or [])
+    # A table's rows (AGENT-BULK-ACTIONS) are independent: a row that no longer applies fails alone, the rest run.
+    batch = bool(steps) and all(s.get("batch") for s in steps)
     for step in steps:
         problem = _recheck(db, ctx, step)
+        if problem and batch:
+            step["status"], step["error"] = "failed", problem
+            db.rollback()  # a refused re-read must not leave the session aborted for the next row
+            continue
         if problem:
             step["status"], step["error"] = "failed", problem
             for other in steps:
@@ -312,6 +321,8 @@ def confirm(
             return _finish(
                 db, action, "rejected", steps, via=via, turn_id=turn_id, expect="proposed", decider=decider
             )
+    if batch and all(s.get("status") == "failed" for s in steps):
+        return _finish(db, action, "rejected", steps, via=via, turn_id=turn_id, expect="proposed", decider=decider)
 
     claimed = db.execute(
         update(AgentAction)
@@ -326,7 +337,9 @@ def confirm(
 
     failed = False
     for step in steps:
-        if failed:
+        if batch and step.get("status") == "failed":
+            continue  # its re-check refused it; nothing of this row runs
+        if failed and not batch:
             step["status"] = "skipped"
             continue
         definition = writes.write_def(step["tool"])
@@ -359,7 +372,12 @@ def confirm(
                 logger.warning("agent: action step failed", exc_info=True)
             step.update(status="failed", error=writes.error_text(exc))
             failed = True
-    status = "partial" if failed else "executed"
+    if batch:
+        done = any(s.get("status") == "done" for s in steps)
+        failed = any(s.get("status") == "failed" for s in steps)
+        status = "executed" if not failed else ("partial" if done else "rejected")
+    else:
+        status = "partial" if failed else "executed"
     return _finish(db, action, status, steps, via=via, turn_id=turn_id, expect="executing")
 
 

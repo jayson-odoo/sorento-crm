@@ -538,6 +538,23 @@ export function partsPayload(parts: DraftPart[]) {
   );
 }
 
+/**
+ * The note after a save that dropped a line's promotion: the server drops one a narrowed pick no
+ * longer touches (PRICETAG-DISCONTINUED-PICK, it prices nothing there). Null when none was dropped.
+ */
+export function droppedPromotionNote(
+  sent: Array<{ promotion_id?: string | null }>,
+  saved: Array<{ promotion_id?: string | null; sort_order: number }> | undefined,
+): string | null {
+  if (!saved) return null;
+  const ordered = [...saved].sort((a, b) => a.sort_order - b.sort_order);
+  const lines = sent.flatMap((line, index) =>
+    line.promotion_id && ordered[index] && !ordered[index].promotion_id ? [index + 1] : [],
+  );
+  if (lines.length === 0) return null;
+  return `Promotion removed from ${lines.length === 1 ? 'line' : 'lines'} ${lines.join(', ')}: it does not cover the option picked.`;
+}
+
 /** Every product the parts have resolved so far, picks included. */
 export function pickedProductIds(parts: DraftPart[]): string[] {
   return parts.flatMap((p) => (p.product_ids?.length ? p.product_ids : p.product_id ? [p.product_id] : []));
@@ -658,10 +675,8 @@ export function lineProblemsOf(
     const picked = part.product_ids?.length ? part.product_ids : part.product_id ? [part.product_id] : [];
     const k = picksNeeded(line, part.role, priceMode);
     if (k >= 2 && picked.length < k) out.push(`${part.role}: pick ${k - picked.length} more.`);
-    for (const id of picked) {
-      const option = combo?.parts.find((p) => p.product_id === id);
-      if (option?.is_discontinued) out.push(`${option.code} is discontinued.`);
-    }
+    // Owner, 7 Nov: a discontinued product never stops Approve, picked or fixed. Its row's
+    // "Discontinued" badge is the warning.
   }
   if (line.combo_id && pricing) {
     if (linePriceType(line, priceMode) === 'list') {
@@ -691,7 +706,6 @@ function isCheckMessage(message: string): boolean {
     message === 'No tag template yet.' ||
     message.startsWith('Template needs ') ||
     /^No combo (list|selling) price\.$/.test(message) ||
-    / is discontinued\.$/.test(message) ||
     /: pick \d+ more\.$/.test(message) ||
     / template linked$/.test(message)
   );

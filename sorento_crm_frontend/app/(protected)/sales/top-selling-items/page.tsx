@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { ReportPage } from '@/components/reports/ReportPage';
+import { ProductRankingLink } from './ProductRankingLink';
 
 export const metadata: Metadata = {
   title: 'Top selling items',
@@ -13,6 +14,7 @@ export default function TopSellingItemsPage() {
       <ReportPage
         reportKey="top_selling_items"
         breadcrumb={[{ label: 'Sales' }, { label: 'Top selling items' }]}
+        belowHeader={<ProductRankingLink />}
       />
     </Suspense>
   );
