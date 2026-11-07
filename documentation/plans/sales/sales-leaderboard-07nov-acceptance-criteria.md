@@ -5,8 +5,9 @@ each line names the question it depends on. Rewritten if an answer differs.
 Card: `CARD-sales-leaderboard-07nov.md`. Plan: `PLAN-sales-leaderboard-07nov.md`.
 
 Reference case: dev copy `sorento_prod_1104`, October 2026 vs September 2026 (crew run, PR #2227 comment
-6704175660). Figures are the engine's line sum, pending the line-vs-header finding (card section "Line sum vs
-header total").
+6704175660). Figures are the shared engine's AFTER lane SALES-SUBTOTAL-LINES (blank-item subtotal lines no
+longer double counted; equal to the header totals). Before that fix lands, ERIC NG Oct reads +144,604.00 and
+JENNIFER Sep +147,317.60; this lane adds no workaround.
 
 ## L1 Navigation and access
 - L1-1 Sales > Leaderboard sits in the Sales menu after Sales Teams, shown only to a user holding
@@ -18,8 +19,8 @@ header total").
   only. Test: for any period and company, the board total equals the Sales & outstanding Invoiced total for the same
   period and company.
 - L2-2 A cancelled document never counts; a credit note subtracts.
-- L2-3 Reference: Last month on 7 Nov (Oct 2026), all companies: total RM 16,514,407.26; previous period RM
-  16,041,861.96; change +2.9%; no agent RM 1,210.32.
+- L2-3 Reference: Last month on 7 Nov (Oct 2026), all companies: total RM 16,369,803.26; previous period RM
+  15,894,544.36; change +3.0%; no agent RM 1,210.32.
 
 ## L3 Ranking (Q1)
 - L3-1 One row per person: agent codes sharing a `person_label` are one row; a code with no `person_label` is its own
@@ -36,7 +37,8 @@ header total").
   customers invoiced across all the person's codes).
 - L4-2 vs last period compares the same number of days just before the period (`compare_to=previous_period`). It is
   blank when the previous figure is zero or negative.
-- L4-3 Reference: LCL +63.6%, SEAN -10.4%, JUSTIN +62.8%.
+- L4-3 Reference: LCL +63.6%, SEAN -10.4%, JUSTIN +62.8%; ERIC NG RM 805,048.34 (#7) -16.7%; JENNIFER RM 291,522.87
+  (#20) +27.6%.
 - L4-4 No target and no commission column (card round 2: no invoiced agent target exists).
 
 ## L5 Period and filters

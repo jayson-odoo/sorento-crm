@@ -4,8 +4,7 @@ Status: Plan. Card asked on PR #2227 (7 Nov), round 2 on dev evidence; UAC draft
 code until the owner answers. Track: full (size L, new screen; new permission slug = migration).
 Card: `CARD-sales-leaderboard-07nov.md`. UAC: `sales-leaderboard-07nov-acceptance-criteria.md`.
 Mockup: `mockups/sales-leaderboard-07nov.html` (real October figures, dev copy `sorento_prod_1104`).
-Evidence SQL: `evidence/sales-leaderboard-oct-dev.sql` (run), `evidence/sales-leaderboard-line-vs-doc-dev.sql`
-(pending).
+Evidence SQL: `evidence/sales-leaderboard-oct-dev.sql` (run), `evidence/sales-leaderboard-line-vs-doc-dev.sql` (run).
 
 Owner 7 Nov ~15:40: "I also need a sales leaderboard feature. So let's think about it."
 
@@ -16,8 +15,9 @@ Fixed inputs:
 
 ## Open before build
 1. Owner answers card Q1-Q5.
-2. Line sum vs header total (ERIC NG Oct +144,604.00, JENNIFER Sep +147,317.60): cause from the line-vs-doc SQL. If
-   header-only money, the engine change is an owner ruling for every consumer, not part of this lane.
+2. ~~Line sum vs header total~~ settled 7 Nov (comment 6704254640): a blank-item SUBTOTAL line double counted by the
+   line sum; header right. Fixed in the shared query by lane SALES-SUBTOTAL-LINES; this lane inherits it, no
+   workaround. Dependency: the board's reference test (UAC L2-3) passes only once that lane is on main; rebase then.
 
 ## Design (on the recommended options; paths under `sorento_crm_backend/app/` unless marked)
 

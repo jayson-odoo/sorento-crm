@@ -1,6 +1,6 @@
 # CARD: SALES-LEADERBOARD (who sold most, this month)
 
-Status: Asked (crew-ask on PR #2227, 7 Nov); round 2 on dev evidence (comment 6704175660). Build waits for the owner's answers. Track: full (size L, new screen).
+Status: Asked (crew-ask on PR #2227, 7 Nov); round 2 on dev evidence (comments 6704175660, 6704254640): line vs header settled, header right, fix in SALES-SUBTOTAL-LINES. Build waits for the owner's answers. Track: full (size L, new screen).
 Mockup: `mockups/sales-leaderboard-07nov.html`. Plan: `PLAN-sales-leaderboard-07nov.md`.
 
 ## The ask in one line
@@ -54,7 +54,7 @@ target % from the Targets service as is (so it matches the Targets screen) and a
 ## Real October case (dev copy `sorento_prod_1104`, prod copy of 4 Nov; crew run, PR #2227 comment 6704175660)
 
 162 agent-code x month rows (Sep + Oct 2026, SRT + MCH). Grouped by `person_label`: 41 persons, 40 with October sales.
-October total RM 16,514,407.26 (line sum), +2.9% vs September RM 16,041,861.96; no agent RM 1,210.32.
+October total RM 16,514,407.26 on today's line sum (RM 16,369,803.26 after the SALES-SUBTOTAL-LINES fix, see below), vs September RM 16,041,861.96 (15,894,544.36 fixed); no agent RM 1,210.32.
 Top 3: LCL RM 1,856,856.61 (SRT 1,798,043.09 + MCH 58,813.52, so #1 only because of the person grouping),
 SEAN RM 1,276,644.96 (SEAN I + III + IV), JUSTIN RM 1,156,644.97. Mockup redrawn with these.
 
@@ -103,11 +103,17 @@ Candidates, all named in `documentation/plans/finance/REF-autocount-billing-sche
 Read-only query for crew: `evidence/sales-leaderboard-line-vs-doc-dev.sql` (Q1 the documents off, Q2 their lines,
 Q3 how widespread across 2026).
 
-Recommendation (pending Q1-Q3): the board stays on `run_ask` (one engine, same as Sales & outstanding and the
-chatbot), and the fix goes where the cause is. If it is candidate 1 (header-only money), the engine's invoiced
-total must use the header when no line-level filter or grouping is asked, which changes the shared engine for every
-consumer: an owner ruling, not a leaderboard decision. If it is 2, 3 or 4 the lines are wrong and the fix is at
-ingest / the shared service; the board needs no change.
+**Finding (crew round 2, PR #2227 comment 6704254640, dev copy, read only).** All 6 off documents (ERIC NG Oct:
+PSWR26-0019, PSWR26-0020; JENNIFER Sep: PS202609-0254, -0267, -0375, -0472; all MYR invoices) carry ONE blank-item line
+(no item code, UOM, qty, price or source doc) whose `net_amount` is the running SUBTOTAL of the lines above it. The
+header total is right; the line sum counts the subtotal twice. Q3: the same pattern in 15 company-months of
+2026-01..10, SRT and MCH. None of candidates 1-4 above; a fifth shape.
+
+**Ruling (crew, 7 Nov).** Lane SALES-SUBTOTAL-LINES fixes the shared line-sum query. This board keeps calling the
+shared service and inherits the fix; no workaround in this lane. The reference figures below are the post-fix ones
+(header totals, which the fixed line sum will equal):
+- ERIC NG Oct RM 805,048.34 (still #7; vs Sep -16.7%); JENNIFER Sep RM 228,388.15, so her October change is +27.6%.
+- October total RM 16,369,803.26, September RM 15,894,544.36, change +3.0%.
 
 ## Questions (max 5)
 

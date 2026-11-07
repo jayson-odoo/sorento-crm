@@ -82,7 +82,7 @@ tr.me td{background:var(--primary-soft)}
 <div class="doc">
 <h1>Sales leaderboard (SALES-LEADERBOARD, 7 Nov), round 2: real October</h1>
 <p class="sub">Sales &gt; Leaderboard. One row per sales person (agent codes grouped by <code>person_label</code>), ranked by invoiced net sales (IV + CS + DN - CN, by DocDate, posted only) from the REPORT-UNIFY engine (<code>services/reports/ask.run_ask</code>, basis <code>invoiced</code>). Pink numbers map to the components on the right.</p>
-<div class="warn"><b>Real figures, October 2026</b>, from the dev copy <code>sorento_prod_1104</code> (prod copy of 4 Nov, so October is complete; crew run of <code>evidence/sales-leaderboard-oct-dev.sql</code>, PR #2227 comment 6704175660). RM = the engine's line sum. Two persons differ on the header total (ERIC NG Oct, JENNIFER Sep); cause under check with <code>evidence/sales-leaderboard-line-vs-doc-dev.sql</code>. "Customers" for a person with several codes is the per-code sum (&le;); the built board counts distinct customers.</div>
+<div class="warn"><b>Real figures, October 2026</b>, from the dev copy <code>sorento_prod_1104</code> (prod copy of 4 Nov, so October is complete; crew run of <code>evidence/sales-leaderboard-oct-dev.sql</code>, PR #2227 comment 6704175660). RM = the shared engine after lane SALES-SUBTOTAL-LINES (blank-item subtotal lines no longer double counted; crew finding, comment 6704254640), so ERIC NG and JENNIFER show their header totals. "Customers" for a person with several codes is the per-code sum (&le;); the built board counts distinct customers.</div>
 
 <h2 class="frame-title">Desktop 1280, Last month = Oct 2026, all companies</h2>
 <div class="layout">
@@ -109,9 +109,9 @@ tr.me td{background:var(--primary-soft)}
 
     <span class="co pin" style="left:186px;top:130px">3</span>
     <div class="kpis">
-      <div class="kpi"><div class="l">Total invoiced</div><div class="v">RM 16,514,407.26</div><div class="d up">+2.9% vs Sep (RM 16,041,861.96)</div></div>
+      <div class="kpi"><div class="l">Total invoiced</div><div class="v">RM 16,369,803.26</div><div class="d up">+3.0% vs Sep (RM 15,894,544.36)</div></div>
       <div class="kpi"><div class="l">Sales persons ranked</div><div class="v">40</div><div class="d" style="color:var(--muted)">plus RM 1,210.32 with no agent</div></div>
-      <div class="kpi"><div class="l">Your rank (signed in as JENNIFER)</div><div class="v">#20</div><div class="d down">RM 291,522.87, -22.4% vs Sep</div></div>
+      <div class="kpi"><div class="l">Your rank (signed in as JENNIFER)</div><div class="v">#20</div><div class="d up">RM 291,522.87, +27.6% vs Sep</div></div>
     </div>
 
     <span class="co pin" style="left:186px;top:236px">4</span>
@@ -132,12 +132,12 @@ tr.me td{background:var(--primary-soft)}
 <tr><td>4</td><td>JIMMY</td><td title="JIMMY - I, - II, - III (MCH)">JIMMY - I, - II, - III (MCH)</td><td class="r">1,094,512.87</td><td class="r up">+24.4%</td><td class="r">&le; 76</td></tr>
 <tr><td>5</td><td>LONG</td><td title="LONG I, LONG III, LONG IV">LONG I, LONG III, LONG IV</td><td class="r">982,956.94</td><td class="r up">+17.1%</td><td class="r">&le; 56</td></tr>
 <tr><td>6</td><td>FANNY</td><td title="FANNY I, FANNY III, FANNY IV">FANNY I, FANNY III, FANNY IV</td><td class="r">949,878.00</td><td class="r down">-26.3%</td><td class="r">&le; 28</td></tr>
-<tr><td>7</td><td>ERIC NG</td><td title="ERIC NG">ERIC NG</td><td class="r">949,652.34<span class="flag">header total 805,048.34 (lines +144,604.00), under check</span></td><td class="r down">-1.7%</td><td class="r">16</td></tr>
+<tr><td>7</td><td>ERIC NG</td><td title="ERIC NG">ERIC NG</td><td class="r">805,048.34<span class="flag">today 949,652.34: subtotal line counted twice, fixed by SALES-SUBTOTAL-LINES</span></td><td class="r down">-16.7%</td><td class="r">16</td></tr>
 <tr><td>8</td><td>WT</td><td title="WT I, WT III, WT IV">WT I, WT III, WT IV</td><td class="r">684,012.74</td><td class="r up">+0.6%</td><td class="r">&le; 57</td></tr>
 <tr><td>9</td><td>ACT</td><td title="ACT">ACT</td><td class="r">627,020.93</td><td class="r down">-23.5%</td><td class="r">15</td></tr>
 <tr><td>10</td><td>KENT</td><td title="KENT - I, - II, - III (MCH)">KENT - I, - II, - III (MCH)</td><td class="r">594,403.18</td><td class="r up">+16.1%</td><td class="r">&le; 41</td></tr>
         <tr class="gap"><td colspan="6">rows 11 to 19 (DataGrid, paged)</td></tr>
-        <tr class="me"><td>20</td><td>JENNIFER (you)</td><td>JENNIFER</td><td class="r">291,522.87<span class="flag">Sep header 228,388.15: on headers this is +27.6%</span></td><td class="r down">-22.4%</td><td class="r">28</td></tr>
+        <tr class="me"><td>20</td><td>JENNIFER (you)</td><td>JENNIFER</td><td class="r">291,522.87<span class="flag">vs Sep 228,388.15 (today reads -22.4%, Sep subtotal lines)</span></td><td class="r up">+27.6%</td><td class="r">28</td></tr>
         <tr class="gap"><td colspan="6">rows 21 to 40</td></tr>
       </tbody>
     </table>
@@ -165,7 +165,7 @@ tr.me td{background:var(--primary-soft)}
     <div style="font-weight:700;font-size:18px">Sales leaderboard</div>
     <div class="asof">Data as of 04/11/2026</div>
     <div class="filters"><span class="chip">This month</span><span class="chip on">Last month</span><span class="chip">Quarter</span><span class="chip">YTD</span><span class="sel">Filters</span></div>
-    <div class="kpi" style="margin-bottom:10px"><div class="l">Total invoiced</div><div class="v" style="font-size:18px">RM 16,514,407.26</div><div class="d up">+2.9% vs Sep</div></div>
+    <div class="kpi" style="margin-bottom:10px"><div class="l">Total invoiced</div><div class="v" style="font-size:18px">RM 16,369,803.26</div><div class="d up">+3.0% vs Sep</div></div>
     <div class="m-podium">
       <div class="m-pod"><div class="medal m2" style="width:22px;height:22px">2</div><div>SEAN</div><div class="rm">1.28m</div></div>
       <div class="m-pod" style="border-color:var(--gold)"><div class="medal m1" style="width:22px;height:22px">1</div><div>LCL</div><div class="rm">1.86m</div></div>
@@ -175,7 +175,7 @@ tr.me td{background:var(--primary-soft)}
     <div class="m-row"><div><b>5</b> LONG<div class="sub">+17.1% vs Sep</div></div><div>982,956.94</div></div>
     <div class="m-row"><div><b>6</b> FANNY<div class="sub">-26.3% vs Sep</div></div><div>949,878.00</div></div>
     <div class="foot">...</div>
-    <div class="m-row me"><div><b>20</b> JENNIFER (you)<div class="sub">-22.4% vs Sep</div></div><div>291,522.87</div></div>
+    <div class="m-row me"><div><b>20</b> JENNIFER (you)<div class="sub">+27.6% vs Sep</div></div><div>291,522.87</div></div>
     <div class="foot">20 more</div>
   </div>
 </div>
