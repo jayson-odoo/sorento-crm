@@ -1,6 +1,6 @@
 # PLAN: node B exists as a replica; deploy both, then LB, then no-data-loss failover (HA-CF-FAILOVER, 7 Nov)
 
-Status: Build (7 Nov). Card answered (section 7). Step 1 built in the repo (7a, 10.4: plain-compose role, DB_CONTAINER). Exposure fixes 10.1-10.3 are owner commands. Section 3 (sync record) next.
+Status: Build (7 Nov evening, HA-TONIGHT). Step 1 built. Tonight: manual runbook `documentation/runbooks/ha-tonight-07nov.md`. Section 3 build contract in section 11, red tests first. Track: full.
 Track: full (prod infra). Nothing in this lane touches production: every prod step is an owner
 command, and every block in section 5 is READ-ONLY.
 
@@ -730,3 +730,95 @@ Owner commands on B, in order (THIS CHANGES PROD, B only; A is untouched):
    - Rollback: `docker compose stop backend_<c> frontend_<c> mcp_<c>`, which leaves B a replica only, as today.
 10. After #2166 (with this change) is merged: add the secrets `SSH_HOST_B` and `SSH_KNOWN_HOSTS`.
     From then on every release deploys A, then B.
+
+## 11. Section 3 build contract (HA-TONIGHT, 7 Nov evening)
+
+The build spec for section 3b plus G11. Tests are written red from this section first. The
+controller and the role watcher stay DISARMED by default: they refuse to run until the owner arms
+them after this PR merges and the drill passes (owner ruling 7 Nov ~21:45, "settle the HA today":
+tonight is the manual runbook `documentation/runbooks/ha-tonight-07nov.md`, not the controller).
+
+### 11a. Names (G11)
+
+New `ha-pg.env` keys, each optional, validated, with the old behaviour as the default:
+
+| Key | Default | Used for | Check |
+|---|---|---|---|
+| `SELF_APP_NAME` | `$NODE_NAME` | `application_name` in this node's `primary_conninfo` after a rejoin | `^[a-z0-9_-]{1,32}$` |
+| `SELF_SLOT` | `${NODE_NAME//-/_}` | `primary_slot_name` after a rejoin; dropped on promote if stale | `^[a-z0-9_]{1,63}$` |
+| `PEER_APP_NAME` | `$PEER_NAME` | `pg_stat_replication.application_name` in observe; `synchronous_standby_names` | `^[a-z0-9_-]{1,32}$` |
+| `PEER_SLOT` | `${PEER_NAME//-/_}` | slot observe checks, `ensure-slot` and `promote` create | `^[a-z0-9_]{1,63}$` |
+
+Adopting B as built: A sets `PEER_APP_NAME=sorento_crm_replica`, `PEER_SLOT=sorento_crm_replica_slot`;
+B sets `SELF_APP_NAME=sorento_crm_replica`, `SELF_SLOT=sorento_crm_replica_slot`. `Config.from_env`
+reads `PEER_APP_NAME` (same default and check) and P4 uses it, not `PEER_NAME`.
+
+### 11b. The sync record (P4' / S1')
+
+Object `ha/sync-state.json` (key overridable as `SYNC_RECORD_KEY`) in the WAL-G R2 bucket:
+`{"mode": "sync"|"async", "primary": "<NODE_NAME>", "since": <unix seconds>}`.
+
+Adapter `ha-pg.sh`:
+- `sync-record get`: prints `rec_mode=<sync|async>`, `rec_primary=<name>`, `rec_since=<int>` and
+  exits 0, or exits non-zero (any HTTP error, timeout, a missing object, a body that is not that
+  shape). Parsing is in the adapter with `python3 -c` from stdin (host python3 is already required
+  by the controller).
+- `sync-record put sync|async`: PUTs the JSON with `primary=$NODE_NAME`, `since=$(date +%s)`, exits
+  0 only on HTTP 200.
+- Transport: `curl -fsS -m 5 --aws-sigv4 "aws:amz:auto:s3"` to
+  `$R2_ENDPOINT/$R2_BUCKET/$SYNC_RECORD_KEY` (path style). The key pair comes from
+  `R2_CREDENTIALS_FILE` (mode 600, two lines `AWS_ACCESS_KEY_ID=` / `AWS_SECRET_ACCESS_KEY=`, the same
+  values as WAL-G's) and reaches curl as a `-K -` config on stdin, so it never shows in `ps`.
+  `R2_ENDPOINT` must start with `https://` (or `http://127.0.0.1` for the drill/tests).
+- Missing R2 settings: `get` and `put` exit 2.
+
+Controller (`decide()` stays pure; the record arrives in `Obs`):
+- `Obs` gains `rec_mode` (`sync` | `async` | `unknown`; `unknown` = the `get` failed), `rec_primary`
+  (`Optional[str]`), `rec_since` (`Optional[int]`). Defaults: `unknown`, `None`, `None`.
+- **P4' (primary).** `desired = PEER_APP_NAME if sync_mode != off and self_streaming else ""`.
+  - Drop (`sync_names` non-empty, `desired` empty): actions `("sync_record", "async")` THEN
+    `("set_sync", "")`, in that order.
+  - Add (`sync_names` empty, `desired` non-empty): `("set_sync", desired)` THEN
+    `("sync_record", "sync")`.
+  - Steady state, names already equal desired: if the record is readable and differs from
+    (`"sync" if desired else "async"`, self) emit `("sync_record", that)`. An `unknown` record in
+    steady state emits nothing (no alert storm while R2 is down; the next transition retries).
+- **I/O loop rule:** a failed `sync_record` action skips every action after it in the same tick
+  (so A never drops B without a confirmed record: writes keep waiting, Q4 (a)) and alerts
+  `sync record write failed; NOT dropping the sync standby` (once per failure streak is fine,
+  every tick is acceptable).
+- **S1' (standby).** S1's three windows and the lag check are unchanged. Promotion additionally
+  needs `rec_mode == "sync" and rec_primary == PEER_NAME`. Otherwise no promotion and one alert
+  per outage (reuse a state flag, reset when streaming again): record `async` names its `since`
+  (card Q5 (a)), `unknown` says the record could not be read.
+  After the `promote` action, emit `("sync_record", "async")` (the new primary has no standby).
+- `SYNC_MODE != off` with no `R2_ENDPOINT`/`R2_BUCKET`/`R2_CREDENTIALS_FILE` in the env: the
+  I/O `main()` refuses to start (exit 2). `decide()` does not see env.
+- With `SYNC_MODE=off` a standby never promotes automatically (the record never says `sync`).
+  This is intended: async plus automatic promotion is the silent-loss path G4.
+
+### 11c. Disarmed by default
+
+- `cf_failover.py main()`: unless `CONTROLLER_ARMED=yes`, log `not armed (CONTROLLER_ARMED=yes
+  in ha-pg.env arms it, after the section 3 drill)` and exit 3, before touching the watchdog.
+  `cf-failover.service` gains `RestartPreventExitStatus=3` so systemd does not loop it.
+- `role-watcher.sh`: same with `ROLE_WATCHER_ARMED=yes`, exit 3; its unit the same line.
+- `ha-pg.env.example`: `CONTROLLER_ARMED=no`, `ROLE_WATCHER_ARMED=no`, the four names, the R2
+  keys, `SYNC_MODE=on_commit` commented with "only after the drill".
+- The drill (`infra/rehearsal/cf_drill.py`) and the loop tests set the arm flags themselves.
+
+### 11d. Tests (red first)
+
+- `test_cf_failover.py`: P4' order on drop and add; steady-state repair; unknown record in steady
+  state emits nothing; S1 with record sync from peer promotes then writes async; record async
+  never promotes and alerts once with `since`; record unknown never promotes; record sync but
+  `rec_primary` = self never promotes; `PEER_APP_NAME` drives `set_sync`; config check on it.
+  World model: a shared record object; a fault "B down, A writes alone (async), A dies" never
+  promotes B; the random-fault test keeps "never two writers" and adds "never a promotion that
+  loses an acknowledged commit" (B's lsn < A's last acknowledged lsn while the record said sync).
+- `test_cf_failover_loop.py`: failed `sync_record` skips the following `set_sync`; not armed
+  exits 3 without opening the watchdog; `SYNC_MODE=on_commit` without R2 settings exits 2.
+- `test_ha_scripts.py`: `sync-record get/put` against a local fake S3 (http.server), credentials
+  never on argv (fake curl logs argv), bad body = non-zero, missing settings = exit 2; the four
+  names reach observe SQL, `ensure-slot`, `promote` and the standby conf; invalid names exit 2;
+  role watcher not armed exits 3.
