@@ -134,7 +134,10 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             lines.append("Total: " + ", ".join(f"{c['label']} {_cell(totals[c['key']])}" for c in columns if c["key"] in totals))
     shown, whole = len(items), data.get("total_groups", data.get("total"))
     if data.get("truncated") and whole:
-        lines.append(f"Showing {shown:,} of {int(whole):,}.")
+        if data.get("ranked_by"):
+            lines.append(f"Top {shown:,} of {int(whole):,} by {str(data['ranked_by']).lower()}.")
+        else:
+            lines.append(f"Showing {shown:,} of {int(whole):,}.")
     if data.get("scope_note"):
         lines.append(data["scope_note"])
     return "\n".join(lines)
@@ -160,7 +163,7 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
         "truncated": data.get("truncated"),
         "sample": items[:SAMPLE_ROWS],
     }
-    for key in ("total", "total_groups", "totals", "restricted"):
+    for key in ("total", "total_groups", "totals", "restricted", "ranked_by"):
         if key in data:
             summary[key] = data[key]
     return ToolResult("ok", data=summary, display=render_card(data, title=title, panel=panel))

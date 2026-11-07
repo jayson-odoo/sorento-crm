@@ -106,3 +106,12 @@ class EntityDef:
     #: A computed entity's note from the rows it returns and the field names the question used (rows, names -> one
     #: line or None), said with the result.
     row_note: Callable[[list[dict], set[str]], str | None] | None = None
+    #: A computed entity's number field rows are ranked by, highest first, unless the query sorts (crew live x3,
+    #: 8 Nov: "payout per dealer" came back by name and cut at 20, the top dealer missing). Groups that sum it
+    #: rank by that sum; a cut result says "Top N of M by <field>".
+    rank_by: str | None = None
+    #: A computed entity's window when the query names none (a window name such as this_year), said in the note;
+    #: None = the periods containing today.
+    default_window: str | None = None
+    #: A computed entity's rows when the query sets no limit (`query.DEFAULT_ROWS` otherwise).
+    default_limit: int | None = None
