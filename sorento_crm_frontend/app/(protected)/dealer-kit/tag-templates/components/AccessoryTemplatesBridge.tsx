@@ -21,7 +21,6 @@ import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateSe
 import {
   useAccessoryTemplatesQuery,
   useCreateAccessoryTemplate,
-  useFetchAccessoryTemplate,
 } from '../../accessory-templates/hooks/useAccessoryTemplates';
 
 export interface SaveTemplateRequest {
@@ -45,7 +44,6 @@ export function AccessoryTemplatesBridge({
 }) {
   const query = useAccessoryTemplatesQuery();
   const create = useCreateAccessoryTemplate();
-  const fetchFresh = useFetchAccessoryTemplate();
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const templates = query.data;
@@ -54,9 +52,11 @@ export function AccessoryTemplatesBridge({
     onTemplates(templates ?? []);
   }, [templates, onTemplates]);
 
+  // Fresh = the list read again (a template that is gone is simply not in it).
+  const refetch = query.refetch;
   useEffect(() => {
-    onFetcher(fetchFresh);
-  }, [fetchFresh, onFetcher]);
+    onFetcher(async (id) => (await refetch()).data?.find((row) => row.id === id) ?? null);
+  }, [refetch, onFetcher]);
 
   useEffect(() => {
     if (!request) return;

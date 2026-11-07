@@ -815,3 +815,8 @@ export function applyLinkActions<T extends LinkLayer>(layers: readonly T[], acti
     patches.has(layer.id) ? ({ ...layer, props: patches.get(layer.id)!.props } as unknown as T) : layer,
   );
 }
+
+/** Whether `changes` alter the box's DESIGN (not its per-box "Reads from" or its link). */
+export function accessoryDesignChanged(props: AccessoriesLayerProps, changes: Partial<AccessoriesLayerProps>): boolean {
+  return designKey(accessoryDesign({ ...props, ...changes })) !== designKey(accessoryDesign(props));
+}

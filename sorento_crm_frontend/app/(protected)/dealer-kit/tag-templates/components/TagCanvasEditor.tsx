@@ -259,6 +259,7 @@ import {
 } from '@/lib/dealer-kit/accessory-box';
 import {
   accessoryDesign,
+  accessoryDesignChanged,
   accessoryDesignSamples,
   designKey,
   type AccessoryDesign,
@@ -1841,7 +1842,11 @@ export function TagCanvasEditor({
     const linked = layer?.props.kind === 'accessories' ? layer.props.presetId : null;
     // The inspector sends the whole props; only a change that leaves `presetId` as it is is a design edit.
     const keepsLink = !('presetId' in changes) || (changes as { presetId?: unknown }).presetId === linked;
-    if (linkedAccessoryBoxes === 'detach' && linked && keepsLink) {
+    // "Reads from" (subjectSlot / subjectPart) is per box and never links: only a DESIGN change detaches.
+    const designChanged =
+      layer?.props.kind === 'accessories' &&
+      accessoryDesignChanged(layer.props, changes as Partial<AccessoriesLayerProps>);
+    if (linkedAccessoryBoxes === 'detach' && linked && keepsLink && designChanged) {
       updateLayerProps(id, { ...changes, presetId: null } as Partial<TagLayerProps>);
     } else {
       updateLayerProps(id, changes);

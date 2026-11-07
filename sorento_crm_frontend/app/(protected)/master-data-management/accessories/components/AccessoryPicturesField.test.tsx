@@ -27,6 +27,7 @@ vi.mock('../hooks/useAccessories', () => ({
 }));
 
 import { AccessoryPicturesField } from './AccessoryPicturesField';
+import type { AccessoryPicture } from '../types/accessory.types';
 
 const pic = (id: string, name: string) => ({
   id, attachment_id: `att-${id}`, url: `https://cdn.test/${id}.jpg`, colour_name: name, colour_hex: null,
@@ -36,7 +37,7 @@ const B = pic('i2', 'Grey');
 const C = pic('i3', 'Gold');
 
 function Harness() {
-  const [pictures, setPictures] = useState([A, B, C]);
+  const [pictures, setPictures] = useState<AccessoryPicture[]>([A, B, C]);
   return <AccessoryPicturesField accessoryId="a1" pictures={pictures} canEdit onChanged={setPictures} />;
 }
 

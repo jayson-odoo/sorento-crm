@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accessoryDesign,
+  accessoryDesignChanged,
   applyLinkActions,
   changedLinkedDesign,
   linkRefreshActions,
@@ -99,5 +100,20 @@ describe('a copy of linked boxes follows the saved template', () => {
 
   it('leaves a box alone when its template cannot be read', async () => {
     expect(await linkRefreshActions([stale], async () => Promise.reject(new Error('down')))).toEqual([]);
+  });
+});
+
+describe('accessoryDesignChanged', () => {
+  const own = box('a').props;
+  it('"Reads from" is not a design change', () => {
+    expect(accessoryDesignChanged(own, { subjectPart: 2 })).toBe(false);
+    expect(accessoryDesignChanged(own, { subjectSlot: { kind: 'main' } } as never)).toBe(false);
+  });
+  it('a header, a colour or a card is', () => {
+    expect(accessoryDesignChanged(own, { headerText: 'X' })).toBe(true);
+    expect(accessoryDesignChanged(own, { fill: '#000000' })).toBe(true);
+  });
+  it('re-sending the same props is not', () => {
+    expect(accessoryDesignChanged(own, { ...own })).toBe(false);
   });
 });
