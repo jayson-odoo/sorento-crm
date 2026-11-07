@@ -32,6 +32,8 @@
 # `blue_green_deploy.sh --preflight` checks all of it and changes nothing (runbook step 3).
 # `blue_green_deploy.sh --role` prints this node's role (single | primary | standby | unknown)
 # and changes nothing; the two-node release (scripts/ha_release.sh) deploys the primary first.
+# On the plain compose (no compose.ha.yml) it asks the plain db: a streaming replica is a
+# standby, anything that is not clearly primary or standby is single (today's release).
 #
 # HA standby mode (HA-CF-FAILOVER, documentation/plans/infra/PLAN-ha-cf-failover-04nov.md
 # section 2 row 1): on a node whose Postgres is a read-only standby the release runs with
@@ -116,7 +118,15 @@ NUMERIC_KNOBS="DEPLOY_LOCK_WAIT_SECONDS DEPLOY_MIN_AVAILABLE_MB SNAPSHOT_KEEP_MI
 # single (no HA) | primary | standby | unknown (HA, but the local Postgres did not answer).
 node_role() {
   local r
-  if [ "$HA_MODE" = 0 ]; then echo single; return; fi
+  if [ "$HA_MODE" = 0 ]; then
+    # Plain compose with a streaming replica (PLAN-ha-b-replica-sync-07nov.md 7a): the role
+    # comes from the plain db. Anything but a clear answer is "single" = today's release.
+    # shellcheck disable=SC2016
+    r=$(docker compose exec -T "$DB_SERVICE" \
+          sh -c 'psql -U "$POSTGRES_USER" -d postgres -Atc "select pg_is_in_recovery()"' 2>/dev/null || true)
+    case "$r" in t) echo standby ;; f) echo primary ;; *) echo single ;; esac
+    return
+  fi
   r=$(docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -Atc 'select pg_is_in_recovery()' 2>/dev/null || true)
   case "$r" in t) echo standby ;; f) echo primary ;; *) echo unknown ;; esac
 }
