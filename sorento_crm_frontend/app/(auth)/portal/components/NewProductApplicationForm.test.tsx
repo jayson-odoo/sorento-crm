@@ -694,3 +694,104 @@ describe('portal: Brand column gone, per-row Opened as for older applications (N
     expect(screen.queryByRole('columnheader', { name: /opened as/i })).toBeNull();
   });
 });
+
+describe('portal: no product table from a stock inquiry, purchasing result read-only (owner 8 Nov)', () => {
+  it('a new form started from an inquiry has no table or add control and saves lines: []', async () => {
+    asMock(getNewProductApplicationPrefill).mockResolvedValue({
+      stock_inquiry_id: 'si-1',
+      stock_inquiry_number: 'SI26-0412',
+      customer_id: null,
+      customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+      project_name: 'EXAMPLE RESIDENCE, TOWER B',
+      needed_by: null,
+      remark: null,
+      lines: [{ proposed_code: 'XY-1234-MB', description: 'Example sinks' }],
+    });
+    render(<NewProductApplicationForm slug="acme" />);
+    const picker = await screen.findByRole('combobox', { name: /start from my stock inquiry/i });
+    fireEvent.focus(picker);
+    const hit = await screen.findByText('SI26-0412 - XY-1234-MB & XY-1234-BG');
+    fireEvent.mouseDown(hit);
+    fireEvent.click(hit);
+    await waitFor(() =>
+      expect((screen.getByLabelText('Customer') as HTMLInputElement).value).toBe(
+        'EXAMPLE DEVELOPER SDN BHD',
+      ),
+    );
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add (row|product)/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /save as draft/i }));
+    await waitFor(() => expect(createNewProductApplication).toHaveBeenCalledTimes(1));
+    const body = asMock(createNewProductApplication).mock.calls[0][0];
+    expect(body.stock_inquiry_id).toBe('si-1');
+    expect(body.lines).toEqual([]);
+  });
+
+  it('the view of an SI application with no lines draws no table', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+        lines: [],
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findByText('NEW PRODUCT APPLICATION');
+    expect(screen.queryByRole('columnheader', { name: /product code/i })).toBeNull();
+    expect(screen.queryAllByTestId('npa-line')).toHaveLength(0);
+  });
+
+  it('the view of an older SI application with lines shows them read-only', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'submitted',
+        status_label: 'Submitted',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+      }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect((await screen.findAllByText('Example kitchen sink')).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+    expect(screen.queryByLabelText('Product type')).toBeNull();
+  });
+
+  it('a standalone application keeps its table', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({ status: 'submitted', status_label: 'Submitted', stock_inquiry_id: null }),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    await screen.findAllByText('Example kitchen sink');
+    expect(screen.getByRole('columnheader', { name: /product code/i })).toBeInTheDocument();
+    expect(screen.getAllByTestId('npa-line')).toHaveLength(1);
+  });
+
+  it('shows a typed new code (no product yet), LEADTIME and COST read-only, with no purchasing controls', async () => {
+    asMock(getNewProductApplication).mockResolvedValue(
+      detail({
+        status: 'completed',
+        status_label: 'Completed',
+        stock_inquiry_id: 'si-1',
+        stock_inquiry_number: 'SI26-0412',
+        lines: [],
+        new_product_id: null,
+        new_product_code: 'XY-TYPED-7',
+        new_code_text: 'XY-TYPED-7',
+        lead_time: '3 weeks',
+        cost_price: '12.50',
+      } as Partial<NewProductApplicationDetail>),
+    );
+    render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
+    expect(await screen.findByText('XY-TYPED-7')).toBeInTheDocument();
+    expect(screen.getByText('3 weeks')).toBeInTheDocument();
+    expect(screen.getByText(/12\.50/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit purchasing response/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /save feedback/i })).toBeNull();
+    expect(screen.queryByLabelText(/^lead ?time/i)).toBeNull();
+    expect(screen.queryByLabelText(/^cost/i)).toBeNull();
+  });
+});

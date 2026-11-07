@@ -207,3 +207,42 @@ describe('numberErrors (v4)', () => {
     );
   });
 });
+
+describe('applications from a stock inquiry carry no product rows (owner 8 Nov)', () => {
+  const prefill = {
+    stock_inquiry_id: 'si-1',
+    stock_inquiry_number: 'SI26-0412',
+    customer_id: null,
+    customer_name: 'EXAMPLE DEVELOPER SDN BHD',
+    project_name: null,
+    needed_by: null,
+    remark: null,
+    lines: [{ proposed_code: 'XY-1234-MB', description: 'Example sinks', expected_qty: '55' }],
+  };
+
+  it('the pre-filled state has no lines and the write sends lines: []', () => {
+    const state = stateFromPrefill(prefill as never);
+    expect(state.lines).toEqual([]);
+    const body = payloadFromState(state);
+    expect(body.stock_inquiry_id).toBe('si-1');
+    expect(body.lines).toEqual([]);
+  });
+
+  it('a standalone state keeps the rows it has', () => {
+    const body = payloadFromState({
+      ...EMPTY_FORM,
+      lines: [{ ...blankLine(), description: 'Example sink' }],
+    });
+    expect(body.lines).toHaveLength(1);
+  });
+
+  it('an older SI application keeps its saved rows (ids travel so the server keeps them)', () => {
+    const state = stateFromDetail({
+      id: 'a-1',
+      stock_inquiry_id: 'si-1',
+      lines: [{ id: 'l-1', line_no: 1, description: 'First sink' }],
+    } as never);
+    expect(state.lines).toHaveLength(1);
+    expect(payloadFromState(state).lines?.[0]).toMatchObject({ id: 'l-1', description: 'First sink' });
+  });
+});
