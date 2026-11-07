@@ -250,51 +250,21 @@ describe('StockInquiryDetail - Create new product application gear item', () => 
   });
 });
 
-const openTab = (name: RegExp) =>
-  fireEvent.mouseDown(screen.getByRole('tab', { name }));
-
-describe('StockInquiryDetail - New product applications tab', () => {
-  it('shows the empty state when nothing was raised from the inquiry', async () => {
+describe('StockInquiryDetail - no tab bar of its own (owner hand test 7 Nov: "supposed to be tgt")', () => {
+  // "New product applications (N)" lives in the page's ONE tab bar (StockInquiryDetailTabs ->
+  // FormDetailTabsWithRevisions), next to Details / Comments / Revisions / SLA Tracking.
+  it('draws no nested tab row, and the form shows straight away for an application viewer', async () => {
     permissionMap = { [VIEW]: true };
     renderPage();
-    await screen.findByText('Stock inquiry number');
-    openTab(/new product applications \(0\)/i);
-    expect(await screen.findByText('No new product applications')).toBeInTheDocument();
-    expect(
-      screen.getByText('Applications created from this inquiry show here.'),
-    ).toBeInTheDocument();
-    // the form is the other tab
-    expect(screen.queryByText('Stock inquiry number')).toBeNull();
-  });
-
-  it('lists number (link), status, current codes -> new code and date', async () => {
-    permissionMap = { [VIEW]: true };
-    applications.data = [
-      {
-        id: 'a-1',
-        application_no: 'NPA-000001',
-        status: 'completed',
-        status_label: 'Completed',
-        created_at: '2026-11-03T02:00:00',
-        opened_codes: ['XY-1234-MB-69'],
-        created_codes: [
-          { product_code: 'XY-1234-MB-69', current_codes: ['XY-1234-MB'], created_at: '2026-11-03T02:00:00' },
-        ],
-      },
-    ];
-    renderPage();
-    openTab(/new product applications \(1\)/i);
-    const link = await screen.findByRole('link', { name: 'NPA-000001' });
-    expect(link).toHaveAttribute('href', '/procurement-management/new-product-applications/a-1');
-    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
-    expect(screen.getByText('XY-1234-MB -> XY-1234-MB-69')).toBeInTheDocument();
-    expect(screen.getByText('03/11/2026')).toBeInTheDocument();
-  });
-
-  it('is hidden for a user with no new product application permission', async () => {
-    renderPage();
-    await screen.findByText('Stock inquiry number');
+    expect(await screen.findByText('Stock inquiry number')).toBeInTheDocument();
+    expect(screen.queryAllByRole('tablist')).toHaveLength(0);
     expect(screen.queryByRole('tab', { name: /new product applications/i })).toBeNull();
+  });
+
+  it('draws no nested tab row for a user with no application permission either', async () => {
+    renderPage();
+    await screen.findByText('Stock inquiry number');
+    expect(screen.queryAllByRole('tablist')).toHaveLength(0);
   });
 });
 
