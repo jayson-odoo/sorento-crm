@@ -15,3 +15,15 @@ Brand SORENTO, Category Kitchen Sink.
 | WR-6 | T1 held | a follow-up that widens nothing and leaves brands / categories out of the object ("by month", no broaden fields) | Unchanged C6-2: the held brand and category are carried (lock) |
 | WR-7 | nothing held | bare "Sorento ..." with said_as null | Unchanged: the one company / brand / both question (HT1-5, lock) |
 | WR-8 | T1 held | the message types a kind for the word ("sorento account type", said_as / kind_said says it) | Unchanged: the typed kind decides (lock) |
+
+### Review round 1 (7 Nov, NOT READY on 7b0b2df3c6): lead rulings
+
+| # | Given | When (parse) | Expected |
+|---|---|---|---|
+| WR-1/2 (corrected) | as WR-1 / WR-2 | the REAL repro objects, including company "Sorento" and company_or_brand ["SORENTO"] | Same as WR-1: channel breakdown for Company Sorento, no brand, no category, no question. On a widen, a company_or_brand word equal to the object's own company is that company (parser fields only) |
+| WR-9 | T1 held | "only company sorento" in the C6-1 shape (company Sorento, brands [SORENTO], entity canonical_code null, kind_said null, said_as null) | Company + the held category, no brand (the C6-1 company reading runs before the settled-name rule) |
+| WR-10 | T1 held (brand and category held) | "for all customers" (broaden_axis customer, broaden_to all) or a date widen (broaden_axis date), the object leaving brands / categories out | The held brand and category are KEPT: an emptied list counts as widened only when the widen axis is "all", none, or a product-filter kind (brand, category, account type) |
+| WR-11 | Brand SORENTO held, no company held | "sorento company only" with said_as null (the HT1-5 shape) | The one company / brand / both question (unchanged HT1-5). "Settled" = the held report has the name as its company AND among its brands (the prod T4 shape) |
+| WR-12 | T1 held | entity_op "clear" with every broaden field null ("remove the filters") and the lists emptied | Lists widened (entity_op clear alone is a widen) |
+| WR-13 | T1 held, SORENTO an account type | the kind is typed ("sorento account type", kind_said said) | The typed kind decides; the settled-name rule does not fire (WR-8 on a held report) |
+| WR-14 | a held report of another kind (outstanding) or topic_reset true | "sorento total ..." with the word unsaid | The settled-name rule does not fire (the held report is not carried) |
