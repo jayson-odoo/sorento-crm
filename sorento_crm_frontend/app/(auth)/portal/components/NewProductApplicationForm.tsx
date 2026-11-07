@@ -636,44 +636,6 @@ export default function NewProductApplicationForm({
               errors={errors}
               readOnly={readOnly}
               showCost={Boolean(application)}
-              renderOpenedAs={
-                application
-                  ? (draftLine) => {
-                      const l = application.lines.find(
-                        (x) => x.id === draftLine.id,
-                      );
-                      if (!l) return null;
-                      return (
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {l.opened_product_id ? (
-                              <>
-                                <Badge status="completed">Opened</Badge>
-                                <span className="font-medium">
-                                  {l.opened_product_code}
-                                </span>
-                              </>
-                            ) : l.closed_reason ? (
-                              <>
-                                <Badge status="cancelled">Not opening</Badge>
-                                <span>{l.closed_reason}</span>
-                              </>
-                            ) : (
-                              <span className="text-muted-foreground">
-                                Not yet
-                              </span>
-                            )}
-                          </div>
-                          {l.opened_supplier_name && (
-                            <p className="text-xs text-muted-foreground">
-                              Supplier: {l.opened_supplier_name}
-                            </p>
-                          )}
-                        </div>
-                      );
-                    }
-                  : undefined
-              }
             />
           </div>
           <div className="mt-6">
