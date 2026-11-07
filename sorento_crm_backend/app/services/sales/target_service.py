@@ -2440,48 +2440,63 @@ def _next_tier(
 ) -> Optional[dict]:
     """The period's next rung on the target page's own ladder (`tier_ladder`, `_reached`, as `period_progress`
     reads it) and what the period would pay on reaching it: the one engine (`period_payout`) on the achievement
-    raised to the rung's threshold (AGENT-COMMISSION-WA). None at the top tier, with no tiers, or when no threshold
-    can be known. Per-account rates (a dealer): the rest is bought in the mix sold so far, split evenly across the
-    counted accounts when nothing is sold yet (owner card Q1 a); `mix` says which and `rates` names each account's
-rate on the rung (crew answer: the answer states the assumption and the rates). A replaced period pays 0 there
-    too (the replacing target's tier does not move)."""
+    raised to the rung's threshold (AGENT-COMMISSION-WA). `state`: `next`, `top` (every rung reached),
+    `no_ratio` (a points target with no RM per point on file) or `no_tiers` (no rung with a threshold in the
+    period); None without commission. `unit`: RM, or units on a quantity target (threshold and gap; the payout is
+    RM). Per-account rates (a dealer): the rest is bought in the mix sold so far, split evenly across the counted
+    accounts when nothing is sold yet (owner card Q1 a); `mix` says which and `rates` names each account's rate on
+    the rung when they differ. A replaced period pays 0 there too (the replacing target's tier does not move)."""
     if (target.commission_method or "none") == "none":
         return None
-    if (target.threshold_unit or "pct") == "pct" and Decimal(period.target_value) <= 0:
-        # Every reachable rung is already reached on a target of 0 (the engine's rule).
-        return None
-    total = sum(by_account.values(), Decimal("0"))
+    unit = "units" if target.metric == "quantity" else "RM"
+    if (target.threshold_unit or "pct") == "points" and ratio_on(ratios, period.period_end) is None:
+        return {"state": "no_ratio", "unit": unit}
+    # What the engine counts: an account netting negative (returns) counts as 0 (`payout_for`); agent and team
+    # targets are one bucket (`period_payout`).
+    if target.subject_kind == "dealer":
+        counted = {k: max(v, Decimal("0")) for k, v in by_account.items()}
+    else:
+        counted = {None: max(sum(by_account.values(), Decimal("0")), Decimal("0"))}
+    total = sum(counted.values(), Decimal("0"))
     account_ids = [cid for cid, _label in labels]
     ladder = tier_ladder(engine, starts, period, target, ratios, labels)
+    if not ladder:
+        return {"state": "no_tiers", "unit": unit}
     upcoming = [r for r in ladder if not _reached(r, total, target, period)]
-    if not upcoming:
-        return None
+    if not upcoming or ((target.threshold_unit or "pct") == "pct" and Decimal(period.target_value) <= 0):
+        # On a pct target of 0 every reachable rung is already reached (the engine's rule).
+        return {"state": "top", "unit": unit}
     rung = upcoming[0]
     threshold = Decimal(rung["threshold_rm"])
     if target.subject_kind != "dealer":
         raised: Dict[Optional[str], Decimal] = {None: threshold}
-    elif total > 0:
-        raised = {k: v * threshold / total for k, v in by_account.items()}
     else:
-        keys = account_ids or [None]
-        raised = {k: threshold / len(keys) for k in keys}
+        keys = [k for k, v in counted.items() if v > 0] if total > 0 else (account_ids or [None])
+        raised = {
+            k: (counted[k] * threshold / total if total > 0 else threshold / len(keys)) for k in keys[:-1]
+        }
+        # The last account takes the remainder, so the parts add up to the threshold exactly (a 1:2 or three-way
+        # split at Decimal precision falls a hair short and the engine would not reach the rung, review B1).
+        raised[keys[-1]] = threshold - sum(raised.values(), Decimal("0"))
     # The assumption only matters when the rung pays different rates per account.
     per_account = target.subject_kind == "dealer" and len(account_ids) > 1 and any(
         t.account_rates is not None for t in engine
     )
-    mix = ("so_far" if total > 0 else "even") if per_account else None
     rates = [r for r in rung["rates"] if r["label"] is not None]
     would = _ZERO_PAYOUT if replaced else period_payout(target, period, engine, starts, raised, ratios)
     now = (payout.commission or Decimal("0")) + (payout.bonus or Decimal("0"))
     pay = (would.commission or Decimal("0")) + (would.bonus or Decimal("0"))
     return {
+        "state": "next",
+        "unit": unit,
         "tier": rung["tier"],
         "threshold": _r2(threshold),
         "gap": _r2(threshold - total),
         "payout": _r2(pay),
         "gain": _r2(pay - now),
-        "mix": mix,
+        "mix": ("so_far" if total > 0 else "even") if per_account else None,
         "rates": rates if per_account and len({r["rate"] for r in rates}) > 1 else [],
+        "replaced": replaced,
     }
 
 

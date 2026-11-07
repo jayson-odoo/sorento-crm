@@ -339,7 +339,13 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         notes.append(entity.own_note)
     if entity.row_note:
         # The names the question used, so a note answers only what was asked (W-A: next-tier lines).
-        used = {*named, *(f for f in _list(spec, "fields") if isinstance(f, str)), *(i["field"] for i in sort)}
+        used = {
+            *named,
+            *(f for f in _list(spec, "fields") if isinstance(f, str)),
+            *(i["field"] for i in sort),
+            *(g for g in group_by if isinstance(g, str)),
+            *(a.get("field") for a in aggregates if isinstance(a, dict)),
+        }
         said = entity.row_note(rows, used)
         if said:
             notes.append(said)

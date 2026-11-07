@@ -20,22 +20,27 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 TARGETS_VIEW = "sales.targets.view"
 
 
-#: W-A (AGENT-COMMISSION-WA): the next rung of the target page's own tier ladder, on the per-period rows and on a
-#: summary row whose subject has one commission target in the window.
+#: W-A (AGENT-COMMISSION-WA): the next rung of the target page's own tier ladder, on a summary row whose subject has
+#: one commission target in the window (the note answers target by target, with the assumptions it makes).
 NEXT_TIER_FIELDS = {
     "next_tier": FieldDef(
         "Next tier", kind="number",
         note="The next tier's number on the target's ladder; empty at the top tier, without commission, or when the "
              "subject has several targets (then the note answers target by target).",
     ),
-    "next_tier_at": FieldDef("Next tier from (RM)", kind="number", note="Where the next tier starts."),
-    "to_next_tier": FieldDef("To the next tier (RM)", kind="number", note="Still to sell to reach the next tier."),
+    "next_tier_at": FieldDef(
+        "Next tier from", kind="number", note="Where the next tier starts: RM, or units on a quantity target.",
+    ),
+    "to_next_tier": FieldDef(
+        "To the next tier", kind="number",
+        note="Still to sell to reach the next tier: RM, or units on a quantity target.",
+    ),
     "next_tier_payout": FieldDef(
-        "Payout at the next tier", kind="number",
+        "Payout at the next tier (RM)", kind="number",
         note="Commission plus bonus the period would pay on reaching the next tier (the same engine as the page).",
     ),
     "next_tier_gain": FieldDef(
-        "More at the next tier", kind="number", note="Payout at the next tier minus the payout now.",
+        "More at the next tier (RM)", kind="number", note="Payout at the next tier minus the payout now.",
     ),
 }
 
@@ -147,7 +152,6 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "payout": round((commission or 0) + (bonus or 0), 2) if has_commission else None,
                 "replaced": fig["replaced"],
                 "replaced_by": replacing.get(target.replaced_by_target_id) if fig["replaced"] else None,
-                **_next_fields(fig["next_tier"]),
                 "_next": fig["next_tier"],
                 "_has_tiers": has_commission,
             }
@@ -157,7 +161,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
 
 def _next_fields(nxt: dict | None) -> dict:
     """The next rung of one period (`target_service._next_tier`, the page's own ladder and engine) as fields."""
-    nxt = nxt or {}
+    nxt = nxt if nxt and nxt.get("state") == "next" else {}
     return {
         "next_tier": nxt.get("tier"),
         "next_tier_at": nxt.get("threshold"),
@@ -313,8 +317,16 @@ def _live(periods: list[dict]) -> dict:
 NEXT_LINES = 10
 
 
-def _rm(value) -> str:
-    return f"RM {value:,.2f}"
+def _rm(value, unit: str = "RM") -> str:
+    return f"RM {value:,.2f}" if unit == "RM" else f"{value:,.2f} units"
+
+
+#: What the line says when there is no next tier to reach (`target_service._next_tier` `state`).
+NO_NEXT = {
+    "top": "has reached its top tier: no next tier.",
+    "no_ratio": "has no RM per point on file for the period, so its tiers cannot be placed: no next tier known.",
+    "no_tiers": "has no tiers in this period: no next tier.",
+}
 
 
 def _next_line(owner: str, live: dict) -> str:
@@ -322,18 +334,22 @@ def _next_line(owner: str, live: dict) -> str:
 
     nxt, no = live["next"], live["target_no"]
     when = f"{live['start']:%d/%m/%Y} to {live['end']:%d/%m/%Y}" + (" (closed)" if live["end"] < _today() else "")
-    if nxt is None:
-        return f"{no} ({owner}, {when}) has reached its top tier: no next tier."
+    if nxt is None or nxt["state"] != "next":
+        return f"{no} ({owner}, {when}) " + NO_NEXT[nxt["state"] if nxt else "no_tiers"]
+    unit = nxt["unit"]
     line = (
-        f"{no} ({owner}, {when}): tier {nxt['tier']} at {_rm(nxt['threshold'])}, {_rm(nxt['gap'])} to go, would pay "
-        f"{_rm(nxt['payout'])} ({_rm(nxt['gain'])} more than now)"
+        f"{no} ({owner}, {when}): tier {nxt['tier']} at {_rm(nxt['threshold'], unit)}, {_rm(nxt['gap'], unit)} to "
+        f"go, would pay {_rm(nxt['payout'])} ({_rm(nxt['gain'])} more than now)"
     )
+    if nxt.get("replaced"):
+        line += ", 0 while this period stays replaced by its dealer target"
     if nxt.get("mix") == "so_far":
         line += ", if the rest comes in the same account mix as sold so far"
     elif nxt.get("mix") == "even":
         line += ", with nothing sold yet: if the rest is split evenly across the accounts"
     if nxt.get("rates"):
-        line += " (rates on that tier: " + ", ".join(f"{r['label']} {r['rate']:g}%" for r in nxt["rates"]) + ")"
+        rate = (lambda v: f"RM {v:g} per unit") if unit == "units" else (lambda v: f"{v:g}%")
+        line += " (rates on that tier: " + ", ".join(f"{r['label']} {rate(r['rate'])}" for r in nxt["rates"]) + ")"
     return line + "."
 
 
@@ -475,7 +491,6 @@ register(
                 "Replaced by dealer target", kind="boolean",
                 note="True when the dealer's own target reached a tier, so this one pays nothing.",
             ),
-            **NEXT_TIER_FIELDS,
         },
         name_by=("target_no", "subject"),
         screen_path="/sales/targets/{target_id}",

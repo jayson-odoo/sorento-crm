@@ -191,12 +191,12 @@ def test_W12_the_index_routes_next_tier_questions_to_the_summary():
     assert "next tier" in line.lower()
 
 
-def test_W13_the_per_period_rows_carry_the_same_next_tier(targets):
-    db, _c, t = targets
-    out = run(db, {"entity": "sales_target", "filters": [{"field": "agent", "op": "contains", "value": "agent a"}],
-                   "period": OCT, "fields": NEXT})
-    [row] = out["rows"]
-    assert (row["to_next_tier"], row["next_tier_payout"], row["next_tier_gain"]) == (1000.0, 300.0, 120.0)
+def test_W13_the_hidden_per_period_entity_has_no_next_tier_fields(targets):
+    """Review S2: `sales_target` carries no note, so it could not state the mix assumption (owner card Q1 a); the
+    next tier is answered on the summary only."""
+    from app.services.assistant_registry import ENTITIES
+
+    assert not set(ENTITIES["sales_target"].fields) & (set(NEXT) - {"payout"})
 
 
 def test_W14_a_plain_payout_question_carries_no_next_tier_lines(targets):
@@ -206,3 +206,105 @@ def test_W14_a_plain_payout_question_carries_no_next_tier_lines(targets):
     asked = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "fields": ["payout"],
                      "sort": [{"field": "to_next_tier", "dir": "asc"}]})
     assert "Next tier" in asked["scope_note"]
+
+
+def test_W15_the_live_period_is_todays_not_the_windows_last_closed_one(targets):
+    """Review S3: Sep (top tier) and Oct (today) in one window: the answer is Oct's next tier."""
+    db, _c, t = targets
+    row, out = _one(db, "Agent A", ["01/09/2026", "31/10/2026"])
+    assert (row["next_tier"], row["to_next_tier"], row["next_tier_payout"]) == (2, 1000.0, 300.0)
+    assert "01/10/2026 to 31/10/2026" in out["scope_note"] and "top tier" not in out["scope_note"]
+
+
+# ------------------------------------------------------------------ the helper on its own (review B1, S1, S3, S4)
+
+
+def _fake(**target):
+    from types import SimpleNamespace
+
+    base = {"commission_method": "retroactive", "metric": "amount", "threshold_unit": "amount",
+            "subject_kind": "dealer", "tiers_per_period": False, "rounding": "sen"}
+    period = SimpleNamespace(target_value=Decimal("100000"), period_start=date(2026, 10, 1),
+                             period_end=date(2026, 12, 31))
+    return SimpleNamespace(**{**base, **target}), period
+
+
+def _tier(threshold, rate=None, account_rates=None, bonus=None):
+    from app.services.sales.commission_service import Tier
+
+    return Tier(from_pct=None, rate=rate, bonus_amount=bonus, threshold=Decimal(threshold), is_additional=False,
+                account_rates=account_rates, additional_rate=None)
+
+
+def _call(target, period, tiers, by_account, labels=(), replaced=False, ratios=()):
+    from app.services.sales import target_service as ts
+
+    return ts._next_tier(target, period, tiers, [None] * len(tiers), by_account, list(ratios), list(labels),
+                         replaced, ts._ZERO_PAYOUT)
+
+
+def test_W16_three_accounts_split_evenly_still_reach_the_tier_exactly():
+    """Review B1: 100,000 / 3 at Decimal precision fell a hair short of the tier, so the engine paid RM 0."""
+    target, period = _fake()
+    rates = {"a": Decimal("2"), "b": Decimal("4"), "c": Decimal("6")}
+    nxt = _call(target, period, [_tier("100000", account_rates=rates, bonus=Decimal("500"))], {},
+                labels=[("a", "A"), ("b", "B"), ("c", "C")])
+    # 33,333.33 at 2% + 33,333.33 at 4% + 33,333.34 at 6% + RM 500 bonus.
+    assert nxt["state"] == "next" and nxt["payout"] == 666.67 + 1333.33 + 2000.0 + 500.0
+    sold = _call(target, period, [_tier("100000", account_rates=rates)],
+                 {"a": Decimal("10000"), "b": Decimal("10000"), "c": Decimal("10000")},
+                 labels=[("a", "A"), ("b", "B"), ("c", "C")])
+    assert sold["payout"] == 4000.0 and sold["gap"] == 70000.0
+
+
+def test_W17_an_account_netting_negative_counts_as_0_as_the_engine_counts_it():
+    """Review N2: returns on one account do not inflate the others' share or the distance."""
+    target, period = _fake()
+    rates = {"a": Decimal("2"), "b": Decimal("4")}
+    nxt = _call(target, period, [_tier("100000", account_rates=rates)], {"a": Decimal("50000"), "b": Decimal("-5000")},
+                labels=[("a", "A"), ("b", "B")])
+    assert nxt["gap"] == 50000.0 and nxt["payout"] == 2000.0 and nxt["mix"] == "so_far"
+
+
+def test_W18_no_ratio_and_no_tiers_are_never_called_the_top_tier():
+    """Review S1."""
+    from app.services.assistant_registry.sales import _next_line
+
+    target, period = _fake(threshold_unit="points")
+    assert _call(target, period, [_tier("10", rate=Decimal("1"))], {None: Decimal("0")})["state"] == "no_ratio"
+    target, period = _fake(threshold_unit="pct")
+    assert _call(target, period, [], {None: Decimal("0")})["state"] == "no_tiers"
+    live = {"target_no": "TGT-9", "start": period.period_start, "end": period.period_end, "next": {"state": "no_ratio"}}
+    assert "top tier" not in _next_line("D", live) and "RM per point" in _next_line("D", live)
+
+
+def test_W19_a_replaced_period_would_still_pay_0_and_says_why():
+    """Review S3: the replacing dealer target's tier does not move, so reaching this one's own tier pays 0."""
+    from app.services.assistant_registry.sales import _next_line
+
+    target, period = _fake(subject_kind="agent")
+    nxt = _call(target, period, [_tier("100000", rate=Decimal("1"))], {None: Decimal("40000")}, replaced=True)
+    assert (nxt["gap"], nxt["payout"], nxt["gain"]) == (60000.0, 0.0, 0.0)
+    live = {"target_no": "TGT-9", "start": period.period_start, "end": period.period_end, "next": nxt}
+    assert "replaced by its dealer target" in _next_line("D", live)
+
+
+def test_W20_a_quantity_target_says_units_not_ringgit():
+    """Review S4: threshold and gap in units, payout in RM, rates per unit."""
+    from app.services.assistant_registry.sales import _next_line
+
+    target, period = _fake(metric="quantity")
+    rates = {"a": Decimal("2"), "b": Decimal("3")}
+    nxt = _call(target, period, [_tier("500", account_rates=rates)], {"a": Decimal("100"), "b": Decimal("100")},
+                labels=[("a", "A"), ("b", "B")])
+    line = _next_line("D", {"target_no": "TGT-9", "start": period.period_start, "end": period.period_end, "next": nxt})
+    assert "tier 1 at 500.00 units, 300.00 units to go, would pay RM 1,250.00" in line
+    assert "A RM 2 per unit, B RM 3 per unit" in line
+
+
+def test_W21_an_aggregate_on_a_next_tier_field_counts_as_asked(targets):
+    """Review N1."""
+    db, _c, _t = targets
+    out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT,
+                   "aggregates": [{"fn": "min", "field": "to_next_tier"}]})
+    assert "Next tier" in out["scope_note"]
