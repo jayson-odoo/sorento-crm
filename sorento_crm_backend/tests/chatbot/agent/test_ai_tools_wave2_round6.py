@@ -23,10 +23,11 @@ def _owner(t, key):
     return f"{t[key].sales_agent} - Agent {key.upper()}"
 
 
-def test_S1_payout_per_agent_one_row_per_agent_unassigned_once_with_totals(targets):
+def test_S1_payout_per_agent_one_row_per_agent_then_the_dealer_with_totals(targets):
+    """AGENT-COMMISSION-ALL (owner 8 Nov): a dealer is its own row, named as the Dealers tab names it."""
     db, _c, t = targets
     out = run(db, {"entity": ENTITY})
-    assert [r["label"] for r in out["rows"]] == [_owner(t, "a"), _owner(t, "b"), "Unassigned"]
+    assert [r["label"] for r in out["rows"]] == [_owner(t, "a"), _owner(t, "b"), "ZZT DEALER W2"]
     a = out["rows"][0]
     assert a["targets"] == 1 and a["target_value"] == 10000.0 and a["achieved_value"] == 9000.0
     assert a["achieved_pct"] == 90.0 and a["payout"] == 180.0
@@ -88,7 +89,8 @@ def test_S4_the_screens_reading_a_target_without_a_percent_is_below():
     assert _below(100.0) is False and _below(120.0) is False
 
 
-def test_S5_a_dealer_whose_accounts_one_agent_owns_is_that_agents(targets):
+def test_S5_a_dealer_whose_accounts_one_agent_owns_stays_the_dealers(targets):
+    """AGENT-COMMISSION-ALL Q1 (a), owner 8 Nov: replaces the 5 Nov rule that folded such a dealer into the agent."""
     from app.models.order import Customer
     from app.models.sales import SalesTargetAccount
 
@@ -100,8 +102,8 @@ def test_S5_a_dealer_whose_accounts_one_agent_owns_is_that_agents(targets):
                                                  {"field": "owner", "op": "contains", "value": "agent a"}],
                    "fields": ["kinds", "targets", "payout"]})
     [row] = out["rows"]
-    assert row["kinds"] == "agent, dealer" and row["targets"] == 2
-    assert row["payout"] == 3500.0 + 360.0  # the dealer's Q3 (70,000 at 5%) plus A's own September
+    assert row["kinds"] == "agent" and row["targets"] == 1
+    assert row["payout"] == 360.0  # A's own September only; the dealer's 3,500 is the dealer's row
 
 
 def test_S6_nothing_matched_is_said_never_padded(targets):

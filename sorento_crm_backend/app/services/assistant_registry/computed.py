@@ -335,6 +335,12 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     if named_agents:
         notes.insert(0, named_agents)
     rows = [r for r in computed if all(t(r) for t in tests)]
+    if own_only and entity.own_note:
+        notes.append(entity.own_note)
+    if entity.row_note:
+        said = entity.row_note(rows)
+        if said:
+            notes.append(said)
 
     if key_rows or agg_rows:
         out = _groups(entity, rows, key_rows, agg_rows, sort, spec)
@@ -352,10 +358,9 @@ def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[
     "Agent B III", other owner records). On a field that prints an agent ("CODE - Name", `FieldDef.agent_id`), an
     `eq`, `contains` or `starts_with` whose value is some row's code, name or label keeps only those rows; a value
     that names none exactly matches as the op says."""
-    from app.services.assistant_registry.query import agent_exact
-
     tests = list(tests)
     taken: list[str] = []
+    agents_only = True
     for index, item in enumerate(filters):
         name = item.get("field") if isinstance(item, dict) else None
         field = entity.fields.get(name) if isinstance(name, str) else None
@@ -364,15 +369,29 @@ def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[
             continue
         if not isinstance(value, str) or not value.strip():
             continue
-        exact = sorted({str(r.get(name)) for r in computed if agent_exact(r.get(name), value)})
-        if not exact:
+        hits = [r for r in computed if names_exact(r, name, value)]
+        if not hits:
             continue
-        tests[index] = lambda row, path=name, want=value: agent_exact(row.get(path), want)
-        taken.extend(exact)
+        tests[index] = lambda row, path=name, want=value: names_exact(row, path, want)
+        taken.extend(sorted({str(r.get(name)) for r in hits}))
+        agents_only = agents_only and all(r.get("owner_kind", "agent") == "agent" for r in hits)
     if not taken:
         return tests, None
     shown = list(dict.fromkeys(taken))
-    return tests, f"Agent{'s' if len(shown) > 1 else ''}: {', '.join(shown[:5])}."
+    word = ("Agents" if len(shown) > 1 else "Agent") if agents_only else "Matched"
+    return tests, f"{word}: {', '.join(shown[:5])}."
+
+
+def names_exact(row: dict, path: str, value: Any) -> bool:
+    """Does `value` name the row's `path` exactly: the "CODE - Name" reading (`agent_exact`), or one of the names the
+    row carries for it in `_names` (AGENT-COMMISSION-ALL: a team with or without "Team", a dealer's account codes
+    and names, the person behind several agent codes)."""
+    from app.services.assistant_registry.query import _plain_text, agent_exact
+
+    if agent_exact(row.get(path), value):
+        return True
+    names = (row.get("_names") or {}).get(path)
+    return bool(names) and _plain_text(value) in names
 
 
 #: The most values listed when a text filter matched nothing.

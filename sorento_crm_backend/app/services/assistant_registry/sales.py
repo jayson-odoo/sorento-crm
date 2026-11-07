@@ -18,8 +18,6 @@ from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
 TARGETS_VIEW = "sales.targets.view"
-#: The owner of a dealer target no single agent owns every account of (crew pass on ddd978ef).
-UNASSIGNED = "Unassigned"
 
 
 def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
@@ -68,6 +66,12 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     # An agent's team is the one it is in today, as the Agents tab shows it.
     team_of_agent = {m.sales_agent_id: t for m, t in ts._covering_on(db, today)}
     dealer_accounts = ts._accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
+    # The dealer target that replaces one in a period it reaches a tier (Q5: the answer names it).
+    replacing_ids = {t.replaced_by_target_id for t in targets if t.replaced_by_target_id}
+    replacing = (
+        dict(db.query(SalesTarget.id, SalesTarget.target_no).filter(SalesTarget.id.in_(replacing_ids)))
+        if replacing_ids else {}
+    )
 
     rows = []
     for target, period, fig in ts.period_figures(db, targets, date_from=date_from, date_to=date_to):
@@ -103,6 +107,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 # (crew pass on 74b6b751: a code-only field found "0 records" for a name).
                 "agent": agent_label(agent) if agent else None,
                 "agent_code": agent.sales_agent if agent else None,
+                "_agent_id": agent.id if agent else None,
                 "team": team.name if team else None,
                 "period": period.period_start,
                 "period_start": period.period_start,
@@ -121,6 +126,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
                 "bonus": bonus if has_commission else None,
                 "payout": round((commission or 0) + (bonus or 0), 2) if has_commission else None,
                 "replaced": fig["replaced"],
+                "replaced_by": replacing.get(target.replaced_by_target_id) if fig["replaced"] else None,
             }
         )
     return rows
@@ -135,14 +141,19 @@ def _below(pct) -> bool:
 
 
 def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
-    """`agent_target_summary`: one row per owner per period, deterministic, from `_target_rows` (the target page's
-    own per-period figures) with nothing recomputed but sums and counts.
+    """`agent_target_summary`: one row per target SUBJECT over the window (AGENT-COMMISSION-ALL, owner 8 Nov): each
+    agent, each team, each dealer, deterministic, from `_target_rows` (the target page's own per-period figures) with
+    nothing recomputed but sums and counts.
 
-    The owner of a target is the rule the target service already uses for a salesperson's view
-    (`target_chat_scope`): an agent target is its agent's; a dealer target is the agent's who owns EVERY counted
-    account (`Customer.sales_agent_id`), else "(no single agent)"; a team target is the team's. So the rows' counts
-    and payouts add up to every target period on the screens."""
-    from app.models.sales_agent import SalesAgent
+    Owner answers on the behaviour card: an agent's row is its own agent targets only (Q1 a: a dealer target is paid
+    to the dealer's account, so it is the dealer's row, never folded into the agent who owns its accounts); a team's
+    row is its team target's own payout, named "Team X" and no person (Q2 a, Q3 a), and its members are the agent rows
+    whose `team` is X (Q2 b); a dealer is named as the Dealers tab names it, `agent` being the agent who owns every
+    counted account. Dealer targets with the same name are one dealer (a target and the one that replaces it, Q5).
+
+    Matching (`computed.names_exact`): an agent by code, name, "CODE - Name" or the person behind several codes
+    (`SalesAgent.person_label`); a team with or without "Team"; a dealer by its name or any counted account's code or
+    name. A period with a target of 0 adds nothing to target, achieved and % (no % on the screen either)."""
     from app.services.sales import achievement_service as ach
     from app.services.sales import target_service as ts
     from app.services.sales.team_service import agent_label
@@ -151,28 +162,40 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
     dealer_ids = [r["target_id"] for r in periods if r["subject_kind"] == "dealer"]
     accounts = ts._accounts_by_target(db, dealer_ids) if dealer_ids else {}
     agent_ids = {c.sales_agent_id for customers in accounts.values() for c in customers if c.sales_agent_id}
+    agent_ids |= {r["_agent_id"] for r in periods if r["_agent_id"]}
     agents = {a.id: a for a in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids))} if agent_ids else {}
+    person = {agent_label(a): _norm(a.person_label) for a in agents.values() if _norm(a.person_label)}
 
-    def owner(row: dict) -> tuple[str, str]:
+    def subject(row: dict) -> tuple[str, str, dict]:
+        """(name, kind, extra fields and names)."""
         if row["subject_kind"] == "agent":
-            return row["agent"] or "(no agent)", "agent"
+            name = row["agent"] or "(no agent)"
+            names = [person[name]] if name in person else []
+            return name, "agent", {"agent": row["agent"], "team": row["team"], "_names": {"owner": names, "agent": names}}
         if row["subject_kind"] == "team":
-            return f"Team {row['team'] or row['subject']}", "team"
-        owners = {c.sales_agent_id for c in accounts.get(row["target_id"], [])}
-        if len(owners) == 1 and None not in owners and next(iter(owners)) in agents:
-            return agent_label(agents[next(iter(owners))]), "agent"
-        return UNASSIGNED, "none"
+            team = row["team"] or row["subject"]
+            return f"Team {team}", "team", {"agent": None, "team": None, "_names": {"owner": [_norm(team)]}}
+        customers = accounts.get(row["target_id"], [])
+        owners = {c.sales_agent_id for c in customers}
+        owner = (
+            agent_label(agents[next(iter(owners))])
+            if len(owners) == 1 and None not in owners and next(iter(owners)) in agents else None
+        )
+        names = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
+        return row["subject"], "dealer", {"agent": owner, "team": None, "_names": {"owner": names}}
 
-    per: dict[str, dict] = {}
+    per: dict[tuple, dict] = {}
     for row in periods:
-        name, kind = owner(row)
-        # ONE row per owner over the whole window (crew pass on ddd978ef: per owner and period put one agent on
-        # four rows).
-        out = per.setdefault(name, {
-            "id": name, "owner": name, "owner_kind": kind, "period": row["period_start"],
-            "periods": 0, "targets": set(), "target_value": 0.0, "achieved_value": 0.0,
-            "commission": None, "bonus": None, "payout": None, "_kinds": set(), "_complete": True,
+        name, kind, extra = subject(row)
+        out = per.setdefault((kind, name), {
+            "id": f"{kind}:{name}", "owner": name, "owner_kind": kind, "period": row["period_start"],
+            "agent": extra["agent"], "team": extra["team"], "periods": 0, "targets": set(), "target_value": 0.0,
+            "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None, "replaced_by": None,
+            "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
+            "_zero": set(), "_replaced": set(), "_has_commission": False,
         })
+        for key, values in extra["_names"].items():
+            out["_names"][key].update(values)
         out["periods"] += 1
         out["targets"].add(row["target_no"])
         out["period"] = min(out["period"], row["period_start"])
@@ -180,15 +203,24 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         if row["metric"] != "amount" or row["target_value"] is None:
             # Units, or a points target without a ratio: no RM figure to add (the page shows none either).
             out["_complete"] = False
+        elif row["target_value"] <= 0:
+            # A target of 0 has no % on the screen; its sales would swamp the row's % (owner C3, 8 Nov).
+            out["_zero"].add(row["target_no"])
         else:
             out["target_value"] += row["target_value"]
             out["achieved_value"] += row["achieved_value"] or 0.0
+            out["_summed"] = True
+        if row["commission"] is not None:
+            out["_has_commission"] = True
         for k in ("commission", "bonus", "payout"):
             if row[k] is not None:
                 out[k] = round((out[k] or 0.0) + row[k], 2)
+        if row.get("replaced_by"):
+            out["_replaced"].add((row["target_no"], row["replaced_by"]))
     rows = []
     for out in per.values():
-        complete = out.pop("_complete")
+        summed = out.pop("_summed")
+        complete = out.pop("_complete") and summed
         out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
         out["targets"] = len(out["targets"])
         goal, achieved = round(out["target_value"], 2), round(out["achieved_value"], 2)
@@ -197,10 +229,36 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         out["achieved_pct"] = (
             ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))) if complete and goal else None
         )
+        out["replaced_by"] = ", ".join(sorted({by for _no, by in out["_replaced"]})) or None
+        out["_names"] = {k: sorted(v) for k, v in out["_names"].items()}
+        out["_zero"] = sorted(out["_zero"])
+        out["_replaced"] = sorted(out["_replaced"])
         rows.append(out)
-    # Agents by name, then teams, then the targets no single agent owns, once, last.
+    # Agents by name, then teams, then dealers.
     rows.sort(key=lambda r: ({"agent": 0, "team": 1}.get(r["owner_kind"], 2), r["owner"]))
     return rows
+
+
+def _norm(value) -> str:
+    return " ".join(str(value or "").split()).lower()
+
+
+def _summary_note(rows: list[dict]) -> str | None:
+    """What the answer must say about the rows it shows (owner C3, Q5): which targets of 0 were left out of target
+    and achieved, whose payout is empty because no commission is set (never "RM 0"), and a replaced dealer period."""
+    parts = []
+    zero = [no for r in rows for no in r["_zero"]]
+    if zero:
+        parts.append(f"Left out of target and achieved (a target of 0): {', '.join(zero[:5])}.")
+    unset = [r["owner"] for r in rows if not r["_has_commission"]]
+    if unset:
+        parts.append(f"No commission is set on the targets of {', '.join(unset[:5])}: payout is empty, not RM 0.")
+    for r in rows:
+        for no, by in r["_replaced"]:
+            parts.append(
+                f"{no} ({r['owner']}) is replaced by {by} in the periods that target reached a tier, so it pays 0 there."
+            )
+    return " ".join(parts) or None
 
 
 def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
@@ -320,7 +378,7 @@ register(
         pages=("/sales/targets",),
         routes=("GET /api/v1/sales/targets",),
         hint="one row per target period; for one named target only (TGT-...). Not in the index: use "
-             "agent_target_summary for target questions",
+             "agent_target_summary for payout of an agent, team or dealer",
         in_index=False,
         list_fields=("period_start", "period_end", "target_value", "achieved_value", "achieved_pct", "payout"),
         compute=_target_rows,
@@ -331,7 +389,7 @@ register(
     # Crew passes on 0463b805 and ddd978ef (5 Nov): two deterministic target entities, one per question kind.
     EntityDef(
         key="agent_target_summary",
-        label="Sales targets by agent",
+        label="Commission payout by agent, team or dealer",
         module="sales",
         model=SalesTarget,
         view_permission=TARGETS_VIEW,
@@ -339,11 +397,22 @@ register(
         own_clause=_own,
         fields={
             "owner": FieldDef(
-                "Agent", kind="text", agent_id=True,
-                note="'CODE - Name' (agent targets and the dealers whose accounts the agent owns), 'Team X', or "
-                     "'Unassigned'; filter with eq on a code or name.",
+                "Agent, team or dealer", kind="text", agent_id=True,
+                note="'CODE - Name' for an agent (its own agent targets), 'Team X' for a team target, the dealer's "
+                     "name as the Dealers tab shows it. Matched by an agent's code, name or person, a team's name "
+                     "with or without 'Team', a dealer's name or any of its account codes or names.",
             ),
-            "owner_kind": FieldDef("Owner kind", kind="text", note="agent, team or none."),
+            "owner_kind": FieldDef("Kind", kind="text", note="agent, team or dealer."),
+            "agent": FieldDef(
+                "Agent", kind="text", agent_id=True,
+                note="The agent itself on an agent row; on a dealer row the agent who owns every counted account "
+                     "(dealers of Agent A: agent eq A and owner_kind eq dealer).",
+            ),
+            "team": FieldDef(
+                "Agent's team", kind="text",
+                note="Agent rows only, the agent's team today: team eq X lists the agents of team X (their own "
+                     "targets); the team target itself is the owner 'Team X' row.",
+            ),
             "period": FieldDef(
                 "Period", kind="date",
                 note="The window: between [from, to] (last month, this quarter); without it, the current periods.",
@@ -351,21 +420,34 @@ register(
             "kinds": FieldDef("Target kinds", kind="text"),
             "periods": FieldDef("Periods", kind="number"),
             "targets": FieldDef("Targets", kind="number"),
-            "target_value": FieldDef("Target (RM)", kind="number", note="Empty when a units or no-ratio target is in the row."),
+            "target_value": FieldDef(
+                "Target (RM)", kind="number",
+                note="Empty when a units or no-ratio target is in the row; a target of 0 adds nothing.",
+            ),
             "achieved_value": FieldDef("Achieved (RM)", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
             "commission": FieldDef("Commission", kind="number"),
             "bonus": FieldDef("Bonus", kind="number"),
-            "payout": FieldDef("Commission payout", kind="number", note="Commission plus bonus over the window."),
+            "payout": FieldDef(
+                "Commission payout", kind="number",
+                note="Commission plus bonus over the window; empty (not 0) when no commission is set.",
+            ),
+            "replaced_by": FieldDef(
+                "Replaced by", kind="text",
+                note="A dealer target that replaced this dealer's own target in a period it reached a tier (pays 0).",
+            ),
         },
         name_by=("owner",),
-        hint="PAYOUT / COMMISSION / TARGET vs ACHIEVED per agent or for one agent: one row per agent over the window, "
-             "totals row. One agent: agent=<code or name as said>",
-        list_fields=("targets", "target_value", "achieved_value", "achieved_pct", "payout"),
+        hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
+             "one row per agent, team and dealer over the window, totals row. One of them: agent=<code or name as said> "
+             "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
+        list_fields=("owner_kind", "targets", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
         window_field="period",
         brand_blind=True,
+        own_note="You see only your own agents' targets: team and dealer payouts are not visible to you.",
+        row_note=_summary_note,
     ),
     EntityDef(
         key="target_list",

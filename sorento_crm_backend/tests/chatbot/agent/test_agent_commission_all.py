@@ -158,15 +158,20 @@ def test_C7_team_members_payout_is_their_own_agent_targets_by_team(team):
 
 
 def test_C8_a_replaced_dealer_period_pays_0_and_names_the_target_that_replaced_it(api, grant):
+    """The account's own target and the dealer target that replaces it carry the same dealer name: one dealer row,
+    paid once (the dealer's tier), and the answer says which target was replaced by which."""
     client, db, company_id = api
     grant("sales.targets.view")
     dealer, own = _replacing_pair(client, db, company_id, 1300000)
-    out = run(db, {"entity": ENTITY, "agent": "ZZT REPL A/C I", "period": YEAR, "fields": ["owner_kind", "payout"]})
-    row = next(r for r in out["rows"] if r["payout"] == 0)
-    assert row["owner_kind"] == "dealer"
+    out = run(db, {"entity": ENTITY, "agent": "ZZT REPL A/C I", "period": YEAR,
+                   "fields": ["owner_kind", "targets", "payout", "replaced_by"]})
+    [row] = out["rows"]
+    assert row["owner_kind"] == "dealer" and row["targets"] == 2
+    year = date(2026, 1, 1), date(2026, 12, 31)
+    assert _page_payout(db, own["id"], *year) == 0
+    assert row["payout"] == _page_payout(db, dealer["id"], *year) == 16000 + 32500
     assert row["replaced_by"] == dealer["target_no"]
-    assert f"replaced by {dealer['target_no']}" in out["scope_note"]
-    assert row["payout"] == _page_payout(db, own["id"], date(2026, 1, 1), date(2026, 12, 31)) == 0
+    assert f"{own['target_no']} (ZZT REPL A/C I) is replaced by {dealer['target_no']}" in out["scope_note"]
 
 
 # ------------------------------------------------------------------ permissions (Q4) and the index
