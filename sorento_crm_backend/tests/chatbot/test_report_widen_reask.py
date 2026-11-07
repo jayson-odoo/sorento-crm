@@ -370,3 +370,20 @@ def test_m9_lock_a_raw_that_differs_in_form_from_the_code_is_still_the_settled_h
     assert _kind_slot(rbot).get("asking") != "kind", f"M9: asked {text!r}"
     args = _args(calls)
     assert args.get("company") == DEFAULT_COMPANY_ID and args.get("brand_ids"), f"M9: {args}"
+
+
+def test_m6_unit_an_owed_word_stays_asked_although_the_held_ask_settled_it() -> None:
+    """Direct `_word_kinds`: the three-way question is open and owes "sorento" (kind_words), its reply leaves the word in
+    brand_or_account_type with no pick, and the held ask holds company Sorento AND brand Sorento. The word stays unsure
+    (asked again). Catches `key not in owed` removed from the settled-name rule (report_ask.py ~:3456)."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.lanes.business import report_ask
+
+    focus = SimpleNamespace(required_ask={"ask": report_ask.ASK_NAME, "values": {}, "extras": {"kind_words": ["sorento"]}})
+    ask = {"brands": [], "account_types": [], "company_or_brand": [], "brand_or_account_type": ["sorento"], "company": "Sorento"}
+    held = {"kind": "sales", "company": "Sorento", "brands": ["Sorento"]}
+    out = report_ask._word_kinds(
+        ask, {"entities": []}, focus, None, company="Sorento", companies=[("c1", "Sorento", "SOR")], held_ask=held
+    )
+    assert [(w, how) for w, how, _e, _s in out] == [("sorento", "unsure")], out
