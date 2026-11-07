@@ -310,3 +310,97 @@ def test_a_first_confirm_of_a_moved_line_with_an_imported_order_says_where_it_wa
     world.db.expire_all()
     (after,) = _rows(world, line)
     assert (str(after.id), after.state, after.verb, after.qty) == before
+
+
+# Review round 2: a first Confirm of a moved line keeps every existing first-Confirm wording
+# (CHANGED, take-backs, a mixed decision in full) and adds the move after it, once.
+
+
+def _imported(api, qtys, *, line_qty, delivery_date=None):
+    """An undecided line with raised ORDER rows (a sheet import) at the line's location, then
+    AutoCount moves the line to a sibling location. Returns (order, line, old, new_wh)."""
+    from decimal import Decimal
+
+    from .test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+    from .test_oi_saved_line_email import _one_line_order
+
+    _client, world = api
+    order, line, core = _one_line_order(world, line_qty)
+    old = world.own_wh.warehouse_code
+    inquiry = _inquiry(world.db, world.company_id, order.id)
+    for qty in qtys:
+        row = _oi_row(world.db, world.company_id, inquiry.id, line.id,
+                      world.product.product_code, qty, delivery_date=delivery_date)
+        row.stock_location = old
+    core.qty_ordered = Decimal(line_qty)
+    line.qty = Decimal(line_qty)
+    world.db.commit()
+    new_wh = _sibling(world)
+    _move(world, line, new_wh)
+    return order, line, old, new_wh
+
+
+def test_first_confirm_two_imported_rows_moved_reads_changed_then_the_move(api, emails):
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["10", "3"], line_qty="8")
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, buy_qty="8")])
+
+    assert len(emails) == 1, emails
+    assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
+        (new_wh.warehouse_code, f"CHANGED: ORDER 10 & ORDER 3 -> ORDER 8, NEW LOCATION (was {old})"),
+    ]
+
+
+def test_first_confirm_use_plus_buy_moved_reads_the_mixed_change_then_the_move(api, emails):
+    from .test_so_supply_confirmation import _stock
+
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["10"], line_qty="10")
+    _stock(world.db, world.product, new_wh, on_hand=50)
+    world.db.commit()
+    emails.clear()
+
+    _post(api, order, [_line_payload(
+        line.id, reserve=[{"warehouse_id": new_wh.id, "qty": "6"}], buy_qty="4",
+        amend_reason="Part from stock.",
+    )])
+
+    new = new_wh.warehouse_code
+    assert len(emails) == 1, emails
+    assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
+        (new, f"CHANGED: ORDER 10 -> USE {new} 6 & ORDER 4, NEW LOCATION (was {old})"),
+    ]
+
+
+def test_first_confirm_moved_with_nothing_else_to_say_is_the_move_alone(api, emails):
+    """Review S2: the imported row already carries the line's date and qty, so no row line is
+    queued; the line is told from its snapshot as the move alone, never a fresh ORDER."""
+    from .test_oi_saved_line_email import D_A
+
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["10"], line_qty="10", delivery_date=D_A)
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, buy_qty="10")])
+
+    assert len(emails) == 1, emails
+    assert [(l["location"], l["remark"]) for l in emails[0]["lines"]] == [
+        (new_wh.warehouse_code, f"NEW LOCATION (was {old})"),
+    ]
+
+
+def test_first_confirm_with_a_planners_remark_still_says_the_move(api, emails):
+    """Review S3: any move counts (Q4), the planner's words included."""
+    _client, world = api
+    order, line, old, new_wh = _imported(api, ["10"], line_qty="10")
+    emails.clear()
+
+    payload = _line_payload(line.id, buy_qty="10")
+    payload["remark"] = "Site rushes it."
+    _post(api, order, [payload])
+
+    assert len(emails) == 1, emails
+    [remark] = [l["remark"] for l in emails[0]["lines"]]
+    assert remark == f"Site rushes it., NEW LOCATION (was {old})", remark
