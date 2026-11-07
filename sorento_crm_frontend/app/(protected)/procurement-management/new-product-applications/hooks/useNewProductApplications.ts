@@ -11,6 +11,7 @@ import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import type { ProductFetcher } from '@/components/common/NewProductApplicationProductCodes';
 import type {
   NewProductApplicationFeedbackWrite,
+  NewProductApplicationPurchasingResponseWrite,
   NewProductApplicationWrite,
 } from '@/types/newProductApplication';
 import {
@@ -30,6 +31,7 @@ import {
   closeNewProductApplicationNewCode,
   undoNewProductApplicationNewCode,
   rejectNewProductApplication,
+  saveNewProductApplicationPurchasingResponse,
   reviseNewProductApplication,
   saveNewProductApplicationFeedback,
   submitNewProductApplication,
@@ -289,6 +291,16 @@ export function useNewProductApplicationMutations() {
     mutationFn: (id: string) => undoNewProductApplicationNewCode(id),
     ...move('Failed to undo the code'),
   });
+  const purchasingResponse = useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: NewProductApplicationPurchasingResponseWrite;
+    }) => saveNewProductApplicationPurchasingResponse(id, data),
+    ...move('Failed to save the response', 'Purchasing response saved'),
+  });
   const feedback = useMutation({
     mutationFn: ({
       id,
@@ -320,5 +332,6 @@ export function useNewProductApplicationMutations() {
     linkNewCode,
     closeNewCode,
     undoNewCode,
+    purchasingResponse,
   };
 }

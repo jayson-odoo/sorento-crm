@@ -157,11 +157,9 @@ describe('pre-fill from a responded stock inquiry', () => {
     expect(body.customer_id).toBeNull();
     expect(body.customer_name).toBe('EXAMPLE DEVELOPER SDN BHD');
     expect(body.stock_inquiry_id).toBe('si-1');
-    expect(body.lines).toHaveLength(1);
+    // an application from an inquiry has no product rows
+    expect(body.lines).toEqual([]);
     expect(body.current_product_ids).toEqual([]);
-    // the line keeps today's Product code text
-    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
-    expect(body.lines[0]).not.toHaveProperty('current_product_ids');
     for (const k of [
       'category_id',
       'base_uom_id',
@@ -171,7 +169,7 @@ describe('pre-fill from a responded stock inquiry', () => {
       'selling_price',
       'further_description',
     ])
-      expect(body.lines[0]).not.toHaveProperty(k);
+      expect(body).not.toHaveProperty(k);
   });
 });
 
@@ -201,10 +199,10 @@ describe('pre-fill with a matched current code', () => {
 
 describe('number fields', () => {
   it('sends null, never 0, once the quantity is cleared, and has no cost box', async () => {
-    mock.prefill = PREFILL;
-    renderForm({ stockInquiryId: 'si-1' });
+    renderForm();
 
     const qty = (await screen.findByLabelText('Qty')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '55' } });
     expect(qty.value).toBe('55');
     fireEvent.change(qty, { target: { value: '' } });
     expect(screen.queryByLabelText(/^cost/i)).toBeNull();
@@ -259,8 +257,7 @@ describe('paper layout', () => {
   });
 
   it('sends only the v4 header keys and the paper line keys', async () => {
-    mock.prefill = PREFILL;
-    renderForm({ stockInquiryId: 'si-1' });
+    renderForm();
     await screen.findByLabelText('Product code');
     fireEvent.change(screen.getByLabelText('Dimension'), {
       target: { value: '600x400' },
@@ -290,11 +287,10 @@ describe('paper layout', () => {
 
 describe('Submit', () => {
   it('stays on the form when the server refuses, and reuses the saved draft on the next press', async () => {
-    mock.prefill = PREFILL;
     mock.submitAsync.mockRejectedValueOnce(
       new Error('Product 1: enter the product type.'),
     );
-    renderForm({ stockInquiryId: 'si-1' });
+    renderForm();
     await screen.findByLabelText('Product code');
 
     fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));

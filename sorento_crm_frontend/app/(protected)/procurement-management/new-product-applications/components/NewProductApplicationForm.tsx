@@ -24,6 +24,7 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   EMPTY_FORM,
   blankLine,
+  isBlankLine,
   numberErrors,
   payloadFromState,
   stateFromDetail,
@@ -100,7 +101,9 @@ function StaffNewProductApplicationForm({
     if (applicationId && existing.data) {
       const loaded = stateFromDetail(existing.data);
       setState(
-        loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
+        loaded.lines.length || loaded.stock_inquiry_id
+          ? loaded
+          : { ...loaded, lines: [blankLine()] },
       );
       setHydrated(true);
     } else if (!applicationId && prefill.data) {
@@ -246,6 +249,8 @@ function StaffNewProductApplicationForm({
                     ...prev,
                     stock_inquiry_id: opt.value,
                     stock_inquiry_label: opt.label,
+                    // An inquiry replaces the product rows, unless some were already filled in.
+                    lines: prev.lines.every(isBlankLine) ? [] : prev.lines,
                   }))
                 }
               />
@@ -285,13 +290,17 @@ function StaffNewProductApplicationForm({
               </>
             }
           />
-          <div className="mt-6">
-            <NewProductApplicationLines
-              lines={state.lines}
-              onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
-              errors={errors}
-            />
-          </div>
+          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
+          {(!state.stock_inquiry_id || state.lines.length > 0) && (
+            <div className="mt-6">
+              <NewProductApplicationLines
+                lines={state.lines}
+                onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
+                errors={errors}
+                readOnly={Boolean(state.stock_inquiry_id && applicationId)}
+              />
+            </div>
+          )}
 
           <div className="mt-8 flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button

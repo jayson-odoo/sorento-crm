@@ -34,6 +34,8 @@ export interface NewProductApplicationHeaderProps {
   productCodesField: ReactNode;
   /** NEW PRODUCT CODE, directly under REMARK. */
   newCodeField: ReactNode;
+  /** COST (MYR) of an application with no product rows; omitted when the table carries the costs. */
+  costField?: ReactNode;
   feedback?: { editable: boolean; onSave?: () => void; saving?: boolean };
 }
 
@@ -48,6 +50,7 @@ export function NewProductApplicationHeader({
   customerField,
   productCodesField,
   newCodeField,
+  costField,
   feedback,
 }: NewProductApplicationHeaderProps) {
   const patch = (next: Partial<FormState>) => onChange({ ...value, ...next });
@@ -149,6 +152,9 @@ export function NewProductApplicationHeader({
           </p>
         )}
       </InquiryFormTableRow>
+      {costField !== undefined && (
+        <InquiryFormTableRow label="COST:">{costField}</InquiryFormTableRow>
+      )}
     </ProductInquiryFormLayout>
   );
 }

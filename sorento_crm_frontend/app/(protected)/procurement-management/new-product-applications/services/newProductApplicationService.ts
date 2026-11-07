@@ -12,6 +12,7 @@ import {
   type NewProductApplicationLineage,
   type NewProductApplicationPage,
   type NewProductApplicationPrefill,
+  type NewProductApplicationPurchasingResponseWrite,
   type NewProductApplicationProductHit,
   type NewProductApplicationSuggestion,
   type NewProductApplicationSummary,
@@ -194,6 +195,18 @@ export const closeNewProductApplicationNewCode = (id: string, reason: string) =>
   post(`${at(id)}/new-code/close`, 'Failed to save the reason', { reason });
 export const undoNewProductApplicationNewCode = (id: string) =>
   post(`${at(id)}/new-code/undo`, 'Failed to undo the code');
+
+/** Purchasing's one save: the answer on the new code, lead time and cost(s). */
+export async function saveNewProductApplicationPurchasingResponse(
+  id: string,
+  data: NewProductApplicationPurchasingResponseWrite,
+): Promise<NewProductApplicationDetail> {
+  const res = await apiFetch(`${BASE}/${at(id)}/purchasing-response`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+  return read<NewProductApplicationDetail>(res, 'Failed to save the response');
+}
 
 /** Lists matches only (dashes, spaces and case ignored); a person picks one. */
 export async function searchNewProductApplicationProducts(

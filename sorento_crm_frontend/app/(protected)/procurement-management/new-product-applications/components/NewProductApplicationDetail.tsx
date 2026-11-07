@@ -32,8 +32,9 @@ import { NewProductApplicationStockInquiry } from '@/components/common/NewProduc
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUrlTab } from '@/hooks/useUrlTab';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
+import NewProductApplicationPurchasingDialog from './NewProductApplicationPurchasingDialog';
+import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
-import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -41,7 +42,6 @@ import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { numberFieldError } from '@/lib/number-field';
 import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
 import { stateFromDetail } from '@/lib/new-product-application-form';
 import { codeWithName } from '@/lib/product-display';
@@ -49,17 +49,13 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import type {
   NewProductApplicationDetail as Detail,
   NewProductApplicationLine as Line,
-  NewProductApplicationProductHit,
 } from '@/types/newProductApplication';
 import {
   newProductApplicationsPagerQuery,
   useNewProductApplicationMutations,
   useNewProductApplicationQuery,
 } from '../hooks/useNewProductApplications';
-import {
-  downloadNewProductApplicationExcel,
-  searchNewProductApplicationProducts,
-} from '../services/newProductApplicationService';
+import { downloadNewProductApplicationExcel } from '../services/newProductApplicationService';
 
 // The sheet is read-only here, so no brand or product is ever searched.
 const NO_PRODUCTS = async () => [];
@@ -130,54 +126,10 @@ function ReasonDialog({
   );
 }
 
-type Asking =
-  | { kind: 'reject' }
-  | { kind: 'revise' }
-  | { kind: 'cancel' }
-  | { kind: 'close' };
+type Asking = { kind: 'reject' } | { kind: 'revise' } | { kind: 'cancel' };
 
-/** The NEW PRODUCT CODE row: the outcome, or the three purchasing controls on an Approved record. */
-function NewCodeField({
-  application: r,
-  canOpen,
-  busy,
-  onLink,
-  onClose,
-  onUndo,
-}: {
-  application: Detail;
-  canOpen: boolean;
-  busy: boolean;
-  onLink: (productId: string) => void;
-  onClose: () => void;
-  onUndo: () => void;
-}) {
-  const [searching, setSearching] = useState(false);
-  // A code purchasing chose with "Use": it fills the picker, and Link is still pressed by a person.
-  const [pending, setPending] = useState<{ id: string; code: string } | null>(
-    null,
-  );
-  // The search text the server last answered with nothing for; the empty message names it.
-  const [missed, setMissed] = useState('');
-  const earlier = r.suggestions?.[0];
-
-  const fetchProducts = async (q: string) => {
-    if (!q.trim()) return [];
-    const hits = await searchNewProductApplicationProducts(q);
-    setMissed(hits.length === 0 ? q.trim() : '');
-    return hits;
-  };
-
-  const undo = canOpen && ['approved', 'completed'].includes(r.status) && (
-    <button
-      type="button"
-      className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
-      disabled={busy}
-      onClick={onUndo}
-    >
-      Undo
-    </button>
-  );
+/** The NEW PRODUCT CODE row, read-only: the product (with what AutoCount knows), the typed code, the reason, or the waiting line. */
+function NewCodeResult({ application: r }: { application: Detail }) {
   const facts = r.new_product_facts;
   const fromAutoCount = [
     facts?.opened_category_name,
@@ -212,120 +164,18 @@ function NewCodeField({
             <Badge variant="secondary">Inactive</Badge>
           )}
         </div>
-        <p className="text-xs text-muted-foreground">
-          {who} {undo}
-        </p>
+        {who && <p className="text-xs text-muted-foreground">{who}</p>}
         <p className="text-xs text-muted-foreground">
           From AutoCount: {fromAutoCount || '-'}
         </p>
       </div>
     );
   }
-
-  if (r.new_code_closed_reason) {
-    return (
-      <div className="min-w-0 space-y-0.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span
-            className={`${STATUS_PILL_BASE} ${statusPillClass('cancelled')}`}
-          >
-            Not opening
-          </span>
-          <span className="break-words">{r.new_code_closed_reason}</span>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {who} {undo}
-        </p>
-      </div>
-    );
-  }
-
-  if (!canOpen || r.status !== 'approved') {
-    return <NewProductApplicationNewCodeValue />;
-  }
-
   return (
-    <div className="min-w-0 space-y-2">
-      {earlier && (
-        <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <span className="min-w-0 break-words">
-            Created before: <b>{earlier.product_code}</b>
-            {earlier.application_no ? ` (${earlier.application_no})` : ''}
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => {
-              setPending({
-                id: earlier.product_id,
-                code: earlier.product_code,
-              });
-              setSearching(true);
-            }}
-          >
-            Use {earlier.product_code}
-          </Button>
-        </div>
-      )}
-      <div className="flex flex-wrap gap-1.5">
-        <Button
-          size="sm"
-          variant={searching ? 'outline' : 'primary'}
-          disabled={busy}
-          onClick={() => {
-            setPending(null);
-            setSearching((on) => !on);
-          }}
-        >
-          Link product
-        </Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={onClose}>
-          Not opening
-        </Button>
-      </div>
-      {searching && (
-        <>
-          <AsyncCombobox<NewProductApplicationProductHit>
-            ariaLabel="New product code"
-            value={pending?.id ?? ''}
-            displayValue={pending?.code}
-            allowFreeText={false}
-            fetchOptions={fetchProducts}
-            optionValue={(o) => o.id}
-            optionLabel={(o) => codeWithName(o.product_code, o.product_name)}
-            optionMeta={(o) => o.brand_name ?? ''}
-            placeholder="Search product code"
-            onChange={(v, item) => {
-              if (!item) return;
-              setMissed('');
-              setSearching(false);
-              setPending(null);
-              onLink(v);
-            }}
-          />
-          {pending && (
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={() => {
-                setSearching(false);
-                onLink(pending.id);
-                setPending(null);
-              }}
-            >
-              Link
-            </Button>
-          )}
-          {missed && (
-            <p className="text-sm text-muted-foreground">
-              {missed} is not in the product list yet. It appears after
-              AutoCount sends it.
-            </p>
-          )}
-        </>
-      )}
-    </div>
+    <NewProductApplicationNewCodeValue
+      code={r.new_code_text ?? r.new_product_code}
+      closedReason={r.new_code_closed_reason}
+    />
   );
 }
 
@@ -362,18 +212,8 @@ function StaffNewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const {
-    submit,
-    approve,
-    reject,
-    revise,
-    cancel,
-    undo,
-    linkNewCode,
-    closeNewCode,
-    undoNewCode,
-    feedback,
-  } = useNewProductApplicationMutations();
+  const { submit, approve, reject, revise, cancel, undo } =
+    useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
   );
@@ -390,11 +230,7 @@ function StaffNewProductApplicationDetail({
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Asking | null>(null);
   const [tab, setTab] = useUrlTab({ tabs: DETAIL_TABS, defaultTab: 'details' });
-  // Purchasing's edits to LEADTIME and COST before Save feedback; null shows the saved values.
-  const [draft, setDraft] = useState<{
-    lead_time: string;
-    costs: Record<string, string>;
-  } | null>(null);
+  const [purchasingOpen, setPurchasingOpen] = useState(false);
   const savedState = useMemo(
     () => (application ? stateFromDetail(application) : null),
     [application],
@@ -420,9 +256,6 @@ function StaffNewProductApplicationDetail({
     reject.isPending ||
     revise.isPending ||
     cancel.isPending ||
-    linkNewCode.isPending ||
-    closeNewCode.isPending ||
-    undoNewCode.isPending ||
     undo.isPending;
 
   if (isLoading) {
@@ -455,47 +288,9 @@ function StaffNewProductApplicationDetail({
   const canCancel =
     ownerActs && (r.status === 'draft' || locked) && !anyResolved;
   const stamp = r.submitted_at ?? r.created_at;
-  const canFeedback =
+  const canAnswer =
     canOpen && (r.status === 'approved' || r.status === 'completed');
-  const sheetState = savedState && {
-    ...savedState,
-    ...(draft
-      ? {
-          lead_time: draft.lead_time,
-          lines: savedState.lines.map((l) => ({
-            ...l,
-            cost_price: draft.costs[l.id ?? ''] ?? l.cost_price,
-          })),
-        }
-      : {}),
-  };
-
-  const saveFeedback = async () => {
-    if (!sheetState) return;
-    if (
-      sheetState.lines.some((l) =>
-        numberFieldError(l.cost_price, { min: 0, optional: true }),
-      )
-    ) {
-      toast.error('Cost must be 0 or more.');
-      return;
-    }
-    try {
-      await feedback.mutateAsync({
-        id: r.id,
-        data: {
-          lead_time: sheetState.lead_time.trim() || null,
-          lines: sheetState.lines.map((l) => ({
-            id: l.id as string,
-            cost_price: l.cost_price.trim() || null,
-          })),
-        },
-      });
-      setDraft(null);
-    } catch {
-      // the mutation's own onError toast names the refusal
-    }
-  };
+  const sheetState = savedState;
 
   const downloadExcel = async () => {
     try {
@@ -512,9 +307,7 @@ function StaffNewProductApplicationDetail({
         await reject.mutateAsync({ id: r.id, reason: value });
       else if (asking.kind === 'revise')
         await revise.mutateAsync({ id: r.id, reason: value });
-      else if (asking.kind === 'cancel')
-        await cancel.mutateAsync({ id: r.id, reason: value || undefined });
-      else await closeNewCode.mutateAsync({ id: r.id, reason: value });
+      else await cancel.mutateAsync({ id: r.id, reason: value || undefined });
       setAsking(null);
     } catch {
       // the mutation's own onError toast names the refusal
@@ -550,7 +343,7 @@ function StaffNewProductApplicationDetail({
             required
           />
         );
-      case 'cancel':
+      default:
         return (
           <ReasonDialog
             {...common}
@@ -558,16 +351,6 @@ function StaffNewProductApplicationDetail({
             label="Reason (optional)"
             confirmLabel="Cancel application"
             required={false}
-          />
-        );
-      default:
-        return (
-          <ReasonDialog
-            {...common}
-            title="Not opening"
-            label="Reason"
-            confirmLabel="Not opening"
-            required
           />
         );
     }
@@ -677,6 +460,11 @@ function StaffNewProductApplicationDetail({
                   <Link href={`${BASE_PATH}/${r.id}/edit`}>Edit</Link>
                 </Button>
               )}
+              {canAnswer && (
+                <Button disabled={busy} onClick={() => setPurchasingOpen(true)}>
+                  Edit purchasing response
+                </Button>
+              )}
             </div>
           }
         />
@@ -746,21 +534,11 @@ function StaffNewProductApplicationDetail({
                 <>
                   <NewProductApplicationHeader
                     value={sheetState}
-                    onChange={(next) =>
-                      setDraft((prev) => ({
-                        lead_time: next.lead_time,
-                        costs: prev?.costs ?? {},
-                      }))
-                    }
+                    onChange={() => {}}
                     readOnly
                     applicationNo={r.application_no}
                     createdAt={r.created_at}
                     salesPerson={r.applicant_name}
-                    feedback={{
-                      editable: canFeedback,
-                      onSave: () => void saveFeedback(),
-                      saving: feedback.isPending,
-                    }}
                     stockInquiryField={
                       r.stock_inquiry_id && r.stock_inquiry_number ? (
                         <Link
@@ -781,17 +559,15 @@ function StaffNewProductApplicationDetail({
                         readOnly
                       />
                     }
-                    newCodeField={
-                      <NewCodeField
-                        application={r}
-                        canOpen={canOpen}
-                        busy={busy}
-                        onLink={(productId) =>
-                          linkNewCode.mutate({ id: r.id, productId })
-                        }
-                        onClose={() => setAsking({ kind: 'close' })}
-                        onUndo={() => undoNewCode.mutate(r.id)}
-                      />
+                    newCodeField={<NewCodeResult application={r} />}
+                    costField={
+                      r.lines.length === 0 ? (
+                        <InquiryReadValue>
+                          {r.cost_price == null || r.cost_price === ''
+                            ? ''
+                            : `MYR ${r.cost_price}`}
+                        </InquiryReadValue>
+                      ) : undefined
                     }
                     customerField={
                       <span className="flex flex-wrap items-center gap-2">
@@ -804,73 +580,70 @@ function StaffNewProductApplicationDetail({
                       </span>
                     }
                   />
-                  <div className="mt-6">
-                    <NewProductApplicationLines
-                      lines={sheetState.lines}
-                      onChange={(next) =>
-                        setDraft((prev) => ({
-                          lead_time: prev?.lead_time ?? sheetState.lead_time,
-                          costs: Object.fromEntries(
-                            next.map((l) => [l.id ?? '', l.cost_price]),
-                          ),
-                        }))
-                      }
-                      readOnly
-                      showCost
-                      costEditable={canFeedback}
-                      renderOpenedAs={
-                        r.lines.some(isResolved)
-                          ? (draftLine) => {
-                              const l = r.lines.find(
-                                (x) => x.id === draftLine.id,
-                              );
-                              if (!l || !isResolved(l)) return null;
-                              const showUndo =
-                                canOpen &&
-                                ['approved', 'completed'].includes(r.status);
-                              return (
-                                <div className="min-w-0 space-y-0.5">
-                                  {l.opened_product_id ? (
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                      <Link
-                                        href={`/master-data-management/products/${l.opened_product_id}`}
-                                        className="truncate font-medium text-primary hover:underline"
-                                      >
-                                        {codeWithName(
-                                          l.opened_product_code,
-                                          l.opened_product_name,
+                  {(!r.stock_inquiry_id || r.lines.length > 0) && (
+                    <div className="mt-6">
+                      <NewProductApplicationLines
+                        lines={sheetState.lines}
+                        onChange={() => {}}
+                        readOnly
+                        showCost
+                        renderOpenedAs={
+                          r.lines.some(isResolved)
+                            ? (draftLine) => {
+                                const l = r.lines.find(
+                                  (x) => x.id === draftLine.id,
+                                );
+                                if (!l || !isResolved(l)) return null;
+                                const showUndo =
+                                  canOpen &&
+                                  ['approved', 'completed'].includes(r.status);
+                                return (
+                                  <div className="min-w-0 space-y-0.5">
+                                    {l.opened_product_id ? (
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <Link
+                                          href={`/master-data-management/products/${l.opened_product_id}`}
+                                          className="truncate font-medium text-primary hover:underline"
+                                        >
+                                          {codeWithName(
+                                            l.opened_product_code,
+                                            l.opened_product_name,
+                                          )}
+                                        </Link>
+                                        {l.opened_product_active === false && (
+                                          <Badge variant="secondary">
+                                            Inactive
+                                          </Badge>
                                         )}
-                                      </Link>
-                                      {l.opened_product_active === false && (
-                                        <Badge variant="secondary">
-                                          Inactive
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="break-words">
-                                      Not opening: {l.closed_reason}
-                                    </span>
-                                  )}
-                                  {showUndo && (
-                                    <button
-                                      type="button"
-                                      className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
-                                      disabled={busy}
-                                      onClick={() =>
-                                        undo.mutate({ id: r.id, lineId: l.id })
-                                      }
-                                    >
-                                      Undo
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            }
-                          : undefined
-                      }
-                    />
-                  </div>
+                                      </div>
+                                    ) : (
+                                      <span className="break-words">
+                                        Not opening: {l.closed_reason}
+                                      </span>
+                                    )}
+                                    {showUndo && (
+                                      <button
+                                        type="button"
+                                        className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                                        disabled={busy}
+                                        onClick={() =>
+                                          undo.mutate({
+                                            id: r.id,
+                                            lineId: l.id,
+                                          })
+                                        }
+                                      >
+                                        Undo
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              }
+                            : undefined
+                        }
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </CardContent>
@@ -893,6 +666,12 @@ function StaffNewProductApplicationDetail({
       )}
 
       {dialog}
+      {purchasingOpen && (
+        <NewProductApplicationPurchasingDialog
+          application={r}
+          onClose={() => setPurchasingOpen(false)}
+        />
+      )}
     </div>
   );
 }

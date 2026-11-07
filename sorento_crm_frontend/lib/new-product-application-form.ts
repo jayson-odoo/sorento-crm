@@ -90,6 +90,17 @@ export const blankLine = (): DraftLine => ({
   cost_price: '',
 });
 
+/** True when a row was never filled in (a fresh blank row). */
+export const isBlankLine = (l: DraftLine) =>
+  !l.id &&
+  !l.proposed_code.trim() &&
+  !l.description.trim() &&
+  !l.dimension.trim() &&
+  !l.material.trim() &&
+  !l.thickness.trim() &&
+  !l.packing.trim() &&
+  !l.expected_qty.trim();
+
 /** "SI26-0412 - XY-1234-MB": the inquiry as the header picker and the detail page name it. */
 export const stockInquiryLabel = (
   number?: string | null,
@@ -168,14 +179,8 @@ export function stateFromPrefill(p: NewProductApplicationPrefill): FormState {
     inquiry_code_hint: p.current_products?.length
       ? ''
       : text(first?.proposed_code).trim(),
-    lines: [
-      {
-        ...blankLine(),
-        proposed_code: text(first?.proposed_code),
-        description: text(first?.description),
-        expected_qty: figure(first?.expected_qty),
-      },
-    ],
+    // An application from an inquiry has no product rows: purchasing answers on the header.
+    lines: [],
   };
 }
 

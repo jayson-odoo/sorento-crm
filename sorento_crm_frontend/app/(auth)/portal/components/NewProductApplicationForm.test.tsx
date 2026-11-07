@@ -190,7 +190,7 @@ beforeEach(() => {
 });
 
 describe('new application', () => {
-  it('starts from my stock inquiry: line 1 gets the code text, the customer stays typed text', async () => {
+  it('starts from my stock inquiry: the code text becomes the hint, no product rows, the customer stays typed text', async () => {
     asMock(getNewProductApplicationPrefill).mockResolvedValue({
       stock_inquiry_id: 'si-1',
       stock_inquiry_number: 'SI26-0412',
@@ -234,8 +234,7 @@ describe('new application', () => {
     expect(body.customer_id).toBeNull();
     expect(body.stock_inquiry_id).toBe('si-1');
     expect(body.current_product_ids).toEqual([]);
-    expect(body.lines[0].proposed_code).toBe('XY-1234-MB & XY-1234-BG');
-    expect(body.lines[0]).not.toHaveProperty('current_product_ids');
+    expect(body.lines).toEqual([]);
   });
 
   it('has no item group, base UOM or selling price, and no cost box to write', async () => {

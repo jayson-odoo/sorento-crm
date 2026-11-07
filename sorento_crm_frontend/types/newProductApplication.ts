@@ -173,6 +173,10 @@ export interface NewProductApplicationDetail extends NewProductApplicationSummar
   suggestions?: NewProductApplicationSuggestion[];
   /** The ONE new product code purchasing links (or the reason it is not opening). */
   new_product_id?: string | null;
+  /** The code purchasing typed when it is not in the catalogue yet. */
+  new_code_text?: string | null;
+  /** COST (MYR) of an application with no product rows. */
+  cost_price?: string | number | null;
   new_product_code?: string | null;
   new_product_name?: string | null;
   new_product_active?: boolean | null;
@@ -193,6 +197,17 @@ export interface NewProductApplicationPage {
   total: number;
   page: number;
   limit: number;
+}
+
+/** PUT /purchasing-response: purchasing's one save. A key left out is unchanged; outcome null clears. */
+export interface NewProductApplicationPurchasingResponseWrite {
+  outcome?: 'link' | 'new' | 'not_opening' | null;
+  product_id?: string;
+  new_code?: string;
+  reason?: string;
+  lead_time?: string | null;
+  cost_price?: string | null;
+  lines?: { id: string; cost_price: string | null }[];
 }
 
 /** PUT /feedback: one lead time, one cost per product; null clears. */

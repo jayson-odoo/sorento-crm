@@ -35,6 +35,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { NewProductApplicationHeader } from '@/components/common/NewProductApplicationHeader';
 import { NewProductApplicationProductCodes } from '@/components/common/NewProductApplicationProductCodes';
+import { InquiryReadValue } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { NewProductApplicationNewCodeValue } from '@/components/common/NewProductApplicationNewCode';
 import { NewProductApplicationStockInquiry } from '@/components/common/NewProductApplicationStockInquiry';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -194,7 +195,9 @@ export default function NewProductApplicationForm({
     setAttachments((d.attachments ?? []) as PortalAttachment[]);
     const loaded = stateFromDetail(d);
     setState(
-      loaded.lines.length ? loaded : { ...loaded, lines: [blankLine()] },
+      loaded.lines.length || loaded.stock_inquiry_id
+        ? loaded
+        : { ...loaded, lines: [blankLine()] },
     );
   }, []);
 
@@ -564,11 +567,20 @@ export default function NewProductApplicationForm({
             }
             newCodeField={
               <NewProductApplicationNewCodeValue
-                code={application?.new_product_code}
+                code={application?.new_code_text ?? application?.new_product_code}
                 active={application?.new_product_active}
                 closedReason={application?.new_code_closed_reason}
                 supplier={application?.new_product_facts?.opened_supplier_name}
               />
+            }
+            costField={
+              application && application.lines.length === 0 ? (
+                <InquiryReadValue>
+                  {application.cost_price == null || application.cost_price === ''
+                    ? ''
+                    : `MYR ${application.cost_price}`}
+                </InquiryReadValue>
+              ) : undefined
             }
             customerField={
               <>
@@ -602,12 +614,14 @@ export default function NewProductApplicationForm({
               </>
             }
           />
+          {/* An application from an inquiry has no product table; an older one shows its rows read-only. */}
+          {(!state.stock_inquiry_id || state.lines.length > 0) && (
           <div className="mt-6">
             <NewProductApplicationLines
               lines={state.lines}
               onChange={(lines) => setState((prev) => ({ ...prev, lines }))}
               errors={errors}
-              readOnly={readOnly}
+              readOnly={readOnly || Boolean(state.stock_inquiry_id && application)}
               showCost={Boolean(application)}
               renderOpenedAs={
                 application?.lines.some(
@@ -634,6 +648,7 @@ export default function NewProductApplicationForm({
               }
             />
           </div>
+          )}
           <div className="mt-6">
             <AttachmentDropzone
               kind="new_product_application"
