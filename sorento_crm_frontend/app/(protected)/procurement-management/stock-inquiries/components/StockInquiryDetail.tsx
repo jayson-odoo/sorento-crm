@@ -39,12 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useUrlTab } from '@/hooks/useUrlTab';
-import {
-  InquiryApplicationsList,
-  NewProductApplicationBanners,
-} from '@/components/common/NewProductApplicationBanners';
+import { NewProductApplicationBanners } from '@/components/common/NewProductApplicationBanners';
 import {
   exportStockInquiryToExcel,
   exportStockInquiryWithRevisionsToExcel,
@@ -184,10 +179,6 @@ function StaffStockInquiryDetail({
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
   // The reply dialog's "Salesperson must create a New Product Application" box.
   const [editNpaRequested, setEditNpaRequested] = useState(false);
-  const [tab, setTab] = useUrlTab({
-    tabs: ['details', 'applications'] as const,
-    defaultTab: 'details',
-  });
   const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
   const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
@@ -1166,31 +1157,8 @@ function StaffStockInquiryDetail({
         />
       )}
 
-      {canSeeApplications && (
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList variant="line" className="w-full justify-start">
-            <TabsTrigger value="details">Details</TabsTrigger>
-            <TabsTrigger value="applications">
-              New product applications ({(applications ?? []).length})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      )}
-
-      {canSeeApplications && tab === 'applications' ? (
-        <InquiryApplicationsList
-          applications={applications ?? []}
-          renderNumber={(a) => (
-            <Link
-              href={`/procurement-management/new-product-applications/${a.id}`}
-              className="text-primary hover:underline"
-            >
-              {a.application_no}
-            </Link>
-          )}
-        />
-      ) : (
-      <>
+      {/* "New product applications (N)" is a tab of the page's ONE bar (StockInquiryDetailTabs),
+          next to Details / Comments / Revisions / SLA Tracking: no second row here. */}
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
           <InquiryReadValue empty=" - ">
@@ -1385,8 +1353,6 @@ function StaffStockInquiryDetail({
           because the revise banner above quotes the newest entry. */}
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
-      </>
-      )}
     </div>
   );
 }
