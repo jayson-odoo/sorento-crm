@@ -20,20 +20,69 @@ lag at the moment A dies (measured 0 bytes behind, under 2 ms).
 | `<A_PUBLIC_IP>` / `<B_PUBLIC_IP>` | public IPv4 of each node | hPanel |
 | `<A_PUBLIC_IF>` / `<B_PUBLIC_IF>` | public interface (often `eth0`) | on A: `ip route get <B_PUBLIC_IP>` prints `dev ...`; on B the same with A |
 | `<APP_DB>` / `<APP_DB_USER>` | the CRM database name and app role | A's `.env` `DATABASE_URL` (do not paste it anywhere) |
-| `<REPL_PASSWORD>` | `replicator` password | B's current `primary_conninfo` (S2.3 shows it on your screen) |
+| `<REPL_PASSWORD>` | `replicator` password | on B: `sudo grep -o "password=[^ ]*" /root/replica-run-new.sh` (on your screen only) |
 | `<SHA>` | the 40-hex image SHA A runs now | on A: `docker compose ps --format '{{.Image}}' backend_$(cat .active_color)` |
 | `<CRM_HOST>` | the public CRM hostname | Cloudflare DNS |
 | `<B_COMPOSE_NET>` | B's CRM compose network | on B: `docker network ls \| grep sorento` |
 
 Tunnel addresses used below (private, safe to keep): A = `10.77.0.1`, B = `10.77.0.2`.
 
+## The provider firewall (Hostinger, owner screenshot 7 Nov ~22:20)
+
+A and B share ONE Hostinger firewall rule set. It acts before the host, so Docker cannot bypass
+it. Rules, in order: accept TCP 22, 443, 80 from any; accept TCP 5432, 27017, 6432, 8765 and UDP
+51820 from ONE source, which is **node B's public IP**; then drop everything else.
+
+| Rule | What it opens, on each node | Source it needs | Recommendation |
+|---|---|---|---|
+| UDP 51820 | WireGuard | **A AND B** (each side sends handshakes and keepalives to the other) | Add A's public IP. Without it, A's packets are dropped at B, so no tunnel. |
+| TCP 5432 | A: the CRM Postgres (replication). B: n8n's Postgres | B (B replicates from A over the public address until S2.3 is done) | Remove the rule a day after S2.3 streams over the tunnel: tunnel traffic is inside UDP 51820, so the provider never sees 5432. |
+| TCP 6432 | A: pgbouncer (n8n on B reaches the CRM database here). B: host pgbouncer | B | Keep until n8n is retired or moved to the tunnel (`10.77.0.1:6432`), then remove. |
+| TCP 8765 | the CRM MCP server (streamable HTTP, bearer token); n8n on B calls it on A | B | Same as 6432: keep for n8n, move to the tunnel, then remove. |
+| TCP 27017 | B: n8n's MongoDB. Nothing outside B needs it, and the only allowed source is B itself | none | **Remove the rule.** It does nothing useful. |
+| TCP 22 | SSH | see below | Leave open to any for now (see below). |
+| everything else | dropped: n8n UI 5678, Redis 6379, the replica port 5434 | none | correct |
+
+**What this already covers:** S1 (A's 5432 from B only) and S3 (B's n8n stores and pgbouncer) are
+already enforced at the provider for IPv4. Whether the Hostinger firewall also filters IPv6 is
+UNVERIFIED; the outside-in check below tests it. The host rules in S1 and S3 stay as defence in
+depth: one shared rule set means a single "any" added later for some other reason re-opens both
+nodes, and tunnel traffic (inside 51820) is never filtered by the provider at all. They are no
+longer urgent: run S1 and S3 after S2, not before.
+
+**Outside-in check (from a third machine, e.g. a phone hotspot, on no allowlist):**
+
+```bash
+for h in <A_PUBLIC_IP> <B_PUBLIC_IP>; do
+  for p in 5432 6432 6379 27017 5678 5434 8765; do
+    nc -4 -z -w 5 $h $p && echo "$h:$p OPEN <- FAIL" || echo "$h:$p closed"; done
+  for p in 22 80 443; do nc -4 -z -w 5 $h $p && echo "$h:$p open (expected)" || echo "$h:$p closed"; done
+done
+# IPv6, if the nodes have public IPv6 addresses:
+for h in <A_PUBLIC_IPV6> <B_PUBLIC_IPV6>; do for p in 5432 6432 6379 27017 8765; do
+  nc -6 -z -w 5 $h $p && echo "$h:$p OPEN <- FAIL" || echo "$h:$p closed"; done; done
+```
+
+Expected: every database, cache and MCP port `closed` on both nodes; 22, 80 and 443 open. Any
+`OPEN <- FAIL` on IPv6 means the provider firewall does not cover IPv6: then S1 and S3 are urgent.
+
+**SSH 22 from any.** Restricting it (your own IP, or Tailscale only) would be safer, but: the
+release workflow SSHes into A (and later B) from GitHub-hosted runners, whose addresses change, so
+a 22-from-my-IP rule **breaks every release**. And a mistake locks you out of both nodes at once
+(shared rule set). If you restrict it, first make sure hPanel's browser terminal/VNC console works
+for both nodes (that is the rollback path: it does not go through the firewall), then either add
+Tailscale to the deploy workflow or keep 22 open. Recommended for now: keep 22 open, and make sure
+password login is off on both (`sudo sshd -T | grep -E '^(passwordauthentication|permitrootlogin)'`
+prints `passwordauthentication no` and `permitrootlogin no` or `prohibit-password`). Rollback of
+any SSH restriction: hPanel console, then remove the rule in the firewall panel.
+
 ## Order, downtime and stop rule
 
 | Step | Node | Changes | App downtime |
 |---|---|---|---|
-| S1 | A | firewall: Postgres 5432 from B only | none |
+| S1 | A | host firewall: Postgres 5432 from B only (provider already enforces it; defence in depth, run after S2) | none |
 | S2 | A + B | WireGuard tunnel, replication moves onto it | none (B re-connects in seconds) |
-| S3 | B | firewall: n8n stores and pgbouncer closed to the internet | none (n8n untouched if the check passes) |
+| S3 | B | host firewall: n8n stores and pgbouncer (provider already enforces it; defence in depth, run after S2) | none (n8n untouched if the check passes) |
 | S4 | A | one Postgres restart: `wal_log_hints`, WAL archive to R2, slot and sender limits | **yes: about 1-2 minutes of 503s on A**, announce it |
 | S5 | B | CRM app comes up on B as a STANDBY | none (B has no users) |
 | S6 | drill on B only | rehearse the manual failover on a throwaway copy | none |
@@ -121,8 +170,8 @@ whole database stops crossing the internet in clear text.
 
 ### S2.1 Tunnel (both nodes)
 
-**hPanel first:** on each node's Hostinger firewall allow `51820/udp` from the other node's
-public IP.
+**hPanel first:** the shared Hostinger rule for `51820/udp` must list BOTH nodes' public IPs (it
+lists only B today). Without A's IP, A's handshakes are dropped at B and the tunnel never comes up.
 
 **Paste (node A), then the same on node B with the values swapped as marked:**
 
@@ -187,36 +236,67 @@ docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
 
 **Rollback:** `docker compose exec -T -u postgres db sh -c 'cp "$PGDATA/pg_hba.conf.bak-07nov" "$PGDATA/pg_hba.conf"'` and the reload line.
 
-### S2.3 B: point the replica at the tunnel (reload)
+### S2.3 B: move the replica onto the tunnel (replica recreate, about 10-30 s, no user impact)
 
-First (read-only): `docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "select name, source from pg_settings where name in ('primary_conninfo','primary_slot_name')"`.
-**Stop if** any row says `command line`: `alter system` would be silently overridden; post it.
+On B, `primary_conninfo` and `primary_slot_name` are passed on the replica container's command
+line (`-c ...`; owner check 7 Nov: `pg_settings.source = command line`), so `alter system` cannot
+change them. The container is recreated with the same image id, volume, ports, env and args, and
+only `host=` changed to `10.77.0.1`. A is untouched; the slot holds WAL while the replica is down.
+
+**0. Prerequisite (READ-ONLY, B):** `sudo wg show wg0 latest-handshakes` fresh;
+`ping -c 5 -q 10.77.0.1` 0% loss; `docker exec sorento_crm_replica pg_isready -h 10.77.0.1 -p 5432`
+prints `accepting connections` (the container reaches A through the tunnel, NATed to 10.77.0.2,
+the address S2.2 allowed). Stop if not.
+
+**1. Generate (B, changes nothing running).** Copy `infra/scripts/replica-recreate-gen.py` from the
+branch to B as `/root/replica-gen.py` (mode 600), then:
 
 ```bash
-# THIS CHANGES PROD (node B). `show` prints the password: read it on YOUR screen, never paste it.
-docker exec -it sorento_crm_replica psql -U postgres -d postgres -Atc "show primary_conninfo"
-# Save the old string for the rollback (root-only file):
-sudo sh -c 'umask 077; docker exec sorento_crm_replica psql -U postgres -d postgres -Atc "show primary_conninfo" > /root/primary_conninfo.bak-07nov'
-# Same string, only host=... changed to host=10.77.0.1 (and port=5432):
-docker exec -it sorento_crm_replica psql -U postgres -d postgres \
-  -c "alter system set primary_conninfo = '<the same string with host=10.77.0.1 port=5432>'" \
-  -c "select pg_reload_conf()"
+sudo sh -c 'umask 077; docker inspect sorento_crm_replica | python3 -I /root/replica-gen.py 10.77.0.1'
 ```
 
-If `-U postgres` is refused on B, use the replica's superuser (the role A's `postgres` image created).
+Expected: `WARNINGS: 0`; the masked `old:` / `new:` lines differ only in `host=`; the NEW RUN line
+keeps `-p 127.0.0.1:5433:5432/tcp`, the data volume, `primary_slot_name`, and a `sha256:` image.
+Stop on any `STOP:` or `WARNING`. The `old:` line shows A's public IP: mask it before posting.
+
+**2. Recreate (THIS CHANGES PROD, B only):**
+
+```bash
+docker stop -t 60 sorento_crm_replica &&
+docker rename sorento_crm_replica sorento_crm_replica_old &&
+docker update --restart no sorento_crm_replica_old &&
+sudo sh /root/replica-run-new.sh &&
+sleep 15 &&
+docker exec sorento_crm_replica psql -U postgres -d postgres -Atc \
+  "select pg_is_in_recovery(), status, sender_host, sender_port from pg_stat_wal_receiver"
+```
+
+Expected on B: `t|streaming|10.77.0.1|5432` (re-run the last line if empty; up to about 30 s).
 
 **Check, on A (superuser):**
 
 ```bash
 docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
   "select application_name, client_addr, state from pg_stat_replication"
+docker compose exec -T -u postgres db psql -U postgres -d postgres -Atc \
+  "select slot_name, active, wal_status from pg_replication_slots"
 ```
 
-**Expected:** `sorento_crm_replica|10.77.0.2|streaming` within 30 s. Then the standard health check.
+**Expected:** `sorento_crm_replica|10.77.0.2|streaming`, `sorento_crm_replica_slot|t|reserved`, then
+the standard health check.
 
-**Rollback (B):** `alter system set primary_conninfo = '<contents of /root/primary_conninfo.bak-07nov>'` + `select pg_reload_conf()`.
+**Rollback (B):** `docker rm -f sorento_crm_replica && docker rename sorento_crm_replica_old sorento_crm_replica && docker update --restart unless-stopped sorento_crm_replica && docker start sorento_crm_replica`
+(use the restart policy step 1 printed). `/root/replica-run-old.sh` rebuilds the original if the
+`_old` container is ever lost.
 
-**Stop if:** not `streaming` from `10.77.0.2` within 2 minutes: roll back B first, then post.
+**Stop if:** not `streaming` from `10.77.0.1` within 2 minutes, or `docker logs --tail 30
+sorento_crm_replica` shows `FATAL` (`no pg_hba.conf entry for host "10.77.0.2"` = S2.2's row is
+missing on A): roll back, then post.
+
+Afterwards: keep `sorento_crm_replica_old` until the next day, then `docker rm` it (data is in the
+volume); `sudo shred -u /root/replica-run-old.sh /root/replica-run-new.sh` (they hold the
+password). S5.2 later recreates the container once more from the NEW container's settings (same
+script pattern), adding the compose network and the 5434 port.
 
 ### S2.4 Later (after a day of streaming over the tunnel; not tonight)
 
