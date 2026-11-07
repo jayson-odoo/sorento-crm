@@ -251,6 +251,7 @@ import {
   accessoryBoxLayout,
   accessoryLineCount,
 } from '@/lib/dealer-kit/accessory-box';
+import { cardDropped } from '@/lib/dealer-kit/accessory-card';
 import {
   CROP_HANDLE_ANCHORS,
   cropOverlayLayout,
@@ -3586,8 +3587,9 @@ export function TagCanvasEditor({
       if (!items) continue;
       const fit = { count: items.length, lines: accessoryLineCount(items) };
       fits.set(layer.id, fit);
-      dropped += accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines)
-        .dropped;
+      dropped += layer.props.card
+        ? cardDropped(fit.count, layer.props, layer.width_mm, layer.height_mm)
+        : accessoryBoxLayout(fit.count, layer.props, layer.width_mm, layer.height_mm, fit.lines).dropped;
     }
     return { fits, dropped };
   }, [layers, dataOf, assetUrls, library.featureIcons]);

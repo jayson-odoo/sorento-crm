@@ -17,6 +17,7 @@ import {
   itemLayoutOf,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
+import { cardDropped } from '@/lib/dealer-kit/accessory-card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Bold,
@@ -1955,7 +1956,9 @@ function AccessoriesInspector({
 }) {
   const headerId = useId();
   const dropped = fit
-    ? accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
+    ? props.card
+      ? cardDropped(fit.count, props, boxWidth_mm, boxHeight_mm)
+      : accessoryBoxLayout(fit.count, props, boxWidth_mm, boxHeight_mm, fit.lines).dropped
     : 0;
   const showHeader = props.showHeader !== false;
   const showFrame = props.showFrame !== false;

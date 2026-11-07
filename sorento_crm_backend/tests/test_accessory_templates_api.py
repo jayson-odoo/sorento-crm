@@ -360,7 +360,7 @@ def test_view_only_lists_and_reads_but_cannot_write(api):
 
 
 def test_the_deferred_delete_action_is_registered():
-    import app.services.record_actions  # noqa: F401  (registers the actions)
+    from app.services import record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
 
     action = get_action("accessory_box_preset.delete")
@@ -557,7 +557,7 @@ def test_delete_removes_presetid_from_linked_boxes_and_keeps_their_design(api):
 
 
 def test_the_deferred_action_runs_the_same_detach(api):
-    import app.services.record_actions  # noqa: F401
+    from app.services import record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
 
     db, _as, _scope = api

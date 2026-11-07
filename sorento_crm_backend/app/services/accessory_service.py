@@ -567,6 +567,9 @@ class AccessoryService:
                     sweep = self._drop_attachment(previous)
             else:
                 self.db.add(AccessoryImage(accessory_id=row.id, attachment_id=attachment_id, sort_order=0))
+            # The old column is no longer read, but the old route still keeps it in step (a seed
+            # script and an old tab look at it).
+            row.image_attachment_id = attachment_id
             self.db.commit()
         except Exception:
             self.db.rollback()
