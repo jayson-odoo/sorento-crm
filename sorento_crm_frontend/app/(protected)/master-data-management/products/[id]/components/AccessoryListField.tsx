@@ -37,7 +37,6 @@ import {
   fetchBoxStyleOptions,
   useBoxStyleOptions,
   useOwnerAccessories,
-  useOwnerBoxStyle,
   useReplaceOwnerAccessories,
 } from '../../../accessories/hooks/useAccessories';
 import {
@@ -169,8 +168,9 @@ export function AccessoryListField({
 }) {
   const { data } = useOwnerAccessories(kind, ownerId);
   const save = useReplaceOwnerAccessories(kind, ownerId);
-  const { data: boxStyleId } = useOwnerBoxStyle(kind, ownerId);
-  const { data: styleOptions = [] } = useBoxStyleOptions(canEdit);
+  // The owner's box style rides in the same answer as its list.
+  const boxStyleId = data?.box_style_id ?? null;
+  const { data: styleOptions = [] } = useBoxStyleOptions(true);
   const create = useCreateAccessory();
   const items = data ?? [];
   const known = useRef(new Map<string, AccessoryEntry>());
@@ -314,7 +314,15 @@ export function AccessoryListField({
             clearable
           />
         </div>
-      ) : null}
+      ) : (
+        <div className="space-y-1">
+          <Label>Box style</Label>
+          <p className="text-sm text-muted-foreground">
+            {styleOptions.find((option) => option.value === boxStyleId)?.label ??
+              (boxStyleId ? 'Saved accessories template' : "Tag template's own box")}
+          </p>
+        </div>
+      )}
       {canEdit ? (
         <SearchableSelect
           value=""

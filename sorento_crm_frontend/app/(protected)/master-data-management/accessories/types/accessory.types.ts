@@ -77,3 +77,9 @@ export const entryRef = (e: Pick<AccessoryEntry, 'kind' | 'id' | 'entry'>): Acce
 
 /** Which record owns an ordered accessory list. */
 export type AccessoryOwnerKind = 'product' | 'combo';
+
+/** An owner's list: the entries, with the box style the owner names (a saved accessories template id). */
+export type OwnerAccessories = AccessoryEntry[] & { box_style_id?: string | null };
+
+export const withBoxStyle = (items: AccessoryEntry[], boxStyleId: string | null | undefined): OwnerAccessories =>
+  Object.assign([...items], { box_style_id: boxStyleId ?? null });

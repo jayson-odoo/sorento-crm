@@ -27,7 +27,7 @@ from app.schemas.accessory import (
     AccessoryUpdate,
 )
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
-from app.services.accessory_service import MAX_IMAGE_BYTES, AccessoryService
+from app.services.accessory_service import MAX_IMAGE_BYTES, UNSET, AccessoryService
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
@@ -46,10 +46,8 @@ def _items(payload: AccessoryItemsIn) -> list[dict]:
 
 def _style(payload: AccessoryItemsIn):
     """`box_style_id`: absent from the body = unchanged (the service's `_UNSET`), null = cleared."""
-    from app.services.accessory_service import _UNSET
-
     if "box_style_id" not in payload.model_fields_set:
-        return _UNSET
+        return UNSET
     if payload.box_style_id:
         validate_uuid_path(payload.box_style_id, resource="Accessories template")
     return payload.box_style_id or None

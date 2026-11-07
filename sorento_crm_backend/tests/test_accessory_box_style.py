@@ -315,3 +315,28 @@ def test_revision_0018_is_additive_and_chains_onto_one_head():
 
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
     assert script.get_heads() == ["ptag_0018_acc_box_style"]
+
+
+@pytest.mark.parametrize("kind", ["product", "combo"])
+def test_another_companys_style_is_404_even_for_an_all_company_scope(db, monkeypatch, kind):
+    """The check is the owner's company against the preset's, not the session scope."""
+    from app.main import app as fastapi_app
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    _mocha(db)
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    host = _product(db, "ZZSTY")
+    url = _url(db, kind, host)
+    mine = _preset(db)
+    theirs = _preset(db, company_id=MOCHA)
+
+    async def _all_companies():
+        set_company_scope(db, None)
+        return None
+
+    fastapi_app.dependency_overrides[apply_company_scope] = _all_companies
+    set_company_scope(db, None)
+    assert _put(client, url, box_style_id=theirs.id).status_code == 404
+    assert _put(client, url, box_style_id=mine.id).status_code == 200
+    assert client.get(url).json()["box_style_id"] == mine.id

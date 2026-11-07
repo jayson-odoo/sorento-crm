@@ -20,6 +20,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import { withBoxStyle } from '../types/accessory.types';
 import type {
   Accessory,
   AccessoryEntry,
@@ -28,6 +29,7 @@ import type {
   AccessoryOwnerKind,
   AccessoryPicture,
   AccessoryWrite,
+  OwnerAccessories,
 } from '../types/accessory.types';
 
 const BASE = '/api/v1/master-data/accessories';
@@ -151,19 +153,11 @@ function ownerPath(kind: AccessoryOwnerKind, id: string): string {
 export async function listOwnerAccessories(
   kind: AccessoryOwnerKind,
   id: string,
-): Promise<AccessoryEntry[]> {
+): Promise<OwnerAccessories> {
   const res = await apiFetch(ownerPath(kind, id));
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the accessories'));
-  const body = (await res.json()) as { data?: AccessoryEntry[] };
-  return body.data ?? [];
-}
-
-/** The saved accessories template this owner names as its own box style, or null (the tag template's own). */
-export async function getOwnerBoxStyle(kind: AccessoryOwnerKind, id: string): Promise<string | null> {
-  const res = await apiFetch(ownerPath(kind, id));
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the box style'));
-  const body = (await res.json()) as { box_style_id?: string | null };
-  return body.box_style_id ?? null;
+  const body = (await res.json()) as { data?: AccessoryEntry[]; box_style_id?: string | null };
+  return withBoxStyle(body.data ?? [], body.box_style_id);
 }
 
 /**
@@ -182,6 +176,6 @@ export async function replaceOwnerAccessories(
     body: JSON.stringify(boxStyleId === undefined ? { items } : { items, box_style_id: boxStyleId }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the accessories'));
-  const body = (await res.json()) as { data?: AccessoryEntry[] };
-  return body.data ?? [];
+  const body = (await res.json()) as { data?: AccessoryEntry[]; box_style_id?: string | null };
+  return withBoxStyle(body.data ?? [], body.box_style_id);
 }

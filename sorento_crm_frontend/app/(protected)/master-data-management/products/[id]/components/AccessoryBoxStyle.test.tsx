@@ -4,7 +4,8 @@
  * Written test-FIRST.
  *
  * Invented names (the coder must match them):
- *  - accessoryService.getOwnerBoxStyle(kind, id): Promise<string | null>   (the list GET's `box_style_id`)
+ *  - the owner's `box_style_id` comes with the list the field already loads (one GET): the list array
+ *    carries it as a `box_style_id` property (`listOwnerAccessories` -> OwnerAccessories)
  *  - accessoryService.replaceOwnerAccessories(kind, id, items, boxStyleId?)  4th argument: a template id
  *    to set, null to clear, left out (exactly 3 arguments) when only the list changed
  *  - saved templates come from `listAccessoryTemplates()` in
@@ -22,7 +23,6 @@ import type { AccessoryEntry } from '../../../accessories/types/accessory.types'
 const service = vi.hoisted(() => ({
   listOwnerAccessories: vi.fn(),
   replaceOwnerAccessories: vi.fn(),
-  getOwnerBoxStyle: vi.fn(),
   searchAccessories: vi.fn(),
   createAccessory: vi.fn(),
 }));
@@ -78,6 +78,8 @@ const BOARD = {
   product_count: 0, combo_count: 0,
 } as unknown as AccessoryEntry;
 
+const withStyle = (id: string | null) => Object.assign([BOARD], { box_style_id: id });
+
 function mount(kind: 'product' | 'combo' = 'product', canEdit = true) {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
@@ -90,8 +92,7 @@ const picker = () => screen.findByLabelText('Box style') as Promise<HTMLSelectEl
 
 beforeEach(() => {
   vi.clearAllMocks();
-  service.listOwnerAccessories.mockResolvedValue([BOARD]);
-  service.getOwnerBoxStyle.mockResolvedValue(null);
+  service.listOwnerAccessories.mockResolvedValue(withStyle(null));
   service.replaceOwnerAccessories.mockResolvedValue([BOARD]);
   service.searchAccessories.mockResolvedValue([]);
 });
@@ -118,7 +119,7 @@ describe.each(['product', 'combo'] as const)('Box style picker on a %s', (kind) 
   });
 
   it('starts on the style the owner already names', async () => {
-    service.getOwnerBoxStyle.mockResolvedValue('t2');
+    service.listOwnerAccessories.mockResolvedValue(withStyle('t2'));
     mount(kind);
     const select = await picker();
     await waitFor(() => expect(select.value).toBe('t2'));
@@ -135,7 +136,7 @@ describe.each(['product', 'combo'] as const)('Box style picker on a %s', (kind) 
   });
 
   it('clearing it sends null', async () => {
-    service.getOwnerBoxStyle.mockResolvedValue('t1');
+    service.listOwnerAccessories.mockResolvedValue(withStyle('t1'));
     mount(kind);
     const select = await picker();
     await waitFor(() => expect(select.value).toBe('t1'));
@@ -147,6 +148,21 @@ describe.each(['product', 'combo'] as const)('Box style picker on a %s', (kind) 
 });
 
 describe('Box style picker, other rules', () => {
+  it('a view-only reader sees the chosen style read-only, by name', async () => {
+    service.listOwnerAccessories.mockResolvedValue(withStyle('t2'));
+    mount('product', false);
+    await screen.findByText('CHOPPING BOARD');
+    expect(screen.getByText('Box style')).toBeInTheDocument();
+    expect(await screen.findByText('Row of three')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Box style')).toBeNull();
+  });
+
+  it('a view-only reader of an owner with no style sees the tag template\'s own box', async () => {
+    mount('product', false);
+    await screen.findByText('CHOPPING BOARD');
+    expect(screen.getByText("Tag template's own box")).toBeInTheDocument();
+  });
+
   it('a list change alone leaves the style out of the PUT', async () => {
     mount('product');
     fireEvent.click(await screen.findByLabelText('Remove CHOPPING BOARD'));

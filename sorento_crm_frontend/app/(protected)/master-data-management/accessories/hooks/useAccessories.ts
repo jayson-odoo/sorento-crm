@@ -10,7 +10,6 @@ import {
   createAccessory,
   deleteAccessoryImage,
   getAccessory,
-  getOwnerBoxStyle,
   getAccessories,
   listOwnerAccessories,
   orderAccessoryPictures,
@@ -20,9 +19,10 @@ import {
   uploadAccessoryImage,
   type PictureColour,
 } from '../services/accessoryService';
-import { entryRef } from '../types/accessory.types';
+import { entryRef, withBoxStyle } from '../types/accessory.types';
 import type {
   AccessoryEntry,
+  OwnerAccessories,
   AccessoryOwnerKind,
   AccessoryWrite,
 } from '../types/accessory.types';
@@ -141,7 +141,6 @@ export function useOwnerAccessories(kind: AccessoryOwnerKind, id: string | undef
 export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string) {
   const queryClient = useQueryClient();
   const key = ownerAccessoriesKey(kind, id);
-  const styleKey = ownerBoxStyleKey(kind, id);
   return useMutation({
     mutationFn: ({ next, boxStyleId }: { next: AccessoryEntry[]; boxStyleId?: string | null }) =>
       boxStyleId === undefined
@@ -149,15 +148,16 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
         : replaceOwnerAccessories(kind, id, next.map(entryRef), boxStyleId),
     onMutate: async ({ next, boxStyleId }) => {
       await queryClient.cancelQueries({ queryKey: key });
-      const previous = queryClient.getQueryData<AccessoryEntry[]>(key);
-      const previousStyle = queryClient.getQueryData<string | null>(styleKey);
-      queryClient.setQueryData<AccessoryEntry[]>(key, next);
-      if (boxStyleId !== undefined) queryClient.setQueryData<string | null>(styleKey, boxStyleId);
-      return { previous, previousStyle };
+      const previous = queryClient.getQueryData<OwnerAccessories>(key);
+      // The list and the owner's box style travel in one answer, so one cache entry holds both.
+      queryClient.setQueryData<OwnerAccessories>(
+        key,
+        withBoxStyle(next, boxStyleId === undefined ? previous?.box_style_id : boxStyleId),
+      );
+      return { previous };
     },
-    onError: (error: Error, vars, context) => {
+    onError: (error: Error, _vars, context) => {
       queryClient.setQueryData(key, context?.previous);
-      if (vars.boxStyleId !== undefined) queryClient.setQueryData(styleKey, context?.previousStyle ?? null);
       toast.error(error.message || 'Failed to save the accessories');
     },
     onSuccess: (saved) => {
@@ -165,21 +165,6 @@ export function useReplaceOwnerAccessories(kind: AccessoryOwnerKind, id: string)
       queryClient.invalidateQueries({ queryKey: ACCESSORIES_KEY });
       queryClient.invalidateQueries({ queryKey: ['product-combos'] });
     },
-  });
-}
-
-export const ownerBoxStyleKey = (kind: AccessoryOwnerKind, id: string | undefined) => [
-  'owner-accessories-box-style',
-  kind,
-  id,
-];
-
-/** The saved accessories template the owner names as its box style (null = the tag template's own). */
-export function useOwnerBoxStyle(kind: AccessoryOwnerKind, id: string | undefined) {
-  return useQuery({
-    queryKey: ownerBoxStyleKey(kind, id),
-    queryFn: () => getOwnerBoxStyle(kind, id as string),
-    enabled: !!id,
   });
 }
 

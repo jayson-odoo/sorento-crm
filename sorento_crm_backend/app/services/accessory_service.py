@@ -40,7 +40,8 @@ from app.services.storage_router import (
     resolve_signed_url,
 )
 
-_UNSET = object()
+#: "Leave the box style alone" (public: the route passes it when the body omits `box_style_id`).
+UNSET = _UNSET = object()
 IMAGE_TYPE_CODE = "accessory_image"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 12
@@ -646,7 +647,7 @@ class AccessoryService:
         self, product_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
     ) -> List[Dict[str, Any]]:
         product = self._product_or_404(product_id)
-        style_id = self._resolve_box_style(box_style)
+        style_id = self._resolve_box_style(box_style, product.company_id)
         resolved = self._resolve_items(items, product.company_id, refused={product.id: "A product cannot list itself"})
         self.db.query(ProductAccessory).filter(ProductAccessory.product_id == product_id).delete(
             synchronize_session=False
@@ -679,7 +680,7 @@ class AccessoryService:
         self, combo_id: str, items: List[Dict[str, Any]], box_style: Any = _UNSET
     ) -> List[Dict[str, Any]]:
         combo = self._combo_or_404(combo_id)
-        style_id = self._resolve_box_style(box_style)
+        style_id = self._resolve_box_style(box_style, self._product_or_404(combo.host_product_id).company_id)
         host = self._product_or_404(combo.host_product_id)
         # One list of free products, never two: a product already IN the combo (a part) is not
         # also its free item, and the host is the combo itself.
@@ -722,13 +723,18 @@ class AccessoryService:
 
     # ------------------------------------------------------------------ helpers
 
-    def _resolve_box_style(self, box_style: Any) -> Any:
-        """`_UNSET` (leave alone), None (clear) or the id of a saved template visible to the caller."""
+    def _resolve_box_style(self, box_style: Any, owner_company_id: Optional[str]) -> Any:
+        """`_UNSET` (leave alone), None (clear) or the id of a saved template of the OWNER's company.
+        Checked against the owner's company, not the session scope, so an all-company caller cannot
+        attach another company's template."""
         from app.models.dealer_kit import AccessoryBoxPreset
 
         if box_style is _UNSET or box_style is None:
             return box_style
-        row = self.db.query(AccessoryBoxPreset.id).filter(AccessoryBoxPreset.id == str(box_style)).first()
+        query = self.db.query(AccessoryBoxPreset.id).filter(AccessoryBoxPreset.id == str(box_style))
+        if owner_company_id is not None:
+            query = query.filter(AccessoryBoxPreset.company_id == owner_company_id)
+        row = query.first()
         if row is None:
             raise handle_not_found("Accessories template", str(box_style))
         return row[0]
