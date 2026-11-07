@@ -757,3 +757,52 @@ def test_08_a_single_change_after_a_batch_and_a_batch_after_a_single_change_are_
 
     result, _ = run_turn(db, w, [round_of(single), round_of(batch_call), answer_("ok")], text_="grant access")
     assert len(result.pending_action["lines"]) == 1 and b.phone_number in result.pending_action["lines"][0]
+
+
+# ------------------------------------------------------------------ 9. crew live check round 1 (Gemini)
+
+
+def test_09_an_access_word_outside_owner_and_employee_skips_the_row_with_the_word(db):
+    """Live: 'Manager' was mapped to Employee and granted. The model now says `unknown` and the row is skipped."""
+    w = make_world(db)
+    person = dealer(db, w)
+
+    steps, skipped = propose_rows(db, w, [
+        {**row_(person.phone_number, codes=[w.cust_a.customer_code]), "role": "unknown", "access_as_written": "Manager"},
+    ])
+
+    assert steps == []
+    assert "unknown access: manager" in reason_of(skipped, 1)
+    assert state(db, person.phone_number)["types"] == ["end_user"]
+
+
+def test_09_a_live_shaped_turn_lists_the_unknown_access_row_and_proposes_the_rest(db):
+    w = make_world(db)
+    a, m = dealer(db, w), dealer(db, w)
+    rows = [
+        row_(a.phone_number, name="ZZT Ali", codes=[w.cust_a.customer_code]),
+        {**row_(m.phone_number, name="ZZT Manager", codes=[w.cust_a.customer_code]), "role": "unknown",
+         "access_as_written": "Manager"},
+    ]
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_("Row 1 will change; row 2 is skipped.")]
+
+    result, _ = run_turn(db, w, script, text_="grant access to these people")
+
+    assert len(result.pending_action["lines"]) == 1
+    assert "Unknown access: Manager" in result.reply_text
+    assert state(db, m.phone_number)["types"] == ["end_user"]
+
+
+def test_09_row_numbers_and_counts_the_batch_produced_are_not_flagged_as_unverified(db):
+    """Live: the prose above the preview read 'rows *(not verified)*, *(not verified)*'."""
+    w = make_world(db)
+    people_ = [dealer(db, w) for _ in range(3)]
+    rows = [row_(p.phone_number, codes=[w.cust_a.customer_code]) for p in people_[:2]]
+    rows += [row_(people_[2].phone_number, names=["ZZT No Such Shop"])]
+    text_ = "I will change rows 1 and 2 (2 rows) and skip row 3 (1 row) because its customer was not found."
+    script = [round_of(tc(BATCH, {"write": GRANT, "rows": rows}, "b1")), answer_(text_)]
+
+    result, _ = run_turn(db, w, script, text_="grant access to these people")
+
+    assert "not verified" not in result.reply_text
+    assert "rows 1 and 2" in result.reply_text
