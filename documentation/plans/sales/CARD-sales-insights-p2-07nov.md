@@ -1,7 +1,7 @@
 # CARD: SALES-INSIGHTS-P2 (leaderboard phase 2: drilldown, perspectives, targets, customisable)
 
 Status: Asked (crew-ask on PR #2231, 7 Nov, comment 6705350934). Evidence round 1 back (comment 6705369461), mockup
-drawn on it; round 2 (comment 6705387753, #2230 counted-line flags) returns identical figures. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
+drawn on it; round 2 (comment 6705387753, #2230 counted-line flags) returns identical figures; round 3 (6705556179) gives Channel and the other bases. Build waits for the owner. Track: full (size L). Figures depend on SALES-SUBTOTAL-LINES (#2230).
 Plan: `PLAN-sales-insights-p2-07nov.md`. Evidence: `evidence/sales-insights-p2-oct-dev.sql`.
 Mockup: `mockups/sales-insights-p2-07nov.html` (real October figures; panels "Self-service" and "Components reused" answer the owner's two mockup questions).
 
@@ -163,6 +163,19 @@ assistant agree on every basis. Rank, View by, drill and Open as report (to the 
 - Top selling items is invoiced only, so "Open in Top selling items" shows on Invoiced only.
 - Target: like for like gets likelier: FANNY's targets are ORDERED, so on the Ordered basis their period and basis
   match (still RM 0.00 today).
+
+**Evidence round 3 (crew, PR #2231 comment 6705556179; mockup frame G).** October, all companies, the engine's own
+statements: Invoiced RM 16,369,803.26 (+3.0% vs Sep), Delivered RM 10,797,078.52 (-21.2%), Ordered RM 14,697,054.39
+(-10.2%), Undelivered due in October RM 3,899,975.87, Undelivered all open RM 77,309,379.57 (RM 71,768,951.72 of it
+Project team). What the switch shows:
+- The ranking moves with the basis: LCL #1 invoiced, #5 ordered, #7 delivered; SEAN #1 ordered and delivered. Invoiced
+  "No sales order" rose from RM 359,970.26 (Sep) to RM 1,136,680.81 (Oct), consistent with LCL's ACCOUNT disbursement
+  item (RM 735,826.08) carrying no sales order; no order basis sees it.
+- Undelivered opens on all open lines (the report's own default, `datasets/sales_order_lines_ask.py:223`
+  `all_dates_period`), and that view is dominated by long-running project orders (ERIC NG RM 13.9m, JUSTIN RM 11.0m,
+  TERA RM 10.9m). Kept as the default so the board equals the Undelivered orders tab; the period chips narrow it.
+- A customer row can span companies: the engine groups by name, and 13 of the 21 mockup codes exist in both SRT and
+  MCH, so the Company cell lists every company of the row's ids (e.g. "SRT, MCH").
 
 **Permissions per basis** (the existing gates, nothing widened): Invoiced needs `sales.reports.view`
 (`invoiced_sales.py:369`); Delivered / Ordered / Undelivered need `order_management.orders.view` (the Sales &
