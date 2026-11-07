@@ -221,9 +221,11 @@ class BillingDocumentLine(CompanyScopedMixin, Base):
     from_line_ref = Column(String(255), nullable=True)
     # AutoCount DtlKey.
     source_ref = Column(String(255), nullable=False)
-    # An AutoCount subtotal line (blank item, amount = the lines above): shown, never summed as
-    # a sale. Decided by the ingest (`app/services/finance/billing_subtotal_lines.py`).
+    # An AutoCount subtotal line (blank item, amount = the lines above) or a blank-item copy of a
+    # real line: shown, never summed as a sale. Decided by the ingest
+    # (`app/services/finance/billing_subtotal_lines.py`).
     is_subtotal = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    is_duplicate = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

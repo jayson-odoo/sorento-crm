@@ -1,6 +1,6 @@
 # PLAN: AutoCount subtotal lines excluded from line-based sales sums (SALES-SUBTOTAL-LINES)
 
-Status: in review (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026, PR #2230)
+Status: in review, round 2 (small fix track plus one additive migration; lane SALES-SUBTOTAL-LINES, 7 Nov 2026, PR #2230)
 
 ## Problem
 
@@ -57,3 +57,32 @@ part of it). Evaluated top to bottom.
   qty is not marked; a re-push that edits the lines re-decides.
 - Dataset sum over the fixture equals the header `local_net_total`.
 - Kill test: removing the predicate turns the dataset test red.
+
+## Round 2 (crew verification, PR #2230 comments 6704618301, 6704659700, 6704685087)
+
+Round 1 removed RM 1,494,224.00 (25 documents, 0 false exclusions). Still off: 41 documents.
+
+- **SRT Jan, PSWR26-0001 (+RM 64,434.70).** Its `SubTotal` line (no item, UOM, qty or price) carries
+  `from_doc_type = DO`, which the round 1 shape test refused. Fact-based widening: a from-doc
+  reference (and a resolved SO line) no longer disqualifies a subtotal line; every other
+  condition, the exact sum and the header guard stay.
+- **MCH Jan-May and Aug (40 documents, +RM 138,356.80): AutoCount item packages.** Cause: the AutoCount
+  `IVDTL` of `AED_V2_MOCHA` holds one PARENT row per package set (no ItemCode, `ParentDtlKey = 0`,
+  carries Qty, UnitPrice and SubTotal, description "... SET PACKAGE ...") and N CHILD rows
+  (`ParentDtlKey` = the parent's DtlKey); the FIRST child repeats the parent's Qty, UnitPrice and
+  SubTotal. The shared service sends every row and never selects `ParentDtlKey` (its
+  `presets.py:774-782, :843-866`; crew lane SS-PACKAGE-LINES carries it onto canonical lines). The
+  CRM stores exactly what it is pushed (`billing_document_ingest_service.py` `_create` / `_update`:
+  lines replaced whole, unique only on `(document_id, source_ref)`), so both rows were summed.
+  `Seq` is NOT a safe key (M2601-1517: parent Seq 48, child Seq 16).
+- **CRM rule (`is_duplicate`, exact):** a line naming no item and no UOM, stating quantity, unit price
+  and net, whose quantity, unit price, discount and net are repeated exactly by a line in the same
+  document that names an item; one real line excuses one copy; same header guard. The children
+  are counted (they carry the item codes); the parent row stays on the document.
+- **Reconciliation:** `SQL-sales-subtotal-reconcile.sql` is generated from the migration's
+  `VERDICT_SQL` (a test asserts it carries it verbatim). Query 1 adds the dry-run counts
+  (`subtotal_lines`, `package_copies`, `docs_marked`, `docs_still_off`); Query 2 lists every 2026
+  document whose counted lines differ from its header (target 0 rows).
+- **Trigger for the next step:** once SS-PACKAGE-LINES ships `ParentDtlKey` on canonical lines, the
+  CRM reads it (a line some other line names as its parent is the copy) and keeps this rule only
+  for rows ingested before it, unless MCH 2026 is re-pulled.

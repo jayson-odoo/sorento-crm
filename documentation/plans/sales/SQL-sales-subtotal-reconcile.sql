@@ -1,39 +1,67 @@
--- SALES-SUBTOTAL-LINES reconciliation (read-only). Plan:
+-- SALES-SUBTOTAL-LINES reconciliation (read-only, SELECT only, safe on the dev copy). Plan:
 -- documentation/plans/sales/PLAN-sales-subtotal-lines-07nov.md
 --
--- Per company-month of 2026: the header sales sum (signed local_net_total) against the line
--- sum (signed net_amount x currency_rate) BEFORE the fix (every line) and AFTER it (subtotal
--- lines skipped). The subtotal verdict is computed here by the same walk as
--- app/services/finance/billing_subtotal_lines.py, so the query runs on a database that does not
--- have the is_subtotal column yet. SELECT only; safe on the dev copy.
+-- GENERATED from the migration's VERDICT_SQL
+-- (sorento_crm_backend/alembic/versions/sbt_0001_billing_subtotal_lines.py), so the verdicts here
+-- are the backfill's: subtotal lines and item-package parent copies, header guard included. It
+-- computes them itself, so it runs before the columns exist.
 --
--- Query 1: the company-month table. Query 2: the documents still off after the fix, with the
--- likely reason (no lines; footer charge or rounding = header-only money, REF gotcha 5).
-WITH RECURSIVE balanced AS (
-    -- A document whose lines already add up to its header has nothing to undo (review R1).
-    SELECT b.document_id
-    FROM finance.billing_document_lines b
-    JOIN finance.billing_documents d ON d.id = b.document_id
-    GROUP BY b.document_id, d.net_total
-    HAVING SUM(COALESCE(b.net_amount, 0)) = d.net_total
+-- Two statements, each complete: Query 1 per company-month 2026 (header vs line sum before and
+-- after, plus the dry-run counts), Query 2 every 2026 document still off after the fix.
+
+WITH RECURSIVE scoped AS (
+    SELECT l.* FROM finance.billing_document_lines l WHERE l.document_id IN (SELECT d.id FROM finance.billing_documents d
+                        WHERE d.doc_date >= DATE '2026-01-01' AND d.doc_date < DATE '2027-01-01')
+),
+balanced AS (
+    -- A document whose lines already add up to its header has nothing to undo.
+    SELECT s.document_id
+    FROM scoped s
+    JOIN finance.billing_documents d ON d.id = s.document_id
+    GROUP BY s.document_id, d.net_total
+    HAVING SUM(COALESCE(s.net_amount, 0)) = d.net_total
+),
+real AS (
+    SELECT s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount, COUNT(*) AS n
+    FROM scoped s
+    WHERE (NULLIF(BTRIM(s.item_code), '') IS NOT NULL OR s.product_id IS NOT NULL)
+      AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
+    GROUP BY s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount
+),
+copies AS (
+    -- An item-package parent row: no item, no UOM, a quantity and a price.
+    SELECT s.id, s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount,
+           ROW_NUMBER() OVER (
+               PARTITION BY s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount
+               ORDER BY s.source_ref COLLATE "C"
+           ) AS rk
+    FROM scoped s
+    WHERE NULLIF(BTRIM(s.item_code), '') IS NULL AND s.product_id IS NULL
+      AND NULLIF(BTRIM(s.uom), '') IS NULL
+      AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
+      AND s.document_id NOT IN (SELECT document_id FROM balanced)
+),
+dup AS (
+    -- One real line excuses one copy (same document, quantity, price, discount and money).
+    SELECT c.id
+    FROM copies c
+    JOIN real r ON r.document_id = c.document_id AND r.quantity = c.quantity
+                AND r.unit_price = c.unit_price AND r.net_amount = c.net_amount
+                AND r.discount_amount IS NOT DISTINCT FROM c.discount_amount
+    WHERE c.rk <= r.n
 ),
 ordered AS (
-    SELECT l.id, l.document_id, l.net_amount,
-           (l.net_amount IS NOT NULL
-            AND NULLIF(BTRIM(l.item_code), '') IS NULL AND l.product_id IS NULL
-            AND NULLIF(BTRIM(l.uom), '') IS NULL AND l.quantity IS NULL AND l.unit_price IS NULL
-            AND NULLIF(BTRIM(l.from_doc_type), '') IS NULL
-            AND NULLIF(BTRIM(l.from_doc_no), '') IS NULL
-            AND NULLIF(BTRIM(l.from_line_ref), '') IS NULL
-            AND l.sales_order_line_id IS NULL
-            AND l.document_id NOT IN (SELECT document_id FROM balanced)) AS shape,
+    SELECT s.id, s.document_id, s.net_amount,
+           (s.net_amount IS NOT NULL
+            AND NULLIF(BTRIM(s.item_code), '') IS NULL AND s.product_id IS NULL
+            AND NULLIF(BTRIM(s.uom), '') IS NULL AND s.quantity IS NULL AND s.unit_price IS NULL
+            AND s.document_id NOT IN (SELECT document_id FROM balanced)) AS shape,
            ROW_NUMBER() OVER (
-               PARTITION BY l.document_id
-               ORDER BY l.line_no NULLS LAST, l.source_ref COLLATE "C"
+               PARTITION BY s.document_id
+               ORDER BY s.line_no NULLS LAST, s.source_ref COLLATE "C"
            ) AS rn
-    FROM finance.billing_document_lines l
-    WHERE l.document_id IN (SELECT d.id FROM finance.billing_documents d
-                        WHERE d.doc_date >= DATE '2026-01-01' AND d.doc_date < DATE '2027-01-01')
+    FROM scoped s
+    WHERE s.id NOT IN (SELECT id FROM dup)
 ),
 walk AS (
     SELECT o.id, o.document_id, o.rn, FALSE AS is_subtotal,
@@ -55,9 +83,12 @@ walk AS (
         SELECT (w.counted > 0 AND o.shape
                 AND o.net_amount IN (w.since_start, w.since_previous)) AS is_subtotal
     ) v
-)
-,
-verdict AS (SELECT id, is_subtotal FROM walk),
+),
+verdict AS (
+    SELECT id, document_id, is_subtotal, FALSE AS is_duplicate FROM walk
+    UNION ALL
+    SELECT s.id, s.document_id, FALSE, TRUE FROM scoped s WHERE s.id IN (SELECT id FROM dup)
+),
 docs AS (
     SELECT d.id, c.code AS company, to_char(d.doc_date, 'YYYY-MM') AS month, d.doc_no,
            d.document_type,
@@ -74,15 +105,17 @@ per_doc AS (
            d.sign * d.local_net_total AS header,
            COALESCE(SUM(d.sign * l.net_amount * d.currency_rate), 0) AS lines_before,
            COALESCE(SUM(d.sign * l.net_amount * d.currency_rate)
-                    FILTER (WHERE NOT COALESCE(v.is_subtotal, FALSE)), 0) AS lines_after,
+                    FILTER (WHERE NOT COALESCE(v.is_subtotal OR v.is_duplicate, FALSE)), 0) AS lines_after,
            COUNT(l.id) AS line_count,
-           COUNT(l.id) FILTER (WHERE v.is_subtotal) AS subtotal_lines
+           COUNT(l.id) FILTER (WHERE v.is_subtotal) AS subtotal_lines,
+           COUNT(l.id) FILTER (WHERE v.is_duplicate) AS package_copies
     FROM docs d
     LEFT JOIN finance.billing_document_lines l ON l.document_id = d.id
     LEFT JOIN verdict v ON v.id = l.id
     GROUP BY d.id, d.company, d.month, d.doc_no, d.document_type, d.sign, d.local_net_total
 )
--- Query 1
+-- Query 1: per company-month (also the backfill's dry-run counts: subtotal_lines,
+-- package_copies and docs_marked are what the migration sets for 2026).
 SELECT company, month,
        ROUND(SUM(header), 2) AS header_sum,
        ROUND(SUM(lines_before), 2) AS line_sum_before,
@@ -90,20 +123,126 @@ SELECT company, month,
        ROUND(SUM(lines_after), 2) AS line_sum_after,
        ROUND(SUM(lines_after) - SUM(header), 2) AS diff_after,
        SUM(subtotal_lines) AS subtotal_lines,
-       COUNT(*) FILTER (WHERE subtotal_lines > 0) AS docs_with_subtotal
+       SUM(package_copies) AS package_copies,
+       COUNT(*) FILTER (WHERE subtotal_lines + package_copies > 0) AS docs_marked,
+       COUNT(*) FILTER (WHERE ROUND(lines_after, 2) <> ROUND(header, 2)) AS docs_still_off
 FROM per_doc
 GROUP BY company, month
 ORDER BY company, month;
 
--- Query 2: run it with the same WITH block as Query 1 (copy everything above `-- Query 1`),
--- replacing the final SELECT with:
---
--- SELECT company, month, doc_no, document_type, header, ROUND(lines_after, 2) AS lines_after,
---        ROUND(lines_after - header, 2) AS diff, line_count, subtotal_lines,
---        CASE WHEN line_count = 0 THEN 'no lines (header-only document)'
---             WHEN ABS(lines_after - header) <= 0.05 THEN 'rounding'
---             ELSE 'header-only money (footer charge) or a line the rule does not see' END
---          AS reason
--- FROM per_doc
--- WHERE ROUND(lines_after, 2) <> ROUND(header, 2)
--- ORDER BY company, month, ABS(lines_after - header) DESC;
+WITH RECURSIVE scoped AS (
+    SELECT l.* FROM finance.billing_document_lines l WHERE l.document_id IN (SELECT d.id FROM finance.billing_documents d
+                        WHERE d.doc_date >= DATE '2026-01-01' AND d.doc_date < DATE '2027-01-01')
+),
+balanced AS (
+    -- A document whose lines already add up to its header has nothing to undo.
+    SELECT s.document_id
+    FROM scoped s
+    JOIN finance.billing_documents d ON d.id = s.document_id
+    GROUP BY s.document_id, d.net_total
+    HAVING SUM(COALESCE(s.net_amount, 0)) = d.net_total
+),
+real AS (
+    SELECT s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount, COUNT(*) AS n
+    FROM scoped s
+    WHERE (NULLIF(BTRIM(s.item_code), '') IS NOT NULL OR s.product_id IS NOT NULL)
+      AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
+    GROUP BY s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount
+),
+copies AS (
+    -- An item-package parent row: no item, no UOM, a quantity and a price.
+    SELECT s.id, s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount,
+           ROW_NUMBER() OVER (
+               PARTITION BY s.document_id, s.quantity, s.unit_price, s.discount_amount, s.net_amount
+               ORDER BY s.source_ref COLLATE "C"
+           ) AS rk
+    FROM scoped s
+    WHERE NULLIF(BTRIM(s.item_code), '') IS NULL AND s.product_id IS NULL
+      AND NULLIF(BTRIM(s.uom), '') IS NULL
+      AND s.quantity IS NOT NULL AND s.unit_price IS NOT NULL AND s.net_amount IS NOT NULL
+      AND s.document_id NOT IN (SELECT document_id FROM balanced)
+),
+dup AS (
+    -- One real line excuses one copy (same document, quantity, price, discount and money).
+    SELECT c.id
+    FROM copies c
+    JOIN real r ON r.document_id = c.document_id AND r.quantity = c.quantity
+                AND r.unit_price = c.unit_price AND r.net_amount = c.net_amount
+                AND r.discount_amount IS NOT DISTINCT FROM c.discount_amount
+    WHERE c.rk <= r.n
+),
+ordered AS (
+    SELECT s.id, s.document_id, s.net_amount,
+           (s.net_amount IS NOT NULL
+            AND NULLIF(BTRIM(s.item_code), '') IS NULL AND s.product_id IS NULL
+            AND NULLIF(BTRIM(s.uom), '') IS NULL AND s.quantity IS NULL AND s.unit_price IS NULL
+            AND s.document_id NOT IN (SELECT document_id FROM balanced)) AS shape,
+           ROW_NUMBER() OVER (
+               PARTITION BY s.document_id
+               ORDER BY s.line_no NULLS LAST, s.source_ref COLLATE "C"
+           ) AS rn
+    FROM scoped s
+    WHERE s.id NOT IN (SELECT id FROM dup)
+),
+walk AS (
+    SELECT o.id, o.document_id, o.rn, FALSE AS is_subtotal,
+           COALESCE(o.net_amount, 0) AS since_start,
+           COALESCE(o.net_amount, 0) AS since_previous,
+           1 AS counted
+    FROM ordered o
+    WHERE o.rn = 1
+    UNION ALL
+    SELECT o.id, o.document_id, o.rn, v.is_subtotal,
+           CASE WHEN v.is_subtotal THEN w.since_start
+                ELSE w.since_start + COALESCE(o.net_amount, 0) END,
+           CASE WHEN v.is_subtotal THEN 0
+                ELSE w.since_previous + COALESCE(o.net_amount, 0) END,
+           w.counted + CASE WHEN v.is_subtotal THEN 0 ELSE 1 END
+    FROM walk w
+    JOIN ordered o ON o.document_id = w.document_id AND o.rn = w.rn + 1
+    CROSS JOIN LATERAL (
+        SELECT (w.counted > 0 AND o.shape
+                AND o.net_amount IN (w.since_start, w.since_previous)) AS is_subtotal
+    ) v
+),
+verdict AS (
+    SELECT id, document_id, is_subtotal, FALSE AS is_duplicate FROM walk
+    UNION ALL
+    SELECT s.id, s.document_id, FALSE, TRUE FROM scoped s WHERE s.id IN (SELECT id FROM dup)
+),
+docs AS (
+    SELECT d.id, c.code AS company, to_char(d.doc_date, 'YYYY-MM') AS month, d.doc_no,
+           d.document_type,
+           CASE WHEN d.document_type = 'credit_note' THEN -1 ELSE 1 END AS sign,
+           d.local_net_total, d.currency_rate
+    FROM finance.billing_documents d
+    JOIN companies c ON c.id = d.company_id
+    WHERE d.status = 'posted'
+      AND d.document_type IN ('invoice', 'cash_sale', 'credit_note', 'debit_note')
+      AND d.doc_date >= DATE '2026-01-01' AND d.doc_date < DATE '2027-01-01'
+),
+per_doc AS (
+    SELECT d.id, d.company, d.month, d.doc_no, d.document_type,
+           d.sign * d.local_net_total AS header,
+           COALESCE(SUM(d.sign * l.net_amount * d.currency_rate), 0) AS lines_before,
+           COALESCE(SUM(d.sign * l.net_amount * d.currency_rate)
+                    FILTER (WHERE NOT COALESCE(v.is_subtotal OR v.is_duplicate, FALSE)), 0) AS lines_after,
+           COUNT(l.id) AS line_count,
+           COUNT(l.id) FILTER (WHERE v.is_subtotal) AS subtotal_lines,
+           COUNT(l.id) FILTER (WHERE v.is_duplicate) AS package_copies
+    FROM docs d
+    LEFT JOIN finance.billing_document_lines l ON l.document_id = d.id
+    LEFT JOIN verdict v ON v.id = l.id
+    GROUP BY d.id, d.company, d.month, d.doc_no, d.document_type, d.sign, d.local_net_total
+)
+-- Query 2: every 2026 document whose counted lines still differ from its header (target: 0 rows).
+SELECT company, month, doc_no, document_type, header, ROUND(lines_before, 2) AS lines_before,
+       ROUND(lines_after, 2) AS lines_after, ROUND(lines_after - header, 2) AS diff,
+       line_count, subtotal_lines, package_copies,
+       CASE WHEN line_count = 0 THEN 'no lines (header-only document)'
+            WHEN ABS(lines_after - header) <= 0.05 THEN 'rounding'
+            WHEN subtotal_lines + package_copies > 0 THEN 'marked but still off: inspect'
+            ELSE 'header-only money (footer charge) or a line no rule recognises' END AS reason
+FROM per_doc
+WHERE ROUND(lines_after, 2) <> ROUND(header, 2)
+ORDER BY company, month, ABS(lines_after - header) DESC;

@@ -64,7 +64,7 @@ from app.schemas.canonical_documents import (
     CanonicalBillingDocumentLine,
     billing_document_errors,
 )
-from app.services.finance.billing_subtotal_lines import mark_subtotal_lines
+from app.services.finance.billing_subtotal_lines import mark_uncounted_lines
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
@@ -320,7 +320,7 @@ class BillingDocumentIngestService(MasterRefResolver):
         warnings: list[str] = []
         header = self._header_values(payload, existing, warnings)
         lines = [self._line_values(line, warnings) for line in payload.lines]
-        mark_subtotal_lines(lines, header["net_total"])
+        mark_uncounted_lines(lines, header["net_total"])
         header["demand_class"] = self._demand_class(header, lines)
 
         if existing is None:
