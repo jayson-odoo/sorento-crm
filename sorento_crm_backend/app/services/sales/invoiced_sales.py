@@ -99,6 +99,13 @@ def signed_line_amount() -> Any:
     return _sign(BillingDocumentLine.net_amount * BillingDocument.currency_rate)
 
 
+def counted_line() -> Any:
+    """A line that is a sale: every line but an AutoCount subtotal line, whose amount restates
+    the lines above it (SALES-SUBTOTAL-LINES). Every line-based sales sum applies it; the line
+    stays on the document."""
+    return BillingDocumentLine.is_subtotal.is_(False)
+
+
 def signed_line_quantity() -> Any:
     """A line's quantity, negative on a credit note."""
     return _sign(BillingDocumentLine.quantity)
